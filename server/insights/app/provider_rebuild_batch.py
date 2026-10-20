@@ -142,9 +142,12 @@ async def rebuild_batch(
 ) -> list[dict[str, Any]]:
     """Return full staged rows; never publish partial or malformed embeddings.
 
-    A row whose org's model calls are switched off is staged without a vector,
-    as a tombstone is, and its index added to `waiting`: the rebuild completes,
-    and the row has no vector until the org is back on and it is embedded again.
+    A row whose org's model calls are switched off is staged without a vector
+    (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
+    the rebuild completes and counts it in its progress (`rows_waiting`). Once the
+    org is back on, memory_embeddings and code_chunks / code_summaries stubs are
+    embedded again by their recovery workers; a row of any other table has no
+    vector until a write replaces it or a later rebuild covers it.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.

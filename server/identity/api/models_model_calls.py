@@ -3,7 +3,8 @@
 An org admin switches the org's model calls off (or back on): while off, no
 chat, embedding, rerank or classify call is made for the org's data, on a
 request or by a background job, and its queued work waits. A platform admin
-can lock the setting, so the org's own admins cannot change it.
+can lock the setting: the org's own admins can still switch it off, but not
+back on.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ class OrgSetModelCallsInput(BaseModel):
     enabled: bool
     # A note on why, kept with the setting; at most 500 characters.
     reason: str = Field(default="", max_length=500)
-    # Platform admins only: true locks the setting against the org's own admins,
-    # false unlocks it; unset leaves the lock as it is.
+    # Platform admins only: true locks the setting (the org's own admins may switch
+    # it off, not back on), false unlocks it; unset leaves the lock as it is.
     locked: bool | None = None
 
 
@@ -38,7 +39,7 @@ class OrgModelCallsOutput(BaseModel):
     updated_by: str = ""
     # When the last change was written (UTC); None when it was never set.
     updated_at: datetime | None = None
-    # Whether a platform admin locked the setting against the org's own admins.
+    # Whether a platform admin locked the setting: its admins cannot switch it on.
     locked: bool = False
     # The platform admin who set the lock; "" when unlocked.
     locked_by: str = ""

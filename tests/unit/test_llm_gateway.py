@@ -150,7 +150,7 @@ def test_chat_and_embeddings_go_to_the_gateway_with_its_token(
     vectors = _Recorder({"data": [{"embedding": [0.0] * 8}], "usage": {"total_tokens": 1}})
     monkeypatch.setattr(embed_mod, "_http_client", lambda: vectors)
     embedder = embed_mod.OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="")
-    asyncio.run(embedder._post(embedder._payload("text")))
+    asyncio.run(embedder._post(embedder._payload("text"), ""))
     assert vectors.calls[0]["url"] == "https://gateway.example/v1/embeddings"
     assert vectors.calls[0]["headers"]["Authorization"] == "Bearer gw-1"
 
@@ -160,7 +160,7 @@ def test_anthropic_behind_a_gateway_also_gets_the_key_as_a_bearer(monkeypatch) -
 
     monkeypatch.setattr(settings, "anthropic_base_url", "https://gateway.example")
     recorder = _Recorder({})
-    asyncio.run(anthropic_mod._post(recorder, "claude-haiku-4-5", "svc-key", {}))
+    asyncio.run(anthropic_mod._post(recorder, "claude-haiku-4-5", "svc-key", {}, ""))
     call = recorder.calls[0]
     assert call["url"] == "https://gateway.example/v1/messages"
     assert call["headers"]["Authorization"] == "Bearer svc-key"

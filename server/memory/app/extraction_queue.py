@@ -261,16 +261,39 @@ async def mark_error(
 _DROP_PER_PASS = 500
 
 
-async def drop_waiting(orgs: frozenset[str], *, older_than_days: int, ch: Any | None = None) -> int:
+async def drop_waiting(
+    orgs: frozenset[str],
+    *,
+    older_than_days: int,
+    ch: Any | None = None,
+    org_filter: str | None = None,
+    namespace_filter: str | None = None,
+) -> int:
     """Drop the requests of `orgs` (switched off) that have waited longer than
-    `older_than_days`: each is marked `failed` with a memory_drops record
-    (reason `model_calls_off`). Returns how many."""
+    `older_than_days`, counted from when the request was queued or the org was
+    switched off, whichever is later. Each gets a memory_drops record (reason
+    `model_calls_off`), written before the request is marked `failed`: a
+    record that cannot be written leaves the request pending. Returns how many."""
     from server.core.ch import get_client
-    from server.memory.app.drops import record_drop
+    from server.memory.app.drops import write_drops
 
-    if not orgs or older_than_days <= 0:
+    if not orgs:
         return 0
     ch = ch or get_client()
+    scope = ""
+    params: dict[str, Any] = {
+        "pending": STATUS_PENDING,
+        "running": STATUS_RUNNING,
+        "orgs": sorted(orgs),
+        "days": int(older_than_days),
+        "lim": _DROP_PER_PASS,
+    }
+    if org_filter is not None:
+        scope += " AND org = {org_f:String}"
+        params["org_f"] = org_filter
+    if namespace_filter is not None:
+        scope += " AND namespace = {ns_f:String}"
+        params["ns_f"] = namespace_filter
     cols = ", ".join(COLUMNS)
     rows = await ch.query_all(
         f"""
@@ -279,33 +302,30 @@ async def drop_waiting(orgs: frozenset[str], *, older_than_days: int, ch: Any | 
         WHERE status IN ({{pending:String}}, {{running:String}})
           AND has({{orgs:Array(String)}}, org)
           AND enqueued_at < now64(3) - toIntervalDay({{days:UInt32}})
+          AND org IN (
+              SELECT org FROM loom.org_model_calls FINAL
+              WHERE enabled = 0 AND updated_at < now64(3) - toIntervalDay({{days:UInt32}})
+          )
+          {scope}
         ORDER BY enqueued_at ASC
         LIMIT {{lim:UInt32}}
         """,
-        params={
-            "pending": STATUS_PENDING,
-            "running": STATUS_RUNNING,
-            "orgs": sorted(orgs),
-            "days": int(older_than_days),
-            "lim": _DROP_PER_PASS,
-        },
+        params=params,
     )
     if not rows:
         return 0
+    await write_drops(
+        [(str(r["org"]), str(r["namespace"]), str(r.get("queue_id") or "")) for r in rows],
+        "extraction_queue",
+        "model_calls_off",
+        ch=ch,
+    )
     why = f"dropped: model calls switched off, waited over {older_than_days} days"
     await ch.insert(
         TABLE,
         [_mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=_EPOCH) for r in rows],
         settings=_SYNC,
     )
-    for r in rows:
-        record_drop(
-            str(r["org"]),
-            str(r["namespace"]),
-            "extraction_queue",
-            "model_calls_off",
-            item=str(r.get("queue_id") or ""),
-        )
     return len(rows)
 
 

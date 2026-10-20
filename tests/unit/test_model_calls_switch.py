@@ -16,6 +16,7 @@ from server.core.errors import BackendUnavailableError
 from server.llm import customer
 from server.observability import genai, provider_health
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 @pytest.fixture(autouse=True)
@@ -146,10 +147,14 @@ class _Switch:
 
     def __init__(self, off: set[str]) -> None:
         self.off, self.down, self.reads = off, False, 0
+        self.sequential: list[bool] = []
 
     async def query_all(self, sql: str, **_: Any) -> list[dict[str, Any]]:
+        from server.core.ch import sequential_reads_var
+
         assert "loom.org_model_calls FINAL WHERE enabled = 0" in sql
         self.reads += 1
+        self.sequential.append(sequential_reads_var.get())
         if self.down:
             raise ConnectionError("clickhouse away")
         return [{"org": o} for o in sorted(self.off)]
@@ -173,6 +178,7 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
     switch.off = set()
     customer.forget_switch()  # a change written on this server
     assert asyncio.run(customer.switched_off("acme")) is False and switch.reads == 2
+    assert switch.sequential == [True, True]  # the read after a write sees it on any replica
 
 
 def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch) -> None:
@@ -514,39 +520,85 @@ def test_the_ops_take_one_org(org: str) -> None:
         asyncio.run(model_calls.handle_org_model_calls(OrgModelCallsInput(org=org)))
 
 
-def test_a_switched_off_orgs_requests_are_dropped_after_the_wait_with_a_record(
-    monkeypatch,
-) -> None:
-    from server.memory.app import drops
+class _DropCH:
+    """Answers the drop query with `rows`; records each insert by table."""
+
+    def __init__(self, rows: list[dict[str, Any]], *, fail_drops: bool = False) -> None:
+        self.rows, self.fail_drops = rows, fail_drops
+        self.sql, self.params = "", {}
+        self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        self.sql, self.params = sql, params
+        return self.rows
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+        if self.fail_drops and table == "loom.memory_drops":
+            raise BackendUnavailableError("down")
+        self.inserts.append((table, rows))
+
+
+_WAITING = [{"org": "acme", "namespace": "n", "queue_id": "q1", "status": "pending"}]
+
+
+def test_a_dropped_request_is_marked_failed_after_its_drop_record_is_written() -> None:
     from server.memory.app import extraction_queue as q
 
-    written: list[dict[str, Any]] = []
-    recorded: list[tuple[str, str, str, str]] = []
-
-    class _CH:
-        sql = ""
-        params: dict[str, Any] = {}
-
-        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
-            self.sql, self.params = sql, params
-            return [{"org": "acme", "namespace": "n", "queue_id": "q1", "status": "pending"}]
-
-        async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
-            written.extend(rows)
-
-    def record(org: str, ns: str, stage: str, reason: str, **kw: Any) -> None:
-        recorded.append((org, stage, reason, kw.get("item", "")))
-
-    monkeypatch.setattr(drops, "record_drop", record)
-    ch = _CH()
-    n = asyncio.run(q.drop_waiting(frozenset({"acme"}), older_than_days=7, ch=ch))
-    assert n == 1 and ch.params["orgs"] == ["acme"] and ch.params["days"] == 7
-    assert "toIntervalDay" in ch.sql and "has({orgs:Array(String)}, org)" in ch.sql
-    [row] = written
+    ch = _DropCH(_WAITING)
+    n = asyncio.run(
+        q.drop_waiting(frozenset({"acme"}), older_than_days=7, ch=ch, namespace_filter="n")
+    )
+    assert n == 1 and ch.params["orgs"] == ["acme"] and ch.params["ns_f"] == "n"
+    [(t1, [drop]), (t2, [row])] = ch.inserts
+    assert t1 == "loom.memory_drops" and t2 == q.TABLE
+    assert (drop["org"], drop["stage"], drop["reason"], drop["item"]) == (
+        "acme",
+        "extraction_queue",
+        "model_calls_off",
+        "q1",
+    )
     assert row["status"] == q.STATUS_FAILED and "switched off" in row["last_error"]
-    assert recorded == [("acme", "extraction_queue", "model_calls_off", "q1")]
     assert asyncio.run(q.drop_waiting(frozenset(), older_than_days=7, ch=ch)) == 0
-    assert asyncio.run(q.drop_waiting(frozenset({"acme"}), older_than_days=0, ch=ch)) == 0
+
+
+def test_a_request_whose_drop_record_fails_stays_pending() -> None:
+    from server.memory.app import extraction_queue as q
+
+    ch = _DropCH(_WAITING, fail_drops=True)
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(q.drop_waiting(frozenset({"acme"}), older_than_days=7, ch=ch))
+    assert ch.inserts == []  # not marked failed: the next pass drops it with its record
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_the_wait_counts_from_the_switch_off_when_it_is_later_than_the_request() -> None:
+    """acme's old request waited 7 days past acme's switch-off: dropped.
+    gamma's is as old, but gamma was switched off 2 days ago: it waits.
+    acme's 3-day-old request waits too."""
+    from server.memory.app import extraction_queue as q
+
+    ch = _DropCH([])
+    asyncio.run(q.drop_waiting(frozenset({"acme", "gamma"}), older_than_days=7, ch=ch))
+    queued = ", ".join(
+        f"('{org}', 'n', 'a', '{qid}', '', 1, 1, 'pending', now64(3) - toIntervalDay({age}), 1)"
+        for org, qid, age in (("acme", "old", 20), ("gamma", "old", 20), ("acme", "new", 3))
+    )
+    switched = ", ".join(
+        f"('{org}', 0, '', 'admin', now64(3) - toIntervalDay({age}), 0, '', 1)"
+        for org, age in (("acme", 10), ("gamma", 2))
+    )
+    found = run(
+        [
+            ddl("memory_extraction_queue"),
+            ddl("org_model_calls"),
+            "INSERT INTO loom.memory_extraction_queue (org, namespace, agent, queue_id, payload,"
+            f" message_count, content_chars, status, enqueued_at, version) VALUES {queued}",
+            f"INSERT INTO loom.org_model_calls VALUES {switched}",
+        ],
+        ch.sql,
+        ch.params,
+    )
+    assert [(r["org"], r["queue_id"]) for r in found] == [("acme", "old")]
 
 
 async def test_the_extraction_queue_drops_with_the_configured_wait(monkeypatch) -> None:
@@ -555,7 +607,7 @@ async def test_the_extraction_queue_drops_with_the_configured_wait(monkeypatch) 
 
     asked: list[tuple[frozenset[str], int]] = []
 
-    async def drop_waiting(orgs: frozenset[str], *, older_than_days: int, ch: Any) -> int:
+    async def drop_waiting(orgs: frozenset[str], *, older_than_days: int, **_: Any) -> int:
         asked.append((orgs, older_than_days))
         return 2
 
@@ -635,7 +687,7 @@ def test_a_platform_lock_holds_against_the_orgs_own_admin(store: _Store) -> None
         out = _set(org="acme", enabled=False, reason="offboarded", locked=True)
         assert (out.enabled, out.locked, out.locked_by) == (False, True, "root@platform")
         _as("ops@acme.com", Role.ORG_ADMIN)
-        with pytest.raises(AuthInsufficientError, match="locked by 'root@platform'"):
+        with pytest.raises(AuthInsufficientError, match="locked off by 'root@platform'"):
             _set(org="acme", enabled=True)  # nor switch it back on
         with pytest.raises(AuthInsufficientError):
             _set(org="acme", enabled=True, locked=False)  # nor unlock it
@@ -650,6 +702,20 @@ def test_a_platform_lock_holds_against_the_orgs_own_admin(store: _Store) -> None
         set_current_auth(None)
 
 
+def test_a_lock_never_stops_the_orgs_admin_switching_off(store: _Store) -> None:
+    from server.auth.context import set_current_auth
+    from server.operations.base import Role
+
+    try:
+        _as("root@platform", Role.PLATFORM_ADMIN)
+        _set(org="acme", enabled=True, locked=True)  # locked on, say for a contract
+        _as("ops@acme.com", Role.ORG_ADMIN)
+        out = _set(org="acme", enabled=False, reason="our call")
+        assert (out.enabled, out.locked, out.locked_by) == (False, True, "root@platform")
+    finally:
+        set_current_auth(None)
+
+
 def test_a_platform_admins_change_keeps_a_lock_it_does_not_name(store: _Store) -> None:
     from server.auth.context import set_current_auth
     from server.operations.base import Role
@@ -659,8 +725,56 @@ def test_a_platform_admins_change_keeps_a_lock_it_does_not_name(store: _Store) -
         _set(org="acme", enabled=False, locked=True)
         out = _set(org="acme", enabled=False, reason="still off")
         assert (out.locked, out.locked_by) == (True, "root@platform")
+        out = _set(org="acme", enabled=True, reason="back on")
+        assert (out.enabled, out.locked, out.locked_by) == (True, True, "root@platform")
+        out = _set(org="acme", enabled=True, locked=False)
+        assert (out.enabled, out.locked) == (True, False)
     finally:
         set_current_auth(None)
+
+
+def test_a_change_read_before_a_lock_cannot_write_the_lock_away(monkeypatch) -> None:
+    """The org admin's change reads the switch (unlocked), then a platform admin
+    locks it off. Held from read to write, the admin's change ends first and the
+    lock lands after it; unheld, the admin's row would write `locked = 0`."""
+    from server.auth import grant_claims
+    from server.auth.context import set_current_auth
+    from server.identity.api.models_model_calls import OrgSetModelCallsInput
+    from server.identity.app import model_calls
+    from server.operations.base import Role
+    from tests.unit.claims_fake import MemoryClaims
+
+    table = _Store()
+    reads = 0
+
+    async def slow_get(org: str, **_: Any) -> dict[str, Any] | None:
+        nonlocal reads
+        reads += 1
+        row = await table.get(org)
+        if reads == 1:
+            await asyncio.sleep(0.05)  # the platform admin's change starts meanwhile
+        return row
+
+    monkeypatch.setattr(model_calls.repo, "insert_row", table.insert_row)
+    monkeypatch.setattr(model_calls.repo, "get", slow_get)
+    monkeypatch.setattr(grant_claims, "take", MemoryClaims().take)
+
+    async def change(subject: str, role: Any, **body: Any) -> None:
+        _as(subject, role)
+        await model_calls.handle_org_set_model_calls(OrgSetModelCallsInput(org="acme", **body))
+
+    async def both() -> None:
+        admin = asyncio.create_task(change("ops@acme.com", Role.ORG_ADMIN, enabled=True))
+        await asyncio.sleep(0.01)
+        await change("root@platform", Role.PLATFORM_ADMIN, enabled=False, locked=True)
+        await admin
+
+    try:
+        asyncio.run(both())
+    finally:
+        set_current_auth(None)
+    last = max(table.rows, key=lambda r: r["version"])
+    assert (last["enabled"], last["locked"], last["locked_by"]) == (0, 1, "root@platform")
 
 
 def test_offboarding_switches_the_org_off_and_locks_it(store: _Store) -> None:
@@ -703,6 +817,48 @@ def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) 
     assert seen and all(s == frozenset({"acme"}) for s in seen)
     assert out["skipped_switched_off"] == 3 * len(reembed._TABLES)
     assert any("switched-off org" in line for line in lines)  # the CLI prints it
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_reembed_delete_old_keeps_the_vectors_of_every_org_it_left(monkeypatch) -> None:
+    """acme was off when the run began, gamma was switched off during it: both
+    keep their only vectors; beta's replaced rows are deleted."""
+    from server.memory.app import reembed
+
+    async def table(ch: Any, embedder: Any, name: str, **kw: Any) -> int:
+        kw["left_orgs"].add("gamma")
+        return 0
+
+    async def waiting(*a: Any) -> int:
+        return 1
+
+    async def width(table: str, dim: int) -> None:
+        return None
+
+    deletes: list[tuple[str, dict[str, Any]]] = []
+
+    class _CH:
+        async def execute(self, sql: str, params: dict[str, Any]) -> None:
+            deletes.append((sql, params))
+
+    monkeypatch.setattr(reembed, "reembed_table", table)
+    monkeypatch.setattr(reembed, "_waiting", waiting)
+    monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
+    _off("acme")
+    embedder = type("E", (), {"model_name": "new", "dim": 2})()
+    asyncio.run(reembed.reembed_all(_CH(), embedder, delete_old=True, log=lambda *_: None))
+    sql, params = next((s, p) for s, p in deletes if "loom.entity_vectors" in s)
+    create = ddl("entity_vectors").replace("CODEC(Quantized('rabitq', 3072, 0), LZ4)", "")
+    rows = ", ".join(
+        f"('{org}', 'n', 'a', 'u', 'e', [0.5, 0.5], 'old', 2, '{org}-k', now(), NULL)"
+        for org in ("acme", "beta", "gamma")
+    )
+    left = run(
+        [create, f"INSERT INTO loom.entity_vectors VALUES {rows}", sql],
+        "SELECT org FROM loom.entity_vectors ORDER BY org",
+        params,
+    )
+    assert [r["org"] for r in left] == ["acme", "gamma"]
 
 
 def test_the_reembed_filter_leaves_out_switched_off_orgs() -> None:

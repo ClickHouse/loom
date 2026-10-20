@@ -117,9 +117,11 @@ class ProviderSettings(ModelSettings):
     # Seconds a process trusts its copy of that switch when it cannot read it
     # again; past it, every model call is refused (fail closed). 15 to 300.
     model_calls_policy_max_stale_seconds: float = Field(60.0, ge=15, le=300)
-    # Days a switched-off org's queued requests (the extraction queue) wait before
-    # they are dropped, each with a memory_drops record; 0 = wait without limit.
-    model_calls_off_max_wait_days: int = Field(7, ge=0)
+    # Days a switched-off org's queued requests (the extraction queue) wait, from
+    # when the org was switched off, before they are dropped, each with a
+    # memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise
+    # remove them first, with no record.
+    model_calls_off_max_wait_days: int = Field(7, ge=1, le=29)
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use

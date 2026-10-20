@@ -128,6 +128,8 @@ async def _run(
             # variant exists
             result.skipped_restricted += 1
             continue
+        if await customer.switched_off(cfg.org):
+            continue  # scoring embeds: the namespace is scored when the org is back on
         set_namespace(ns)  # Where a cut pass stopped
         src = make(cfg.org, ns)
         try:

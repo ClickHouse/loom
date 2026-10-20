@@ -36,7 +36,9 @@ def _caller() -> tuple[str, bool]:
 
 async def handle_org_set_model_calls(input: OrgSetModelCallsInput) -> OrgModelCallsOutput:
     """Switch the org's model calls off or on. A platform admin may also lock
-    or unlock the setting; while it is locked, the org's own admins are refused.
+    or unlock the setting; while it is locked, the org's own admins may still
+    switch it off but not back on. A platform admin's change keeps the lock
+    unless it sends `locked`.
     Every process sees a change within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`."""
     _one_org(input.org)
     by, platform = _caller()
@@ -62,10 +64,12 @@ async def _set(
     async with model_calls_change(org):
         current = await repo.get(org) or {"locked": 0, "locked_by": ""}
         held = bool(current["locked"])
-        if held and not platform:
+        # The lock keeps an org's own admins from switching back on, never from
+        # switching off.
+        if held and enabled and not platform:
             raise AuthInsufficientError(
-                f"model calls of {org!r} are locked by {current['locked_by']!r}: "
-                "only a platform admin changes them"
+                f"model calls of {org!r} are locked off by {current['locked_by']!r}: "
+                "only a platform admin switches them back on"
             )
         lock = held if locked is None else locked
         locked_by = str(current["locked_by"]) if locked is None else by

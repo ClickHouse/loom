@@ -25,7 +25,7 @@ The org's current setting; enabled and unlocked when it was never set.
 | `reason` | `str` | The note given with the last change; "" when none. |
 | `updated_by` | `str` | Who made the last change; "" when it was never set. |
 | `updated_at` | `datetime \| None` | When the last change was written (UTC); None when it was never set. |
-| `locked` | `bool` | Whether a platform admin locked the setting against the org's own admins. |
+| `locked` | `bool` | Whether a platform admin locked the setting: its admins cannot switch it on. |
 | `locked_by` | `str` | The platform admin who set the lock; "" when unlocked. |
 
 ## `org.set_model_calls`
@@ -39,7 +39,7 @@ Switch the org's model calls off or on.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `enabled` | `bool` | required | False switches the org's model calls off; true switches them back on. |
 | `reason` | `str` | `''` | A note on why, kept with the setting; at most 500 characters. |
-| `locked` | `bool \| None` | `None` | Platform admins only: true locks the setting against the org's own admins, false unlocks it; unset leaves the lock as it is. |
+| `locked` | `bool \| None` | `None` | Platform admins only: true locks the setting (the org's own admins may switch it off, not back on), false unlocks it; unset leaves the lock as it is. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ Switch the org's model calls off or on.
 | `reason` | `str` | The note given with the last change; "" when none. |
 | `updated_by` | `str` | Who made the last change; "" when it was never set. |
 | `updated_at` | `datetime \| None` | When the last change was written (UTC); None when it was never set. |
-| `locked` | `bool` | Whether a platform admin locked the setting against the org's own admins. |
+| `locked` | `bool` | Whether a platform admin locked the setting: its admins cannot switch it on. |
 | `locked_by` | `str` | The platform admin who set the lock; "" when unlocked. |
 
 <!-- prettier-ignore-end -->

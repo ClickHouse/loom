@@ -335,8 +335,6 @@ async def _judge_one(item: dict[str, Any]) -> None:
         + "\n---\n".join(f"[{i}] {e}" for i, e in enumerate(excerpts, start=1))
     )
 
-    if await customer.switched_off(str(item["org"])):
-        return  # a sample, not owed work: an org switched off sends none of its text
     model = settings.retrieval_judge_model.strip()
     client = get_llm_client_for_model(model) if model else get_llm_client()
 
@@ -368,6 +366,8 @@ async def _judge_one(item: dict[str, Any]) -> None:
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
             )
+    except customer.ModelCallsDisabled:
+        return  # a sample, not owed work: an org switched off sends none of its text
     finally:
         from server.workers.cost_event import emit_worker_cost_event_for
 

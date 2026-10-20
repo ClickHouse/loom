@@ -277,7 +277,7 @@ the shared HTTP client also carries non-model calls, which name no customer.
   instead of being billed to no one.
 
 - **An org switched off makes no call.** `org.set_model_calls` writes `loom.org_model_calls`;
-  `customer.admit()`, first in every sender (before the gateway token, the embedding caches
+  `customer.require()`, first in every sender (before the gateway token, the embedding caches
   and provider health), checks the call's org against each process's copy of the
   switched-off orgs (`customer.switched_off_orgs`). A cached vector or answer is refused
   too: the switch is a kill switch, so nothing model-made reaches the org. The copy is

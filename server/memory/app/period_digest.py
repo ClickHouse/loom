@@ -307,6 +307,11 @@ async def _fetch_namespaces(ch: Any, cfg: PeriodDigestConfig) -> list[dict[str, 
     if cfg.namespace_filter is not None:
         scope += " AND s.namespace = {ns_f:String}"
         params["ns_f"] = cfg.namespace_filter
+    # A switched-off org's sessions wait unpicked, leaving the pass's slots to others.
+    off = await customer.switched_off_orgs()
+    if off:
+        scope += " AND NOT has({off:Array(String)}, s.org)"
+        params["off"] = sorted(off)
     opt_in = (
         """
         INNER JOIN loom.namespaces AS n FINAL

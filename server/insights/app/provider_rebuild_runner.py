@@ -58,6 +58,7 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
     progress.setdefault("table_index", 0)
     progress.setdefault("cursor", 0)
     progress.setdefault("rows_done", 0)
+    progress.setdefault("rows_waiting", 0)
     if (
         type(progress["plan_version"]) is not int
         or progress["plan_version"] != 1
@@ -66,7 +67,7 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Unsupported rebuild checkpoint")
     if any(
         type(progress[name]) is not int or progress[name] < 0
-        for name in ("table_index", "cursor", "rows_done")
+        for name in ("table_index", "cursor", "rows_done", "rows_waiting")
     ):
         raise ValueError("Invalid rebuild cursor")
     if progress["table_index"] > len(REBUILD_TABLES):
@@ -115,10 +116,15 @@ async def _rebuild_page(config_id: UUID, progress: dict[str, Any], backend: Rebu
         or type(result.done) is not bool
         or result.cursor < progress["cursor"]
         or result.rows_written < 0
+        or type(result.rows_waiting) is not int
+        or result.rows_waiting < 0
         or (not result.done and result.cursor == progress["cursor"])
     ):
         raise ValueError("Rebuild backend did not advance its cursor")
     progress["rows_done"] += result.rows_written
+    # Staged without a vector (the org's model calls are off): shown, so an
+    # operator sees what the published space is missing.
+    progress["rows_waiting"] += result.rows_waiting
     progress["cursor"] = 0 if result.done else result.cursor
     progress["table_index"] += int(result.done)
     progress["table"] = REBUILD_TABLES[index]

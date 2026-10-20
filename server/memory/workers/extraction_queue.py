@@ -153,12 +153,17 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
 
     with record_pass("extraction_queue") as rec:
         # A switched-off org's requests stay pending until it is switched back
-        # on, or until they have waited LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS.
+        # on, or until they have waited LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS
+        # since the org was switched off.
         off = await customer.switched_off_orgs()
         from server.settings import settings
 
         result.dropped = await q.drop_waiting(
-            off, older_than_days=settings.model_calls_off_max_wait_days, ch=ch
+            off,
+            older_than_days=settings.model_calls_off_max_wait_days,
+            ch=ch,
+            org_filter=cfg.org_filter,
+            namespace_filter=cfg.namespace_filter,
         )
         rows = await q.claim_batch(
             limit=cfg.max_batches_per_pass,

@@ -122,14 +122,14 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     vectors = _Recorder({"data": [{"embedding": [0.0] * 8}], "usage": {"total_tokens": 1}})
     monkeypatch.setattr(embed_mod, "_http_client", lambda: vectors)
     embedder = embed_mod.OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
-    asyncio.run(embedder._post(embedder._payload("text")))
+    asyncio.run(embedder._embed_one_raw("text"))
     sent.append(vectors.calls[0]["headers"])
 
     gemini = _Recorder({"embedding": {"values": [0.0] * 8}})
     monkeypatch.setattr(gemini_mod, "_http_client", lambda: gemini)
     asyncio.run(
-        gemini_mod.GeminiEmbedder(model="gemini-embedding-001", dim=8, api_key="k")._post(
-            "https://gemini.example/embed", {}
+        gemini_mod.GeminiEmbedder(model="gemini-embedding-001", dim=8, api_key="k")._embed_one_raw(
+            "text"
         )
     )
     sent.append(gemini.calls[0]["headers"])

@@ -209,14 +209,17 @@ async def switched_off_orgs() -> frozenset[str]:
 
 async def _read() -> None:
     global _off, _read_at, _next_read
-    from server.core.ch import get_client
+    from server.core.ch import get_client, own_write_reads
 
     _next_read = time.monotonic() + settings.model_calls_policy_refresh_seconds
     try:
         # Every org switched off, one row each: never cut short, which would fail open.
-        rows = await get_client().query_all(
-            "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0"
-        )
+        # Sequentially consistent: the read after `forget_switch` must see the change
+        # just written, and every process's read the newest change on any replica.
+        with own_write_reads():
+            rows = await get_client().query_all(
+                "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0"
+            )
     except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
         log.warning("model-call switch: read failed (%s); serving the last copy", e)
         return

@@ -212,15 +212,158 @@ def test_tracker_embedding_leaves_a_switched_off_orgs_cursor_where_it_is(monkeyp
     assert reached == ["beta"]  # acme's source, page and cursor were never touched
 
 
+def test_an_org_switched_off_mid_pass_keeps_its_stub_and_its_attempts(monkeypatch) -> None:
+    """The stubs are picked with both orgs on; acme is switched off before the
+    embed. acme's stub is neither re-inserted nor charged an attempt; beta's is
+    embedded."""
+    import server.memory.store as memory_repo
+    from server.memory.workers import embedding as w
+
+    stubs = [
+        memory_repo.build_embedding_row(
+            org=org,
+            namespace="n",
+            memory_key=f"{org}-k",
+            content_excerpt="text",
+            embedding_model="m",
+            embedding_dim=0,
+            embed_attempts=2,
+        )
+        for org in ("acme", "beta")
+    ]
+    written: list[dict[str, Any]] = []
+
+    class _Embedder:
+        model_name, dim = "m", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            return [[0.5, 0.5] for _ in texts]
+
+    async def none(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    async def picked(**kw: Any) -> list[dict[str, Any]]:
+        assert kw["exclude_orgs"] == frozenset()  # both on when the stubs are read
+        _off("acme")
+        return [dict(s) for s in stubs]
+
+    async def served(rows: list[dict[str, Any]], *a: Any) -> tuple[list[Any], list[Any]]:
+        return rows, []
+
+    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+        written.extend(rows)
+
+    async def nothing(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(w, "get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(memory_repo, "find_memories_without_embedding_rows", none)
+    monkeypatch.setattr(memory_repo, "find_embedding_stubs", picked)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", insert)
+    monkeypatch.setattr(memory_repo, "retire_copies_under_unembedded_heads", nothing)
+    monkeypatch.setattr(memory_repo, "index_late_rows", nothing)
+    monkeypatch.setattr(w, "_stubs_still_served", served)
+    monkeypatch.setattr(w, "_refresh_entities", nothing)
+    _off()
+    result = asyncio.run(w.run_pass(w.EmbeddingWorkerConfig()))
+    assert {r["org"] for r in written} == {"beta"}
+    assert all(r["embedding_dim"] == 2 and r["embed_attempts"] == 2 for r in written)
+    assert result.embedded_count == 1 and result.failed_count == 0
+
+
+def test_the_period_digest_selects_no_identity_of_a_switched_off_org() -> None:
+    from server.memory.app import period_digest as pd
+
+    ch = _CH(
+        [
+            {"org": "acme", "namespace": "n", "agent": "a", "user_id": "u", "sessions": 9},
+            {"org": "beta", "namespace": "n", "agent": "a", "user_id": "u", "sessions": 5},
+        ]
+    )
+    _off("acme")
+    rows = asyncio.run(pd._fetch_namespaces(ch, pd.PeriodDigestConfig()))
+    assert [r["org"] for r in rows] == ["beta"] and _excludes(ch, "acme")
+    assert "NOT has({off:Array(String)}, s.org)" in ch.sent[0][0]
+
+
+def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> None:
+    from server.code.app.index import ingest_pass as ip
+
+    ran: list[str] = []
+
+    async def run_repo(cfg: Any, result: Any, budget: Any) -> None:
+        ran.append(cfg.org)
+
+    async def nothing(*a: Any, **k: Any) -> Any:
+        return set()
+
+    repos = [
+        SimpleNamespace(org="acme", namespace="code-a", label="a"),
+        SimpleNamespace(org="beta", namespace="code-b", label="b"),
+    ]
+    monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
+    monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
+    monkeypatch.setattr(ip, "selected_repos", lambda org, ns: repos)
+    monkeypatch.setattr(ip, "_without_unsandboxed", lambda repos, result: repos)
+    monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
+    monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(ip, "_run_repo", run_repo)
+    _off("acme")
+    result = ip.CodeIngestResult()
+    asyncio.run(ip._run(result))
+    assert ran == ["beta"] and not result.errors  # acme's watermark is never read
+
+
+def test_tracker_links_scores_no_namespace_of_a_switched_off_org(monkeypatch) -> None:
+    from server.tracker.workers import links as w
+
+    scored: list[str] = []
+
+    async def score(src: Any, repo: Any, org: str, ns: str, **_: Any) -> None:
+        scored.append(org)
+
+    async def refit(*a: Any, **k: Any) -> None:
+        return None
+
+    namespaces = {
+        "t-a": SimpleNamespace(org="acme", restricted=False),
+        "t-b": SimpleNamespace(org="beta", restricted=False),
+    }
+    monkeypatch.setattr(
+        "server.tracker.domain.namespaces.configured_namespaces", lambda: namespaces
+    )
+    monkeypatch.setattr(w, "score_namespace", score)
+    monkeypatch.setattr(w, "refit_dupcheck", refit)
+    _off("acme")
+    result = w.TrackerLinksResult()
+    asyncio.run(w._run(result, repo=object(), source_factory=lambda org, ns: object()))
+    assert scored == ["beta"] and result.namespaces == 1 and not result.errors
+
+
 def test_the_retrieval_judge_drops_a_switched_off_orgs_sample(monkeypatch) -> None:
     from server.observability import retrieval_judge as rj
 
-    built: list[bool] = []
-    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: built.append(True))
+    sent: list[str] = []
+    scored: list[str] = []
+
+    class _Client:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            await customer.require()
+            sent.append(customer.current())
+            return SimpleNamespace(text='{"on_target": true, "useful": [1], "reason": "r"}')
+
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _Client())
+    monkeypatch.setattr(rj.settings, "retrieval_judge_model", "")
+    monkeypatch.setattr(
+        "server.observability.langfuse_scores.post_score", lambda **k: scored.append(k["name"])
+    )
+    item = {"org": "acme", "namespace": "n", "query": "q", "excerpts": ["x"], "trace_id": "t"}
     _off("acme")
-    item = {"org": "acme", "namespace": "n", "query": "q", "excerpts": ["x"]}
-    asyncio.run(rj._judge_one(item))
-    assert built == []
+    asyncio.run(rj._judge_one(item))  # the refusal drops the sample; nothing raises
+    assert sent == [] and scored == []
+    asyncio.run(rj._judge_one({**item, "org": "beta"}))
+    assert sent == ["beta"] and scored
 
 
 def test_the_code_link_policy_leaves_a_switched_off_orgs_links_due(monkeypatch) -> None:
