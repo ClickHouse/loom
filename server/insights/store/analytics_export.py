@@ -94,13 +94,11 @@ NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "n
 ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 
-# Pinned whatever the server's profile says: the analyzer (from 26.9 the only
-# one; on 26.4-26.8 a profile can still turn it off, and the statements are
-# checked on the analyzer only), sums that are never Nullable, strings as
-# Parquet STRING, not BINARY (a warehouse joins the hashes as strings), and
-# dates as DATE, not UInt16.
+# Pinned whatever the server's profile says: sums that are never Nullable,
+# strings as Parquet STRING, not BINARY (a warehouse joins the hashes as
+# strings), and dates as DATE, not UInt16.
 STATEMENT_SETTINGS = (
-    "SETTINGS enable_analyzer = 1, aggregate_functions_null_for_empty = 0, "
+    "SETTINGS aggregate_functions_null_for_empty = 0, "
     "output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
 )
 
