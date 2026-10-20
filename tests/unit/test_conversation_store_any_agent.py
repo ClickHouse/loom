@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS, THREAD_EXCERPT_CHARS
 from server.knowledge.store import conversations as conversation_repo
 
 _AT = datetime(2026, 6, 1, 9, 0)
@@ -261,7 +262,8 @@ async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
     keyed, params = ch.calls[1]
     # No count is selected, and the last turn is read only as far as the listing checks.
     assert " AS n" not in keyed and "uniqExact" not in keyed
-    assert "substringUTF8(content, 1, {listed:UInt32})" in keyed and params["listed"] == 1024
+    assert "substringUTF8(content, 1, {listed:UInt32})" in keyed
+    assert params["listed"] == THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS
     assert rows[0]["msg_count"] == 5
 
 
