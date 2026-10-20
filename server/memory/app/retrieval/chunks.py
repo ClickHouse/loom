@@ -840,8 +840,8 @@ async def _search_memory_chunks(
 def _served(hits: list[SearchHit], rows: list[dict[str, Any]], n: int) -> list[SearchHit]:
     """The first `n` hits whose chunk text does not read as a credential. A chunk written
     as one has no vector and never gets here; this holds back one an earlier build embedded.
-    Every stored version of a key is checked: a hit is held back when any of them reads as a
-    credential, whichever one the hit came from."""
+    Every embedded version of a key the read returned is checked: a hit is held back when
+    any of them reads as a credential, whichever one the hit came from."""
     versions: dict[str, list[str]] = {}
     for r in rows:
         versions.setdefault(str(r["memory_key"]), []).append(str(r["content_full"]))

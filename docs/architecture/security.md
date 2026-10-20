@@ -716,11 +716,12 @@ value, a chunk `memory.import_evidence` writes) whose text reads as a credential
 as written with no vector, and its text is never sent to the embedder; every chunk read
 that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns
 it. This holds for a chunk of a long `memory.set` value whatever its row's label; a `low`
-row stays findable through its own embedding. A session digest whose text reads as a credential is likewise written without a
-vector, and so is a `conversation.append` turn: the message is stored as written in
-`loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing
-embedding row keeps the turn out of vector search. `conversation.save_message` answers
-`reason: "reads_as_credential"` for such a turn, so the saved search never holds it.
+row stays findable through its own embedding. A session digest whose text reads as a
+credential is likewise written without a vector, and so is a `conversation.append` turn:
+the message is stored as written in `loom.conversations` and gets no row in
+`loom.conversation_embeddings`. A missing embedding row keeps the turn out of vector
+search. `conversation.save_message` answers `reason: "reads_as_credential"` for such a
+turn, so the saved search never holds it.
 `conversation.compact` leaves such a turn out of its window: it stays live and is never
 sent to the summarizer. A summary that reads as a credential anyway is refused (`reason:
 "summary-reads-as-credential"`) and tombstones nothing, as when the summary cannot be
@@ -741,17 +742,17 @@ the reads that serve passages check their text too:
   key, `conversation.search`'s hits (the vector ranking, checked on the text the vector
   was built from, and the substring fallback the search takes when the embedder is down),
   and `conversation.search_saved_messages`'s hits (its vector leg and its BM25 keyword leg
-  over the whole text). Each read asks for two spare rows, so up to two held-back passages
-  do not leave it short.
+  over the whole text). The summary leg, the `memory.ask` lookups, `conversation.search`
+  and the saved keyword leg ask for two spare rows, so up to two held-back passages do not
+  leave a page short; the chunk leg already over-fetches.
 - Listed without the text: `conversation.list_saved_messages` shows an empty
   `content_excerpt` for a saved message that reads as a credential (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
   whose last turn reads as a credential (its first 1,024 characters are checked, not only
   the 240-character excerpt), and an empty `title` for a title that reads as one.
   `memory.outline` lists a session digest whose summary reads as a credential with an
-  empty `headline`. The
-  conversation titler never sends a turn that reads as a credential to its model and
-  never stores a title that reads as one.
+  empty `headline`. The conversation titler never sends a turn that reads as a credential
+  to its model and never stores a title that reads as one.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
   credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`

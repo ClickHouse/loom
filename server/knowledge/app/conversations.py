@@ -1381,12 +1381,18 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     # A saved turn is the user's explicit choice to keep that message findable: it stays
     # verbatim, never folded into a summary and tombstoned. A turn that reads as a
     # credential is never sent to the summarizer: it stays live, out of the window, and out
-    # of search (it has no embedding row).
-    candidates = [
-        r
-        for r in rows[: -input.keep_recent]
-        if not r.get("is_saved") and not reads_high(str(r["content"]))
-    ]
+    # of search (it has no embedding row). The credential check stops once the turns kept
+    # from the first new one on fill the window: later turns never reach the summarizer.
+    candidates = []
+    kept_chars = 0
+    for r in rows[: -input.keep_recent]:
+        if kept_chars > _FOLDED_SUMMARY_CHARS + _COMPACT_TRANSCRIPT_CHARS:
+            break
+        if r.get("is_saved") or reads_high(str(r["content"])):
+            continue
+        candidates.append(r)
+        if kept_chars or not _compacted_from(r):
+            kept_chars += len(f"{r['role']}: {r['content']}") + 1
     if not candidates:
         return ConversationCompactOutput(
             compacted=False,

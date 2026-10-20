@@ -536,11 +536,7 @@ async def write_set_chunks_fail_open(
     `chunks_written=0`, never an error."""
     try:
         return await write_set_chunks(
-            input,
-            memory_type=memory_type,
-            limit=limit,
-            ch=ch,
-            embedder=embedder,
+            input, memory_type=memory_type, limit=limit, ch=ch, embedder=embedder
         )
     except Exception as e:  # noqa: BLE001 — the fact row is written
         log.warning(
