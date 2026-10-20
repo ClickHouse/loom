@@ -1104,7 +1104,12 @@ _HELD_PAIRS_CTES = f"""
         SELECT memory_id, content_sha256, entity_a, entity_b FROM loom.entity_edge_rows
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
-          AND (memory_id, content_sha256) NOT IN {{skip_versions:Array(Tuple(UUID, String))}}
+          -- The values a drop is about to delete hold nothing, while their row is 'high'.
+          AND (memory_id, content_sha256) NOT IN (
+              SELECT memory_id, content_sha256 FROM loom.memory FINAL
+              WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                AND (memory_id, content_sha256) IN {{skip_versions:Array(Tuple(UUID, String))}}
+                AND sensitivity = 'high')
     ),
     keyed AS (
         SELECT memory_key, entity_a, entity_b, max(seen_at) AS seen_at
@@ -1212,7 +1217,8 @@ async def end_edges(
     (`reopen_held_edges`), then one for the edges with a stated later end of the pairs no
     row named. The UPDATE stamps the rows it ends with this close's id (`closed_by`), so
     the reopen opens only those. The links of the values `skip_versions` ((memory_id,
-    content_sha256)) hold nothing: they are about to be deleted. The edges go a
+    content_sha256)) hold nothing while their row is 'high': they are about to be
+    deleted. The edges go a
     parameter's worth at a time (`param_slices`): long entity names make a long list of
     pairs."""
     for part in param_slices(ends):

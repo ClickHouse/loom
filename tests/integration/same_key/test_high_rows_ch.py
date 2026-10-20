@@ -1247,12 +1247,15 @@ async def test_a_bulk_made_high_with_a_huge_declared_entity_drops_and_ends_its_o
     assert {(r["entity_a"], r["entity_b"]) for r in linked} == {tuple(sorted((big, "bob lane")))}
 
 
+@pytest.mark.parametrize(
+    "later", ["Alice Smith met Carol King", "Alice Smith met Bob Lane and Carol King in Berlin"]
+)
 async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
-    ch, org, monkeypatch
+    ch, org, monkeypatch, later
 ) -> None:
-    """A row made high; its drop reads its links, then a plain write of the row links a
-    pair the drop is ending, before the drop ends and deletes: only the links the drop
-    read go, so the later link stays and holds its pair's edge open."""
+    """A row made high; its drop reads its links, then a plain write of the row (a new
+    value, or the same one again) links a pair the drop is ending, before the drop ends
+    and deletes: the plain row's links stay and hold its pair's edge open."""
     from server.core.hashing import sha256_value
     from server.memory.app import edge_links, projections
     from server.memory.app.projection_errors import ProjectionScope
@@ -1273,13 +1276,12 @@ async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
         " SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    later = sha256_value("Alice Smith met Carol King")
     real = projections.end_edges
 
     async def a_later_link_first(*a: Any, **kw: Any) -> None:
         monkeypatch.setattr(projections, "end_edges", real)
         # The writer re-sets the row plain, naming Carol King: its own links land.
-        await _high_set(org, "s1", "contact", "Alice Smith met Carol King", sensitivity="low")
+        await _high_set(org, "s1", "contact", later, sensitivity="low")
         await real(*a, **kw)
 
     monkeypatch.setattr(projections, "end_edges", a_later_link_first)
@@ -1289,6 +1291,6 @@ async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
     linked = await ch.query_all(
         "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
         " AND content_sha256 = {sha:String} SETTINGS select_sequential_consistency = 1",
-        params={"org": org, "sha": later},
+        params={"org": org, "sha": sha256_value(later)},
     )
     assert ("alice smith", "carol king") in {(r["entity_a"], r["entity_b"]) for r in linked}

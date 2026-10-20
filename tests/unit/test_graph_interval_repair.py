@@ -1199,8 +1199,10 @@ async def test_end_edges_reads_only_the_live_rows_that_link_the_pairs() -> None:
     await end_edges(ch, org="clickhouse", namespace="agent-memory", ends=[("alice", "london", _T)])
     sql, params = ch.query_all_calls[0]
     reads = [" ".join(r.split())[:200] for r in sql.split("FROM loom.memory FINAL")[1:]]
-    # The rows linked to the pairs, and the legacy rows of the keys linked to them.
-    assert len(reads) == 2
+    # The rows linked to the pairs, the legacy rows of the keys linked to them, and the
+    # values a drop is deleting.
+    assert len(reads) == 3
     assert any("memory_id IN (SELECT memory_id FROM rowed)" in r for r in reads)
+    assert any("IN {skip_versions:Array(Tuple(UUID, String))}" in r for r in reads)
     assert any("memory_key IN (SELECT memory_key FROM keyed)" in r for r in reads)
     assert params["pairs"] == [("alice", "london")]

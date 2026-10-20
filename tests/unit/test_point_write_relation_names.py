@@ -90,7 +90,7 @@ def test_a_statuses_id_is_at_most_64_characters():
 
 
 def test_an_empty_user_or_session_is_the_sentinel():
-    """"" would skip every rule written for the anonymous user and for another
+    """ "" would skip every rule written for the anonymous user and for another
     session; the wire reads it as `-`."""
     from server.memory.api.models_bulk import MemoryBulkSetInput
 

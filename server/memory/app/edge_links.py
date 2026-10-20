@@ -197,6 +197,11 @@ async def _drop_links_of(
               AND memory_id IN {ids:Array(UUID)}
               AND (toString(memory_id), toString(content_sha256), entity_a, entity_b)
                   IN {links:Array(Tuple(String, String, String, String))}
+              -- A row re-set plain since the read (its value maybe the same) keeps them.
+              AND memory_id IN (
+                  SELECT memory_id FROM loom.memory FINAL
+                  WHERE org = {org:String} AND namespace = {ns:String}
+                    AND memory_id IN {ids:Array(UUID)} AND sensitivity = 'high')
             """,
             params={
                 **params,
