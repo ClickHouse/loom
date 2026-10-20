@@ -29,7 +29,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
-import functools
 import logging
 import time
 from collections.abc import Iterable, Iterator
@@ -147,11 +146,16 @@ def headers(org: str) -> dict[str, str]:
     `require()` returned; {} when it returned none (no header configured)."""
     if not org:
         return {}
-    # Header values are latin-1 with no line breaks; an org id never needs more.
-    named = settings.inference_customer_format.replace("{org}", org)
+    # The deployment's own calls name the system customer as configured; an
+    # org is named as the gateway knows it.
+    if org != current():
+        named = org
+    else:
+        named = settings.inference_customer_format.replace("{org}", org)
+    # Header values are latin-1 with no line breaks: quote whatever the org adds.
     out = {settings.inference_customer_header: quote(named, safe="-._~:@")}
     if settings.inference_feature_header:
-        out[settings.inference_feature_header] = quote(gateway_feature(), safe="-._~:")
+        out[settings.inference_feature_header] = quote(gateway_feature(), safe="-._~:@")
     return out
 
 
@@ -159,14 +163,8 @@ def gateway_feature() -> str:
     """The feature as the gateway names it (`LOOM_INFERENCE_FEATURE_MAP_JSON`),
     else Loom's own name."""
     mine = feature()
-    names = _feature_map(settings.inference_feature_map_json)
+    names = settings.feature_map()  # decoded once per value (json_map_items)
     return names.get(mine) or names.get("*") or mine
-
-
-@functools.lru_cache(maxsize=4)
-def _feature_map(raw: str) -> dict[str, str]:
-    # Parsed once per value, not on every model call; settings validated it at load.
-    return settings.feature_map()
 
 
 def feature() -> str:

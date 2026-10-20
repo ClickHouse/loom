@@ -605,8 +605,10 @@ def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeyp
     [
         ({"LOOM_INFERENCE_CUSTOMER_REQUIRED": "true"}, "needs LOOM_INFERENCE_CUSTOMER_HEADER"),
         ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud"}, "must contain"),
-        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '["hyde"]'}, "must map"),
-        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, ""),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '["hyde"]'}, "inference_feature_map_json"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, "inference_feature_map_json"),
+        ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud/{org}"}, "as they are"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": "search/expand"}'}, "as they are"),
     ],
 )
 def test_settings_refuse_a_cell_that_could_not_name_its_customers(monkeypatch, env, error) -> None:
@@ -616,3 +618,12 @@ def test_settings_refuse_a_cell_that_could_not_name_its_customers(monkeypatch, e
         monkeypatch.setenv(k, v)
     with pytest.raises(ValueError, match=error):
         Settings()
+
+
+def test_the_system_customer_is_named_as_configured_not_formatted(metered, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "inference_customer_format", "cloud:{org}")
+    monkeypatch.setattr(settings, "inference_system_customer", "loom-deployment")
+    with customer.system():
+        assert customer.headers()["X-Customer"] == "loom-deployment"
+    with customer.system(), customer.for_org("acme"):
+        assert customer.headers()["X-Customer"] == "cloud:acme"
