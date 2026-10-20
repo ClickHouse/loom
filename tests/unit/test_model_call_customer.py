@@ -213,6 +213,20 @@ def test_the_embedding_worker_makes_one_call_per_org(metered) -> None:
     assert [v[0] for v, _ in out] == [1.0, 2.0, 3.0]  # in the rows' order
 
 
+def test_with_no_customer_header_a_mixed_org_pass_is_one_call(monkeypatch) -> None:
+    from server.memory.workers import embedding
+
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    rows = [
+        {"org": "acme", "content_excerpt": "a"},
+        {"org": "beta", "content_excerpt": "bb"},
+    ]
+    emb = _ByOrg()
+    out = asyncio.run(embedding._embed_rows(emb, rows))
+    assert emb.calls == [("", 2)]
+    assert [v[0] for v, _ in out] == [1.0, 2.0]
+
+
 def test_a_reembed_page_spanning_two_orgs_makes_one_call_per_org(metered, monkeypatch) -> None:
     from server.memory.app import reembed
 

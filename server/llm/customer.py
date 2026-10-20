@@ -145,7 +145,11 @@ def feature() -> str:
 
 def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
     """The positions of `orgs` grouped by org, in first-seen order: one model
-    call per group, since a call names a single customer."""
+    call per group, since a call names a single customer. With no customer
+    header nothing reads the customer, so every position is one group."""
+    orgs = list(orgs)
+    if not settings.inference_customer_header:
+        return {"": list(range(len(orgs)))} if orgs else {}
     out: dict[str, list[int]] = {}
     for i, org in enumerate(orgs):
         out.setdefault(org, []).append(i)
