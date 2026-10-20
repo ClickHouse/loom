@@ -26,17 +26,18 @@ type SearchWhyProps =
 function scoresOf(hit: SearchHit): { similarity: string | null; score: string | null } {
   return {
     similarity: Number.isFinite(hit.similarity) ? hit.similarity.toFixed(2) : null,
-    score: typeof hit.rank_score === "number" ? hit.rank_score.toFixed(2) : null,
+    score: Number.isFinite(hit.rank_score) ? hit.rank_score.toFixed(2) : null,
   };
 }
 
-/** How well a hit matched, in the row's meta line; under 640 px the score alone. */
+/** How well a hit matched, in the row's meta line; under 640 px the score alone on screen,
+ *  with the similarity still read out. */
 export function SearchScores({ hit }: { hit: SearchHit }) {
   const { similarity, score } = scoresOf(hit);
   return (
     <span data-testid="search-score" className="tabular whitespace-nowrap">
       {similarity !== null && (
-        <span className="hidden sm:inline">
+        <span className="sr-only sm:not-sr-only sm:whitespace-nowrap">
           similarity {similarity}
           {score !== null && " · "}
         </span>

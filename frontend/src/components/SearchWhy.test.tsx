@@ -65,6 +65,11 @@ describe("SearchWhy", () => {
     expect(screen.getByTestId("search-score")).toHaveTextContent(/^score 0\.71$/);
   });
 
+  it("leaves out a score that is not a number", () => {
+    render(<SearchScores hit={hit({ rank_score: Number.NaN })} />);
+    expect(screen.getByTestId("search-score")).toHaveTextContent(/^similarity 0\.62$/);
+  });
+
   it("marks a term that pushed the hit down", async () => {
     render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
     await open();
