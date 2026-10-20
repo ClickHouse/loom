@@ -115,3 +115,69 @@ def test_an_unreranked_block_is_gated_as_served() -> None:
 
     block = [_hit("b", 0.30), _hit("a", 0.50)]
     assert gate_order(block) is block
+
+
+@pytest.mark.asyncio
+async def test_a_score_tie_still_gates_on_the_fused_rank_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under rrf two rows often share a fused score; the fused order then breaks the tie
+    on distance, and the gates read that row, not the reranker's pick."""
+    from server.memory.app.search.verdict import _gate_second_sim, _gate_top_sim
+
+    near, far = _hit("near", 0.5), _hit("far", 0.5)
+    near.distance, far.distance = 0.3, 0.6
+    ctx = _ctx([near, far])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(["far in s1", "near in s1"]))
+    await ranking._run_external_rerank(ctx)
+    block = assemble_context_block(ctx.all_hits, top_k=10)
+    assert [h.memory_key for h in block] == ["far", "near"]
+    assert _gate_top_sim(block) == pytest.approx(0.7)
+    assert _gate_second_sim(block) == pytest.approx(0.4)
+
+
+@pytest.mark.asyncio
+async def test_the_retry_gate_reads_the_fused_rank_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The quality recipe's judge runs for a mid-range fused top cosine (0.35-0.65); the
+    reranker's low-cosine pick at rank 1 must not skip it."""
+    from server.memory.app import search_llm
+    from server.memory.app.search import fallbacks
+
+    fused_top, pick = _hit("user_location", 0.5), _hit("user_name", 0.3)
+    fused_top.score_components["rerank_from"], pick.score_components["rerank_from"] = 0.0, 1.0
+    judged: list[str] = []
+
+    async def _judge(query: str, excerpts: list[str]) -> tuple[bool, str]:
+        judged.append(query)
+        return True, ""
+
+    budget = SimpleNamespace(
+        fallback_affordable=lambda **_k: True,
+        try_spend_llm=lambda _n: True,
+        note_llm_call=lambda _n: None,
+    )
+    ctx = SimpleNamespace(
+        input=SimpleNamespace(query="q", recipe="quality", _pass_depth=0),
+        final_hits=[pick, fused_top],
+        chronological_intent=None,
+        llm_free=False,
+        search_budget=budget,
+        namespaces=["n"],
+        actual_work={},
+    )
+    monkeypatch.setattr(search_llm, "judge_results_iteratively", _judge)
+    await fallbacks._maybe_iterative_retry(ctx)
+    assert judged == ["q"]
+
+
+def test_a_reranked_chunks_lift_is_over_its_own_score() -> None:
+    """The bounded lift records how far the parent boost lifted the row; a reranked row
+    holds another rank's score, so the lift is read against its own fused score."""
+    from server.memory.domain.query_planner import bound_component_lift
+
+    chunk, fact = _hit("chunk", 0.9), _hit("fact", 0.5)
+    chunk.score_components.update({"chunk_parent_boost": 0.3, "rank_score_pre_rerank": 0.7})
+    assert bound_component_lift([chunk, fact]) == 1
+    assert chunk.rank_score == pytest.approx(0.5 + 1e-6)
+    # Own un-boosted score 0.7 - 0.3 = 0.4: lifted to just above the 0.5 ceiling.
+    assert chunk.score_components["chunk_parent_lift"] == pytest.approx(0.1 + 1e-6)

@@ -17,7 +17,7 @@ from server.memory.app.search.scoring import (
     _effective_arm_boosts,
     _record_rerank_trail,
 )
-from server.memory.domain.search_types import hit_sort_key
+from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK, hit_sort_key
 
 log = logging.getLogger(__package__)
 
@@ -191,7 +191,7 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     for h, score in zip(
         ordered, sorted((o.rank_score for o in ordered), reverse=True), strict=True
     ):
-        h.score_components["rank_score_pre_rerank"] = h.rank_score
+        h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
         h.score_components["rank_score"] = score
         h.rank_score = score
     ctx.all_hits = ordered

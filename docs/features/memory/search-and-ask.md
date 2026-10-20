@@ -35,19 +35,19 @@ narrow to one author.
 
 ### What a hit carries
 
-| Field                           | Meaning                                                                                             |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `memory_key`, `content_excerpt` | The row and the text it matched on.                                                                 |
-| `similarity`                    | Cosine to the query in [0, 1]. Threshold on this; no boost is added to it.                          |
-| `rank_score`                    | The fused score the list is sorted by. Under `rrf` it is a reciprocal-rank sum (about 0.03).        |
-| `below_threshold`               | Under the similarity floor but kept (`floor_mode="readmit"`).                                       |
-| `source`                        | `fact` (memory embeddings), `chunk` (a passage of a long value) or `summary` (a session digest).    |
-| `parent_memory_key`             | For a chunk, the memory it belongs to.                                                              |
-| `status`, `superseded_by`       | Lifecycle state; a superseded row served on request names its successor.                            |
-| `source_class`, `verified`      | How the content entered memory, and whether a live attestation stands.                              |
-| `valid_at`, `created_at`        | Validity time and record time.                                                                      |
-| `score_components`              | The main ranking terms (`explain=true` for more; `foreign=1.0` marks a hit from another namespace). |
-| `namespace`                     | The source namespace on a cross-namespace search.                                                   |
+| Field                           | Meaning                                                                                                                                                                                                                            |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_key`, `content_excerpt` | The row and the text it matched on.                                                                                                                                                                                                |
+| `similarity`                    | Cosine to the query in [0, 1]. Threshold on this; no boost is added to it.                                                                                                                                                         |
+| `rank_score`                    | The score the list is sorted by: the fused score, under `rrf` a reciprocal-rank sum (about 0.03). After a reranker it is the score of the rank the row now holds; its own fused score is `score_components.rank_score_pre_rerank`. |
+| `below_threshold`               | Under the similarity floor but kept (`floor_mode="readmit"`).                                                                                                                                                                      |
+| `source`                        | `fact` (memory embeddings), `chunk` (a passage of a long value) or `summary` (a session digest).                                                                                                                                   |
+| `parent_memory_key`             | For a chunk, the memory it belongs to.                                                                                                                                                                                             |
+| `status`, `superseded_by`       | Lifecycle state; a superseded row served on request names its successor.                                                                                                                                                           |
+| `source_class`, `verified`      | How the content entered memory, and whether a live attestation stands.                                                                                                                                                             |
+| `valid_at`, `created_at`        | Validity time and record time.                                                                                                                                                                                                     |
+| `score_components`              | The main ranking terms (`explain=true` for more; `foreign=1.0` marks a hit from another namespace).                                                                                                                                |
+| `namespace`                     | The source namespace on a cross-namespace search.                                                                                                                                                                                  |
 
 The response adds `abstain`, `abstain_code`, `retrieval_risk`, `candidates_total`,
 `namespaces_searched`, `pending_extraction`, `degraded` and `next`.

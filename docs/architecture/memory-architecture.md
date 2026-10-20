@@ -270,7 +270,9 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    orders by reciprocal rank instead. Reinforcement is read from `memory_reinforcement`
    after the fetch. A configured reranker reorders the pool and fails open.
 7. **Verdict** (`verdict.py`, `_finalize_abstain`): empty is `no_match`, a weak top hit
-   is `below_threshold`, then the calibrator's `low_calibrated_confidence`. A query
+   is `below_threshold`, then the calibrator's `low_calibrated_confidence`. After a
+   reranker, the top hit these gates read is the fused one (`gate_order`), not the
+   reranker's pick. A query
    naming an identifier absent from every hit abstains too
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
