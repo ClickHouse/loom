@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.domain.sensitivity import reads_high
 
 # --- The cosine-ordered fact read reaches the vector through a keyed re-read ---
 #
@@ -254,7 +255,7 @@ async def find_chunks_by_identifier(
     # wide columns), and the outer read re-applies the predicate to those keys
     # only, where the tombstone of a retired chunk wins.
     where_sql = " AND ".join(where)
-    return await ch.query_all(
+    rows = await ch.query_all(
         f"""
         SELECT concat('chunk:', session_id, ':', toString(chunk_index)) AS memory_key,
                'episodic' AS memory_type,
@@ -271,6 +272,14 @@ async def find_chunks_by_identifier(
         """,
         params=params,
     )
+    return _without_credentials(rows)
+
+
+def _without_credentials(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chunk rows whose text does not read as a credential. A chunk labelled 'high' has no
+    vector and the `embedding_dim > 0` filter already leaves it out; this holds back one
+    written before the label existed, or by a build that did not set it."""
+    return [r for r in rows if not reads_high(str(r.get("content_excerpt") or ""))]
 
 
 async def find_chunks_by_session_date(
@@ -329,7 +338,7 @@ async def find_chunks_by_session_date(
     # (see find_chunks_by_identifier); the subquery keeps to the sessions with
     # a digest dated in range, a superset of the join's max(valid_at) rule.
     chunk_where = [w for w in where if not w.startswith("toDate(ss.")]
-    return await ch.query_all(
+    rows = await ch.query_all(
         f"""
         SELECT concat('chunk:', c.session_id, ':', toString(c.chunk_index)) AS memory_key,
                'episodic' AS memory_type,
@@ -361,6 +370,7 @@ async def find_chunks_by_session_date(
         """,
         params=params,
     )
+    return _without_credentials(rows)
 
 
 # Suffixes a row may carry for an attribute facet the extractor did not

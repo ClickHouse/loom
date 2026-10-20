@@ -215,3 +215,15 @@ async def test_non_reembed_actions_cannot_accidentally_send_data(target, table):
     with pytest.raises(RebuildBatchError, match="unsupported_rebuild_table"):
         await rebuild_batch(table, [], target)
     target.embed_many.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", ["memory_chunks", "session_summaries"])
+async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(table, target):
+    labelled = {**row_for(table), "sensitivity": "high"}
+    # Written before the label existed: unlabelled and embedded, its text holds a key.
+    unlabelled = {**row_for(table), TEXT_COLUMNS[table]: "key " + "AKIA" + "IOSFODNN7EXAMPLE"}
+    plain = row_for(table)
+    result = await rebuild_batch(table, [labelled, unlabelled, plain], target)
+    target.embed_many.assert_awaited_once_with(["source text"])
+    assert [r["embedding_dim"] for r in result] == [0, 0, 2]

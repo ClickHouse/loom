@@ -11,6 +11,7 @@ from typing import Any
 from server.core.vectors.search_settings import vector_search_settings
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
+from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -197,6 +198,9 @@ async def fetch_session_summaries(
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
+    # A digest that reads as a credential is written without a vector; this holds back
+    # one written before that rule.
+    rows = [r for r in rows if not reads_high(str(r.get("content_excerpt") or ""))]
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []
     for r in rows:

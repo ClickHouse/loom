@@ -14,6 +14,7 @@ from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.passage_trim import trim_chunk_excerpt
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, hit_sort_key
+from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -811,11 +812,11 @@ async def _search_memory_chunks(
     # Neighbor expansion: for the top-3 anchors, fetch ±1 chunk_index
     # neighbors from the same session, ranked below their anchor.
     if not primary_hits or not q_tokens:
-        return primary_hits[: int(q.top_k)]
+        return _served_chunks(primary_hits, rows, int(q.top_k))
 
     anchor_keys = _chunk_anchor_keys(rows)
     if not anchor_keys:
-        return primary_hits[: int(q.top_k)]
+        return _served_chunks(primary_hits, rows, int(q.top_k))
     neighbor_rows = await _chunk_anchor_windows(
         ch,
         anchor_keys,
@@ -833,7 +834,22 @@ async def _search_memory_chunks(
         primary_hits.append(_chunk_neighbor_hit(r, q, q_tokens))
 
     primary_hits.sort(key=hit_sort_key)
-    return primary_hits[: int(q.top_k) * 3]
+    return _served_chunks(primary_hits, [*rows, *neighbor_rows], int(q.top_k) * 3)
+
+
+def _served_chunks(hits: list[SearchHit], rows: list[dict[str, Any]], n: int) -> list[SearchHit]:
+    """The first `n` hits, in rank order, whose chunk text does not read as a credential. A
+    chunk labelled 'high' has no vector and never gets here; this holds back one written
+    before the label existed, or by a build that did not set it. The text is checked only
+    as far down the ranking as the `n` hits served."""
+    text = {str(r.get("memory_key")): str(r.get("content_full") or "") for r in rows}
+    served: list[SearchHit] = []
+    for hit in hits:
+        if len(served) >= n:
+            break
+        if not reads_high(text.get(hit.memory_key, hit.content_excerpt)):
+            served.append(hit)
+    return served
 
 
 def _chunk_neighbor_sql(

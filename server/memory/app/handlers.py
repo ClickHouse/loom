@@ -62,7 +62,7 @@ log = logging.getLogger(__name__)
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
 from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
-from server.memory.domain.sensitivity import value_reads_high  # noqa: E402
+from server.memory.domain.sensitivity import passage_reads_high, value_reads_high  # noqa: E402
 
 
 def existing_context_limit(msgs: list[dict[str, str]], limit: int) -> int:
@@ -234,7 +234,7 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     ch = get_client()
     rows = await ch.query_all(
         f"""
-        SELECT chunk_index, content, parent_memory_key
+        SELECT chunk_index, content, parent_memory_key, sensitivity
         FROM loom.memory_chunks FINAL
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -253,6 +253,24 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     if target is None:
         return MemoryGetOutput(found=False)
 
+    # A chunk that reads as a credential is served only when its own key is read, and
+    # that read is audited as a key read of a 'high' row is. A neighbour is context the
+    # caller did not name: one that reads as a credential is left out of the passage.
+    if passage_reads_high(target.get("sensitivity"), str(target["content"])):
+        from server.observability import audit as _audit
+
+        await _audit.emit(
+            "memory.sensitive_read",
+            org=input.org,
+            namespace=input.namespace,
+            actor=writer_actor(input.agent),
+            subject={"memory_key": input.memory_key, "session_id": session_id, "chunk_index": idx},
+        )
+    rows = [
+        r
+        for r in rows
+        if r is target or not passage_reads_high(r.get("sensitivity"), str(r["content"]))
+    ]
     stitched = "\n\n".join(str(r["content"]) for r in rows)
 
     return MemoryGetOutput(

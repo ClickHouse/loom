@@ -10,7 +10,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import HIGH, passage_sensitivity, value_reads_high
 from server.observability.genai import staged
 
 log = logging.getLogger(__name__)
@@ -135,7 +135,8 @@ async def _draft_session_summary(
 ) -> SessionSummaryDraft | None:
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the
-    embedder returns an empty vector (the read leg filters embedding_dim > 0)."""
+    embedder returns an empty vector (the read leg filters embedding_dim > 0);
+    a digest that reads as a credential is drafted with no vector."""
     from server.llm.client import get_llm_client
 
     if not msgs:
@@ -152,6 +153,16 @@ async def _draft_session_summary(
         log.info("session_summaries: empty digest for session=%r; skipping", input.session_id)
         return None
     embedder = get_embedder()
+    # A digest that reads as a credential is written without a vector: the summary leg
+    # reads only digests that have one, and the text never reaches the embedder.
+    if passage_sensitivity(summary_text) == HIGH:
+        return SessionSummaryDraft(
+            summary_text=summary_text,
+            embedding=[],
+            embedding_model=embedder.model_name,
+            tokens_in=int(getattr(result, "tokens_in", 0) or 0),
+            tokens_out=int(getattr(result, "tokens_out", 0) or 0),
+        )
     embedding = await embedder.embed(summary_text)
     if not embedding:
         log.info("session_summaries: empty embedding for session=%r; skipping", input.session_id)

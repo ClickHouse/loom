@@ -28,8 +28,10 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
+from server.memory.app.chunk_projection import embed_plain
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
+from server.memory.domain.sensitivity import HIGH, passage_sensitivity
 from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
@@ -306,17 +308,21 @@ async def handle_memory_import_evidence(
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
     if chunks:
-        vectors = await _embed_all(embedder, [c.content for c in chunks])
+        levels = [passage_sensitivity(c.content) for c in chunks]
+        vectors = await embed_plain(
+            [c.content for c in chunks], levels, lambda texts: _embed_all(embedder, texts)
+        )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []
-        for c, vec in zip(chunks, vectors, strict=True):
-            if not vec:
+        for c, vec, level in zip(chunks, vectors, levels, strict=True):
+            if not vec and level != HIGH:
                 out.skipped += 1
                 continue
             sha = hashlib.sha256(c.content.encode("utf-8")).hexdigest()
             if c.content_sha256 and c.content_sha256 != sha:
                 out.edited.append(f"{c.session_id}:{c.chunk_index}")
-            out.embedding_dim = len(vec)
+            if vec:
+                out.embedding_dim = len(vec)
             rows.append(
                 {
                     "org": input.org,
@@ -330,6 +336,7 @@ async def handle_memory_import_evidence(
                     "embedding": vec,
                     "embedding_model": embedder.model_name,
                     "embedding_dim": len(vec),
+                    "sensitivity": level,
                     "parent_memory_key": c.parent_memory_key
                     or (c.memory_keys[0] if c.memory_keys else ""),
                     "line_start": int(c.line_start or 0),
@@ -376,13 +383,17 @@ async def handle_memory_import_evidence(
     ]
     out.skipped += len(input.digests) - len(digests)
     if digests:
-        vectors = await _embed_all(embedder, [d.summary_text for d in digests])
+        levels = [passage_sensitivity(d.summary_text) for d in digests]
+        vectors = await embed_plain(
+            [d.summary_text for d in digests], levels, lambda texts: _embed_all(embedder, texts)
+        )
         drows: list[dict[str, Any]] = []
-        for d, vec in zip(digests, vectors, strict=True):
-            if not vec:
+        for d, vec, level in zip(digests, vectors, levels, strict=True):
+            if not vec and level != HIGH:
                 out.skipped += 1
                 continue
-            out.embedding_dim = len(vec)
+            if vec:
+                out.embedding_dim = len(vec)
             drows.append(
                 build_session_summary_row(
                     org=input.org,

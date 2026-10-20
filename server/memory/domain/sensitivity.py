@@ -160,14 +160,17 @@ def attribute_tags(text: str, existing: Iterable[str] = ()) -> list[str]:
     ]
 
 
+def _holds_credential(text: str) -> bool:
+    return any(pat.search(text) for pat in _HIGH_PATTERNS)
+
+
 def detect_sensitivity(text: str) -> str:
     """Classify `text`: 'high' for a credential shape, 'medium' for contact
     details, '' otherwise. Order matters — a line with both is 'high'."""
     if not text:
         return ""
-    for pat in _HIGH_PATTERNS:
-        if pat.search(text):
-            return HIGH
+    if _holds_credential(text):
+        return HIGH
     for pat in _MEDIUM_PATTERNS:
         if pat.search(text):
             return MEDIUM
@@ -225,10 +228,28 @@ def reads_high(text: str) -> bool:
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
     undone too, where a token after `\\n` or a quoted password keeps its word boundary."""
-    if detect_sensitivity(text) == HIGH:
+    if not text:
+        return False
+    if _holds_credential(text):
         return True
     unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
-    return unescaped != text and detect_sensitivity(unescaped) == HIGH
+    return unescaped != text and _holds_credential(unescaped)
+
+
+def passage_sensitivity(text: str) -> str:
+    """The label a raw passage (a conversation chunk, a chunk of a long value, a session
+    digest) is written with: 'high' when it reads as a credential, else ''. No caller labels
+    a passage, so the detector runs whatever the autodetect setting. A 'high' passage is
+    stored as written and never embedded, so no search leg returns it."""
+    return HIGH if reads_high(text) else ""
+
+
+def passage_reads_high(level: object, text: str) -> bool:
+    """Whether a stored passage is held back from the reads that serve passages to every
+    reader of a namespace (search hits, the passages `memory.ask` injects, the neighbours
+    of a keyed chunk read): labelled 'high', or reading as a credential. The text check
+    covers a passage written before the label existed, or by a build that did not set it."""
+    return str(level or "").strip().lower() == HIGH or reads_high(text)
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

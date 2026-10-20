@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
@@ -14,6 +14,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.app.projection_errors import record_input_projection_failure
+from server.memory.domain.sensitivity import HIGH, passage_sensitivity
 
 log = logging.getLogger(__name__)
 
@@ -275,6 +276,19 @@ async def _embed_chunks(embedder: Any, texts: list[str]) -> list[list[float]]:
         return out
 
 
+async def embed_plain(
+    texts: list[str],
+    levels: list[str],
+    embed: Callable[[list[str]], Awaitable[list[list[float]]]],
+) -> list[list[float]]:
+    """One vector per text: `embed` runs on the texts whose level is not 'high', and a
+    'high' text gets [], so a passage that reads as a credential never reaches the
+    embedder."""
+    plain = [text for text, level in zip(texts, levels, strict=True) if level != HIGH]
+    vectors = iter(await embed(plain) if plain else [])
+    return [[] if level == HIGH else list(next(vectors)) for level in levels]
+
+
 async def write_memory_chunks(
     input: Any,
     msgs: list[dict[str, str]],
@@ -325,17 +339,23 @@ async def write_memory_chunks(
     chunk_payloads = [
         (i, chunk, line_start, line_end) for i, (chunk, line_start, line_end) in enumerate(chunks)
     ]
-    vectors = await _embed_chunks(embedder, [chunk for _, chunk, _, _ in chunk_payloads])
+    levels = [passage_sensitivity(chunk) for _, chunk, _, _ in chunk_payloads]
+    vectors = await embed_plain(
+        [chunk for _, chunk, _, _ in chunk_payloads],
+        levels,
+        lambda texts: _embed_chunks(embedder, texts),
+    )
 
     rows: list[dict[str, Any]] = []
     spans: list[tuple[int, str, int, int]] = []
-    for (i, chunk, line_start, line_end), vec in zip(
+    for (i, chunk, line_start, line_end), vec, level in zip(
         chunk_payloads,
         vectors,
+        levels,
         strict=True,
     ):
-        if not vec:
-            continue
+        if not vec and level != HIGH:
+            continue  # unembeddable: a plain chunk is written only with its vector
         content_sha256 = hashlib.sha256(chunk.encode("utf-8")).hexdigest()
         rows.append(
             {
@@ -351,6 +371,7 @@ async def write_memory_chunks(
                 "embedding": vec,
                 "embedding_model": embedder.model_name,
                 "embedding_dim": len(vec),
+                "sensitivity": level,
                 "parent_memory_key": parent_memory_key,
                 "line_start": int(line_start),
                 "line_end": int(line_end),

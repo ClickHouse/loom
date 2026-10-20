@@ -27,7 +27,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.memory.app.chunk_projection import chunk_text_with_truncation
+from server.memory.app.chunk_projection import chunk_text_with_truncation, embed_plain
+from server.memory.domain.sensitivity import HIGH, passage_sensitivity
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ _CHUNK_COLUMNS = (
     "embedding",
     "embedding_model",
     "embedding_dim",
+    "sensitivity",
     "parent_memory_key",
     "line_start",
     "line_end",
@@ -206,6 +208,7 @@ def _chunk_state_row(
             "chunk_index": int(r.get("chunk_index") or 0),
             "embedding": list(r.get("embedding") or []),
             "embedding_dim": int(r.get("embedding_dim") or 0),
+            "sensitivity": str(r.get("sensitivity") or ""),
             "line_start": int(r.get("line_start") or 0),
             "line_end": int(r.get("line_end") or 0),
             "run_id": str(r.get("run_id") or "-"),
@@ -415,13 +418,18 @@ async def write_set_chunks(
 
         embedder = get_embedder()
 
-    vectors = await _embed_chunks(embedder, [c for c, _, _ in chunks])
+    levels = [passage_sensitivity(c) for c, _, _ in chunks]
+    vectors = await embed_plain(
+        [c for c, _, _ in chunks], levels, lambda texts: _embed_chunks(embedder, texts)
+    )
     session_id = set_chunk_session_id(input.memory_key)
     run_id = str(getattr(input, "run_id", "") or "-")
     now = naive_utc_now()
     rows: list[dict[str, Any]] = []
-    for i, ((chunk, line_start, line_end), vec) in enumerate(zip(chunks, vectors, strict=True)):
-        if not vec:
+    for i, ((chunk, line_start, line_end), vec, level) in enumerate(
+        zip(chunks, vectors, levels, strict=True)
+    ):
+        if not vec and level != HIGH:
             continue
         rows.append(
             {
@@ -437,6 +445,7 @@ async def write_set_chunks(
                 "embedding": vec,
                 "embedding_model": embedder.model_name,
                 "embedding_dim": len(vec),
+                "sensitivity": level,
                 "parent_memory_key": input.memory_key,
                 "line_start": int(line_start),
                 "line_end": int(line_end),

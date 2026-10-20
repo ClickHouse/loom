@@ -18,7 +18,7 @@ vulnerability, and for the deployment hardening checklist, see
 | One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
 | An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
 | Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                                                                      | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows and chunks are never embedded                                                           | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
 | Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
 | Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
 | A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
@@ -679,17 +679,36 @@ leg returns it. The other reads that could serve its value follow three rules:
   do until the sweep. `memory.bulk_get`, like `memory.list`, serves any other row past
   `expires_at` until the expiry sweep.
 
-Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
-has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
-to a key with any `high` version, and those whose text the detector reads as a credential,
-unless asked with `include_high` (each one it then releases is audited). `bodies: "source"`
-leaves out a passage whose text reads as a credential. Other raw text is served to readers
-of the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
-row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
-`memory.get` on a `chunk:` key, the session digests `memory.digests` lists (their summary
-text; key facts that read as a credential are left out), what the session-summary draft (the
+Raw evidence has no caller to label it, so the write path labels it. A verbatim chunk in
+`loom.memory_chunks` (a conversation chunk `memory.set_from_messages` writes, a chunk of a
+long `memory.set` value, a chunk `memory.import_evidence` writes) carries a `sensitivity`
+column: `high` when its text reads as a credential (`passage_sensitivity`, which is
+`reads_high` whatever `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says), else empty. A `high` chunk
+is stored as written and never embedded (its text is never sent to the embedder), so no
+search leg returns it. A session digest whose text reads as a credential is likewise
+written without a vector. A provider rebuild stages either without a vector. Chunks and
+digests written before the label, or by a build that does not set it, may still hold a
+vector, so the reads that serve passages check their text with `reads_high` too:
+
+- Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
+  its model and the context pack built from search), the chunks `memory.ask` injects for an
+  identifier or a session date, and the neighbours `memory.get` stitches around a
+  `chunk:` key.
+- Read by key and audited: `memory.get` on the `chunk:` key of a chunk labelled `high` or
+  reading as a credential serves it and writes a `memory.sensitive_read` row.
+- `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
+  version, and those whose text reads as a credential, unless asked with `include_high`
+  (each one it then releases is audited). `bodies: "source"` leaves out a passage whose text
+  reads as a credential.
+
+Other raw text is served to readers of the namespace as it is: a caller-labelled `high`
+value that shares a chunk with a plain row (the chunk's own label comes from its text, not
+from the rows it holds), the session digests `memory.digests` lists (their summary text; key
+facts that read as a credential are left out), what the session-summary draft (the
 conversation turns), the period-digest draft and the outcome judge (session digest text)
-send their model, and `memory.recall`'s raw turns.
+send their model, `memory.recall`'s raw turns, and the turns `conversation.append` stores,
+which `conversation.search` embeds and ranks by similarity across the namespace. Raw text
+is stored as written, and erasure removes the chunk and digest rows whole.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
@@ -706,9 +725,10 @@ also reads text holding JSON, such as a chunk of an object value, with its strin
 undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
 `bodies: "source"`, the observations `observe_extract` sends its model, the entity
 extractor's input, the existing memories an extraction prompt shows, the rows
-`memory.consolidate` and the profile fold send their models, and a session digest's key
-facts when written, listed by `memory.digests` or read by the outcome judge. The
-`sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
+`memory.consolidate` and the profile fold send their models, a session digest's key
+facts when written, listed by `memory.digests` or read by the outcome judge, and the
+chunks and digests above when written and when served. The
+`sensitivity_sweep` worker (on, daily) labels memory rows from paths that skip it, every high shape
 counting as `credential` for its default shape filter: a new version per row and, for
 `high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
 unlabelled row that holds a credential is embedded like any other, so search serves it, and
@@ -766,7 +786,8 @@ hashing are engineering primitives, not a compliance guarantee.
 - A row-scoped op answers `found=False` outside the caller's scope, never 403.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
-- A `high`-sensitivity value has no embedding row.
+- A `high`-sensitivity value has no embedding row, and a chunk or session digest whose
+  text reads as a credential is written without a vector.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
 

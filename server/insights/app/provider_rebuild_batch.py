@@ -13,6 +13,7 @@ from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
+from server.memory.domain.sensitivity import passage_reads_high
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -29,6 +30,9 @@ TEXT_COLUMNS = {
     "session_summaries": "summary_text",
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
+# Raw passages the write path leaves without a vector when they read as a credential
+# (`passage_sensitivity`); a rebuild stages such a row without one too.
+PASSAGE_TABLES = frozenset({"memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
 
@@ -69,6 +73,8 @@ def _inputs(
         if row.get("tombstoned_at") is not None:
             continue
         text = _source_text(table, row, index, source_texts)
+        if table in PASSAGE_TABLES and passage_reads_high(row.get("sensitivity"), text):
+            continue
         for column in columns:
             value = text
             if column == "memory_key_embedding":
