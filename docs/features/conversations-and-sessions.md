@@ -213,13 +213,13 @@ provider the turns are still recorded.
 
 ## Settings
 
-| Setting                                                                     | Effect                                                                                                                                   |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY`                                   | The cosine floor of `conversation.search` ([Knowledge → Conversations](../reference/configuration.md#conversations)).                    |
-| `LOOM_CONVERSATION_TITLER_*`                                                | The titler worker's switch, cadence, window and per-pass cap ([Knowledge → Conversations](../reference/configuration.md#conversations)). |
-| `LOOM_RETENTION_CONVERSATIONS_DAYS`, `LOOM_TIERING_CONVERSATIONS_WARM_DAYS` | Opt-in TTL and warm-volume move for transcripts ([Retention and tiering](../reference/configuration.md#retention-and-tiering)).          |
-| `LOOM_SESSION_BRIEF_LLM`, `…_LLM_MODEL`, `…_WINDOW_CHARS`, `…_MAX_WINDOWS`  | How briefs are condensed ([Context](../reference/configuration.md#context)).                                                             |
-| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`                                         | Closes an MCP session's implicit run after this long without a call ([Mcp](../reference/configuration.md#mcp)).                          |
+| Setting                                                                     | Effect                                                                                                                                                                    |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY`                                   | The cosine floor of `conversation.search` ([Knowledge → Conversations](../reference/configuration.md#conversations)).                                                     |
+| `LOOM_CONVERSATION_TITLER_*`                                                | The titler worker's switch, cadence, window and per-pass cap ([Knowledge → Conversations](../reference/configuration.md#conversations)).                                  |
+| `LOOM_RETENTION_CONVERSATIONS_DAYS`, `LOOM_TIERING_CONVERSATIONS_WARM_DAYS` | Opt-in TTL and warm-volume move for transcripts ([Retention](../reference/configuration.md#retention), [storage tiering](../reference/configuration.md#storage-tiering)). |
+| `LOOM_SESSION_BRIEF_LLM`, `…_LLM_MODEL`, `…_WINDOW_CHARS`, `…_MAX_WINDOWS`  | How briefs are condensed ([Context](../reference/configuration.md#context)).                                                                                              |
+| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`                                         | Closes an MCP session's implicit run after this long without a call ([Mcp](../reference/configuration.md#mcp)).                                                           |
 
 ## Limits
 

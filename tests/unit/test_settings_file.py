@@ -5,6 +5,7 @@ ignored (N-1 and N share the file in a rollout)."""
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -182,12 +183,35 @@ def test_every_setting_says_what_it_does() -> None:
     assert not bare, f"no comment above these fields in server/settings/catalog.py: {bare}"
 
 
-def test_a_group_shows_its_heading_and_note_even_when_a_secret_opens_it() -> None:
+def test_the_template_prints_each_group_heading_with_its_note() -> None:
     """`code_repos_json`, a secret the template leaves out, opens its group."""
     text = settings_example.render()
     assert "\n  # --- multi-repo and self-service ---\n" in text
     heading = text.index("\n  # --- caller-shaped read ceilings ---\n")
     assert text[heading:].split("\n")[2].startswith("  # Ceilings for the reads a caller shapes")
+
+
+def test_a_group_a_secret_opens_keeps_its_heading_and_note() -> None:
+    source = (
+        "class ClickHouseSettings(BaseModel):\n"
+        '    """ClickHouse."""\n'
+        "\n"
+        "    # The group's note.\n"
+        "    # --- connection ---\n"
+        "    # The password.\n"
+        '    ch_password: str = ""\n'
+        "    # The host.\n"
+        '    ch_host: str = "localhost"\n'
+    )
+    cls = ast.parse(source).body[0]
+    out = settings_example._section(cls, source.splitlines())  # type: ignore[arg-type]
+    shown = [line for line in out if line]
+    assert shown[1:4] == [
+        "  # --- connection ---",
+        "  # The group's note.",
+        "  # The host. [restart]",
+    ]
+    assert not any("ch_password" in line for line in out)
 
 
 def test_no_description_points_at_a_neighbouring_field() -> None:

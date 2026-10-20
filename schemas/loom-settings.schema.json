@@ -341,22 +341,22 @@
         "code_backport_gaps_budget_s": {
           "default": 1800.0,
           "type": "number",
-          "description": "Seconds after which a pass stops starting fixes."
+          "description": "Seconds after which a backport-gaps pass stops starting fixes."
         },
         "code_backport_gaps_days": {
           "default": 90,
           "type": "integer",
-          "description": "Days back of backport-labelled trunk PRs a pass considers."
+          "description": "Days back of backport-labelled trunk PRs a backport-gaps pass considers."
         },
         "code_backport_gaps_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `pace_s`, at most `prs_per_pass` a night, stalest first, stopping at `budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table."
+          "description": "Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table."
         },
         "code_backport_gaps_interval_seconds": {
           "default": 86400.0,
           "type": "number",
-          "description": "Seconds between passes; the read op reports the table stale past twice this."
+          "description": "Seconds between backport-gaps passes; the read op reports the table stale past twice this."
         },
         "code_backport_gaps_max_pass_seconds": {
           "default": 3600.0,
@@ -366,12 +366,12 @@
         "code_backport_gaps_pace_s": {
           "default": 1.0,
           "type": "number",
-          "description": "Seconds of pause between two fixes."
+          "description": "Seconds a backport-gaps pass pauses between two fixes."
         },
         "code_backport_gaps_prs_per_pass": {
           "default": 300,
           "type": "integer",
-          "description": "Max fixes checked per pass, stalest first."
+          "description": "Max fixes a backport-gaps pass checks, stalest first."
         },
         "code_backport_history_budget_ms": {
           "default": 8000,
@@ -1385,7 +1385,7 @@
         "code_scip_full_interval_seconds": {
           "default": 900,
           "type": "integer",
-          "description": "Seconds between checks for an entry that is due."
+          "description": "Seconds between the C++ full re-index's checks for an entry that is due."
         },
         "code_scip_full_retry_s": {
           "default": 21600,
@@ -1574,7 +1574,7 @@
         "code_search_catalogue_kinds": {
           "default": "responsibility",
           "type": "string",
-          "description": "The question kinds the catalogue penalty applies to."
+          "description": "The question kinds `code_search_catalogue_penalty` applies to."
         },
         "code_search_catalogue_penalty": {
           "default": 1.0,
@@ -2168,7 +2168,7 @@
         "entity_communities_giant_share": {
           "default": 0.5,
           "type": "number",
-          "description": "When one community holds more than this share of a namespace's entities, double hub_drop_fraction and re-partition, up to hub_drop_max_fraction (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction."
+          "description": "When one community holds more than this share of a namespace's entities, double `entity_communities_hub_drop_fraction` and re-partition, up to `entity_communities_hub_drop_max_fraction` (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction."
         },
         "entity_communities_hub_drop_fraction": {
           "default": 0.002,
@@ -2309,7 +2309,7 @@
           "default": 600,
           "minimum": 60,
           "type": "integer",
-          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (max_batches_per_pass times one replay), or an overlapping worker may claim a batch still waiting in the pass."
+          "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass."
         },
         "extraction_queue_max_attempts": {
           "default": 3,
@@ -4312,12 +4312,12 @@
         "ops_op_mix_update_share_warn": {
           "default": 0.01,
           "type": "number",
-          "description": "Share of writes that are updates below which the check warns (append-only bank)."
+          "description": "Share of writes that are updates below which the `op_mix` check warns (append-only bank)."
         },
         "ops_op_mix_window_days": {
           "default": 7,
           "type": "integer",
-          "description": "ops.health's create/read/update/delete mix over the window: warns when reads per write exceed the bar (polling load) or, after `min_writes`, the update share falls below its bar (append-only bank)."
+          "description": "Days of ops the `op_mix` check of ops.health reads: the create/read/update/delete mix over them warns when reads per write exceed `ops_op_mix_reads_per_write_warn` (polling load) or, after `ops_op_mix_min_writes`, the update share falls below `ops_op_mix_update_share_warn` (append-only bank)."
         },
         "ops_procedure_plane_min_packs": {
           "default": 50,
@@ -4337,7 +4337,7 @@
         "ops_procedure_plane_window_days": {
           "default": 7,
           "type": "integer",
-          "description": "ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and none showed a procedure while procedures exist, or when success retention over ≥ `min_pairs` pairs is below `retention_warn`."
+          "description": "Days the `procedure_plane` check of ops.health reads: it warns when ≥ `ops_procedure_plane_min_packs` packs flowed and none showed a procedure while procedures exist, or when success retention over ≥ `ops_procedure_plane_min_pairs` pairs is below `ops_procedure_plane_retention_warn`."
         },
         "orphan_vector_reconcile_enabled": {
           "default": true,
@@ -5138,7 +5138,7 @@
         "tracker_embed_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Every interval (seconds), for each configured tracker namespace, the issues and PRs open or closed within `closed_days` and changed since the last pass are embedded (`title + \"\\n\" + left(body, body_chars)`, `tracker_embed_batch` a call) into loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that left the window is tombstoned. Off = nothing is written; the leg serves the table plus its query-time catch-up. The interval bounds only that catch-up, never what a query can find."
+          "description": "Every interval (seconds), for each configured tracker namespace, the issues and PRs open or closed within `tracker_embed_closed_days` and changed since the last pass are embedded (`title + \"\\n\" + left(body, tracker_embed_body_chars)`, `tracker_embed_batch` a call) into loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that left the window is tombstoned. Off = nothing is written; the leg serves the table plus its query-time catch-up. The interval bounds only that catch-up, never what a query can find."
         },
         "tracker_embed_fetch_multiplier": {
           "default": 10.0,
@@ -5176,7 +5176,7 @@
         "tracker_links_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "A daily pass ranks, for every issue opened in the last `issue_days`, the merged trunk PRs of the `window_days` after it (from a week before) by BM25F over title and body, the issue's stack frames in the PR's diff, the closing mention and the component, and writes each issue's top `per_issue` into loom.qa_link_candidates. Off = nothing is written; `tracker.links` serves the table."
+          "description": "A daily pass ranks, for every issue opened in the last `tracker_links_issue_days`, the merged trunk PRs of the `tracker_links_window_days` after it (from a week before) by BM25F over title and body, the issue's stack frames in the PR's diff, the closing mention and the component, and writes each issue's top `tracker_links_per_issue` into loom.qa_link_candidates. Off = nothing is written; `tracker.links` serves the table."
         },
         "tracker_links_interval_seconds": {
           "default": 86400.0,

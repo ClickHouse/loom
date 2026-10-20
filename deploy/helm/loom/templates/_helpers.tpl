@@ -83,7 +83,7 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- end }}
 {{- range list "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}
 {{- if hasKey $.Values.secrets.extra . }}
-{{- fail (printf "set %s through secrets.jwtSecret / secrets.jwtSecretPrevious, not secrets.extra" .) }}
+{{- fail (printf "set %s through %s, not secrets.extra" . (get (dict "LOOM_JWT_SECRET" "secrets.jwtSecret" "LOOM_JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious") .)) }}
 {{- end }}
 {{- end }}
 LOOM_DEPLOYMENT: "1"

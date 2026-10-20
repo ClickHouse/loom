@@ -1010,7 +1010,7 @@ settings:
   # One entry per pass, under its entry lock. [restart]
   # code_scip_full_enabled: true
 
-  # Seconds between checks for an entry that is due. [restart]
+  # Seconds between the C++ full re-index's checks for an entry that is due. [restart]
   # code_scip_full_interval_seconds: 900
 
   # Hours between full re-indexes of one entry. [restart]
@@ -1116,25 +1116,26 @@ settings:
 
   # Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the
   # last `days` labelled for backport and writes one row per release branch into
-  # loom.code_backport_gaps. Paced one fix per `pace_s`, at most `prs_per_pass` a night,
-  # stalest first, stopping at `budget_s`; settled fixes are skipped. Off = nothing
-  # written; the read op serves the table. [restart]
+  # loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most
+  # `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at
+  # `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the
+  # read op serves the table. [restart]
   # code_backport_gaps_enabled: true
 
-  # Seconds between passes; the read op reports the table stale past twice this.
-  # [restart]
+  # Seconds between backport-gaps passes; the read op reports the table stale past twice
+  # this. [restart]
   # code_backport_gaps_interval_seconds: 86400.0
 
-  # Days back of backport-labelled trunk PRs a pass considers. [restart]
+  # Days back of backport-labelled trunk PRs a backport-gaps pass considers. [restart]
   # code_backport_gaps_days: 90
 
-  # Max fixes checked per pass, stalest first. [restart]
+  # Max fixes a backport-gaps pass checks, stalest first. [restart]
   # code_backport_gaps_prs_per_pass: 300
 
-  # Seconds of pause between two fixes. [restart]
+  # Seconds a backport-gaps pass pauses between two fixes. [restart]
   # code_backport_gaps_pace_s: 1.0
 
-  # Seconds after which a pass stops starting fixes. [restart]
+  # Seconds after which a backport-gaps pass stops starting fixes. [restart]
   # code_backport_gaps_budget_s: 1800.0
 
   # A backport-gaps pass's hard deadline (seconds) under the worker supervisor.
@@ -1597,13 +1598,13 @@ settings:
   # [restart]
   # code_search_prose_penalty: 0.25
 
+  # The question kinds `code_search_catalogue_penalty` applies to. [restart]
+  # code_search_catalogue_kinds: "responsibility"
+
   # Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max
   # fan_in in the pool); skipped under test intent and on noise paths; inert without the
   # stats. 0 = off. [restart]
   # code_fan_in_prior_cap: 0.25
-
-  # The question kinds the catalogue penalty applies to. [restart]
-  # code_search_catalogue_kinds: "responsibility"
 
   # Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal
   # weights. [restart]
@@ -2152,9 +2153,9 @@ settings:
   # extraction_queue_max_batches_per_pass: 8
 
   # Seconds a claimed batch stays leased to one worker before another may claim it; at
-  # least a minute. Set it above the longest pass (max_batches_per_pass times one
-  # replay), or an overlapping worker may claim a batch still waiting in the pass.
-  # [live]
+  # least a minute. Set it above the longest pass
+  # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker
+  # may claim a batch still waiting in the pass. [live]
   # extraction_queue_lease_seconds: 600
 
   # Attempts before a failing batch stops returning to `pending` and is marked failed.
@@ -2613,8 +2614,9 @@ settings:
   # entity_communities_hub_drop_fraction: 0.002
 
   # When one community holds more than this share of a namespace's entities, double
-  # hub_drop_fraction and re-partition, up to hub_drop_max_fraction (a code corpus
-  # parted at 0.016, 2.9%). 0 = fixed fraction. [restart]
+  # `entity_communities_hub_drop_fraction` and re-partition, up to
+  # `entity_communities_hub_drop_max_fraction` (a code corpus parted at 0.016, 2.9%). 0
+  # = fixed fraction. [restart]
   # entity_communities_giant_share: 0.5
 
   # Largest `entity_communities_hub_drop_fraction` the re-partition doubles up to (four
@@ -3606,25 +3608,27 @@ settings:
   # "text" (dev) or "json" (production). [restart]
   # log_format: "text"
 
-  # ops.health's create/read/update/delete mix over the window: warns when reads per
-  # write exceed the bar (polling load) or, after `min_writes`, the update share falls
-  # below its bar (append-only bank). [restart]
+  # Days of ops the `op_mix` check of ops.health reads: the create/read/update/delete
+  # mix over them warns when reads per write exceed `ops_op_mix_reads_per_write_warn`
+  # (polling load) or, after `ops_op_mix_min_writes`, the update share falls below
+  # `ops_op_mix_update_share_warn` (append-only bank). [restart]
   # ops_op_mix_window_days: 7
 
   # Reads per write above which the `op_mix` check warns (polling load). [restart]
   # ops_op_mix_reads_per_write_warn: 20.0
 
-  # Share of writes that are updates below which the check warns (append-only bank).
-  # [restart]
+  # Share of writes that are updates below which the `op_mix` check warns (append-only
+  # bank). [restart]
   # ops_op_mix_update_share_warn: 0.01
 
   # Writes in the `op_mix` check's window before its update-share warning can fire.
   # [restart]
   # ops_op_mix_min_writes: 500
 
-  # ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and none showed
-  # a procedure while procedures exist, or when success retention over ≥ `min_pairs`
-  # pairs is below `retention_warn`. [restart]
+  # Days the `procedure_plane` check of ops.health reads: it warns when ≥
+  # `ops_procedure_plane_min_packs` packs flowed and none showed a procedure while
+  # procedures exist, or when success retention over ≥ `ops_procedure_plane_min_pairs`
+  # pairs is below `ops_procedure_plane_retention_warn`. [restart]
   # ops_procedure_plane_window_days: 7
 
   # Context packs in the `procedure_plane` check's window before "no pack showed a
@@ -4001,12 +4005,10 @@ settings:
   # its scope. [restart]
   # document_blob_min_age_seconds: 3600
 
-  # --- retention and tiering ---
-  # Opt-in retention and tiering, applied as idempotent ALTER TABLE MODIFY TTL by
+  # --- retention ---
+  # Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by
   # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
-  # rows older than N days, a tiering_*_warm_days setting moves them to
-  # tiering_warm_volume_name after W days. With both set, W must be < N or the move is a
-  # no-op (logged WARN).
+  # rows older than N days.
 
   # Days `loom.audit_log` rows are kept; 0 = forever. [restart]
   # retention_audit_log_days: 0
@@ -4038,6 +4040,9 @@ settings:
   # retention_reconcile_interval_seconds: 300
 
   # --- storage tiering ---
+  # Opt-in tiering, applied the same way: a tiering_*_warm_days setting moves a table's
+  # rows to tiering_warm_volume_name after W days. With retention also set, W must be <
+  # N or the move is a no-op (logged WARN).
 
   # Days before `loom.audit_log` rows move to the warm volume; 0 = never. [restart]
   # tiering_audit_log_warm_days: 0
@@ -4237,12 +4242,12 @@ settings:
   # --- the tracker_embed pass ---
 
   # Every interval (seconds), for each configured tracker namespace, the issues and PRs
-  # open or closed within `closed_days` and changed since the last pass are embedded
-  # (`title + "\n" + left(body, body_chars)`, `tracker_embed_batch` a call) into
-  # loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that left
-  # the window is tombstoned. Off = nothing is written; the leg serves the table plus
-  # its query-time catch-up. The interval bounds only that catch-up, never what a query
-  # can find. [restart]
+  # open or closed within `tracker_embed_closed_days` and changed since the last pass
+  # are embedded (`title + "\n" + left(body, tracker_embed_body_chars)`,
+  # `tracker_embed_batch` a call) into loom.qa_item_embeddings; an unchanged text
+  # (sha256) is skipped, an item that left the window is tombstoned. Off = nothing is
+  # written; the leg serves the table plus its query-time catch-up. The interval bounds
+  # only that catch-up, never what a query can find. [restart]
   # tracker_embed_enabled: true
 
   # Seconds between `tracker_embed` passes. [restart]
@@ -4279,11 +4284,12 @@ settings:
 
   # --- an issue names the PRs that probably fixed it ---
 
-  # A daily pass ranks, for every issue opened in the last `issue_days`, the merged
-  # trunk PRs of the `window_days` after it (from a week before) by BM25F over title and
-  # body, the issue's stack frames in the PR's diff, the closing mention and the
-  # component, and writes each issue's top `per_issue` into loom.qa_link_candidates. Off
-  # = nothing is written; `tracker.links` serves the table. [restart]
+  # A daily pass ranks, for every issue opened in the last `tracker_links_issue_days`,
+  # the merged trunk PRs of the `tracker_links_window_days` after it (from a week
+  # before) by BM25F over title and body, the issue's stack frames in the PR's diff, the
+  # closing mention and the component, and writes each issue's top
+  # `tracker_links_per_issue` into loom.qa_link_candidates. Off = nothing is written;
+  # `tracker.links` serves the table. [restart]
   # tracker_links_enabled: true
 
   # Seconds between `tracker_links` passes. [restart]

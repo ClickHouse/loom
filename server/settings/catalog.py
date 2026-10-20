@@ -777,7 +777,7 @@ class CodeSettings(BaseModel):
     # re-indexes each entry every `code_scip_full_every_hours` (heals deltas
     # that hit the TU cap). One entry per pass, under its entry lock.
     code_scip_full_enabled: bool = True
-    # Seconds between checks for an entry that is due.
+    # Seconds between the C++ full re-index's checks for an entry that is due.
     code_scip_full_interval_seconds: int = 900
     # Hours between full re-indexes of one entry.
     code_scip_full_every_hours: int = 168
@@ -851,21 +851,23 @@ class CodeSettings(BaseModel):
     code_pr_history_interval_seconds: int = 900
 
     # --- The set-wide backport report ----------------------------------------
-    # Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR
-    # of the last `days` labelled for backport and writes one row per release
-    # branch into loom.code_backport_gaps. Paced one fix per `pace_s`, at most
-    # `prs_per_pass` a night, stalest first, stopping at `budget_s`; settled
-    # fixes are skipped. Off = nothing written; the read op serves the table.
+    # Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the
+    # last `days` labelled for backport and writes one row per release branch into
+    # loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most
+    # `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at
+    # `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written;
+    # the read op serves the table.
     code_backport_gaps_enabled: bool = True
-    # Seconds between passes; the read op reports the table stale past twice this.
+    # Seconds between backport-gaps passes; the read op reports the table stale past
+    # twice this.
     code_backport_gaps_interval_seconds: float = 86400.0
-    # Days back of backport-labelled trunk PRs a pass considers.
+    # Days back of backport-labelled trunk PRs a backport-gaps pass considers.
     code_backport_gaps_days: int = 90
-    # Max fixes checked per pass, stalest first.
+    # Max fixes a backport-gaps pass checks, stalest first.
     code_backport_gaps_prs_per_pass: int = 300
-    # Seconds of pause between two fixes.
+    # Seconds a backport-gaps pass pauses between two fixes.
     code_backport_gaps_pace_s: float = 1.0
-    # Seconds after which a pass stops starting fixes.
+    # Seconds after which a backport-gaps pass stops starting fixes.
     code_backport_gaps_budget_s: float = 1800.0
     # A backport-gaps pass's hard deadline (seconds) under the worker supervisor.
     code_backport_gaps_max_pass_seconds: float = 3600.0
@@ -1206,13 +1208,13 @@ class CodeSettings(BaseModel):
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
     code_search_prose_penalty: float = 0.25
+    # The question kinds `code_search_catalogue_penalty` applies to.
+    code_search_catalogue_kinds: str = "responsibility"
     # Cap of code.search's fan-in rank prior:
     # score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool);
     # skipped under test intent and on noise paths; inert without the stats.
     # 0 = off.
     code_fan_in_prior_cap: float = 0.25
-    # The question kinds the catalogue penalty applies to.
-    code_search_catalogue_kinds: str = "responsibility"
     # Lexical list's RRF weight for a responsibility question (vector = 1.0).
     # 1.0 = equal weights.
     code_search_rrf_lexical_weight_responsibility: float = 1.0
@@ -1664,9 +1666,10 @@ class ExtractionSettings(BaseModel):
     extraction_queue_interval_seconds: int = 15
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
-    # Seconds a claimed batch stays leased to one worker before another may claim it;
-    # at least a minute. Set it above the longest pass (max_batches_per_pass times one
-    # replay), or an overlapping worker may claim a batch still waiting in the pass.
+    # Seconds a claimed batch stays leased to one worker before another may claim it; at
+    # least a minute. Set it above the longest pass
+    # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping
+    # worker may claim a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
     # Attempts before a failing batch stops returning to `pending` and is marked failed.
     extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=0)
@@ -2066,7 +2069,8 @@ class MemorySettings(BaseModel):
     # 0 = keep every entity.
     entity_communities_hub_drop_fraction: float = 0.002
     # When one community holds more than this share of a namespace's entities,
-    # double hub_drop_fraction and re-partition, up to hub_drop_max_fraction
+    # double `entity_communities_hub_drop_fraction` and re-partition, up to
+    # `entity_communities_hub_drop_max_fraction`
     # (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction.
     entity_communities_giant_share: float = 0.5
     # Largest `entity_communities_hub_drop_fraction` the re-partition doubles up to (four
@@ -3005,19 +3009,22 @@ class ObservabilitySettings(BaseModel):
     # "text" (dev) or "json" (production).
     log_format: Annotated[Literal["text", "json"], CaseFolded] = "text"
 
-    # ops.health's create/read/update/delete mix over the window: warns when
-    # reads per write exceed the bar (polling load) or, after `min_writes`,
-    # the update share falls below its bar (append-only bank).
+    # Days of ops the `op_mix` check of ops.health reads: the create/read/update/delete mix
+    # over them warns when reads per write exceed `ops_op_mix_reads_per_write_warn`
+    # (polling load) or, after `ops_op_mix_min_writes`, the update share falls below
+    # `ops_op_mix_update_share_warn` (append-only bank).
     ops_op_mix_window_days: int = 7
     # Reads per write above which the `op_mix` check warns (polling load).
     ops_op_mix_reads_per_write_warn: float = 20.0
-    # Share of writes that are updates below which the check warns (append-only bank).
+    # Share of writes that are updates below which the `op_mix` check warns (append-only
+    # bank).
     ops_op_mix_update_share_warn: float = 0.01
     # Writes in the `op_mix` check's window before its update-share warning can fire.
     ops_op_mix_min_writes: int = 500
-    # ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and
-    # none showed a procedure while procedures exist, or when success retention
-    # over ≥ `min_pairs` pairs is below `retention_warn`.
+    # Days the `procedure_plane` check of ops.health reads: it warns when
+    # ≥ `ops_procedure_plane_min_packs` packs flowed and none showed a procedure while
+    # procedures exist, or when success retention over ≥ `ops_procedure_plane_min_pairs`
+    # pairs is below `ops_procedure_plane_retention_warn`.
     ops_procedure_plane_window_days: int = 7
     # Context packs in the `procedure_plane` check's window before "no pack showed a
     # procedure" can warn.
@@ -3653,12 +3660,10 @@ class StorageSettings(BaseModel):
     # it and deletes every original of its scope.
     document_blob_min_age_seconds: int = 3600
 
-    # Opt-in retention and tiering, applied as idempotent ALTER TABLE MODIFY TTL by
+    # Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by
     # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
-    # rows older than N days, a tiering_*_warm_days setting moves them to
-    # tiering_warm_volume_name after W days. With both set, W must be < N or the move is a
-    # no-op (logged WARN).
-    # ---- retention and tiering ----
+    # rows older than N days.
+    # ---- retention ----
     # Days `loom.audit_log` rows are kept; 0 = forever.
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
@@ -3681,6 +3686,9 @@ class StorageSettings(BaseModel):
     # Seconds between TTL re-apply passes.
     retention_reconcile_interval_seconds: int = 300
 
+    # Opt-in tiering, applied the same way: a tiering_*_warm_days setting moves a table's
+    # rows to tiering_warm_volume_name after W days. With retention also set, W must be
+    # < N or the move is a no-op (logged WARN).
     # ---- storage tiering ----
     # Days before `loom.audit_log` rows move to the warm volume; 0 = never.
     tiering_audit_log_warm_days: int = 0
@@ -3848,12 +3856,12 @@ class TrackerSettings(BaseModel):
     tracker_similar_catch_up_budget_ms: int = 300
     # --- the tracker_embed pass --------------------------------------------------
     # Every interval (seconds), for each configured tracker namespace, the issues and
-    # PRs open or closed within `closed_days` and changed since the last pass are
-    # embedded (`title + "\n" + left(body, body_chars)`, `tracker_embed_batch` a call)
-    # into loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that
-    # left the window is tombstoned. Off = nothing is written; the leg serves the table
-    # plus its query-time catch-up. The interval bounds only that catch-up, never what
-    # a query can find.
+    # PRs open or closed within `tracker_embed_closed_days` and changed since the last
+    # pass are embedded (`title + "\n" + left(body, tracker_embed_body_chars)`,
+    # `tracker_embed_batch` a call) into loom.qa_item_embeddings; an unchanged text
+    # (sha256) is skipped, an item that left the window is tombstoned. Off = nothing is
+    # written; the leg serves the table plus its query-time catch-up. The interval
+    # bounds only that catch-up, never what a query can find.
     tracker_embed_enabled: bool = True
     # Seconds between `tracker_embed` passes.
     tracker_embed_interval_seconds: float = 1800.0
@@ -3880,10 +3888,10 @@ class TrackerSettings(BaseModel):
     # BM25F) is cached per process; the upstream index cannot count it inside a budget.
     tracker_similar_idf_ttl_s: float = 3600.0
     # --- an issue names the PRs that probably fixed it -----------------------
-    # A daily pass ranks, for every issue opened in the last `issue_days`, the merged
-    # trunk PRs of the `window_days` after it (from a week before) by BM25F over title
+    # A daily pass ranks, for every issue opened in the last `tracker_links_issue_days`, the merged
+    # trunk PRs of the `tracker_links_window_days` after it (from a week before) by BM25F over title
     # and body, the issue's stack frames in the PR's diff, the closing mention and the
-    # component, and writes each issue's top `per_issue` into
+    # component, and writes each issue's top `tracker_links_per_issue` into
     # loom.qa_link_candidates. Off = nothing is written; `tracker.links` serves the table.
     tracker_links_enabled: bool = True
     # Seconds between `tracker_links` passes.

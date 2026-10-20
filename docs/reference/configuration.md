@@ -345,7 +345,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SCIP_DELTA_MAX_TUS` | `int` | `200` |  | Max translation units one delta indexes; past it only the changed `.cpp` files are indexed and the header fan-out heals on the next full run. |
 | `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` | `int` | `3600` |  | Seconds the C++ delta harness may run before it is killed. |
 | `LOOM_CODE_SCIP_FULL_ENABLED` | `bool` | `True` |  | C++ full re-index: seeds an entry the delta has no watermark for, and re-indexes each entry every `code_scip_full_every_hours` (heals deltas that hit the TU cap). One entry per pass, under its entry lock. |
-| `LOOM_CODE_SCIP_FULL_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between checks for an entry that is due. |
+| `LOOM_CODE_SCIP_FULL_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between the C++ full re-index's checks for an entry that is due. |
 | `LOOM_CODE_SCIP_FULL_EVERY_HOURS` | `int` | `168` |  | Hours between full re-indexes of one entry. |
 | `LOOM_CODE_SCIP_FULL_TIMEOUT_SECONDS` | `int` | `28800` |  | Seconds the full re-index harness (CMake configure, scip-clang, convert) may run; the checkout move and the apply get 6 h more in the pass deadline. |
 | `LOOM_CODE_CROSSREF_ENABLED` | `bool` | `True` |  | SQL <-> C++ crossref (code_test_map from registrations and test queries) for each C++ entry whose git_head moved since its last run. |
@@ -382,12 +382,12 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_BACKPORT_GAPS_ENABLED` | `bool` | `True` |  | Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `pace_s`, at most `prs_per_pass` a night, stalest first, stopping at `budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table. |
-| `LOOM_CODE_BACKPORT_GAPS_INTERVAL_SECONDS` | `float` | `86400.0` |  | Seconds between passes; the read op reports the table stale past twice this. |
-| `LOOM_CODE_BACKPORT_GAPS_DAYS` | `int` | `90` |  | Days back of backport-labelled trunk PRs a pass considers. |
-| `LOOM_CODE_BACKPORT_GAPS_PRS_PER_PASS` | `int` | `300` |  | Max fixes checked per pass, stalest first. |
-| `LOOM_CODE_BACKPORT_GAPS_PACE_S` | `float` | `1.0` |  | Seconds of pause between two fixes. |
-| `LOOM_CODE_BACKPORT_GAPS_BUDGET_S` | `float` | `1800.0` |  | Seconds after which a pass stops starting fixes. |
+| `LOOM_CODE_BACKPORT_GAPS_ENABLED` | `bool` | `True` |  | Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table. |
+| `LOOM_CODE_BACKPORT_GAPS_INTERVAL_SECONDS` | `float` | `86400.0` |  | Seconds between backport-gaps passes; the read op reports the table stale past twice this. |
+| `LOOM_CODE_BACKPORT_GAPS_DAYS` | `int` | `90` |  | Days back of backport-labelled trunk PRs a backport-gaps pass considers. |
+| `LOOM_CODE_BACKPORT_GAPS_PRS_PER_PASS` | `int` | `300` |  | Max fixes a backport-gaps pass checks, stalest first. |
+| `LOOM_CODE_BACKPORT_GAPS_PACE_S` | `float` | `1.0` |  | Seconds a backport-gaps pass pauses between two fixes. |
+| `LOOM_CODE_BACKPORT_GAPS_BUDGET_S` | `float` | `1800.0` |  | Seconds after which a backport-gaps pass stops starting fixes. |
 | `LOOM_CODE_BACKPORT_GAPS_MAX_PASS_SECONDS` | `float` | `3600.0` |  | A backport-gaps pass's hard deadline (seconds) under the worker supervisor. |
 
 ### Coverage watches
@@ -573,8 +573,8 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
 | `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
 | `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
+| `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds `code_search_catalogue_penalty` applies to. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
-| `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds the catalogue penalty applies to. |
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |
 | `LOOM_CODE_SEARCH_ABSTAIN_CARD_BELOW` | `float` | `0.0` |  | A prose question whose nearest file card's cosine is below this abstains `off_domain`; independent of the card leg. 0 = off. |
 | `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` | `float` | `0.35` |  | Calibrated confidence below which a result is flagged `low_calibrated_confidence` (still returned). The deployment sets 0.30. |
@@ -766,7 +766,7 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 | `LOOM_EXTRACTION_DEFER_AGENTS` | `str` | `''` | live | Agents whose set_from_messages runs deferred without the flag: comma-separated agent names, "*" = every service-account caller, "" = nobody. A call that sets `record_schema` is never deferred by this list (it reads `written` back), and an explicit defer=false still wins. |
 | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between deferred-extraction queue passes. |
 | `LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS` | `int` | `8` | live | Most queued batches one pass claims. |
-| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (max_batches_per_pass times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
+| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
 
@@ -946,7 +946,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_ENTITY_COMMUNITIES_MAX_EDGES` | `int` | `200000` |  | Entity pairs read per namespace, strongest first; past it the rest are dropped and the namespace is reported truncated. |
 | `LOOM_ENTITY_COMMUNITIES_WALKED_DAYS` | `int` | `14` |  | A pass covers the namespaces with consolidation_enabled plus those whose graph was walked (facts.traverse / related / path, namespace.taxonomy) within this many days; 0 = the opted-in set only. |
 | `LOOM_ENTITY_COMMUNITIES_HUB_DROP_FRACTION` | `float` | `0.002` |  | Leave the top fraction of entities by degree out of the partition, so generic tokens cannot fuse the graph into one community. A graph under 500 entities drops none. 0 = keep every entity. |
-| `LOOM_ENTITY_COMMUNITIES_GIANT_SHARE` | `float` | `0.5` |  | When one community holds more than this share of a namespace's entities, double hub_drop_fraction and re-partition, up to hub_drop_max_fraction (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction. |
+| `LOOM_ENTITY_COMMUNITIES_GIANT_SHARE` | `float` | `0.5` |  | When one community holds more than this share of a namespace's entities, double `entity_communities_hub_drop_fraction` and re-partition, up to `entity_communities_hub_drop_max_fraction` (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction. |
 | `LOOM_ENTITY_COMMUNITIES_HUB_DROP_MAX_FRACTION` | `float` | `0.032` |  | Largest `entity_communities_hub_drop_fraction` the re-partition doubles up to (four doublings from its default); a graph still fused here is written as is and counted in the pass outcome. |
 | `LOOM_ENTITY_COMMUNITIES_MIN_CO_OCCUR` | `int` | `1` |  | Co-occurrence count an entity pair needs to count as an edge. |
 
@@ -1292,11 +1292,11 @@ Telemetry, audit, tracing and the ops surface.
 | --- | --- | --- | --- | --- |
 | `LOOM_LOG_LEVEL` | `'debug' \| 'info' \| 'warning' \| 'error' \| 'critical'` | `'info'` |  | Root log level. (Bind host/port are flags of `loom serve`, not settings.) |
 | `LOOM_LOG_FORMAT` | `'text' \| 'json'` | `'text'` |  | "text" (dev) or "json" (production). |
-| `LOOM_OPS_OP_MIX_WINDOW_DAYS` | `int` | `7` |  | ops.health's create/read/update/delete mix over the window: warns when reads per write exceed the bar (polling load) or, after `min_writes`, the update share falls below its bar (append-only bank). |
+| `LOOM_OPS_OP_MIX_WINDOW_DAYS` | `int` | `7` |  | Days of ops the `op_mix` check of ops.health reads: the create/read/update/delete mix over them warns when reads per write exceed `ops_op_mix_reads_per_write_warn` (polling load) or, after `ops_op_mix_min_writes`, the update share falls below `ops_op_mix_update_share_warn` (append-only bank). |
 | `LOOM_OPS_OP_MIX_READS_PER_WRITE_WARN` | `float` | `20.0` |  | Reads per write above which the `op_mix` check warns (polling load). |
-| `LOOM_OPS_OP_MIX_UPDATE_SHARE_WARN` | `float` | `0.01` |  | Share of writes that are updates below which the check warns (append-only bank). |
+| `LOOM_OPS_OP_MIX_UPDATE_SHARE_WARN` | `float` | `0.01` |  | Share of writes that are updates below which the `op_mix` check warns (append-only bank). |
 | `LOOM_OPS_OP_MIX_MIN_WRITES` | `int` | `500` |  | Writes in the `op_mix` check's window before its update-share warning can fire. |
-| `LOOM_OPS_PROCEDURE_PLANE_WINDOW_DAYS` | `int` | `7` |  | ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and none showed a procedure while procedures exist, or when success retention over ≥ `min_pairs` pairs is below `retention_warn`. |
+| `LOOM_OPS_PROCEDURE_PLANE_WINDOW_DAYS` | `int` | `7` |  | Days the `procedure_plane` check of ops.health reads: it warns when ≥ `ops_procedure_plane_min_packs` packs flowed and none showed a procedure while procedures exist, or when success retention over ≥ `ops_procedure_plane_min_pairs` pairs is below `ops_procedure_plane_retention_warn`. |
 | `LOOM_OPS_PROCEDURE_PLANE_MIN_PACKS` | `int` | `50` |  | Context packs in the `procedure_plane` check's window before "no pack showed a procedure" can warn. |
 | `LOOM_OPS_PROCEDURE_PLANE_RETENTION_WARN` | `float` | `0.5` |  | Success retention (fraction) below which the `procedure_plane` check warns. |
 | `LOOM_OPS_PROCEDURE_PLANE_MIN_PAIRS` | `int` | `20` |  | Pairs the `procedure_plane` check measures success retention over before its warning can fire. |
@@ -1455,9 +1455,9 @@ Storage: document originals, per-table retention and warm-tier moves.
 | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between document-original GC sweeps. |
 | `LOOM_DOCUMENT_BLOB_MIN_AGE_SECONDS` | `int` | `3600` |  | Seconds an original must have gone unwritten before the sweep may remove it. A write stores its original before the document row that names it, so a younger original may belong to a write still in flight. Erasure ignores it and deletes every original of its scope. |
 
-### Retention and tiering
+### Retention
 
-Opt-in retention and tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: a retention_*_days setting deletes a table's rows older than N days, a tiering_*_warm_days setting moves them to tiering_warm_volume_name after W days. With both set, W must be < N or the move is a no-op (logged WARN).
+Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: a retention_*_days setting deletes a table's rows older than N days.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -1472,6 +1472,8 @@ Opt-in retention and tiering, applied as idempotent ALTER TABLE MODIFY TTL by se
 | `LOOM_RETENTION_RECONCILE_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between TTL re-apply passes. |
 
 ### Storage tiering
+
+Opt-in tiering, applied the same way: a tiering_*_warm_days setting moves a table's rows to tiering_warm_volume_name after W days. With retention also set, W must be < N or the move is a no-op (logged WARN).
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -1573,7 +1575,7 @@ The tracker plane: records, duplicate checks, bisect.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_TRACKER_EMBED_ENABLED` | `bool` | `True` |  | Every interval (seconds), for each configured tracker namespace, the issues and PRs open or closed within `closed_days` and changed since the last pass are embedded (`title + "\n" + left(body, body_chars)`, `tracker_embed_batch` a call) into loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that left the window is tombstoned. Off = nothing is written; the leg serves the table plus its query-time catch-up. The interval bounds only that catch-up, never what a query can find. |
+| `LOOM_TRACKER_EMBED_ENABLED` | `bool` | `True` |  | Every interval (seconds), for each configured tracker namespace, the issues and PRs open or closed within `tracker_embed_closed_days` and changed since the last pass are embedded (`title + "\n" + left(body, tracker_embed_body_chars)`, `tracker_embed_batch` a call) into loom.qa_item_embeddings; an unchanged text (sha256) is skipped, an item that left the window is tombstoned. Off = nothing is written; the leg serves the table plus its query-time catch-up. The interval bounds only that catch-up, never what a query can find. |
 | `LOOM_TRACKER_EMBED_INTERVAL_SECONDS` | `float` | `1800.0` |  | Seconds between `tracker_embed` passes. |
 | `LOOM_TRACKER_EMBED_MAX_PASS_SECONDS` | `float` | `900.0` |  | Seconds a tracker-embed pass may run before the supervisor abandons it. |
 | `LOOM_TRACKER_EMBED_CLOSED_DAYS` | `int` | `365` |  | The embedding window for PRs, days: a PR closed longer ago is not embedded and one that leaves the window is tombstoned. |
@@ -1587,7 +1589,7 @@ The tracker plane: records, duplicate checks, bisect.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_TRACKER_LINKS_ENABLED` | `bool` | `True` |  | A daily pass ranks, for every issue opened in the last `issue_days`, the merged trunk PRs of the `window_days` after it (from a week before) by BM25F over title and body, the issue's stack frames in the PR's diff, the closing mention and the component, and writes each issue's top `per_issue` into loom.qa_link_candidates. Off = nothing is written; `tracker.links` serves the table. |
+| `LOOM_TRACKER_LINKS_ENABLED` | `bool` | `True` |  | A daily pass ranks, for every issue opened in the last `tracker_links_issue_days`, the merged trunk PRs of the `tracker_links_window_days` after it (from a week before) by BM25F over title and body, the issue's stack frames in the PR's diff, the closing mention and the component, and writes each issue's top `tracker_links_per_issue` into loom.qa_link_candidates. Off = nothing is written; `tracker.links` serves the table. |
 | `LOOM_TRACKER_LINKS_INTERVAL_SECONDS` | `float` | `86400.0` |  | Seconds between `tracker_links` passes. |
 | `LOOM_TRACKER_LINKS_MAX_PASS_SECONDS` | `float` | `3600.0` |  | Seconds a tracker-links pass may run before the supervisor abandons it. |
 | `LOOM_TRACKER_LINKS_ISSUE_DAYS` | `int` | `90` |  | Issues opened within this many days are ranked each pass. |
