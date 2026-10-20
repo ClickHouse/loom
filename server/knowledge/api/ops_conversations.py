@@ -15,8 +15,12 @@ from server.knowledge.api.models_conversations import (
     ConversationGetOutput,
     ConversationListInput,
     ConversationListOutput,
+    ConversationSaveMessageInput,
+    ConversationSaveMessageOutput,
     ConversationSearchInput,
     ConversationSearchOutput,
+    ConversationSearchSavedMessagesInput,
+    ConversationSearchSavedMessagesOutput,
     ConversationSetLoggingInput,
     ConversationSetLoggingOutput,
     ConversationThreadsInput,
@@ -31,7 +35,9 @@ from server.knowledge.app.conversations import (
     handle_conversation_delete,
     handle_conversation_get,
     handle_conversation_list,
+    handle_conversation_save_message,
     handle_conversation_search,
+    handle_conversation_search_saved_messages,
     handle_conversation_set_logging,
     handle_conversation_threads,
     handle_conversation_update,
@@ -55,6 +61,18 @@ conversation_append = Operation(
     output_model=ConversationAppendOutput,
     handler=handle_conversation_append,
     idempotent=True,  # dedup on msg_id
+    required_role=Role.WRITER,
+    audit=False,
+)
+
+conversation_save_message = Operation(
+    name="conversation.save_message",
+    maturity="experimental",
+    input_model=ConversationSaveMessageInput,
+    output_model=ConversationSaveMessageOutput,
+    handler=handle_conversation_save_message,
+    idempotent=True,
+    budget_p99_ms=250,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -125,6 +143,18 @@ conversation_search = Operation(
     audit=False,
 )
 
+conversation_search_saved_messages = Operation(
+    name="conversation.search_saved_messages",
+    maturity="experimental",
+    input_model=ConversationSearchSavedMessagesInput,
+    output_model=ConversationSearchSavedMessagesOutput,
+    handler=handle_conversation_search_saved_messages,
+    idempotent=True,
+    budget_p99_ms=200,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
 conversation_threads = Operation(
     name="conversation.threads",
     input_model=ConversationThreadsInput,
@@ -151,12 +181,14 @@ conversation_compact = Operation(
 OPERATIONS: list[Operation] = [
     conversation_create,
     conversation_append,
+    conversation_save_message,
     conversation_set_logging,
     conversation_get,
     conversation_update,
     conversation_delete,
     conversation_list,
     conversation_search,
+    conversation_search_saved_messages,
     conversation_threads,
     conversation_compact,
 ]

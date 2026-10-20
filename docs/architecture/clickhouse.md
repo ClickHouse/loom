@@ -101,7 +101,9 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   instants.
 - **Retries never duplicate.** Every insert carries an `insert_deduplication_token` from
   the batch and a per-batch nonce (`insert_dedup_token`), so a retry after a dropped socket
-  lands the batch once.
+  lands the batch once. A caller that passes its own token names the row's identity
+  instead, so two writers of one row land it once: `conversation.save_message` writes a
+  new transcript row this way.
 
 ## Engines and why
 

@@ -259,6 +259,20 @@ async def test_exhausted_read_reconnect_is_an_actionable_503(
     assert exc.value.extra["outcome_unknown"] is False
 
 
+async def test_a_callers_token_names_every_attempt_of_the_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A token naming the row's identity, not the batch, lands two writers of one
+    row once; a retry still sends it unchanged."""
+    fake = _FakeAsync(plan={"loom.t": [OperationalError(_NET)]})
+    c = _client(monkeypatch, fake)
+    await c.insert("loom.t", [{"a": 1}], settings={"insert_deduplication_token": "turn:1"})
+    await c.insert("loom.t", [{"a": 2}], settings={"insert_deduplication_token": "turn:1"})
+    sent = [s for f in c.fakes for k, _t, s in f.calls if k == "insert"]
+    assert [s["insert_deduplication_token"] for s in sent] == ["turn:1"] * 3
+    assert all(s["insert_deduplicate"] == 1 for s in sent)
+
+
 async def test_async_batches_deduplicate_through_the_async_switch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
