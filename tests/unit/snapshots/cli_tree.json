@@ -10910,7 +10910,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Keep candidates carrying this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
+       "help": "Select only rows of this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
        "metavar": null
       },
       {

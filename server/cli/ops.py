@@ -319,7 +319,7 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
         "--only-shape",
         action="append",
         choices=["credential", "email", "phone", "other"],
-        help="Keep candidates carrying this probe shape (repeatable); the phone shape is "
+        help="Select only rows of this probe shape (repeatable); the phone shape is "
         "a ten-digit run and the noisiest, so apply credential + email first",
     )
     add_apply_flags(p_ssw, writes="write the labels")

@@ -83,22 +83,34 @@ _COARSE_KEYED = (
 )
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
-# `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
-# the detector would miss too; anything it over-selects the detector drops.
-COARSE_SHAPE_RE = (
-    # the detector reads these prefixes at a word boundary, so `task-` and `disk-` are not
-    rf"{_JSON_BOUNDARY}(?:sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|eyJ|AIza)"
-    r"|PRIVATE KEY"
-    r"|(?i:password|passwd|pwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token"
-    r"|bearer|client[_-]?secret|private[_-]?key)"
-    r"|@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
-    r"|[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}"
-    r"|[0-9](?:[ -]?[0-9]){12}"  # card number
-    r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
-    rf"|{_COARSE_PIN}"
-    rf"|{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}"  # IBAN
-    rf"|{_COARSE_KEYED}"
-)
+# `memory/domain/sensitivity.py`'s high and medium patterns, by the shape `_shapes` gives
+# the row. Anything this misses the detector would miss too; anything it over-selects the
+# detector drops.
+_COARSE_BY_SHAPE = {
+    "credential": (
+        # the detector reads these prefixes at a word boundary, so `task-` and `disk-` are not
+        rf"{_JSON_BOUNDARY}(?:sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|eyJ|AIza)"
+        r"|PRIVATE KEY"
+        r"|(?i:password|passwd|pwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token"
+        r"|bearer|client[_-]?secret|private[_-]?key)"
+        r"|[0-9](?:[ -]?[0-9]){12}"  # card number
+        r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
+        rf"|{_COARSE_PIN}"
+        rf"|{_COARSE_KEYED}"
+    ),
+    "email": r"@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    "phone": r"[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}",
+    "other": rf"{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}",  # IBAN
+}
+COARSE_SHAPE_RE = "|".join(_COARSE_BY_SHAPE.values())
+
+
+def coarse_shape_re(shapes: set[str]) -> str:
+    """The coarse filter for rows of the named shapes (every shape when none is named), so
+    a pass that keeps only some shapes never selects a row it would drop: a phone-shaped
+    row the scheduled pass leaves unlabelled would be selected again on every pass."""
+    return "|".join(rx for shape, rx in _COARSE_BY_SHAPE.items() if not shapes or shape in shapes)
+
 
 # A probe shape reported beside the detector's levels, so a dry run says how many
 # e-mail-shaped rows it found.
@@ -162,8 +174,7 @@ _SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 
 
 def _after_cursor() -> str:
-    """Rows after `{after_<column>}` in sort key order. Spelled out as `a > x OR (a = x AND
-    ...)`: the primary index prunes on that form, and not on a tuple comparison."""
+    """Rows after `{after_<column>}` in sort key order, as `a > x OR (a = x AND ...)`."""
     cond = ""
     for col in reversed(_SORT_KEY):
         cond = f"{col} > {{after_{col}:String}}" + (
@@ -185,7 +196,7 @@ def scan_sql(
     if after:  # the next page, after the last row of the one before
         scope += f" AND ({_after_cursor()})"
     return f"""
-        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, created_at,
+        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
                if(length(toString(value_json)) > 2, toString(value_json), value) AS value
         FROM loom.memory FINAL
         WHERE tombstoned_at IS NULL AND sensitivity = ''
@@ -215,20 +226,23 @@ async def scan(
     operator can apply the others first.
 
     Reads pages of `limit` rows in the table's sort key order until `limit` candidates are
-    found, the rows run out or `pages` pages are read (`None`: no page cap). A selected row
-    the detector leaves unlabelled, or one outside `only_shapes`, stays unlabelled and is
-    selected again on the next run; reading past it keeps a run of them from hiding a later
-    row that is high."""
+    found, the rows run out or `pages` pages are read (`None`: no page cap). Only rows of
+    the shapes in `only_shapes` are selected. A selected row the detector leaves unlabelled
+    stays unlabelled and is selected again on the next run; reading past it keeps a run of
+    them from hiding a later row that is high."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": limit}
+    keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
+    report = SweepReport()
+    shape_re = coarse_shape_re(keep)
+    if not shape_re:  # no shape the detector gives
+        return report
+    params: dict[str, Any] = {"shape": shape_re, "lim": limit}
     if org:
         params["org"] = org
     if namespace:
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
-    report = SweepReport()
-    keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     last: dict[str, Any] | None = None
     read = 0
     while pages is None or read < pages:
@@ -426,6 +440,7 @@ __all__ = [
     "SweepCandidate",
     "SweepReport",
     "apply",
+    "coarse_shape_re",
     "high_with_embedding_count",
     "scan",
     "scan_sql",

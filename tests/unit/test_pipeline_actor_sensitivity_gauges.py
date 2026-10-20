@@ -274,26 +274,36 @@ class _LocalCH:
     def __init__(self, setup: list[str], params: dict[str, Any]) -> None:
         self.setup = setup
         self.params = params
+        self.returned: list[dict[str, Any]] = []  # every row a query answered
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        return run(self.setup, sql, self.params | (params or {}))
+        rows = run(self.setup, sql, self.params | (params or {}))
+        self.returned.extend(rows)
+        return rows
 
     async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         rows = await self.query_all(sql, params)
         return rows[0] if rows else None
 
 
-def _local_memory(rows: list[tuple[str, str, Any, int]]) -> _LocalCH:
-    """loom.memory on clickhouse-local holding (memory_id, memory_key, value, age seconds)."""
+# (org, namespace, user_id, memory_id, memory_key, value, age seconds)
+_Row = tuple[str, str, str, str, str, Any, int]
+
+
+def _local_memory(rows: list[_Row]) -> _LocalCH:
+    """loom.memory on clickhouse-local holding `rows`, all under agent `a`, session `-`."""
     # Each query reruns the insert, so the timestamps are fixed here rather than `now()`.
     now = int(time.time())
     values, params = [], {}
-    for i, (mid, key, value, age) in enumerate(rows):
+    for i, (org, ns, user, mid, key, value, age) in enumerate(rows):
         values.append(
-            f"('o', 'n', 'a', '-', '-', {{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, "
-            f"toDateTime({{at{i}:UInt32}}))"
+            f"({{org{i}:String}}, {{ns{i}:String}}, 'a', {{user{i}:String}}, '-', "
+            f"{{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, toDateTime({{at{i}:UInt32}}))"
         )
         params |= {
+            f"org{i}": org,
+            f"ns{i}": ns,
+            f"user{i}": user,
             f"id{i}": mid,
             f"key{i}": key,
             f"value{i}": json.dumps(value),
@@ -308,12 +318,12 @@ def _local_memory(rows: list[tuple[str, str, Any, int]]) -> _LocalCH:
     return _LocalCH([*tables, insert], params)
 
 
-def _spin_rows_then_a_pin(spins: int) -> list[tuple[str, str, Any, int]]:
+def _spin_rows_then_a_pin(spins: int) -> list[_Row]:
     """`spins` selected rows the detector leaves unlabelled, then a row holding a PIN."""
-    rows: list[tuple[str, str, Any, int]] = [
-        (_uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(spins)
+    rows: list[_Row] = [
+        ("o", "n", "-", _uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(spins)
     ]
-    rows.append((_uuid(99), "vault_door", "badge PIN is 4471", 60))  # sorts after spin_*
+    rows.append(("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60))
     return rows
 
 
@@ -355,6 +365,63 @@ async def test_a_pass_reads_at_most_its_page_cap() -> None:
     ch = _local_memory(_spin_rows_then_a_pin(5))
     capped = await sweep.scan(since_days=2, limit=2, pages=2, ch=ch)  # type: ignore[arg-type]
     assert capped.scanned == 4 and capped.truncated and capped.candidates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None:
+    # Pages of two rows end inside one user, at a user boundary and at a namespace boundary:
+    # each selected row comes back exactly once, and the scan reaches the PIN row at the end.
+    spin = {"spin": "4471"}
+    rows: list[_Row] = [
+        ("o", "n", "-", _uuid(1), "spin_1", spin, 60),
+        ("o", "n", "-", _uuid(2), "spin_2", spin, 60),
+        ("o", "n", "-", _uuid(3), "spin_3", spin, 60),
+        ("o", "n", "u2", _uuid(4), "spin_1", spin, 60),
+        ("o", "n", "u2", _uuid(5), "spin_2", spin, 60),
+        ("o", "n2", "-", _uuid(6), "spin_1", spin, 60),
+        ("o", "n2", "u2", _uuid(7), "spin_1", spin, 60),
+        ("o", "n2", "u2", _uuid(8), "vault_door", "badge PIN is 4471", 60),
+    ]
+    ch = _local_memory(rows)
+    report = await sweep.scan(since_days=2, limit=2, pages=None, ch=ch)  # type: ignore[arg-type]
+    returned = sorted(r["memory_id"] for r in ch.returned)
+    assert returned == sorted(row[3] for row in rows)
+    assert [c.memory_key for c in report.candidates] == ["vault_door"]
+    assert report.scanned == 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_phone_shaped_rows_in_one_org_never_hide_a_credential_in_another(
+    monkeypatch,
+) -> None:
+    # The first org holds more ten-digit runs (epoch seconds) than a pass's pages: the
+    # detector reads them as phone numbers, which the scheduled pass leaves alone, so they
+    # are not selected, and the token in the next org is labelled.
+    from server.memory.workers import sensitivity_sweep as w
+    from server.settings import settings
+
+    rows: list[_Row] = [
+        ("acme", "n", "-", _uuid(i), f"obs_{i}", {"ts": 1760000000 + i}, 60) for i in range(6)
+    ]
+    token = "gh" + "p_" + "Ab3" * 12
+    rows.append(("zeta", "n", "-", _uuid(99), "deploy_token", f"push with {token}", 60))
+    ch = _local_memory(rows)
+    applied: list[Any] = []
+
+    async def _apply(cands, *, ch=None):
+        applied.extend(cands)
+        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
+
+    monkeypatch.setattr(sweep, "apply", _apply)
+    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential,email")
+    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    assert [(c.org, c.memory_key) for c in applied] == [("zeta", "deploy_token")]
+    assert out["scanned"] == 1
 
 
 @pytest.mark.asyncio
@@ -408,7 +475,7 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
 def test_a_sweep_pass_bound_below_one_is_refused(field: str) -> None:
     from pydantic import ValidationError
 
-    from server.settings._memory import MemorySettings
+    from server.settings.catalog import MemorySettings
 
     with pytest.raises(ValidationError):
         MemorySettings(**{field: 0})
