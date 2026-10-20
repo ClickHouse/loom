@@ -84,6 +84,11 @@ class _Seed:
     pattern_id_v: str = ""
 
 
+def _saved_message_id(nonce: str) -> str:
+    """The id of the chat message a seeded user saves; it carries the user's nonce."""
+    return f"msg-{nonce}"
+
+
 def _post(base: str, token: str, op: str, payload: dict[str, Any]) -> httpx.Response:
     with httpx.Client(base_url=base, timeout=60.0) as c:
         return c.post(f"/v1/{op}", json=payload, headers={"Authorization": f"Bearer {token}"})
@@ -191,7 +196,7 @@ def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str
             "agent": "a",
             "user_id": user,
             "conversation_id": s.conversation_id,
-            "message_id": f"msg-{nonce}",
+            "message_id": _saved_message_id(nonce),
             "role": "user",
             "content": f"{s.entity} saved the vault code {nonce}",
         },
@@ -285,7 +290,7 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
         "failure_ids": [str(uuid.uuid4())],
         "conversation_id": seed.conversation_id,
-        "message_ids": [f"msg-{seed.nonce_v}"],
+        "message_ids": [_saved_message_id(seed.nonce_v)],
     }
     out: dict[str, Any] = {}
     fields = model.model_fields
@@ -432,19 +437,19 @@ def test_the_walk_reaches_vs_saved_messages(
 
 
 def test_a_pinned_token_cannot_save_or_unsave_vs_saved_message(
-    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
 ) -> None:
     """W re-saves and unsaves V's saved message as itself: the save is refused as
-    another user's turn, the unsave finds nothing, and V's message stays saved.
-    Both answers echo the message id W sent, so they are checked here and not by
-    the write walk's nonce check."""
+    another user's turn, the unsave finds nothing, and V's message stays saved
+    as V's one row. Both answers echo the message id W sent, so they are checked
+    here and not by the write walk's nonce check."""
     conv = {
         "org": seed.org,
         "namespace": seed.ns,
         "agent": "a",
         "conversation_id": seed.conversation_id,
     }
-    msg = {**conv, "message_id": f"msg-{seed.nonce_v}"}
+    msg = {**conv, "message_id": _saved_message_id(seed.nonce_v)}
     saved = _write(
         control_plane_url,
         tokens["pinned_w"],
@@ -463,6 +468,30 @@ def test_a_pinned_token_cannot_save_or_unsave_vs_saved_message(
         {**conv, "user_id": V, "message_ids": [msg["message_id"]]},
     )
     assert status["saved"] == [msg["message_id"]], status
+    status_w = _write(
+        control_plane_url,
+        tokens["pinned_w"],
+        "conversation.saved_status",
+        {**conv, "user_id": W, "message_ids": [msg["message_id"]]},
+    )
+    assert status_w["saved"] == [], status_w
+    rows = ch_client.query(
+        """
+        SELECT user_id, content, is_saved, tombstoned_at IS NULL
+        FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND thread_id = {tid:String} AND msg_id = {mid:String}
+        """,
+        parameters={
+            "org": seed.org,
+            "ns": seed.ns,
+            "tid": seed.conversation_id,
+            "mid": msg["message_id"],
+        },
+    ).result_rows
+    assert [tuple(r) for r in rows] == [
+        (V, f"{seed.entity} saved the vault code {seed.nonce_v}", True, True)
+    ], rows
 
 
 @pytest.mark.parametrize("other_user", ["*", V])
