@@ -569,6 +569,30 @@ async def test_memory_set_succeeds_when_the_chunk_insert_fails(
     assert any(t == "loom.memory" for t, _, _ in ch.inserts)
 
 
+@pytest.mark.asyncio
+async def test_memory_set_announces_its_row_when_supersession_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row is in before the supersession runs: a failure there answers an error,
+    and the event is already in the outbox (a retry is a restatement, never announced)."""
+    ch = _CH()
+    _wire_set(monkeypatch, ch, _BatchEmbedder())
+    announced: list[Any] = []
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    async def _supersede(**_: Any) -> int:
+        raise RuntimeError("supersession insert failed")
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    monkeypatch.setattr("server.memory.app.key_supersession.supersede_same_key_rows", _supersede)
+    with pytest.raises(RuntimeError, match="supersession"):
+        await write_mod.handle_memory_set(_input("Deploys happen on Thursday"))
+    [(event, row)] = announced
+    assert event == "memory.written" and row["memory_key"] == _KEY
+
+
 def test_write_outcome_label_precedence() -> None:
     assert set_commit._set_write_outcome("dup-id", "conflict", True) == "duplicate"
     assert set_commit._set_write_outcome("", "conflict", True) == "conflicted"

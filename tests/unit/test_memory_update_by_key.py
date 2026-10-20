@@ -273,3 +273,35 @@ async def test_an_update_that_writes_a_credential_is_labelled_high_and_leaves_se
     assert fence["tombstoned_at"] is not None and fence["version"] == written["version"]
     # at the new row's version, so a concurrent embedded write's newer vector survives
     assert dropped == [("deploy_day", written["version"])]
+
+
+@pytest.mark.asyncio
+async def test_update_announces_its_row_when_supersession_fails(
+    wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The version row is in before the supersession runs: a failure there answers an
+    error, and the memory.revised event is already in the outbox."""
+    wired([_cand(_ID_A)], _row())
+    announced: list[Any] = []
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    async def _supersede(**_: Any) -> int:
+        raise RuntimeError("supersession insert failed")
+
+    from server.memory.app import key_supersession as ks
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    monkeypatch.setattr(ks, "supersede_same_key_rows", _supersede)
+    with pytest.raises(RuntimeError, match="supersession"):
+        await update_mod.handle_memory_update(
+            MemoryUpdateInput(
+                org="test",
+                namespace="personal",
+                memory_key="deploy_day",
+                value="Deploys happen on Thursday",
+            )
+        )
+    [(event, row)] = announced
+    assert event == "memory.revised" and row["memory_id"] == _ID_A

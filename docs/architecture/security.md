@@ -791,9 +791,9 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` are the operator's exceptions. A refusal does not
   name the address, a URL with a user name or password is refused, and logs name the
   host only.
-- **No slow receiver holds a worker.** One deadline,
-  `LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS`, covers a delivery from the name lookup to the
-  status line, and the answer's body is never read.
+- **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
+  connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
+  webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.
 - **No network on the request path.** A memory write leaves outbox rows; a worker sends
   them. The outbox holds keys and user ids, so erasure clears it.
 

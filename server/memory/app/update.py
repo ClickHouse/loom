@@ -701,6 +701,9 @@ async def _write_revision(
             # After the retire (at the same version, the later insert wins the tie),
             # and even when the gather failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
+    # The row is in: announce it before the tail below, so a failure there does not lose
+    # the event (a retry of the same value is a restatement and announces nothing).
+    await webhooks.announce([("memory.revised", memory_row)])
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
@@ -719,7 +722,6 @@ async def _write_revision(
 
     # Same-key supersession, exactly as memory.set runs it after its insert.
     await _revision_supersession(input.org, existing, serialized_value, ch, cfg.policy)
-    await webhooks.announce([("memory.revised", memory_row)])
     return MemoryUpdateByIdOutput(
         updated=True,
         new_version=new_version,

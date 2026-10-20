@@ -64,9 +64,10 @@ USER_AGENT = "loom-memory-webhook/1"
 
 
 def _post_budget_seconds() -> float:
-    """How long a pass may spend POSTing: every POST waiting its whole ack deadline,
-    memory_webhook_deliver_concurrency at a time, cut short of the pass deadline so the
-    pass records what it sent; the rest go next pass."""
+    """How long after it starts a pass may still be POSTing: every POST waiting its whole
+    ack deadline, memory_webhook_deliver_concurrency at a time, cut short of the pass
+    deadline by the reserve, which covers the reads before the POSTs and the insert
+    after them, so the pass records what it sent; the rest go next pass."""
     every_post_waits = (
         settings.memory_webhook_max_posts_per_pass
         / settings.memory_webhook_deliver_concurrency
@@ -249,9 +250,10 @@ async def _send(
     due: list[dict[str, Any]],
     urls: Mapping[store.Hook, str],
     secrets: Mapping[store.Hook, bytes],
+    deadline: float,
 ) -> tuple[list[dict[str, Any]], int]:
     """POST the leased `due` events: memory_webhook_deliver_concurrency at a time,
-    one at a time per webhook, within `_post_budget_seconds()`. Returns the
+    one at a time per webhook, until `deadline` (event-loop time). Returns the
     attempt rows of the events that finished (recorded even when the budget or
     an error cut the pass) and the number of POSTs that failed and will be
     retried."""
@@ -292,7 +294,7 @@ async def _send(
     try:
         # A task group: an error in one webhook's turn cancels the others' before
         # the pass returns, so no POST outlives the pass.
-        async with asyncio.timeout(_post_budget_seconds()), asyncio.TaskGroup() as group:
+        async with asyncio.timeout_at(deadline), asyncio.TaskGroup() as group:
             for rows in by_hook.values():
                 group.create_task(in_turn(rows))
     except TimeoutError:
@@ -315,6 +317,8 @@ async def deliver_once(
     the environment the secrets are read from, and `org` / `namespace` narrow
     the pass (tests). Every time comes from
     `naive_utc_now()`, read when it is needed."""
+    # From the start of the pass: the reads below spend the reserve too.
+    deadline = asyncio.get_running_loop().time() + _post_budget_seconds()
     now = naive_utc_now()
     since = now - timedelta(days=store.KEEP_DAYS)
 
@@ -373,7 +377,7 @@ async def deliver_once(
             for r in due
         ]
     )
-    finished, failed = await _send(transport, due, urls, usable)
+    finished, failed = await _send(transport, due, urls, usable, deadline)
     return DeliverResult(
         delivered=sum(out["status"] == "delivered" for out in finished),
         failed=failed,

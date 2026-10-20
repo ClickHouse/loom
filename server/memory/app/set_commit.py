@@ -32,7 +32,7 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app import after_write
+from server.memory.app import after_write, webhooks
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import declared_entities
@@ -40,6 +40,7 @@ from server.memory.app.high_fence import fence_high
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
+from server.memory.domain.webhook_events import EventType
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -207,6 +208,7 @@ class _SetWrite:
     on_expire: str = ""
     memory_id: str = ""
     had_existing_row: bool = False
+    restated: bool = False
     writer_actor: str = ""
     source_class: str = ""
     memory_row: dict[str, Any] = field(default_factory=dict)
@@ -246,6 +248,18 @@ async def _lift_after_insert(
     return w.version
 
 
+async def _announce_set(w: _SetWrite) -> None:
+    """The row just inserted, to the namespace's webhooks: a new key is written, a new
+    value of one is revised, and the same value said again (a reinforcement) is no
+    change to announce. Called straight after the insert, before the post-insert tail,
+    so a failure there does not lose the event: a retry of the same value is a
+    restatement and announces nothing."""
+    if w.restated:
+        return
+    event: EventType = "memory.revised" if w.had_existing_row else "memory.written"
+    await webhooks.announce([(event, w.memory_row)])
+
+
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     """Phase 7 of memory.set: the non-embedded write — one loom.memory row, no peers.
 
@@ -279,6 +293,7 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
     version = await _lift_after_insert(w, ch)
+    await _announce_set(w)
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     try:
         await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
@@ -665,6 +680,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     with traced("ch.insert.dual_write", concurrent=2):
         await asyncio.gather(_insert_memory(), _insert_embedding())
     await _lift_after_insert(w, ch, [embedding_row])
+    await _announce_set(w)
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
     _cd.schedule_settle(

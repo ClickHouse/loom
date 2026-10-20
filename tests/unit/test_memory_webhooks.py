@@ -416,11 +416,11 @@ def _events(announced: list[Any]) -> set[tuple[str, str]]:
 async def test_memory_set_announces_a_change_and_never_a_restatement(
     announced: list[Any], existing: bool, restated: bool, event: str | None
 ) -> None:
-    from server.memory.app.write import _announce_set
+    from server.memory.app.set_commit import _announce_set
 
     row = {"memory_key": "k", "version": 42}
-    w = SimpleNamespace(had_existing_row=existing, memory_row=row)
-    await _announce_set(w, restated=restated)  # type: ignore[arg-type]
+    w = SimpleNamespace(had_existing_row=existing, restated=restated, memory_row=row)
+    await _announce_set(w)  # type: ignore[arg-type]
     assert announced == ([[(event, row)]] if event else [])
 
 
@@ -1175,6 +1175,30 @@ async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
 
 
 @pytest.mark.asyncio
+async def test_the_post_budget_counts_from_the_start_of_the_pass(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reads before the POSTs spend the budget too, so a slow due read leaves the
+    POSTs only what is left of it and the pass still ends inside its deadline."""
+    monkeypatch.setattr(worker, "_post_budget_seconds", lambda: 0.3)
+    read_due = fake.due_events
+
+    async def slow_due_events(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        await asyncio.sleep(0.25)
+        return await read_due(*args, **kwargs)
+
+    monkeypatch.setattr(fake, "due_events", slow_due_events)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(0.2)  # inside a budget of its own, not inside what is left
+        return httpx.Response(204)
+
+    result = await _pass(handler)
+    assert result.delivered == 0
+    assert fake.last("ev-1")["status"] == "leased"
+
+
+@pytest.mark.asyncio
 async def test_an_erasure_while_an_event_waits_for_a_slot_stops_its_post(
     fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1478,24 +1502,37 @@ def test_the_worker_is_registered_on_its_settings() -> None:
 
 
 @pytest.mark.parametrize(
-    "field",
+    ("field", "value"),
     [
-        "memory_webhook_deliver_interval_seconds",
-        "memory_webhook_deliver_idle_interval_seconds",
-        "memory_webhook_max_attempts",
-        "memory_webhook_failures_before_cooldown",
-        "memory_webhook_cooldown_seconds",
-        "memory_webhook_max_cooldown_seconds",
-        "memory_webhook_refresh_seconds",
-        "memory_webhook_max_posts_per_pass",
-        "memory_webhook_posts_per_webhook",
-        "memory_webhook_deliver_concurrency",
-        "memory_webhook_ack_timeout_seconds",
-        "memory_webhook_max_backoff_seconds",
+        ("memory_webhook_deliver_interval_seconds", 0),
+        ("memory_webhook_deliver_idle_interval_seconds", 0),
+        ("memory_webhook_deliver_max_pass_seconds", 29),
+        ("memory_webhook_deliver_reserve_seconds", 0),
+        ("memory_webhook_lease_margin_seconds", 0),
+        ("memory_webhook_max_attempts", 0),
+        ("memory_webhook_failures_before_cooldown", 0),
+        ("memory_webhook_cooldown_seconds", 0),
+        ("memory_webhook_max_cooldown_seconds", 0),
+        ("memory_webhook_refresh_seconds", 0),
+        ("memory_webhook_max_posts_per_pass", 0),
+        ("memory_webhook_posts_per_webhook", 0),
+        ("memory_webhook_deliver_concurrency", 0),
+        ("memory_webhook_ack_timeout_seconds", 0),
+        ("memory_webhook_max_backoff_seconds", 0),
     ],
 )
-def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str) -> None:
+def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str, value: float) -> None:
     from server.settings.catalog import MemoryWebhookSettings
 
     with pytest.raises(PydanticValidationError):
-        MemoryWebhookSettings(**{field: 0})
+        MemoryWebhookSettings(**{field: value})
+
+
+def test_a_delivery_reserve_not_below_the_pass_deadline_is_refused() -> None:
+    from server.settings.catalog import MemoryWebhookSettings
+
+    with pytest.raises(PydanticValidationError, match="RESERVE_SECONDS must be less"):
+        MemoryWebhookSettings(
+            memory_webhook_deliver_reserve_seconds=120,
+            memory_webhook_deliver_max_pass_seconds=120,
+        )
