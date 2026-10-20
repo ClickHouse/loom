@@ -489,3 +489,44 @@ def test_a_document_rewrite_keeps_who_wrote_it(monkeypatch: pytest.MonkeyPatch) 
         "actor": "user:bob",
         "source_class": "asserted",
     }
+
+
+@pytest.mark.parametrize("value", ["-", "", " ", "*"])
+def test_an_erasure_or_export_of_no_user_is_refused(value: str) -> None:
+    from pydantic import ValidationError
+
+    from server.erasure.api.erasure import ErasureExportInput, ErasureRequestInput
+
+    scope = {"org": ORG, "scope_type": "user_id", "scope_value": value, "requester": "ops"}
+    with pytest.raises(ValidationError, match="names no user"):
+        ErasureExportInput(**scope)
+    with pytest.raises(ValidationError, match="names no user"):
+        ErasureRequestInput(**scope)
+
+
+def test_a_gateway_token_acts_as_no_one_on_a_route_naming_no_end_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from server.auth import bearer
+
+    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _gateway())
+    with pytest.raises(HTTPException) as refused:
+        bearer.verify_bearer_header("Bearer gw")
+    assert refused.value.status_code == 403
+    assert bearer.verify_bearer_header("Bearer gw", acts_for_end_users=True) is not None
+
+
+def test_the_op_endpoint_runs_a_gateway_token_as_the_user_it_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.auth import bearer
+    from server.transport import http
+
+    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _gateway())
+    headers = {"Authorization": "Bearer gw", "X-Loom-On-Behalf-Of": "user:alice"}
+    auth = http._extract_auth(SimpleNamespace(headers=headers))  # type: ignore[arg-type]
+    assert auth is not None and auth.subject == "user:alice"

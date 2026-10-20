@@ -48,9 +48,13 @@ def missing_bearer() -> HTTPException:
     )
 
 
-def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
+def verify_bearer_header(
+    authorization: str | None, *, acts_for_end_users: bool = False
+) -> AuthInfo | None:
     """The principal an `Authorization` header names, None when it carries
-    no credential; HTTPException 401 / 503 as `verify_bearer`."""
+    no credential; HTTPException 401 / 503 as `verify_bearer`, and 403 for a
+    gateway token unless the route applies the end user a request names
+    (`acts_for_end_users`): a gateway token acts as no one itself."""
     try:
         token = bearer_token(authorization)
     except TokenError as e:
@@ -59,7 +63,21 @@ def verify_bearer_header(authorization: str | None) -> AuthInfo | None:
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": str(e)},
         ) from e
-    return None if token is None else verify_bearer(token)
+    info = None if token is None else verify_bearer(token)
+    if info is not None and info.gateway and not acts_for_end_users:
+        raise gateway_refused()
+    return info
+
+
+def gateway_refused() -> HTTPException:
+    """The 403 for a gateway token on a route that names no end user."""
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": "AUTH_INSUFFICIENT",
+            "message": "a gateway token acts only for the end user a request names",
+        },
+    )
 
 
 def auth_unavailable(e: AuthUnavailable) -> HTTPException:

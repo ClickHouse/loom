@@ -139,7 +139,7 @@ async def ensure_registered(
                 namespace=namespace,
                 owner_email=subject,
                 description=f"Auto-registered on first write ({op_name}) by {subject}.",
-                kind=kind,  # type: ignore[arg-type]
+                kind=None,  # classified by name (`classify_kind`), as `kind` above
                 tags=[AUTO_REGISTER_TAG] + (["bench"] if kind == "bench" else []),
                 retention_days=0,
             ),

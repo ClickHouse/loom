@@ -7,6 +7,7 @@ Skips without LOOM_BASE_URL."""
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import httpx
@@ -63,6 +64,16 @@ def _search(gw: Gateway, user: str, namespace: str, query: str, **kw: str) -> li
         **kw,
     )
     return r.json().get("results", []) if r.status_code == 200 else []
+
+
+def _soon(check: Callable[[], bool], description: str) -> None:
+    """A change is enforced at once on the server process that made it, and on
+    its others at their next watermark poll (1 s)."""
+    wait_until(check, max_wait=5, description=description)
+
+
+def _refused(gw: Gateway, user: str, op: str, payload: dict[str, Any]) -> Callable[[], bool]:
+    return lambda: gw.call(user, op, payload).status_code == 403
 
 
 def _nonce() -> str:
@@ -129,16 +140,8 @@ def test_a_removed_member_and_a_revoked_grant_read_nothing(gw: Gateway) -> None:
     assert gw.scim("PATCH", "Groups/people", patch).status_code == 200
     gw.ok("alice", "grants.revoke", {"namespace": col, "subject": "user:erin"})
     for user in ("dan", "erin"):
-        # At once on the process that made the change; on the server's others
-        # at their next watermark poll (1 s).
-        wait_until(
-            lambda u=user: (
-                gw.call(u, "knowledge.search", {"namespace": col, "query": nonce}).status_code
-                == 403
-            ),
-            max_wait=5,
-            description=f"{user} refused",
-        )
+        search = {"namespace": col, "query": nonce}
+        _soon(_refused(gw, user, "knowledge.search", search), f"{user} refused")
         assert not any(nonce in h["content"] for h in _search(gw, user, "@me", nonce)), user
     assert any(nonce in h["content"] for h in _search(gw, "bob", col, nonce)), "bob stays"
 
@@ -393,8 +396,12 @@ def test_a_deleted_collection_leaves_its_children_top_level(gw: Gateway) -> None
     child = _collection(gw, "alice", f"col-child-{tag}", parent=top)
     gw.ok("alice", "grants.create", {"namespace": child, "subject": "user:bob", "role": "viewer"})
     assert gw.ok("alice", "collection.delete", {"namespace": top})["deleted"] is True
-    listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
-    assert listed[child]["parent"] == "", "the child keeps its own grant, at the top"
+
+    def _child_on_top() -> bool:
+        listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
+        return listed[child]["parent"] == ""
+
+    _soon(_child_on_top, "the child keeps its own grant, at the top")
     assert gw.call("bob", "collection.delete", {"namespace": child}).status_code == 403
 
 
@@ -426,6 +433,20 @@ def test_a_deleted_collection_is_closed_even_by_name(gw: Gateway) -> None:
     nonce = _nonce()
     _add(gw, "alice", col, f"before the delete {nonce}")
     gw.ok("alice", "collection.delete", {"namespace": col})
-    assert gw.call("bob", "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
+    _soon(_refused(gw, "bob", "knowledge.search", {"namespace": col, "query": nonce}), "closed")
     r = gw.call("bob", "knowledge.add", {"namespace": col, "source_uri": "x", "content": "y"})
     assert r.status_code == 403
+
+
+def test_a_deleted_group_takes_no_grant_and_keeps_none(gw: Gateway) -> None:
+    col = _collection(gw, "alice", f"col-gone-{uuid.uuid4().hex[:6]}")
+    gw.scim("POST", "Groups", {"externalId": "temps", "members": [{"value": "bob"}]})
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "group:temps", "role": "viewer"})
+    assert gw.scim("DELETE", "Groups/temps").status_code == 204
+    again = gw.call(
+        "alice", "grants.create", {"namespace": col, "subject": "group:temps", "role": "viewer"}
+    )
+    assert again.status_code == 422 and "no group" in again.text
+    gw.scim("POST", "Groups", {"externalId": "temps", "members": [{"value": "bob"}]})
+    search = {"namespace": col, "query": "x"}
+    _soon(_refused(gw, "bob", "knowledge.search", search), "a recreated group inherits nothing")

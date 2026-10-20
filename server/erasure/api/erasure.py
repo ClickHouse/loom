@@ -54,6 +54,7 @@ class ErasureRequestInput(BaseModel):
 
     @model_validator(mode="after")
     def _list_scope_is_a_json_array(self) -> ErasureRequestInput:
+        _check_user_scope(self.scope_type, self.scope_value)
         if self.scope_type == "namespace_list":
             try:
                 names = parse_namespace_list(self.scope_value)
@@ -66,6 +67,16 @@ class ErasureRequestInput(BaseModel):
         elif not self.external:
             raise ValueError("external=false is only allowed for scope_type namespace_list")
         return self
+
+
+# The user ids no person has: a row written by no end user carries `-` (or, from
+# older writers, ''), so a scope of one of them would reach every such row.
+_NO_USER = frozenset({"", "-", "*"})
+
+
+def _check_user_scope(scope_type: str, scope_value: str) -> None:
+    if scope_type == "user_id" and scope_value.strip() in _NO_USER:
+        raise ValueError(f"user_id scope_value {scope_value!r} names no user")
 
 
 def parse_namespace_list(scope_value: str) -> list[str]:
@@ -201,6 +212,11 @@ class ErasureExportInput(BaseModel):
     # 10k rows is enough for an internal admin tool; ops can re-query CH for the rest.
     section_limit: int = Field(default=10_000, ge=1, le=100_000)
 
+    @model_validator(mode="after")
+    def _names_a_user(self) -> ErasureExportInput:
+        _check_user_scope(self.scope_type, self.scope_value)
+        return self
+
 
 class ErasureExportSection(BaseModel):
     rows: list[dict[str, object]]
@@ -222,7 +238,7 @@ class ErasureExportOutput(BaseModel):
     counts: dict[str, int]
     # `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`.
     memory: ErasureExportSection
-    # Knowledge chunk rows of the namespace; empty for a `user_id` scope.
+    # Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope.
     knowledge: ErasureExportSection
     # Per-request ledger rows in scope, newest first.
     agent_events: ErasureExportSection

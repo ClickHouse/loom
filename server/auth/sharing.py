@@ -157,27 +157,19 @@ def owns_personal(auth: AuthInfo, org: str, namespace: str) -> bool:
     return bool(principal_id(auth.subject, USER)) and namespace == personal_name(org, auth.subject)
 
 
-async def _best_role(org: str, lineage: list[str], subjects: list[str]) -> Role | None:
-    best = 0
-    for subject in subjects:
-        grants = await grant_cache.grant_map(org, subject)
-        best = max(best, *(grants.rank(ns) or 0 for ns in lineage))
-    return rank_role(best)
+def _best(maps: list[grant_cache.GrantMap], lineage: list[str]) -> Role | None:
+    """The highest role any of `maps` grants on a collection or an ancestor."""
+    return rank_role(max((m.rank(ns) or 0 for m in maps for ns in lineage), default=0))
 
 
-async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
-    """The request's role on the collection `namespace`."""
-    if is_personal(namespace):
-        return Role.ADMIN if owns_personal(auth, org, namespace) else None
-    collections = await tree(org)
-    if namespace not in collections.parent:
-        return None  # a `col-` name not in the tree admits only a platform admin
-    lineage = collections.lineage(namespace)
-    granted = await _best_role(org, lineage, await principals(auth, org))
+def _capped(
+    auth: AuthInfo, org: str, namespace: str, granted: Role | None, creator: Role | None
+) -> Role | None:
+    """`granted`, for a scoped or delegated token no further than its own claim
+    names `namespace`, and for a delegated one no further than its creator's
+    role there (`creator`)."""
     if granted is None or not (auth.has_ns_roles() or auth.creator):
         return granted
-    # A scoped or delegated token: no further than its own claim names there,
-    # and a delegated one no further than its creator's role.
     from server.auth.authz import names_namespace
 
     if not names_namespace(auth, org, namespace):
@@ -186,31 +178,38 @@ async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
         own = auth.effective_role(org, namespace)
     else:
         own = max(auth.roles, key=lambda r: r.value, default=None)
-    ceilings = [granted, own]
-    if auth.creator:
-        ceilings.append(await _best_role(org, lineage, [auth.creator]))
+    ceilings = [granted, own, *([creator] if auth.creator else [])]
     if None in ceilings:
         return None
     return min(ceilings, key=lambda r: r.value)  # type: ignore[union-attr]
 
 
+async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
+    """The request's role on the collection `namespace`."""
+    return (await roles(auth, org, [namespace]))[namespace]
+
+
 async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Role | None]:
-    """`role` for many collections, reading the tree, the principals and their
-    grant maps once."""
-    if auth.has_ns_roles() or auth.creator:
-        return {ns: await role(auth, org, ns) for ns in namespaces}
+    """The request's role on each collection of `namespaces`, reading the tree,
+    the principals and their grant maps once. A personal collection needs no
+    read: its name says whose it is."""
+    out = {
+        ns: (Role.ADMIN if owns_personal(auth, org, ns) else None)
+        for ns in namespaces
+        if is_personal(ns)
+    }
+    shared = [ns for ns in namespaces if ns not in out]
+    if not shared:
+        return out
     collections = await tree(org)
     maps = [await grant_cache.grant_map(org, p) for p in await principals(auth, org)]
-    out: dict[str, Role | None] = {}
-    for ns in namespaces:
-        if is_personal(ns):
-            out[ns] = Role.ADMIN if owns_personal(auth, org, ns) else None
-            continue
+    creator = [await grant_cache.grant_map(org, auth.creator)] if auth.creator else []
+    for ns in shared:
         if ns not in collections.parent:
-            out[ns] = None
+            out[ns] = None  # a `col-` name not in the tree admits only a platform admin
             continue
         lineage = collections.lineage(ns)
-        out[ns] = rank_role(max((m.rank(n) or 0 for m in maps for n in lineage), default=0))
+        out[ns] = _capped(auth, org, ns, _best(maps, lineage), _best(creator, lineage))
     return out
 
 
@@ -237,7 +236,8 @@ async def readable(auth: AuthInfo | None, org: str) -> list[str]:
             )
         shared = collections.with_descendants(granted)
         if auth.has_ns_roles() or auth.creator:
-            shared = {ns for ns in shared if await role(auth, org, ns)}
+            capped = await roles(auth, org, sorted(shared))
+            shared = {ns for ns, r in capped.items() if r is not None}
     except Exception as e:  # noqa: BLE001 — what cannot be read is not readable
         log.warning("readable collections of %s in %s not resolved: %s", auth.subject, org, e)
         note_unreadable()

@@ -13,10 +13,8 @@ from fastapi.responses import Response, StreamingResponse
 
 from server.auth.authz import check_authorized
 from server.auth.bearer import missing_bearer, verify_bearer_header
-from server.auth.gateway import effective_auth, is_end_user
-from server.auth.sharing import PERSONAL_ALIAS
+from server.auth.gateway import effective_auth, personal_namespace
 from server.core.ch import sequential_reads
-from server.core.principals import personal_name
 from server.knowledge.domain.documents import text_download_filename
 from server.knowledge.store import documents as documents_repo
 from server.operations.base import Role
@@ -46,7 +44,7 @@ async def knowledge_download(
     """
     # The HTTP transport's rule: a present bearer is verified whether or not
     # the deployment requires one; a missing one is a 401 only when auth is on.
-    auth = verify_bearer_header(request.headers.get("Authorization"))
+    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
     try:
@@ -56,9 +54,13 @@ async def knowledge_download(
                 request.headers.get("X-Loom-On-Behalf-Of") or "",
                 request.headers.get("X-Loom-Agent") or "",
             )
-        if namespace == PERSONAL_ALIAS and is_end_user(auth):
-            namespace = personal_name(org, auth.subject)  # type: ignore[union-attr]
+        namespace = personal_namespace(auth, org, namespace)
         await check_authorized(auth, Role.VIEWER, org=org, namespace=namespace)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "VALIDATION_FAILED", "message": str(e)},
+        ) from e
     except PermissionError as e:
         raise HTTPException(
             status_code=403,

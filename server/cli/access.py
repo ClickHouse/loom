@@ -226,8 +226,18 @@ def _mint_gateway_token(args: argparse.Namespace, ttl_seconds: int | None, jti: 
     """`--gateway`: a token that acts only for the end users each request names."""
     from server.auth.jwt import TokenError, mint_token
 
-    if args.namespaces or args.namespace_role:
-        print("  ✗ a gateway token names no namespaces", file=sys.stderr)
+    # Every claim comes from the end user a request names, none from the token.
+    claims = {
+        "--namespaces": args.namespaces,
+        "--namespace-role": args.namespace_role,
+        "--roles": args.roles != ["writer"],  # the flag's default
+        "--read-scope": args.read_scope,
+        "--read-user-id": args.read_user_id,
+        "--traffic-class": args.traffic_class,
+    }
+    named = [flag for flag, value in claims.items() if value]
+    if named:
+        print(f"  ✗ a gateway token takes no claim: drop {', '.join(named)}", file=sys.stderr)
         return 2
     try:
         token = mint_token(
@@ -240,7 +250,7 @@ def _mint_gateway_token(args: argparse.Namespace, ttl_seconds: int | None, jti: 
             consumer=args.consumer,
             jti=jti,
         )
-    except TokenError as e:
+    except (TokenError, ValueError) as e:
         print(f"  ✗ {e}", file=sys.stderr)
         return 2
     summary = {

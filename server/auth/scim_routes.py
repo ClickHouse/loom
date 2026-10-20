@@ -37,10 +37,10 @@ from server.settings import settings
 
 SCIM_JSON = "application/scim+json"
 USER_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:User"
-_LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
-_MAX_RESULTS = 200
+MAX_RESULTS = 200
 _LAST_INDEX = 2**32 - 1
 # A shorter bearer token is guessable: SCIM refuses to start with one.
 MIN_TOKEN_LENGTH = 32
@@ -95,7 +95,7 @@ def _error_response(e: ScimError) -> JSONResponse:
     return _answer(body, e.status, **headers)
 
 
-class _ScimRoute(APIRoute):
+class ScimRoute(APIRoute):
     """Every error these routes and their bearer check raise answers as an
     RFC 7644 error, a server-side one as a retryable 503."""
 
@@ -120,7 +120,7 @@ class _ScimRoute(APIRoute):
         return run
 
 
-router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route_class=_ScimRoute)
+router = APIRouter(prefix="/scim/v2", dependencies=[Depends(_authorized)], route_class=ScimRoute)
 
 
 # ── parsing ───────────────────────────────────────────────────────────────
@@ -454,7 +454,7 @@ def _matches(comparison: tuple[str, str | bool], entry: dict[str, Any]) -> bool:
     return scim.normalized(str(want)) == scim.normalized(entry[attr])
 
 
-def _int_param(request: Request, name: str, default: int) -> int:
+def int_param(request: Request, name: str, default: int) -> int:
     raw = request.query_params.get(name)
     if raw is None:
         return default
@@ -464,7 +464,7 @@ def _int_param(request: Request, name: str, default: int) -> int:
         raise ScimError(400, f"{name} must be an integer", "invalidValue") from None
 
 
-async def _body(request: Request) -> dict[str, Any]:
+async def read_body(request: Request) -> dict[str, Any]:
     try:
         body = json.loads(await request.body())
     except (ValueError, RecursionError):  # not JSON, or nested too deep to parse
@@ -553,7 +553,7 @@ async def service_provider_config() -> JSONResponse:
             "schemas": [_CONFIG_SCHEMA],
             "patch": {"supported": True},
             "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
-            "filter": {"supported": True, "maxResults": _MAX_RESULTS},
+            "filter": {"supported": True, "maxResults": MAX_RESULTS},
             "changePassword": {"supported": False},
             "sort": {"supported": False},
             "etag": {"supported": False},
@@ -572,8 +572,8 @@ async def service_provider_config() -> JSONResponse:
 @router.get("/Users")
 async def list_users(request: Request) -> JSONResponse:
     # Past the end is an empty page, however far: the offset must fit its UInt32.
-    start = min(_LAST_INDEX, max(1, _int_param(request, "startIndex", 1)))
-    count = min(_MAX_RESULTS, max(0, _int_param(request, "count", 100)))
+    start = min(_LAST_INDEX, max(1, int_param(request, "startIndex", 1)))
+    count = min(MAX_RESULTS, max(0, int_param(request, "count", 100)))
     text = request.query_params.get("filter")
     if text is not None:
         attribute, value = parse_filter(text)
@@ -588,7 +588,7 @@ async def list_users(request: Request) -> JSONResponse:
         total, rows = await scim.page(start, count)
     return _answer(
         {
-            "schemas": [_LIST_SCHEMA],
+            "schemas": [LIST_SCHEMA],
             "totalResults": total,
             "startIndex": start,
             "itemsPerPage": len(rows),
@@ -608,7 +608,7 @@ async def get_user(uid: str, request: Request) -> JSONResponse:
 @router.post("/Users")
 async def create_user(request: Request) -> JSONResponse:
     """Records the email; the Loom account comes from the person's first sign-in."""
-    body = _lowered(await _body(request))
+    body = _lowered(await read_body(request))
     name, email, emails = user_name_and_email(body)
     # A null is unassigned (RFC 7643 §2.5): a new user is active.
     active = parse_active(True if body.get("active") is None else body["active"])
@@ -622,7 +622,7 @@ async def create_user(request: Request) -> JSONResponse:
 
 @router.put("/Users/{uid}")
 async def replace_user(uid: str, request: Request) -> JSONResponse:
-    body = await _body(request)
+    body = await read_body(request)
     if any(named != uid for named in _every(body, "id")):
         raise ScimError(400, "the body names another user", "invalidValue")
     # Read in every spelling: a body refused for an attribute named twice
@@ -647,7 +647,7 @@ async def replace_user(uid: str, request: Request) -> JSONResponse:
 
 @router.patch("/Users/{uid}")
 async def patch_user(uid: str, request: Request) -> JSONResponse:
-    body = await _body(request)
+    body = await read_body(request)
     try:
         active = patched_active(body)
     except ScimError:

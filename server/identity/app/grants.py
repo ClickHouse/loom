@@ -151,6 +151,17 @@ def _enforce_principal_target(namespace: str, subject: str) -> None:
         raise ValidationError("groups and agents hold grants on collections only")
 
 
+async def _enforce_group_exists(org: str, subject: str) -> None:
+    """A grant to a group names one the org's SCIM client created and has not
+    deleted: a deleted group's grants were revoked with it."""
+    from server.core.principals import GROUP, principal_id
+    from server.identity.app.scim_groups import fetch_group
+
+    group_id = principal_id(subject, GROUP)
+    if group_id and await fetch_group(org, group_id) is None:
+        raise ValidationError(f"no group {group_id!r} in {org}")
+
+
 async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
     """Insert or raise a grant; lower one only on `replace=true`. Admin-issued grants are
     always active (the admin is the approver),
@@ -159,6 +170,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
 
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
     _enforce_principal_target(input.namespace, input.subject)
+    await _enforce_group_exists(input.org, input.subject)
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
     from server.auth.aliases import canonical_subject

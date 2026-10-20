@@ -475,7 +475,8 @@ org and names the end user on every HTTP request:
 
 ```bash
 loom mint-token --gateway --subject sa:chat --org acme --ttl-days 30
-curl -s "$LOOM/v1/knowledge.search" -H "Authorization: Bearer $GATEWAY_TOKEN" \
+curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $GATEWAY_TOKEN" \
+  -H "Content-Type: application/json" \
   -H "X-Loom-On-Behalf-Of: user:u-42" -H "X-Loom-Agent: agent:helper" \
   -d '{"org": "acme", "namespace": "@me", "query": "renewal clause"}'
 ```

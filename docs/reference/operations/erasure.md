@@ -32,7 +32,7 @@ GDPR Article 20 portability.
 | `requester` | `str` | Echo of who asked for the export. |
 | `counts` | `dict[str, int]` | Rows per section (`memory`, `knowledge`, `agent_events`, `audit_log`) before truncation. |
 | `memory` | `ErasureExportSection` | `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`. |
-| `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace; empty for a `user_id` scope. |
+| `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope. |
 | `agent_events` | `ErasureExportSection` | Per-request ledger rows in scope, newest first. |
 | `audit_log` | `ErasureExportSection` | Audit rows in scope; for `user_id`, rows whose subject mentions the user id. |
 

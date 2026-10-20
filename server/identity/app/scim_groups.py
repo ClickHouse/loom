@@ -31,13 +31,13 @@ from server.auth.bearer import bearer_token
 from server.auth.grant_claims import group_change
 from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.auth.scim_routes import (
-    _LIST_SCHEMA,
-    _MAX_RESULTS,
+    LIST_SCHEMA,
+    MAX_RESULTS,
     SCIM_JSON,
     ScimError,
-    _body,
-    _int_param,
-    _ScimRoute,
+    ScimRoute,
+    int_param,
+    read_body,
 )
 from server.core import grant_cache
 from server.core.ch import get_client, own_write_reads, set_query_tag
@@ -99,7 +99,7 @@ async def _caller(request: Request) -> _Caller:
     return _Caller(org=auth.org, actor=auth.subject)
 
 
-router = APIRouter(prefix="/scim/v2", route_class=_ScimRoute)
+router = APIRouter(prefix="/scim/v2", route_class=ScimRoute)
 # The SCIM client of each request, as a route dependency.
 _CALLER = Depends(_caller)
 
@@ -129,7 +129,8 @@ def group_row(
     }
 
 
-async def _fetch(org: str, group_id: str) -> dict[str, Any] | None:
+async def fetch_group(org: str, group_id: str) -> dict[str, Any] | None:
+    """The live group `group_id` of `org`, or None."""
     with own_write_reads():
         return await get_client().query_one(
             f"""
@@ -194,7 +195,7 @@ def _gateway_org(caller: _Caller) -> str:
 
 
 async def _existing(org: str, group_id: str) -> dict[str, Any]:
-    row = await _fetch(org, group_id)
+    row = await fetch_group(org, group_id)
     if row is None:
         raise ScimError(404, f"no group {group_id!r}")
     return row
@@ -202,8 +203,8 @@ async def _existing(org: str, group_id: str) -> dict[str, Any]:
 
 @router.get("/Groups")
 async def list_groups(request: Request, caller: _Caller = _CALLER) -> JSONResponse:
-    start = max(1, _int_param(request, "startIndex", 1))
-    count = min(_MAX_RESULTS, max(0, _int_param(request, "count", _MAX_RESULTS)))
+    start = max(1, int_param(request, "startIndex", 1))
+    count = min(MAX_RESULTS, max(0, int_param(request, "count", MAX_RESULTS)))
     rows: list[dict[str, Any]] = []
     total = 0
     org = caller.org
@@ -237,7 +238,7 @@ async def list_groups(request: Request, caller: _Caller = _CALLER) -> JSONRespon
         total = int((counted or {}).get("n") or 0)
     return _answer(
         {
-            "schemas": [_LIST_SCHEMA],
+            "schemas": [LIST_SCHEMA],
             "totalResults": total,
             "startIndex": start,
             "itemsPerPage": len(rows),
@@ -256,12 +257,12 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
     """The group's id is its externalId when that is a well-formed id, so a
     client can address and grant it by its own id; else a new one."""
     org = _gateway_org(caller)
-    body = await _body(request)
+    body = await read_body(request)
     external = str(body.get("externalId") or "")
     group_id = external if principal_id(USER + external, USER) else uuid.uuid4().hex
     members = _members(body.get("members"))
     async with group_change(org, group_id):
-        if await _fetch(org, group_id) is not None:
+        if await fetch_group(org, group_id) is not None:
             raise ScimError(409, f"a group {group_id!r} exists", "uniqueness")
         row = group_row(
             org,
@@ -278,7 +279,7 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
 @router.put("/Groups/{group_id}")
 async def replace_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     org = _gateway_org(caller)
-    body = await _body(request)
+    body = await read_body(request)
     members = _members(body.get("members"))
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
@@ -322,7 +323,7 @@ def _patched(name: str, members: set[str], operations: list[Any]) -> tuple[str, 
 async def patch_group(group_id: str, request: Request, caller: _Caller = _CALLER) -> JSONResponse:
     """`add` / `remove` / `replace` on `members`, and `replace` on `displayName`."""
     org = _gateway_org(caller)
-    body = await _body(request)
+    body = await read_body(request)
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
         name, members = _patched(
@@ -342,8 +343,8 @@ async def patch_group(group_id: str, request: Request, caller: _Caller = _CALLER
 
 @router.delete("/Groups/{group_id}")
 async def delete_group(group_id: str, caller: _Caller = _CALLER) -> Response:
-    """The group goes, and so do the grants that named it: a group made later
-    under the same id starts with none."""
+    """The group goes, and so do the grants that named it; `grants.create`
+    refuses a group that is gone."""
     from server.identity.app.grants import revoke_subject
 
     org = _gateway_org(caller)

@@ -123,7 +123,8 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     Raises HTTPException(401) on present-but-invalid tokens, or on missing
     tokens when auth_required=True.
     """
-    auth = verify_bearer_header(request.headers.get("Authorization"))  # counts its own refusals
+    # Counts its own refusals; a gateway token is then bound to the end user it names.
+    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if settings.auth_actually_required():
             raise missing_bearer()
@@ -153,20 +154,21 @@ def _resolve_personal(
     op: Operation, call: _HttpCall, payload: Any, raw_body: dict[str, Any], auth: AuthInfo | None
 ) -> tuple[Any, dict[str, Any]]:
     """`namespace: "@me"` is the asserted end user's personal collection, which
-    only the server names (no read: the name is derived from the user); any
-    other caller is refused. The gate then authorizes it as any namespace."""
-    from server.auth.gateway import is_end_user
+    only the server names; any other caller is refused. The gate then
+    authorizes it as any namespace."""
+    from server.auth.gateway import personal_namespace
     from server.auth.sharing import PERSONAL_ALIAS
     from server.core.errors import ValidationError as RequestInvalid
-    from server.core.principals import personal_name
 
     if getattr(payload, "namespace", None) != PERSONAL_ALIAS:
         return payload, raw_body
-    if auth is None or not is_end_user(auth):
-        e = RequestInvalid(f"{PERSONAL_ALIAS!r} names a gateway end user's personal collection")
-        raise _refuse(op, call, 400, error_code="VALIDATION_FAILED", e=e)
-    org = getattr(payload, "org", None) or auth.org
-    namespace = personal_name(org, auth.subject)
+    org = getattr(payload, "org", None) or (auth.org if auth is not None else "")
+    try:
+        namespace = personal_namespace(auth, org, PERSONAL_ALIAS)
+    except ValueError as e:
+        raise _refuse(
+            op, call, 400, error_code="VALIDATION_FAILED", e=RequestInvalid(str(e))
+        ) from e
     return payload.model_copy(update={"namespace": namespace}), {**raw_body, "namespace": namespace}
 
 

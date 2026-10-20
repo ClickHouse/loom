@@ -19,10 +19,10 @@ from __future__ import annotations
 import dataclasses
 
 from server.auth.jwt import AuthInfo
-from server.core.principals import AGENT, USER, is_reserved_subject, principal_id
+from server.core.principals import AGENT, USER, is_reserved_subject, personal_name, principal_id
 from server.operations.base import Role
 
-__all__ = ["act_for", "effective_auth", "is_end_user"]
+__all__ = ["act_for", "effective_auth", "is_end_user", "personal_namespace"]
 
 
 def is_end_user(auth: AuthInfo | None) -> bool:
@@ -76,3 +76,16 @@ def effective_auth(auth: AuthInfo, on_behalf_of: str, agent: str = "") -> AuthIn
     if is_reserved_subject(on_behalf_of):
         raise PermissionError("a trusted caller acts for a Loom subject, not a grant principal")
     return dataclasses.replace(auth, subject=on_behalf_of, impersonated_by=auth.subject)
+
+
+def personal_namespace(auth: AuthInfo | None, org: str, namespace: str) -> str:
+    """`namespace`, with `@me` read as the end user's personal collection (no
+    read: the name is derived from the user). ValueError for `@me` from any
+    caller that is not a gateway's end user."""
+    from server.auth.sharing import PERSONAL_ALIAS
+
+    if namespace != PERSONAL_ALIAS:
+        return namespace
+    if auth is None or not is_end_user(auth):
+        raise ValueError(f"{PERSONAL_ALIAS!r} names a gateway end user's personal collection")
+    return personal_name(org, auth.subject)
