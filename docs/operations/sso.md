@@ -225,13 +225,16 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   limit spends none of the trust's. Raise the trust's limit for a fleet whose
   agents renew often. The SDKs and the plugins renew five minutes before the
   token runs out, or halfway through its life when that comes sooner; the
-  SDKs renew in each process, the plugins once per agent home. A one-hour
-  workload token renews after 55 minutes; a five-minute one every 2.5
-  minutes, four exchanges per 10 minutes when each renewal presents a fresh
-  token. Loom's token lives only as long as the workload token has left, so
-  a workload token the platform replaces partway through its life is renewed
-  more often: about 7 exchanges per 10 minutes for a five-minute token
-  replaced at 80 % of its life.
+  SDKs renew in each process, the plugins once per agent home and per new
+  workload token (hooks that fire together may each renew). When each
+  renewal presents a fresh workload token, a one-hour token renews after 55
+  minutes and a five-minute one every 2.5 minutes, four exchanges per 10
+  minutes. Loom's token lives only as long as the workload token has left, so
+  one the platform replaces partway through its life, or never, is renewed
+  more often: a five-minute token replaced every 4 minutes settles at about
+  three renewals per replacement, 7.5 exchanges per 10 minutes (7 or 8 in
+  any window), and a token never replaced renews ever sooner in its last
+  five minutes.
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
