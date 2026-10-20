@@ -29,7 +29,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth import agents, claims, machines, scim, shielded, sso_links
-from server.auth.attempts import Attempts, address_key, allow_all, client_address
+from server.auth.attempts import Attempts, Busy, address_key, allow_all, client_address
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
     PENDING_TTL,
@@ -538,11 +538,15 @@ _refused_logged_at: dict[str, float] = {}
 
 
 def log_refused(what: str, address: str) -> None:
+    _warn_once_a_minute(what, "oauth: too many sign-in %ss from %s; refused", what, address)
+
+
+def _warn_once_a_minute(kind: str, message: str, *args: object) -> None:
     """At most once a minute per kind, so a flood shows up without filling
     the log."""
-    if time.monotonic() - _refused_logged_at.get(what, -60.0) > 60:
-        _refused_logged_at[what] = time.monotonic()
-        log.warning("oauth: too many sign-in %ss from %s; refused", what, address)
+    if time.monotonic() - _refused_logged_at.get(kind, -60.0) > 60:
+        _refused_logged_at[kind] = time.monotonic()
+        log.warning(message, *args)
 
 
 @router.get("/oauth/sso")
@@ -1485,7 +1489,7 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
             m, proof = await machines.verify_any_workload(token)
         if m["agent_claim"]:
             agent = agents.agent_of(m, proof)
-        await _admit_exchange(m["name"], agent or str(proof["sub"]))
+        await _admit_exchange(m["name"], agent)
         if agent:
             own = await agents.ensure_namespace(m, agent)
     except machines.Refused as e:
@@ -1505,38 +1509,42 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
 _EXCHANGE_WINDOW_S = 600
 
 
-async def _admit_exchange(trust: str, workload: str) -> None:
-    """Count one exchange against its trust and its workload, or refuse it
-    with 429. Only a token the trust's issuer signed gets here, so a caller
-    without one cannot spend a trust's budget."""
+async def _admit_exchange(trust: str, agent: str) -> None:
+    """Count one exchange against its trust, and an agent's also against the
+    agent, or refuse it: 429 over a limit, 503 when this process is too busy
+    to count. Only a token the trust's issuer signed gets here, so a caller
+    without one cannot spend a trust's budget. A trust without agents is one
+    workload: its jobs (every pull request of a repository) share one `sub`."""
     gates = [
         (
             Attempts("oauth.exchange", settings.workload_exchanges_per_trust, _EXCHANGE_WINDOW_S),
             trust,
-        ),
-        (
-            Attempts(
-                "oauth.exchange.workload",
-                settings.workload_exchanges_per_workload,
-                _EXCHANGE_WINDOW_S,
-            ),
-            f"{trust}:{workload}",
-        ),
-    ]
-    if await allow_all(gates):
-        return
-    # Once a minute per trust, so a flood shows up without filling the log.
-    if time.monotonic() - _refused_logged_at.get(f"exchange:{trust}", -60.0) > 60:
-        _refused_logged_at[f"exchange:{trust}"] = time.monotonic()
-        log.warning(
-            "oauth: exchange for trust %s (%s) refused: over its limit, or too busy to count",
-            trust,
-            workload,
         )
+    ]
+    if agent:
+        per_agent = Attempts(
+            "oauth.exchange.agent", settings.workload_exchanges_per_agent, _EXCHANGE_WINDOW_S
+        )
+        gates.append((per_agent, f"{trust}:{agent}"))
+    try:
+        admitted = await allow_all(gates)
+    except Busy:
+        _warn_once_a_minute(
+            "exchange.busy", "oauth: too busy to count an exchange for trust %s; 503", trust
+        )
+        raise _unavailable() from None
+    if admitted:
+        return
+    _warn_once_a_minute(
+        f"exchange:{trust}",
+        "oauth: exchange for trust %s (agent %r) over its limit; refused",
+        trust,
+        agent,
+    )
     raise OAuthError(
         "temporarily_unavailable",
         429,
-        description="too many token exchanges for this trust or workload; retry later",
+        description="too many token exchanges for this trust or agent; retry later",
         headers={"Retry-After": "60"},
     )
 

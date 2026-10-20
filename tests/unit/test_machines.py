@@ -730,20 +730,25 @@ def test_a_token_no_trust_takes_learns_nothing_of_the_trusts(bots, monkeypatch) 
     assert r.json()["error_description"] == "no trust of this issuer takes the subject token"
 
 
-def test_one_workload_over_its_exchange_limit_is_refused_alone(bots, monkeypatch) -> None:
-    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_workload", 2)
+def test_one_agent_over_its_exchange_limit_is_refused_alone(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 2)
     c, token = TestClient(oauth_app()), _ci_token(bots, agent_id="a1")
     assert [_exchange(c, token, "fleet").status_code for _ in range(2)] == [200, 200]
     r = _exchange(c, token, "fleet")
     assert r.status_code == 429 and r.json()["error"] == "temporarily_unavailable"
     assert r.headers["Retry-After"] == "60"
     assert bots["made"] == [("fleet", "a1")] * 2  # the refused one made nothing
-    # Another agent of the same trust, and a CI trust's workload, go on.
     assert _exchange(c, _ci_token(bots, agent_id="a2"), "fleet").status_code == 200
-    assert _exchange(c, _ci_token(bots)).status_code == 200
 
 
-def test_a_trust_over_its_exchange_limit_refuses_every_workload(bots, monkeypatch) -> None:
+def test_a_trust_without_agents_counts_only_against_the_trust(bots, monkeypatch) -> None:
+    # Every pull request job of a repository shares one `sub`.
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    c = TestClient(oauth_app())
+    assert [_exchange(c, _ci_token(bots)).status_code for _ in range(3)] == [200] * 3
+
+
+def test_a_trust_over_its_exchange_limit_refuses_every_agent(bots, monkeypatch) -> None:
     monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 2)
     c = TestClient(oauth_app())
     codes = [_exchange(c, _ci_token(bots, agent_id=f"a{i}"), "fleet").status_code for i in range(3)]
@@ -751,8 +756,27 @@ def test_a_trust_over_its_exchange_limit_refuses_every_workload(bots, monkeypatc
     assert _exchange(c, _ci_token(bots)).status_code == 200  # another trust counts its own
 
 
+def test_an_agent_refused_at_its_own_limit_spends_none_of_the_trusts(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 3)
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    c, token = TestClient(oauth_app()), _ci_token(bots, agent_id="a1")
+    assert [_exchange(c, token, "fleet").status_code for _ in range(5)] == [200] + [429] * 4
+    codes = [_exchange(c, _ci_token(bots, agent_id=a), "fleet").status_code for a in "234"]
+    assert codes == [200, 200, 429]
+
+
+def test_an_exchange_this_process_is_too_busy_to_count_is_answered_busy(bots, monkeypatch) -> None:
+    from server.auth import attempts
+
+    monkeypatch.setattr(attempts, "_semaphore", lambda: asyncio.Semaphore(0))
+    monkeypatch.setattr(attempts, "_SLOT_WAIT_S", 0.01)
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots))
+    assert r.status_code == 503 and r.json()["error"] == "temporarily_unavailable"
+    assert r.headers["Retry-After"] == "5"
+
+
 def test_exchanges_age_out_of_the_limit(bots, monkeypatch) -> None:
-    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_workload", 1)
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 1)
     c = TestClient(oauth_app())
     assert [_exchange(c, _ci_token(bots)).status_code for _ in range(2)] == [200, 429]
     bots["attempts"].now += oauth._EXCHANGE_WINDOW_S + 1

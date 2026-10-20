@@ -61,7 +61,10 @@ class Attempts:
         that keeps retrying is let in again as its attempts age out; one
         refused at the recount (it raced others past the first count) stays
         recorded. A process too busy to check refuses."""
-        return await allow_all([(self, key)])
+        try:
+            return await allow_all([(self, key)])
+        except Busy:
+            return False
 
     async def blocked(self, key: str) -> bool:
         """Whether `key` is at its limit, for a limit that counts failures only
@@ -95,12 +98,10 @@ class Admission:
 
 async def allow_all(gates: list[tuple[Attempts, str]]) -> bool:
     """`Attempts.allow` for one attempt counted under every (limit, key):
-    admitted only while each has room, recorded under all of them."""
-    try:
-        async with slot():
-            return await _admit(gates, released=False) is not None
-    except Busy:
-        return False
+    admitted only while each has room, recorded under all of them. Raises
+    Busy when no check slot frees, which a caller answers as busy, not over."""
+    async with slot():
+        return await _admit(gates, released=False) is not None
 
 
 async def admit(gates: list[tuple[Attempts, str]]) -> Admission | None:
