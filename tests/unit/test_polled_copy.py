@@ -39,7 +39,7 @@ async def test_the_copy_is_aged_from_the_start_of_its_read() -> None:
     copy = PolledCopy("t", "", slow, _LOG)
     before = time.monotonic()
     assert await copy.get(refresh_s=10, max_stale_s=60) == "new"
-    assert before <= copy.read_at < before + 0.04
+    assert before <= copy._read_at < before + 0.04
 
 
 async def test_a_change_made_here_is_waited_for_even_with_a_young_copy() -> None:

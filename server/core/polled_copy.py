@@ -26,34 +26,34 @@ class PolledCopy[T]:
         self, name: str, empty: T, read: Callable[[], Awaitable[T]], log: logging.Logger
     ) -> None:
         self.name = name
-        self.value = empty
+        self._value = empty
         self._read = read
         self._log = log
         # When the copy was read (monotonic, from the start of its query; 0.0 =
         # never), when the next read is due (0.0 = now), and when a change here
         # last asked for one.
-        self.read_at = 0.0
-        self.next_read = 0.0
-        self.forgot_at = 0.0
+        self._read_at = 0.0
+        self._next_read = 0.0
+        self._forgot_at = 0.0
         self._lock = asyncio.Lock()
 
     def _fresh(self, now: float, max_stale_s: float) -> bool:
-        return bool(self.read_at) and now - self.read_at <= max_stale_s
+        return bool(self._read_at) and now - self._read_at <= max_stale_s
 
     async def get(self, *, refresh_s: float, max_stale_s: float) -> T | None:
         """The copy, read first when a read is due; None when it is too old to
         serve (never read, or every read since `max_stale_s` ago failed)."""
         now = time.monotonic()
         serve_in_hand = (
-            self._lock.locked() and self._fresh(now, max_stale_s) and self.next_read != 0.0
+            self._lock.locked() and self._fresh(now, max_stale_s) and self._next_read != 0.0
         )
-        if now >= self.next_read and not serve_in_hand:
+        if now >= self._next_read and not serve_in_hand:
             async with self._lock:
-                if time.monotonic() >= self.next_read:
+                if time.monotonic() >= self._next_read:
                     await self._refresh(refresh_s)
         if not self._fresh(time.monotonic(), max_stale_s):
             return None
-        return self.value
+        return self._value
 
     async def _refresh(self, refresh_s: float) -> None:
         started = time.monotonic()
@@ -62,18 +62,18 @@ class PolledCopy[T]:
         except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
             self._log.warning("%s: read failed (%s); serving the last copy", self.name, e)
         else:
-            self.value, self.read_at = value, started
+            self._value, self._read_at = value, started
         # A failed read waits its turn too, so the waiters do not each query in turn.
         done = time.monotonic()
-        self.next_read = 0.0 if self.forgot_at >= started else done + refresh_s
+        self._next_read = 0.0 if self._forgot_at >= started else done + refresh_s
 
     def forget(self) -> None:
         """Make the next call read again, for a change just made here. The copy
         in hand keeps its age, so a failed read serves it as before."""
-        self.next_read, self.forgot_at = 0.0, time.monotonic()
+        self._next_read, self._forgot_at = 0.0, time.monotonic()
 
     def _reset_for_tests(self, value: T, *, read: bool, refresh_s: float) -> None:
         now = time.monotonic()
-        self.value, self.read_at, self.forgot_at = value, (now if read else 0.0), 0.0
-        self.next_read = now + refresh_s if read else 0.0
+        self._value, self._read_at, self._forgot_at = value, (now if read else 0.0), 0.0
+        self._next_read = now + refresh_s if read else 0.0
         self._lock = asyncio.Lock()  # a test's event loop is not the last one's
