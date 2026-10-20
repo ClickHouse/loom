@@ -126,12 +126,14 @@ def _census_reads_here() -> bool:
 def _census_only(probe: Callable[[], Any]) -> Callable[[], Any]:
     """Wrap a census probe so it runs only where `_census_reads_here()`;
     elsewhere it returns None, which the gauge cache renders as "no
-    observation" (never 0)."""
+    observation" (never 0). The predicate rides along as `reads_here`, so
+    the cache stops exporting the moment this process gives up the lease."""
 
     @functools.wraps(probe)
     def _run() -> Any:
         return probe() if _census_reads_here() else None
 
+    setattr(_run, "reads_here", _census_reads_here)  # noqa: B010 — a function declares no field
     return _run
 
 

@@ -49,14 +49,16 @@ class _TTLCache:
     `MetricsTimeoutError` and a dropped export cycle (all instruments, not just
     the gauges) on every cache expiry.
     `get()` returns the last value immediately (None before the first refresh
-    lands, and after the producer answers None (`_census_only` off the lease),
-    which observers must render as "no observation", not 0) and kicks off at
-    most one refresh once the TTL has lapsed.
+    lands, and while a census producer's process does not hold the lease,
+    `_census_only`; observers must render it as "no observation", not 0) and
+    kicks off at most one refresh once the TTL has lapsed.
     """
 
     def __init__(self, ttl_s: float, producer: Callable[[], Any]) -> None:
         self._ttl = ttl_s
         self._producer = producer
+        # A census producer's lease check (`otel_probes._census_only`).
+        self._reads_here: Callable[[], bool] | None = getattr(producer, "reads_here", None)
         self._value: Any = None
         self._fetched_at = 0.0
         # Seconds after `_fetched_at` the next refresh is due.
@@ -86,6 +88,11 @@ class _TTLCache:
     def get(self) -> Any:
         start = False
         with self._lock:
+            # A census another process takes is not this one's to export,
+            # whatever it read while it held the lease. In memory, no ClickHouse.
+            if self._reads_here is not None and not self._reads_here():
+                self._value = None
+                return None
             # "Never fetched" is always due: monotonic() counts from boot, so on
             # a host up for less than one TTL (a fresh CI runner, a container
             # started right after a reboot) `now - 0.0 >= ttl` is false and a

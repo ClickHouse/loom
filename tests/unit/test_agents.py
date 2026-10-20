@@ -190,13 +190,13 @@ def test_a_first_exchange_cut_off_before_its_grant_is_finished_by_the_next(
     assert counter.ticks == [{"loom.org": "acme", "loom.trust": "fleet", "outcome": "made"}]
 
 
-def test_a_repair_another_exchange_finished_first_is_not_counted(world, monkeypatch) -> None:
+def test_a_grant_written_since_the_check_is_left_alone_and_not_counted(world, monkeypatch) -> None:
     from server.observability import metrics
 
     counter = _Counter()
     monkeypatch.setattr(metrics, "_agents_provisioned", counter)
-    # A first exchange cut off after the row; another repair writes the grant
-    # between this one's check and its re-check under the grant's claim.
+    # A first exchange cut off after the row; a grant change for the agent lands
+    # between this exchange's check and its re-check under the grant's claim.
     world["rows"]["fleet-a1"] = {
         "active": True,
         "tags": ["machine:fleet"],

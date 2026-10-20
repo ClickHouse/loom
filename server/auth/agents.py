@@ -139,7 +139,8 @@ async def _granted(org: str, ns: str, who: str) -> bool:
 async def _finish_grant(org: str, ns: str, who: str) -> bool:
     """The agent's owner grant, held as a grant change is held from its read
     to its write, so a revocation is never written over. True when this call
-    wrote it, so two repairs at once finish (and count) the agent once."""
+    wrote it: a grant written since the check (a grant change for the agent)
+    is left alone and not counted."""
     from server.auth.grant_claims import grant_change
     from server.auth.self_signup import insert_owner_grant
 

@@ -229,6 +229,19 @@ def test_a_process_that_loses_the_lease_stops_exporting_its_census(
     assert _observed(cache, "agent_trust_used_ratio") == []
 
 
+def test_a_handoff_stops_the_old_holders_series_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.workers import leader
+
+    cache = _census_cache(monkeypatch, lambda: {"agent_trust_used_ratio": [(0.9, {})]})
+    cache._refresh()
+    assert _observed(cache, "agent_trust_used_ratio") == [0.9]
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    # Within the TTL and before any refresh: nothing from the old reading.
+    assert cache.get() is None
+    assert _observed(cache, "agent_trust_used_ratio") == []
+    assert not cache._refreshing
+
+
 def test_a_census_skipped_off_the_lease_is_due_again_within_30_s(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
