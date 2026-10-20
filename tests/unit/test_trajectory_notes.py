@@ -244,6 +244,29 @@ async def test_distill_events_fails_open_per_pair(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "stale"])
+async def test_a_call_the_switch_holds_propagates_from_events_and_notes(
+    monkeypatch, held: str
+) -> None:
+    """Not a failure to count: the caller leaves the session to distil again."""
+    from server.llm import customer
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "observe_extract_notes_min_observations", 0)
+    error = customer.ModelCallsDisabled if held == "switched_off" else customer.SwitchUnread
+
+    class _Held:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            raise error("held")
+
+    obs = [tn.observation_from_row(r) for r in ROWS]
+    with pytest.raises(error):
+        await tn.distill_events(SESSION, obs, llm=_Held(), max_events=12, ch=_CH())
+    with pytest.raises(error):
+        await tn.distill_notes(SESSION, obs, llm=_Held(), ch=_CH())
+
+
+@pytest.mark.asyncio
 async def test_distill_notes_writes_a_procedure_and_a_hint(monkeypatch) -> None:
     from server.settings import settings
 

@@ -18,7 +18,7 @@ either: the switch is a kill switch. `require()`, at the top of every
 sender, checks both before the gateway token, the caches or provider health.
 Each process tries to read the switched-off orgs at most every
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and refuses every call for an org
-(`BackendUnavailableError`) once its copy is older than
+(`SwitchUnread`, a BackendUnavailableError) once its copy is older than
 `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`: the switch fails closed. A call that
 names an org is checked even as the deployment's (`system()`); only a
 deployment call that names none is never switched off.
@@ -68,9 +68,18 @@ class ModelCallsDisabled(LoomServerError):
     status_code = 403
 
 
+class SwitchUnread(BackendUnavailableError):
+    """This process's copy of the switch is too old to trust: no call is made
+    for an org until it is read, and a job leaves its rows as they are."""
+
+
 # What require() refuses with: callers that fail open (a reranker, classify)
 # re-raise these, since neither is a provider fault to work around.
 REFUSALS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled)
+
+# What a job leaves its rows as they are for, to try again later: a refusal, or
+# a switch it cannot read.
+HOLDS: tuple[type[LoomServerError], ...] = (*REFUSALS, SwitchUnread)
 
 
 # The orgs switched off, as this process last read them, when (monotonic; 0.0 =
@@ -210,23 +219,20 @@ async def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
 
 
 async def switched_off(org: str) -> bool:
-    """Whether `org`'s model calls are switched off. Raises
-    BackendUnavailableError when this process's copy of the switch is too old
-    to trust."""
+    """Whether `org`'s model calls are switched off. Raises SwitchUnread
+    when this process's copy of the switch is too old to trust."""
     return org in await switched_off_orgs()
 
 
 async def switched_off_orgs() -> frozenset[str]:
     """The orgs whose model calls are switched off, for a job to pass over;
-    raises BackendUnavailableError when this process's copy is too old."""
+    raises SwitchUnread when this process's copy is too old."""
     if time.monotonic() >= _next_read:
         async with _lock:
             if time.monotonic() >= _next_read:
                 await _read()
     if not _read_at or time.monotonic() - _read_at > settings.model_calls_policy_max_stale_seconds:
-        raise BackendUnavailableError(
-            "the model-call switch could not be read; model calls wait until it is"
-        )
+        raise SwitchUnread("the model-call switch could not be read; model calls wait until it is")
     return _off
 
 

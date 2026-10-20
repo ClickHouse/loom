@@ -248,7 +248,8 @@ async def _vectors_for(
     """`embed_many` for the batch's non-empty texts, per-text on its failure
     so one poison text cannot fail its neighbours; `(vectors, failures)` by
     index. An empty text is never sent: one would fail the whole batch. A
-    refused call (`customer.REFUSALS`) is not a text's failure and propagates."""
+    refused call or an unread switch (`customer.HOLDS`) is not a text's failure
+    and propagates."""
     failures: dict[int, str] = {i: EMPTY_TEXT for i, t in enumerate(texts) if not t.strip()}
     todo = [i for i in range(len(texts)) if i not in failures]
     if not todo:
@@ -259,7 +260,7 @@ async def _vectors_for(
             got = await embed_many([texts[i] for i in todo])
             if len(got) == len(todo):
                 return dict(zip(todo, got, strict=True)), failures
-        except customer.REFUSALS:
+        except customer.HOLDS:
             raise
         except Exception as e:  # noqa: BLE001 — fall back per-text
             logger.warning("code_embed_recovery: batch failed (%s), per-text", e)
@@ -269,7 +270,7 @@ async def _vectors_for(
     for i in todo:
         try:
             vectors[i] = await embed_shrinking(embedder, texts[i])
-        except customer.REFUSALS:
+        except customer.HOLDS:
             raise
         except Exception as e:  # noqa: BLE001 — one failing chunk must not fail its group
             failures[i] = str(e)[:300]
@@ -288,7 +289,8 @@ async def _embed_rows(
 ) -> int:
     """Embed the pass's rows per `(org, namespace)` — the provider spans and
     spend stay attributed to the namespace — `_batch()` texts an embed call,
-    and write every replacement row of the table in one insert."""
+    and write every replacement row of the table in one insert. A switch gone
+    stale mid-pass (`SwitchUnread`) stops the pass before that insert."""
     if not rows:
         return 0
     from server.code.app.index.embed_text import clip_for_embedding

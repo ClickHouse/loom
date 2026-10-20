@@ -233,17 +233,16 @@ async def _distill_session(
             observation_date = va.date().isoformat()
 
     written = await _extract_replay(session, msgs, observation_date)
-    # The transition events and the two session notes, from
-    # the same observations, before they are marked DONE. Fail-open: the
-    # facts are already written; a failed note is a count, not a lost pass.
+    # The transition events and the two session notes, from the same observations,
+    # before they are marked DONE. Fail-open: the facts are already written, and a
+    # failed note is a count, not a lost pass.
+    # A call the switch holds (`customer.HOLDS`: switched off since the session was
+    # picked, or a copy too old to read) propagates instead: the sources stay
+    # un-DONE and the whole session is distilled again once the org is back on.
+    # Its events and hints are keyed by the session and its facts deduplicated by
+    # hash, so the rerun replaces them rather than adding copies.
     context = await _load_session_context(session, ch=get_client_for_context())
     extras = await _distill_extras(session, readable, context=context)
-    org = str(session["org"])
-    if await customer.switched_off(org):
-        # Switched off since the session was picked: the extras' calls were refused
-        # (they fail open), so the sources stay un-DONE and are distilled again once
-        # the org is back on.
-        raise customer.ModelCallsDisabled(f"model calls are switched off for org {org!r}")
 
     # Mark sources DONE. RMT: mirror every column, only tags + version change.
     from server.core.ch import get_client

@@ -179,7 +179,8 @@ async def _embed_rows(
     """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
     org, and one model call names a single customer. An org switched off since
     the stubs were picked gets `(None, SWITCHED_OFF)`: its rows are left as
-    they are, attempts untouched."""
+    they are, attempts untouched. A switch gone stale mid-pass (`SwitchUnread`)
+    stops the pass before its write."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
     groups = await customer.by_org(str(r.get("org") or "") for r in rows)
     for org, positions in groups.items():
@@ -235,8 +236,8 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
                 len(vecs),
                 len(texts),
             )
-        except customer.ModelCallsDisabled:
-            raise  # the org is switched off: no row's attempt is spent
+        except (customer.ModelCallsDisabled, customer.SwitchUnread):
+            raise  # the org is switched off, or may be: no row's attempt is spent
         except Exception as e:  # noqa: BLE001 — batch failure falls back to per-row
             log.info(
                 "embedding worker: batch of %d failed (%s: %s); isolating per row",
@@ -252,7 +253,7 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
             if len(one) != 1:
                 raise RuntimeError(f"embed_many returned {len(one)} vectors for 1 input")
             out.append((one[0], ""))
-        except customer.ModelCallsDisabled:
+        except (customer.ModelCallsDisabled, customer.SwitchUnread):
             raise
         except Exception as e:  # noqa: BLE001 — per-row isolation is the point
             out.append((None, f"{type(e).__name__}: {e}"[:512]))

@@ -115,7 +115,7 @@ class ProviderSettings(ModelSettings):
     # switched off (loom.org_model_calls); a change reaches every process within it.
     model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
     # Seconds a process trusts its copy of that switch when it cannot read it
-    # again; past it, every model call is refused (fail closed). 15 to 300.
+    # again; past it, every model call for an org is refused (fail closed). 15 to 300.
     model_calls_policy_max_stale_seconds: float = Field(60.0, ge=15, le=300)
     # Days a switched-off org's queued requests (the extraction queue) wait, from
     # when the org was switched off, before they are dropped, each with a

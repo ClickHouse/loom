@@ -323,8 +323,8 @@ def test_an_org_switched_off_mid_pass_keeps_its_stub_and_its_attempts(monkeypatc
 def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_distil(
     monkeypatch,
 ) -> None:
-    """The extras fail open on a refusal, so a switch-off between the facts and
-    the extras would mark the session DONE with its events and notes lost."""
+    """The extras' refused call propagates, so a switch-off between the facts and
+    the extras leaves the session un-DONE, its events and notes not lost."""
     import server.memory.store as memory_repo
     from server.memory.workers import observe_extract as ox
 
@@ -336,13 +336,25 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
     async def context(*a: Any, **k: Any) -> list[Any]:
         return []
 
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            await customer.require()
+            return SimpleNamespace(text="")
+
     async def extras(*a: Any, **k: Any) -> Any:
-        _off("acme")  # switched off while the extras ran: their calls were refused
-        return SimpleNamespace(events_written=0, procedure_written=0, hint_written=0, failures=[])
+        from server.memory.app import trajectory_notes as tn
+
+        _off("acme")  # switched off while the extras ran
+        return await tn.distill_notes(a[0], [_useful], llm=_LLM())
 
     async def insert(rows: list[Any], **_: Any) -> None:
         done.extend(rows)
 
+    from server.memory.app import trajectory_notes as tn
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "observe_extract_notes_min_observations", 0)
+    _useful = tn.Observation("o1", "command_run", "Bash", "pytest -q", "", (), None, None)
     monkeypatch.setattr(ox, "_extract_replay", replay)
     monkeypatch.setattr(ox, "_load_session_context", context)
     monkeypatch.setattr(ox, "get_client_for_context", lambda: None)
@@ -355,7 +367,7 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
         value={"narrative": "ran the tests"}, sensitivity="", tags=[], valid_at=None
     )
     _off()
-    with pytest.raises(customer.ModelCallsDisabled):
+    with customer.for_org("acme"), pytest.raises(customer.ModelCallsDisabled):  # as run_pass
         asyncio.run(ox._distill_session(session, [obs]))
     assert done == []  # not marked DONE: distilled again once the org is back on
 
@@ -389,6 +401,151 @@ def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch)
     with pytest.raises(BackendUnavailableError):
         asyncio.run(w.run_pass(w.EmbeddingWorkerConfig()))
     assert written == []
+
+
+def test_a_switch_gone_stale_mid_embedding_pass_writes_nothing_and_spends_no_attempt(
+    monkeypatch,
+) -> None:
+    """With the customer header set the batch is split without reading the
+    switch, so the copy is first found stale inside the embed call: the pass
+    stops before its write, not with a provider failure on every stub."""
+    import server.memory.store as memory_repo
+    from server.memory.workers import embedding as w
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
+    stubs = [
+        memory_repo.build_embedding_row(
+            org="acme",
+            namespace="n",
+            memory_key="acme-k",
+            content_excerpt="text",
+            embedding_model="m",
+            embedding_dim=0,
+            embed_attempts=4,
+        )
+    ]
+    written: list[dict[str, Any]] = []
+
+    class _Embedder:
+        model_name, dim = "m", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            return [[0.5, 0.5] for _ in texts]
+
+    async def none(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    async def picked(**kw: Any) -> list[dict[str, Any]]:
+        _stale()  # fresh when the stubs are read, stale by the embed
+        return [dict(s) for s in stubs]
+
+    async def served(rows: list[dict[str, Any]], *a: Any) -> tuple[list[Any], list[Any]]:
+        return rows, []
+
+    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+        written.extend(rows)
+
+    async def nothing(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(w, "get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(memory_repo, "find_memories_without_embedding_rows", none)
+    monkeypatch.setattr(memory_repo, "find_embedding_stubs", picked)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", insert)
+    monkeypatch.setattr(memory_repo, "retire_copies_under_unembedded_heads", nothing)
+    monkeypatch.setattr(memory_repo, "index_late_rows", nothing)
+    monkeypatch.setattr(w, "_stubs_still_served", served)
+    monkeypatch.setattr(w, "_refresh_entities", nothing)
+    _off()
+    with pytest.raises(customer.SwitchUnread):
+        asyncio.run(w.run_pass(w.EmbeddingWorkerConfig(max_attempts=5)))
+    assert written == []
+
+
+def test_a_switch_gone_stale_mid_code_recovery_pass_writes_nothing() -> None:
+    from server.code.workers import embed_recovery as w
+
+    class _Embedder:
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            return [[0.5, 0.5] for _ in texts]
+
+        async def embed(self, text: str) -> list[float]:
+            await customer.require()
+            return [0.5, 0.5]
+
+    class _Repo:
+        rows: list[Any] = []
+
+        def tombstone_of(self, table: str, live: dict[str, Any]) -> dict[str, Any]:
+            return dict(live)
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            self.rows = rows
+
+    repo = _Repo()
+    rows = [{"org": "acme", "namespace": "code-a", "text": "def f(): pass", "embed_attempts": 4}]
+    result = w.CodeEmbedRecoveryResult()
+    _stale()
+    with pytest.raises(customer.SwitchUnread):
+        asyncio.run(
+            w._embed_rows(
+                repo,
+                "code_chunks",
+                rows,
+                _Embedder(),
+                text_of=lambda r: r["text"],
+                max_attempts=5,
+                result=result,
+            )
+        )
+    assert repo.rows == [] and result.failed == 0 and result.poisoned == 0
+
+
+def test_code_backfill_stops_on_a_switched_off_org_and_records_its_pass(monkeypatch) -> None:
+    """The org's rows stay as they are, so without the stop the next page is the
+    same one, forever."""
+    import argparse
+
+    from server.cli import code_backfill
+
+    pages: list[int] = []
+    recorded: list[dict[str, Any]] = []
+
+    class _Embedder:
+        model_name, dim = "m", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            return [[0.5, 0.5] for _ in texts]
+
+    class _Repo:
+        async def pending_embed_chunks(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            pages.append(1)
+            assert len(pages) < 3, "the backfill re-read the same page"
+            return [{"org": "acme", "namespace": "code-a", "content": "def f(): pass"}]
+
+        def tombstone_of(self, table: str, live: dict[str, Any]) -> dict[str, Any]:
+            return dict(live)
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            return None
+
+    async def record(*a: Any, **k: Any) -> None:
+        recorded.append(k)
+
+    async def compact(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(code_backfill, "_record_manual_pass", record)
+    monkeypatch.setattr(code_backfill, "_compact_after_bulk", compact)
+    _off("acme")
+    rc = asyncio.run(code_backfill._backfill_embed(_Repo(), "acme", "code-a", argparse.Namespace()))
+    assert rc == 1 and pages == [1]
+    assert len(recorded) == 1 and recorded[0]["phase"] == "embed"
 
 
 def test_a_switch_gone_stale_mid_reembed_stops_the_page_before_its_write() -> None:

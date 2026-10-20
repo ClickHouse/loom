@@ -445,15 +445,15 @@ only as any namespace's: granted by its admin, or by joining.
 each send point refuses a call for a switched-off org (403 `MODEL_CALLS_DISABLED`) before
 anything is sent, and background jobs leave the org's work queued. The server that took the
 change applies it on its next call, every other within
-`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`; an older build ignores the switch. It
-fails closed: a process whose copy of the switch is older than
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`; an older build ignores the switch. It fails
+closed: a process whose copy of the switch is older than
 `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` refuses every model call for an org until it
-reads it again. An org admin reaches only its own org's switch. A platform admin's lock (`"locked": true`,
-settable only by a platform admin) stops the org's admins from switching it back on or
-unlocking it, never from switching it off. Offboarding is manual today: a platform admin
-switches the org off locked, and the org's cached query vectors expire after 30 days.
-Changes to one org's switch are serialized, so an org admin's write never carries an old lock
-state over a new one.
+reads it again. An org admin reaches only its own org's switch. A platform admin's lock
+(`"locked": true`, settable only by a platform admin) stops the org's admins from switching
+it back on or unlocking it, never from switching it off. Offboarding is manual today: a
+platform admin switches the org off locked, and the org's cached query vectors expire after
+30 days. Changes to one org's switch are serialized, so an org admin's write never carries
+an old lock state over a new one.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
