@@ -193,8 +193,8 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   behind (fewer than it asked for) is not repeated before then once drained, so a
   namespace is scanned at most once per that age while nobody else is behind. A user
   whose build failed (a model error, an answer that is not a JSON object, including one
-  cut off at its 2048-token cap, the `structured_profile` entry of
-  `LOOM_LLM_MAX_TOKENS_OVERRIDES`) is skipped for
+  cut off at its 2048-token cap (the `structured_profile` entry of `LLM_MAX_TOKENS`,
+  changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`)) is skipped for
   `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` (300), doubling up to
   `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600), and tried again after. A
   namespace whose scan or stored schema fails is counted and backs off the same way until
@@ -238,7 +238,7 @@ in [unified search](../unified-search.md).
 | Setting                         | Effect                                                                                                                                                      |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_PROFILE_CONSOLIDATION_*`  | The profile fold worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                                  |
-| `LOOM_STRUCTURED_PROFILE_*`     | The structured profile worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                            |
+| `LOOM_STRUCTURED_PROFILE_*`     | The structured profile worker ([Structured profiles](../../reference/configuration.md#structured-profiles)).                                                |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | Tags rows with protected attributes, which the fold leaves out ([Sensitivity and provenance](../../reference/configuration.md#sensitivity-and-provenance)). |
 
 ## Limits

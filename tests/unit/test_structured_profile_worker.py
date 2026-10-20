@@ -4,7 +4,7 @@ which orgs and users it passes over, and what it never writes."""
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -97,12 +97,6 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     monkeypatch.setattr(profile_schemas, "list_active", list_active)
     monkeypatch.setattr(profile_sources, "users_behind", users_behind)
     monkeypatch.setattr(w, "build_profile", build)
-    # Registered so the test's own value (set by `_cfg`) is undone after it.
-    monkeypatch.setattr(
-        settings,
-        "structured_profile_max_users_per_pass",
-        settings.structured_profile_max_users_per_pass,
-    )
     yield state
     w._backoff.clear()
     w._namespace_backoff.clear()
@@ -111,9 +105,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     pass_context.clear()
 
 
-def _cfg(budget: int, only: tuple[str, str] | None = None) -> w.StructuredProfileConfig:
-    """A pass of `budget` users; the `world` fixture restores the setting."""
-    settings.structured_profile_max_users_per_pass = budget
+def _cfg(only: tuple[str, str] | None = None) -> w.StructuredProfileConfig:
+    """A pass over every namespace, or only `only`."""
     return w.StructuredProfileConfig(only=only)
 
 
@@ -127,8 +120,11 @@ def _per_space(built: list[tuple[str, str, str]]) -> dict[tuple[str, str], int]:
 
 
 @pytest.mark.asyncio
-async def test_each_namespace_gets_an_equal_share_of_the_budget(world: dict[str, Any]) -> None:
-    result = await w.run_pass(_cfg(4))
+async def test_each_namespace_gets_an_equal_share_of_the_budget(
+    world: dict[str, Any], settings_override: Callable[..., None]
+) -> None:
+    settings_override(structured_profile_max_users_per_pass=4)
+    result = await w.run_pass(_cfg())
     # ceil(4 / 3) = 2 each, until the budget runs out.
     assert _per_space(world["built"]) == {("o1", "a"): 2, ("o1", "b"): 2, ("o2", "a"): 0}
     assert result.profiles_written == 4
@@ -137,22 +133,27 @@ async def test_each_namespace_gets_an_equal_share_of_the_budget(world: dict[str,
 @pytest.mark.asyncio
 async def test_a_pass_resumes_after_the_last_namespace_and_wraps_around(
     world: dict[str, Any],
+    settings_override: Callable[..., None],
 ) -> None:
     ctx = pass_context.begin("structured_profile", resume_cursor=json.dumps(["o1", "a"]))
-    await w.run_pass(_cfg(3))
+    settings_override(structured_profile_max_users_per_pass=3)
+    await w.run_pass(_cfg())
     assert _spaces_built(world["built"]) == [("o1", "b"), ("o2", "a"), ("o1", "a")]
     assert json.loads(ctx.cursor) == ["o1", "a"]
 
     world["built"].clear()
     ctx = pass_context.begin("structured_profile", resume_cursor=json.dumps(["o1", "b"]))
-    await w.run_pass(_cfg(1))
+    settings_override(structured_profile_max_users_per_pass=1)
+    await w.run_pass(_cfg())
     assert _spaces_built(world["built"]) == [("o2", "a")]
     assert json.loads(ctx.cursor) == ["o2", "a"]
 
 
 @pytest.mark.asyncio
 async def test_a_failing_namespace_is_counted_and_the_pass_moves_on(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
 ) -> None:
     fine = profile_sources.users_behind
 
@@ -163,7 +164,8 @@ async def test_a_failing_namespace_is_counted_and_the_pass_moves_on(
 
     monkeypatch.setattr(profile_sources, "users_behind", users_behind)
     ctx = pass_context.begin("structured_profile")
-    result = await w.run_pass(_cfg(3))
+    settings_override(structured_profile_max_users_per_pass=3)
+    result = await w.run_pass(_cfg())
     assert result.errors == 1 and ctx.count == 1
     assert _spaces_built(world["built"]) == [("o1", "b"), ("o2", "a")]
     # The cursor moved past it: the next pass starts after, and comes back to it on the wrap.
@@ -172,7 +174,9 @@ async def test_a_failing_namespace_is_counted_and_the_pass_moves_on(
 
 @pytest.mark.asyncio
 async def test_a_pass_stopped_between_users_builds_no_more(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
 ) -> None:
     ctx = pass_context.begin("structured_profile")
     real_build = w.build_profile
@@ -183,30 +187,36 @@ async def test_a_pass_stopped_between_users_builds_no_more(
         return out
 
     monkeypatch.setattr(w, "build_profile", build_then_stop)
+    settings_override(structured_profile_max_users_per_pass=10)
     with pytest.raises(pass_context.PassStopped):
-        await w.run_pass(_cfg(10, ("o2", "a")))
+        await w.run_pass(_cfg(("o2", "a")))
     assert world["built"] == [("o2", "a", "u0")]
 
 
 @pytest.mark.asyncio
-async def test_a_switched_off_org_is_passed_over(world: dict[str, Any]) -> None:
+async def test_a_switched_off_org_is_passed_over(
+    world: dict[str, Any], settings_override: Callable[..., None]
+) -> None:
     world["off"] = {"o1"}
-    await w.run_pass(_cfg(10))
+    settings_override(structured_profile_max_users_per_pass=10)
+    await w.run_pass(_cfg())
     assert {b[0] for b in world["built"]} == {"o2"}
 
 
 @pytest.mark.asyncio
 async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
     world: dict[str, Any],
+    settings_override: Callable[..., None],
 ) -> None:
     key = ("o2", "a", "u0")
     world["fail"] = {key}
-    result = await w.run_pass(_cfg(10, ("o2", "a")))
+    settings_override(structured_profile_max_users_per_pass=10)
+    result = await w.run_pass(_cfg(("o2", "a")))
     assert (result.errors, result.profiles_written) == (1, 4)
 
     # The next pass leaves the user out and builds the others.
     world["built"].clear()
-    result = await w.run_pass(_cfg(10, ("o2", "a")))
+    result = await w.run_pass(_cfg(("o2", "a")))
     assert key not in world["built"] and result.errors == 0
 
     # Each failure doubles the wait, up to the cap.
@@ -222,17 +232,19 @@ async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
     world["fail"] = set()
     world["built"].clear()
     w._scans.clear()  # and the last scan is old enough to run again
-    await w.run_pass(_cfg(10, ("o2", "a")))
+    await w.run_pass(_cfg(("o2", "a")))
     assert key in world["built"] and key not in w._backoff
 
 
 @pytest.mark.asyncio
 async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses(
     world: dict[str, Any],
+    settings_override: Callable[..., None],
 ) -> None:
     key = ("o2", "a", "u0")
     world["refuse"] = {key}
-    result = await w.run_pass(_cfg(10, ("o2", "a")))
+    settings_override(structured_profile_max_users_per_pass=10)
+    result = await w.run_pass(_cfg(("o2", "a")))
     assert (result.refused, result.errors, result.profiles_written) == (1, 0, 4)
     assert w.refused_at("o2", "a") == {"u0": ("d1", 3)}
 
@@ -240,12 +252,12 @@ async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses
     # tried again once the refusal lapses.
     world["refuse"] = set()
     world["built"].clear()
-    await w.run_pass(_cfg(10, ("o2", "a")))
+    await w.run_pass(_cfg(("o2", "a")))
     assert key not in world["built"]
     digest, version, _ = w._refused[key]
     w._refused[key] = (digest, version, 0.0)
     w._scans.clear()  # and the last scan is old enough to run again
-    await w.run_pass(_cfg(10, ("o2", "a")))
+    await w.run_pass(_cfg(("o2", "a")))
     assert key in world["built"] and key not in w._refused
 
 
@@ -451,8 +463,11 @@ async def test_what_the_write_answers_decides_refusal_or_failure(
 
 
 @pytest.mark.asyncio
-async def test_one_scan_serves_the_passes_after_it(world: dict[str, Any]) -> None:
-    cfg = _cfg(1, ("o2", "a"))
+async def test_one_scan_serves_the_passes_after_it(
+    world: dict[str, Any], settings_override: Callable[..., None]
+) -> None:
+    settings_override(structured_profile_max_users_per_pass=1)
+    cfg = _cfg(("o2", "a"))
     for _ in range(5):
         await w.run_pass(cfg)
     # The first scan found up to SCAN_FACTOR users; the next four passes took from it.
@@ -468,10 +483,13 @@ async def test_one_scan_serves_the_passes_after_it(world: dict[str, Any]) -> Non
 
 @pytest.mark.asyncio
 async def test_a_drained_incomplete_scan_is_scanned_again_at_once(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
 ) -> None:
     monkeypatch.setattr(w, "SCAN_FACTOR", 1)  # the scan finds as many as it asks for
-    cfg = _cfg(1, ("o2", "a"))
+    settings_override(structured_profile_max_users_per_pass=1)
+    cfg = _cfg(("o2", "a"))
     await w.run_pass(cfg)
     await w.run_pass(cfg)
     assert world["scans"] == 2 and len(world["built"]) == 2
@@ -479,14 +497,17 @@ async def test_a_drained_incomplete_scan_is_scanned_again_at_once(
 
 @pytest.mark.asyncio
 async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
 ) -> None:
     async def failing(**kw: Any) -> list[Behind]:
         world["scans"] += 1
         raise RuntimeError("the scan failed")
 
     monkeypatch.setattr(profile_sources, "users_behind", failing)
-    cfg = _cfg(10, ("o2", "a"))
+    settings_override(structured_profile_max_users_per_pass=10)
+    cfg = _cfg(("o2", "a"))
     assert (await w.run_pass(cfg)).errors == 1
     # Backing off, the namespace is not scanned and the pass is idle.
     ctx = pass_context.begin("structured_profile")
@@ -501,9 +522,12 @@ async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
 
 @pytest.mark.asyncio
 async def test_a_schema_change_or_an_old_scan_scans_again(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
 ) -> None:
-    cfg = _cfg(1, ("o2", "a"))
+    settings_override(structured_profile_max_users_per_pass=1)
+    cfg = _cfg(("o2", "a"))
     await w.run_pass(cfg)
     w._scans[("o2", "a")].scanned_at -= settings.structured_profile_scan_max_age_seconds + 1
     await w.run_pass(cfg)
@@ -515,7 +539,9 @@ async def test_a_schema_change_or_an_old_scan_scans_again(
 
 @pytest.mark.asyncio
 async def test_the_leftover_budget_takes_from_the_scan_already_made(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
 ) -> None:
     async def users_behind(**kw: Any) -> list[Behind]:
         world["scans"] += 1
@@ -523,7 +549,8 @@ async def test_the_leftover_budget_takes_from_the_scan_already_made(
         return [Behind(u, "d1", 0) for u in behind[(kw["org"], kw["namespace"])][: kw["limit"]]]
 
     monkeypatch.setattr(profile_sources, "users_behind", users_behind)
-    await w.run_pass(_cfg(6))
+    settings_override(structured_profile_max_users_per_pass=6)
+    await w.run_pass(_cfg())
     assert _per_space(world["built"]) == {("o1", "a"): 1, ("o1", "b"): 5, ("o2", "a"): 0}
     assert world["scans"] == 3  # one per namespace, none for the leftover round
 
@@ -531,10 +558,12 @@ async def test_the_leftover_budget_takes_from_the_scan_already_made(
 @pytest.mark.asyncio
 async def test_a_schema_that_does_not_parse_is_counted_and_passed_over(
     world: dict[str, Any],
+    settings_override: Callable[..., None],
 ) -> None:
     world["bad"] = {("o1", "a")}
     ctx = pass_context.begin("structured_profile")
-    result = await w.run_pass(_cfg(3))
+    settings_override(structured_profile_max_users_per_pass=3)
+    result = await w.run_pass(_cfg())
     assert result.errors == 1 and ctx.count == 1
     assert ("o1", "a") not in _spaces_built(world["built"])
     assert ("o1", "a") in w._namespace_backoff  # it backs off like a failing scan
@@ -543,14 +572,19 @@ async def test_a_schema_that_does_not_parse_is_counted_and_passed_over(
 @pytest.mark.asyncio
 async def test_a_waiting_namespace_does_not_take_the_only_place_in_a_pass(
     world: dict[str, Any],
+    settings_override: Callable[..., None],
 ) -> None:
     w._note_namespace_failure("o1", "a", "h" * 64)
-    await w.run_pass(_cfg(1))
+    settings_override(structured_profile_max_users_per_pass=1)
+    await w.run_pass(_cfg())
     assert _spaces_built(world["built"]) == [("o1", "b")]
 
 
 @pytest.mark.asyncio
-async def test_a_new_schema_ends_a_namespace_wait(world: dict[str, Any]) -> None:
+async def test_a_new_schema_ends_a_namespace_wait(
+    world: dict[str, Any], settings_override: Callable[..., None]
+) -> None:
     w._note_namespace_failure("o1", "a", "x" * 64)  # it failed under an older schema
-    await w.run_pass(_cfg(1))
+    settings_override(structured_profile_max_users_per_pass=1)
+    await w.run_pass(_cfg())
     assert _spaces_built(world["built"]) == [("o1", "a")]
