@@ -92,10 +92,15 @@ def _plan_retrieval(
     and the plan."""
     from server.memory.domain.query_planner import plan_memory_search
 
-    initial_hyde_allowed = bool(getattr(input, "hyde", False)) and (
-        caller_hyde_explicit
-        or getattr(input, "retrieval_budget", "standard") == "deep"
-        or getattr(input, "recipe", "") == "quality"
+    llm_free = _is_llm_free(input)
+    initial_hyde_allowed = (
+        bool(getattr(input, "hyde", False))
+        and (
+            caller_hyde_explicit
+            or getattr(input, "retrieval_budget", "standard") == "deep"
+            or getattr(input, "recipe", "") == "quality"
+        )
+        and not llm_free
     )
     search_plan = plan_memory_search(
         current_search_mode=input.search_mode,
@@ -113,6 +118,14 @@ def _plan_retrieval(
         mode_pinned=not bool(getattr(input, "_search_mode_defaulted", False)),
         namespace_defaults=tuple(getattr(input, "_namespace_defaults_applied", ()) or ()),
     )
+    if llm_free:
+        # The plan an LLM-free read reports runs no LLM step, whatever the planner chose
+        # (the deep budget turns HyDE on after `current_hyde`).
+        search_plan = replace(
+            search_plan,
+            hyde=False,
+            rerank="" if search_plan.rerank.startswith(BUILTIN_OPENAI) else search_plan.rerank,
+        )
     input = input.model_copy(update=search_plan.input_updates)
     return input, search_plan
 
@@ -190,15 +203,17 @@ def _size_candidate_pool(
     # top_k when the namespace has the rows) silently truncates.
     pool_top_k = _quality_pool(input, pool_top_k, _settings)  # the cap; quality-filter widening
     actual_work["pool_top_k"] = int(pool_top_k)
+    llm_free = _is_llm_free(input)
     retrieval_cost_estimate = estimate_memory_search_work(
         search_plan,
         namespace_count=len(namespaces),
         top_k=int(input.top_k),
         pool_top_k=int(pool_top_k),
-        query_enrichment_used=query_enrichment_used,
+        # The estimate counts enrichment as an LLM call; an LLM-free read's is the parser.
+        query_enrichment_used=query_enrichment_used and not llm_free,
         sub_query_count=len(sub_queries),
         entity_count=len(effective_entity_filter),
-        graph_triples_enabled=input.search_mode == "graph",
+        graph_triples_enabled=input.search_mode == "graph" and not llm_free,
         external_rerank_enabled=external_rerank_enabled,
     )
     search_plan = replace(search_plan, estimated_work=retrieval_cost_estimate)

@@ -36,7 +36,6 @@ class SearchContext:
     input: MemorySearchInput
     search_budget: SearchBudget
     embedder: Embedder
-    fast_posture: bool
     # No LLM call on this read: the fast posture, or an LLM-free caller (context.pack).
     llm_free: bool
 

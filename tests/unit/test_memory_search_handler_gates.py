@@ -480,7 +480,14 @@ async def test_a_fast_read_makes_no_llm_call(
     out = await _run(search_env, query=query, observation_date="2023-07-15", **posture)
     assert llm_attempts == []
     assert out.retrieval_work["llm_calls_total"] == 0
+    _assert_plans_no_llm(out)
     assert out.results  # still answered, from the vector query alone
+
+
+def _assert_plans_no_llm(out: Any) -> None:
+    # What the read reports it planned and costed shows no LLM step either.
+    assert "hyde=off" in out.retrieval_plan and "hyde=on" not in out.score_explanation
+    assert out.retrieval_cost_estimate["llm_calls"] == 0
 
 
 _PACK_QUESTIONS = [
@@ -517,6 +524,32 @@ async def test_a_context_pack_makes_no_llm_call(
         return (reranker, "")  # builtin:openai is an LLM
 
     monkeypatch.setattr(rerank_mod, "get_namespace_rerank_config", namespace_rerank)
+    import server.knowledge.app.conversations as conversations_mod
+    import server.knowledge.app.knowledge_search as knowledge_mod
+    import server.memory.app.search as search_mod
+
+    searched: list[Any] = []
+    ran: list[str] = []
+
+    def recorded(name: str, handler: Any, outputs: list[Any] | None = None) -> Any:
+        async def _h(*a: Any, **k: Any) -> Any:
+            ran.append(name)
+            out = await handler(*a, **k)
+            if outputs is not None:
+                outputs.append(out)
+            return out
+
+        return _h
+
+    for mod, name in (
+        (knowledge_mod, "handle_knowledge_search"),
+        (conversations_mod, "handle_conversation_search"),
+    ):
+        monkeypatch.setattr(mod, name, recorded(name, getattr(mod, name)))
+    search = search_mod.handle_memory_search
+    monkeypatch.setattr(
+        search_mod, "handle_memory_search", recorded("memory_search", search, searched)
+    )
     out = await handle_context_pack(
         ContextPackInput(
             org="o",
@@ -530,6 +563,26 @@ async def test_a_context_pack_makes_no_llm_call(
     )
     assert llm_attempts == []
     assert "memories" in out.sections  # answered from the vector query alone
+    # The opt-in sections ran (an empty one that raised would pass the check above).
+    assert {"handle_knowledge_search", "handle_conversation_search"} <= set(ran)
+    assert searched  # the memories search, and the procedures section's
+    for search_out in searched:
+        _assert_plans_no_llm(search_out)
+
+
+async def test_off_the_llm_free_posture_the_llm_reranker_runs(search_env, llm_attempts) -> None:
+    # A positive control: without the fast posture or the pack's flag, a requested
+    # builtin:openai rerank reaches the model client.
+    await _run(search_env, recipe="balanced", rerank="builtin:openai")
+    assert any(a.startswith("complete: Query:") for a in llm_attempts)
+
+
+async def test_off_the_llm_free_posture_the_quality_recipe_runs_hyde_once(
+    search_env, llm_attempts
+) -> None:
+    await _run(search_env, recipe="quality")
+    hyde = [a for a in llm_attempts if a.startswith("complete: Question:")]
+    assert len(hyde) == 1
 
 
 async def test_the_standard_budget_still_asks_the_llm_for_a_count_intent(

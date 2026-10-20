@@ -40,9 +40,9 @@ class ContextPackInput(_Identity):
     # Same semantics as memory.search.read_scope; binds to this op's user_id /
     # session_id. The token's claim is the ceiling.
     read_scope: Literal["namespace", "own_user", "own_session"] = "namespace"
-    # Section budgets and search recipe: `startup` (fast recall; with no query it serves
-    # pins and recent memories), `task` (balanced), `debug` (quality), `handoff`. No mode
-    # makes an LLM call: the recipe sets the search planes, never its LLM steps.
+    # Section budgets and search recipe, with no LLM call in any mode: `startup` (fast
+    # recall; with no query it serves pins and recent memories), `task` and `handoff`
+    # (balanced), `debug` (quality). The recipe sets the search planes, never LLM steps.
     mode: Literal["startup", "task", "debug", "handoff"] = "task"
     # Add a `knowledge` section of matching document chunks; needs a `query`.
     include_knowledge: bool = False

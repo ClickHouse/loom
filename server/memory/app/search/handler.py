@@ -171,8 +171,8 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         fresh_result.top_k_ceiling = _top_k_ceiling
         return fresh_result
 
-    # Fast posture disables every optional LLM stage (the iterative judge) for a vector-query
-    # latency floor.
+    # Fast posture skips set expansion (the fast budget also pins the 1x pool); the LLM
+    # gates read _is_llm_free.
     fast_posture = _is_fast_posture(input)
 
     embedder = get_embedder()
@@ -250,7 +250,6 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             input=input,
             search_budget=search_budget,
             embedder=embedder,
-            fast_posture=fast_posture,
             llm_free=_is_llm_free(input),
             obs_date=obs_date,
             parsed_intent=parsed_intent,
