@@ -1292,3 +1292,45 @@ async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
         params={"org": org, "sha": sha256_value(later)},
     )
     assert ("alice smith", "carol king") in {(r["entity_a"], r["entity_b"]) for r in linked}
+
+
+async def test_values_whose_edges_stay_open_do_not_block_a_value_less_close(
+    ch, org, monkeypatch
+) -> None:
+    """A high row whose older values link only the pair it still names, and one that
+    links a pair it no longer names: the repair reads only what can close, so the
+    closable value is reached however few values a pass reads (one, here) and however
+    many stay open ahead of it by hash."""
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    with monkeypatch.context() as m:  # every close and drop lost: all edges stay open
+        m.setattr(edge_links, "drop_undeclared_links", nothing)
+        m.setattr(projections, "end_edges", nothing)
+        m.setattr(triple_projections, "end_edges", nothing)
+        # Their hashes sort ahead of the closable value's.
+        for value in ("Alice and Bob note 9", "Alice and Bob note 22", "Alice and Bob note 23"):
+            await _high_set(org, "s1", "vault", value, entities=["Alice Smith", "Bob Lane"])
+        await _high_set(
+            org,
+            "s1",
+            "vault",
+            "Alice met Carol about the plan",
+            entities=["Alice Smith", "Carol King"],
+        )
+        out = await _high_set(
+            org, "s1", "vault", "Orchid", sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGE", 1)
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGES", 1)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", [], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    for _ in range(2):
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
