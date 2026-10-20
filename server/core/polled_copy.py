@@ -1,12 +1,10 @@
-"""One process's copy of a small table, for a fail-closed check made on
-every call.
+"""One process's copy of a small table, read on a timer, for a fail-closed check.
 
-It reads the whole table when a read is due: `refresh_s` after the last
-read ended, or at once after a change made in this process (`note_change`).
-While a read runs, a call is served the copy in hand if that copy is young
-enough and no change made here waits; otherwise it waits for the read. `get`
-answers None when the copy is older than `max_stale_s`, and the caller
-refuses.
+The check is made on every call. The copy reads the whole table when a read is due:
+`refresh_s` after the last read ended, or at once after a change made in this process
+(`note_change`). While a read runs, a call is served the copy in hand if that copy is young
+enough and no change made here waits; otherwise it waits for the read. `get` answers None
+when the copy is older than `max_stale_s`, and the caller refuses.
 """
 
 from __future__ import annotations

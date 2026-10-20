@@ -12,8 +12,7 @@ import pytest
 
 from server.llm import customer
 from server.settings import settings
-from tests.unit.switch_state import switch_read_now as _off
-from tests.unit.switch_state import switch_stale as _stale
+from tests.unit.switch_state import switch_off, switch_stale
 
 
 class _CH:
@@ -60,7 +59,7 @@ def test_profile_consolidation_selects_no_identity_of_a_switched_off_org(monkeyp
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(w, "_consolidate_identity", fold)
-    _off("acme")
+    switch_off("acme")
     asyncio.run(w.run_pass(w.ProfileConsolidationConfig(max_identities_per_pass=1)))
     assert _excludes(ch, "acme") and folded == ["beta"]  # acme, the larger, filled no slot
 
@@ -74,7 +73,7 @@ def test_observe_extract_selects_no_session_of_a_switched_off_org() -> None:
             {"org": "beta", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"},
         ]
     )
-    _off("acme")
+    switch_off("acme")
     sessions = asyncio.run(
         w.find_ready_sessions(w.ObserveExtractConfig(max_sessions_per_pass=1), ch=ch)
     )
@@ -99,7 +98,7 @@ def test_projection_repair_scans_no_failure_of_a_switched_off_org(monkeypatch) -
         return []
 
     monkeypatch.setattr(projection_failures, "scan_active_projection_failures", scan)
-    _off("acme")
+    switch_off("acme")
     asyncio.run(w.run_pass(w.ProjectionRepairConfig()))
     assert seen == [frozenset({"acme"})]
 
@@ -126,7 +125,7 @@ def test_the_titler_selects_no_thread_of_a_switched_off_org(monkeypatch) -> None
 
     monkeypatch.setattr(conversations, "titler_candidates", candidates)
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _LLM())
-    _off("acme")
+    switch_off("acme")
     asyncio.run(w.run_pass(w.ConversationTitlerConfig()))
     assert seen == [frozenset({"acme"})]
 
@@ -137,7 +136,7 @@ def test_reflection_distillation_judges_and_contrasts_no_switched_off_org() -> N
     ch = _CH()
     cfg = so.DistillConfig()
     result = so.DistillResult()
-    _off("acme")
+    switch_off("acme")
     asyncio.run(so.label_sessions(ch, object(), cfg, result))
     asyncio.run(so.distil_contrasts(ch, object(), cfg, result))
     assert len(ch.sent) == 2 and _excludes(ch, "acme")
@@ -166,7 +165,7 @@ def test_code_embed_recovery_scans_no_repository_of_a_switched_off_org(monkeypat
 
     monkeypatch.setattr(code_index, "CodeRepo", _CodeRepo)
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: object())
-    _off("acme")
+    switch_off("acme")
     asyncio.run(w._run(w.CodeEmbedRecoveryResult()))
     assert scanned and all(r == [("beta", "code-b")] for r in scanned)
 
@@ -201,7 +200,7 @@ def test_an_org_switched_off_mid_code_recovery_pass_keeps_its_stubs_and_attempts
         for org in ("acme", "beta")
     ]
     result = w.CodeEmbedRecoveryResult()
-    _off("acme")
+    switch_off("acme")
     embedded = asyncio.run(
         w._embed_rows(
             repo,
@@ -232,7 +231,7 @@ def test_code_summaries_and_ingest_skip_a_switched_off_orgs_repositories(monkeyp
     ]
     monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr(w, "_summarize_repo", summarize)
-    _off("acme")
+    switch_off("acme")
     asyncio.run(w._run(w.CodeSummaryResult()))
     assert summarized == ["beta"]
 
@@ -250,7 +249,7 @@ def test_tracker_embedding_leaves_a_switched_off_orgs_cursor_where_it_is(monkeyp
     monkeypatch.setattr(
         "server.tracker.domain.namespaces.configured_namespaces", lambda: namespaces
     )
-    _off("acme")
+    switch_off("acme")
     with pytest.raises(RuntimeError):
         asyncio.run(
             w._run(
@@ -297,7 +296,7 @@ def test_an_org_switched_off_mid_pass_keeps_its_stub_and_its_attempts(monkeypatc
 
     async def picked(**kw: Any) -> list[dict[str, Any]]:
         assert kw["exclude_orgs"] == frozenset()  # both on when the stubs are read
-        _off("acme")
+        switch_off("acme")
         return [dict(s) for s in stubs]
 
     async def served(rows: list[dict[str, Any]], *a: Any) -> tuple[list[Any], list[Any]]:
@@ -317,7 +316,7 @@ def test_an_org_switched_off_mid_pass_keeps_its_stub_and_its_attempts(monkeypatc
     monkeypatch.setattr(memory_repo, "index_late_rows", nothing)
     monkeypatch.setattr(w, "_stubs_still_served", served)
     monkeypatch.setattr(w, "_refresh_entities", nothing)
-    _off()
+    switch_off()
     result = asyncio.run(w.run_pass(w.EmbeddingWorkerConfig()))
     assert {r["org"] for r in written} == {"beta"}
     assert all(r["embedding_dim"] == 2 and r["embed_attempts"] == 2 for r in written)
@@ -348,7 +347,7 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
     async def extras(*a: Any, **k: Any) -> Any:
         from server.memory.app import trajectory_notes as tn
 
-        _off("acme")  # switched off while the extras ran
+        switch_off("acme")  # switched off while the extras ran
         return await tn.distill_notes(a[0], [_useful], llm=_LLM())
 
     async def insert(rows: list[Any], **_: Any) -> None:
@@ -369,7 +368,7 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
     obs = SimpleNamespace(
         value={"narrative": "ran the tests"}, sensitivity="", tags=[], valid_at=None
     )
-    _off()
+    switch_off()
     with customer.for_org("acme"), pytest.raises(customer.ModelCallsDisabled):  # as run_pass
         asyncio.run(ox._distill_session(session, [obs]))
     assert done == []  # not marked DONE: distilled again once the org is back on
@@ -392,7 +391,7 @@ def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch)
 
     monkeypatch.setattr(memory_repo, "find_memories_without_embedding_rows", none)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", insert)
-    _stale()
+    switch_stale()
     with pytest.raises(BackendUnavailableError):
         asyncio.run(w.run_pass(w.EmbeddingWorkerConfig()))
     assert written == []
@@ -432,7 +431,7 @@ def test_a_switch_gone_stale_mid_embedding_pass_writes_nothing_and_spends_no_att
         return []
 
     async def picked(**kw: Any) -> list[dict[str, Any]]:
-        _stale()  # fresh when the stubs are read, stale by the embed
+        switch_stale()  # fresh when the stubs are read, stale by the embed
         return [dict(s) for s in stubs]
 
     async def served(rows: list[dict[str, Any]], *a: Any) -> tuple[list[Any], list[Any]]:
@@ -452,7 +451,7 @@ def test_a_switch_gone_stale_mid_embedding_pass_writes_nothing_and_spends_no_att
     monkeypatch.setattr(memory_repo, "index_late_rows", nothing)
     monkeypatch.setattr(w, "_stubs_still_served", served)
     monkeypatch.setattr(w, "_refresh_entities", nothing)
-    _off()
+    switch_off()
     with pytest.raises(customer.SwitchUnread):
         asyncio.run(w.run_pass(w.EmbeddingWorkerConfig(max_attempts=5)))
     assert written == []
@@ -482,7 +481,7 @@ def test_a_switch_gone_stale_mid_code_recovery_pass_writes_nothing() -> None:
     repo = _Repo()
     rows = [{"org": "acme", "namespace": "code-a", "text": "def f(): pass", "embed_attempts": 4}]
     result = w.CodeEmbedRecoveryResult()
-    _stale()
+    switch_stale()
     with pytest.raises(customer.SwitchUnread):
         asyncio.run(
             w._embed_rows(
@@ -536,7 +535,7 @@ def test_code_backfill_stops_on_a_switched_off_org_and_records_its_pass(monkeypa
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Embedder())
     monkeypatch.setattr(code_backfill, "_record_manual_pass", record)
     monkeypatch.setattr(code_backfill, "_compact_after_bulk", compact)
-    _off("acme")
+    switch_off("acme")
     rc = asyncio.run(code_backfill._backfill_embed(_Repo(), "acme", "code-a", argparse.Namespace()))
     assert rc == 1 and pages == [1]
     assert len(recorded) == 1 and recorded[0]["phase"] == "embed"
@@ -639,7 +638,7 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     monkeypatch.setattr(code_backfill, "_record_manual_pass", record)
     monkeypatch.setattr(code_backfill, "_compact_after_bulk", compact)
     assert settings.inference_customer_header == ""
-    _off("acme")
+    switch_off("acme")
     args = argparse.Namespace(
         org="acme",
         namespace="code-a",
@@ -676,7 +675,7 @@ def test_a_switch_gone_stale_mid_reembed_stops_the_page_before_its_write() -> No
             self.rows = rows
 
     ch = _CH()
-    _stale()
+    switch_stale()
     with pytest.raises(BackendUnavailableError):
         asyncio.run(
             reembed._rewrite_page(ch, _Emb(), table, [{"org": "acme", text: "a"}], key_only=False)
@@ -693,7 +692,7 @@ def test_the_period_digest_selects_no_identity_of_a_switched_off_org() -> None:
             {"org": "beta", "namespace": "n", "agent": "a", "user_id": "u", "sessions": 5},
         ]
     )
-    _off("acme")
+    switch_off("acme")
     rows = asyncio.run(pd._fetch_namespaces(ch, pd.PeriodDigestConfig()))
     assert [r["org"] for r in rows] == ["beta"] and _excludes(ch, "acme")
     assert "NOT has({off:Array(String)}, s.org)" in ch.sent[0][0]
@@ -721,7 +720,7 @@ def test_code_ingest_runs_no_repository_of_a_switched_off_org(monkeypatch) -> No
     monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
     monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
     monkeypatch.setattr(ip, "_run_repo", run_repo)
-    _off("acme")
+    switch_off("acme")
     result = ip.CodeIngestResult()
     asyncio.run(ip._run(result))
     assert ran == ["beta"] and not result.errors  # acme's watermark is never read
@@ -747,7 +746,7 @@ def test_tracker_links_scores_no_namespace_of_a_switched_off_org(monkeypatch) ->
     )
     monkeypatch.setattr(w, "score_namespace", score)
     monkeypatch.setattr(w, "refit_dupcheck", refit)
-    _off("acme")
+    switch_off("acme")
     result = w.TrackerLinksResult()
     asyncio.run(w._run(result, repo=object(), source_factory=lambda org, ns: object()))
     assert scored == ["beta"] and result.namespaces == 1 and not result.errors
@@ -771,14 +770,14 @@ def test_the_retrieval_judge_drops_a_switched_off_orgs_sample(monkeypatch) -> No
         "server.observability.langfuse_scores.post_score", lambda **k: scored.append(k["name"])
     )
     item = {"org": "acme", "namespace": "n", "query": "q", "excerpts": ["x"], "trace_id": "t"}
-    _off("acme")
+    switch_off("acme")
     asyncio.run(rj._judge_one(item))  # the refusal drops the sample; nothing raises
     assert sent == [] and scored == []
     asyncio.run(rj._judge_one({**item, "org": "beta"}))
     assert sent == ["beta"] and scored
     sent.clear()
     scored.clear()
-    _stale()
+    switch_stale()
     asyncio.run(rj._judge_one({**item, "org": "beta"}))  # maybe off: dropped, nothing raises
     assert sent == [] and scored == []
 
@@ -794,7 +793,7 @@ def test_the_code_link_policy_leaves_a_switched_off_orgs_links_due(monkeypatch) 
 
     monkeypatch.setattr(policy.store, "policy_due", due)
     budget = SimpleNamespace(judgements=5)
-    _off("acme")
+    switch_off("acme")
     asyncio.run(policy.apply_policies("acme", "code", "head", object(), budget, object()))
     assert read == [] and budget.judgements == 5  # nothing read, judged or written
     asyncio.run(policy.apply_policies("beta", "code", "head", object(), budget, object()))
@@ -813,7 +812,7 @@ def test_the_conflict_sweep_rejudges_no_mark_of_a_switched_off_org() -> None:
     )
     assert _excludes(ch, "acme")
     ch = _CH()
-    _off("acme")
+    switch_off("acme")
     asyncio.run(w.run_pass(ch=ch))
     assert _excludes(ch, "acme")
 
@@ -827,6 +826,6 @@ async def test_a_stub_whose_org_is_switched_off_mid_pass_is_left_unwritten() -> 
             return [[1.0] for _ in texts]
 
     rows = [{"org": "acme", "content_excerpt": "a"}, {"org": "beta", "content_excerpt": "b"}]
-    _off("acme")  # switched off after the stubs were picked
+    switch_off("acme")  # switched off after the stubs were picked
     out = await w._embed_rows(_E(), rows)
     assert out == [(None, w.SWITCHED_OFF), ([1.0], "")]

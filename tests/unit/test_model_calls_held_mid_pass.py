@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from server.llm import customer
-from tests.unit.switch_state import switch_read_now
+from tests.unit.switch_state import switch_off
 
 HELD = [
     customer.ModelCallsDisabled("model calls are switched off for org 'acme'"),
@@ -385,7 +385,7 @@ def test_the_conflict_sweep_leaves_a_mark_whose_judge_is_held_unstamped(monkeypa
     async def stamp(*a: Any, **k: Any) -> None:
         stamped.append(a)
 
-    switch_read_now()
+    switch_off()
     monkeypatch.setattr(settings, "memory_conflict_judge", True)
     monkeypatch.setattr(conflict_marks, "stale_pending_marks", marks)
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", rows)
