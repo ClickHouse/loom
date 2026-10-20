@@ -111,6 +111,12 @@ schema. These rules keep that safe. The operator procedure is in
     `loom.memory_versions`, which every build's erasure deletes. The rows expire with the
     outbox's 3-day TTL.
 
+13. **Saved conversation messages:** older builds can compact concurrently saved
+    turns and rebuild embeddings without carrying their saved state. Clients use
+    `conversation.save_message` only once every serving replica runs the build that
+    preserves saved messages. A rollback pauses saved-message writes and compaction
+    until every replica supports that state again.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

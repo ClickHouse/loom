@@ -7792,7 +7792,7 @@ class ConversationAppendOutput(TypedDict, total=False):
     msg_id: Required[str]
     ts: Required[str]  # date-time as ISO-8601 text
     stored: NotRequired[bool]
-    reason: NotRequired[Literal["", "duplicate", "logging_disabled"]]
+    reason: NotRequired[Literal["", "duplicate", "logging_disabled", "deleted"]]
 
 
 class ConversationCompactInput(TypedDict, total=False):
