@@ -31,7 +31,7 @@ curl -si -XPOST localhost:<port>/v1/<op> -H 'Content-Type: application/json' -H 
 | --- | --- | --- |
 | the op's row | `loom.agent_events` by `request_id` (`operation`, `success`, `error_code`, `latency_ms`, `build_commit`, `args`) | did it run, on which build, with which arguments |
 | its statements | `system.query_log` by `log_comment` (`read_rows`, `memory_usage`, `exception`) | what ClickHouse was asked and what it cost |
-| a ranking | `memory.search_trace` with the same input | each leg's similarity, boosts and final rank |
+| a ranking | `memory.search` with the same input and `explain=true` | each hit's `score_components`: its signals, and a reranker's move (`rerank_*`, `rank_score_pre_rerank`) |
 | a write | the row read back, every field; `loom.memory_versions` for its history | what was stored versus what was sent |
 | a worker | `ops.health`, the worker's `log_comment = 'worker.<name>'` | whether the pass ran and how far it got |
 | the server | the server log line with the same request id | the exception and its stack |

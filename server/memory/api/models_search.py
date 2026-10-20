@@ -864,7 +864,7 @@ class MemoryAggregateOutput(BaseModel):
 
 class MemorySearchTraceInput(MemorySearchInput):
     """Same shape as memory.search; returns the vector leg's per-candidate scoring
-    breakdown (no fusion, assembly or reranker), as the dashboard's Recall Lab shows it.
+    breakdown (no fusion, assembly or reranker).
     Why a served row ranked where it did: memory.search with explain=true."""
 
 
