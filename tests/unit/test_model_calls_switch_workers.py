@@ -13,6 +13,7 @@ import pytest
 from server.llm import customer
 from server.settings import settings
 from tests.unit.switch_state import switch_read_now as _off
+from tests.unit.switch_state import switch_stale as _stale
 
 
 class _CH:
@@ -372,15 +373,6 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
     with customer.for_org("acme"), pytest.raises(customer.ModelCallsDisabled):  # as run_pass
         asyncio.run(ox._distill_session(session, [obs]))
     assert done == []  # not marked DONE: distilled again once the org is back on
-
-
-def _stale() -> None:
-    """A copy of the switch too old to trust, and not due to be read again."""
-    customer._switch._reset_for_tests(
-        frozenset(),
-        read_age_s=settings.model_calls_policy_max_stale_seconds + 1,
-        due_in_s=settings.model_calls_policy_refresh_seconds,
-    )
 
 
 def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch) -> None:

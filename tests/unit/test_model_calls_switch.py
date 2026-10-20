@@ -17,6 +17,7 @@ from server.observability import genai, provider_health
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 from tests.unit.switch_state import switch_read_now as _off
+from tests.unit.switch_state import switch_stale, switch_unread
 
 
 @pytest.fixture(autouse=True)
@@ -185,7 +186,7 @@ class _Switch:
 def switch(monkeypatch: pytest.MonkeyPatch) -> _Switch:
     table = _Switch(set())
     monkeypatch.setattr("server.core.ch.get_client", lambda: table)
-    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    switch_unread()
     return table
 
 
@@ -206,11 +207,7 @@ def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch) -> None:
     refresh = settings.model_calls_policy_refresh_seconds
     customer._switch._reset_for_tests(frozenset(), read_age_s=refresh + 1, due_in_s=refresh)
     assert asyncio.run(customer.switched_off("acme")) is False  # still young enough
-    customer._switch._reset_for_tests(
-        frozenset(),
-        read_age_s=settings.model_calls_policy_max_stale_seconds + 1,
-        due_in_s=refresh,
-    )
+    switch_stale()
     with pytest.raises(BackendUnavailableError):
         asyncio.run(customer.switched_off("beta"))
 
@@ -605,7 +602,7 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
         asyncio.run(client.complete("s", "u"))
     switch.down = True
     # Never read, and the read fails: fail closed.
-    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    switch_unread()
     with pytest.raises(BackendUnavailableError):
         asyncio.run(client.complete("s", "u"))
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")

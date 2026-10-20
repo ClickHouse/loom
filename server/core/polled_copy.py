@@ -1,4 +1,4 @@
-"""One process's copy of a small table that a fail-closed check reads on
+"""One process's copy of a small table, for a fail-closed check made on
 every call.
 
 It reads the whole table when a read is due: `refresh_s` after the last

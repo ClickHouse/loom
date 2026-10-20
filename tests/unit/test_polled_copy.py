@@ -24,8 +24,8 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
 async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
     clock: ManualClock,
 ) -> None:
-    """A change here asked for a read, three calls queue for it, and the read
-    fails after longer than `refresh_s`: the next read is counted from its end,
+    """A change here asked for a read, three calls arrive for it, two queue
+    behind the one that reads, and the read fails after longer than `refresh_s`: the next read is counted from its end,
     so the waiters behind it are served the last copy instead of each reading."""
     reads = 0
 
