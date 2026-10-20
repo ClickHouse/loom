@@ -23,6 +23,7 @@ from typing import Any
 
 from server.core.background import register_deferred_task
 from server.core.datetimes import naive_utc_now, to_naive_utc
+from server.llm import customer
 from server.memory.store import conflict_marks
 from server.settings import settings
 
@@ -245,7 +246,8 @@ async def settle(
     verdict = "error"
     result: Any = None
     try:
-        result = await cf.settle_deferred_judgement(pj)
+        with customer.for_org(str(ident.org)):
+            result = await cf.settle_deferred_judgement(pj)
         if await still_current(ident, content_sha256):
             verdict = await apply(
                 ident, result, memory_id=memory_id, cfg=cfg, content_sha256=content_sha256

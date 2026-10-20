@@ -44,6 +44,11 @@ from server.memory.store.dedup import (
     status_by_keys,
     superseded_successors,
 )
+from server.memory.store.delete_checks import (
+    find_delete_check,
+    pending_delete_checks,
+    record_delete_check,
+)
 from server.memory.store.embeddings import (
     EmbeddingKey,
     divergent_namespaces,
@@ -122,9 +127,11 @@ from server.memory.store.reads import (
     high_memory_ids,
     key_holds_established_fact,
     list_by_namespace,
+    live_keys,
     memory_rows_by_identity_keys,
     namespace_version,
     overlay_usage_totals_many,
+    versions_above,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
@@ -211,6 +218,7 @@ __all__ = [
     "find_by_key_prefix",
     "find_chunks_by_identifier",
     "find_chunks_by_session_date",
+    "find_delete_check",
     "find_duplicate_clusters",
     "find_duplicate_pairs",
     "find_embedding_stubs",
@@ -243,6 +251,7 @@ __all__ = [
     "head_sensitivities",
     "live_rows_for_keys",
     "live_ids_in_scope",
+    "live_keys",
     "live_shared_embedding_rows_for_key",
     "live_source_count",
     "MEMORY_PERSISTED_COLS",
@@ -253,9 +262,11 @@ __all__ = [
     "namespace_version",
     "normalize_key_prefix",
     "parse_memory_value",
+    "pending_delete_checks",
     "read_unentitied_rows",
     "read_your_writes_enabled",
     "reconcile_embedding_status",
+    "record_delete_check",
     "record_usage_event",
     "key_derivative_scrubs",
     "redact_row",
@@ -282,6 +293,7 @@ __all__ = [
     "unsupersede_embeddings",
     "uuid_or_none",
     "version_second",
+    "versions_above",
     "write_versions_by_ids",
     "written_now",
     "ZERO_UUID",

@@ -876,6 +876,10 @@
               "body",
               "options"
             ],
+            "delete_version": [
+              "body",
+              "options"
+            ],
             "demonstrate": [
               "body",
               "options"
@@ -929,6 +933,10 @@
               "options"
             ],
             "import_evidence": [
+              "body",
+              "options"
+            ],
+            "keys": [
               "body",
               "options"
             ],

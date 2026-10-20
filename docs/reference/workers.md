@@ -218,6 +218,7 @@ adding its row.
 | `code_summary` | Weekly LLM file/module summary cards for code.map orientation. | `LOOM_CODE_SUMMARY_ENABLED` | False | `LOOM_CODE_SUMMARY_INTERVAL_SECONDS` | 604800 |
 | `conflict_sweep` | Re-judge deferred conflict checks lost with their process. | always on |  | `LOOM_CONFLICT_SWEEP_INTERVAL_SECONDS` | 30.0 |
 | `conversation_titler` | Conversation-titler worker. | `LOOM_CONVERSATION_TITLER_ENABLED` | True | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | 1800 |
+| `delete_version_check` | Finish the checks memory.delete_version owes after its tombstone. | `LOOM_DELETE_VERSION_CHECK_ENABLED` | True | `LOOM_DELETE_VERSION_CHECK_INTERVAL_SECONDS` | 60 |
 | `document_blob_gc` | Document-original sweep: `loom.document_blobs` rows no live document names. | `LOOM_DOCUMENT_BLOB_GC_ENABLED` | True | `LOOM_DOCUMENT_BLOB_GC_INTERVAL_SECONDS` | 3600 |
 | `embedding_worker` | Embedding recovery worker. | `LOOM_EMBEDDING_WORKER_ENABLED` | True | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | 5 |
 | `entity_communities` | Entity-communities worker (default-off). | `LOOM_ENTITY_COMMUNITIES_ENABLED` | False | `LOOM_ENTITY_COMMUNITIES_INTERVAL_SECONDS` | 21600 |

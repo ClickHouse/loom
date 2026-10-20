@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds as _now
+from server.llm import customer
 from server.settings import settings
 from server.tracker.app.embed_index import (
     KINDS,
@@ -405,7 +406,8 @@ async def _flush(
 ) -> None:
     if not pending:
         return
-    vectors = await embed_many(emb, [p["text"] for p in pending])
+    with customer.for_org(org):
+        vectors = await embed_many(emb, [p["text"] for p in pending])
     rows = build_rows(
         org,
         ns,

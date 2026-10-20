@@ -327,6 +327,7 @@ jobs:
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
             helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
           done
+          kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
 
   agent-plugins:
     name: coding-agent plugins (node --test)

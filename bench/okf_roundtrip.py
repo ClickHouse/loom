@@ -51,6 +51,7 @@ from server.cli.okf import (
 )
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
+from server.memory.domain import okf_lint
 
 # Tags the bundle itself adds on the way through: `okf:*` (type/status) and
 # `origin:*` (provenance). Neither is a change to what the
@@ -287,7 +288,7 @@ async def run(args: argparse.Namespace) -> int:
                 description="OKF round-trip import target",
                 keep=args.keep_namespaces,
             )
-        source, _ = await _fetch_namespace(
+        source, *_ = await _fetch_namespace(
             client,
             args.org,
             args.namespace,
@@ -316,7 +317,7 @@ async def run(args: argparse.Namespace) -> int:
             files.update(okf_ev.plan_files(src_chunks, src_digests, paths))
         bundle_dir = Path(args.bundle_dir or tempfile.mkdtemp(prefix="okf-rt-"))
         created, updated = _write_bundle(bundle_dir, files)
-        concepts = _walk_bundle(bundle_dir)
+        concepts = _walk_bundle(okf_lint.read_bundle(bundle_dir))
         t_export = (datetime.now(UTC) - t0).total_seconds()
         # ---- import into the fresh namespace
         t1 = datetime.now(UTC)
@@ -330,8 +331,7 @@ async def run(args: argparse.Namespace) -> int:
                     "agent": args.import_agent,
                     "user_id": "-",
                     "session_id": (okf.concept_session_id(c) or "-") if args.keep_sessions else "-",
-                    "source_trace": payload.get("source_trace")
-                    or f"okf:{bundle_dir.name}/{c.path}",
+                    "source_trace": f"okf:{c.path}",
                 }
             )
             try:
@@ -362,12 +362,10 @@ async def run(args: argparse.Namespace) -> int:
         ev_totals: dict[str, int] = {}
         if not args.no_evidence and not args.skip_import:
             ev_chunks, ev_digests = _walk_evidence(bundle_dir)
-            ev_args = argparse.Namespace(
-                namespace=target, agent=args.import_agent, user_id="-", path=str(bundle_dir)
-            )
+            ev_args = argparse.Namespace(namespace=target, agent=args.import_agent, user_id="-")
             ev_totals = await _import_evidence(client, args.org, ev_args, ev_chunks, ev_digests)
         t_import = (datetime.now(UTC) - t1).total_seconds()
-        imported, _ = await _fetch_namespace(
+        imported, *_ = await _fetch_namespace(
             client, args.org, target, include_tombstoned=False, include_high=True
         )
         imp_chunks: list[okf_ev.ChunkRecord] = []

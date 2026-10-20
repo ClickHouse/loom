@@ -178,8 +178,8 @@ def test_sentinel_session_never_becomes_a_literal_session(
 def test_mcp_sets_span_identity_before_running_the_handler() -> None:
     """Provider spans are created INSIDE the handler.
 
-    `set_loom_attributes` is the only caller of `genai.set_identity`, so calling it
-    after `await op.handler(...)` would leave every `llm.*` and `embed.*` span of
+    MCP sets the identity through `set_loom_attributes`, so calling it after
+    `await op.handler(...)` would leave every `llm.*` and `embed.*` span of
     an MCP request with no loom.org/namespace/operation and no Langfuse session or
     user, on the transport that matters most (Claude Desktop, Cursor, Claude Code).
 

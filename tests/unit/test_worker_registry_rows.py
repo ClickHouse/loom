@@ -138,3 +138,12 @@ def test_a_pass_deadline_is_a_setting_or_derived_in_its_worker() -> None:
     """No row pins a number: a deadline is a setting, or a constant its worker derives."""
     for row in _ROWS:
         assert not hasattr(row, "max_pass_seconds"), row.name
+
+
+def test_the_delete_version_check_row() -> None:
+    row = _row("delete_version_check")
+    assert row.module == "server.memory.workers.delete_version_check"
+    assert row.enabled == "delete_version_check_enabled"
+    assert row.interval == "delete_version_check_interval_seconds"
+    assert row.idle_interval == "delete_version_check_idle_interval_seconds"
+    assert importlib.util.find_spec(row.module) is not None

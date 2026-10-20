@@ -36,9 +36,9 @@ class ConflictsListInput(BaseModel):
     # conflict and needs only the keys. With keys_only the answer is `keys`
     # from one FINAL read of the key columns — no value column.
     keys_only: bool = False
-    # The output fields the caller reads (a whitelist
-    # resolved against the row model; an unknown name is a 422); unset, every
-    # field. Every list operation is projectable.
+    # The output fields the caller reads (a whitelist resolved against the row model; an
+    # unknown name is a 422); unset, every field. Every row keeps `memory_key` and
+    # `sensitivity`. Every list operation is projectable.
     fields: list[str] | None = None
 
 

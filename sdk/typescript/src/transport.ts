@@ -555,9 +555,14 @@ const NEVER_RAN_CODES: ReadonlySet<string> = new Set(["AUTH_UNAVAILABLE"]);
 
 /**
  * 5xx answers to a deployment's configuration, which no retry changes: the
- * operator's fix is named in the error (and in /v1/health).
+ * operator's fix is named in the error (and in /v1/health). A model call that
+ * names no customer is a server path to fix, not a passing fault.
  */
-const CONFIGURATION_CODES: ReadonlySet<string> = new Set(["CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED"]);
+const CONFIGURATION_CODES: ReadonlySet<string> = new Set([
+  "CODED_WIDTH_MISMATCH",
+  "GATEWAY_REQUIRED",
+  "MODEL_CALL_UNATTRIBUTED",
+]);
 
 function neverRan(status: number, code: string): boolean {
   return status === 408 || NEVER_RAN_CODES.has(code);

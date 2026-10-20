@@ -22,6 +22,7 @@ from typing import Any
 
 import server.memory.store as memory_repo
 from server.embedding import get_embedder
+from server.llm import customer
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -170,6 +171,26 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
         "files": list(r.get("files") or []),
         "concepts": list(r.get("concepts") or []),
     }
+
+
+async def _embed_rows(
+    embedder: Any, rows: list[dict[str, Any]]
+) -> list[tuple[list[float] | None, str]]:
+    """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
+    org, and one model call names a single customer."""
+    out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
+    for org, positions in customer.by_org(str(r.get("org") or "") for r in rows).items():
+        with customer.for_org(org):
+            embedded: list[tuple[list[float] | None, str]]
+            if not customer.names_one():
+                embedded = [(None, customer.NO_CUSTOMER)] * len(positions)
+            else:
+                embedded = await _embed_batch(
+                    embedder, [rows[i]["content_excerpt"] for i in positions]
+                )
+        for i, one in zip(positions, embedded, strict=True):
+            out[i] = one
+    return out
 
 
 async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float] | None, str]]:
@@ -434,13 +455,13 @@ async def run_pass(
         if dropped:
             await memory_repo.insert_embedding_rows(dropped)
         if rows:
-            embedded = await _embed_batch(embedder, [r["content_excerpt"] for r in rows])
+            embedded = await _embed_rows(embedder, rows)
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):
                 content = r["content_excerpt"]
                 if vec is None:
                     new_attempts = int(r.get("embed_attempts") or 0) + 1
                     err = embed_err
-                    is_poisoned = new_attempts >= cfg.max_attempts
+                    is_poisoned = new_attempts >= cfg.max_attempts or err == customer.NO_CUSTOMER
                     # Re-insert the stub with bumped failure state (stays embedding_dim=0).
                     retries.append(
                         memory_repo.build_embedding_row(

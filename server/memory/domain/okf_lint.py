@@ -18,7 +18,7 @@ property of the data, not a defect.
 
 Checks, by finding id:
 
-    frontmatter                parses; `type` non-empty                    critical
+    frontmatter                parses; `type` non-empty; `tags` a list     critical
     required_keys              title, description, loom.memory_key,
                                loom.memory_type on a concept               critical
     type_directory_mismatch    loom.memory_type disagrees with the folder  warning
@@ -28,7 +28,7 @@ Checks, by finding id:
     edited_since_export        loom.content_sha256 no longer hashes the
                                body (concepts and evidence files)          warning
     derived_needs_confidence   source_class derived at confidence 1.0      warning
-    high_sensitivity_present   a `sensitivity: high` row travelled         warning
+    high_sensitivity_present   a high row (field or tag) travelled         warning
     index_missing              a directory or the root has no index.md     critical
     okf_version                the root index declares no okf_version      critical
     index_listing              a concept its indexes do not list           warning
@@ -237,6 +237,10 @@ def _check_concept(
     if not has_fm or not str(fm.get("type") or "").strip():
         rep.add("frontmatter", rel, "missing frontmatter or empty `type`")
         return
+    tags = fm.get("tags")
+    if tags is not None and not isinstance(tags, list):
+        rep.add("frontmatter", rel, "`tags` is not a list")
+        tags = None  # parse_concept reads it as no tags; lint the rest of the file the same way
     raw_loom = fm.get("loom")
     loom: dict[str, Any] = raw_loom if isinstance(raw_loom, dict) else {}
     directory = rel.rsplit("/", 1)[0] if "/" in rel else ""
@@ -249,7 +253,9 @@ def _check_concept(
             rep.add("required_keys", rel, f"missing `loom.{key}`")
     mt = str(loom.get("memory_type") or "").strip()
     folder_type = okf.memory_type_for(str(fm.get("type") or ""), directory)
-    if mt and directory and directory != mt and folder_type != mt:
+    # export writes a type under `okf.type_directory(mt)`: its slug, lowercased, prefixed when
+    # reserved, so a directory that is neither the type nor that name is a mismatch
+    if mt and directory and directory not in (mt, okf.type_directory(mt)) and folder_type != mt:
         rep.add(
             "type_directory_mismatch",
             rel,
@@ -274,11 +280,11 @@ def _check_concept(
             "source_class derived at confidence 1.0: an inference written as a fact",
             WARNING,
         )
-    if is_high(loom.get("sensitivity"), fm.get("tags")):
+    if is_high(loom.get("sensitivity"), tags):
         rep.add(
             "high_sensitivity_present",
             rel,
-            "a sensitivity=high row (by field or tag) travelled in the bundle "
+            "a high row (sensitivity or the sensitivity:high tag) travelled in the bundle "
             "(export skips them by default)",
             WARNING,
         )
@@ -396,14 +402,16 @@ def _check_indexes(rep: LintReport, files: dict[str, str], concept_paths: list[s
                 rep.add("index_listing", rel, "not listed in the root index.md", WARNING)
 
 
+def generation_pointer(files: dict[str, str]) -> dict[str, Any]:
+    """The root index.md's `loom` frontmatter (`corpus_digest`, `concepts`, `complete`, ...),
+    or {} when there is none."""
+    fm, _b, _h = _frontmatter(files.get("index.md", ""))
+    loom = fm.get("loom") if isinstance(fm, dict) else None
+    return loom if isinstance(loom, dict) else {}
+
+
 def _check_generation(rep: LintReport, files: dict[str, str], concept_paths: list[str]) -> None:
-    root_index = files.get("index.md")
-    if root_index is None:
-        return
-    fm, _b, _h = _frontmatter(root_index)
-    loom = (fm or {}).get("loom") if isinstance(fm, dict) else None
-    if not isinstance(loom, dict):
-        return
+    loom = generation_pointer(files)
     declared = str(loom.get("corpus_digest") or "").strip()
     if not declared:
         return

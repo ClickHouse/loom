@@ -26,6 +26,7 @@ from typing import Any
 
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
+from server.llm import customer
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
 
@@ -411,6 +412,10 @@ async def replay_row(row: dict[str, Any]) -> int:
     from server.memory.domain import provenance as _prov
 
     # The worker has no auth bound, so the scope is bound for "no auth".
-    with _prov.pipeline_actor(replay_actor(row)), read_filters_bound(None, replay_scope(row)):
+    with (
+        _prov.pipeline_actor(replay_actor(row)),
+        read_filters_bound(None, replay_scope(row)),
+        customer.for_org(str(row.get("org") or "")),
+    ):
         out = await handle_memory_set_from_messages(rebuild_input(row))
     return len(out.written)

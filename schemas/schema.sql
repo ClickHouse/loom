@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 158 tables + 18 materialized views.
+-- Counts: 159 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (158)
+-- Tables (159)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
@@ -1277,6 +1277,26 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, thread_id, ts, msg_id)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.delete_version_checks
+CREATE TABLE IF NOT EXISTS loom.delete_version_checks
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` String,
+    `user_id` String,
+    `session_id` String,
+    `memory_key` String,
+    `checked` UInt64,
+    `tombstone` UInt64,
+    `done` UInt8 DEFAULT 0,
+    `created_at` DateTime DEFAULT now(),
+    `updated_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (org, namespace, agent, user_id, session_id, memory_key, tombstone)
+TTL created_at + toIntervalDay(30)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.deployment_config
 CREATE TABLE IF NOT EXISTS loom.deployment_config

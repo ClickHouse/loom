@@ -106,7 +106,11 @@ def test_slug_is_file_safe_and_collisions_get_suffixes() -> None:
     files = okf.plan_bundle(
         [_entry(memory_key="a/b"), _entry(memory_key="a b")], namespace="ns", exported_at=_NOW
     )
-    assert "semantic/a-b.md" in files and "semantic/a-b-1.md" in files
+    named = {p for p in files if p.startswith("semantic/a-b")}
+    # one keeps the name; the other takes a suffix from its own key and row id
+    assert "semantic/a-b.md" in named and len(named) == 2
+    (other,) = named - {"semantic/a-b.md"}
+    assert re.fullmatch(r"semantic/a-b-[0-9a-f]{8}\.md", other)
 
 
 # ---------------- serialisation shapes ----------------
@@ -156,6 +160,9 @@ def test_bundle_has_root_index_sub_indexes_log_and_drift_free_listings() -> None
     pointer = _root_pointer(root)
     assert pointer["concepts"] == 2 and pointer["exported_at"] == "2026-09-11"
     assert pointer["corpus_digest"] == okf.corpus_digest(files) and "build_commit" not in pointer
+    assert "complete" not in pointer  # import-okf --prune refuses it
+    whole = okf.plan_bundle([_entry()], namespace="ns", exported_at=_NOW, complete=True)
+    assert _root_pointer(whole["index.md"])["complete"] is True
     assert "* [Deploy window](semantic/deploy_window.md) - Tue and Thu only; never Friday." in root
     sub = files["semantic/index.md"]
     assert not sub.startswith("---")  # sub-indexes carry no frontmatter
@@ -526,6 +533,169 @@ def test_corpus_digest_covers_concepts_only_and_moves_with_them() -> None:
     b = okf.plan_bundle([_entry(), _entry(memory_key="other")], namespace="ns", exported_at=_NOW)
     assert okf.corpus_digest(b) != okf.corpus_digest(a)
     assert _root_pointer('---\nokf_version: "0.2"\n---\n# old bundle\n') == {}
+
+
+def test_a_slug_suffix_never_lands_on_another_concepts_id() -> None:
+    # `deploy/step` and `deploy:step` share a slug; the suffix the second gets must not be
+    # `deploy-step-1`'s own, or one file overwrites the other and a complete bundle loses a key.
+    keys = ["deploy/step", "deploy:step", "deploy-step-1"]
+    entries = [
+        _entry(memory_key=k, memory_id=f"{i:08d}-0000-0000-0000-000000000000")
+        for i, k in enumerate(keys)
+    ]
+    files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW, complete=True)
+    concept_files = [
+        p
+        for p in files
+        if p.startswith("semantic/") and p.rsplit("/", 1)[-1] not in okf.RESERVED_FILES
+    ]
+    assert len(concept_files) == 3, concept_files
+
+
+def _keys_read_back(tmp_path: Any, entries: list[dict[str, Any]]) -> list[str]:
+    """The memory keys an import finds in the bundle export writes for `entries`."""
+    from server.cli import okf as cli_okf
+    from server.memory.domain import okf_lint
+
+    files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW, complete=True)
+    cli_okf._write_bundle(tmp_path, files)
+    assert okf_lint.lint_bundle(tmp_path).criticals == []  # import's lint gate passes
+    read = okf_lint.read_bundle(tmp_path)
+    assert okf_lint.bundle_digest(read) == okf_lint.generation_pointer(read)["corpus_digest"]
+    return sorted(c.memory_key for c in cli_okf._walk_bundle(read))
+
+
+def _ids(n: int) -> list[str]:
+    return [f"{i:08d}-0000-0000-0000-000000000000" for i in range(n)]
+
+
+def test_a_key_named_like_a_bundle_file_still_travels(tmp_path: Any) -> None:
+    keys = ["index", "log", "README", "AGENTS", "index:"]
+    entries = [_entry(memory_key=k, memory_id=i) for k, i in zip(keys, _ids(5), strict=True)]
+    assert _keys_read_back(tmp_path, entries) == sorted(keys)
+
+
+@pytest.mark.parametrize(
+    "memory_type", ["evidence", "digests", "staging", "node_modules", ".notes", "a/b", "../x"]
+)
+def test_a_row_of_any_memory_type_still_travels(tmp_path: Any, memory_type: str) -> None:
+    entries = [
+        _entry(memory_key="k", memory_type=memory_type),
+        _entry(memory_key="plain", memory_id=_ids(2)[1]),
+    ]
+    assert _keys_read_back(tmp_path / "b", entries) == ["k", "plain"]
+    assert not any(p.resolve() == (tmp_path / "x").resolve() for p in tmp_path.rglob("*"))
+
+
+def test_the_same_rows_in_another_order_get_the_same_files() -> None:
+    # Two writers hold `deploy`; the newest-first listing order changes between runs.
+    a = _entry(memory_key="deploy", agent="a", memory_id=_ids(2)[0], value="from a")
+    b = _entry(memory_key="deploy", agent="b", memory_id=_ids(2)[1], value="from b")
+    one = okf.plan_bundle([a, b], namespace="ns", exported_at=_NOW)
+    two = okf.plan_bundle([b, a], namespace="ns", exported_at=_NOW)
+    assert one == two
+
+
+def test_a_suffixed_file_moves_only_when_the_bare_names_holder_changes() -> None:
+    # Adding `deploy-step`, which sorts before both, moves only the one that held the bare
+    # name; the suffixed file depends on its own key and row id. When the holder leaves,
+    # the next in order takes the bare name: that one file moves, once.
+    ids = _ids(3)
+    a = _entry(memory_key="deploy/step", memory_id=ids[0])
+    b = _entry(memory_key="deploy:step", memory_id=ids[1])
+    new = _entry(memory_key="deploy-step", memory_id=ids[2])
+
+    def paths(entries: list[dict[str, Any]]) -> dict[str, str]:
+        files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW)
+        concepts = [
+            okf.parse_concept(p, t) for p, t in files.items() if p.startswith("semantic/deploy")
+        ]
+        return {c.memory_key: c.path for c in concepts}
+
+    before, after = paths([a, b]), paths([a, b, new])
+    assert after["deploy:step"] == before["deploy:step"]
+    assert after["deploy-step"] == "semantic/deploy-step.md"
+    assert paths([b])["deploy:step"] == "semantic/deploy-step.md"
+
+
+def test_names_that_collide_only_in_case_get_two_files(tmp_path: Any) -> None:
+    keys = ["Foo", "foo", "Index"]
+    entries = [_entry(memory_key=k, memory_id=i) for k, i in zip(keys, _ids(3), strict=True)]
+    entries.append(_entry(memory_key="x", memory_type="Semantic", memory_id=_ids(4)[3]))
+    assert _keys_read_back(tmp_path, entries) == sorted([*keys, "x"])
+    assert len({p.as_posix().casefold() for p in tmp_path.rglob("*")}) == len(
+        list(tmp_path.rglob("*"))
+    )
+
+
+@pytest.mark.parametrize("memory_type", ["index.md", "log.md", "  ", "nul", "COM1"])
+def test_a_type_named_like_a_bundle_file_or_blank_still_travels(
+    tmp_path: Any, memory_type: str
+) -> None:
+    entries = [_entry(memory_key="k", memory_type=memory_type)]
+    assert _keys_read_back(tmp_path, entries) == ["k"]
+
+
+def test_a_very_long_key_or_type_gets_a_name_the_filesystem_takes(tmp_path: Any) -> None:
+    long_a, long_b = "x" * 400 + "a", "x" * 400 + "b"
+    entries = [
+        _entry(memory_key=k, memory_id=i) for k, i in zip([long_a, long_b], _ids(2), strict=True)
+    ]
+    entries.append(_entry(memory_key="k", memory_type="t" * 300, memory_id=_ids(3)[2]))
+    assert _keys_read_back(tmp_path, entries) == sorted([long_a, long_b, "k"])
+
+
+@pytest.mark.parametrize("name", ["nul", "CON", "com1", "com0", "lpt9.txt"])
+def test_a_windows_device_name_is_never_a_file_or_directory(name: str) -> None:
+    files = okf.plan_bundle(
+        [_entry(memory_key=name), _entry(memory_key="k", memory_type=name, memory_id=_ids(2)[1])],
+        namespace="ns",
+        exported_at=_NOW,
+    )
+    for path in files:
+        for part in path.split("/"):
+            assert part.split(".", 1)[0].casefold() not in {"nul", "con", "com1", "com0", "lpt9"}, (
+                path
+            )
+
+
+def test_the_reserved_directories_cover_every_name_a_reader_skips() -> None:
+    from server.memory.domain import okf_evidence, okf_lint
+
+    skipped = {p for p in okf_lint._SKIP_PARTS if not p.startswith(".")}
+    assert okf_evidence.EVIDENCE_DIRS | {okf_lint.STAGING_DIR} | skipped <= okf._RESERVED_DIRS
+
+
+@pytest.mark.parametrize("memory_type", ["My Type", "Semantic", "evidence", "nul", "t" * 300])
+def test_lint_never_warns_on_the_directory_export_chose(tmp_path: Any, memory_type: str) -> None:
+    from server.cli import okf as cli_okf
+    from server.memory.domain import okf_lint
+
+    files = okf.plan_bundle(
+        [_entry(memory_type=memory_type)], namespace="ns", exported_at=_NOW, complete=True
+    )
+    cli_okf._write_bundle(tmp_path, files)
+    found = [f.id for f in okf_lint.lint_bundle(tmp_path).warnings]
+    assert "type_directory_mismatch" not in found
+
+
+def test_keys_named_like_every_suffix_a_concept_could_take_never_stop_the_export() -> None:
+    # Someone who knows a row's id can write keys named like each of its suffixed names; each
+    # rename attempt is a fresh hash, so planning always ends and every key keeps a file.
+    mid = _ids(2)[1]
+    identity = f"a.b\0{mid}"
+    taken = [okf._short_hash(identity, n) for n in range(6)]
+    entries = [_entry(memory_key="a.b", memory_id=_ids(1)[0])]
+    entries.append(_entry(memory_key="a.b", memory_id=mid, agent="other"))
+    entries += [
+        _entry(memory_key=f"a-{h}.b", memory_id=f"{n + 10:08d}-0000-0000-0000-000000000000")
+        for n, h in enumerate(taken)
+    ]
+    files = okf.plan_bundle(entries, namespace="ns", exported_at=_NOW)
+    concept_files = [p for p in files if p.startswith("semantic/") and not p.endswith("index.md")]
+    assert len(concept_files) == len(entries)
+    # the second `a.b` lands on the first attempt nobody holds
+    assert f"semantic/a-{okf._short_hash(identity, 6)}.b.md" in files
 
 
 def test_evidence_of_a_row_kept_home_or_holding_a_credential_stays_home() -> None:

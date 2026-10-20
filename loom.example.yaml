@@ -344,6 +344,33 @@ settings:
   # hosts sent to, while the gateway is required. [restart]
   # inference_gateway_hosts: ""
 
+  # Header naming the customer (the org) on every model call, for a gateway that meters
+  # by it; set, a call naming no customer is refused (server/llm/customer.py). [restart]
+  # inference_customer_header: ""
+
+  # Header naming the feature that made the call (hyde, memory.search, worker.embedding,
+  # ...), with inference_customer_header only; "" sends none. [restart]
+  # inference_feature_header: ""
+
+  # The customer named on calls made for the deployment itself (startup probe, the
+  # recalibration worker's fixed pairs, provider checks), which belong to no org.
+  # [restart]
+  # inference_system_customer: "loom"
+
+  # True (a cell serving several customers): refuse to start without
+  # inference_customer_header, so no model call goes out unattributed. [restart]
+  # inference_customer_required: false
+
+  # How the customer header names an org, as the gateway knows it: `{org}` is the org
+  # id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is).
+  # [restart]
+  # inference_customer_format: "{org}"
+
+  # JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...)
+  # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
+  # [restart]
+  # inference_feature_map_json: ""
+
   # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
   # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
   # a request skips both tiers. Only single-text (query) embeds up to
@@ -2617,6 +2644,25 @@ settings:
 
   # Lowest confidence a `demote` (expiry or run.complete) leaves on a row. [restart]
   # memory_expiry_demote_floor: 0.05
+
+  # --- delete-version checks ---
+
+  # Run the delete_version_check worker, which finishes the memory.delete_version checks
+  # a 503 left owed (False: only a retry of the delete finishes them). [restart]
+  # delete_version_check_enabled: true
+
+  # Seconds between delete_version_check passes while checks are owed. [restart]
+  # delete_version_check_interval_seconds: 60
+
+  # Seconds between delete_version_check passes that found none. [restart]
+  # delete_version_check_idle_interval_seconds: 300
+
+  # Seconds a delete-version check is left to the delete that owes it before a pass runs
+  # it. [restart]
+  # delete_version_check_grace_seconds: 60
+
+  # Delete-version checks one delete_version_check pass runs. [restart]
+  # delete_version_check_batch_size: 200
 
   # --- namespace health, knowledge graph, communities ---
 

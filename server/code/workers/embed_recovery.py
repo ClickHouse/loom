@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass, set_worker_identity
@@ -295,7 +296,12 @@ async def _embed_rows(
         for start in range(0, len(whole), batch):
             group = whole[start : start + batch]
             texts = [clip_for_embedding(text_of(r), count_tokens=counter) for r in group]
-            vectors, failures = await _vectors_for(embedder, texts)
+            with customer.for_org(org):
+                vectors: dict[int, list[float]]
+                if not customer.names_one():
+                    vectors, failures = {}, dict.fromkeys(range(len(group)), customer.NO_CUSTOMER)
+                else:
+                    vectors, failures = await _vectors_for(embedder, texts)
             embedded += _stage_replacements(
                 repo, table, group, vectors, failures, max_attempts, result, replacements
             )
@@ -333,7 +339,7 @@ def _stage_replacements(
             row["embed_attempts"] = attempts
             row["embed_last_error"] = failures.get(i, "")
             result.failed += 1
-            if attempts >= max_attempts or failures.get(i) == EMPTY_TEXT:
+            if attempts >= max_attempts or failures.get(i) in (EMPTY_TEXT, customer.NO_CUSTOMER):
                 row["embed_failed_at"] = naive_utc_now()
                 result.poisoned += 1
         replacements.append(row)

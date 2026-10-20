@@ -8,10 +8,14 @@ from server.memory.api.models_crud import (
     MemoryClearOutput,
     MemoryDeleteInput,
     MemoryDeleteOutput,
+    MemoryDeleteVersionInput,
+    MemoryDeleteVersionOutput,
     MemoryGetByIdInput,
     MemoryGetByIdOutput,
     MemoryGetInput,
     MemoryGetOutput,
+    MemoryKeysInput,
+    MemoryKeysOutput,
     MemoryListInput,
     MemoryListOutput,
     MemoryRedactInput,
@@ -41,13 +45,14 @@ from server.memory.app.curation import handle_memory_redact
 from server.memory.app.handlers import (
     handle_memory_clear,
     handle_memory_delete,
+    handle_memory_delete_version,
     handle_memory_get,
     handle_memory_get_by_id,
     handle_memory_pin,
     handle_memory_touch,
     handle_memory_unpin,
 )
-from server.memory.app.query import handle_memory_list
+from server.memory.app.query import handle_memory_keys, handle_memory_list
 from server.memory.app.restore import handle_memory_restore
 from server.memory.app.update import handle_memory_update, handle_memory_update_by_id
 from server.memory.app.verify import handle_memory_verify
@@ -112,6 +117,17 @@ memory_delete = Operation(
     audit=True,  # delete is auditable
 )
 
+memory_delete_version = Operation(
+    name="memory.delete_version",
+    maturity="experimental",
+    input_model=MemoryDeleteVersionInput,
+    output_model=MemoryDeleteVersionOutput,
+    handler=handle_memory_delete_version,
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=True,
+)
+
 memory_restore = Operation(
     name="memory.restore",
     input_model=MemoryRestoreInput,
@@ -137,6 +153,17 @@ memory_list = Operation(
     input_model=MemoryListInput,
     output_model=MemoryListOutput,
     handler=handle_memory_list,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+memory_keys = Operation(
+    name="memory.keys",
+    maturity="experimental",
+    input_model=MemoryKeysInput,
+    output_model=MemoryKeysOutput,
+    handler=handle_memory_keys,
     idempotent=True,
     required_role=Role.VIEWER,
     audit=False,

@@ -102,6 +102,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         return int(args.func(args))
 
     from server.core.ch import query_tag_var
+    from server.llm import customer
     from server.memory.domain.provenance import cli_actor, pipeline_actor
     from server.observability.traffic_class import (
         bind_background,
@@ -115,7 +116,14 @@ def _dispatch(args: argparse.Namespace) -> int:
     path = (getattr(args, d, "") for d in ("cmd", "code_cmd", "subcommand"))
     tag_token = query_tag_var.set(".".join(["cli", *filter(None, path)]))
     try:
-        with pipeline_actor(cli_actor(getattr(args, "cmd", ""))):
+        # A command for one org (`--org`, or `LOOM_CODE_ORG` for `loom code`) bills
+        # its model calls there; one that walks several orgs names each as it goes.
+        org = getattr(args, "org", "") or ""
+        if not org and getattr(args, "cmd", "") == "code":
+            from server.settings import settings
+
+            org = settings.code_org
+        with pipeline_actor(cli_actor(getattr(args, "cmd", ""))), customer.for_org(str(org)):
             rc = int(args.func(args))
         if hint := dry_run_hint(args, rc):
             # stderr: a command's --json output stays the only thing on stdout

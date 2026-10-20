@@ -24,6 +24,7 @@ from typing import Any, TypedDict, cast
 from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
+from server.llm import customer
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -95,7 +96,7 @@ async def _make_title(
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("title"):
+        with llm_stage("title"), customer.for_org(str(row["org"])):
             out = await llm.complete(
                 system=_TITLE_SYSTEM, user=snippet, max_tokens=llm_max_tokens("title")
             )

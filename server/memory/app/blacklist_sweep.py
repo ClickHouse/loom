@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -93,7 +94,7 @@ async def sweep_pattern(
         org,
         ids,
         when=when,
-        update=lambda _existing: {"expire_reason": f"blacklist.sweep:{pattern_id}"[:512]},
+        update=lambda _existing: {"expire_reason": f"{SWEEP_REASON_PREFIX}{pattern_id}"[:512]},
         ch=ch,
     )
     by_ns: dict[str, int] = {}

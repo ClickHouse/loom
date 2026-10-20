@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core import readiness
+from server.llm import customer
 from server.memory.store.rows import next_version
 from server.settings import settings
 
@@ -343,7 +344,10 @@ async def calibrate_embedder(
         return None
 
     async def _embed_pair(a: str, b: str) -> float:
-        va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
+        # The recalibration worker's fixed pairs are the deployment's; code.calibrate
+        # probes a namespace's corpus under its request's org, which wins.
+        with customer.system():
+            va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
         return _cosine(va, vb)
 
     try:

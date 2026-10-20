@@ -51,6 +51,9 @@ _CROSS_CHECKED = {
     # Read with the token URL, the public URL and the JWT audience and issuers
     # (test_inference_identity_token.py).
     "inference_token_audience",
+    # A template that must contain {org}, checked by a model validator
+    # (test_model_call_customer.py).
+    "inference_customer_format",
 }
 
 

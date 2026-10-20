@@ -81,8 +81,17 @@ async def test_tombstone_ids_empty_input_short_circuits() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("trace", "written"),
+    [
+        ("old", "old | resolve:revise:reason:by"),
+        # A live row an older build restored keeps memory.delete_version's marker; the
+        # resolution's tombstone does not carry it.
+        ("memory.delete_version:42", "resolve:revise:reason:by"),
+    ],
+)
 async def test_tombstone_ids_writes_rmt_versions(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, trace: str, written: str
 ) -> None:
     from server.memory import store as memory_repo
     from server.memory.store import lifecycle
@@ -107,7 +116,7 @@ async def test_tombstone_ids_writes_rmt_versions(
             created_at=datetime(2026, 5, 17),
             updated_at=datetime(2026, 5, 17),
             expires_at=None,
-            source_trace="old",
+            source_trace=trace,
         )
 
     monkeypatch.setattr(lifecycle, "get_by_id", fake_get_by_id)
@@ -129,7 +138,7 @@ async def test_tombstone_ids_writes_rmt_versions(
             created_at=datetime(2026, 5, 17),
             updated_at=datetime(2026, 5, 17),
             expires_at=None,
-            source_trace="old",
+            source_trace=trace,
         )
         captured["org"] = org
         captured["ids"] = memory_ids
@@ -147,7 +156,7 @@ async def test_tombstone_ids_writes_rmt_versions(
     assert captured["org"] == "clickhouse"
     assert captured["ids"] == ["id-1", "id-2"]
     assert captured["update"]["status"] == "tombstoned"
-    assert captured["update"]["source_trace"] == "old | resolve:revise:reason:by"
+    assert captured["update"]["source_trace"] == written
 
 
 @pytest.mark.asyncio

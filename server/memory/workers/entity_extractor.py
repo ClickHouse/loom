@@ -19,6 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
 from server.memory.app.drops import record_drop
 from server.memory.domain.entity_sentinels import NONE_SENTINEL, PARSE_FAILED_SENTINEL
 from server.memory.domain.graph_quality import canonical_entity_text
@@ -340,7 +341,8 @@ async def run_pass(
             row_started = time.monotonic()
             cost_accumulator.begin_op()
             try:
-                entities = await _extract(value_str)
+                with customer.for_org(str(r["org"])):
+                    entities = await _extract(value_str)
             except Exception as e:  # noqa: BLE001 — one row's failure must not stop the pass
                 result.failures.append(
                     f"{r['org']}/{r['namespace']}/{r['memory_key']}: {type(e).__name__}: {e}"

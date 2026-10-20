@@ -256,6 +256,39 @@ delete it by key.
 | `code.ask`   | `LOOM_CODE_ASK_LLM_CACHE` (on); a non-zero temperature bypasses it                                        |
 | Extraction   | Off, except where `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` enables it (the `bench` class by default)            |
 
+## The customer of a model call
+
+With `LOOM_INFERENCE_CUSTOMER_HEADER` set, every request to a model (chat, embedding, rerank,
+classify) carries the org whose data it holds, and with `LOOM_INFERENCE_FEATURE_HEADER` the
+feature that made it (`server/llm/customer.py`). The senders add the headers themselves:
+the shared HTTP client also carries non-model calls, which name no customer.
+
+- **Where the org comes from.** A request: the identity the transport records after the
+  token is verified (`observability.genai`), which is the org the op addresses. A worker or
+  a CLI: `customer.for_org(org)` around the call, from the rows it works on; a CLI command
+  with `--org` is scoped to it. A worker's own identity never counts, since a pass stamps the
+  org of the row it last worked on and the next row's call must not inherit it. The
+  deployment's own calls (the startup embedder probe, the recalibration worker's fixed
+  pairs, the provider checks) run under `customer.system()` and name
+  `LOOM_INFERENCE_SYSTEM_CUSTOMER`. The sampled retrieval judge sends the judged org's query
+  and memory text, so it names that org.
+- **One customer per call.** A job that batches several orgs' rows (the embedding worker,
+  `loom reembed`, a model rebuild) splits its batches by org before calling.
+- **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's
+  customer id, and `LOOM_INFERENCE_FEATURE_MAP_JSON` maps Loom's feature names to the gateway's.
+  A cell that serves several customers sets `LOOM_INFERENCE_CUSTOMER_REQUIRED`, so it does not
+  start without the header.
+- **No customer, no call.** A call that names none raises `Unattributed`
+  (`MODEL_CALL_UNATTRIBUTED`) before anything is sent. A missed call path fails loudly
+  instead of being billed to no one. The embedding workers (memory and code) check first and
+  give up on a row that names no org at once, recording that error with no model call, since a
+  retry cannot help and the refusal is not a provider failure.
+
+**Why headers, not a token per customer.** The gateway already knows Loom as one service
+(its token); a credential per org would mean thousands to issue, rotate and revoke for no
+gain in what the gateway can check. The org in the header is the org the request addresses,
+as authorized for its token.
+
 ## Fake providers
 
 The fakes let a keyless install boot, tests run offline and CI stay deterministic. Do not

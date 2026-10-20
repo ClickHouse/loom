@@ -237,6 +237,8 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "memory_keys": seed.keys_v,
         "memory_id": seed.memory_ids_v[0],
         "memory_ids": seed.memory_ids_v,
+        # memory.delete_version names the version it removes; the gate refuses first.
+        "version": "1",
         "query": f"vault code {seed.entity}",
         "question": f"what is the vault code {seed.entity} keeps?",
         "situation": f"the vault is locked and {seed.entity} is away",

@@ -11,6 +11,7 @@ from typing import Any
 
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
+from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
@@ -148,15 +149,20 @@ async def rebuild_batch(
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
     texts, slots = _inputs(table, rows, source_texts or {})
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), _CALL_BATCH):
-        batch = texts[start : start + _CALL_BATCH]
-        try:
-            produced = await target.embed_many(batch)
-        except Exception:  # noqa: BLE001 — provider errors must not expose keys or source text in status
-            raise RebuildBatchError("embedding_provider_failed") from None
-        _validate_vectors(produced, len(batch), target.dim)
-        vectors.extend(produced)
+    # One call carries one org's texts: a model call names a single customer.
+    by_org = customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
+    vectors: list[list[float]] = [[] for _ in texts]
+    for org, positions in by_org.items():
+        for start in range(0, len(positions), _CALL_BATCH):
+            part = positions[start : start + _CALL_BATCH]
+            try:
+                with customer.for_org(org):
+                    produced = await target.embed_many([texts[i] for i in part])
+            except Exception:  # noqa: BLE001 — provider errors must not expose keys or source text in status
+                raise RebuildBatchError("embedding_provider_failed") from None
+            _validate_vectors(produced, len(part), target.dim)
+            for i, vector in zip(part, produced, strict=True):
+                vectors[i] = vector
     result = [_empty_target_row(table, row, target.model_name) for row in rows]
     for (index, column), vector in zip(slots, vectors, strict=True):
         result[index][column] = vector

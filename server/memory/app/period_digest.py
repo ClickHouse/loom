@@ -36,6 +36,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.app.provenance import writer_actor
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -429,7 +430,7 @@ async def _write_period(
 ) -> bool:
     system, user = build_period_prompt(period)
     try:
-        with llm_stage("period_digest"):
+        with llm_stage("period_digest"), customer.for_org(period.org):
             out = await llm.complete(
                 system=system, user=user, max_tokens=llm_max_tokens("period_digest")
             )
@@ -442,7 +443,8 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
-    embedding = await embedder.embed(text)
+    with customer.for_org(period.org):
+        embedding = await embedder.embed(text)
     try:
         source_ids, source_entities = await _source_memories(ch, period)
     except Exception as e:  # noqa: BLE001 — lineage and entities are additive

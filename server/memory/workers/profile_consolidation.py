@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
 from server.memory.domain.sensitivity import value_reads_high
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
@@ -194,7 +195,7 @@ async def _consolidate_identity(
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("profile_fold"):
+        with llm_stage("profile_fold"), customer.for_org(str(row["org"])):
             client = get_llm_client_for_model(cfg.model) if cfg.model else get_llm_client()
             out = await client.complete(
                 system=_FOLD_SYSTEM,

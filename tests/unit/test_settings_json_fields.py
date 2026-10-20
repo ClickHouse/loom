@@ -16,6 +16,7 @@ _OBJECTS = [
     "llm_max_tokens_overrides",
     "ratelimit_class_fractions",
     "rerank_endpoints_json",
+    "inference_feature_map_json",
     "code_vector_tables",
     "latency_budget_overrides",
     "latency_budget_overrides_by_consumer",
@@ -29,6 +30,7 @@ _OBJECT_SAMPLES = {
     "llm_max_tokens_overrides": ' {"hyde": 64} ',
     "latency_budget_overrides": ' {"memory.search": "2x"} ',
     "rerank_endpoints_json": ' {"gw": "https://rerank.example/v1"} ',
+    "inference_feature_map_json": ' {"hyde": "query-expansion"} ',
 }
 _ARRAYS = ["code_repos_json", "code_test_gate_run_templates"]
 _CANARY = "s3cr3t-canary"

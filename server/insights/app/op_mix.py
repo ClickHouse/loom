@@ -41,6 +41,7 @@ _READ = {
     "memory.search",
     "memory.ask",
     "memory.brief",
+    "memory.keys",
     "memory.list",
     "memory.timeline",
     "memory.related",
@@ -94,6 +95,7 @@ _ANNOTATE = {
 }
 _DELETE = {
     "memory.delete",
+    "memory.delete_version",
     "memory.clear",
     "memory.demote",
     "memory.redact",

@@ -2043,6 +2043,31 @@
           "type": "string",
           "description": "The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is reserved and rejected."
         },
+        "delete_version_check_batch_size": {
+          "default": 200,
+          "type": "integer",
+          "description": "Delete-version checks one delete_version_check pass runs."
+        },
+        "delete_version_check_enabled": {
+          "default": true,
+          "type": "boolean",
+          "description": "Run the delete_version_check worker, which finishes the memory.delete_version checks a 503 left owed (False: only a retry of the delete finishes them)."
+        },
+        "delete_version_check_grace_seconds": {
+          "default": 60,
+          "type": "integer",
+          "description": "Seconds a delete-version check is left to the delete that owes it before a pass runs it."
+        },
+        "delete_version_check_idle_interval_seconds": {
+          "default": 300,
+          "type": "integer",
+          "description": "Seconds between delete_version_check passes that found none."
+        },
+        "delete_version_check_interval_seconds": {
+          "default": 60,
+          "type": "integer",
+          "description": "Seconds between delete_version_check passes while checks are owed."
+        },
         "deployment": {
           "default": false,
           "type": "boolean",
@@ -2375,6 +2400,31 @@
           "type": "number",
           "description": "Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, and a machine issuer's discovery."
         },
+        "inference_customer_format": {
+          "default": "{org}",
+          "type": "string",
+          "description": "How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only (\"{org}\" = the id as is)."
+        },
+        "inference_customer_header": {
+          "default": "",
+          "type": "string",
+          "description": "Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py)."
+        },
+        "inference_customer_required": {
+          "default": false,
+          "type": "boolean",
+          "description": "True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed."
+        },
+        "inference_feature_header": {
+          "default": "",
+          "type": "string",
+          "description": "Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...), with inference_customer_header only; \"\" sends none."
+        },
+        "inference_feature_map_json": {
+          "default": "",
+          "type": "string",
+          "description": "JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...) to the gateway's (letters, digits, . _ ~ : @ -); \"*\" for any other; \"\" = Loom's."
+        },
         "inference_gateway_hosts": {
           "default": "",
           "type": "string",
@@ -2384,6 +2434,11 @@
           "default": false,
           "type": "boolean",
           "description": "True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set."
+        },
+        "inference_system_customer": {
+          "default": "loom",
+          "type": "string",
+          "description": "The customer named on calls made for the deployment itself (startup probe, the recalibration worker's fixed pairs, provider checks), which belong to no org."
         },
         "inference_token_audience": {
           "default": "",

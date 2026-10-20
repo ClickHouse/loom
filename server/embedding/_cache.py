@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 
 from server.core.background import TaskSet
 from server.embedding.normalize import normalize_whitespace, query_text
+from server.llm import customer
 from server.observability.genai import request_org
 from server.settings import settings
 
@@ -96,12 +97,17 @@ async def cached_embed(
     width: a shared-tier row of another width (the same model before a
     `LOOM_EMBEDDING_DIM` change) is not this embedder's vector.
 
+    Checks the call's customer first (`server.llm.customer.require`), as
+    every model call does before anything is cached: a refused call gets no
+    hit and joins no flight.
+
     The hit flag is returned rather than inferred from the `hits`/`misses`
     counters: those are process-wide, so diffing them across an `await` races
     with every other concurrent embed. The caller needs it to distinguish a
     served-from-cache embedding (no upstream tokens, no cost) from a billed one
     on its telemetry span.
     """
+    customer.require()
     org = request_org()
     if not org:
         _last_tier.set("miss")
