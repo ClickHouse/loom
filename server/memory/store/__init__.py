@@ -31,7 +31,7 @@ package for a caller outside it, on the submodule for a call from inside.
 
 from __future__ import annotations
 
-from server.memory.store.bm25_stats import index_late_rows
+from server.memory.store.bm25_stats import index_late_rows, late_rows
 from server.memory.store.dedup import (
     canonical_rows_by_ids,
     clear_duplicate_tag,
@@ -239,6 +239,7 @@ __all__ = [
     "heal_divergent_entities",
     "Identity",
     "index_late_rows",
+    "late_rows",
     "insert_embedding_rows",
     "insert_memory_versions",
     "key_holds_established_fact",

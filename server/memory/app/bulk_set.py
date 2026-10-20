@@ -22,6 +22,7 @@ from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
 )
+from server.memory.app import after_write
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
     _bulk_build_rows,
@@ -326,7 +327,7 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
             retire = _vectors_to_retire(state)
     # The entries' versions were drawn before the batch embedded: a slow batch indexes
     # its own BM25 stats.
-    await memory_repo.index_late_rows(state.embedding_rows, ch=ch)
+    after_write.index_late_rows(state.embedding_rows, ch=ch)
     await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     fences = _high_winners(state)
     if fences:
