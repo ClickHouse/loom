@@ -82,5 +82,5 @@ async def test_an_erasure_in_the_org_deletes_its_cached_vectors_only(ch: Any, sc
         deleted = await steps_ledgers.delete_idempotency_by_namespace(a, ["ns"])
     else:
         deleted = await steps_ledgers.delete_idempotency_by_user(a, "u1")
-    assert deleted == 1  # the org's one cached vector; it had no replay body
+    assert deleted == 0  # the step counts replay bodies (none here); the vectors are logged
     assert [r["org"] for r in await _rows(ch, model)] == [b]
