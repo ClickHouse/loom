@@ -228,6 +228,20 @@ def test_the_chunk_leg_serves_no_chunk_that_reads_as_a_credential() -> None:
     assert [h.memory_key for h in _served(hits, rows, 1)] == ["chunk:s:1"]
 
 
+def test_a_chunk_key_with_a_credential_version_is_held_back() -> None:
+    """Two stored versions of one chunk key, the plain one read first: the hit is held
+    back, since the version that reads as a credential could be the one it serves."""
+    from server.memory.app.retrieval.chunks import _served
+
+    hits = [_hit("chunk:s:0", "[user] notes", 0.9), _hit("chunk:s:1", _PLAIN, 0.8)]
+    rows = [
+        {"memory_key": "chunk:s:0", "content_full": "[user] notes on the plan"},
+        {"memory_key": "chunk:s:0", "content_full": f"[user] notes and the key {OPENAI_KEY}"},
+        {"memory_key": "chunk:s:1", "content_full": _PLAIN},
+    ]
+    assert [h.memory_key for h in _served(hits, rows, 5)] == ["chunk:s:1"]
+
+
 @pytest.mark.asyncio
 async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> None:
     from server.memory.app.retrieval.summaries import fetch_session_summaries

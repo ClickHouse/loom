@@ -839,9 +839,14 @@ async def _search_memory_chunks(
 
 def _served(hits: list[SearchHit], rows: list[dict[str, Any]], n: int) -> list[SearchHit]:
     """The first `n` hits whose chunk text does not read as a credential. A chunk written
-    as one has no vector and never gets here; this holds back one an earlier build embedded."""
-    text = {str(r["memory_key"]): str(r["content_full"]) for r in rows}
-    return without_credentials(hits, lambda hit: text[hit.memory_key], n)
+    as one has no vector and never gets here; this holds back one an earlier build embedded.
+    Every stored version of a key is checked: a hit is held back when any of them reads as a
+    credential, whichever one the hit came from."""
+    versions: dict[str, list[str]] = {}
+    for r in rows:
+        versions.setdefault(str(r["memory_key"]), []).append(str(r["content_full"]))
+    # Joined by a newline, which no credential pattern crosses.
+    return without_credentials(hits, lambda hit: "\n".join(versions[hit.memory_key]), n)
 
 
 def _chunk_neighbor_sql(

@@ -23,8 +23,9 @@ from tests.integration._resources import unique_org
 ORG = unique_org("raw-evidence")
 _NONCE = os.urandom(3).hex()
 # One namespace per test, so one test's identical passage never ranks in another's search.
-NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED = (
-    f"raw-{name}-{_NONCE}" for name in ("chunks", "legacy", "digest", "turns", "saved")
+NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED, NS_TIE, NS_CUT = (
+    f"raw-{name}-{_NONCE}"
+    for name in ("chunks", "legacy", "digest", "turns", "saved", "tie", "cut")
 )
 
 # Credential shapes `reads_high` matches, with nonce bodies. Never real secrets.
@@ -52,7 +53,7 @@ def token() -> str:
     return mint_token(
         subject="raw-evidence",
         org=ORG,
-        namespaces=[NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED],
+        namespaces=[NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS, NS_SAVED, NS_TIE, NS_CUT],
         roles=["admin", "writer"],  # admin: conversation.set_logging
         ttl_seconds=600,
     )
@@ -353,7 +354,7 @@ def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
     thread = f"t-{uuid.uuid4().hex[:8]}"
     _insert_turns(
         ch_client,
-        NS_SAVED,
+        NS_TIE,
         thread,
         [("m-a", "a plain last turn", False), ("m-b", f"key {_API_KEY}", False)],
         role_of={"m-a": "assistant"},
@@ -362,7 +363,7 @@ def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
     r = _post(
         control_plane_url,
         token,
-        NS_SAVED,
+        NS_TIE,
         "conversation.threads",
         {"window_days": 30, "agent": "*", "limit": 50},
     )
@@ -382,12 +383,12 @@ def test_a_key_that_crosses_the_excerpt_cut_is_listed_empty(
     head = "x" * 230 + " "  # the key starts at character 232 and runs past 240
     secret = head + _AWS_KEY_ID + " " + "y" * 1800
     plain = head + "z" * 1820
-    _insert_turns(ch_client, NS_SAVED, secret_thread, [("m-1", secret, False)])
-    _insert_turns(ch_client, NS_SAVED, plain_thread, [("m-1", plain, False)])
+    _insert_turns(ch_client, NS_CUT, secret_thread, [("m-1", secret, False)])
+    _insert_turns(ch_client, NS_CUT, plain_thread, [("m-1", plain, False)])
     r = _post(
         control_plane_url,
         token,
-        NS_SAVED,
+        NS_CUT,
         "conversation.threads",
         {"window_days": 30, "agent": "*", "limit": 50},
     )

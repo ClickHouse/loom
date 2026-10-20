@@ -86,6 +86,7 @@ async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verificati
     assert "_loom_rebuild_ordinal > {after:UInt64}" in target_sql and "LIMIT" in target_sql
     assert "(`embedding`.size0 = 0 OR `memory_key_embedding`.size0 = 0)" in target_sql
     assert "AS emptied" in target_sql
+    assert "AND isNull(tombstoned_at)" in target_sql  # a tombstone is staged empty
     assert "IN {ordinals:Array(UInt64)}" in source_sql and "`content` AS text" in source_sql
     assert "JOIN" not in target_sql + source_sql
     assert client.query_all.await_args_list[1].args[1] == {"ordinals": [4, 5]}

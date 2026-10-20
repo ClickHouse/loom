@@ -156,7 +156,7 @@ async def test_a_thread_list_reads_the_last_turn_only_when_asked(
     from server.knowledge.app.conversations import handle_conversation_threads
 
     grouped = [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}]
-    keyed_row = {"thread_id": "t-1", "n": 1 if reads_last_turn else 7}
+    keyed_row = {"thread_id": "t-1", "n": 7}
     if reads_last_turn:
         keyed_row["last_turn"] = ("bot", "user", "hi")
     titles = [{"thread_id": "t-1", "title": "Titled"}]

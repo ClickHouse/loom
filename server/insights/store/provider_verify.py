@@ -68,12 +68,14 @@ async def _holds_plain_emptied(
     flags = [f"{_identifier(c)}.size0 = 0" for c in columns]
     has_vector = ", ".join(f"arrayExists(x -> x != 0, {_identifier(c)})" for c in columns)
     live = "isNull(tombstoned_at)" if "tombstoned_at" in schema.columns else "1"
+    # A tombstoned target row is staged empty on purpose: the page skips it.
+    target_live = " AND isNull(tombstoned_at)" if "tombstoned_at" in schema.columns else ""
     after = 0
     while True:
         page = await client.query_all(
             f"SELECT {_ORDINAL} AS ordinal, [{', '.join(flags)}] AS emptied"
             f" FROM loom.{names.target} FINAL"
-            f" WHERE {_ORDINAL} > {{after:UInt64}} AND ({' OR '.join(flags)})"
+            f" WHERE {_ORDINAL} > {{after:UInt64}} AND ({' OR '.join(flags)}){target_live}"
             f" ORDER BY {_ORDINAL} LIMIT {{page:UInt32}}",
             {"after": after, "page": _EMPTIED_PAGE},
         )
