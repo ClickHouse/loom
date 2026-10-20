@@ -710,3 +710,41 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         assert json.loads(summary["metadata"])["compacted_from"] == ["m1", "m2", "s"]
     else:
         assert out.reason == "below-min-to-compact" and llm.prompts == []
+
+
+def test_compact_never_summarizes_or_tombstones_a_saved_turn(monkeypatch) -> None:
+    """A message the user saved for search keeps its row: compaction folds the
+    turns around it and leaves it verbatim."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user" if i % 2 == 0 else "assistant",
+            "content": f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "-",
+            "is_saved": i == 1,
+        }
+        for i in range(8)
+    ]
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=2, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True
+    assert out.messages_summarized == 5
+    [summary] = fake.inserted
+    import json
+
+    assert "m1" not in json.loads(summary["metadata"])["compacted_from"]
