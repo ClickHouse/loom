@@ -200,7 +200,9 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     parent = _hit("user_location", 0.5)
     parent.score_components["rerank_from"] = 0.0
     retry_row = _hit("user_employer", 0.45)
-    retry_row.score_components["rerank_from"] = 0.0
+    retry_row.score_components.update(
+        {"rerank_from": 0.0, "rerank_pos": 2.0, "rerank_delta": -2.0, "rerank_external": 1.0}
+    )
 
     async def _judge(query: str, excerpts: list[str]) -> tuple[bool, str]:
         return False, "where does the user work?"
@@ -229,7 +231,7 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     await fallbacks._maybe_iterative_retry(ctx)
     merged = {h.memory_key: h for h in ctx.final_hits}
     assert set(merged) == {"user_location", "user_employer"}
-    assert "rerank_from" not in merged["user_employer"].score_components
+    assert not {k for k in merged["user_employer"].score_components if k.startswith("rerank_")}
     assert merged["user_location"].score_components["rerank_from"] == 0.0
 
 
@@ -272,3 +274,36 @@ async def test_a_row_under_the_floor_stays_last_after_a_real_rerank(
     floored = [b, a, weak]
     assert [h.memory_key for h in gate_order(floored)] == ["a", "b", "lexical"]
     assert _gate_top_sim(floored) == pytest.approx(0.6)
+
+
+@pytest.mark.asyncio
+async def test_the_calibrator_reads_the_fused_top_and_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verdict phase feeds the calibrator the fused rank 1 and rank 2 cosines, and does
+    not abstain on a reranked answer whose own cosine is low."""
+    from server.memory.app.search import verdict
+    from server.memory.domain import retrieval_calibration
+
+    top, second, pick = _hit("top", 0.6), _hit("second", 0.5), _hit("pick", 0.25)
+    ctx = _ctx([top, second, pick])
+    order = ["pick in s1", "top in s1", "second in s1"]
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
+    await ranking._run_external_rerank(ctx)
+    block = assemble_context_block(ctx.all_hits, top_k=10)
+    assert [h.memory_key for h in block] == ["pick", "top", "second"]
+
+    seen: dict[str, Any] = {}
+    real = retrieval_calibration.calibrate_retrieval
+
+    def _spy(**kw: Any) -> Any:
+        seen.update(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(retrieval_calibration, "calibrate_retrieval", _spy)
+    ctx.actual_work, ctx.query_triples = {}, []
+    run = SimpleNamespace(ns_calibration=None, graph_seeds=0, graph_neighbors=0, triples_matched=0)
+    _cal, (abstain, _code, _reason) = verdict._calibrate_final_hits(ctx, run, block, 0)
+    assert seen["top_similarity"] == pytest.approx(0.6)
+    assert seen["second_similarity"] == pytest.approx(0.5)
+    assert abstain is False

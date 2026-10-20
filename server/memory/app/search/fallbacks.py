@@ -15,6 +15,9 @@ from server.memory.domain.search_types import hit_sort_key
 
 log = logging.getLogger(__package__)
 
+# The score_components an external rerank stamps (`scoring._record_rerank_trail`).
+_RERANK_TRAIL = ("rerank_from", "rerank_pos", "rerank_delta", "rerank_external")
+
 
 async def _maybe_iterative_retry(ctx: SearchContext) -> None:
     """Iterative retrieval gate. Ask the LLM "did we get it?"; if not, run ONE
@@ -98,9 +101,11 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                 )
                 if rh_key not in seen_keys:
                     seen_keys.add(rh_key)
-                    # A retry row's rerank position is in the retry's own pool: it joins
-                    # after this pool's rerank, so the gates leave it where it lands.
-                    rh.score_components.pop("rerank_from", None)
+                    # A retry row's rerank trail describes the retry's own pool: it joins
+                    # after this pool's rerank, so it carries none and the gates leave it
+                    # where it lands.
+                    for trail in _RERANK_TRAIL:
+                        rh.score_components.pop(trail, None)
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)
             ctx.final_hits = final_hits[: input.top_k]
