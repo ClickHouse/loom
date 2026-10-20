@@ -17,6 +17,7 @@ from server.core.ch_errors import error_code, error_line
 from server.core.ch_names import SCHEMA, TELEMETRY, NamedClient, quote, telemetry_database
 from server.core.ch_names import database as database_name
 from server.core.paths import MIGRATIONS_DIR
+from server.core.schema.migrate_lease import RUNNER_TABLES
 
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
@@ -339,16 +340,18 @@ def _refuse_moved_schema(ch: Client) -> None:
     operator who means a new schema there creates the database, empty, first."""
     if database_name() == SCHEMA:
         return
-    # The runner makes its own tables before the ledger: a first boot stopped between
-    # the two leaves a schema that is still Loom's.
-    from server.core.schema.migrate_lease import RUNNER_TABLES
-
     rows = ch.query(
         "SELECT countIf(database = {schema:String} AND name = '_migrations') AS other, "
         "countIf(database = {db:String} AND name NOT IN {own:Array(String)}) AS tables, "
         "countIf(database = {db:String} AND name = '_migrations') AS ledger "
         "FROM system.tables WHERE database IN ({schema:String}, {db:String})",
-        parameters={"schema": SCHEMA, "db": database_name(), "own": sorted(RUNNER_TABLES)},
+        parameters={
+            "schema": SCHEMA,
+            "db": database_name(),
+            # The runner makes its own tables before the ledger: a first boot stopped
+            # between the two leaves a schema that is still Loom's.
+            "own": sorted(RUNNER_TABLES),
+        },
     ).result_rows
     other, tables, ledger = rows[0] if rows else (0, 0, 0)
     if not other or ledger:
