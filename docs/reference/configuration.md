@@ -244,7 +244,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 
 ### Repository job sandbox
 
-Resource limits (rlimits) for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup.
+Resource limits (rlimits) for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (`code_sandbox_max_pids` aside): there is no cgroup.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -382,7 +382,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_BACKPORT_GAPS_ENABLED` | `bool` | `True` |  | Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table. |
+| `LOOM_CODE_BACKPORT_GAPS_ENABLED` | `bool` | `True` |  | Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `code_backport_gaps_days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table. |
 | `LOOM_CODE_BACKPORT_GAPS_INTERVAL_SECONDS` | `float` | `86400.0` |  | Seconds between backport-gaps passes; the read op reports the table stale past twice this. |
 | `LOOM_CODE_BACKPORT_GAPS_DAYS` | `int` | `90` |  | Days back of backport-labelled trunk PRs a backport-gaps pass considers. |
 | `LOOM_CODE_BACKPORT_GAPS_PRS_PER_PASS` | `int` | `300` |  | Max fixes a backport-gaps pass checks, stalest first. |
@@ -444,7 +444,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_EMBED_RECOVERY_ENABLED` | `bool` | `False` |  | Embedding recovery for code_chunks/code_summaries stubs (dim=0). |
 | `LOOM_CODE_EMBED_RECOVERY_INTERVAL_SECONDS` | `int` | `30` |  | Seconds between recovery passes while stubs are pending. |
-| `LOOM_CODE_EMBED_RECOVERY_IDLE_INTERVAL_SECONDS` | `int` | `120` |  | Sleep after a code embed-recovery pass that found no pending stub; the normal interval returns once a pass writes a row. |
+| `LOOM_CODE_EMBED_RECOVERY_IDLE_INTERVAL_SECONDS` | `int` | `120` |  | Sleep after a code embed-recovery pass that found no pending stub; `code_embed_recovery_interval_seconds` resumes once a pass writes a row. |
 | `LOOM_CODE_EMBED_RECOVERY_FULL_SCAN_SECONDS` | `int` | `1800` |  | The pending scan reads above a version watermark; once per this many seconds it scans from version 0 to catch late rows. 0 = always from 0. |
 | `LOOM_CODE_EMBED_MAX_ATTEMPTS` | `int` | `8` |  | Embed attempts per stub before it is poisoned (`embed_failed_at` set) and skipped. |
 | `LOOM_CODE_EMBED_RECOVERY_BATCH` | `int` | `100` |  | Stub keys the recovery scan takes per repo per pass (also texts per embed call); raise it to onboard large repositories faster. |
@@ -463,7 +463,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CODE_RECONCILE_ENABLED` | `bool` | `True` |  | Content-based reconciliation (code/app/index/reconcile.py): each interval, compare every path's chunk commit with the branch head and re-ingest up to heal_per_pass stale paths. |
+| `LOOM_CODE_RECONCILE_ENABLED` | `bool` | `True` |  | Content-based reconciliation (code/app/index/reconcile.py): each interval, compare every path's chunk commit with the branch head and re-ingest up to `code_reconcile_heal_per_pass` stale paths. |
 | `LOOM_CODE_RECONCILE_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between reconciliation runs per namespace. |
 | `LOOM_CODE_RECONCILE_HEAL_PER_PASS` | `int` | `200` |  | Stale paths re-ingested per run. |
 | `LOOM_CODE_RECONCILE_MAX_COMMITS` | `int` | `1000` |  | Max distinct chunk commits a run compares; past it the stale set is a floor (`truncated`). |
@@ -554,7 +554,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SEARCH_MEMO_ENABLED` | `bool` | `True` |  | Memoise served code.search responses per (org, namespace, request shape) in loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true` bypasses it. |
 | `LOOM_CODE_SEARCH_MEMO_TTL_S` | `int` | `1800` |  | Seconds a memoised response, and a cursor's stored pool, stay replayable. |
 | `LOOM_CODE_SEARCH_MEMO_MAX_PAYLOAD_BYTES` | `int` | `200000` |  | Max bytes of a response the memo stores; a larger one is not memoised. 0 = no cap. |
-| `LOOM_CODE_CORPUS_STATS_TTL_S` | `int` | `300` |  | Seconds the BM25 corpus statistics (term df, chunk count, mean length) are cached per process; 0 = no cache. Bounded by the term cap, oldest out. |
+| `LOOM_CODE_CORPUS_STATS_TTL_S` | `int` | `300` |  | Seconds the BM25 corpus statistics (term df, chunk count, mean length) are cached per process; 0 = no cache. Bounded by `code_corpus_stats_max_terms`, oldest out. |
 | `LOOM_CODE_CORPUS_STATS_MAX_TERMS` | `int` | `50000` |  | Max terms whose df the per-process cache holds; the oldest goes first. |
 | `LOOM_CODE_SEARCH_CURSOR_ENABLED` | `bool` | `True` |  | A computed code.search / code.grep stores its ranked pool (no bodies) in loom.code_search_memo and issues `next_cursor`; the next page is a point read. The pool size is `code_search_cursor_pool`. |
 | `LOOM_CODE_SEARCH_CURSOR_POOL` | `int` | `100` |  | Units kept in a cursor's ranked pool; capped at 200. |
@@ -835,6 +835,11 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_PRIOR_CAP` | `float` | `0.08` |  | Cap on memory.search's metadata priors (confidence, soft tag/category) so they break ties instead of re-ranking. 0.0 = uncapped; a request's `prior_cap` overrides it. |
 | `LOOM_PROMPT_FENCE_SECRET` | `str` | *(unset)* |  | Memory bodies in every synthesis and extraction prompt sit between nonce-carrying data markers (server/memory/domain/prompt_fence.py). Key for the fence nonce, HMAC(secret, prompt): an identical prompt renders identically (the response cache keys on it) while a memory author cannot predict the closing marker. "" = derive from jwt_secret. |
+
+### Scratchpad
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SCRATCHPAD_MAX_CHARS` | `int` | `2000` |  | Characters each injected working-memory block renders before it is cut with "(truncated)". |
 
 ### Deployment-specific names the fact filters recognise
@@ -871,6 +876,11 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` |  | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` |  | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
 | `LOOM_DUPLICATE_THRESHOLD` | `float` | `0.97` |  | Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate' with a duplicate_of pointer instead of 'conflicted'. Per-namespace override: loom.namespaces.duplicate_threshold. |
+
+### Blacklist cache
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_BLACKLIST_VERSION_CHECK_INTERVAL_SECONDS` | `float` | `2.0` |  | Blacklist cache invalidation: in-process invalidate_cache(), a one-row CH version watermark (loom.blacklist_version) polled at most every check interval (bounds cross-replica lag), and a hard TTL backstop. No Redis. |
 | `LOOM_BLACKLIST_CACHE_TTL_SECONDS` | `int` | `300` |  | Seconds after which the blacklist cache reloads regardless of the version watermark. |
 
@@ -910,6 +920,11 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_PROFILE_CONSOLIDATION_MEMORY_LIMIT` | `int` | `100` |  | Memories read into one fold, highest confidence then newest first. |
 | `LOOM_PROFILE_CONSOLIDATION_COOLDOWN_SECONDS` | `int` | `86400` |  | Seconds after a profile section is written before it is folded again. |
 | `LOOM_PROFILE_CONSOLIDATION_LABEL` | `str` | `'consolidated_profile'` |  | `memory_key` of the folded profile row. |
+
+### Reflection distillation
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_REFLECTION_DISTILL_ENABLED` | `bool` | `False` |  | Reflection distillation: label recent sessions that carry no outcome (positive / negative / unclear into loom.session_outcomes_by_user), pair each confidently failed session with its nearest successful one and distil the difference into one hidden `reflection` memory. LLM calls; sessions labelled through run.complete are not re-judged. |
 | `LOOM_REFLECTION_DISTILL_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between reflection distillation passes. |
 | `LOOM_REFLECTION_DISTILL_LOOKBACK_DAYS` | `int` | `14` |  | Days back a pass looks for unlabelled sessions and for failed sessions to contrast. |
@@ -917,6 +932,11 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_REFLECTION_DISTILL_MAX_CONTRASTS_PER_PASS` | `int` | `10` |  | Failed sessions one pass tries to pair and distil. |
 | `LOOM_REFLECTION_DISTILL_MIN_CONFIDENCE` | `float` | `0.7` |  | A judged label below this confidence neither pairs nor is paired with. |
 | `LOOM_REFLECTION_DISTILL_MIN_PAIR_SIMILARITY` | `float` | `0.55` |  | Cosine floor between the failed and the successful summary; below it the sessions were not about the same thing. |
+
+### Entity extraction
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_ENTITY_EXTRACT_ENABLED` | `bool` | `True` |  | Async LLM entity tagging of memory rows (fills `entities` for search's entity match); off the memory.set hot path. |
 | `LOOM_ENTITY_EXTRACT_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between entity extraction passes that found work. |
 | `LOOM_ENTITY_EXTRACT_IDLE_INTERVAL_SECONDS` | `int` | `300` |  | Sleep after an entity extraction pass that found no unentitied row. |
@@ -954,7 +974,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_BULK_CONTEXTUALIZE_ALLOWED` | `bool` | `True` |  | memory.bulk_set honours contextualize=true (embed a chunk with its context) only when allowed; concurrency bounds the per-entry model calls, max_entries caps one call's spend. |
+| `LOOM_MEMORY_BULK_CONTEXTUALIZE_ALLOWED` | `bool` | `True` |  | memory.bulk_set honours contextualize=true (embed a chunk with its context) only when allowed; `memory_bulk_contextualize_concurrency` bounds the per-entry model calls, `memory_bulk_contextualize_max_entries` caps one call's spend. |
 | `LOOM_MEMORY_BULK_CONTEXTUALIZE_CONCURRENCY` | `int` | `8` |  | Context model calls one bulk_set runs at once. |
 | `LOOM_MEMORY_BULK_CONTEXTUALIZE_MAX_ENTRIES` | `int` | `200` |  | A bulk_set with more pending entries than this is not contextualized at all. |
 
@@ -977,6 +997,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` |  | Days back the sensitivity sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` |  | Rows one sweep pass re-labels (at least 1). |
 | `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
+| `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` |  | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
 
 ### Code-linked memories
 
@@ -989,7 +1010,6 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
 | `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
-| `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` |  | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
 
 ### Memory chunks
 
@@ -1104,11 +1124,11 @@ memory.ask: evidence assembly and answer synthesis.
 | `LOOM_MEMORY_ASK_ENTITY_FOLLOW_TOP_K` | `int` | `6` | live | Rows retrieved for each followed bridge entity. |
 | `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K` | `int` | `5` | live | Passages the knowledge.search leg appends to the synthesis window. |
 | `LOOM_MEMORY_ASK_EXCLUDE_UNVERIFIED_EXTERNAL` | `bool` | `True` | live | memory.ask keeps declared-external, unattested rows out of the synthesis pool (they still surface as hits). Off = they are synthesized like any other row. |
-| `LOOM_MEMORY_ASK_PRECEDENTS` | `bool` | `False` | live | Serve the earlier synthesized answer to the same question and shape, with no LLM call, when the synthesis window is byte-identical (same keys, same content_sha256 per key); otherwise synthesize and store. A per-request precedents field overrides. Max age 0 = only the evidence decides. |
+| `LOOM_MEMORY_ASK_PRECEDENTS` | `bool` | `False` | live | Serve the earlier synthesized answer to the same question and shape, with no LLM call, when the synthesis window is byte-identical (same keys, same content_sha256 per key); otherwise synthesize and store. A per-request precedents field overrides. |
 | `LOOM_MEMORY_ASK_PRECEDENTS_MAX_AGE_HOURS` | `int` | `0` | live | Hours a stored precedent stays servable; 0 = no age bound, the evidence alone decides. |
 | `LOOM_MEMORY_ASK_PRECEDENTS_NAMESPACES` | `str` | `''` | live | Comma-separated fnmatch globs the precedent flag applies to; '' = every namespace. Scope it to namespaces whose traffic is real repeats (e.g. "support-*"): on a shared server a paired A/B would answer its second arm from the first. |
 | `LOOM_MEMORY_ASK_PRECEDENTS_FAST_MAX_AGE_HOURS` | `int` | `1` | live | With precedents on, an eligible precedent is served before retrieval when no plane its namespaces read was written since (loom.namespace_write_marks), the blacklist is unchanged and every cited row is live with the same hash. Hours a precedent stays servable on that fast path (a bound on rank drift, not staleness); 0 = no bound. |
-| `LOOM_MEMORY_ASK_LLM_CACHE_DEFAULT` | `bool` | `True` | live | Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. The namespace globs (comma-separated fnmatch, '' = all) scope the default; a per-request llm_cache wins (benches measuring synthesis send false). |
+| `LOOM_MEMORY_ASK_LLM_CACHE_DEFAULT` | `bool` | `True` | live | Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a per-request llm_cache wins (benches measuring synthesis send false). |
 | `LOOM_MEMORY_ASK_LLM_CACHE_NAMESPACES` | `str` | `''` | live | Comma-separated fnmatch namespace globs the LLM cache default applies to; '' = all. |
 | `LOOM_MEMORY_ASK_PENDING_EVIDENCE_TURNS` | `int` | `5` | live | memory.ask pending evidence: the turns of in-flight deferred batches that share words with the question join the synthesis window as raw rows (source="pending"). Most pending turns read into the synthesis window per ask. |
 | `LOOM_MEMORY_ASK_PENDING_EVIDENCE_BATCHES` | `int` | `20` | live | Newest in-flight deferred batches the pending-evidence read scans. |
@@ -1155,7 +1175,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_REINFORCEMENT_HALF_LIFE_DAYS` | `float` | `90.0` | live | Days after which a use's reinforcement weighs half: the base half-life, which grows with a row's use count. |
 | `LOOM_SEARCH_TRACE_LOG_ENABLED` | `bool` | `False` | live | Per-query recall telemetry into loom.search_trace_log (query, returned keys+scores, abstain, latency), fire-and-forget. Off by default: query text is logged, so it is an operator opt-in. |
 | `LOOM_MEMORY_QUERY_NODES_ENABLED` | `bool` | `False` | live | Past queries as nodes: one loom.query_nodes row per memory.search (normalised text, embedding, returned keys), gated on the namespace's capture consent; the erasure saga deletes the table. |
-| `LOOM_MEMORY_SEARCH_SET_EXPANSION_LEG_TOP_K` | `int` | `2` | live | Set-expansion instance legs (collective nouns -> "has a sister"): each phrase runs as a narrow sub-query leg of top_k rows; a row joins only above min_similarity, at most max_added per search, never above the main leg's best row. |
+| `LOOM_MEMORY_SEARCH_SET_EXPANSION_LEG_TOP_K` | `int` | `2` | live | Set-expansion instance legs (collective nouns -> "has a sister"): each phrase runs as a narrow sub-query leg of this many rows; a row joins only above `memory_search_set_expansion_min_similarity`, at most `memory_search_set_expansion_max_added` per search, never above the main leg's best row. |
 | `LOOM_MEMORY_SEARCH_SET_EXPANSION_MIN_SIMILARITY` | `float` | `0.5` | live | Similarity a set-expansion leg's row must exceed to join the pool. |
 | `LOOM_MEMORY_SEARCH_SET_EXPANSION_MAX_ADDED` | `int` | `5` | live | Most rows the set-expansion legs add to one search. |
 | `LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` | `bool` | `True` | live | Read-side exposure ledger in loom.memory_exposures: one row per read (token subject, returned keys, query digest never the text, scope) plus an hourly per-actor roll-up. Carries no user content. |
@@ -1181,7 +1201,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_GRAPH_SEED_RECENT_MAX` | `int` | `8` | live | Most recent-memory entities added to the graph seeds under recent/both. |
 | `LOOM_MEMORY_SEARCH_BM25_LIVE_TAIL` | `bool` | `True` | live | bm25_hybrid merges the once-a-minute BM25 roll-ups with a live aggregate over rows newer than their mark, so df and corpus size are exact. Off = roll-ups alone (up to ~70 s behind a write). |
 | `LOOM_MEMORY_SEARCH_PAGE_TTL_S` | `int` | `1800` | live | Seconds a parked page (a `paging=true` search's tail) stays fetchable before the TTL merge reclaims it. |
-| `LOOM_MEMORY_SEARCH_ENTITY_BOOST_TOP_ENTITIES` | `int` | `20` | live | Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py). loom.entity_vectors holds one row per (entity, memory_key) edge, so the lookup ranks distinct entities first, then expands to edges (a flat LIMIT surfaced as few as 1 distinct entity). top_entities = distinct entities kept; max_pairs = hard bound on the edge expansion (a hub can carry hundreds), which bounds work rather than results. |
+| `LOOM_MEMORY_SEARCH_ENTITY_BOOST_TOP_ENTITIES` | `int` | `20` | live | Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py). loom.entity_vectors holds one row per (entity, memory_key) edge, so the lookup ranks distinct entities first, then expands to edges (a flat LIMIT surfaced as few as 1 distinct entity). This is the distinct entities kept; `memory_search_entity_boost_max_pairs` bounds the edge expansion (a hub can carry hundreds), which bounds work rather than results. |
 | `LOOM_MEMORY_SEARCH_ENTITY_BOOST_MAX_PAIRS` | `int` | `400` | live | Most (entity, memory_key) edges the entity-boost lookup expands to. |
 | `LOOM_MEMORY_SEARCH_TRUST_WEIGHT` | `float` | `0.0` | live | Weight on the provenance term (source_class + verified); 0 = off, a strict no-op in every mode. |
 | `LOOM_MEMORY_EMBED_ANSWER_TOPIC` | `bool` | `True` | live | Prepend the extractor's `question_topic` to the embedded text of assistant-direct-answer facts, so a topic-only follow-up matches them. The stored value is untouched; takes effect on (re-)ingest. |
@@ -1212,7 +1232,7 @@ Models: which model does each job.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (in this section) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
+| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 
@@ -1270,7 +1290,7 @@ Namespace registration, write marks and bench-namespace GC.
 | `LOOM_NAMESPACE_AUTOREGISTER_ENABLED` | `bool` | `True` |  | A principal's first write into a namespace with no loom.namespaces row inserts one: owner = token subject, `kind = 'bench'` under a bench prefix, `retention_days = 0` (never a TTL). No ALTER. |
 | `LOOM_NAMESPACE_AUTOREGISTER_SKIP_PREFIXES` | `str` | `'namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,…` |  | Op-name prefixes the auto-register hook ignores: ops on a namespace rather than into it, the code plane (registers `kind = 'code'` itself), and the operator planes. |
 | `LOOM_NAMESPACE_BENCH_PREFIXES` | `str` | `'lme-,mb-,td-,locomo-,kcurve-,wpath-,bench-,ma-verbatim-,…` |  | Comma-separated name prefixes of throwaway harness namespaces: stamped `kind = 'bench'` by `namespace.register` (when no kind is given) and auto-register, and scanned by `namespaces-gc`. |
-| `LOOM_NAMESPACE_GC_WORKER_ENABLED` | `bool` | `True` |  | namespace_gc: `kind = 'bench'` namespaces with live memory and no write for idle_hours are purged by one list-scoped erasure saga per batch, at most sagas_per_pass a pass, kept to loom tables. |
+| `LOOM_NAMESPACE_GC_WORKER_ENABLED` | `bool` | `True` |  | namespace_gc: `kind = 'bench'` namespaces with live memory and no write for `namespace_gc_idle_hours` are purged by one list-scoped erasure saga per batch, at most `namespace_gc_sagas_per_pass` a pass, kept to loom tables. |
 | `LOOM_NAMESPACE_GC_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between namespace GC passes. |
 | `LOOM_NAMESPACE_GC_IDLE_HOURS` | `int` | `24` |  | Hours without a write before a bench namespace is purged. |
 | `LOOM_NAMESPACE_GC_BATCH` | `int` | `200` |  | Namespaces one erasure saga purges, oldest write first (at least 1). |
@@ -1302,7 +1322,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_OPS_PROCEDURE_PLANE_MIN_PAIRS` | `int` | `20` |  | Pairs the `procedure_plane` check measures success retention over before its warning can fire. |
 | `LOOM_AUDIT_VERIFIER_ENABLED` | `bool` | `True` |  | Periodic re-hash of audit rows; a mismatch writes `audit.tamper_detected`. Per-row detection, not a hash chain (see server/observability/audit.py). |
 | `LOOM_AUDIT_VERIFIER_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between audit verifier passes (row re-hash and checkpoint sealing). |
-| `LOOM_AUDIT_CHECKPOINT_WINDOW_SECONDS` | `int` | `3600` |  | Length, seconds, of one audit window. Each closed window is sealed as a chained checkpoint once `grace_seconds` old, and the last `verify_windows` are recounted every pass: a short recount is a deletion, which per-row hashes cannot see. |
+| `LOOM_AUDIT_CHECKPOINT_WINDOW_SECONDS` | `int` | `3600` |  | Length, seconds, of one audit window. Each closed window is sealed as a chained checkpoint once `audit_checkpoint_grace_seconds` old, and the last `audit_checkpoint_verify_windows` are recounted every pass: a short recount is a deletion, which per-row hashes cannot see. |
 | `LOOM_AUDIT_CHECKPOINT_GRACE_SECONDS` | `int` | `600` |  | Seconds after a window closes before it is sealed. |
 | `LOOM_AUDIT_CHECKPOINT_VERIFY_WINDOWS` | `int` | `24` |  | Most recent sealed windows recounted every pass (at least 1). |
 | `LOOM_AUDIT_CHECKPOINT_MAX_SEAL_PER_PASS` | `int` | `48` |  | Most windows one pass seals; a backlog is sealed over later passes. |
@@ -1379,12 +1399,12 @@ Embedding and LLM providers.
 | `LOOM_LLM_RETRY_MAX_WAIT_S` | `float` | `20.0` | live | Longest backoff, in seconds, between two attempts of an LLM call. |
 | `LOOM_LLM_MAX_TOKENS_OVERRIDES` | `str` | `''` | live | JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed as the cost ledger's stage series name it. A name that is no LLM call, or a count below 1, = the map is logged once and ignored. '' = the table as declared. |
 | `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` | `str` | `'{"bench": {"llm_cache": true}}'` |  | JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache` overrides the class's cache default (a per-request pin wins); `strong`/`mid` false bars the cascade from that tier. Unlisted = every tier eligible. |
-| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(set)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. |
+| `LOOM_RERANK_ENDPOINTS_JSON` | `str` | *(unset)* |  | JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are short identifiers, URLs http(s). Loom posts candidate text only to these. A secret: its URLs can carry a credential. |
 | `LOOM_LLM_RERANK_SKIP_ABOVE` | `float` | `0.62` |  | Skip the rerank when the vector top hit's cosine is ≥ this (strong matches rank reliably; the rerank costs ~500 ms). Fallback when the adaptive gate has no probe. |
 | `LOOM_EMBEDDING_WORKER_ENABLED` | `bool` | `True` |  | Recovery worker: retries failed embeds and reconciles orphan scope='shared' rows (the write path embeds inline). |
 | `LOOM_EMBEDDING_WORKER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between recovery worker passes while there is work. |
 | `LOOM_EMBEDDING_WORKER_IDLE_INTERVAL_SECONDS` | `int` | `30` |  | Sleep after an idle embedding recovery pass (nothing to embed); `embedding_worker_interval_seconds` resumes once a pass writes a row. |
-| `LOOM_EMBEDDING_WORKER_ORPHAN_FULL_SCAN_SECONDS` | `int` | `1800` |  | Orphan reconciliation: the full memory × embedding anti-join runs once per `full_scan_seconds`; other passes check only memories of the last `recent_seconds`. 0 = full join every pass. |
+| `LOOM_EMBEDDING_WORKER_ORPHAN_FULL_SCAN_SECONDS` | `int` | `1800` |  | Seconds between orphan reconciliation's full memory × embedding anti-joins; other passes check only memories of the last `embedding_worker_orphan_recent_seconds`. 0 = full join every pass. |
 | `LOOM_EMBEDDING_WORKER_ORPHAN_RECENT_SECONDS` | `int` | `900` |  | Age window, seconds, of the memories a non-full orphan pass checks. |
 | `LOOM_LLM_RESPONSE_CACHE_TABLE` | `str` | `'loom.llm_response_cache'` |  | The table the LLM response cache reads and writes; an isolated server whose boot migrations are off points this at its own scratch mirror. |
 
@@ -1473,7 +1493,7 @@ Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage
 
 ### Storage tiering
 
-Opt-in tiering, applied the same way: a tiering_*_warm_days setting moves a table's rows to tiering_warm_volume_name after W days. With retention also set, W must be < N or the move is a no-op (logged WARN).
+Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: a tiering_*_warm_days setting moves a table's rows to tiering_warm_volume_name after that many days. It must be below the table's retention_*_days when both are set, or the move is a no-op (logged WARN).
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -1615,7 +1635,7 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_DUPCHECK_REFIT_ENABLED` | `bool` | `True` |  | The fit (coefficients, curve, holdout) is JSON in loom.code_index_state under the tracker namespace, refitted by the tracker_links pass once older than `tracker_dupcheck_refit_interval_s` by replaying every gold query at its filing time. Off = the stored fit keeps serving; with none stored the op answers `uncalibrated`. |
 | `LOOM_TRACKER_DUPCHECK_REFIT_INTERVAL_S` | `float` | `604800.0` |  | Seconds after which the tracker_links pass refits the duplicate-check calibration (7 days). |
 | `LOOM_TRACKER_DUPCHECK_FIT_NEGATIVES` | `int` | `400` |  | Non-duplicate pairs sampled (by hash) per duplicate-check calibration fit. |
-| `LOOM_TRACKER_DUPCHECK_JUDGE_ENABLED` | `bool` | `True` |  | The judge stage. On a `related` answer one model call reads the draft against the top `judge_top_k` issue candidates' title + body head (`judge_body_chars`) and may promote a same-defect one to `duplicate` (never demotes; a recorded related_to never promotes). `judge_model` "" = default client. Benched on a labelled duplicate set. |
+| `LOOM_TRACKER_DUPCHECK_JUDGE_ENABLED` | `bool` | `True` |  | The judge stage. On a `related` answer one model call reads the draft against the top `tracker_dupcheck_judge_top_k` issue candidates' title + body head (`tracker_dupcheck_judge_body_chars`) and may promote a same-defect one to `duplicate` (never demotes; a recorded related_to never promotes). `tracker_dupcheck_judge_model` "" = default client. Benched on a labelled duplicate set. |
 | `LOOM_TRACKER_DUPCHECK_JUDGE_TOP_K` | `int` | `5` |  | Issue candidates the judge reads (at least 1). |
 | `LOOM_TRACKER_DUPCHECK_JUDGE_BODY_CHARS` | `int` | `1500` |  | Body characters per candidate the judge reads. |
 | `LOOM_TRACKER_DUPCHECK_RERANK_ENABLED` | `bool` | `True` |  | The rerank stage. One model call reads the draft against a pool of each leg's own head (`tracker_dupcheck_rerank_per_leg` rows a leg) plus the issues the tracker graph links to the leading candidates; its same/related picks lead `nearest`, the verdict stays the fit's. Fails open. |
@@ -1631,7 +1651,7 @@ The tracker plane: records, duplicate checks, bisect.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_TRACKER_BISECT_SCOPE_PATTERNS` | `int` | `6` |  | When no frame resolves to a file, code.bisect_candidates(issue_number) scans the release window only for PRs whose diff carries one of this many of the issue's rarest patterns (IDF over the issue corpus). 0 turns the leg off. |
-| `LOOM_TRACKER_BISECT_COMPONENT_DIRS` | `int` | `8` |  | The issue's component widens the scan to at most `component_dirs` `src/` directories its PRs touch, each with `min_lift` × the share every trunk PR has (a hub directory says nothing); the aggregate is cached per component for `ttl_s`. |
+| `LOOM_TRACKER_BISECT_COMPONENT_DIRS` | `int` | `8` |  | The issue's component widens the scan to at most this many `src/` directories its PRs touch, each with `tracker_bisect_component_min_lift` × the share every trunk PR has (a hub directory says nothing); the aggregate is cached per component for `tracker_bisect_component_ttl_s`. |
 | `LOOM_TRACKER_BISECT_COMPONENT_MIN_LIFT` | `float` | `1.5` |  | A component directory counts only when its share of the component's PRs is at least this multiple of its share of every trunk PR. |
 | `LOOM_TRACKER_BISECT_COMPONENT_TTL_S` | `float` | `3600.0` |  | Seconds the per-component directory aggregate is cached. |
 

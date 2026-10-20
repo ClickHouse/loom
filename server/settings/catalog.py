@@ -604,7 +604,7 @@ class CodeSettings(BaseModel):
     # Resource limits (rlimits) for each process of a sandboxed repository job
     # (clone, fetch, dependency install, compiler-tier harness;
     # code/app/index/sandbox.py). They bound each process, not a job's total
-    # (max_pids aside): there is no cgroup.
+    # (`code_sandbox_max_pids` aside): there is no cgroup.
     # --- repository job sandbox ---
     # CPU seconds one process of a sandboxed repository job may use.
     code_sandbox_cpu_seconds: int = 7200
@@ -850,13 +850,13 @@ class CodeSettings(BaseModel):
     # Seconds between PR-history sync passes.
     code_pr_history_interval_seconds: int = 900
 
-    # --- The set-wide backport report ----------------------------------------
+    # --- the set-wide backport report ----------------------------------------
     # Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the
-    # last `days` labelled for backport and writes one row per release branch into
-    # loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most
-    # `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at
-    # `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written;
-    # the read op serves the table.
+    # last `code_backport_gaps_days` labelled for backport and writes one row per
+    # release branch into loom.code_backport_gaps. Paced one fix per
+    # `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night,
+    # stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are
+    # skipped. Off = nothing written; the read op serves the table.
     code_backport_gaps_enabled: bool = True
     # Seconds between backport-gaps passes; the read op reports the table stale past
     # twice this.
@@ -932,8 +932,8 @@ class CodeSettings(BaseModel):
     code_embed_recovery_enabled: bool = False
     # Seconds between recovery passes while stubs are pending.
     code_embed_recovery_interval_seconds: int = 30
-    # Sleep after a code embed-recovery pass that found no pending stub; the normal interval
-    # returns once a pass writes a row.
+    # Sleep after a code embed-recovery pass that found no pending stub;
+    # `code_embed_recovery_interval_seconds` resumes once a pass writes a row.
     code_embed_recovery_idle_interval_seconds: int = 120
     # The pending scan reads above a version watermark; once per this many
     # seconds it scans from version 0 to catch late rows. 0 = always from 0.
@@ -963,7 +963,7 @@ class CodeSettings(BaseModel):
     # --- reconciliation and re-chunking ---------------------------------------
     # Content-based reconciliation (code/app/index/reconcile.py): each
     # interval, compare every path's chunk commit with the branch head and
-    # re-ingest up to heal_per_pass stale paths.
+    # re-ingest up to `code_reconcile_heal_per_pass` stale paths.
     code_reconcile_enabled: bool = True
     # Seconds between reconciliation runs per namespace.
     code_reconcile_interval_seconds: int = 3600
@@ -1155,8 +1155,8 @@ class CodeSettings(BaseModel):
     # 0 = no cap.
     code_search_memo_max_payload_bytes: int = 200_000
     # Seconds the BM25 corpus statistics (term df, chunk count, mean length)
-    # are cached per process; 0 = no cache. Bounded by the term cap, oldest
-    # out.
+    # are cached per process; 0 = no cache. Bounded by
+    # `code_corpus_stats_max_terms`, oldest out.
     code_corpus_stats_ttl_s: int = 300
     # Max terms whose df the per-process cache holds; the oldest goes first.
     code_corpus_stats_max_terms: int = 50_000
@@ -1823,6 +1823,7 @@ class MemorySettings(BaseModel):
     # predict the closing marker. "" = derive from jwt_secret.
     prompt_fence_secret: str = ""
 
+    # ---- scratchpad ----
     # Characters each injected working-memory block renders before it is cut with "(truncated)".
     memory_scratchpad_max_chars: int = Field(default=2000, ge=1)
 
@@ -1907,6 +1908,7 @@ class MemorySettings(BaseModel):
     # override: loom.namespaces.duplicate_threshold.
     duplicate_threshold: float = 0.97
 
+    # ---- blacklist cache ----
     # Blacklist cache invalidation: in-process invalidate_cache(), a one-row
     # CH version watermark (loom.blacklist_version) polled at most every check
     # interval (bounds cross-replica lag), and a hard TTL backstop. No Redis.
@@ -1985,6 +1987,7 @@ class MemorySettings(BaseModel):
     # `memory_key` of the folded profile row.
     profile_consolidation_label: str = "consolidated_profile"
 
+    # ---- reflection distillation ----
     # Reflection distillation: label recent sessions that carry no outcome
     # (positive / negative / unclear into loom.session_outcomes_by_user), pair each
     # confidently failed session with its nearest successful one and distil
@@ -2005,6 +2008,7 @@ class MemorySettings(BaseModel):
     # sessions were not about the same thing.
     reflection_distill_min_pair_similarity: float = 0.55
 
+    # ---- entity extraction ----
     # Async LLM entity tagging of memory rows (fills `entities` for search's
     # entity match); off the memory.set hot path.
     entity_extract_enabled: bool = True
@@ -2081,8 +2085,8 @@ class MemorySettings(BaseModel):
     entity_communities_min_co_occur: int = 1
     # ---- bulk contextualization ----
     # memory.bulk_set honours contextualize=true (embed a chunk with its
-    # context) only when allowed; concurrency bounds the per-entry model calls,
-    # max_entries caps one call's spend.
+    # context) only when allowed; `memory_bulk_contextualize_concurrency` bounds the
+    # per-entry model calls, `memory_bulk_contextualize_max_entries` caps one call's spend.
     memory_bulk_contextualize_allowed: bool = True
     # Context model calls one bulk_set runs at once.
     memory_bulk_contextualize_concurrency: int = Field(default=8, ge=1)
@@ -2128,6 +2132,11 @@ class MemorySettings(BaseModel):
     # demotes the row in ranking, so it is left to the operator's
     # `--only-shape phone`.
     sensitivity_sweep_shapes: str = "credential,email"
+    # Tag rows mentioning a protected attribute or common proxy with
+    # `attribute:<class>` at write time (gender, religion, health, age, family,
+    # income, ethnicity, sexuality, politics). A label, never a gate; the
+    # profile fold leaves such rows out.
+    memory_attribute_tagging: bool = True
     # ---- code-linked memories ----
     # Link memories to the code they name (symbols and files of the repository
     # their `repo:` tag or code namespace names) and keep the links current as the
@@ -2153,11 +2162,6 @@ class MemorySettings(BaseModel):
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
-    # Tag rows mentioning a protected attribute or common proxy with
-    # `attribute:<class>` at write time (gender, religion, health, age, family,
-    # income, ethnicity, sexuality, politics). A label, never a gate; the
-    # profile fold leaves such rows out.
-    memory_attribute_tagging: bool = True
 
     # ---- memory chunks ----
     # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈
@@ -2499,8 +2503,7 @@ class MemoryAskSettings(BaseModel):
 
     # Serve the earlier synthesized answer to the same question and shape, with no LLM call,
     # when the synthesis window is byte-identical (same keys, same content_sha256 per key);
-    # otherwise synthesize and store. A per-request precedents field overrides. Max age 0 =
-    # only the evidence decides.
+    # otherwise synthesize and store. A per-request precedents field overrides.
     memory_ask_precedents: Annotated[bool, LIVE] = False
     # Hours a stored precedent stays servable; 0 = no age bound, the evidence alone decides.
     memory_ask_precedents_max_age_hours: Annotated[int, LIVE] = 0
@@ -2517,8 +2520,8 @@ class MemoryAskSettings(BaseModel):
     # Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by
     # sha256(system, user, max_tokens, response_format) per model in
     # loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so
-    # a changed memory misses. The namespace globs (comma-separated fnmatch, '' = all) scope
-    # the default; a per-request llm_cache wins (benches measuring synthesis send false).
+    # a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a
+    # per-request llm_cache wins (benches measuring synthesis send false).
     memory_ask_llm_cache_default: Annotated[bool, LIVE] = True
     # Comma-separated fnmatch namespace globs the LLM cache default applies to; '' = all.
     memory_ask_llm_cache_namespaces: Annotated[str, LIVE] = ""
@@ -2683,9 +2686,10 @@ class MemorySearchSettings(BaseModel):
     # capture consent; the erasure saga deletes the table.
     memory_query_nodes_enabled: Annotated[bool, LIVE] = False
     # Set-expansion instance legs (collective nouns -> "has a sister"): each
-    # phrase runs as a narrow sub-query leg of top_k rows; a row joins only
-    # above min_similarity, at most max_added per search, never above the main
-    # leg's best row.
+    # phrase runs as a narrow sub-query leg of this many rows; a row joins only above
+    # `memory_search_set_expansion_min_similarity`, at most
+    # `memory_search_set_expansion_max_added` per search, never above the main leg's best
+    # row.
     memory_search_set_expansion_leg_top_k: Annotated[int, LIVE] = 2
     # Similarity a set-expansion leg's row must exceed to join the pool.
     memory_search_set_expansion_min_similarity: Annotated[float, LIVE] = 0.5
@@ -2783,9 +2787,9 @@ class MemorySearchSettings(BaseModel):
     # Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py).
     # loom.entity_vectors holds one row per (entity, memory_key) edge, so the
     # lookup ranks distinct entities first, then expands to edges (a flat
-    # LIMIT surfaced as few as 1 distinct entity). top_entities = distinct
-    # entities kept; max_pairs = hard bound on the edge expansion (a hub can
-    # carry hundreds), which bounds work rather than results.
+    # LIMIT surfaced as few as 1 distinct entity). This is the distinct entities kept;
+    # `memory_search_entity_boost_max_pairs` bounds the edge expansion (a hub can carry
+    # hundreds), which bounds work rather than results.
     memory_search_entity_boost_top_entities: Annotated[int, LIVE] = 20
     # Most (entity, memory_key) edges the entity-boost lookup expands to.
     memory_search_entity_boost_max_pairs: Annotated[int, LIVE] = 400
@@ -2871,7 +2875,7 @@ class ModelSettings(BaseModel):
 
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, the conflict judge, rerank and every
-    # job whose own model setting (in this section) is left "". Empty takes the
+    # job whose own model setting (the other *_model settings) is left "". Empty takes the
     # resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
     # Model to answer with when a client's provider is still unavailable after
@@ -2970,9 +2974,9 @@ class NamespaceSettings(BaseModel):
     namespace_bench_prefixes: str = (
         "lme-,mb-,td-,locomo-,kcurve-,wpath-,bench-,ma-verbatim-,mab-,musique-"
     )
-    # namespace_gc: `kind = 'bench'` namespaces with live memory and no write
-    # for idle_hours are purged by one list-scoped erasure saga per batch, at
-    # most sagas_per_pass a pass, kept to loom tables.
+    # namespace_gc: `kind = 'bench'` namespaces with live memory and no write for
+    # `namespace_gc_idle_hours` are purged by one list-scoped erasure saga per batch, at
+    # most `namespace_gc_sagas_per_pass` a pass, kept to loom tables.
     namespace_gc_worker_enabled: bool = True
     # Seconds between namespace GC passes.
     namespace_gc_interval_seconds: int = 3600
@@ -3040,7 +3044,8 @@ class ObservabilitySettings(BaseModel):
     # Seconds between audit verifier passes (row re-hash and checkpoint sealing).
     audit_verifier_interval_seconds: int = 3600
     # Length, seconds, of one audit window. Each closed window is sealed as a
-    # chained checkpoint once `grace_seconds` old, and the last `verify_windows`
+    # chained checkpoint once `audit_checkpoint_grace_seconds` old, and the last
+    # `audit_checkpoint_verify_windows`
     # are recounted every pass: a short recount is a deletion, which per-row
     # hashes cannot see.
     audit_checkpoint_window_seconds: int = 3600
@@ -3412,7 +3417,8 @@ class ProviderSettings(ModelSettings):
     llm_policy_by_traffic_class: Annotated[str, JsonObject] = '{"bench": {"llm_cache": true}}'
     # JSON {name: url}: the rerank endpoints a request's `rerank`, a namespace's
     # `rerank_endpoint` and LOOM_CODE_SEARCH_RERANK_DEFAULT may name. Names are
-    # short identifiers, URLs http(s). Loom posts candidate text only to these.
+    # short identifiers, URLs http(s). Loom posts candidate text only to these. A
+    # secret: its URLs can carry a credential.
     rerank_endpoints_json: Annotated[str, JsonObject] = "{}"
 
     def rerank_endpoint_map(self) -> dict[str, str]:
@@ -3465,9 +3471,9 @@ class ProviderSettings(ModelSettings):
     # Sleep after an idle embedding recovery pass (nothing to embed);
     # `embedding_worker_interval_seconds` resumes once a pass writes a row.
     embedding_worker_idle_interval_seconds: int = 30
-    # Orphan reconciliation: the full memory × embedding anti-join runs once
-    # per `full_scan_seconds`; other passes check only memories of the last
-    # `recent_seconds`. 0 = full join every pass.
+    # Seconds between orphan reconciliation's full memory × embedding anti-joins; other
+    # passes check only memories of the last `embedding_worker_orphan_recent_seconds`.
+    # 0 = full join every pass.
     embedding_worker_orphan_full_scan_seconds: int = 1800
     # Age window, seconds, of the memories a non-full orphan pass checks.
     embedding_worker_orphan_recent_seconds: int = 900
@@ -3686,9 +3692,10 @@ class StorageSettings(BaseModel):
     # Seconds between TTL re-apply passes.
     retention_reconcile_interval_seconds: int = 300
 
-    # Opt-in tiering, applied the same way: a tiering_*_warm_days setting moves a table's
-    # rows to tiering_warm_volume_name after W days. With retention also set, W must be
-    # < N or the move is a no-op (logged WARN).
+    # Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by
+    # server/storage/retention_overrides.py: a tiering_*_warm_days setting moves a table's
+    # rows to tiering_warm_volume_name after that many days. It must be below the table's
+    # retention_*_days when both are set, or the move is a no-op (logged WARN).
     # ---- storage tiering ----
     # Days before `loom.audit_log` rows move to the warm volume; 0 = never.
     tiering_audit_log_warm_days: int = 0
@@ -3958,9 +3965,10 @@ class TrackerSettings(BaseModel):
     # Non-duplicate pairs sampled (by hash) per duplicate-check calibration fit.
     tracker_dupcheck_fit_negatives: int = 400
     # The judge stage. On a `related` answer one model call reads
-    # the draft against the top `judge_top_k` issue candidates' title + body head
-    # (`judge_body_chars`) and may promote a same-defect one to `duplicate` (never
-    # demotes; a recorded related_to never promotes). `judge_model` "" = default client.
+    # the draft against the top `tracker_dupcheck_judge_top_k` issue candidates' title +
+    # body head (`tracker_dupcheck_judge_body_chars`) and may promote a same-defect one to
+    # `duplicate` (never demotes; a recorded related_to never promotes).
+    # `tracker_dupcheck_judge_model` "" = default client.
     # Benched on a labelled duplicate set.
     tracker_dupcheck_judge_enabled: bool = True
     # Issue candidates the judge reads (at least 1).
@@ -3994,9 +4002,10 @@ class TrackerSettings(BaseModel):
     # release window only for PRs whose diff carries one of this many of the issue's
     # rarest patterns (IDF over the issue corpus). 0 turns the leg off.
     tracker_bisect_scope_patterns: int = 6
-    # The issue's component widens the scan to at most `component_dirs` `src/`
-    # directories its PRs touch, each with `min_lift` × the share every trunk PR has (a
-    # hub directory says nothing); the aggregate is cached per component for `ttl_s`.
+    # The issue's component widens the scan to at most this many `src/` directories its
+    # PRs touch, each with `tracker_bisect_component_min_lift` × the share every trunk PR
+    # has (a hub directory says nothing); the aggregate is cached per component for
+    # `tracker_bisect_component_ttl_s`.
     tracker_bisect_component_dirs: int = 8
     # A component directory counts only when its share of the component's PRs
     # is at least this multiple of its share of every trunk PR.

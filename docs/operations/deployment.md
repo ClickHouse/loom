@@ -288,11 +288,18 @@ renaming the database; give each its own service.
   once every process has loaded it. Old tokens verify by
   the `kid` in their header until `loom signing-key retire <kid>`. No env change or
   restart is needed ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).
-  Replacing `LOOM_JWT_SECRET` itself re-keys everything: every token it signed, every
-  keyring key and every stored credential (repository tokens, tracker-source passwords,
-  provider keys) sealed under it stop opening; `loom signing-key record-root` then
-  records the new one and `loom deployment publish --yes` publishes it to the replicas. The keyring commands and `loom mint-token` refuse to run with any
-  other root secret than the one recorded; `/v1/health` (`keyring_root_mismatch`,
+  Replacing `LOOM_JWT_SECRET` itself re-keys everything. Tokens it signed (kid
+  `default`) stop verifying: mint new ones. The keyring keys and stored credentials
+  (repository tokens, tracker-source passwords, provider keys) sealed under it keep
+  opening only while the old value is set as `LOOM_JWT_SECRET_PREVIOUS`, which never
+  verifies a token. The order: put the new root in `LOOM_JWT_SECRET` and the old one in
+  `LOOM_JWT_SECRET_PREVIOUS` in `.env`; in a container with that env run
+  `loom secrets reseal --dry-run && loom signing-key record-root && loom deployment
+publish --yes` (the dry run checks the previous root while the old one is still
+  recorded); recreate the containers; run `loom secrets reseal`; and remove
+  `LOOM_JWT_SECRET_PREVIOUS` once `loom secrets reseal --check` exits 0, since a value
+  still sealed under the old root stops opening without it. The keyring commands and
+  `loom mint-token` refuse to run with any other root secret than the one recorded; `/v1/health` (`keyring_root_mismatch`,
   `signing_keys_unsealable`) and `loom doctor` (`signing_keyring`) flag a process that
   holds another.
 - **`LOOM_PLATFORM_ADMINS`.** Tokens and grants carry only `viewer`, `writer` or

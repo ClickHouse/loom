@@ -15,7 +15,7 @@ import pytest
 
 from scripts.codegen import settings_example, settings_schema
 from server.settings import Settings
-from server.settings._describe import descriptions
+from server.settings._describe import descriptions, heading_note
 from server.settings._env import is_secret_field
 from server.settings._file import SettingsFileError
 
@@ -214,9 +214,69 @@ def test_a_group_a_secret_opens_keeps_its_heading_and_note() -> None:
     assert not any("ch_password" in line for line in out)
 
 
+# Names a description may give bare although a sibling setting ends in them: request,
+# row and ClickHouse fields (a request's `top_k`, a row's `on_expire`, `ef_search`).
+_WIRE_NAMES = {
+    "candidate_min_confidence",
+    "chunk_size",
+    "co_occur",
+    "consolidation_enabled",
+    "deadline_ms",
+    "deep_select",
+    "ef_search",
+    "fan_in",
+    "floor_mode",
+    "git_fetch_pr_heads",
+    "hub_share",
+    "key_axis",
+    "llm_cache",
+    "max_threads",
+    "max_tokens",
+    "namespace_scope",
+    "on_expire",
+    "org_readable",
+    "prior_cap",
+    "schema_profile",
+    "scip_checkout_dir",
+    "synth_model",
+    "top_k",
+    "weight_mention",
+    "world_knowledge",
+}
+
+
+def test_no_description_names_a_sibling_setting_by_its_suffix() -> None:
+    """`max_added` names nothing in settings.list, the schema or another section: a
+    description, or a heading's note, spells the sibling's full name."""
+    source = settings_example.CATALOG.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    described = descriptions(Settings)
+    token = re.compile(r"(?<![\w.:/<-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w(/.-])")
+    found = []
+    for cls in (n for n in ast.parse(source).body if isinstance(n, ast.ClassDef)):
+        names = {
+            st.target.id
+            for st in cls.body
+            if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name)
+        }
+        for st in cls.body:
+            if not (isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name)):
+                continue
+            for text in (described.get(st.target.id, ""), heading_note(lines, st.lineno)):
+                for word in token.findall(text):
+                    if word in Settings.model_fields or word in _WIRE_NAMES:
+                        continue
+                    if any(n.endswith("_" + word) for n in names):
+                        found.append(f"{st.target.id}: {word}")
+    assert not found, f"spell the full setting name: {sorted(set(found))}"
+
+
 def test_no_description_points_at_a_neighbouring_field() -> None:
-    """settings.list and the schema show one field at a time, so "the bound above" names
-    nothing there: a description names the other setting instead."""
+    """settings.list and the schema show one field at a time, so a pointer at a
+    neighbour names nothing there. A heuristic over the pointing phrasings: "above" or
+    "below" ending a clause, "the X above/below", "that budget"-style demonstratives, and
+    openings that lean on the previous field ("The same", "The soft"). Sibling names
+    given by suffix are the next test's."""
     pointing = re.compile(
         r"\b(?:above|below)(?=\s*(?:[).,;:]|$))"
         r"|\b(?:the|that|those|every)\s+[\w-]+(?:\s+[\w-]+)?\s+(?:above|below)\b(?!\s+(?:which|it|this))"
@@ -224,7 +284,7 @@ def test_no_description_points_at_a_neighbouring_field() -> None:
         r"|^The same\b|\bthe section\b|\b(?:this worker|the pass)'s\b|^The soft\b"
     )
     found = [n for n, text in descriptions(Settings).items() if pointing.search(text)]
-    assert not found, f"name the setting meant instead of above/below: {found}"
+    assert not found, f"name the setting meant instead of pointing at it: {found}"
 
 
 def test_uncommenting_every_line_of_the_example_loads_every_default(

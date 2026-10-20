@@ -53,7 +53,7 @@
         "audit_checkpoint_window_seconds": {
           "default": 3600,
           "type": "integer",
-          "description": "Length, seconds, of one audit window. Each closed window is sealed as a chained checkpoint once `grace_seconds` old, and the last `verify_windows` are recounted every pass: a short recount is a deletion, which per-row hashes cannot see."
+          "description": "Length, seconds, of one audit window. Each closed window is sealed as a chained checkpoint once `audit_checkpoint_grace_seconds` old, and the last `audit_checkpoint_verify_windows` are recounted every pass: a short recount is a deletion, which per-row hashes cannot see."
         },
         "audit_verifier_enabled": {
           "default": true,
@@ -351,7 +351,7 @@
         "code_backport_gaps_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table."
+          "description": "Nightly pass: runs `code.backport_gap(exact, history)` for every trunk PR of the last `code_backport_gaps_days` labelled for backport and writes one row per release branch into loom.code_backport_gaps. Paced one fix per `code_backport_gaps_pace_s`, at most `code_backport_gaps_prs_per_pass` a night, stalest first, stopping at `code_backport_gaps_budget_s`; settled fixes are skipped. Off = nothing written; the read op serves the table."
         },
         "code_backport_gaps_interval_seconds": {
           "default": 86400.0,
@@ -622,7 +622,7 @@
         "code_corpus_stats_ttl_s": {
           "default": 300,
           "type": "integer",
-          "description": "Seconds the BM25 corpus statistics (term df, chunk count, mean length) are cached per process; 0 = no cache. Bounded by the term cap, oldest out."
+          "description": "Seconds the BM25 corpus statistics (term df, chunk count, mean length) are cached per process; 0 = no cache. Bounded by `code_corpus_stats_max_terms`, oldest out."
         },
         "code_coverage_check_pattern": {
           "default": "%per_test_coverage%",
@@ -778,7 +778,7 @@
         "code_embed_recovery_idle_interval_seconds": {
           "default": 120,
           "type": "integer",
-          "description": "Sleep after a code embed-recovery pass that found no pending stub; the normal interval returns once a pass writes a row."
+          "description": "Sleep after a code embed-recovery pass that found no pending stub; `code_embed_recovery_interval_seconds` resumes once a pass writes a row."
         },
         "code_embed_recovery_interval_seconds": {
           "default": 30,
@@ -1254,7 +1254,7 @@
         "code_reconcile_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Content-based reconciliation (code/app/index/reconcile.py): each interval, compare every path's chunk commit with the branch head and re-ingest up to heal_per_pass stale paths."
+          "description": "Content-based reconciliation (code/app/index/reconcile.py): each interval, compare every path's chunk commit with the branch head and re-ingest up to `code_reconcile_heal_per_pass` stale paths."
         },
         "code_reconcile_heal_per_pass": {
           "default": 200,
@@ -2153,7 +2153,7 @@
         "embedding_worker_orphan_full_scan_seconds": {
           "default": 1800,
           "type": "integer",
-          "description": "Orphan reconciliation: the full memory × embedding anti-join runs once per `full_scan_seconds`; other passes check only memories of the last `recent_seconds`. 0 = full join every pass."
+          "description": "Seconds between orphan reconciliation's full memory × embedding anti-joins; other passes check only memories of the last `embedding_worker_orphan_recent_seconds`. 0 = full join every pass."
         },
         "embedding_worker_orphan_recent_seconds": {
           "default": 900,
@@ -2569,7 +2569,7 @@
         "llm_model": {
           "default": "",
           "type": "string",
-          "description": "The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (in this section) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
+          "description": "The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
         },
         "llm_openai_reasoning_effort": {
           "default": "",
@@ -2977,7 +2977,7 @@
         "memory_ask_llm_cache_default": {
           "default": true,
           "type": "boolean",
-          "description": "Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. The namespace globs (comma-separated fnmatch, '' = all) scope the default; a per-request llm_cache wins (benches measuring synthesis send false)."
+          "description": "Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a per-request llm_cache wins (benches measuring synthesis send false)."
         },
         "memory_ask_llm_cache_namespaces": {
           "default": "",
@@ -3024,7 +3024,7 @@
         "memory_ask_precedents": {
           "default": false,
           "type": "boolean",
-          "description": "Serve the earlier synthesized answer to the same question and shape, with no LLM call, when the synthesis window is byte-identical (same keys, same content_sha256 per key); otherwise synthesize and store. A per-request precedents field overrides. Max age 0 = only the evidence decides."
+          "description": "Serve the earlier synthesized answer to the same question and shape, with no LLM call, when the synthesis window is byte-identical (same keys, same content_sha256 per key); otherwise synthesize and store. A per-request precedents field overrides."
         },
         "memory_ask_precedents_fast_max_age_hours": {
           "default": 1,
@@ -3190,7 +3190,7 @@
         "memory_bulk_contextualize_allowed": {
           "default": true,
           "type": "boolean",
-          "description": "memory.bulk_set honours contextualize=true (embed a chunk with its context) only when allowed; concurrency bounds the per-entry model calls, max_entries caps one call's spend."
+          "description": "memory.bulk_set honours contextualize=true (embed a chunk with its context) only when allowed; `memory_bulk_contextualize_concurrency` bounds the per-entry model calls, `memory_bulk_contextualize_max_entries` caps one call's spend."
         },
         "memory_bulk_contextualize_concurrency": {
           "default": 8,
@@ -3723,7 +3723,7 @@
         "memory_search_entity_boost_top_entities": {
           "default": 20,
           "type": "integer",
-          "description": "Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py). loom.entity_vectors holds one row per (entity, memory_key) edge, so the lookup ranks distinct entities first, then expands to edges (a flat LIMIT surfaced as few as 1 distinct entity). top_entities = distinct entities kept; max_pairs = hard bound on the edge expansion (a hub can carry hundreds), which bounds work rather than results."
+          "description": "Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py). loom.entity_vectors holds one row per (entity, memory_key) edge, so the lookup ranks distinct entities first, then expands to edges (a flat LIMIT surfaced as few as 1 distinct entity). This is the distinct entities kept; `memory_search_entity_boost_max_pairs` bounds the edge expansion (a hub can carry hundreds), which bounds work rather than results."
         },
         "memory_search_entity_summaries_top_n": {
           "default": 5,
@@ -3975,7 +3975,7 @@
         "memory_search_set_expansion_leg_top_k": {
           "default": 2,
           "type": "integer",
-          "description": "Set-expansion instance legs (collective nouns -> \"has a sister\"): each phrase runs as a narrow sub-query leg of top_k rows; a row joins only above min_similarity, at most max_added per search, never above the main leg's best row."
+          "description": "Set-expansion instance legs (collective nouns -> \"has a sister\"): each phrase runs as a narrow sub-query leg of this many rows; a row joins only above `memory_search_set_expansion_min_similarity`, at most `memory_search_set_expansion_max_added` per search, never above the main leg's best row."
         },
         "memory_search_set_expansion_max_added": {
           "default": 5,
@@ -4171,7 +4171,7 @@
         "namespace_gc_worker_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "namespace_gc: `kind = 'bench'` namespaces with live memory and no write for idle_hours are purged by one list-scoped erasure saga per batch, at most sagas_per_pass a pass, kept to loom tables."
+          "description": "namespace_gc: `kind = 'bench'` namespaces with live memory and no write for `namespace_gc_idle_hours` are purged by one list-scoped erasure saga per batch, at most `namespace_gc_sagas_per_pass` a pass, kept to loom tables."
         },
         "namespace_health_ttl_seconds": {
           "default": 3600,
@@ -4906,7 +4906,7 @@
         "tracker_bisect_component_dirs": {
           "default": 8,
           "type": "integer",
-          "description": "The issue's component widens the scan to at most `component_dirs` `src/` directories its PRs touch, each with `min_lift` × the share every trunk PR has (a hub directory says nothing); the aggregate is cached per component for `ttl_s`."
+          "description": "The issue's component widens the scan to at most this many `src/` directories its PRs touch, each with `tracker_bisect_component_min_lift` × the share every trunk PR has (a hub directory says nothing); the aggregate is cached per component for `tracker_bisect_component_ttl_s`."
         },
         "tracker_bisect_component_min_lift": {
           "default": 1.5,
@@ -5011,7 +5011,7 @@
         "tracker_dupcheck_judge_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "The judge stage. On a `related` answer one model call reads the draft against the top `judge_top_k` issue candidates' title + body head (`judge_body_chars`) and may promote a same-defect one to `duplicate` (never demotes; a recorded related_to never promotes). `judge_model` \"\" = default client. Benched on a labelled duplicate set."
+          "description": "The judge stage. On a `related` answer one model call reads the draft against the top `tracker_dupcheck_judge_top_k` issue candidates' title + body head (`tracker_dupcheck_judge_body_chars`) and may promote a same-defect one to `duplicate` (never demotes; a recorded related_to never promotes). `tracker_dupcheck_judge_model` \"\" = default client. Benched on a labelled duplicate set."
         },
         "tracker_dupcheck_judge_model": {
           "default": "",

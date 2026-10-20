@@ -84,7 +84,8 @@ def _type_name(field: str) -> str:
 def _default(field: str) -> str:
     info = Settings.model_fields[field]
     if is_secret_field(field):
-        return "*(unset)*" if not info.default else "*(set)*"
+        # An empty JSON map or list configures nothing, as an empty string does.
+        return "*(unset)*" if info.default in ("", "{}", "[]", None) else "*(set)*"
     value = info.default
     if info.default_factory is not None:
         value = info.default_factory()  # type: ignore[call-arg]
