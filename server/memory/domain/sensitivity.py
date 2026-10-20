@@ -67,38 +67,39 @@ _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
 # so a row the write path labels is a row the sweep can select.
 #
 # A run of digit groups joined by single spaces or dashes, not after `+` (an international
-# phone number). A card number is one group of such a run, or consecutive groups in a
-# card's own grouping with at most three short groups (1-4 digits) around it, at most two
-# of them after it. So a card pasted with its expiry and CVV ("4111 1111 1111 1111 0429
-# 123") or after a date ("2024-01-15 4111 ...") is still found, and two phone numbers side
-# by side (3-3-4 groups) or a table of eight or more numbers are not.
+# phone number). A card number is one ungrouped group of 15 (Amex) or 16 digits, or
+# consecutive groups in a printed card grouping with at most three short groups (1-4
+# digits) around it, at most two of them after it. So a card pasted with its expiry and
+# CVV ("4111 1111 1111 1111 0429 123") or after a date ("2024-01-15 4111 ...") is still
+# found, and two phone numbers side by side (3-3-4 groups), a table of eight or more
+# numbers, or a 19-digit hash are not.
 _DIGIT_GROUPS = re.compile(r"(?<![\d+])\d+(?:[ -]\d+)*", re.ASCII)
-# Group lengths of a printed card: 16 and 19 digits in fours, and Amex and Diners 4-6-5
-# and 4-6-4.
-_CARD_GROUPINGS = {(4, 4, 4, 4), (4, 4, 4, 4, 3), (4, 6, 5), (4, 6, 4)}
-# Leading digits and lengths of the card networks: Visa, Mastercard (51-55 and 22-27),
-# Amex, Diners, JCB, and Discover/UnionPay. A number with other leading digits or another
-# length (epoch milliseconds, yyyymmdd dates, a 15-digit IMEI, which always passes Luhn)
-# is never a card.
+# Group lengths of a printed card: 16 and 19 digits in fours, Amex 4-6-5, Diners 4-6-4.
+_CARD_GROUPINGS = ((4, 4, 4, 4), (4, 4, 4, 4, 3), (4, 6, 5), (4, 6, 4))
+
+
+def _numbers(first: int, last: int) -> tuple[str, ...]:
+    return tuple(str(n) for n in range(first, last + 1))
+
+
+# Leading digits and lengths of the card networks. A number with other leading digits or
+# another length (epoch milliseconds, yyyymmdd dates, a 15-digit IMEI, which always passes
+# Luhn) is never a card.
 _CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
-    (("4",), (13, 16, 19)),
-    (("51", "52", "53", "54", "55", "22", "23", "24", "25", "26", "27"), (16,)),
-    (("34", "37"), (15,)),
-    (("30", "36", "38"), (14,)),
-    (("35", "6"), (16, 17, 18, 19)),
+    (("4",), (16, 19)),  # Visa
+    (_numbers(51, 55) + _numbers(2221, 2720), (16,)),  # Mastercard
+    (("34", "37"), (15,)),  # Amex
+    (_numbers(300, 305) + ("3095", "36", "38", "39"), (14,)),  # Diners
+    (_numbers(3528, 3589), (16, 17, 18, 19)),  # JCB
+    (("6011", "62", *_numbers(644, 649), "65"), (16, 17, 18, 19)),  # Discover, UnionPay
 )
 # A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
 # area 000, 666 or 9xx, group 00, serial 0000.
 _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
-# A PIN, passcode, CVV/CVC or security code stated with its value. Every label takes the
-# value after `is`, `was`, `:` or `=` ("PIN is 4471", "cvv: 123"). All but a bare `pin`,
-# which is also a verb and a connector pin ("pin 115", "pin #115"), take it directly too
-# ("CVV 123"), unless an `of` follows ("passcode 100 of the batch" names a position).
-# `pin number`, `passcode`, `cvv`, `cvc` and `security code` take 3-8 digits; `pin` and
-# `pin code` take 3-5, since "PIN: 560001" and "PIN code 560001" are Indian postal codes.
-# A connector pin written as an assignment ("GPIO pin: 115") reads as a PIN: the price of
-# reading "PIN: 4471" as one.
-# Each whitespace run has its own anchor, so a long run of spaces is read once.
+# A PIN, passcode, CVV/CVC or security code stated with its value ("PIN is 4471",
+# "CVV 123"). Two trade-offs: `pin` and `pin code` take 3-5 digits, since "PIN: 560001" is
+# an Indian postal code; and a connector pin written as an assignment ("GPIO pin: 115")
+# reads as a PIN, the price of reading "PIN: 4471" as one.
 _PIN_VALUE_AFTER = r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*"
 _LONG_PIN_LABEL = r"(?:pin number|passcode|cvv2?|cvc2?|security code)"
 _STATED_PIN = re.compile(
@@ -131,22 +132,20 @@ def _is_card(digits: str) -> bool:
 
 
 def _has_card(text: str) -> bool:
-    """Whether a digit run holds a card number: one group, or consecutive groups in a
-    card's grouping with at most three short groups around it (at most two after), that
-    has a card network's leading digits and length and passes the Luhn check."""
+    """Whether a digit run holds a card number, ungrouped or in a printed grouping."""
     for m in _DIGIT_GROUPS.finditer(text):
         groups = re.split(r"[ -]", m.group())
-        if any(_is_card(group) for group in groups):
+        if any(len(group) in (15, 16) and _is_card(group) for group in groups):
             return True
         for i in range(min(len(groups), 4)):  # a grouped card starts within four groups
-            for n in (3, 4, 5):
-                window = groups[i : i + n]
-                around = groups[:i] + groups[i + n :]
+            for grouping in _CARD_GROUPINGS:
+                window = groups[i : i + len(grouping)]
+                around = groups[:i] + groups[i + len(grouping) :]
                 if (
-                    len(groups) - (i + n) <= 2
+                    tuple(map(len, window)) == grouping
+                    and len(groups) - (i + len(grouping)) <= 2
                     and len(around) <= 3
                     and all(len(g) <= 4 for g in around)
-                    and tuple(map(len, window)) in _CARD_GROUPINGS
                     and _is_card("".join(window))
                 ):
                     return True

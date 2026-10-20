@@ -75,8 +75,7 @@ COARSE_SHAPE_RE = (
 )
 
 # A probe shape reported beside the detector's levels, so a dry run says how many
-# e-mail-shaped rows it found (every high row is a `credential`, a card number, SSN or
-# stated PIN included).
+# e-mail-shaped rows it found.
 _PROBE_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 
 

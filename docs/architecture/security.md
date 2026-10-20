@@ -632,14 +632,15 @@ The `high` shapes:
 
 - Credential: a prefixed API key, an access key id, a private-key block, a JWT, or a
   `password=` / `api_key:` assignment of an 8+ character token.
-- Card number: in a run of digit groups joined by single spaces or dashes, one group, or
-  consecutive groups in a card's grouping (4-4-4-4, 4-4-4-4-3, 4-6-5, 4-6-4) with at most
-  three short groups around it, at most two of them after it. A card pasted with its
-  expiry and CVV or after a date still counts; two phone numbers side by side or a table
-  of eight or more numbers do not. It has a card network's leading digits and length
-  (Visa 4 at 13, 16 or 19 digits; Mastercard 51-55 and 22-27 at 16; Amex 34 and 37 at 15;
-  Diners 30, 36 and 38 at 14; JCB 35 and Discover/UnionPay 6 at 16-19) and passes the
-  Luhn check, so a 15-digit IMEI is not a card.
+- Card number: one ungrouped group of 15 (Amex) or 16 digits, or, in a run of digit
+  groups joined by single spaces or dashes, consecutive groups in a printed card grouping
+  (4-4-4-4, 4-4-4-4-3, 4-6-5, 4-6-4) with at most three short groups around it, at most
+  two of them after it. A card pasted with its expiry and CVV or after a date still counts;
+  two phone numbers side by side, a table of eight or more numbers, a 19-digit hash and a
+  13-digit phone number without its `+` do not. It has a card network's leading digits and
+  length (Visa 4 at 16 or 19; Mastercard 51-55 and 2221-2720 at 16; Amex 34 and 37 at 15;
+  Diners 300-305, 3095, 36, 38 and 39 at 14; JCB 3528-3589 and Discover/UnionPay 6011, 62,
+  644-649 and 65 at 16-19) and passes the Luhn check, so a 15-digit IMEI is not a card.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its value after `is`,
@@ -720,7 +721,9 @@ row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands
 `memory.get` on a `chunk:` key, the session digests `memory.digests` lists (their summary
 text; key facts that read as `high` are left out), what the session-summary draft (the
 conversation turns), the period-digest draft and the outcome judge (session digest text)
-send their model, and `memory.recall`'s raw turns.
+send their model, `memory.recall`'s raw turns, and the turns `conversation.search` and
+`conversation.search_saved_messages` rank, which are embedded whatever card number, SSN or
+stated PIN they hold.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).

@@ -409,6 +409,9 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "charge it to 4111-1111-1111-1111",
         "mastercard 5500000000000004",
         "amex 3782 822463 10005",
+        "mastercard 2221 0000 0000 0009",
+        "diners 3056 930902 5904",
+        "discover 6011111111111117",
         # pasted with its expiry or CVV, or after another number
         "card 4242 4242 4242 4242 08/27",
         "4111 1111 1111 1111 12/29",
@@ -444,6 +447,7 @@ def test_payment_and_identity_numbers_are_high(text: str) -> None:
         "phones: 415-555-0123 415-555-0199",
         # a phone number keeps its own tier: 13 digits after `+`, Luhn-valid or not
         "call +49 1512 3456789",
+        "whatsapp 4915123456787",  # the same number without `+`: 13 digits, Luhn-valid
         "+1 415 555 0123",
     ],
 )
@@ -460,7 +464,8 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "build 18446744073709551615",  # 20 digits: longer than any card
         "dev stack ports 3000 5432 6379 9200",  # Luhn-valid, but no network's prefix and length
         "ports 4000 4001 4002 4003 4004 4005 4006 4007",  # a table, not a card in it
-        "IMEI 490154203237518",  # 15 digits, always Luhn-valid, no network issues 4 at 15
+        "IMEI 490154203237518",
+        "hash 6000000000000000004",  # a 19-digit id: only a printed grouping is 19 digits  # 15 digits, always Luhn-valid, no network issues 4 at 15
         "SSN 000-12-3456",  # never-issued area
         "SSN 666-12-3456",
         "SSN 912-34-5678",
