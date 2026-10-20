@@ -712,7 +712,7 @@ def set_event(*, had_existing_row: bool, restated: bool) -> EventType | None:
 async def _announce_set(w: _SetWrite, *, restated: bool) -> None:
     event = set_event(had_existing_row=w.had_existing_row, restated=restated)
     if event:
-        await webhooks.announce(event, [w.memory_row])
+        await webhooks.announce([(event, w.memory_row)])
 
 
 def _stamp_lifecycle(

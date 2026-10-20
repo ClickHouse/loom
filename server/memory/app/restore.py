@@ -371,7 +371,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             e,
         )
 
-    await webhooks.announce("memory.restored", [restore_row])
+    await webhooks.announce([("memory.restored", restore_row)])
     return MemoryRestoreOutput(
         restored=True,
         from_status="tombstoned",

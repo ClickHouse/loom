@@ -37,6 +37,9 @@ log = logging.getLogger(__name__)
 WEBHOOK_SECRET_PREFIX = "LOOM_WEBHOOK_SECRET_"
 # How long a receiver has to answer before the delivery counts as failed.
 ACK_TIMEOUT_SECONDS = 10.0
+# One TLS context for every delivery: building one reads the CA bundle. Each
+# delivery still has its own client and so its own connections.
+_TLS = httpx.create_ssl_context()
 
 
 def webhook_secret_org_prefix(org: str) -> str:
@@ -63,17 +66,18 @@ def webhook_secret_ref_ok(org: str, ref: str) -> bool:
 _warned_unusable: set[str] = set()
 
 
-def read_secret(org: str, ref: str, env: Mapping[str, str]) -> bytes | None:
+def read_secret(org: str, ref: str, env: Mapping[str, str], *, warn: bool = True) -> bytes | None:
     """The signing key `ref` names in `env` (surrounding whitespace, such as a
     trailing newline, dropped), or None when the name is not one of `org`'s own,
-    the variable is unset, or its `whsec_` value is not base64."""
+    the variable is unset, or its `whsec_` value is not base64. `warn=False`
+    for a caller that says so itself."""
     raw = env.get(ref, "").strip() if webhook_secret_ref_ok(org, ref) else ""
     if not raw:
         return None
     try:
         return secret_bytes(raw)
     except binascii.Error:
-        if ref not in _warned_unusable:
+        if warn and ref not in _warned_unusable:
             _warned_unusable.add(ref)
             log.warning("webhook: the secret in %s is not usable: whsec_ must be base64", ref)
         return None
@@ -183,7 +187,9 @@ async def post(
             extra_headers = {"Host": host_header} if host_header else {}
             extensions = {"sni_hostname": server_name} if server_name else {}
             async with (
-                httpx.AsyncClient(transport=transport, follow_redirects=False) as client,
+                httpx.AsyncClient(
+                    transport=transport, follow_redirects=False, verify=_TLS
+                ) as client,
                 client.stream(
                     "POST",
                     pinned,

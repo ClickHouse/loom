@@ -47,6 +47,7 @@ from server.memory.app.projections import (
 from server.memory.app.provenance import writer_actor
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.webhook_events import EventType
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -717,14 +718,12 @@ async def _bulk_announce(state: _BulkWriteState) -> None:
     the live-key lookup failed (`existing_lookup_ok` is False) every key looks
     new, so a revision is announced as written."""
     seen = set(state.existing_ids)
-    written: list[dict[str, Any]] = []
-    revised: list[dict[str, Any]] = []
+    changes: list[tuple[EventType, dict[str, Any]]] = []
     for row in state.memory_rows:
         key = str(row["memory_key"])
-        (revised if key in seen else written).append(row)
+        changes.append(("memory.revised" if key in seen else "memory.written", row))
         seen.add(key)
-    await webhooks.announce("memory.written", written)
-    await webhooks.announce("memory.revised", revised)
+    await webhooks.announce(changes)
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:

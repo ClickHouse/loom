@@ -324,6 +324,9 @@ refuse one more than a few minutes old to bound replay) and
 lives only in the server's environment: `secret_ref` names the variable, one of the
 org's own, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, encoded as for
 [task inbox webhooks](../tasks-and-decisions.md); a `whsec_` prefix marks a base64 key.
+A secret belongs to the org, not to one webhook: every webhook that names the same
+`secret_ref` signs with it, so a receiver checks the signed body's `org` and `namespace`
+before acting on an event.
 
 **URLs.** `https` only, unless `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` is set (a local receiver
 in development), and with no user name or password in it. The host must resolve to public addresses: loopback, private,
@@ -346,10 +349,13 @@ sweep, the `delete_version` check).
   and one at a time per webhook, so a slow receiver holds at most one of the 4. A webhook
   whose last 5 POSTs failed is passed over for a cooldown that starts at a minute and
   doubles up to an hour, checked before each POST; a 2xx ends it. The cooldown is kept
-  per server process, so a restart or a new worker leader starts it afresh. A webhook
-  with a due event therefore gets at least one POST in every pass while fewer than 40
-  webhooks have work. With fast receivers the ceiling is about 40 events per pass, a pass
-  every 5 s while there is work: some 8 events a second per deployment.
+  per server process, so a restart or a new worker leader starts it afresh. Every
+  webhook with work therefore gets its first POST of a pass before any webhook gets a
+  second, while fewer than 40 webhooks have work; a pass stops starting POSTs after
+  100 s, and what it did not send goes next pass. One webhook gets at most 10 POSTs per
+  pass, one after another, so a receiver that answers in 1 s takes about 10 events per
+  pass. With fast receivers the ceiling is about 40 events per pass, a pass every 5 s
+  while there is work: some 8 events a second per deployment.
 - **Waiting and dead events.** While the variable `secret_ref` names is unset or not
   usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
   counts as no attempt; after 2.5 days they are marked `dead` with "secret never set".

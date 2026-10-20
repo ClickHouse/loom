@@ -175,11 +175,11 @@ def _actor() -> str:
     return provenance.writer_actor() or (f"worker:{ctx.worker}" if ctx else "")
 
 
-async def announce(event: EventType, changes: Sequence[Mapping[str, Any]]) -> None:
-    """Leave one outbox row per (change, webhook that takes `event`). A change is
-    a mapping with the memory's org, namespace, agent, user_id, session_id,
-    memory_key, memory_id and version (a memory version row is one). Never
-    raises."""
+async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> None:
+    """Leave one outbox row per (event, change) and webhook that takes the event,
+    in one insert. A change is a mapping with the memory's org, namespace, agent,
+    user_id, session_id, memory_key, memory_id and version (a memory version row
+    is one). Never raises."""
     if not changes:
         return
     try:
@@ -187,13 +187,13 @@ async def announce(event: EventType, changes: Sequence[Mapping[str, Any]]) -> No
         actor = _actor()
         rows = [
             _outbox_row(event, wid, c, actor=actor, now=now)
-            for c in changes
+            for event, c in changes
             for wid in await subscribers(str(c["org"]), str(c["namespace"]), event)
         ]
         await store.insert_outbox(rows)
     except Exception as e:  # noqa: BLE001 — the write is in; its announcement must not fail it
         degradations.note("memory.webhook", "not_announced", e)
-        log.warning("memory webhooks: %s not announced: %s", event, e)
+        log.warning("memory webhooks: %d changes not announced: %s", len(changes), e)
 
 
 def memory_change(memory: Any, version: int) -> dict[str, Any]:
@@ -217,22 +217,19 @@ async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_i
     knows what it covered."""
     if namespaces is None:
         namespaces = await namespaces_with_hooks(org)
+    no_memory = {
+        "agent": "-",
+        "user_id": "-",
+        "session_id": "-",
+        "memory_key": "",
+        "memory_id": "",
+        "version": 0,
+    }
     await announce(
-        "memory.erased",
         [
-            {
-                "org": org,
-                "namespace": ns,
-                "agent": "-",
-                "user_id": "-",
-                "session_id": "-",
-                "memory_key": "",
-                "memory_id": "",
-                "version": 0,
-                "erasure_id": erasure_id,
-            }
+            ("memory.erased", {"org": org, "namespace": ns, **no_memory, "erasure_id": erasure_id})
             for ns in namespaces
-        ],
+        ]
     )
 
 

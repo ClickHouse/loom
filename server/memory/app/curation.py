@@ -640,7 +640,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         "memory_id": input.memory_id,
         "version": input.version,
     }
-    await webhooks.announce("memory.redacted", [change])
+    await webhooks.announce([("memory.redacted", change)])
     return MemoryRedactOutput(
         redacted=True,
         redacted_at=now,

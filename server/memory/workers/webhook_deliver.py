@@ -52,10 +52,12 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# POSTs per pass, CONCURRENCY at a time, each ended by the 10 s ack deadline:
-# 40 take at most 100 s of the pass's 120 s deadline. The rest go next pass.
+# POSTs per pass, CONCURRENCY at a time, each ended by the 10 s ack deadline. The
+# pass stops sending at POST_BUDGET_SECONDS, inside its 120 s deadline, and records
+# what it sent; the rest go next pass.
 MAX_POSTS_PER_PASS = 40
 CONCURRENCY = 4
+POST_BUDGET_SECONDS = 100.0
 # Events of one webhook per pass, so every webhook with work gets its turn.
 PER_WEBHOOK = 10
 # How long a leased event is passed over by another copy of the pass: past the
@@ -84,12 +86,15 @@ class _Health:
 _health: dict[str, _Health] = {}
 
 
-def _cooling_until(webhook_id: str, now: datetime) -> datetime | None:
+def _cooling_until(webhook_id: str) -> datetime | None:
     h = _health.get(webhook_id)
-    return h.until if h is not None and h.until is not None and now < h.until else None
+    if h is None or h.until is None or naive_utc_now() >= h.until:
+        return None
+    return h.until
 
 
-def _note_post(webhook_id: str, ok: bool, now: datetime) -> None:
+def _note_post(webhook_id: str, ok: bool) -> None:
+    """A POST's outcome on the webhook's health; a cooldown runs on the wall clock."""
     if ok:
         _health.pop(webhook_id, None)
         return
@@ -97,7 +102,7 @@ def _note_post(webhook_id: str, ok: bool, now: datetime) -> None:
     h.failures += 1
     if h.failures >= FAILURES_BEFORE_COOLDOWN:
         h.cooldown = min(h.cooldown * 2 or COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS)
-        h.until = now + timedelta(seconds=h.cooldown)
+        h.until = naive_utc_now() + timedelta(seconds=h.cooldown)
 
 
 @dataclass(frozen=True)
@@ -226,7 +231,7 @@ async def deliver_once(
     urls = {_hook(h): str(h["url"]) for h in live}
     usable = {k: s for k, s in secrets.items() if s is not None}
     unsecured = [k for k in secrets if k not in usable]
-    sendable = [k for k in usable if _cooling_until(k[2], now) is None]
+    sendable = [k for k in usable if _cooling_until(k[2]) is None]
 
     removed = [h for h in await store.removed_webhooks(since) if mine(h)]
     await store.mark_dead(
@@ -262,49 +267,56 @@ async def deliver_once(
         ]
     )
     slots = asyncio.Semaphore(CONCURRENCY)
+    # (attempt row, whether a POST went out and failed), as each event finishes, so
+    # a pass cut at its budget still records what it sent.
+    finished: list[tuple[dict[str, Any], bool]] = []
 
-    async def one(row: Mapping[str, Any]) -> dict[str, Any]:
-        """One event: checked, then POSTed or passed over."""
+    async def one(row: Mapping[str, Any]) -> None:
+        """One event: checked once it holds a slot, then POSTed or passed over."""
         hook = _hook(row)
-        until = _cooling_until(hook[2], now)
-        if until is not None:  # failed its last POSTs earlier in this pass
-            return _wait_row(row, until=until, now=now, why="the webhook is cooling down")
-        # memory.erased names no key; any other event names the memory it is about. Read
-        # just before the POST: an erasure landing after it can still let this one out.
-        if row["memory_key"] and not await store.keys_with_history([_key(row)]):
-            return _attempt_row(
-                str(row["event_id"]),
-                status="dead",
-                attempts=int(row["attempts"]),
-                next_attempt_at=now,
-                now=now,
-                last_error="the memory was erased",
-            )
         async with slots:
+            until = _cooling_until(hook[2])
+            if until is not None:  # failed its last POSTs earlier in this pass
+                wait = _wait_row(row, until=until, now=now, why="the webhook is cooling down")
+                finished.append((wait, False))
+                return
+            # memory.erased names no key; any other event names the memory it is about.
+            # Read right before the POST: only an erasure during the POST can let it out.
+            if row["memory_key"] and not await store.keys_with_history([_key(row)]):
+                dead = _attempt_row(
+                    str(row["event_id"]),
+                    status="dead",
+                    attempts=int(row["attempts"]),
+                    next_attempt_at=now,
+                    now=now,
+                    last_error="the memory was erased",
+                )
+                finished.append((dead, False))
+                return
             delivery = await _post(transport, row, urls[hook], usable[hook])
-        _note_post(hook[2], delivery.ok, now)
-        return _outcome(row, delivery, now=now)
+        _note_post(hook[2], delivery.ok)
+        finished.append((_outcome(row, delivery, now=now), not delivery.ok))
 
-    async def in_turn(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    async def in_turn(rows: list[Mapping[str, Any]]) -> None:
         """A webhook's events one after another: one POST in flight per webhook."""
-        return [await one(r) for r in rows]
+        for row in rows:
+            await one(row)
 
     by_hook: dict[store.Hook, list[Mapping[str, Any]]] = {}
     for row in due:
         by_hook.setdefault(_hook(row), []).append(row)
-    outcomes = [o for rows in await asyncio.gather(*map(in_turn, by_hook.values())) for o in rows]
-    # One insert per pass: a pass cut before it leaves its leases to expire, and the
-    # re-send carries the same event ids, which the receivers drop.
-    await store.insert_attempts(outcomes)
-    statuses = [str(o["status"]) for o in outcomes]
-    # A failure is a POST that went out and was not acknowledged; an event passed
-    # over for a cooldown keeps its attempt count.
-    sent = {str(r["event_id"]): int(r["attempts"]) for r in due}
+    try:
+        async with asyncio.timeout(POST_BUDGET_SECONDS):
+            await asyncio.gather(*map(in_turn, by_hook.values()))
+    except TimeoutError:
+        # The unsent keep their lease and go again once it ends, under the same ids.
+        log.info("memory_webhook_deliver: %d of %d sent by the budget", len(finished), len(due))
+    # One insert per pass: the receivers drop a re-send of an id they have.
+    await store.insert_attempts([out for out, _failed in finished])
+    statuses = [str(out["status"]) for out, _failed in finished]
     return DeliverResult(
         delivered=statuses.count("delivered"),
-        failed=sum(
-            1 for o in outcomes if o["status"] == "pending" and o["attempts"] > sent[o["event_id"]]
-        ),
+        failed=sum(failed for _out, failed in finished),
         dead=statuses.count("dead"),
         waiting=waiting,
     )

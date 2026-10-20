@@ -191,7 +191,7 @@ async def apply_rollback(
 
     for i in range(0, len(memory_rows), _INSERT_BATCH):
         await insert_memory_versions(memory_rows[i : i + _INSERT_BATCH], ch=ch)
-    await _announce(memory_rows, row_events)
+    await webhooks.announce(list(zip(row_events, memory_rows, strict=True)))
     for i in range(0, len(embedding_rows), _INSERT_BATCH):
         await store.insert_embedding_rows(embedding_rows[i : i + _INSERT_BATCH], ch=ch)
     # After the memory insert, as memory.set does, so no reader sees the vector
@@ -214,11 +214,3 @@ def _reinstate_event(historical: Any, action: svc.RollbackAction) -> EventType:
     if historical.tombstoned_at:
         return "memory.tombstoned"
     return "memory.restored" if action.head_tombstoned else "memory.revised"
-
-
-async def _announce(memory_rows: list[dict[str, Any]], row_events: list[EventType]) -> None:
-    events: tuple[EventType, ...] = ("memory.revised", "memory.restored", "memory.tombstoned")
-    for event in events:
-        await webhooks.announce(
-            event, [r for r, e in zip(memory_rows, row_events, strict=True) if e == event]
-        )

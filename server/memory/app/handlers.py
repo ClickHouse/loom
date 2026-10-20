@@ -606,7 +606,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
     tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
-    await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, version)])
+    await webhooks.announce([("memory.tombstoned", webhooks.memory_change(existing, version))])
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -773,7 +773,9 @@ async def finish_delete_check(
         )
         # Here, where every finish of the delete passes (the call itself, a retry of
         # a deferred one, the delete_version_check worker).
-        await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, tombstone)])
+        await webhooks.announce(
+            [("memory.tombstoned", webhooks.memory_change(existing, tombstone))]
+        )
     try:
         await memory_repo.record_delete_check(check, done=True)
     except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly

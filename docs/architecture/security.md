@@ -756,7 +756,9 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   headers; the timestamp lets a receiver refuse a replay. The secret is an environment
   variable a registration names, never stored; only a name under the registering org's
   own prefix (`webhook_secret_ref_ok`) is read, so no tenant can have Loom sign with
-  another's secret.
+  another's secret. The secret is the org's by design, not one webhook's: two webhooks
+  of the org that name it sign alike, so a receiver checks `org` and `namespace` in the
+  signed body.
 - **No request forgery inward.** Each delivery resolves the host, refuses loopback,
   private, link-local and multicast addresses (`server/core/hosts.py`), connects to the
   address it vetted and follows no redirect. Memory webhooks also refuse plain `http`

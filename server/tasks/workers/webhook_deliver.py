@@ -129,13 +129,14 @@ def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | N
     ref = str(inbox_row.get("webhook_secret_ref") or "")
     key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
     # A row written before the org rule may name any variable: never read it.
-    secret = webhooks.read_secret(key[0], ref, env)
+    secret = webhooks.read_secret(key[0], ref, env, warn=False)  # warned below, once
     if secret is None:
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)
             log.warning(
                 "task webhook: inbox %s/%s has a webhook_url but no usable secret in env %r "
-                "(it must be set and start %s); notices are held until then",
+                "(unset, or a whsec_ value that is not base64; the name must start %s); "
+                "notices are held until then",
                 key[0],
                 key[1],
                 ref or "<unset>",

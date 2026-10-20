@@ -273,6 +273,19 @@ async def test_a_secret_with_a_trailing_newline_signs_with_the_secret(fake: Fake
 
 
 @pytest.mark.asyncio
+async def test_a_malformed_secret_is_warned_about_once(fake: FakeRepo, caplog) -> None:
+    from server.core import webhooks as shared
+
+    shared._warned_unusable.clear()
+    caplog.set_level(logging.WARNING)
+    env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": "whsec_not*base64!"}
+    async with _client(lambda r: httpx.Response(204)) as client:
+        await wd.deliver_once(transport=client, now=NOW, env=env)
+        await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert sum("secret" in rec.message for rec in caplog.records) == 1
+
+
+@pytest.mark.asyncio
 async def test_an_undecodable_secret_holds_its_inbox_and_not_the_next(fake: FakeRepo) -> None:
     fake.inboxes[:] = [
         {**fake.inboxes[0], "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_ACME__BAD"},

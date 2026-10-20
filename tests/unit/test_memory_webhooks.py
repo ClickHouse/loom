@@ -201,7 +201,7 @@ async def test_announce_writes_one_row_per_subscribed_webhook(
         ("wh2", frozenset({"memory.tombstoned"})),
     )
     ch = RecordingCH().install(monkeypatch)
-    await app.announce("memory.written", [_change(session_id="s1", value="secret text")])
+    await app.announce([("memory.written", _change(session_id="s1", value="secret text"))])
     rows = ch.inserted("memory_webhook_outbox")
     assert [r["webhook_id"] for r in rows] == ["wh1"]
     row = rows[0]
@@ -224,7 +224,7 @@ async def test_a_background_pass_is_the_actor_of_its_changes(
     ch = RecordingCH().install(monkeypatch)
     pass_context.begin("memory_expiry_sweep")
     try:
-        await app.announce("memory.tombstoned", [_change()])
+        await app.announce([("memory.tombstoned", _change())])
     finally:
         pass_context.clear()
     assert ch.inserted("memory_webhook_outbox")[0]["actor"] == "worker:memory_expiry_sweep"
@@ -235,7 +235,7 @@ async def test_a_namespace_without_webhooks_pays_no_insert(
     monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
 ) -> None:
     ch = RecordingCH().install(monkeypatch)
-    await app.announce("memory.written", [_change()])
+    await app.announce([("memory.written", _change())])
     assert ch.calls == []
 
 
@@ -249,7 +249,7 @@ async def test_a_failed_outbox_insert_never_fails_the_write(
         raise RuntimeError("ClickHouse is away")
 
     monkeypatch.setattr(store, "insert_outbox", broken)
-    await app.announce("memory.written", [_change()])
+    await app.announce([("memory.written", _change())])
 
 
 @pytest.mark.asyncio
@@ -268,19 +268,20 @@ async def test_a_users_erasure_names_the_erasure_only(
 
 
 @pytest.fixture
-def announced(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[dict[str, Any]]]]:
-    calls: list[tuple[str, list[dict[str, Any]]]] = []
+def announced(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, dict[str, Any]]]]:
+    """Each `announce` call with changes: its (event, change) pairs."""
+    calls: list[list[tuple[str, dict[str, Any]]]] = []
 
-    async def record(event: str, changes: Any) -> None:
+    async def record(changes: Any) -> None:
         if changes:
-            calls.append((event, [dict(c) for c in changes]))
+            calls.append([(event, dict(c)) for event, c in changes])
 
     monkeypatch.setattr(app, "announce", record)
     return calls
 
 
 def _events(announced: list[Any]) -> set[tuple[str, str]]:
-    return {(e, c["memory_key"]) for e, cs in announced for c in cs}
+    return {(e, c["memory_key"]) for call in announced for e, c in call}
 
 
 def test_memory_set_announces_a_change_and_never_a_restatement() -> None:
@@ -306,9 +307,11 @@ async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised
         ],
     )
     await bulk_set._bulk_announce(state)  # type: ignore[arg-type]
-    assert [(e, [c["version"] for c in cs]) for e, cs in announced] == [
-        ("memory.written", [1]),
-        ("memory.revised", [2, 3]),
+    (call,) = announced  # one insert for the batch
+    assert [(e, c["version"]) for e, c in call] == [
+        ("memory.written", 1),
+        ("memory.revised", 2),
+        ("memory.revised", 3),
     ]
 
 
@@ -362,7 +365,7 @@ async def test_a_finished_delete_version_is_announced_with_its_tombstone(
     monkeypatch.setattr(memory_repo, "record_delete_check", record)
     out = await handlers.finish_delete_check(_memory_row("k"), {"checked": 5, "tombstone": 9})
     assert out.tombstoned is True
-    assert [(e, cs[0]["version"]) for e, cs in announced] == [("memory.tombstoned", 9)]
+    assert [(e, c["version"]) for call in announced for e, c in call] == [("memory.tombstoned", 9)]
 
 
 @pytest.mark.asyncio
@@ -425,6 +428,7 @@ async def test_a_rollback_announces_revisions_revivals_and_tombstones(
         remove=[act("born_later", "remove", 0)],
     )
     await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object())
+    assert len(announced) == 1  # one insert for the rollback
     assert _events(announced) == {
         ("memory.revised", "changed"),
         ("memory.restored", "revived"),
@@ -471,6 +475,7 @@ async def test_the_expiry_sweep_announces_its_tombstones_and_demotions(
     monkeypatch.setattr(expiry, "insert_memory_versions", noop)
     monkeypatch.setattr(expiry, "_mirror_embeddings_batch", noop)
     await expiry.run_pass()
+    assert len(announced) == 1  # one insert for the sweep's batch
     assert _events(announced) == {("memory.tombstoned", "gone"), ("memory.revised", "faded")}
 
 
@@ -867,6 +872,92 @@ async def test_the_erasure_step_reads_the_ids_once_then_deletes_events_and_attem
     await steps_ledgers.delete_memory_webhook_outbox_by_user("acme", "u1", ch=ch)
     assert len(ch.statements("SELECT DISTINCT event_id")) == 1
     assert order == [("loom.memory_webhook_outbox", None), ("loom.memory_webhook_attempts", ["e1"])]
+
+
+@pytest.mark.asyncio
+async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker, "POST_BUDGET_SECONDS", 0.3)
+    fake.hooks = [
+        _registration("wh-fast", namespace="fast"),
+        _registration("wh-slow", namespace="slow"),
+    ]
+    fake.outbox = [
+        _outbox_row(webhook_id="wh-fast", namespace="fast", event_id="fast-1"),
+        _outbox_row(webhook_id="wh-slow", namespace="slow", event_id="slow-1"),
+    ]
+    fake.history = {(KEY[0], ns, *KEY[2:]) for ns in ("fast", "slow")}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] == "slow.example":
+            await asyncio.sleep(5)
+        return httpx.Response(204)
+
+    result = await _pass(handler)
+    assert result.delivered == 1
+    assert fake.last("fast-1")["status"] == "delivered"
+    # Unsent by the budget: it keeps its lease and goes again once the lease ends.
+    assert fake.last("slow-1")["status"] == "leased"
+
+
+@pytest.mark.asyncio
+async def test_an_erasure_while_an_event_waits_for_a_slot_stops_its_post(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker, "CONCURRENCY", 1)
+    fake.hooks = [_registration("wh-a", namespace="a"), _registration("wh-b", namespace="b")]
+    fake.outbox = [
+        _outbox_row(webhook_id="wh-a", namespace="a", event_id="a-1"),
+        _outbox_row(webhook_id="wh-b", namespace="b", event_id="b-1", user_id="u2"),
+    ]
+    fake.history = {(KEY[0], "a", *KEY[2:]), (KEY[0], "b", KEY[2], "u2", *KEY[4:])}
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["host"])
+        fake.erase_user("u2")  # while b-1 waits for the only slot
+        return httpx.Response(204)
+
+    await _pass(handler)
+    assert seen == ["a.example"]
+    assert fake.last("b-1")["status"] == "dead"
+    assert fake.last("b-1")["last_error"] == "the memory was erased"
+
+
+@pytest.mark.asyncio
+async def test_the_erasure_step_takes_a_namespace_list_and_deletes_attempts_in_batches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.erasure.store import steps_ledgers
+
+    monkeypatch.setattr(steps_ledgers, "_ATTEMPT_ID_BATCH", 2)
+    ch = (
+        RecordingCH(strict=False)
+        .on(
+            "SELECT DISTINCT event_id FROM loom.memory_webhook_outbox",
+            [{"event_id": f"e{i}"} for i in range(3)],
+        )
+        .on("SELECT count()", [{"n": 1}])
+    )
+    ch.install(monkeypatch)
+    mutations: list[tuple[str, str, Any]] = []
+
+    async def mutate(table: str, *, mutation: str, where: str, params: Any, **_: Any) -> None:
+        mutations.append((table, where, params.get("ids")))
+
+    monkeypatch.setattr(steps_ledgers.erasure_mutations, "run_mutation", mutate)
+    await steps_ledgers.delete_memory_webhook_outbox_by_namespace("acme", ["a", "b"], ch=ch)
+    (read,) = ch.statements("SELECT DISTINCT event_id")
+    assert "namespace IN {ns:Array(String)}" in read.sql and read.params["ns"] == ["a", "b"]
+    assert [m[0] for m in mutations] == [
+        "loom.memory_webhook_outbox",
+        "loom.memory_webhook_attempts",
+        "loom.memory_webhook_attempts",
+    ]
+    assert [m[2] for m in mutations[1:]] == [["e0", "e1"], ["e2"]]
+    # Each batch's statement differs, so each gets its own mutation tag.
+    assert mutations[1][1] != mutations[2][1]
 
 
 @pytest.mark.asyncio
