@@ -22,7 +22,7 @@ CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (159)
+-- Tables (160)
 -- ======================================================================
 
 -- loom.agent_cost_rollup_daily
