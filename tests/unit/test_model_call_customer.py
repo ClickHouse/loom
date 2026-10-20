@@ -633,8 +633,8 @@ def test_the_system_customer_is_named_as_configured_not_formatted(metered, monke
     monkeypatch.setattr(settings, "inference_customer_format", "cloud:{org}")
     monkeypatch.setattr(settings, "inference_system_customer", "loom-deployment")
     with customer.system():
-        assert customer.headers()["X-Customer"] == "loom-deployment"
+        assert _headers()["X-Customer"] == "loom-deployment"
     with customer.system(), customer.for_org("acme"):
-        assert customer.headers()["X-Customer"] == "cloud:acme"
+        assert _headers()["X-Customer"] == "cloud:acme"
     with customer.system(), customer.for_org("loom-deployment"):  # an org named like it
-        assert customer.headers()["X-Customer"] == "cloud:loom-deployment"
+        assert _headers()["X-Customer"] == "cloud:loom-deployment"
