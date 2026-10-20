@@ -548,6 +548,21 @@ for (const phone of [false, true]) {
       await expectWhole(page, "memory inspector", { targets: ['[role="dialog"] button'] });
     });
 
+    test("the open Library text preview: every focus ring is drawn whole", async ({ page }) => {
+      await open(page, "/library");
+      await page.route("**/v1/knowledge.download**", (route) =>
+        route.fulfill({ status: 200, contentType: "text/plain; charset=utf-8", body: "Drain the lane.\n".repeat(400) }),
+      );
+      await page
+        .getByRole("button", { name: /^Preview / })
+        .first()
+        .click();
+      await expect(page.getByRole("dialog").locator("pre")).toBeVisible();
+      await expectWhole(page, "library text preview", {
+        targets: ['[role="dialog"] button', '[role="dialog"] section[tabindex="0"]'],
+      });
+    });
+
     test("the open task detail: every focus ring is drawn whole", async ({ page }) => {
       await open(page, "/tasks");
       await page.getByRole("row", { name: /^Task 1:/ }).click();

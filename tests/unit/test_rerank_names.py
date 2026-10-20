@@ -117,6 +117,38 @@ async def test_a_configured_name_posts_to_the_operator_url(recorder: type[_Recor
 
 
 @pytest.mark.asyncio
+async def test_an_operator_ranking_keeps_every_row_of_a_repeated_key(
+    monkeypatch: pytest.MonkeyPatch, recorder: type[_Recorder]
+) -> None:
+    """The endpoint names rows by key, and extraction writes a key once per session:
+    each entry takes the key's next row, so no row is lost or served twice."""
+
+    def _cand(key: str, session: str) -> R.RerankCandidate:
+        return R.RerankCandidate(
+            memory_key=key,
+            namespace="n",
+            content_excerpt=f"{key} {session}",
+            memory_type="fact",
+            similarity=0.5,
+        )
+
+    async def _post(self: Any, url: str, json: Any = None, **_: Any) -> Any:
+        class _Resp:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict[str, Any]:
+                return {"ranked": [{"memory_key": k, "namespace": "n"} for k in ("a", "a", "b")]}
+
+        return _Resp()
+
+    monkeypatch.setattr(_Recorder, "post", _post)
+    cands = [_cand("a", "s1"), _cand("b", "s1"), _cand("a", "s3")]
+    out = await R.rerank(endpoint="acme", prompt_template="", query="q", candidates=cands)
+    assert [c.content_excerpt for c in out] == ["a s1", "a s3", "b s1"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["https://legacy.example/rerank", "gone", "none"])
 async def test_an_unconfigured_endpoint_posts_nothing(
     recorder: type[_Recorder], endpoint: str
