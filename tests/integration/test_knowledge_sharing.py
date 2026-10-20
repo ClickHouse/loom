@@ -513,6 +513,20 @@ def test_a_users_erasure_deletes_the_originals_no_one_else_shares(
                 "blob_content_type": "text/plain",
             },
         )
+    # Alice rewrites a document bob uploaded with new text and no file: his
+    # original does not pass to her row, so his erasure still finds it.
+    rewritten = f"bob's rewritten {_nonce()}".encode()
+    gw.ok(
+        "bob",
+        "knowledge.add",
+        {
+            "namespace": col,
+            "source_uri": "f/r",
+            "content": rewritten.decode(),
+            "original_bytes_b64": base64.b64encode(rewritten).decode(),
+        },
+    )
+    gw.ok("alice", "knowledge.upsert", {"namespace": col, "source_uri": "f/r", "content": "new"})
     admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
     _erase_user(control_plane_url, admin, gw.org, "bob")
 
@@ -524,6 +538,7 @@ def test_a_users_erasure_deletes_the_originals_no_one_else_shares(
         ).result_rows[0][0]
 
     assert (_stored(own), _stored(shared)) == (0, 1), "bob's own file goes; the shared one stays"
+    assert _stored(rewritten) == 0, "his file under a document alice rewrote goes too"
 
 
 def test_a_resave_of_the_same_text_keeps_the_document_its_writers(

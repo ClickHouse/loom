@@ -901,3 +901,29 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
         namespace.handle_namespace_delete(NamespaceDeleteInput(org=ORG, namespace="col-hr"))
     )
     assert out.deleted is True and retired == ["col-hr"]
+
+
+def test_an_end_users_original_never_passes_to_another_writer_of_new_text() -> None:
+    """Without fresh bytes a write carries the prior original, but not an end
+    user's to someone else: that user's erasure must still find it."""
+    from datetime import datetime
+
+    from server.knowledge.app.writes import _original_of
+    from server.knowledge.store.documents import DocumentRow
+
+    prior = DocumentRow(
+        org=ORG,
+        namespace="col-hr",
+        source_uri="doc/x",
+        doc_id="d",
+        content="a's text",
+        version=1,
+        ingested_at=datetime(2026, 1, 1),
+        user_id="a",
+        blob_path="sha-x",
+    )
+    b = {"agent": "-", "user_id": "b", "actor": "user:b", "source_class": "asserted"}
+    assert _original_of(prior, b) is None
+    assert _original_of(prior, {**b, "user_id": "a"}) is prior, "a's own edit keeps it"
+    team = prior.model_copy(update={"user_id": "-"})
+    assert _original_of(team, b) is team, "a document no end user wrote carries as before"

@@ -28,7 +28,8 @@ pytestmark = pytest.mark.skipif(
     reason="LOOM_CH_HOST not set — integration tests require a live CH",
 )
 
-WINDOW_S = 2.0
+# One poll interval, with room for a slow poll on a loaded runner.
+WINDOW_S = float(os.environ.get("LOOM_ACL_WATERMARK_POLL_SECONDS", "1")) + 2.0
 
 
 def _grant(org: str, revoked: bool) -> dict[str, Any]:

@@ -234,8 +234,9 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 - **A claim goes no further than the grant.** Where the subject holds a grant row on a
   namespace the token names, of any status, the claim is capped at that grant: a
   `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or a
-  restore ends every older token's claim there at once on the server that made it and
-  within `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s) on the others, and a pending or rejected
+  restore ends every older token's claim there at once in the server process that made it
+  and within `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s) in every other process, on that server
+  or another, and a pending or rejected
   request caps it at no access. A scoped token keeps its own role there, capped at the
   grant. A namespace an operator named at mint that was never granted to the subject keeps
   its claim; revoke the token for that.
@@ -492,7 +493,8 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $GATEWAY_
   within `LOOM_ACL_WATERMARK_POLL_SECONDS`.
 - Ids are lowercase letters, digits and `._@-`. `namespace: "@me"` is the user's personal
   collection: only they reach it, and it takes no grant.
-- An end user may call `collection.create` and `collection.list` but no directory
+- Of the ops that name no namespace, an end user may call `collection.create`,
+  `collection.list`, `namespace.list_mine` and `grants.pending_for_me`, but no directory
   self-service (`namespace.register`, `namespace.join`, `namespace.browse`).
 - Revoking the gateway token cuts off every user it acts for. To cut off one user, revoke
   their grants and take them out of their groups, or erase them (`erasure.request` with

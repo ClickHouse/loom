@@ -790,11 +790,12 @@ async def tombstone_documents_by_user(
     )
 
 
-# The originals the user's documents point at that no other writer's live
-# document shares (two documents with the same bytes share one row).
+# The originals any version of the user's documents pointed at (a version
+# another writer replaced included) that no other writer's live document
+# shares (two documents with the same bytes share one row).
 _USERS_OWN_BLOBS = (
     "org = {org:String} AND (namespace, toString(sha256)) IN ("
-    " SELECT namespace, blob_path FROM loom.documents FINAL"
+    " SELECT namespace, blob_path FROM loom.documents"
     " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != '')"
     " AND (namespace, toString(sha256)) NOT IN ("
     " SELECT namespace, blob_path FROM loom.documents FINAL"

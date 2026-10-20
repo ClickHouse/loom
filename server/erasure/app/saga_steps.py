@@ -245,8 +245,10 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("groups.remove_member", _step_remove_from_groups_by_user),
     ("personal.retire", _step_retire_personal_collection_by_user),
     ("collections.forget_owner", _step_forget_collection_owner_by_user),
-    # Last of the counted steps, well after the scrub: a refresh of the table
-    # that overlapped the scrub has finished by now, so none writes the row back.
+    # Last of the counted steps, after the scrub: a refresh of the table that
+    # read the ledger before the scrub landed has most likely finished by now.
+    # That is a bound in time, not an order: one still running could write the
+    # row back, and the user's later calls write a new one.
     ("subject_last_seen.delete", memory_steps.delete_last_seen_by_user),
     *_UNCOUNTED_STEPS_USER,
 )

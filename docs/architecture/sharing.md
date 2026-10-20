@@ -100,9 +100,9 @@ its count moves: the org's cached grant maps, its groups, or its tree. Grant chu
 tenant therefore re-reads only grant maps, one statement per subject that asks, never the
 tree or the group table. The poll reads at most three rows per org once merged: 3,000 rows
 in 2 ms at 1,000 orgs and 30,000 rows in 10 ms at 10,000 orgs (p50 of 9), per process per
-interval. So a revoke, a removed member, a
-move or a detach is enforced on every replica within about one poll interval, and at once
-on the replica that made it.
+interval. So a revoke, a removed member, a move or a detach is enforced in every process,
+on that server or another, within about one poll interval, and at once in the process that
+made it.
 
 A process whose last poll is older than `LOOM_ACL_WATERMARK_MAX_STALE_SECONDS` (10 s)
 serves no cached grant and reads per request; a failed read then falls back only to an

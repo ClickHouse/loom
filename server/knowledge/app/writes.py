@@ -78,6 +78,15 @@ def _nano_version() -> int:
     return time.time_ns()
 
 
+def _original_of(prior: DocumentRow | None, author: dict[str, str]) -> DocumentRow | None:
+    """The prior row whose original a write without fresh bytes may carry:
+    not one an end user uploaded when someone else writes new text, so that
+    user's erasure finds every original of theirs."""
+    if prior is not None and prior.user_id not in ("-", author["user_id"]):
+        return None
+    return prior
+
+
 async def _resolve_blob(
     input: KnowledgeAddInput, prior: DocumentRow | None
 ) -> tuple[str, int, str, str]:
@@ -220,7 +229,9 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
         else None
     )
     author = _author_for(prior, input.content, author)
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(input, prior)
+    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
+        input, _original_of(prior, author)
+    )
 
     from server.knowledge.store import documents as documents_repo
 
@@ -316,7 +327,9 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
         include_superseded=True,
     )
     author = _author_for(prior, input.content, author)
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(input, prior)
+    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
+        input, _original_of(prior, author)
+    )
 
     # The builder sets every loom.documents column, content_sha256 included
     # so cross-URI dedup can match.
@@ -582,7 +595,7 @@ async def handle_knowledge_bulk_add(
         version = _nano_version()
         chunks = _chunk_text(entry.content)
         entry_author = _author_for(priors.get(entry.source_uri), entry.content, author)
-        prior = priors.get(entry.source_uri)
+        prior = _original_of(priors.get(entry.source_uri), entry_author)
         prior = prior if documents_repo.serves_original(prior) else None
 
         doc_rows.append(

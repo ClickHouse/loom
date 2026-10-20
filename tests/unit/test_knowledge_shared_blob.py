@@ -72,6 +72,7 @@ def _prior(**over: object) -> SimpleNamespace:
         superseded_at=None,
         blob_erased_at=None,
         content="an earlier text",  # not the new one: the writer becomes its author
+        user_id="-",  # written by no end user: its original carries to any writer
     )
     for k, v in over.items():
         setattr(row, k, v)

@@ -577,7 +577,7 @@ async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
 
     revoked = 0
     try:
-        for _ in range(3):
+        for _ in range(_REVOKE_TRIES):
             listed = await grants_repo.live_rows_of(org, subject)
             if not listed:
                 return revoked
@@ -597,6 +597,8 @@ async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
                     subject={"subject": subject},
                 )
                 revoked += 1
+        if not await grants_repo.live_rows_of(org, subject):
+            return revoked  # the last pass revoked the last of them
         raise BackendUnavailableError(
             f"grants of {subject!r} are still live after their revoke; retry",
             operation="grants.revoke",
