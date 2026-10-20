@@ -80,6 +80,7 @@ async def test_optional_filters_thread_through() -> None:
             thread_id="t-9",
             role="assistant",
             run_id="r-1",
+            user_id="u-1",
         ),
         ch=ch,
     )
@@ -87,9 +88,11 @@ async def test_optional_filters_thread_through() -> None:
     assert "thread_id = {thread_id:String}" in sql
     assert "role = {role:String}" in sql
     assert "run_id = {run_id:String}" in sql
+    assert "user_id = {user_id:String}" in sql
     assert params["thread_id"] == "t-9"
     assert params["role"] == "assistant"
     assert params["run_id"] == "r-1"
+    assert params["user_id"] == "u-1"
 
 
 @pytest.mark.asyncio
@@ -101,6 +104,7 @@ async def test_no_optional_filters_omits_clauses() -> None:
     assert "thread_id = " not in sql
     assert "role = " not in sql
     assert "run_id = " not in sql
+    assert "user_id = " not in sql
 
 
 @pytest.mark.asyncio
@@ -185,7 +189,10 @@ async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeyp
 
     monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
     out = await h._search_substring_fallback(
-        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"),
+        ["ns"],
+        [],
+        saved_only=False,
     )
     [hit] = out.hits
     assert hit.content_excerpt == content[:240]
