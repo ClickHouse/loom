@@ -9,6 +9,8 @@ export interface WhyTerm {
   label: string;
   /** Signed contribution; positive lifted the hit, negative pushed it down. */
   value: number;
+  /** The value counts places (a reranker's move), not a score. */
+  places?: boolean;
 }
 
 // Server component name -> label on this page. A name not listed here is
@@ -38,7 +40,7 @@ export function whyTerms(components: Record<string, unknown> | null | undefined)
   const out: WhyTerm[] = [];
   for (const [name, raw] of Object.entries(components)) {
     if (name === "rerank_delta" && typeof raw === "number" && raw !== 0) {
-      out.push({ label: "reranked", value: raw }); // places the reranker moved the row
+      out.push({ label: "reranked", value: raw, places: true });
       continue;
     }
     if (SKIP.has(name) || name.startsWith("rerank_")) continue;
@@ -48,6 +50,11 @@ export function whyTerms(components: Record<string, unknown> | null | undefined)
   }
   out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   return out;
+}
+
+/** A term as shown: a score lift as `+0.12`, a reranker's move in places as `+3`. */
+export function termText(t: WhyTerm): string {
+  return t.places ? `${t.value >= 0 ? "+" : "-"}${Math.abs(Math.round(t.value))}` : signed(t.value);
 }
 
 /** Signed two-decimal rendering: `+0.12`, `-0.05`. */

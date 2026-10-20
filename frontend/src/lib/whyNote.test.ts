@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signed, whyTerms } from "./whyNote";
+import { signed, termText, whyTerms } from "./whyNote";
 
 // Non-zero components by magnitude, signed; `rank_score` / `rank_score_raw` are the base,
 // not a reason; sub-0.005 terms are noise.
@@ -30,9 +30,10 @@ describe("signed / whyTerms", () => {
       semantic: 0.25,
     });
     expect(terms).toEqual([
-      { label: "reranked", value: 3 },
+      { label: "reranked", value: 3, places: true },
       { label: "semantic", value: 0.25 },
     ]);
+    expect(terms.map(termText)).toEqual(["+3", "+0.25"]);
   });
 
   it("shows an unknown component under its own spelling rather than hiding it", () => {
