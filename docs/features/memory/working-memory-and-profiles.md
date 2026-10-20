@@ -149,7 +149,7 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
 | ----------- | --------------------------------------------------------------------------------------- |
 | `ready`     | Built from the user's current memories under the current schema.                        |
 | `stale`     | A memory or the schema changed since it was built; served as built until the next pass. |
-| `pending`   | Not built yet; every property reads `null`.                                             |
+| `pending`   | Not built yet, or the user has no facts to build from; every property reads `null`.     |
 | `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.     |
 
 - **Storage.** The profile is the user's `profile` row with key `structured_profile`
@@ -209,7 +209,8 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
 - **Scope.** The read is always for one `user_id`. A token pinned to a user
   (`read_user_id`, an end user's token) reads only that user's profile, with or without
   `user_id` in the body; another user is 403. A token bounded to one session
-  (`own_session`) is refused with `AUTH_INSUFFICIENT`: a profile spans the user's sessions.
+  (`own_session`) is refused (`IDENTITY_INCOMPLETE` without a `session_id`,
+  `AUTH_INSUFFICIENT` with one): a profile spans the user's sessions.
 - **Model calls.** Only the worker calls the model, only for a namespace with a schema,
   never for an org whose model calls are switched off
   ([`org.set_model_calls`](../../reference/operations.md#org)), and through the

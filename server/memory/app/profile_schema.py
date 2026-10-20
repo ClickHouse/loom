@@ -16,7 +16,7 @@ from typing import Any
 from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError, ValidationError
-from server.identity.domain.read_scope import resolve_read_filters
+from server.identity.domain.read_scope import effective_read_scope, resolve_read_filters
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_profile import (
     ProfileSchemaInput,
@@ -136,18 +136,20 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
     # Lazy: server.auth.context pulls in authz -> operations -> the handlers, this one too.
     from server.auth.context import current_auth
 
-    rf = resolve_read_filters(
-        requested=input.read_scope,
-        user_id=input.user_id,
-        session_id=input.session_id,
-        auth=current_auth(),
-    )
-    uid = rf.user_id
-    if rf.scope == "own_session":
+    auth = current_auth()
+    # Refused before resolving, so the answer does not hang on whether a session is named.
+    if effective_read_scope(input.read_scope, auth) == "own_session":
         raise AuthInsufficientError(
             "profile.structured reads a user's profile, which spans their sessions; "
             "a read bounded to one session cannot take it"
         )
+    rf = resolve_read_filters(
+        requested=input.read_scope,
+        user_id=input.user_id,
+        session_id=input.session_id,
+        auth=auth,
+    )
+    uid = rf.user_id
     if not uid or uid in ("-", "*"):
         raise ValidationError("profile.structured reads one user's profile: name user_id")
 

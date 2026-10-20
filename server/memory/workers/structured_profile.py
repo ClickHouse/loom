@@ -80,7 +80,7 @@ SCAN_FACTOR = 10
 # minutes is five passes at the default interval.
 SCAN_MAX_AGE_SECONDS = 600.0
 
-# Both kept in this process only, so they start over when the worker lease moves.
+# Kept in this process only, so each starts over when the worker lease moves.
 # (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
 _backoff: dict[tuple[str, str, str], tuple[float, float]] = {}
 # (org, namespace) -> (monotonic time it may be retried, its last wait, the schema
@@ -176,14 +176,37 @@ class StructuredProfileResult:
     errors: int = 0
 
 
+def _limits(constraints: dict[str, Any]) -> list[str]:
+    """The constraints `conform` checks, in words, so the model answers in that form."""
+    parts = []
+    if "pattern" in constraints:
+        parts.append(f"pattern {constraints['pattern']}")
+    low, high = constraints.get("min_length"), constraints.get("max_length")
+    if low is not None and high is not None:
+        parts.append(f"{low} to {high} characters")
+    elif low is not None:
+        parts.append(f"at least {low} characters")
+    elif high is not None:
+        parts.append(f"at most {high} characters")
+    low, high = constraints.get("min_value"), constraints.get("max_value")
+    if low is not None and high is not None:
+        parts.append(f"{low} to {high}")
+    elif low is not None:
+        parts.append(f"at least {low}")
+    elif high is not None:
+        parts.append(f"at most {high}")
+    return parts
+
+
 def system_prompt(props: list[profile_schema.ProfileProperty]) -> str:
-    """The prompt naming each property, its type and what it holds."""
+    """The prompt naming each property, its type, its constraints and what it holds."""
     lines = []
     for p in props:
-        kind = f"array of {p.item_type}" if p.type == "array" else p.type
+        parts = [f"array of {p.item_type}" if p.type == "array" else p.type]
         if p.enum:
-            kind += " (one of " + ", ".join(json.dumps(v) for v in p.enum) + ")"
-        lines.append(f'- "{p.name}" ({kind}): {p.description}')
+            parts.append("one of " + ", ".join(json.dumps(v) for v in p.enum))
+        parts += _limits(dict(p.constraints))
+        lines.append(f'- "{p.name}" ({", ".join(parts)}): {p.description}')
     return _SYSTEM + "\n".join(lines)
 
 

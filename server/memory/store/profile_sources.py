@@ -125,35 +125,6 @@ async def user_facts(
     return rows
 
 
-async def digests(
-    *,
-    org: str,
-    namespace: str,
-    user_ids: list[str],
-    scope: ReadFilters,
-    ch: _CHClient | None = None,
-) -> dict[str, tuple[str, int]]:
-    """(digest, source count) of each of `user_ids` that has sources, in one statement."""
-    ch = ch or _default_client()
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        "uids": user_ids,
-        "types": STRUCTURED_TYPES,
-    }
-    rows = await ch.query_all(
-        f"""
-        SELECT user_id, {SOURCES_DIGEST} AS digest, count() AS n
-        FROM loom.memory FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND user_id IN {{uids:Array(String)}} AND {CURRENT_FACTS}{scope_and(scope, params)}
-        GROUP BY user_id
-        """,
-        params=params,
-    )
-    return {str(r["user_id"]): (str(r["digest"]), int(r["n"])) for r in rows}
-
-
 async def sources_digest(
     *,
     org: str,
@@ -163,8 +134,25 @@ async def sources_digest(
     ch: _CHClient | None = None,
 ) -> tuple[str, int]:
     """The user's sources digest and count now; ('', 0) when there are none."""
-    found = await digests(org=org, namespace=namespace, user_ids=[user_id], scope=scope, ch=ch)
-    return found.get(user_id, ("", 0))
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "types": STRUCTURED_TYPES,
+    }
+    row = await ch.query_one(
+        f"""
+        SELECT {SOURCES_DIGEST} AS digest, count() AS n
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND user_id = {{uid:String}} AND {CURRENT_FACTS}{scope_and(scope, params)}
+        """,
+        params=params,
+    )
+    if not row or not int(row["n"]):
+        return "", 0
+    return str(row["digest"]), int(row["n"])
 
 
 async def live_ids(

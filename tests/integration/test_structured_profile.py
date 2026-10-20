@@ -287,3 +287,7 @@ def test_a_session_bounded_token_cannot_read_a_profile(control_plane_url: str, n
     body = {"org": ORG, "namespace": ns, "agent": "bot", "user_id": "u1", "session_id": "s1"}
     r = _post(control_plane_url, token, "profile.structured", body)
     assert r.status_code == 403 and "sessions" in r.text
+    # Without a session_id the scope does not resolve, and the gate refuses that first.
+    del body["session_id"]
+    r = _post(control_plane_url, token, "profile.structured", body)
+    assert r.status_code == 400 and "IDENTITY_INCOMPLETE" in r.text

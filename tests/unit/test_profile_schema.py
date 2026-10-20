@@ -169,9 +169,19 @@ def test_the_prompt_fences_the_facts_and_names_each_property() -> None:
     from server.memory.workers import structured_profile as w
 
     prompt = w.system_prompt(ps.parse(_schema(diet=_DIET, languages=_LANGS)))
-    assert '- "diet" (string (one of "vegan", "omnivore")): diet' in prompt
+    assert '- "diet" (string, one of "vegan", "omnivore"): diet' in prompt
     assert '- "languages" (array of string): languages spoken' in prompt
     assert "<<memory" in prompt  # the fence note
+
+
+def test_the_prompt_names_each_property_s_constraints() -> None:
+    from server.memory.workers import structured_profile as w
+
+    country = {"type": "string", "pattern": "^[A-Z]{2}$", "maxLength": 2, "description": "Country"}
+    age = {"type": "integer", "minimum": 0, "maximum": 130, "description": "Age"}
+    prompt = w.system_prompt(ps.parse(_schema(country=country, age=age)))
+    assert '- "country" (string, pattern ^[A-Z]{2}$, at most 2 characters): Country' in prompt
+    assert '- "age" (integer, 0 to 130): Age' in prompt
 
 
 # --- staleness, on clickhouse-local against the real tables ------------------
@@ -616,7 +626,6 @@ async def test_a_stored_schema_that_no_longer_parses_reads_as_no_schema(
 @_needs_ch
 @pytest.mark.asyncio
 async def test_every_digest_is_16_hex_characters() -> None:
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import profile_sources as src
 
     users = [f"u{i:02d}" for i in range(64)]
@@ -624,14 +633,18 @@ async def test_every_digest_is_16_hex_characters() -> None:
         _fact(f"00000000-0000-0000-0004-0000000000{i:02d}", u, "tz", "a")
         for i, u in enumerate(users)
     ]
-    found = await src.digests(
+    behind = await src.users_behind(
         org="o",
         namespace="n",
-        user_ids=users,
-        scope=WHOLE_NAMESPACE,
+        label="structured_profile",
+        schema_sha256="0" * 64,
+        cooldown_seconds=0,
+        limit=len(users),
+        timeout_seconds=60,
+        max_memory_bytes=4 * 1024**3,
         ch=_LocalCH(ddl("memory"), *facts),
     )
-    digests = [d for d, _ in found.values()]
+    digests = [b.digest for b in behind]
     assert len(digests) == 64 and all(len(d) == 16 and int(d, 16) >= 0 for d in digests)
     # `hex` drops leading zeros: the padding is what keeps these 16 long.
     assert any(d.startswith("0") for d in digests)

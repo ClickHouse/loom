@@ -803,8 +803,8 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
                 user_keys_only=keys,
                 ch=ch,
             )
-        await profile_sources.digests(
-            org=ORG, namespace=NS, user_ids=["u1", "u2"], scope=scope, ch=ch
+        await profile_sources.sources_digest(
+            org=ORG, namespace=NS, user_id="u1", scope=scope, ch=ch
         )
         await profile_sources.live_ids(
             org=ORG, namespace=NS, user_id="u1", memory_ids=["m1"], scope=scope, ch=ch
