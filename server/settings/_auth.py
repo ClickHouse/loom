@@ -187,7 +187,7 @@ class AuthSettings(BaseModel):
     # deployment-wide; past it /oauth/token answers 429 until older ones age out.
     workload_exchanges_per_trust: int = Field(default=50000, ge=1)
     # The same for one agent of a trust with an agent claim, so one agent's
-    # loop cannot spend the trust's. A trust without agents has only its own.
+    # loop cannot spend the trust's. A trust without agents has only the per-trust limit.
     workload_exchanges_per_agent: int = Field(default=300, ge=1)
 
     # Browser self-signup: "off" (endpoint 404s) or "open"

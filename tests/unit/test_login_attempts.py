@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.auth import login, revocation
+from server.auth import attempts, login, revocation
 from server.auth.passwords import hash_password
 
 _HASH = hash_password("correct horse battery staple")
@@ -458,3 +458,12 @@ def test_the_keys_known_over_their_limit_stay_bounded(
     attempts._remember_over(("login.address", "k2"))
     attempts._remember_over(("login.address", "k5"))
     assert list(attempts._known_over) == [("login.address", f"k{i}") for i in (4, 2, 5)]
+
+
+def test_a_limit_this_process_is_too_busy_to_check_still_refuses(
+    auth_attempts, monkeypatch
+) -> None:
+    monkeypatch.setattr(attempts, "_semaphore", lambda: asyncio.Semaphore(0))
+    monkeypatch.setattr(attempts, "_SLOT_WAIT_S", 0.01)
+    assert asyncio.run(attempts.Attempts("k", 1, 60).allow("x")) is False
+    assert auth_attempts.rows == []

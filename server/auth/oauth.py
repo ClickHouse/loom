@@ -1515,12 +1515,10 @@ async def _admit_exchange(trust: str, agent: str) -> None:
     to count. Only a token the trust's issuer signed gets here, so a caller
     without one cannot spend a trust's budget. A trust without agents is one
     workload: its jobs (every pull request of a repository) share one `sub`."""
-    gates = [
-        (
-            Attempts("oauth.exchange", settings.workload_exchanges_per_trust, _EXCHANGE_WINDOW_S),
-            trust,
-        )
-    ]
+    per_trust = Attempts(
+        "oauth.exchange", settings.workload_exchanges_per_trust, _EXCHANGE_WINDOW_S
+    )
+    gates = [(per_trust, trust)]
     if agent:
         per_agent = Attempts(
             "oauth.exchange.agent", settings.workload_exchanges_per_agent, _EXCHANGE_WINDOW_S
@@ -1537,9 +1535,9 @@ async def _admit_exchange(trust: str, agent: str) -> None:
         return
     _warn_once_a_minute(
         f"exchange:{trust}",
-        "oauth: exchange for trust %s (agent %r) over its limit; refused",
+        "oauth: exchange for trust %s%s over its limit; refused",
         trust,
-        agent,
+        f" (agent {agent})" if agent else "",
     )
     raise OAuthError(
         "temporarily_unavailable",
