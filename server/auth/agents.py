@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from typing import Any
 
 from server.auth import machines
@@ -24,10 +25,10 @@ from server.core.ch import get_client
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
 # The most bytes an agent's token spends on the namespaces it names, its own and
-# its trust's included (an agent trust's roles are refused at registration past
-# it, `account_admin.bot_from`): fifteen of the longest names. Base64 adds a third, and the
+# its trust's included: fifteen of the longest names. Base64 adds a third, and the
 # other claims, the header and a 4096-bit signature leave this much of a proxy's
 # default 8 KB header limit (test_an_agents_token_stays_under_a_proxys_header_limit).
+# An agent trust whose shared namespaces pass it is refused (`account_admin.bot_from`).
 TOKEN_NAMESPACE_BYTES = 4096
 
 log = logging.getLogger(__name__)
@@ -74,6 +75,11 @@ def lent(roles: dict[str, str], held: dict[str, str]) -> list[str]:
     return [ns for ns in held if ns not in roles]
 
 
+def names_bytes(names: Iterable[str]) -> int:
+    """What `names` cost in a token, against TOKEN_NAMESPACE_BYTES."""
+    return sum(map(token_bytes, names))
+
+
 def token_bytes(ns: str) -> int:
     """What one name costs in a token: `"ns",` in `namespaces` and
     `"ns":"viewer",` in `ns_roles`."""
@@ -99,7 +105,7 @@ async def with_grants(
     for ns, role in held.items():
         if ns in roles and grant_rank(role) > grant_rank(roles[ns]):
             roles[ns] = role
-    used = sum(map(token_bytes, roles))
+    used = names_bytes(roles)
     kept = 0
     for ns in extra:
         used += token_bytes(ns)

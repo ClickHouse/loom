@@ -91,7 +91,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     # nothing more: the share only raises its role.
     named = [*roles, *extra]
     if input.namespace not in named and (
-        sum(map(agents.token_bytes, [*named, input.namespace])) > agents.TOKEN_NAMESPACE_BYTES
+        agents.names_bytes([*named, input.namespace]) > agents.TOKEN_NAMESPACE_BYTES
     ):
         raise PreconditionFailedError(
             f"agent {input.agent}'s token has no room for {input.namespace}: its namespaces "

@@ -209,6 +209,22 @@ def test_a_share_that_raises_a_role_the_trust_gives_costs_nothing(calls, world) 
     assert _share(role="writer").role == "writer"
 
 
+def test_a_trust_namespace_no_longer_active_is_not_counted(calls, world) -> None:
+    # The token names only the trust's live namespaces; a deactivated one must
+    # not take room a share would fit in.
+    _as("sa:fleet:a")
+    gone = "g" + "x" * 127
+    world["trust_roles"] = [(gone, "viewer")]
+    world["inactive"] = {gone}
+    world["ranks"] = _filling(own=["fleet-b"])
+    for ns in list(world["ranks"])[-10:]:  # make room for fleet-a, but not for gone too
+        del world["ranks"][ns]
+    assert agents.names_bytes(["fleet-b", *world["ranks"], gone, "fleet-a"]) > (
+        agents.TOKEN_NAMESPACE_BYTES
+    )
+    assert _share().role == "viewer"
+
+
 def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world) -> None:
     _as("sa:fleet:a")
     full = _filling(own=["fleet-b"])

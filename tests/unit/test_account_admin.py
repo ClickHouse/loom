@@ -276,7 +276,7 @@ def test_two_creates_at_once_make_one_bot(world, monkeypatch) -> None:
 def test_an_agent_trusts_shared_namespaces_must_fit_every_agents_token() -> None:
     trust = {"issuer": "https://ci.example", "audience": "loom", "claims": ["tenant_id=t1"]}
     roles = [f"t{i:02}" + "x" * 125 + "=viewer" for i in range(15)]
-    with pytest.raises(ValueError, match="could not name them all"):
+    with pytest.raises(ValueError, match="share fewer namespaces"):
         account_admin.bot_from(
             name="fleet", org="acme", namespace_roles=roles, agent_claim="sub", **trust
         )

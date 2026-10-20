@@ -216,7 +216,9 @@ with more than one admin, registered first, in one org); its tokens are for
   longest names, more of shorter ones), which keeps it under a proxy's 8 KB
   header limit; a share that would pass that is refused, and one that only
   raises a role the token already names is not (two shares at once can pass
-  it, and the token then names those that fit).
+  it, and the token then names those that fit). A trust's shared namespaces,
+  with room for a 63-character agent's own, must fit those 4,096 bytes, or
+  `loom bot create` refuses it.
 
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further
