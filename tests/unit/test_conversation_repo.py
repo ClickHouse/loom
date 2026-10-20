@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.knowledge.store.conversations import (
     MessageInsert,
     MessageRow,
@@ -162,6 +163,7 @@ async def test_search_substring_uses_positioncaseinsensitive() -> None:
         ["ns"],
         "bot",
         "deploy",
+        scope=WHOLE_NAMESPACE,
         thread_id="t-1",
         ch=ch,
     )
