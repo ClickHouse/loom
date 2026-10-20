@@ -281,8 +281,11 @@ def test_an_unshare_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None
     assert written == []
 
 
-def test_a_share_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None:
-    # The row read under the claim is an admin's: the share writes nothing.
+@pytest.mark.parametrize("role", ["viewer", "writer"])
+def test_a_share_rechecks_the_row_under_the_grants_claim(monkeypatch, role: str) -> None:
+    # The row read under the claim is an admin's writer grant: the share
+    # writes nothing, and a lower one is refused as the admin's, not as a
+    # downgrade.
     from server.auth import aliases
     from server.identity.api.models_grants import GrantsCreateInput
     from server.identity.app import grants as grants_app
@@ -290,7 +293,7 @@ def test_a_share_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None:
     written: list[Any] = []
 
     async def find_active_grant(org: str, namespace: str, subject: str, **kw: Any) -> GrantState:
-        return _row("alice@acme.com")
+        return _row("alice@acme.com", role="writer")
 
     async def canonical(org: str, subject: str) -> str:
         return subject
@@ -314,8 +317,8 @@ def test_a_share_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None:
     monkeypatch.setattr(grants_app, "_enforce_code_ceiling", no_ceiling)
     monkeypatch.setattr(aliases, "canonical_subject", canonical)
     check = agent_shares._made_by("sa:fleet:a", "sa:fleet:b", "fleet-a")
-    body = GrantsCreateInput(org="acme", namespace="fleet-a", subject="sa:fleet:b", role="viewer")
-    with pytest.raises(PreconditionFailedError):
+    body = GrantsCreateInput(org="acme", namespace="fleet-a", subject="sa:fleet:b", role=role)
+    with pytest.raises(PreconditionFailedError, match="made by alice@acme.com"):
         asyncio.run(grants_app.create_grant(body, check))
     assert written == []
 

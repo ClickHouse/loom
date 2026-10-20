@@ -79,7 +79,8 @@ async def with_grants(
     them. A grant raises a role `ns_roles` gives, and a lower or revoked one
     caps that role at the gate (`authz.claim_cap`). At most MAX_LENT
     namespaces are added, the first by name, so the token stays within a
-    proxy's header limit."""
+    proxy's header limit; `grants.share_agent` checks the same count, but two
+    shares at once can both pass it."""
     from server.operations.base import grant_rank
 
     held = await granted(m["org"], subject(m["name"], agent))

@@ -195,7 +195,7 @@ async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: An
 async def test_an_agent_neither_lowers_nor_takes_back_an_admins_grant(ch: Any) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo
-    from server.core.errors import GrantWouldDowngradeError, PreconditionFailedError
+    from server.core.errors import PreconditionFailedError
     from server.identity.api.models_grants import (
         GrantsCreateInput,
         GrantsShareAgentInput,
@@ -222,7 +222,9 @@ async def test_an_agent_neither_lowers_nor_takes_back_an_admins_grant(ch: Any) -
                 ns_roles=((a1, "writer"),),
             )
         )
-        with pytest.raises(GrantWouldDowngradeError):
+        # Lower than the admin's: refused as the admin's, not as a downgrade
+        # the agent could undo by unsharing.
+        with pytest.raises(PreconditionFailedError, match="made by"):
             await agent_shares.handle_grants_share_agent(
                 GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2")
             )

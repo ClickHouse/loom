@@ -92,15 +92,22 @@ async def _enforce_code_ceiling(org: str, namespace: str, role: str) -> None:
         raise ValidationError(ceiling, code="ROLE_CEILING")
 
 
-async def _refuse_accidental_downgrade(input: GrantsCreateInput, subject: str) -> GrantState | None:
+async def _refuse_accidental_downgrade(
+    input: GrantsCreateInput,
+    subject: str,
+    may_replace: Callable[[GrantState], None] | None = None,
+) -> GrantState | None:
     """The grants table replaces on (org, namespace, subject), so a `viewer` create for a
     current `admin` would lower them silently; this guard refuses that. Returns the
     subject's current active row (or None) so the write can carry
     its pending request forward; raises 409 when the requested role is below
-    the current one and the caller did not say `replace=true`."""
+    the current one and the caller did not say `replace=true`. `may_replace`
+    runs on that row first, so its refusal is the one a caller sees."""
     existing = await grants_repo.find_active_grant(input.org, input.namespace, subject)
     if existing is None:
         return None
+    if may_replace is not None:
+        may_replace(existing)
     current = existing.role
     if grant_rank(current) > grant_rank(input.role) and not input.replace:
         from server.core.errors import GrantWouldDowngradeError
@@ -182,9 +189,7 @@ async def _write_grant(
 ) -> datetime:
     """`grants.create`'s read of the current grant and its write, under the
     grant's claim."""
-    existing = await _refuse_accidental_downgrade(input, subject)
-    if existing is not None and may_replace is not None:
-        may_replace(existing)
+    existing = await _refuse_accidental_downgrade(input, subject, may_replace)
     if existing is not None and _active_admin(existing) and input.role != "admin":
         await _refuse_last_admin(input)
     pending_role = existing.pending_role if existing is not None else None

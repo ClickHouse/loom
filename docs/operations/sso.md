@@ -210,7 +210,8 @@ with more than one admin, registered first, in one org); its tokens are for
   the others. A grant an admin made stays (409). An admin of the namespace
   grants or revokes `sa:fleet:b` with `grants.create` and `grants.revoke`; an
   agent's token takes any grant its subject holds in the org, as writer at
-  most, and names at most 50 namespaces besides its own and the trust's.
+  most, and names at most 50 namespaces besides its own and the trust's (two
+  shares at once can pass 50; the token then names the first 50 by name).
 
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further
