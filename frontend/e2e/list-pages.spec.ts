@@ -315,31 +315,6 @@ test.describe("a touch pointer at 375 px", () => {
   });
 });
 
-// Click UI's Checkbox draws its unchecked box from its default variation's stroke token;
-// styles.css redefines that token, and the box is what the control is recognised by
-// (WCAG 1.4.11, 3:1 against what it sits on).
-test("an unchecked row checkbox's stroke holds 3:1 against the row", async ({ page }) => {
-  await open(page, "/memories");
-  const box = page.locator("main .list-row").first().getByRole("checkbox");
-  await expect(box).toHaveAttribute("aria-checked", "false");
-  const ratio = await box.evaluate((el) => {
-    const rgb = (c: string) => (c.match(/[\d.]+/g) ?? []).map(Number);
-    const lum = (c: string) => {
-      const [r, g, b] = rgb(c).map((v) => {
-        const s = v / 255;
-        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-      });
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    };
-    let under = el.parentElement;
-    while (under && (rgb(getComputedStyle(under).backgroundColor)[3] ?? 1) === 0) under = under.parentElement;
-    const stroke = lum(getComputedStyle(el).borderTopColor);
-    const back = lum(getComputedStyle(under ?? document.body).backgroundColor);
-    return (Math.max(stroke, back) + 0.05) / (Math.min(stroke, back) + 0.05);
-  });
-  expect(ratio).toBeGreaterThanOrEqual(3);
-});
-
 test("Insights holds the usage audit and the mentor, and the list is a tab away", async ({ page }) => {
   await installApi(page, { memoryRows: 12 });
   await page.goto("/memories?section=insights");

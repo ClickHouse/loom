@@ -5,7 +5,7 @@ import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { installStaleChunkReload } from "./lib/staleChunk";
 import { keepFocusThroughLoading, labelSelectSearch } from "./lib/clickUiFixes";
-import "click-ui-styles/tokens-light.css";
+import "click-ui-styles/tokens-dark.css";
 import "click-ui-styles/global.css";
 import "./styles.css";
 
