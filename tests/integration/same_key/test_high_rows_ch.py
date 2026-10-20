@@ -1418,6 +1418,61 @@ async def test_a_restored_link_keeps_its_edges_stated_end_and_weight(ch, org, mo
     assert sum(w for *_, w in after) == sum(w for *_, w in before) + 1  # the re-set's own
 
 
+async def test_a_plain_re_set_inside_a_drop_keeps_its_links_when_the_restore_fails(
+    ch, org, monkeypatch
+) -> None:
+    """A row made high, re-set plain with the same value inside its drop, and the
+    restore after the DELETE fails: the read before the DELETE spared the plain row's
+    links, so the replay (which skips a row no longer high) leaves the pair linked and
+    open."""
+    from server.core.hashing import sha256_value
+    from server.memory.app import edge_links, projections
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    value = "Alice Smith met Bob Lane and Carol King in Berlin"
+    await _high_set(org, "s1", "contact", value)
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    with monkeypatch.context() as m:
+        m.setattr(edge_links, "drop_undeclared_links", nothing)  # the drop runs below
+        out = await _high_set(
+            org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    head = await ch.query_one(
+        "SELECT version FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    real = projections.end_edges
+
+    async def plain_before_the_delete(*a: Any, **kw: Any) -> list[str]:
+        monkeypatch.setattr(projections, "end_edges", real)
+        close_ids = await real(*a, **kw)
+        await _high_set(org, "s1", "contact", value, sensitivity="low")
+        return close_ids
+
+    async def restore_lost(*a: Any, **kw: Any) -> None:
+        raise RuntimeError("restore lost")
+
+    with monkeypatch.context() as m:
+        m.setattr(projections, "end_edges", plain_before_the_delete)
+        m.setattr(edge_links, "_restore_kept_links", restore_lost)
+        scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+        versions = {str(out.memory_id): int(head["version"])}
+        await edge_links.drop_undeclared_edges(scope, versions, ch=ch, op="memory.set")
+    await retry_projection_failures(org=org, projection="entity_edges_drop_undeclared", ch=ch)
+    linked = await ch.query_all(
+        "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " AND content_sha256 = {sha:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "sha": sha256_value(value)},
+    )
+    assert ("alice smith", "carol king") in {(r["entity_a"], r["entity_b"]) for r in linked}
+    assert ("alice smith", "carol king") in await _open_edge_pairs(ch, org)
+
+
 async def test_a_same_value_plain_re_set_before_the_drops_delete_keeps_its_links(
     ch, org, monkeypatch
 ) -> None:

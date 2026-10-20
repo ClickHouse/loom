@@ -193,8 +193,18 @@ async def _drop_links_of(
         open_only=True,
         skip_versions=sorted({(memory_id, sha) for memory_id, sha, *_ in drop}),
     )
-    # Parameters only: a mutation with a subquery is refused on a replicated table.
-    for part in param_slices(drop):
+    # Read again right before the DELETE: a row re-set plain since the first read keeps
+    # its links even when the restore below fails, as its replay skips a row no longer
+    # 'high'; one re-set high naming more entities keeps those. The restore covers a write
+    # landing after this read. Parameters only: a mutation with a subquery is refused on a
+    # replicated table.
+    high = await _rows_still_high(input, sorted({memory_id for memory_id, *_ in drop}), ch=ch)
+    deleted = [
+        (memory_id, sha, a, b)
+        for memory_id, sha, a, b in drop
+        if memory_id in high and not {a, b} <= high[memory_id]
+    ]
+    for part in param_slices(deleted):
         await ch.execute(
             """
             DELETE FROM loom.entity_edge_rows
