@@ -98,6 +98,9 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                 )
                 if rh_key not in seen_keys:
                     seen_keys.add(rh_key)
+                    # A retry row's rerank position is in the retry's own pool: it joins
+                    # after this pool's rerank, so the gates leave it where it lands.
+                    rh.score_components.pop("rerank_from", None)
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)
             ctx.final_hits = final_hits[: input.top_k]

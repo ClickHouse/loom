@@ -181,3 +181,50 @@ def test_a_reranked_chunks_lift_is_over_its_own_score() -> None:
     assert chunk.rank_score == pytest.approx(0.5 + 1e-6)
     # Own un-boosted score 0.7 - 0.3 = 0.4: lifted to just above the 0.5 ceiling.
     assert chunk.score_components["chunk_parent_lift"] == pytest.approx(0.1 + 1e-6)
+
+
+@pytest.mark.asyncio
+async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry reranks its own pool: its positions are not on this pool's scale, so the
+    rows it merges in are gated where they land, like any row that joins after the rerank."""
+    import server.memory.app.search as search_pkg
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app import search_llm
+    from server.memory.app.search import fallbacks
+
+    parent = _hit("user_location", 0.5)
+    parent.score_components["rerank_from"] = 0.0
+    retry_row = _hit("user_employer", 0.45)
+    retry_row.score_components["rerank_from"] = 0.0
+
+    async def _judge(query: str, excerpts: list[str]) -> tuple[bool, str]:
+        return False, "where does the user work?"
+
+    async def _search(_input: Any) -> Any:
+        return SimpleNamespace(results=[retry_row])
+
+    budget = SimpleNamespace(
+        fallback_affordable=lambda **_k: True,
+        try_spend_llm=lambda _n: True,
+        note_llm_call=lambda _n: None,
+        try_spend_fallback=lambda **_k: True,
+        remaining_wall_s=lambda: 5.0,
+    )
+    ctx = SimpleNamespace(
+        input=MemorySearchInput(org="o", namespace="n", query="q", recipe="quality", top_k=5),
+        final_hits=[parent],
+        chronological_intent=None,
+        llm_free=False,
+        search_budget=budget,
+        namespaces=["n"],
+        actual_work={},
+    )
+    monkeypatch.setattr(search_llm, "judge_results_iteratively", _judge)
+    monkeypatch.setattr(search_pkg, "handle_memory_search", _search)
+    await fallbacks._maybe_iterative_retry(ctx)
+    merged = {h.memory_key: h for h in ctx.final_hits}
+    assert set(merged) == {"user_location", "user_employer"}
+    assert "rerank_from" not in merged["user_employer"].score_components
+    assert merged["user_location"].score_components["rerank_from"] == 0.0

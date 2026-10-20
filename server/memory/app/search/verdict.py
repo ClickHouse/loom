@@ -181,7 +181,8 @@ def _calibrate_final_hits(
     )
     from server.memory.domain.retrieval_calibration import calibrate_retrieval
 
-    # KNOWN ISSUE, deliberately not fixed here. Rank 0 is not guaranteed to carry the best
+    # KNOWN ISSUE, deliberately not fixed here. The first row of `gate_order` (the served rank
+    # 1, or after a rerank the fused rank 1) is not guaranteed to carry the best
     # cosine: RRF/lexical fusion can put a weak row first, and under the default
     # namespace_scope="all_mine" a row from another namespace can win it, so a query can
     # abstain while a 0.63 hit sits at rank 1. Taking max/second-max by value instead is wrong
@@ -190,8 +191,8 @@ def _calibrate_final_hits(
     # suppresses abstention indefinitely; (b) second-highest-by-value is by construction the
     # smallest gap in the set, which collapses `calibrate_retrieval`'s margin term and invents
     # a *new* class of false abstention ([0.35, 0.05, 0.34] goes 0.443/"high" ->
-    # 0.327/"abstain"); (c) the iterative judge reads rank 0 too, and would disagree with the
-    # verdict about what the top hit is.
+    # 0.327/"abstain"); (c) the iterative judge reads the same first row, and would disagree
+    # with the verdict about what the top hit is.
     # A real fix needs the hit model to distinguish cosine from synthesized distances.
     second_similarity = _gate_second_sim(final_hits)
     calibration = calibrate_retrieval(
@@ -205,7 +206,8 @@ def _calibrate_final_hits(
         evidence_support_count=evidence_support_count,
         abstain_threshold=abstain_threshold,
     )
-    # Rank-0 based, matching the calibrator above; see the note there before changing it.
+    # The first row of `gate_order`, as the calibrator above; see the note there before
+    # changing it.
     abstain, abstain_code, abstain_reason = _finalize_abstain(
         final_hits,
         calibration=calibration,
