@@ -108,7 +108,8 @@ async def _cap_and_spend(
 ) -> tuple[float, float, float]:
     """(cap, 24 h spend, `operation`'s part of it) for one namespace: the namespace's cap,
     else the server default; zeros when uncapped, without reading the spend. Raises on
-    a read error; the public forms fail open."""
+    a read error; the public forms take that as under the cap, or over it with
+    `fail_open=False`."""
     from server.core.ch import get_client
 
     ch = get_client()
