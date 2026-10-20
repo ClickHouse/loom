@@ -99,9 +99,7 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                 )
                 if rh_key not in seen_keys:
                     seen_keys.add(rh_key)
-                    # A retry row's rerank trail describes the retry's own pool: it joins
-                    # after this pool's rerank, so it carries none and the gates leave it
-                    # where it lands.
+                    # A retry row's rerank trail is on the retry pool's scale.
                     drop_rerank_trail(rh)
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)

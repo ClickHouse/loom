@@ -20,7 +20,7 @@ def gate_order(hits: list[Any]) -> list[Any]:
     slots = [i for i, c in enumerate(comps) if "rerank_from" in c and not c.get("below_floor")]
     if not any(comps[i].get("rerank_delta") for i in slots):
         return hits
-    fused = sorted((hits[i] for i in slots), key=lambda h: float(h.score_components["rerank_from"]))
+    fused = [hits[i] for i in sorted(slots, key=lambda i: float(comps[i]["rerank_from"]))]
     out = list(hits)
     for i, h in zip(slots, fused, strict=True):
         out[i] = h

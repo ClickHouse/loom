@@ -153,10 +153,10 @@ def _apply_chronological_sort(ctx: SearchContext) -> None:
 
 
 async def _run_external_rerank(ctx: SearchContext) -> None:
-    """Pluggable rerank: if the namespace has a rerank_endpoint, POST the
-    pool to the operator's reranker. Fail-open so a broken reranker keeps the
-    fused order. Yields to chronological_intent (the date-sort above
-    owns the final order)."""
+    """Pluggable rerank: if the namespace has a rerank_endpoint, send the pool's
+    rows that no identifier pin holds to the operator's reranker, which returns a
+    permutation of them (the input order when it fails). Yields to
+    chronological_intent (the date-sort above owns the final order)."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
     input = ctx.input
@@ -198,10 +198,8 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
         # and no score changes.
         ctx.actual_work.update(_record_rerank_trail(before, before, "external"))
         return
-    # The block sorts by rank_score: the pool's own scores, handed out in this order, keep
-    # it, and every later stage (digest band, lift bound, retry merge) sees the same values.
-    # `before` is sorted best-first (fusion and the mention boost sort), so a kept slot,
-    # a pin's, keeps its own score.
+    # The pool's own scores, handed out in the new order, keep the block's sort; `before` is
+    # sorted best-first, so a pinned slot keeps its own score.
     handed = sorted((o.rank_score for o in ordered), reverse=True)
     for h, score in zip(ordered, handed, strict=True):
         h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
