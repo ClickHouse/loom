@@ -23,7 +23,7 @@ Put = Callable[[str, bytes], bool]
 
 # Each statement reads a month partition of the ledger or every live memory
 # row: far past the request read deadline on a large deployment, and inside
-# the CronJob's one-hour deadline. The client must be built inside the
+# the CronJob's three-hour deadline for four attempts. The client must be built inside the
 # `statement_timeout` scope for its driver read timeout to cover it.
 STATEMENT_TIMEOUT_S = 1200
 

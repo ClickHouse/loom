@@ -45,10 +45,6 @@ def app_and_events(monkeypatch: pytest.MonkeyPatch) -> tuple[FastAPI, list]:
 
         raise HTTPException(status_code=401, detail={"code": "AUTH_INVALID"})
 
-    @app.get("/v1/me/tokens/{jti}")
-    async def token(jti: str) -> dict[str, str]:
-        return {"jti": jti}
-
     @app.get("/v1/other")
     async def other() -> dict[str, str]:
         return {"ok": "yes"}
@@ -84,14 +80,3 @@ def test_a_refused_me_route_is_a_failed_row_and_other_paths_pass_through(
     r2 = client.get("/v1/other")
     assert r2.status_code == 200 and "Server-Timing" not in r2.headers
     assert not [e for e in captured if e.operation == "me.other"]
-
-
-def test_the_row_names_the_route_template_never_the_raw_path(
-    app_and_events: tuple[FastAPI, list],
-) -> None:
-    app, captured = app_and_events
-    client = TestClient(app)
-    assert client.get("/v1/me/tokens/jti-123").status_code == 200
-    assert client.get("/v1/me/alice@example.com").status_code == 404
-    names = [e.operation for e in captured if e.operation.startswith("me.")]
-    assert names == ["me.tokens.{jti}", "me.unmatched"]

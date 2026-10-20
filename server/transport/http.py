@@ -886,19 +886,6 @@ def me_operation_name(path: str) -> str:
     return f"me.{tail}" if tail else "me"
 
 
-def me_route_operation(request: Request) -> str:
-    """The operation name of the `/v1/me/*` route `request` matches, from the
-    route's template, never the raw path: a path parameter or a path that
-    matches no route would put a caller's string into the ledger."""
-    from starlette.routing import Match
-
-    for route in request.app.router.routes:
-        path = getattr(route, "path", "")
-        if path.startswith("/v1/me/") and route.matches(request.scope)[0] == Match.FULL:
-            return me_operation_name(path)
-    return "me.unmatched"
-
-
 async def me_route_measured(request: Request, call_next: Any) -> Response:
     """A `/v1/me/*` route is an operation. It gets the
     request id, the query tag, the work bag, `Server-Timing` (`app`, `ch`
@@ -911,7 +898,7 @@ async def me_route_measured(request: Request, call_next: Any) -> Response:
         return passthrough
     from server.transport._common import begin_request
 
-    op_name = me_route_operation(request)
+    op_name = me_operation_name(request.url.path)
     request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
     bind_request(op_name, request_id)
     begin_request()

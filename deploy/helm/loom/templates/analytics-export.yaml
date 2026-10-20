@@ -45,7 +45,8 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 3
-      activeDeadlineSeconds: 3600
+      # Over every attempt together: four of two 20-minute statements each.
+      activeDeadlineSeconds: 10800
       # Exit 2 is a refusal (a day not ended, a missing key, raw names with
       # self-signup open): a retry would refuse the same way.
       podFailurePolicy:

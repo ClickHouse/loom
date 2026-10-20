@@ -17,11 +17,15 @@ from server.core.ch import CHClient
 # One row per (org, namespace, agent, operation, kind, transport, traffic
 # class) of UTC day {day:Date}. `kind` is 'request' or 'worker' (a worker
 # pass); `users` and `sessions` leave out the '-' of a call that named none.
+# A `/v1/me/*` row's operation is built from the request path, so it can hold
+# any string a caller sent: every `me.*` operation leaves as `me`.
 # The `ts` bounds prune to the day's monthly partition, which a daily batch
 # reads once (the ledger is a plain MergeTree: no FINAL).
 USAGE_SQL = """
 SELECT
-    org, namespace, agent, operation, kind, transport, traffic_class,
+    org, namespace, agent,
+    if(startsWith(operation, 'me.'), 'me', operation) AS operation,
+    kind, transport, traffic_class,
     {day:Date} AS day,
     count() AS ops,
     countIf(NOT success) AS errors,

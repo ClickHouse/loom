@@ -7,6 +7,7 @@ Skips cleanly when LOOM_CH_HOST is unset.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from collections.abc import AsyncIterator
 from datetime import date, datetime
@@ -101,13 +102,17 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
             _event(org, "2026-01-01 23:59:59.999"),
             _event(org, "2026-01-03 00:00:00"),
             _event(org, "2026-01-02 08:00:00", operation="memory.get", transport="mcp"),
+            # Ledgered from a raw /v1/me path: any string a caller sent.
+            _event(org, "2026-01-02 09:00:00", operation="me.alice@example.com"),
+            _event(org, "2026-01-02 09:30:00", operation="me.sharing-summary"),
         ],
     )
     rows = await ch.query_all(
         f"SELECT * FROM ({USAGE_SQL}) WHERE org = {{org:String}}", {"day": DAY, "org": org}
     )
     by_op = {r["operation"]: r for r in rows}
-    assert sorted(by_op) == ["memory.get", "memory.set"]
+    assert sorted(by_op) == ["me", "memory.get", "memory.set"]
+    assert by_op["me"]["ops"] == 2
     s = by_op["memory.set"]
     assert (s["ops"], s["errors"], s["server_errors"], s["slow"]) == (3, 1, 1, 1)
     assert (s["users"], s["sessions"]) == (2, 1)
@@ -115,6 +120,8 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
     assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
     assert s["kind"] == "request"
     assert by_op["memory.get"]["ops"] == 1
+    body = await parquet("usage", DAY, key=None, ch=ch)
+    assert b"alice@example.com" not in body and org.encode() in body
 
 
 async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:
@@ -134,12 +141,70 @@ async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient)
     assert org.encode() not in body
 
 
-async def test_the_hash_is_reference_siphash_2_4_128(ch: CHClient) -> None:
-    # The published SipHash-2-4-128 vector: key 00..0f, empty message. A system
-    # outside Loom with the same key computes the same hash with any library.
-    k0, k1 = (int.from_bytes(bytes(range(i, i + 8)), "little") for i in (0, 8))
-    row = await ch.query_one(f"SELECT {name_hash_sql("''")} AS h", {"k0": k0, "k1": k1})
-    assert row["h"] == "a3817f04ba25a8e66df67214c7550293"
+_M = (1 << 64) - 1
+
+
+def _rotl(x: int, b: int) -> int:
+    return ((x << b) | (x >> (64 - b))) & _M
+
+
+def _siphash_2_4_128(key: bytes, msg: bytes) -> bytes:
+    """The reference SipHash-2-4-128, written out to check ClickHouse against."""
+    k0, k1 = int.from_bytes(key[:8], "little"), int.from_bytes(key[8:], "little")
+    v = [
+        k0 ^ 0x736F6D6570736575,
+        k1 ^ 0x646F72616E646F6D ^ 0xEE,
+        k0 ^ 0x6C7967656E657261,
+        k1 ^ 0x7465646279746573,
+    ]
+
+    def rounds(n: int) -> None:
+        for _ in range(n):
+            v[0] = (v[0] + v[1]) & _M
+            v[1] = _rotl(v[1], 13) ^ v[0]
+            v[0] = _rotl(v[0], 32)
+            v[2] = (v[2] + v[3]) & _M
+            v[3] = _rotl(v[3], 16) ^ v[2]
+            v[0] = (v[0] + v[3]) & _M
+            v[3] = _rotl(v[3], 21) ^ v[0]
+            v[2] = (v[2] + v[1]) & _M
+            v[1] = _rotl(v[1], 17) ^ v[2]
+            v[2] = _rotl(v[2], 32)
+
+    tail = len(msg) % 8
+    blocks = [int.from_bytes(msg[i : i + 8], "little") for i in range(0, len(msg) - tail, 8)]
+    blocks.append((len(msg) & 0xFF) << 56 | int.from_bytes(msg[len(msg) - tail :], "little"))
+    for m in blocks:
+        v[3] ^= m
+        rounds(2)
+        v[0] ^= m
+    v[2] ^= 0xEE
+    rounds(4)
+    first = (v[0] ^ v[1] ^ v[2] ^ v[3]).to_bytes(8, "little")
+    v[1] ^= 0xDD
+    rounds(4)
+    return first + (v[0] ^ v[1] ^ v[2] ^ v[3]).to_bytes(8, "little")
+
+
+def test_the_reference_implementation_matches_the_published_vectors() -> None:
+    key = bytes(range(16))
+    assert _siphash_2_4_128(key, b"").hex() == "a3817f04ba25a8e66df67214c7550293"
+    assert _siphash_2_4_128(key, bytes(range(15))).hex() == "5493e99933b0a8117e08ec0f97cfc3d9"
+
+
+@pytest.mark.parametrize("name", ["", "ns", "agent-alice-laptop", "x" * 8, "tenant-" * 9])
+async def test_a_hashed_name_is_reference_siphash_under_the_documented_key(
+    ch: CHClient, name: str
+) -> None:
+    # Any system with the key reproduces the hash: SipHash-2-4-128 under the
+    # first 16 bytes of SHA-256(key), as the operator guide documents.
+    secret = "s" * 32
+    k0, k1 = name_hash_key(secret)
+    row = await ch.query_one(
+        f"SELECT {name_hash_sql('{name:String}')} AS h", {"k0": k0, "k1": k1, "name": name}
+    )
+    key = hashlib.sha256(secret.encode()).digest()[:16]
+    assert row["h"] == _siphash_2_4_128(key, name.encode()).hex()
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))

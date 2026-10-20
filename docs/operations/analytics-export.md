@@ -31,7 +31,9 @@ repeated run can be retried as it is. To export a day again, delete its objects 
 | `usage`      | `org`, `namespace`, `agent`, `operation`, `kind`, `transport`, `traffic_class` of the day, from `loom.agent_events` | `day`, `ops`, `errors`, `server_errors`, `slow` (over its latency budget), `input_tokens`, `output_tokens`, `embedding_tokens`, `llm_calls`, `cost_usd`, `bytes_written`, `latency_p50_ms` / `p95` / `p99`, `users`, `sessions`, `snapshot_at` |
 | `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_at`, `live_memories`, `last_memory_at`, `day`, `snapshot_at`                                                                                                                            |
 
-`kind` in `usage` is `request` for a request and `worker` for a worker pass. `users` and
+`kind` in `usage` is `request` for a request and `worker` for a worker pass. Every
+`/v1/me/*` route is one `operation`, `me`: the ledger names those rows after the request
+path, which can carry any string a caller sent. `users` and
 `sessions` are distinct counts within the row that leave out the `-` of a call that named
 none; a sum over rows counts a user once per row. The
 `namespaces` file is the state at `snapshot_at`, whatever `--day` says: a backfill of an
@@ -101,7 +103,7 @@ Only the export's pod reads that Secret; the web and workers pods never see the 
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: the release name when it contains
 `loom`, else `<release>-loom` (`kubectl get sa` shows it). The job runs at 00:30 UTC
-(`schedule`), one run at a time, with up to 3 retries and a one-hour deadline; each
+(`schedule`), one run at a time, with up to 3 retries and a three-hour deadline over all attempts; each
 statement may run 20 minutes. A refusal (exit 2) fails the Job at once instead of retrying. The web and workers pods keep their own ServiceAccount, so
 the role that may assume the writer role is bound to the export's pod only. With IRSA, that
 role's trust names `system:serviceaccount:<namespace>:<fullname>-analytics-export`, and its
