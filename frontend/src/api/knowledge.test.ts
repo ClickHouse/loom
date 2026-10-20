@@ -151,12 +151,12 @@ describe("fetchKnowledgeInlineUrl re-types the blob", () => {
     return blobs;
   }
 
-  it("serves text as text/plain whatever the response says it is", async () => {
+  it("reads text as a string and makes no URL for it", async () => {
     stubFetch(200, "<script>alert(1)</script>", { "Content-Type": "text/markdown" });
     const blobs = captureBlobs();
     const p = await fetchKnowledgeInlineUrl(id, "doc://a");
-    expect(p).toMatchObject({ kind: "text", url: "blob:p-1" });
-    expect(blobs[0].type).toBe("text/plain;charset=utf-8");
+    expect(p).toMatchObject({ kind: "text", url: null, text: "<script>alert(1)</script>" });
+    expect(blobs).toEqual([]);
   });
 
   it("gives an image its own allowlisted type", async () => {

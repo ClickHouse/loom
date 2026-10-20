@@ -155,12 +155,12 @@ describe("Library preview", () => {
     return screen.getByRole("dialog");
   }
 
-  it("frames text only in an iframe with an empty sandbox", async () => {
-    const d = await open({ kind: "text", url: "blob:t", contentType: "text/plain", size: 4 });
-    const frames = d.querySelectorAll("iframe");
-    expect(frames).toHaveLength(1);
-    expect(frames[0].getAttribute("sandbox")).toBe("");
-    expect(frames[0].getAttribute("src")).toBe("blob:t");
+  it("shows text as a text node, never parsed or framed", async () => {
+    const d = await open({ kind: "text", url: null, text: "<b>bold</b>", contentType: "text/plain", size: 11 });
+    expect(d.querySelector("iframe")).toBeNull();
+    const pre = d.querySelector("pre");
+    expect(pre?.textContent).toBe("<b>bold</b>");
+    expect(pre?.querySelector("b")).toBeNull();
   });
 
   it("shows an image as <img>, never in a frame", async () => {

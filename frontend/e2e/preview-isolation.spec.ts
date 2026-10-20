@@ -5,10 +5,9 @@ import { installApi } from "./fixtures";
 // Library previews it on the dashboard's own origin, where the bearer token sits in
 // localStorage. Each fixture below tries to run script: set a global on the parent, read
 // the token and send it to /exfil, and alert. The mocked server answers with the uploaded
-// type as-is (inline), so what is tested is the dashboard's own allowlist: text in an
-// empty-sandbox iframe as text/plain, raster images as <img>, everything else downloads.
-// Opening a preview on its own — its blob: URL, or the download URL — must not run
-// script either.
+// type as-is (inline), so what is tested is the dashboard's own allowlist: text as a text
+// node, raster images as <img>, everything else downloads. Opening a preview on its own —
+// an image's blob: URL, or the download URL — must not run script either.
 
 const PAYLOAD =
   "<script>" +
@@ -169,24 +168,13 @@ test("active and mismatched uploads never run script in the preview", async ({ p
     await closePreview(page);
   }
 
-  // HTML bytes labelled text/plain: shown as text, in a frame that grants nothing.
+  // HTML bytes labelled text/plain: shown as text, a text node that nothing parses.
   const text = FIXTURES[2];
   let dialog = await openPreview(page, text);
-  const frame = dialog.locator("iframe");
-  await expect(frame).toHaveCount(1);
-  expect(await frame.getAttribute("sandbox")).toBe("");
-  const body = page.frameLocator("[role=dialog] iframe").locator("body");
-  await expect(body).toContainText("<script>");
+  await expect(dialog.locator("iframe")).toHaveCount(0);
+  await expect(dialog.locator("pre")).toContainText("<script>");
+  await expect(dialog.locator("pre script, pre img")).toHaveCount(0);
   await expectNothingRan(page, probe);
-  const textUrl = (await frame.getAttribute("src")) ?? "";
-  expect(textUrl.startsWith("blob:")).toBe(true);
-
-  // Opening that blob: URL on its own is a plain-text page.
-  const standalone = await page.context().newPage();
-  await standalone.goto(textUrl);
-  await expect(standalone.locator("body")).toContainText("<script>");
-  await expectNothingRan(standalone, probe);
-  await standalone.close();
   await closePreview(page);
 
   // HTML bytes labelled image/png: an <img>, which never runs script.

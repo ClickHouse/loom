@@ -770,8 +770,8 @@ export function Documents() {
         {/* Sized to what the dialog leaves after its header and footer, so only the pane scrolls. */}
         <div className="h-[max(12rem,calc(75vh-14rem))] overflow-hidden rounded-lg bg-surface-2 relative">
           {previewLoading && <Loading label="Loading preview" className="absolute inset-0" />}
-          {/* Only passive types reach here (previewKind): text in an iframe whose empty
-                  sandbox grants nothing, images as <img>. Nothing else is ever framed. */}
+          {/* Only passive types reach here (previewKind): text as a text node, which nothing
+                  parses, and images as <img>. Nothing else is ever shown. */}
           {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
             <div className="absolute inset-0 grid place-items-center p-6 overflow-auto">
               <img
@@ -781,13 +781,17 @@ export function Documents() {
               />
             </div>
           )}
-          {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "text" && (
-            <iframe
-              sandbox=""
-              src={inlineBlob.url}
-              title={previewEntry.original_filename || "document preview"}
-              className="w-full h-full border-0 bg-bg"
-            />
+          {!previewLoading && inlineBlob?.text != null && previewEntry?.has_blob && inlineBlob.kind === "text" && (
+            <section
+              aria-label={previewEntry.original_filename || "document preview"}
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: the file scrolls in this box, and the keyboard scrolls it only once it has focus
+              tabIndex={0}
+              className="absolute inset-0 overflow-auto bg-bg"
+            >
+              <pre className="m-0 p-3 font-mono text-xs text-text whitespace-pre-wrap break-words">
+                {inlineBlob.text}
+              </pre>
+            </section>
           )}
           {!previewLoading && inlineBlob?.kind === "download" && previewEntry?.has_blob && (
             <div className="absolute inset-0 grid place-items-center px-8 text-center">
