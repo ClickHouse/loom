@@ -82,6 +82,9 @@ interface MemoryCardProps {
    *  a preview and Recent fills gaps with one memory.bulk_get. `undefined` means "not
    *  known": the card then falls back to its own memory.get. */
   value?: unknown;
+  /** Text at the start of the meta slot, inside the open button so it opens the row and is
+   *  read with it (a search hit's similarity and score). */
+  meta?: ReactNode;
   /** A control at the end of the row's first line, after the meta (a search hit's "Why this
    *  result"): beside the open button, never inside it. */
   aside?: ReactNode;
@@ -89,8 +92,8 @@ interface MemoryCardProps {
 
 // Memoised: a page lists ~100 cards, and each Click UI Badge and Icon re-measures its text
 // on every render, so closing the inspector re-rendered every card (~110 ms at 4x CPU).
-// With stable props from the parent (callbacks, the tag set, the aside), only the cards
-// whose props changed render again.
+// With stable props from the parent (callbacks, the tag set, the meta, the aside), only
+// the cards whose props changed render again.
 export const MemoryCard = memo(function MemoryCard({
   identity,
   entry,
@@ -102,6 +105,7 @@ export const MemoryCard = memo(function MemoryCard({
   activeTags,
   embedded = false,
   value: preloaded,
+  meta,
   aside,
 }: MemoryCardProps) {
   // A card with a preloaded value computes its preview during render — one render per
@@ -223,8 +227,9 @@ export const MemoryCard = memo(function MemoryCard({
                 <span className="sr-only">, verified by {entry.verified_by || "—"}</span>
               </>
             )}
-            {/* The meta slot: who wrote it, then when. Flush right; under 640 px its own line. */}
+            {/* The meta slot: the parent's meta, the writer, the time. Flush right; under 640 px its own line. */}
             <span className="flex min-w-0 basis-full items-center gap-2 text-text-muted sm:ml-auto sm:basis-auto sm:shrink-0">
+              {meta}
               {entry.agent && <AgentBadge agent={entry.agent} quiet />}
               <ListTime time={entry.created_at} quiet />
             </span>
