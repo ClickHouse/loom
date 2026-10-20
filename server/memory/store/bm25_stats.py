@@ -7,8 +7,8 @@ carries its memory row's version, drawn when the write began, so a write that
 inserts more than the lag after drawing it (a long embed, a slow judge) can land
 under a watermark that already moved past it, and no pass would count it. Such a
 write indexes its own rows here with the views' expressions; a request does it after
-its response (`server.memory.app.after_write.index_late_rows`), since a write is late
-exactly when inserts are slow. Both tables take a repeat: doc stats collapse per row
+its response (`server.memory.app.after_write.index_late_rows`), so a slow write does
+not also wait on these inserts. Both tables take a repeat: doc stats collapse per row
 (ReplacingMergeTree on the row key) and a term's document frequency is a uniqExact
 over row identities.
 """
@@ -32,6 +32,7 @@ REFRESH_LAG_NS = 10 * 1_000_000_000
 LATE_AFTER_NS = REFRESH_LAG_NS // 2
 
 _IDENTITY = "(org, namespace, agent, user_id, session_id, memory_key)"
+_TABLES = ("memory_doc_stats", "memory_term_freq")
 _KEYS = "{keys:Array(Tuple(String, String, String, String, String, String))}"
 
 _DOC_STATS = f"""
@@ -91,13 +92,21 @@ async def index_late_rows(rows: list[dict[str, Any]], *, ch: _CHClient | None = 
         }
     )
     ch = ch or _default_client()
-    try:
-        # Independent statements: one round trip when inserts are slow, not two.
-        await asyncio.gather(
-            ch.execute(_DOC_STATS, params={"keys": keys}),
-            ch.execute(_TERM_FREQ, params={"keys": keys}),
+    # Independent statements, one round trip; both end before this returns, so shutdown's
+    # drain never closes the client under one of them.
+    results = await asyncio.gather(
+        ch.execute(_DOC_STATS, params={"keys": keys}),
+        ch.execute(_TERM_FREQ, params={"keys": keys}),
+        return_exceptions=True,
+    )
+    failed = [
+        (table, r)
+        for table, r in zip(_TABLES, results, strict=True)
+        if isinstance(r, BaseException)
+    ]
+    for table, e in failed:
+        # The write landed; BM25 weights catch up on a rebuild.
+        _log.warning(
+            "bm25 stats: late rows not folded into %s for %d keys: %s", table, len(keys), e
         )
-    except Exception as e:  # noqa: BLE001 — the write landed; BM25 weights catch up on a rebuild
-        _log.warning("bm25 stats: late rows not indexed for %d keys: %s", len(keys), e)
-        return 0
-    return len(late)
+    return 0 if failed else len(late)

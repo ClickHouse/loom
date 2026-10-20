@@ -296,10 +296,9 @@ same-key supersession and the audit receipt. Projections are fail-open
 (`memory/app/after_write.py`), and a read of the same namespace in the same process waits
 for them (`after_write.settle`). A derived table lags its source by seconds; the BM25 legs
 merge that lag themselves. An embedding row that lands under the refresh watermark (its
-version was drawn more than 5 s before its insert, which happens when inserts are slow)
-is folded into the BM25 tables by its own write, after the response
-(`after_write.index_late_rows`): awaited, it put two more inserts on exactly the writes
-that were already slow.
+version was drawn more than 5 s before its insert: a long embed or judge, or slow
+inserts) is folded into the BM25 tables by its own write, after the response
+(`after_write.index_late_rows`), so a slow write does not also wait on two more inserts.
 
 ## The memory_versions mirror
 

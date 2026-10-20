@@ -64,6 +64,64 @@ async def test_late_rows_are_folded_with_both_views_statements_and_errors_are_lo
 
 
 @pytest.mark.asyncio
+async def test_both_statements_run_at_once_and_one_failing_waits_for_the_other() -> None:
+    """One round trip, and the call ends only after both have: shutdown's drain must not
+    close the client under the statement that is still running."""
+    import asyncio
+
+    started: list[str] = []
+    finished: list[str] = []
+    both_started = asyncio.Event()
+
+    class _CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            table = "doc_stats" if "memory_doc_stats" in sql else "term_freq"
+            started.append(table)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=5)
+            if table == "doc_stats":
+                raise RuntimeError("memory limit")
+            await asyncio.sleep(0.05)
+            finished.append(table)
+
+    assert await bm25_stats.index_late_rows([_row(version=1)], ch=_CH()) == 0
+    assert sorted(started) == ["doc_stats", "term_freq"]
+    assert finished == ["term_freq"]
+
+
+def test_request_paths_hand_late_rows_to_after_write() -> None:
+    """memory.set, memory.bulk_set and memory.update_by_id never await the statements:
+    each hands its rows to `after_write.index_late_rows`."""
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2] / "server/memory/app"
+    for name in ("set_commit.py", "bulk_set.py", "update.py"):
+        tree = ast.parse((root / name).read_text())
+        calls = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "index_late_rows"
+        ]
+        assert calls, name
+        for call in calls:
+            assert isinstance(call.func.value, ast.Name) and call.func.value.id == "after_write", (
+                name
+            )
+        awaited = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Await)
+            and isinstance(n.value, ast.Call)
+            and getattr(n.value.func, "attr", "") == "index_late_rows"
+        ]
+        assert not awaited, name
+
+
+@pytest.mark.asyncio
 async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeypatch) -> None:
     """Each embedding write whose version predates its insert hands its rows over; a
     request does it after its response, so a slow statement does not hold the write."""
