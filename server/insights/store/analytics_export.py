@@ -40,10 +40,10 @@ SELECT
     countIf(NOT success) AS errors,
     countIf(status_class = 'server') AS server_errors,
     countIf({SLI_OK} AND latency_ms > budget_ms) AS slow,
-    sum(toUInt64(input_tokens)) AS input_tokens,
-    sum(toUInt64(output_tokens)) AS output_tokens,
-    sum(toUInt64(embedding_tokens)) AS embedding_tokens,
-    sum(toUInt64(llm_calls)) AS llm_calls,
+    sum(input_tokens) AS input_tokens,
+    sum(output_tokens) AS output_tokens,
+    sum(embedding_tokens) AS embedding_tokens,
+    sum(llm_calls) AS llm_calls,
     sum(upstream_cost_usd) AS cost_usd,
     sum(bytes_written) AS bytes_written,
     toUInt32(ifNotFinite(
@@ -108,8 +108,7 @@ ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 # Pinned whatever the server's profile says. A whole file or an error: a `limit`
 # or a `break` / `any` overflow mode returns a partial result with no error, and
-# an upload never replaces it. FINAL that merges every version before a filter
-# reads it. Then sums that are never Nullable, strings as
+# an upload never replaces it. Then sums that are never Nullable, strings as
 # Parquet STRING, not BINARY (a warehouse joins the hashes as strings), and
 # dates as DATE, not UInt16.
 _WHOLE = ("group_by", "result", "timeout", "read", "sort", "join", "set", "distinct", "transfer")

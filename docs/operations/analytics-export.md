@@ -144,7 +144,8 @@ Only the export's pod reads that Secret. The chart refuses to render without
 `LOOM_ANALYTICS_EXPORT_NAME_KEY` in `env`, `extraEnv` or `secrets.extra`, and a
 `nameKeySecret.name` that is the release's Secret (`secrets.existingSecret` or the chart's
 own) or an `envFrom` Secret. It cannot see the contents of those Secrets: keep the key out of
-them.
+them. A settings file (`settingsFile`) is no place for it either: Loom refuses a secret
+there, so every pod fails to start.
 
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: `fullnameOverride` when set, else the
