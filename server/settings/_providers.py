@@ -99,8 +99,8 @@ class ProviderSettings(ModelSettings):
     # Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...),
     # with inference_customer_header only; "" sends none.
     inference_feature_header: str = ""
-    # The customer named on calls made for the deployment itself (startup probe,
-    # calibration, provider checks), which belong to no org.
+    # The customer named on calls made for the deployment itself (startup probe, the
+    # recalibration worker's fixed pairs, provider checks), which belong to no org.
     inference_system_customer: str = "loom"
     # True (a cell serving several customers): refuse to start without
     # inference_customer_header, so no model call goes out unattributed.
