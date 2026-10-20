@@ -825,7 +825,7 @@ function OnboardingSteps() {
     ["Agents search it with code.search", "Join the repository, then mint a token for your agents."],
   ];
   return (
-    <div className="repo-onboarding mt-6 w-full max-w-md text-left">
+    <div className="mt-6 w-full max-w-md text-left">
       <VerticalStepper aria-label="How a repository is indexed">
         {steps.map(([label, hint], i) => (
           <VerticalStepper.Step

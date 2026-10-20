@@ -772,7 +772,7 @@ function MoreLink({
 const ROW_BLEED = "block text-left -mx-2 w-[calc(100%+1rem)] px-2 rounded-sm cursor-pointer";
 
 // Focus stays in the field (aria-activedescendant), so the ring on the option the keys moved
-// to is the only focus indicator: Click UI's outline blue, inset, over the menu tint. An
+// to is the only focus indicator: Click UI's outline colour, inset, over the menu tint. An
 // option the pointer is on takes the tint alone. `data-by-keys` marks the keys' option.
 const OPTION_CLASS = `${ROW_BLEED} py-2 no-underline hover:no-underline text-text aria-selected:bg-surface-2 data-[by-keys]:ring-2 data-[by-keys]:ring-inset data-[by-keys]:ring-focus`;
 

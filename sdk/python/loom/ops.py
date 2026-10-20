@@ -7736,7 +7736,7 @@ class ConversationAppendOutput(TypedDict, total=False):
     msg_id: Required[str]
     ts: Required[str]  # date-time as ISO-8601 text
     stored: NotRequired[bool]
-    reason: NotRequired[Literal["", "duplicate", "logging_disabled"]]
+    reason: NotRequired[Literal["", "duplicate", "logging_disabled", "deleted"]]
 
 
 class ConversationCompactInput(TypedDict, total=False):
@@ -12973,7 +12973,7 @@ class MemorySearchOutput(TypedDict, total=False):
 
 
 class MemorySearchTraceInput(TypedDict, total=False):
-    "Same shape as memory.search; returns the per-candidate scoring"
+    "Same shape as memory.search; returns the vector leg's per-candidate scoring"
 
     org: Required[str]
     namespace: Required[str]
@@ -13061,7 +13061,7 @@ class MemorySearchTraceInput(TypedDict, total=False):
 
 
 class MemorySearchTraceBody(TypedDict, total=False):
-    "Same shape as memory.search; returns the per-candidate scoring"
+    "Same shape as memory.search; returns the vector leg's per-candidate scoring"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
