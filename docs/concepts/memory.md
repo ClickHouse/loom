@@ -106,9 +106,9 @@ attribute, never from the value, so a later session that states the same attribu
 on the same key. Under `auto_reinforce` and `manual_review`, the conflict resolver judges
 the rows of one key that two sessions of the same user (not the anonymous user `-`, whose
 sessions are separate tasks) wrote, from a point write or a bulk write, as it judges any
-close pair: it
-retires the older row of an update it is sure of (except under `manual_review`), flags a
-contradiction for review and leaves two different facts under a reused key live. Under
+close pair: it retires the older row of an update it is sure of (except under
+`manual_review`), flags a contradiction for review and leaves two different facts under a
+reused key live. Under
 `append_only` nothing is judged.
 
 ## Memory types

@@ -1218,9 +1218,8 @@ async def end_edges(
     row named. The UPDATE stamps the rows it ends with this close's id (`closed_by`), so
     the reopen opens only those. The links of the values `skip_versions` ((memory_id,
     content_sha256)) hold nothing while their row is 'high': they are about to be
-    deleted. The edges go a
-    parameter's worth at a time (`param_slices`): long entity names make a long list of
-    pairs."""
+    deleted. The edges go a parameter's worth at a time (`param_slices`): long entity
+    names make a long list of pairs."""
     for part in param_slices(ends):
         await _end_edges_slice(
             ch,
