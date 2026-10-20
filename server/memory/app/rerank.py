@@ -173,12 +173,14 @@ async def rerank(
     # The operator endpoint is a plain HTTP hop with no LLM client behind it,
     # so nothing else would put it in the waterfall; without this span a slow
     # reranker read as slow retrieval.
+    from server.llm import customer
     from server.observability.otel import traced
 
+    headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(url, json=body)
+                resp = await client.post(url, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed reranker keeps the input order
@@ -244,19 +246,18 @@ async def _rerank_with_builtin_cohere(
         "top_n": len(candidates),
         "return_documents": False,
     }
+    from server.llm import customer
     from server.observability.otel import traced
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        **customer.headers(),  # outside the fail-open: a call naming no customer is a bug
+    }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    _COHERE_API_URL,
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
+                resp = await client.post(_COHERE_API_URL, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed Cohere call keeps the input order

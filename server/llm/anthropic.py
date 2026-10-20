@@ -17,7 +17,7 @@ import httpx
 from server.clients._http import get_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
-from server.llm import gateway, traits
+from server.llm import customer, gateway, traits
 from server.llm._retry import retrying
 from server.llm.client import LLMResult
 from server.llm.json_text import strip_code_fence
@@ -123,6 +123,7 @@ async def _post(client: Any, model: str, api_key: str, payload: dict[str, Any]) 
         "x-api-key": api_key,
         "anthropic-version": _API_VERSION,
         "Content-Type": "application/json",
+        **customer.headers(),
     }
     if root != _ANTHROPIC_ROOT:
         headers["Authorization"] = f"Bearer {api_key}"  # what gateways in front of it take

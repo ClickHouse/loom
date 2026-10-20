@@ -227,9 +227,12 @@ async def probe_embedding_dim() -> int | None:
     `settings.embedding_dim`).
     """
     global _probed_dim
+    from server.llm import customer
+
     try:
         embedder = get_embedder()
-        vec = await embedder.embed("loom")
+        with customer.system():  # the deployment's own check, no org's data
+            vec = await embedder.embed("loom")
     except Exception as e:  # noqa: BLE001 — boot must survive an unreachable embedder
         logging.getLogger(__name__).warning(
             "embedding dim probe failed (%s); falling back to settings.embedding_dim=%d",

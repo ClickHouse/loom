@@ -405,7 +405,10 @@ async def _flush(
 ) -> None:
     if not pending:
         return
-    vectors = await embed_many(emb, [p["text"] for p in pending])
+    from server.llm import customer
+
+    with customer.for_org(org):
+        vectors = await embed_many(emb, [p["text"] for p in pending])
     rows = build_rows(
         org,
         ns,

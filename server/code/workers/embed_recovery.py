@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass, set_worker_identity
@@ -293,7 +294,8 @@ async def _embed_rows(
         for start in range(0, len(whole), batch):
             group = whole[start : start + batch]
             texts = [clip_for_embedding(text_of(r), count_tokens=counter) for r in group]
-            vectors, failures = await _vectors_for(embedder, texts)
+            with customer.for_org(org):
+                vectors, failures = await _vectors_for(embedder, texts)
             embedded += _stage_replacements(
                 repo, table, group, vectors, failures, max_attempts, result, replacements
             )

@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from server.llm import customer
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.session_outcomes import insert_outcomes
@@ -260,7 +261,7 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
             system, user = judge_prompt(
                 str(r.get("summary_text") or ""), list(r.get("key_facts") or [])
             )
-            with llm_stage("session_judge"):
+            with llm_stage("session_judge"), customer.for_org(str(r["org"])):
                 res = await llm.complete(
                     system, user, max_tokens=160, response_format={"type": "json_object"}
                 )
@@ -427,7 +428,7 @@ async def distil_contrasts(
                 str(neg.get("reason") or ""),
                 str(pos.get("summary_text") or ""),
             )
-            with llm_stage("session_contrast"):
+            with llm_stage("session_contrast"), customer.for_org(str(neg["org"])):
                 res = await llm.complete(
                     system, user, max_tokens=400, response_format={"type": "json_object"}
                 )

@@ -172,6 +172,25 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _embed_rows(
+    embedder: Any, rows: list[dict[str, Any]]
+) -> list[tuple[list[float] | None, str]]:
+    """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
+    org, and one model call names a single customer."""
+    from server.llm import customer
+
+    by_org: dict[str, list[int]] = {}
+    for i, r in enumerate(rows):
+        by_org.setdefault(str(r.get("org") or ""), []).append(i)
+    out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
+    for org, positions in by_org.items():
+        with customer.for_org(org):
+            embedded = await _embed_batch(embedder, [rows[i]["content_excerpt"] for i in positions])
+        for i, one in zip(positions, embedded, strict=True):
+            out[i] = one
+    return out
+
+
 async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float] | None, str]]:
     """`(vector, error)` per input, batching the happy path.
 
@@ -434,7 +453,7 @@ async def run_pass(
         if dropped:
             await memory_repo.insert_embedding_rows(dropped)
         if rows:
-            embedded = await _embed_batch(embedder, [r["content_excerpt"] for r in rows])
+            embedded = await _embed_rows(embedder, rows)
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):
                 content = r["content_excerpt"]
                 if vec is None:

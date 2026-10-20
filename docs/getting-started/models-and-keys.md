@@ -227,6 +227,33 @@ gateway's audience; the gateway must trust the cluster's OIDC issuer and match
 Loom's service account (`system:serviceaccount:<namespace>:<name>`), not just
 the issuer, since every pod of the cluster can get a token from it.
 
+#### Naming the customer on every call
+
+A gateway that meters or budgets per customer reads the customer from a header.
+Name the headers, and every chat, embedding, rerank and classify request carries
+the org whose data it holds, and the feature that made it:
+
+```bash
+LOOM_INFERENCE_CUSTOMER_HEADER=X-Customer-Id   # the org
+LOOM_INFERENCE_FEATURE_HEADER=X-Feature        # optional: hyde, extract_typed, memory.search, worker.embedding
+LOOM_INFERENCE_SYSTEM_CUSTOMER=loom            # calls that belong to no org
+```
+
+- A request names the org of its verified token (the org the call addresses);
+  a caller cannot choose another.
+- A background job names the org of the rows it works on, and makes one call
+  per org: the embedding worker, `loom reembed` and a model rebuild split their
+  batches by org.
+- The deployment's own calls (the startup check of the embedder, calibration,
+  the dashboard's provider check) name `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
+- With the customer header set, a model call that names no org is refused
+  (`MODEL_CALL_UNATTRIBUTED`) instead of being sent: it is a call path that
+  forgot its org, and the gateway would bill it to no one.
+- An org id is sent percent-encoded where it needs to be.
+
+Cached answers make no call: an embedding or a model answer served from Loom's
+cache is not metered again.
+
 #### Without a workload token
 
 Where the platform gives Loom no token (a VM, a container host), Loom signs

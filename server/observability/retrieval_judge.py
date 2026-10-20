@@ -359,7 +359,9 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("classify"):
+        from server.llm import customer
+
+        with llm_stage("classify"), customer.for_org(str(item["org"])):
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
             )

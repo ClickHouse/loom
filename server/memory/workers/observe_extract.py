@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
 from server.memory.app.observe_replay import _extract_replay, replay_messages
 from server.memory.domain.observation_tags import (
     CRYSTALLIZE_DONE_TAG,
@@ -383,7 +384,8 @@ async def run_pass(
                 observations = await _load_session_observations(session, cfg, ch)
                 if not observations:
                     continue
-                distilled = await _distill_session(session, observations)
+                with customer.for_org(str(session["org"])):
+                    distilled = await _distill_session(session, observations)
                 result.distilled_sessions.append(distilled)
                 result.written_memories += distilled.written
                 result.observations_consumed += distilled.observations

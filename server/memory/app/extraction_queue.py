@@ -407,10 +407,15 @@ async def replay_row(row: dict[str, Any]) -> int:
     """Run one queued request through the inline handler under the enqueuer's
     principal and read scope; returns memories written."""
     from server.identity.domain.read_scope import read_filters_bound
+    from server.llm import customer
     from server.memory.app.extract.handler import handle_memory_set_from_messages
     from server.memory.domain import provenance as _prov
 
     # The worker has no auth bound, so the scope is bound for "no auth".
-    with _prov.pipeline_actor(replay_actor(row)), read_filters_bound(None, replay_scope(row)):
+    with (
+        _prov.pipeline_actor(replay_actor(row)),
+        read_filters_bound(None, replay_scope(row)),
+        customer.for_org(str(row.get("org") or "")),
+    ):
         out = await handle_memory_set_from_messages(rebuild_input(row))
     return len(out.written)

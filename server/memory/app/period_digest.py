@@ -426,9 +426,11 @@ async def _source_memories(ch: Any, period: Period) -> tuple[list[str], list[str
 async def _write_period(
     ch: Any, llm: Any, embedder: Any, period: Period, result: PeriodDigestResult
 ) -> bool:
+    from server.llm import customer
+
     system, user = build_period_prompt(period)
     try:
-        with llm_stage("period_digest"):
+        with llm_stage("period_digest"), customer.for_org(period.org):
             out = await llm.complete(system=system, user=user, max_tokens=420)
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
         result.failures.append(f"llm {period.memory_key}: {type(e).__name__}: {e}"[:256])
@@ -439,7 +441,8 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
-    embedding = await embedder.embed(text)
+    with customer.for_org(period.org):
+        embedding = await embedder.embed(text)
     try:
         source_ids, source_entities = await _source_memories(ch, period)
     except Exception as e:  # noqa: BLE001 — lineage and entities are additive

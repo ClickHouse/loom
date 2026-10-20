@@ -19,7 +19,7 @@ from server.embedding._provider import (
     store,
     vector,
 )
-from server.llm import gateway
+from server.llm import customer, gateway
 from server.observability.genai import embedding_span
 from server.observability.provider_health import recording
 
@@ -94,7 +94,7 @@ class OpenAIEmbedder:
         resp = await _http_client().post(
             url,
             json=payload,
-            headers={"Authorization": f"Bearer {bearer}"},
+            headers={"Authorization": f"Bearer {bearer}", **customer.headers()},
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()

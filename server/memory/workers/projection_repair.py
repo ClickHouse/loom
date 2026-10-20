@@ -49,7 +49,10 @@ async def run_pass(
         )
         result.scanned = len(failures)
         for failure in failures:
-            retry = await retry_projection_failure(failure)
+            from server.llm import customer
+
+            with customer.for_org(str(failure.org)):
+                retry = await retry_projection_failure(failure)
             if retry.retried:
                 result.retried += 1
             if retry.resolved:

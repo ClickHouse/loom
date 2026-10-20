@@ -1069,6 +1069,9 @@ Source: `server/settings/_providers.py`
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |
 | `LOOM_INFERENCE_TOKEN_AUDIENCE` | `str` | `''` | With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience. |
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` | The scope sent with that exchange; "" sends none. |
+| `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
+| `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` | Header naming the feature that made the call (search, extraction, ...); "" sends none. |
+| `LOOM_INFERENCE_SYSTEM_CUSTOMER` | `str` | `'loom'` | The customer named on calls made for the deployment itself (startup probe, calibration, provider checks), which belong to no org. |
 | `LOOM_EMBEDDING_CACHE_SHARED` | `bool` | `True` | Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, keyed (model, sha1 of normalised text). Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only. |
 | `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS` | `int` | `2000` | Longest query text, characters, that uses the shared cache; 0 = no cap. |
 | `LOOM_EMBEDDING_CACHE_SIZE` | `int` | `10000` | The per-process query-embedding LRU: entries held (0 = cache nothing) and seconds each lives. |

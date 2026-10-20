@@ -72,6 +72,14 @@ class ProviderSettings(ModelSettings):
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
+    # Header naming the customer (the org) on every model call, for a gateway that
+    # meters by it; set, a call naming no customer is refused (server/llm/customer.py).
+    inference_customer_header: str = ""
+    # Header naming the feature that made the call (search, extraction, ...); "" sends none.
+    inference_feature_header: str = ""
+    # The customer named on calls made for the deployment itself (startup probe,
+    # calibration, provider checks), which belong to no org.
+    inference_system_customer: str = "loom"
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use

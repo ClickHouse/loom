@@ -208,6 +208,13 @@ def current_operation() -> str:
     return str((ident or {}).get("operation") or "")
 
 
+def current_org() -> str:
+    """The org the transport (or a worker) stamped on this context; "" when
+    none was."""
+    ident = _identity.get()
+    return str((ident or {}).get("org") or "")
+
+
 def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> None:
     """Identity for a background pass: ``operation=worker.<name>`` plus tenant.
 

@@ -299,14 +299,27 @@ def _without_key(row: dict[str, Any]) -> dict[str, Any]:
 async def _rewrite_page(
     ch: Any, embedder: Any, table: str, chunk: list[dict[str, Any]], key_only: bool
 ) -> None:
+    from server.llm import customer
+
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
-    vecs: list[list[float]] | None = None
-    if not key_only:
-        vecs = await embedder.embed_many([str(r.get(cfg["text"]) or "") for r in chunk])
-    kvecs = None
-    if cfg.get("key_text"):
-        kvecs = await embedder.embed_many([_key_input(r) for r in chunk])
+    vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
+    kvecs: list[list[float]] | None = [[] for _ in chunk] if cfg.get("key_text") else None
+    # A page can span two orgs (the keyset leads with org): one call per org,
+    # since a model call names a single customer.
+    by_org: dict[str, list[int]] = {}
+    for i, r in enumerate(chunk):
+        by_org.setdefault(str(r.get("org") or ""), []).append(i)
+    for org, positions in by_org.items():
+        with customer.for_org(org):
+            if vecs is not None:
+                texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]
+                for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
+                    vecs[i] = v
+            if kvecs is not None:
+                keys = [_key_input(chunk[i]) for i in positions]
+                for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
+                    kvecs[i] = v
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in enumerate(chunk)

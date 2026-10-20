@@ -343,7 +343,10 @@ async def calibrate_embedder(
         return None
 
     async def _embed_pair(a: str, b: str) -> float:
-        va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
+        from server.llm import customer
+
+        with customer.system():  # fixed probe pairs, no org's data
+            va, vb = await asyncio.gather(embedder.embed(a), embedder.embed(b))
         return _cosine(va, vb)
 
     try:

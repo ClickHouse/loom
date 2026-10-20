@@ -245,7 +245,10 @@ async def settle(
     verdict = "error"
     result: Any = None
     try:
-        result = await cf.settle_deferred_judgement(pj)
+        from server.llm import customer
+
+        with customer.for_org(str(ident.org)):
+            result = await cf.settle_deferred_judgement(pj)
         if await still_current(ident, content_sha256):
             verdict = await apply(
                 ident, result, memory_id=memory_id, cfg=cfg, content_sha256=content_sha256

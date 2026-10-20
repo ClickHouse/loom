@@ -56,9 +56,12 @@ async def classify(
         "prompt_template": prompt_template,
         "valid_types": valid_types,
     }
+    from server.llm import customer
+
+    headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(endpoint, json=body)
+            resp = await client.post(endpoint, json=body, headers=headers)
             resp.raise_for_status()
             payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed classifier keeps the caller's type
