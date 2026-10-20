@@ -615,6 +615,10 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"ssnnumber": "123456789"}, "high"),
         ({"ssnno": "123456789"}, "high"),
         ({"SOCIALSECURITYNUMBER": "123-45-6789"}, "high"),
+        # a run of capitals before a lowercase word
+        ({"PINcode": "4471"}, "high"),
+        ({"CVVcode": "123"}, "high"),
+        ({"SSNno": "123-45-6789"}, "high"),
         ({"securitycode": "5512"}, "high"),
         ({"ssn": "000-12-3456"}, ""),
         ({"pan": "4111111111111112"}, ""),
@@ -638,6 +642,10 @@ def test_long_runs_are_read_in_linear_time() -> None:
     assert not reads_high('"pin": "' + " " * 200_000 + "x")
     assert detect_sensitivity("PIN for" + " " * 200_000 + "x") == ""
     assert detect_sensitivity("PIN for the" + " " * 200_000 + "door") == ""
+    assert time.perf_counter() - started < 2.0
+    # escaped quotes, each a possible key start: a key reads at most 200 characters
+    started = time.perf_counter()
+    assert not reads_high('\\"' * 100_000)
     assert time.perf_counter() - started < 2.0
 
 
@@ -734,6 +742,12 @@ _PREFILTER_OBJECTS = [
     {'pin"': "4471"},  # written `pin\"`
     {"door\\pin": "4471"},  # written `door\\pin`
     {"p_in": 1013},
+    {"spin": "4471"},  # a key word ending in a label
+    {"unpin": "1234"},
+    {"cvvcode": "123"},
+    {"ssnno": "123456789"},
+    {"securitycode": "5512"},
+    {"PINcode": "4471"},
     {"cvv_code": "123"},
     {"ssn_no": "123456789"},
     {"social_security_number": "123-45-6789"},

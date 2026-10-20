@@ -695,12 +695,13 @@ or a bank account (number) counts as contact intent, so ranking does not demote 
 that answers it.
 
 A JSON value is read scalar by scalar (`detector_text`). A key whose last one, two or three
-words name a PIN-like secret states its digits under that label, so the free-text rules above
-decide (a label's words may also be written as one word, as in `pincode` or `cvv2`): `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits), `pin_number` as
-`pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code` (`pass_code`,
-`cvv_2`, `cvc2`, `cvv_code` and `cvc_number` too) as `<label> is <value>` (3-8 digits). An
-`ssn`, `ssn_number`, `ssn_no` or `social_security_number` key states an SSN with its dashes
-optional. A card number is found under any key. So `{"pin": "4471"}`,
+words name a PIN-like secret states its digits under that label, so the free-text rules
+above decide the length. A label's words may also be written as one word (`pincode`,
+`cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits),
+`pin_number` as `pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code`
+(with `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and `cvc_number`) as `<label> is <value>`
+(3-8 digits). An `ssn`, `ssn_number`, `ssn_no` or `social_security_number` key states an
+SSN with its dashes optional. A card number is found under any key. So `{"pin": "4471"}`,
 `{"pin_code": "4471"}`, `{"badge_pin": "4471"}` and `{"ssn": "123456789"}` are `high`, and
 `{"pin": "560001"}`, `{"pincode": "560001"}` (a postal code), `{"pin_count": 4}` and
 `{"pin": "A1"}` are not. A connector pin in a config (`{"pin": 115}`) reads as a PIN, as

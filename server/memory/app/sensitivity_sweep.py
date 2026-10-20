@@ -78,9 +78,20 @@ _KEY_SEP = r'(?:[^A-Za-z0-9"\\]|\\(?:["bfnrt/\\]|u[0-9a-fA-F]{4}))*'
 _KEY_VALUE = rf'{_KEY_SEP}"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'
 
 
+# A key's first word starts after a character that is neither a letter nor a digit (the
+# key's opening quote, a separator) or after a JSON escape, so `spin` is not `pin`.
+_KEY_START = r'(?:^|[^A-Za-z0-9]|\\(?:["bfnrt/\\]|u[0-9a-fA-F]{4}))'
+
+
 def _key_words(keys: Iterable[tuple[str, ...]]) -> str:
-    """Key words as RE2, with a separator run between them, as the detector splits a key."""
-    return "|".join(_KEY_SEP.join(words) for words in keys)
+    """Key words as RE2, with a separator run between them, as the detector splits a key.
+    The first word starts at `_KEY_START`, or at a capital after a lowercase letter or digit
+    (`badgePin`), matched case-sensitively inside the case-insensitive prefilter."""
+    alts = []
+    for words in keys:
+        body = _KEY_SEP.join(words)
+        alts.append(rf"{_KEY_START}{body}|(?-i:[a-z0-9]{body[0].upper()}){body[1:]}")
+    return "|".join(alts)
 
 
 _PIN_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label == "pin")

@@ -364,6 +364,9 @@ KEYED_SECRET_WORDS = _KEYED_SECRET_PARTS | {
 _SSN_KEY_PARTS = (("ssn",), ("ssn", "number"), ("ssn", "no"), ("social", "security", "number"))
 SSN_KEYS = _SSN_KEY_PARTS + tuple(("".join(w),) for w in _SSN_KEY_PARTS if len(w) > 1)
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
+# The same key split at every change of case, so a run of capitals before a lowercase word
+# is a word of its own (`PINcode` is `PIN`, `code`; the split above reads `PI`, `Ncode`).
+_KEY_CASE_WORDS = re.compile(r"[A-Z]+|[a-z0-9]+")
 
 
 def _keyed_secret(key: str, value: Any) -> str:
@@ -372,9 +375,14 @@ def _keyed_secret(key: str, value: Any) -> str:
     '' when the key names none."""
     if not isinstance(value, str | int) or isinstance(value, bool):
         return ""
-    words = [w.lower() for w in _KEY_WORDS.findall(key)]
-    # the last one, two and three words: (`pin`,) and (`badge`, `pin`) for `badge_pin`
-    tails = [tuple(words[-n:]) for n in (1, 2, 3) if len(words) >= n]
+    # the last one, two and three words of both splits: (`pin`,) and (`badge`, `pin`) for
+    # `badge_pin`
+    tails = [
+        tuple(w.lower() for w in words[-n:])
+        for words in (_KEY_WORDS.findall(key), _KEY_CASE_WORDS.findall(key))
+        for n in (1, 2, 3)
+        if len(words) >= n
+    ]
     label = next((KEYED_SECRET_WORDS[t] for t in tails if t in KEYED_SECRET_WORDS), "")
     if not (label or any(t in SSN_KEYS for t in tails)):
         return ""
@@ -390,11 +398,11 @@ def _keyed_secret(key: str, value: Any) -> str:
 # A `"key": value` pair in raw JSON text (a chunk of an object value) whose value is
 # digits and dashes, for `reads_high`: a quoted value is the whole string, spaces around
 # the digits allowed (`"4471 abc"` is not one), and a bare number ends where the digits
-# do (`4471.5` and a 20-digit run are not read as a shorter number). The key is any
-# quoted string, escapes included (`"pin\""`, `"door\\pin"`); each attempt reads it to
-# its closing quote, so the scan stays linear.
+# do (`4471.5` and a 20-digit run are not read as a shorter number). The key is a quoted
+# string, escapes included (`"pin\""`, `"door\\pin"`); a key reads at most 200
+# characters, so the scan stays linear.
 _KEYED_PAIR = re.compile(
-    r'"((?:[^"\\]|\\.)+)"\s*:\s*'
+    r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'
     r'(?:"\s*([0-9][0-9-]{0,15})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
     re.ASCII,
 )
