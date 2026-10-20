@@ -7,6 +7,7 @@ Callers pass their own per-request timeout when the default is too short.
 
 It follows redirects, so it is not for caller-supplied URLs: a client that
 must not be redirected to another host (webhook delivery) builds its own.
+`_on_request` runs before every request it sends, each redirect hop included.
 """
 
 from __future__ import annotations
@@ -14,6 +15,10 @@ from __future__ import annotations
 import threading
 
 import httpx
+
+from server.core.errors import GatewayRequiredError
+from server.settings import settings
+from server.settings._providers import is_provider_api
 
 _lock = threading.Lock()
 _client: httpx.AsyncClient | None = None
@@ -39,6 +44,19 @@ class _ProviderClient(httpx.AsyncClient):
         return headers
 
 
+def refuse_provider_api(url: str) -> None:
+    """Refuses a model call to a provider's own API while the gateway is
+    required, whatever named it (a model named per request, the dashboard's
+    check, a redirect): neither a gateway token nor a provider key goes there."""
+    if settings.gateway_required() and is_provider_api(url):
+        host = httpx.URL(url).host
+        raise GatewayRequiredError(f"{host} is not the gateway: point its base URL at the gateway")
+
+
+async def _on_request(request: httpx.Request) -> None:
+    refuse_provider_api(str(request.url))
+
+
 def get_client() -> httpx.AsyncClient:
     """Return the shared client, constructing it on first use."""
     global _client
@@ -59,6 +77,7 @@ def get_client() -> httpx.AsyncClient:
                 ),
                 # Follow a provider's trailing-slash or moved-endpoint redirect.
                 follow_redirects=True,
+                event_hooks={"request": [_on_request]},
             )
     return _client
 

@@ -18,7 +18,12 @@ from server.settings._models import (
 # The providers' own APIs: while the gateway is required, no model call goes
 # there (server/llm/gateway.py).
 PROVIDER_API_HOSTS = frozenset(
-    {"api.openai.com", "api.anthropic.com", "generativelanguage.googleapis.com"}
+    {
+        "api.openai.com",
+        "api.anthropic.com",
+        "generativelanguage.googleapis.com",
+        "api.cohere.com",
+    }
 )
 
 
@@ -75,10 +80,8 @@ class ProviderSettings(ModelSettings):
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
-    # Every model call goes to a gateway: Loom refuses to load with an API root
-    # at a provider's own host (OpenAI, Anthropic, Gemini), and refuses any call
-    # sent there, so a provider key in hand never reaches the provider. On
-    # whenever inference_token_url is set.
+    # True: model calls may go only to a gateway, never a provider's own host;
+    # on whenever inference_token_url is set.
     inference_gateway_required: bool = False
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
@@ -264,10 +267,19 @@ class ProviderSettings(ModelSettings):
         ):
             if is_provider_api(url):
                 raise ValueError(f"{why} needs {name} at the gateway")
-        gemini = self.embedding_provider == "gemini" or (
-            not self.embedding_provider and self.embedding_model.startswith("gemini")
-        )
-        if gemini:
+        for name, url in self.rerank_endpoint_map().items():
+            if is_provider_api(url):
+                # The entry, never its URL: it can carry a credential.
+                raise ValueError(f"{why} refuses LOOM_RERANK_ENDPOINTS_JSON entry {name!r}")
+        from server.core.embedding_space import inferred_provider
+
+        provider: str = self.embedding_provider
+        if not provider:
+            try:
+                provider = inferred_provider(self.embedding_model)
+            except ValueError:
+                provider = ""  # an unknown model is refused where the embedder is built
+        if provider == "gemini":
             # The Gemini embedder calls Google's own API, never a gateway.
             raise ValueError(f"{why} refuses the Gemini embedder: embed through the gateway")
         return self

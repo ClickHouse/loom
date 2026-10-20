@@ -389,6 +389,10 @@ Raised in `server/memory/app/extract/handler.py`.
 
 Raised in `server/memory/app/verify.py`.
 
+#### `GATEWAY_REQUIRED`
+
+HTTP 503, raised as `server.core.errors.GatewayRequiredError`. 503 — a model call named a provider's own API while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a token exchange).
+
 #### `GRANT_BUSY`
 
 HTTP 503, raised as `server.core.errors.GrantBusyError`. 503 — another change to the same grant held it past the wait.

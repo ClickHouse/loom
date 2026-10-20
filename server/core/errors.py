@@ -136,6 +136,15 @@ class RateLimitedError(LoomServerError):
         super().__init__(message, retry_after_s=retry_after_s)
 
 
+class GatewayRequiredError(LoomServerError):
+    """503 — a model call named a provider's own API while the gateway is
+    required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a token exchange). A
+    setting to fix, not an outage: never retried."""
+
+    code = "GATEWAY_REQUIRED"
+    status_code = 503
+
+
 class BackendUnavailableError(LoomServerError):
     """503 — ClickHouse could not be reached after the bounded reconnect.
 

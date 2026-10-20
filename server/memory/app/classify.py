@@ -30,6 +30,7 @@ import logging
 
 import httpx
 
+from server.clients._http import refuse_provider_api
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
 
@@ -57,6 +58,7 @@ async def classify(
         "valid_types": valid_types,
     }
     try:
+        refuse_provider_api(endpoint)  # its own client: the shared client's hook never runs
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(endpoint, json=body)
             resp.raise_for_status()

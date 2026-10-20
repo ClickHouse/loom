@@ -47,6 +47,7 @@ from typing import Any
 
 import httpx
 
+from server.clients._http import refuse_provider_api
 from server.llm.json_text import strip_code_fence
 from server.memory.domain.rerank_names import (
     BUILTIN_COHERE,
@@ -177,6 +178,7 @@ async def rerank(
 
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
+            refuse_provider_api(url)  # its own client: the shared client's hook never runs
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(url, json=body)
                 resp.raise_for_status()
@@ -248,6 +250,7 @@ async def _rerank_with_builtin_cohere(
 
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
+            refuse_provider_api(_COHERE_API_URL)
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(
                     _COHERE_API_URL,

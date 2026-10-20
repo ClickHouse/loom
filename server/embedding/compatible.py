@@ -70,9 +70,6 @@ class CompatibleEmbedder:
         }
         if self._send_dimensions:
             payload["dimensions"] = self.dim
-        from server.llm import gateway
-
-        gateway.refuse_provider_api(self._endpoint)
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
         async for attempt in retrying():
             with attempt:

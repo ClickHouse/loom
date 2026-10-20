@@ -66,9 +66,11 @@ also signs the identity token Loom exchanges at an inference gateway; that gatew
 those keys, so Loom refuses the settings when the token's audience is `LOOM_JWT_AUDIENCE` or
 its issuer one Loom's verifier accepts, and a retire may not leave no RS256 key active.
 While the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange),
-no model call reaches a provider's own API (`server/llm/gateway.py::refuse_provider_api`,
-called by every sender): the settings refuse an API root there or the Gemini embedder, and
-a call a request or the dashboard points there is refused before its key is sent. The `default` row holds `HMAC(root, label)`, written by
+no model call reaches a provider's own API (`server/clients/_http.py::refuse_provider_api`):
+the settings refuse an API root or a rerank endpoint there and the Gemini embedder; the
+shared provider client's request hook (`_on_request`) refuses every hop, redirects included;
+the rerank and classify senders, on their own clients, check each URL; and `builtin:cohere`
+is refused by name. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, never retried. The `default` row holds `HMAC(root, label)`, written by
 the workers leader or a keyring command (never a replica's first boot, which would trust a
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.

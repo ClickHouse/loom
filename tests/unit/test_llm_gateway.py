@@ -10,6 +10,8 @@ from typing import Any
 import httpx
 import pytest
 
+from server.clients import _http
+from server.core.errors import GatewayRequiredError
 from server.llm import gateway
 from server.settings import Settings, settings
 
@@ -262,7 +264,7 @@ def test_health_does_not_call_an_exchanging_deployment_keyless(gw: _Gateway, mon
 )
 def test_the_gateway_token_never_goes_to_a_providers_own_api(gw: _Gateway, url: str) -> None:
     # Whatever path picked the provider: a model named per request, the dashboard's check.
-    with pytest.raises(gateway.GatewayUnavailable, match="not the gateway"):
+    with pytest.raises(GatewayRequiredError, match="not the gateway"):
         asyncio.run(gateway.bearer("", url))
     assert gw.sent == []
 
@@ -275,7 +277,7 @@ def test_a_claude_model_named_per_request_does_not_take_the_token_to_anthropic(
     recorder = _Recorder({})
     monkeypatch.setattr(anthropic_mod, "_http_client", lambda: recorder)
     client = anthropic_mod.AnthropicLLMClient(model="claude-haiku-4-5", api_key="")
-    with pytest.raises(gateway.GatewayUnavailable):
+    with pytest.raises(GatewayRequiredError):
         asyncio.run(client.complete("s", "u"))
     assert recorder.calls == []
 
@@ -408,12 +410,13 @@ def required(monkeypatch: pytest.MonkeyPatch) -> None:
         "https://api.anthropic.com",
         "https://eu.api.openai.com/v1/embeddings",
         "https://generativelanguage.googleapis.com/v1beta/models/m:embedContent",
+        "https://api.cohere.com/v2/rerank",
     ],
 )
 def test_with_the_gateway_required_a_key_never_goes_to_a_providers_own_api(
     required: None, url: str
 ) -> None:
-    with pytest.raises(gateway.GatewayUnavailable, match="not the gateway"):
+    with pytest.raises(GatewayRequiredError, match="not the gateway"):
         asyncio.run(gateway.bearer("sk-gateway", url))
 
 
@@ -421,25 +424,124 @@ def test_with_the_gateway_required_its_key_is_the_bearer_at_the_gateway(required
     assert asyncio.run(gateway.bearer("sk-gateway", _GW)) == "sk-gateway"
 
 
-def test_with_the_gateway_required_no_embedder_posts_to_a_provider(
-    required: None, monkeypatch: pytest.MonkeyPatch
+@pytest.fixture
+def wire(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The shared client, its hooks in place, over a transport that records
+    each URL it is sent and redirects the gateway's /moved to OpenAI."""
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(str(request.url))
+        if request.url.path.endswith("/moved"):
+            return httpx.Response(307, headers={"location": "https://api.openai.com/v1/embeddings"})
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.5] * 8}]})
+
+    monkeypatch.setattr(_http, "_client", None)
+    client = _http.get_client()
+    monkeypatch.setattr(client, "_transport", httpx.MockTransport(answer))
+    yield sent
+    monkeypatch.setattr(_http, "_client", None)
+
+
+def test_with_the_gateway_required_no_redirect_takes_a_call_to_a_provider(
+    required: None, wire: list[str]
 ) -> None:
-    # Neither calls bearer: each refuses the provider's host itself.
+    async def follow() -> None:
+        await _http.get_client().post("https://gateway.example/v1/moved", json={})
+
+    with pytest.raises(GatewayRequiredError):
+        asyncio.run(follow())
+    assert wire == ["https://gateway.example/v1/moved"]  # the provider's hop never left
+
+
+def test_with_the_gateway_required_no_embedder_posts_to_a_provider(
+    required: None, wire: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Neither calls bearer: the shared client refuses the provider's host, at once.
     from server.embedding import compatible, gemini
 
-    recorder = _Recorder({})
-    monkeypatch.setattr(compatible, "get_client", lambda: recorder)
-    monkeypatch.setattr(gemini, "_http_client", lambda: recorder)
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
     direct = compatible.CompatibleEmbedder(
         model="text-embedding-3-small", dim=8, base_url="https://api.openai.com/v1", api_key="k"
     )
-    with pytest.raises(gateway.GatewayUnavailable):
+    with pytest.raises(GatewayRequiredError):
         asyncio.run(direct._request(["text"]))
     google = gemini.GeminiEmbedder(model="gemini-embedding-001", dim=8)
-    with pytest.raises(gateway.GatewayUnavailable):
+    with pytest.raises(GatewayRequiredError):
         asyncio.run(google._post(google._endpoint, google._content_request("text")))
-    assert recorder.calls == []
+    assert wire == []
+    assert not issubclass(GatewayRequiredError, httpx.TransportError)  # never retried
+
+
+def test_the_dashboards_check_names_the_refusal(required: None, wire: list[str]) -> None:
+    from server.insights.app import provider_validation
+
+    check = asyncio.run(
+        provider_validation._check(
+            "embedding",
+            "compatible",
+            "text-embedding-3-small",
+            "k",
+            8,
+            base_url="https://api.openai.com/v1",
+        )
+    )
+    assert (check.ready, check.code) == (False, "gateway_required")
+
+
+def test_no_rerank_or_classify_endpoint_reaches_a_provider(
+    required: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each posts on its own client, so each checks the URL itself.
+    from server.memory.app import classify, rerank
+    from server.memory.app.rerank import RerankCandidate
+
+    posted: list[str] = []
+
+    class _Client:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+        async def post(self, url: str, **_: Any) -> httpx.Response:
+            posted.append(url)
+            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(rerank.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _Client)
+    monkeypatch.setenv("COHERE_API_KEY", "c-key")
+    monkeypatch.setattr(
+        settings, "rerank_endpoints_json", '{"direct": "https://api.openai.com/v1/rerank"}'
+    )
+    candidates = [RerankCandidate("k", "ns", "text", "observation", 0.5)]
+    for endpoint in ("direct", "builtin:cohere"):
+        out = asyncio.run(
+            rerank.rerank(endpoint=endpoint, prompt_template="", query="q", candidates=candidates)
+        )
+        assert out == candidates  # fails open, in input order
+    label = asyncio.run(
+        classify.classify(
+            endpoint="https://api.anthropic.com/classify",
+            prompt_template="",
+            value="v",
+            valid_types=[],
+        )
+    )
+    assert label == "" and posted == []
+
+
+def test_with_the_gateway_required_builtin_cohere_is_refused_by_name(required: None) -> None:
+    from server.memory.domain.rerank_names import check_rerank_name
+
+    for name in ("builtin:cohere", "builtin:cohere:rerank-english-v3.0"):
+        with pytest.raises(ValueError, match="LOOM_INFERENCE_GATEWAY_REQUIRED"):
+            check_rerank_name(name)
+    assert check_rerank_name("builtin:openai") == "builtin:openai"
 
 
 @pytest.mark.parametrize(
@@ -455,6 +557,10 @@ def test_with_the_gateway_required_no_embedder_posts_to_a_provider(
             "LOOM_EMBEDDING_BASE_URL",
         ),
         ({"LOOM_EMBEDDING_MODEL": "gemini-embedding-001"}, "Gemini embedder"),
+        (
+            {"LOOM_RERANK_ENDPOINTS_JSON": '{"direct": "https://api.cohere.com/v2/rerank"}'},
+            "entry 'direct'",
+        ),
     ],
 )
 def test_the_gateway_required_refuses_to_load_with_a_providers_address(

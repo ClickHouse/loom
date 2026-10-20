@@ -22,13 +22,11 @@ import logging
 import math
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 
 from server.core.errors import LoomServerError
 from server.settings import settings
-from server.settings._providers import is_provider_api
 
 log = logging.getLogger(__name__)
 
@@ -59,18 +57,13 @@ def exchanging() -> bool:
     return bool(settings.inference_token_url)
 
 
-def refuse_provider_api(url: str) -> None:
-    """Refuses a model call to a provider's own API while the gateway is
-    required: whatever path named it (a model named per request, the
-    dashboard's check), neither a gateway token nor a provider key goes there."""
-    if settings.gateway_required() and is_provider_api(url):
-        host = urlsplit(url).hostname
-        raise GatewayUnavailable(f"{host} is not the gateway: point its base URL at the gateway")
-
-
 async def bearer(provider_key: str, url: str) -> str:
     """What a model call to `url` presents: the gateway's token when Loom
-    exchanges an identity token there, else the provider key."""
+    exchanges an identity token there, else the provider key. A provider's own
+    API is refused here, before a token is fetched for it, and on every hop by
+    the shared client (`server.clients._http._on_request`)."""
+    from server.clients._http import refuse_provider_api
+
     refuse_provider_api(url)
     if not exchanging():
         return provider_key

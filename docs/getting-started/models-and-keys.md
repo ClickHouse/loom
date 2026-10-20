@@ -201,12 +201,28 @@ OPENAI_API_KEY=<the key the gateway issued for Loom>
 
 Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
 scheme gateways take. With a gateway key, set `LOOM_INFERENCE_GATEWAY_REQUIRED=true`
-so a wrong root can never send prompts and the key straight to a provider:
-Loom then refuses to start while `LOOM_OPENAI_BASE_URL`, `LOOM_ANTHROPIC_BASE_URL`
-or `LOOM_EMBEDDING_BASE_URL` points at a provider's own API (OpenAI, Anthropic,
-Gemini), or the embedder is Gemini's, and refuses any model call sent there,
-whatever named it (a model named per request, a root changed in the dashboard).
-A token exchange turns this on by itself.
+so a wrong root can never send prompts and the key straight to a provider. A
+token exchange turns this on by itself.
+
+- **At start**, Loom refuses to load while `LOOM_OPENAI_BASE_URL`,
+  `LOOM_ANTHROPIC_BASE_URL` or `LOOM_EMBEDDING_BASE_URL` points at a provider's
+  own API (OpenAI, Anthropic, Gemini, Cohere), while an entry of
+  `LOOM_RERANK_ENDPOINTS_JSON` does, or while the embedder is Gemini's. Both
+  default roots are the providers' own APIs, so both must point at the gateway,
+  including the one for a provider you do not use: a model named per request
+  may be either provider's.
+- **At call time**, any call sent to a provider's own API is refused before it
+  leaves, on every redirect hop too, whatever named it: a model named per
+  request, a configuration saved in the dashboard, a `LOOM_CODE_SEARCH_VECTOR_MODELS`
+  entry, a namespace's `classify_endpoint`. `builtin:cohere` is refused as a
+  rerank choice (422). A refused call is not retried, the dashboard's model check
+  answers `gateway_required`, and `/v1/health` reports the provider as failing.
+- **Rolling it out:** a previous build ignores the setting, so turn it on once
+  every replica runs this one. A deployment that already exchanges a token and
+  embeds with Gemini (or at a provider's own embedding root) refuses to start on
+  this build: move the embedder behind the gateway first
+  (`LOOM_EMBEDDING_PROVIDER=compatible`, `LOOM_EMBEDDING_BASE_URL` at the
+  gateway), or the rollout stops at the first upgraded replica.
 
 A gateway that accepts workload identity (RFC 8693 token
 exchange) needs no key at all: Loom exchanges its workload's OIDC token there,

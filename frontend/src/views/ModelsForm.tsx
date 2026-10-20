@@ -31,6 +31,7 @@ const errorMessages: Record<string, string> = {
   invalid_output: "The model response did not match the expected format or dimensions.",
   unsupported_dimensions: "The vector tables need a dimension count that is a multiple of 8.",
   unsupported_provider: "This provider is not supported for this job.",
+  gateway_required: "Model calls must go through the inference gateway: point this provider's base URL at it.",
   provider_error: "The provider check failed. Check the model and provider availability.",
 };
 
