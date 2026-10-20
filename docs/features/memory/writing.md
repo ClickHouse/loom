@@ -341,7 +341,8 @@ worker sends it. Any 2xx within 10 s acknowledges it; the 10 s cover the name lo
 connection and the status line, and the answer's body is never read. Anything else is
 retried after 5 s, 30 s, 2 min, 10 min, 30 min and then hourly, until
 `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts (60 by default, about 2.3 days of retries)
-mark it `dead`. `actor` is the principal that
+mark it `dead`, and any event a receiver has not taken 2.75 days after it happened is
+marked `dead` with "not delivered in time". `actor` is the principal that
 made the change, or `worker:<name>` for a change a background pass made (the expiry
 sweep, the `delete_version` check).
 
@@ -360,6 +361,9 @@ sweep, the `delete_version` check).
 - **Waiting and dead events.** While the variable `secret_ref` names is unset or not
   usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
   counts as no attempt; after 2.5 days they are marked `dead` with "no usable secret".
+  An event of a working webhook that a receiver has not taken after 2.75 days (a
+  receiver that is down, or a backlog that never reached its turn) is marked `dead` with
+  "not delivered in time".
   The events of a removed webhook are marked `dead` at once; registering the same URL
   again creates a new webhook that does not inherit them. An event whose memory was
   erased before it went out is marked `dead` and not sent: the key's history is read just

@@ -122,7 +122,7 @@ class Ops:
         and probe writes until three in a row leave an event (each process reads the
         registry within its refresh interval, and every registration in one read)."""
         probe = f"{self.ns}-probe"
-        await self("webhook.register", namespace=probe, url=url, secret_ref=REF)
+        probe_hook = await self("webhook.register", namespace=probe, url=url, secret_ref=REF)
         in_a_row = 0
         for i in range(120):
             key = f"probe/{i}"
@@ -136,6 +136,11 @@ class Ops:
             seen = await self("webhook.deliveries", namespace=probe, limit=500)
             in_a_row = in_a_row + 1 if key in {d["memory_key"] for d in seen["deliveries"]} else 0
             if in_a_row == 3:
+                await self(
+                    "webhook.remove",
+                    namespace=probe,
+                    webhook_id=probe_hook["webhook"]["webhook_id"],
+                )
                 return
             await asyncio.sleep(0.25)
         raise AssertionError("the server never announced a probe write")

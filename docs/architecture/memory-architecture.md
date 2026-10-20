@@ -490,7 +490,8 @@ namespace with no webhook pays no insert, and the first write after each interva
 for one registry read.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
-the events of removed webhooks and those that waited 2.5 days for a secret, then reads
+the events of removed webhooks, those that waited 2.5 days for a secret, and those a
+receiver has not taken in 2.75 days ("not delivered in time"), then reads
 the due events of the webhooks it can send to (registered, a usable secret, not cooling
 down) through the outbox's sort key (`org, namespace, webhook_id, occurred_at`): the
 events whose newest row in `loom.memory_webhook_attempts` is not settled or waiting, in

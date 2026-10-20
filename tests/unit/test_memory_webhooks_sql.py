@@ -179,6 +179,18 @@ async def test_deliveries_show_the_namespaces_events_and_their_newest_state(null
 
 
 @pytest.mark.asyncio
+async def test_an_event_announced_twice_is_due_and_listed_once() -> None:
+    # A delete_version check that runs twice writes the same event id twice.
+    ch = _tables(_event("wa", "twice", 10), _event("wa", "twice", 10))
+    due = await store.due_events(NOW, since=SINCE, hooks=HOOKS, per_webhook=5, limit=10, ch=ch)
+    assert [r["event_id"] for r in due] == ["twice"]
+    listed = await store.namespace_deliveries(
+        "acme", "chat", since=SINCE, webhook_id="", status="", limit=10, ch=ch
+    )
+    assert [r["event_id"] for r in listed] == ["twice"]
+
+
+@pytest.mark.asyncio
 async def test_keys_with_history_are_the_keys_memory_versions_holds() -> None:
     ch = _LocalCH(
         ddl("memory_versions"),

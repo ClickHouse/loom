@@ -88,14 +88,14 @@ class HistoryTarget:
     memory_key: str
     version: int
     tombstoned_at: Any
-    org: str = ""
-    memory_id: str = ""
+    org: str
+    memory_id: str
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
         return cls(
-            org=str(r.get("org") or ""),
-            memory_id=str(r.get("memory_id") or ""),
+            org=str(r["org"]),
+            memory_id=str(r["memory_id"]),
             namespace=str(r.get("namespace") or ""),
             agent=str(r.get("agent") or ""),
             user_id=str(r.get("user_id") or ""),

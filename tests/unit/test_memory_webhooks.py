@@ -219,6 +219,48 @@ async def test_writes_on_a_cold_copy_wait_for_the_first_read(
     assert both == [["wh1"], ["wh1"]] and len(reads) == 1
 
 
+@pytest.mark.asyncio
+async def test_a_cold_read_that_fails_announces_nothing_and_the_next_write_reads_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[int] = []
+    notes: list[tuple[str, str]] = []
+
+    async def slow_failing() -> list[dict[str, Any]]:
+        reads.append(1)
+        await asyncio.sleep(0.05)
+        raise RuntimeError("ClickHouse is away")
+
+    monkeypatch.setattr(store, "live_webhooks", slow_failing)
+    monkeypatch.setattr(app, "_hooks", {})
+    monkeypatch.setattr(app, "_loaded", False)
+    monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(app.degradations, "note", lambda p, e, r="": notes.append((p, e)))
+    ch = RecordingCH().install(monkeypatch)
+    # Two writes at once: the second takes the first's failed read, not a second one.
+    await asyncio.gather(
+        app.announce([("memory.written", _change())]),
+        app.announce([("memory.written", _change())]),
+    )
+    assert len(reads) == 1 and ch.inserted("memory_webhook_outbox") == []
+    assert ("memory.webhook", "registry_unread") in notes
+    # Nothing has loaded, so the next write reads again.
+    await app.announce([("memory.written", _change())])
+    assert len(reads) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_loaded_copy_serves_while_a_refresh_is_under_way(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app, "_hooks", {("acme", "chat"): (("wh1", frozenset(EVENT_TYPES)),)})
+    monkeypatch.setattr(app, "_loaded", True)
+    monkeypatch.setattr(app, "_next_read", 0.0)  # due again
+    async with app._lock:  # another write is refreshing
+        got = await asyncio.wait_for(app.subscribers("acme", "chat", "memory.written"), 1)
+    assert got == ["wh1"]
+
+
 # ------------------------------------------------------------ announcing
 
 

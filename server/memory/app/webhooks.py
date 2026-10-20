@@ -61,12 +61,11 @@ log = logging.getLogger(__name__)
 # Live webhooks a namespace may hold.
 MAX_PER_NAMESPACE = 10
 
-Hooks = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
-# (org, namespace) → ((webhook_id, its event types), ...), this process's copy.
-_hooks: Hooks = {}
-# Whether a read has landed: until one has, every caller waits for it rather than
-# taking the empty copy for "no webhook anywhere".
-_loaded = False
+# (org, namespace) → ((webhook_id, its event types), ...).
+Registry = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
+_hooks: Registry = {}  # this process's copy of the registry
+_loaded = False  # a read has landed; until one has, callers wait for it
+_reads = 0  # reads finished, so a caller queued behind one does not repeat it
 _next_read = 0.0
 _lock = asyncio.Lock()
 
@@ -100,7 +99,7 @@ async def url_refusal(url: str) -> str:
 
 async def _read() -> None:
     """Read the registry; the next read is due an interval after this one ends."""
-    global _hooks, _loaded, _next_read
+    global _hooks, _loaded, _next_read, _reads
     try:
         rows = await store.live_webhooks()
     except Exception as e:  # noqa: BLE001 — the last copy serves until a read lands
@@ -108,6 +107,7 @@ async def _read() -> None:
         degradations.note("memory.webhook", "registry_unread", e)
         log.warning("memory webhooks: registry read failed (%s); serving the last copy", e)
         _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
+        _reads += 1
         return
     hooks: dict[tuple[str, str], list[tuple[str, frozenset[str]]]] = {}
     for r in rows:
@@ -115,6 +115,7 @@ async def _read() -> None:
         hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"])))
     _hooks, _loaded = {k: tuple(v) for k, v in hooks.items()}, True
     _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
+    _reads += 1
 
 
 def forget_registry() -> None:
@@ -123,14 +124,16 @@ def forget_registry() -> None:
     _next_read = 0.0
 
 
-async def _fresh_hooks() -> Hooks:
-    """This process's copy of the registry, read again once its interval is up. A
-    caller that finds no copy yet waits for the first read; later callers wait
-    only while a refresh is under way."""
-    if _loaded and time.monotonic() < _next_read:
+async def _fresh_hooks() -> Registry:
+    """This process's copy of the registry, read again once its interval is up.
+    Once a copy is loaded, a caller that finds a read under way takes the copy
+    it has. Before then callers wait for the read, and one queued behind a read
+    takes its result, even a failed one, rather than repeating it."""
+    if _loaded and (time.monotonic() < _next_read or _lock.locked()):
         return _hooks
+    seen = _reads
     async with _lock:
-        if not _loaded or time.monotonic() >= _next_read:
+        if _reads == seen and (not _loaded or time.monotonic() >= _next_read):
             await _read()
     return _hooks
 

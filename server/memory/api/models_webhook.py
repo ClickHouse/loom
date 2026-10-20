@@ -98,8 +98,8 @@ class WebhookDelivery(BaseModel):
     memory_id: str
     version: int
     occurred_at: datetime
-    # pending (waiting for its next try), delivered (a 2xx came back) or dead
-    # (out of attempts, or never sendable: see last_error).
+    # pending (waiting for its next try), delivered (a 2xx came back) or dead: out of
+    # attempts, not delivered within 2.75 days, or never sendable (see last_error).
     status: DeliveryStatus
     # POSTs made so far (a wait for a missing secret is not one).
     attempts: int

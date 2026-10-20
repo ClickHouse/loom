@@ -214,7 +214,8 @@ def _wait_row(row: Mapping[str, Any], *, until: datetime, why: str) -> dict[str,
 
 
 async def _skip_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Why `row` is not sent (a cooldown, an erased key), or None to send it."""
+    """The attempt row to record instead of a POST (a cooldown wait, an erased key),
+    or None to send it."""
     until = _cooling_until(_hook(row)[2])
     if until is not None:  # failed its last POSTs earlier in this pass
         return _wait_row(row, until=until, why="the webhook is cooling down")
@@ -235,16 +236,18 @@ async def _send(
     due: list[dict[str, Any]],
     urls: Mapping[store.Hook, str],
     secrets: Mapping[store.Hook, bytes],
-) -> list[tuple[dict[str, Any], bool]]:
+) -> tuple[list[dict[str, Any]], int]:
     """POST the leased `due` events: CONCURRENCY at a time, one at a time per
-    webhook, within POST_BUDGET_SECONDS. Returns each finished event's (attempt
-    row, whether a POST produced it), recorded as it finished, so a pass cut at
-    its budget or by an error still records what it sent."""
+    webhook, within POST_BUDGET_SECONDS. Returns the finished events' attempt
+    rows, recorded as each finished, so a pass cut at its budget or by an error
+    still records what it sent, and how many POSTs failed and will be retried."""
     slots = asyncio.Semaphore(CONCURRENCY)
-    finished: list[tuple[dict[str, Any], bool]] = []
+    finished: list[dict[str, Any]] = []
+    failed = 0
 
     async def one(row: Mapping[str, Any]) -> None:
         """One event: checked once it holds a slot, then POSTed or passed over."""
+        nonlocal failed
         hook = _hook(row)
         async with slots:
             try:
@@ -254,11 +257,14 @@ async def _send(
                 log.warning("memory_webhook_deliver: %s not checked: %s", row["event_id"], e)
                 return
             if skipped is not None:
-                finished.append((skipped, False))
+                finished.append(skipped)
                 return
             delivery = await _post(transport, row, urls[hook], secrets[hook])
         _note_post(hook[2], delivery.ok)
-        finished.append((_outcome(row, delivery), True))
+        outcome = _outcome(row, delivery)
+        finished.append(outcome)
+        if outcome["status"] == "pending":
+            failed += 1
 
     async def in_turn(rows: list[Mapping[str, Any]]) -> None:
         """A webhook's events one after another: one POST in flight per webhook."""
@@ -279,8 +285,8 @@ async def _send(
         log.info("memory_webhook_deliver: %d of %d finished in the budget", len(finished), len(due))
     finally:
         # One insert per pass, whatever ended it: receivers drop a re-send of an id.
-        await store.insert_attempts([out for out, _posted in finished])
-    return finished
+        await store.insert_attempts(finished)
+    return finished, failed
 
 
 async def deliver_once(
@@ -350,11 +356,11 @@ async def deliver_once(
             for r in due
         ]
     )
-    finished = await _send(transport, due, urls, usable)
+    finished, failed = await _send(transport, due, urls, usable)
     return DeliverResult(
-        delivered=sum(out["status"] == "delivered" for out, _posted in finished),
-        failed=sum(posted and out["status"] == "pending" for out, posted in finished),
-        dead=sum(out["status"] == "dead" for out, _posted in finished),
+        delivered=sum(out["status"] == "delivered" for out in finished),
+        failed=failed,
+        dead=sum(out["status"] == "dead" for out in finished),
         waiting=waiting,
     )
 
