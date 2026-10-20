@@ -240,4 +240,4 @@ async def switched_off_orgs() -> frozenset[str]:
 
 def forget_switch() -> None:
     """Make the next call read the switch again, for a change just made here."""
-    _switch.forget()
+    _switch.note_change()
