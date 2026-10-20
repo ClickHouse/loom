@@ -1,6 +1,6 @@
 """JSON-valued settings are checked at load: a value that is not JSON, or
 whose top level is the wrong shape, fails naming the field and never
-printing the value. The readers still parse the entries."""
+printing the value. A field that also checks its entries gets a sample with real ones."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ _OBJECTS = [
 _OBJECT_SAMPLES = {
     "llm_max_tokens_overrides": ' {"hyde": 64} ',
     "latency_budget_overrides": ' {"memory.search": "2x"} ',
+    "rerank_endpoints_json": ' {"gw": "https://rerank.example/v1"} ',
 }
 _ARRAYS = ["code_repos_json", "code_test_gate_run_templates"]
 _CANARY = "s3cr3t-canary"
@@ -46,12 +47,7 @@ def test_the_checked_fields_are_the_json_valued_ones() -> None:
     ]
 
 
-# Object fields whose entries a model validator also checks (test_rerank_names.py), so
-# the arbitrary object below is not a valid value for them.
-_ENTRIES_CHECKED = {"rerank_endpoints_json"}
-
-
-@pytest.mark.parametrize("field", [f for f in _OBJECTS if f not in _ENTRIES_CHECKED])
+@pytest.mark.parametrize("field", _OBJECTS)
 def test_an_object_field_takes_empty_or_an_object(field: str) -> None:
     assert getattr(_load(**{field: ""}), field) == ""
     sample = _OBJECT_SAMPLES.get(field, ' {"a": {}} ')

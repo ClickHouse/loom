@@ -7,7 +7,8 @@ override binds the whole deployment within `runtime_overrides_refresh_seconds`
 and outlives a restart. Only a LIVE field takes one (`server.settings._live`);
 clearing it puts back the value the process started with (from the environment,
 the dotenv file, the settings file or the default). A build that no longer has
-the field, or no longer reads it live, logs the row once and ignores it.
+the field, no longer reads it live, or whose field refuses the stored value, logs the
+row once and ignores it.
 """
 
 from __future__ import annotations

@@ -3,13 +3,14 @@ and a deployment tunes an entry without editing it."""
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from pydantic import ValidationError
 
 from server.observability.budgets import BudgetOverrides
 from server.operations.registry import ALL_OPERATIONS
 from server.settings import Settings, settings
-from server.settings._live import coerce
 from server.settings.catalog import OP_BUDGETS_P99_MS, OP_SHAPE_BUDGETS_P99_MS
 from server.tasks.api.models_task import MAX_WAIT_SECONDS
 
@@ -57,13 +58,23 @@ def test_a_runtime_override_wins_over_the_setting(monkeypatch: pytest.MonkeyPatc
     assert overrides.effective("memory.search", 300) == 50
 
 
-@pytest.mark.parametrize(
-    "raw", ['{"memory.search": "lots"}', '{"memory.search": -5}', '{"memory.serch": 50}']
-)
-def test_a_bad_override_map_is_refused_at_startup_and_by_settings_set(raw: str) -> None:
-    """An unknown op or an unusable budget is refused, naming the rule, never the value."""
+@pytest.mark.parametrize("raw", ['{"memory.search": "lots"}', '{"memory.search": -5}'])
+def test_an_unusable_budget_stops_startup(raw: str) -> None:
+    """The refusal names the op, never the value. The field is not live, so the settings
+    file and the environment are the only ways in."""
     with pytest.raises(ValidationError) as caught:
         Settings(_env_file=None, latency_budget_overrides=raw)  # type: ignore[call-arg]
-    assert "lots" not in str(caught.value) and "serch" not in str(caught.value)
-    with pytest.raises(ValidationError):
-        coerce(Settings, "latency_budget_overrides", raw)
+    assert "memory.search" in str(caught.value)
+    assert "lots" not in str(caught.value) and "-5" not in str(caught.value)
+
+
+def test_an_op_this_build_lacks_is_logged_and_ignored(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Builds N-1 and N read one settings file: an op one of them lacks must not stop it."""
+    raw = '{"memory.search": 900, "memory.a_later_op": 50}'
+    Settings(_env_file=None, latency_budget_overrides=raw)  # type: ignore[call-arg]
+    monkeypatch.setattr(settings, "latency_budget_overrides", raw)
+    with caplog.at_level(logging.WARNING):
+        assert BudgetOverrides().effective("memory.search", 300) == 900
+    assert "memory.a_later_op" in caplog.text

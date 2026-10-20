@@ -402,8 +402,9 @@ settings:
   # llm_retry_max_wait_s: 20.0
 
   # JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most
-  # tokens one kind of LLM call may write, keyed by its `llm_stage`. A name that is no
-  # LLM call, or a count below 1, is refused. '' = the table as declared. [live]
+  # tokens one kind of LLM call may write, keyed by its `llm_stage`. A count below 1 is
+  # refused; a call this build lacks is logged and ignored. '' = the table as declared.
+  # [live]
   # llm_max_tokens_overrides: ""
 
   # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}: `llm_cache`
@@ -3765,8 +3766,9 @@ settings:
 
   # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
   # server/settings/catalog.py): an integer replaces that op's budget, "3x" multiplies
-  # it. Checked after the per-consumer overrides and `admin/budget.set`; an entry naming
-  # no op, or neither ms nor "<n>x", is refused. '' = the table as declared. [restart]
+  # it. Checked after the per-consumer overrides and `admin/budget.set`; a value that is
+  # neither ms nor "<n>x" stops startup, an op this build lacks is logged and ignored.
+  # '' = the table as declared. [restart]
   # latency_budget_overrides: ""
 
   # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in ms, "3x"

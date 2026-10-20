@@ -1,5 +1,5 @@
 {{- range $k, $_ := .Values.settingsFile }}
-{{- if has $k (list "embedding_provider" "embedding_model" "embedding_dim" "embedding_base_url" "embedding_send_dimensions" "jwt_secret" "jwt_secret_previous") }}
+{{- if has (printf "LOOM_%s" (upper $k)) (include "loom.guardedNames" $ | fromJsonArray) }}
 {{- fail (printf "set %s through %s, not settingsFile" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}
 {{- end }}
 {{- end }}

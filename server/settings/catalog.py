@@ -3016,9 +3016,9 @@ class NamespaceSettings(BaseModel):
 
 
 def parse_latency_budgets(raw: str) -> dict[str, int | float]:
-    """`latency_budget_overrides` as {op: ms | factor}; ValueError when an entry names no
-    op of OP_BUDGETS_P99_MS or is neither milliseconds nor "<n>x". The message states
-    the rule, never the value."""
+    """`latency_budget_overrides` as {op: ms | factor}; ValueError names the op whose
+    budget is neither milliseconds nor "<n>x", never the value. An op this build lacks
+    is kept: the reader logs it and nothing asks for it."""
     if not raw.strip():
         return {}
     obj = json.loads(raw)
@@ -3026,11 +3026,9 @@ def parse_latency_budgets(raw: str) -> dict[str, int | float]:
         raise ValueError("not a JSON object")
     out: dict[str, int | float] = {}
     for op_name, value in obj.items():
-        if op_name not in OP_BUDGETS_P99_MS:
-            raise ValueError("an entry names no op (OP_BUDGETS_P99_MS)")
         parsed = parse_budget_value(value)
         if parsed is None:
-            raise ValueError("an entry is neither milliseconds nor '<n>x'")
+            raise ValueError(f"{op_name!r}: neither milliseconds nor '<n>x'")
         out[op_name] = parsed
     return out
 
@@ -3040,7 +3038,9 @@ def _latency_budgets_map(raw: str) -> str:
     return raw
 
 
-# Startup and `loom settings set` refuse a map naming no op or an unusable budget.
+# Startup and the settings file refuse an unusable budget. An op name is not checked
+# here: builds N-1 and N read one settings file, and an op one of them lacks must not
+# stop it starting.
 LatencyBudgetsMap = AfterValidator(_latency_budgets_map)
 
 
@@ -3160,8 +3160,8 @@ class ObservabilitySettings(BaseModel):
     # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
     # server/settings/catalog.py): an integer replaces that op's budget, "3x"
     # multiplies it. Checked after the per-consumer overrides and `admin/budget.set`;
-    # an entry naming no op, or neither ms nor "<n>x", is refused. '' = the table as
-    # declared.
+    # a value that is neither ms nor "<n>x" stops startup, an op this build lacks is
+    # logged and ignored. '' = the table as declared.
     latency_budget_overrides: Annotated[str, JsonObject, LatencyBudgetsMap] = ""
     # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in
     # ms, "3x" multiplies the op's declared budget. Checked after runtime
@@ -3246,8 +3246,9 @@ RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 def parse_llm_max_tokens(raw: str) -> dict[str, int]:
-    """`llm_max_tokens_overrides` as {call: tokens}; ValueError says which rule an entry
-    breaks (no LLM call, no positive token count), never the value."""
+    """`llm_max_tokens_overrides` as {call: tokens}; ValueError names the call whose count
+    is not an integer of at least 1, never the count. A call this build lacks is kept:
+    the reader logs it and nothing asks for it."""
     if not raw.strip():
         return {}
     obj = json.loads(raw)
@@ -3255,10 +3256,8 @@ def parse_llm_max_tokens(raw: str) -> dict[str, int]:
         raise ValueError("not a JSON object")
     out: dict[str, int] = {}
     for call, tokens in obj.items():
-        if call not in LLM_MAX_TOKENS:
-            raise ValueError("an entry names no LLM call (LLM_MAX_TOKENS)")
         if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1:
-            raise ValueError("an entry's count is not a positive token count")
+            raise ValueError(f"{call!r}: not an integer of at least 1")
         out[call] = tokens
     return out
 
@@ -3268,7 +3267,8 @@ def _llm_max_tokens_map(raw: str) -> str:
     return raw
 
 
-# Startup and `loom settings set` refuse a map naming no LLM call or a count below 1.
+# Startup, the settings file and `loom settings set` refuse a count below 1. A call name
+# is not checked here: builds N-1 and N read one settings file and one stored override.
 LlmMaxTokensMap = AfterValidator(_llm_max_tokens_map)
 
 
@@ -3474,8 +3474,8 @@ class ProviderSettings(ModelSettings):
     # Longest backoff, in seconds, between two attempts of an LLM call.
     llm_retry_max_wait_s: Annotated[float, LIVE] = Field(default=20.0, ge=0)
     # JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most
-    # tokens one kind of LLM call may write, keyed by its `llm_stage`. A name that is no
-    # LLM call, or a count below 1, is refused. '' = the table as declared.
+    # tokens one kind of LLM call may write, keyed by its `llm_stage`. A count below 1 is
+    # refused; a call this build lacks is logged and ignored. '' = the table as declared.
     llm_max_tokens_overrides: Annotated[str, JsonObject, LlmMaxTokensMap, LIVE] = ""
 
     # JSON {class: {"llm_cache": bool, "strong": bool, "mid": bool}}:

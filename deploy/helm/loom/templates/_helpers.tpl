@@ -68,6 +68,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 value through secrets.* (or the existingSecret, which then holds them, unchecked by the
 chart), the embedding space through embedding.*. Takes (dict "key" <env or
 settings-file name> "root" $). */}}
+{{- /* The settings every pod must share, as env names: the embedding space and the root
+secret. A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
+{{- define "loom.guardedNames" -}}
+["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS"]
+{{- end -}}
+
 {{- define "loom.guardedThrough" -}}
 {{- $key := upper .key | trimPrefix "LOOM_" -}}
 {{- $values := dict "JWT_SECRET" "secrets.jwtSecret" "JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious" -}}
@@ -82,8 +88,7 @@ pod template rather than a ConfigMap, so a pod of the previous ReplicaSet that
 restarts mid-rollout keeps its own config instead of booting with the new one. */}}
 {{- define "loom.config" -}}
 {{- $dev := .Values.devClickhouse.enabled -}}
-{{- /* The settings every pod must share: the embedding space and the root secret. */}}
-{{- $guarded := list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" -}}
+{{- $guarded := include "loom.guardedNames" . | fromJsonArray -}}
 {{- range $k, $_ := .Values.env }}
 {{- if has $k $guarded }}
 {{- fail (printf "set %s through %s, not env" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}

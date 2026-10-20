@@ -15,14 +15,19 @@ _parsed: tuple[str, dict[str, int]] = ("", {})
 
 
 def _overrides(raw: str) -> dict[str, int]:
-    """`llm_max_tokens_overrides` parsed, re-parsed only when the raw string changes.
-    The field refuses a bad map at startup, in the settings file and at `settings.set`,
-    and a stored override this build cannot use is skipped when it is adopted."""
+    """`llm_max_tokens_overrides` parsed, re-parsed only when the raw string changes. The
+    field refuses an unusable count; a call this build lacks is logged once and ignored."""
     global _parsed
     with _lock:
         if raw == _parsed[0]:
             return _parsed[1]
         out = parse_llm_max_tokens(raw)
+        unknown = sorted(set(out) - set(LLM_MAX_TOKENS))
+        if unknown:
+            log.warning(
+                "LOOM_LLM_MAX_TOKENS_OVERRIDES names no LLM call of this build, ignored: %s",
+                unknown,
+            )
         _parsed = (raw, out)
         return out
 

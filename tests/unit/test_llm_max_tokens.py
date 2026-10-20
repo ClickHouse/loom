@@ -66,23 +66,33 @@ def test_a_deployment_override_changes_one_call(monkeypatch: pytest.MonkeyPatch)
     assert llm_max_tokens("hyde") == LLM_MAX_TOKENS["hyde"]
 
 
-_BAD_MAPS = ['{"no_such_call": 64}', '{"hyde": 0}', '{"hyde": "64"}', "[1]"]
-
-
-@pytest.mark.parametrize("raw", _BAD_MAPS)
-def test_a_bad_override_map_is_refused_at_startup_and_by_settings_set(raw: str) -> None:
-    with pytest.raises(ValidationError):
+@pytest.mark.parametrize("raw", ['{"hyde": -7}', '{"hyde": 0}', '{"hyde": "64"}', "[1]"])
+def test_an_unusable_count_is_refused_at_startup_and_by_settings_set(raw: str) -> None:
+    """The refusal names the call, never the count."""
+    with pytest.raises(ValidationError) as caught:
         Settings(_env_file=None, llm_max_tokens_overrides=raw)  # type: ignore[call-arg]
+    assert "-7" not in str(caught.value)
     with pytest.raises(ValidationError):
         coerce(Settings, "llm_max_tokens_overrides", raw)
 
 
-def test_a_stored_map_this_build_cannot_use_is_skipped_when_adopted(
+def test_a_call_this_build_lacks_is_logged_and_ignored(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Builds N-1 and N read one settings file: a call one of them lacks must not stop it."""
+    raw = '{"hyde": 64, "a_later_call": 100}'
+    Settings(_env_file=None, llm_max_tokens_overrides=raw)  # type: ignore[call-arg]
+    monkeypatch.setattr(settings, "llm_max_tokens_overrides", raw)
+    with caplog.at_level(logging.WARNING):
+        assert llm_max_tokens("hyde") == 64
+    assert "a_later_call" in caplog.text
+
+
+def test_a_stored_count_this_build_refuses_is_skipped_when_adopted(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A row another build stored (a call this one lacks) never reaches the calls."""
     with caplog.at_level(logging.WARNING):
-        so.adopt({so.KIND: {("llm_max_tokens_overrides",): '{"no_such_call": 64}'}})
+        so.adopt({so.KIND: {("llm_max_tokens_overrides",): '{"hyde": 0}'}})
     assert settings.llm_max_tokens_overrides == ""
     assert llm_max_tokens("hyde") == LLM_MAX_TOKENS["hyde"]
     assert any("ignored" in r.message for r in caplog.records)

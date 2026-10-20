@@ -203,15 +203,21 @@ class BudgetOverrides:
 
     def op_settings_map(self) -> dict[str, int | float]:
         """`latency_budget_overrides` parsed: {op: value}, re-parsed only when the raw
-        string changes. The field refuses a bad map at startup and at `settings.set`."""
+        string changes. The field refuses an unusable budget at startup; an op this build
+        lacks is logged once and ignored."""
         from server.settings import settings
-        from server.settings.catalog import parse_latency_budgets
+        from server.settings.catalog import OP_BUDGETS_P99_MS, parse_latency_budgets
 
         raw = str(settings.latency_budget_overrides)
         with self._lock:
             if raw == self._op_settings_raw:
                 return self._op_settings_map
             parsed = parse_latency_budgets(raw)
+            unknown = sorted(set(parsed) - set(OP_BUDGETS_P99_MS))
+            if unknown:
+                log.warning(
+                    "LOOM_LATENCY_BUDGET_OVERRIDES names no op of this build, ignored: %s", unknown
+                )
             self._op_settings_raw = raw
             self._op_settings_map = parsed
             return parsed
