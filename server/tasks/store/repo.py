@@ -512,57 +512,56 @@ async def lease_strays(
     """What the lease reconcile acts on, org-wide, among rows last written before
     `before` (a transition still in flight keeps its own rows): todo and triage tasks
     with no lease row, and idle or expired rows whose task is gone, ended or at another
-    fence. Two statements a pass: the lease rows, then the queued tasks and the tasks a
-    lease row names (that one asks the lease table again, server-side); each list stops
-    at `limit`."""
+    fence. One statement each, bounded in SQL by `limit`; each reads the other table
+    server-side, so a task created after `before` is in neither."""
     ch = ch or _default_client()
-    leases = await ch.query_all(
-        "SELECT task_id, owner, fence, "
-        "(owner = '' OR lease_until < {before:DateTime}) AND updated_at < {before:DateTime} "
-        "AS settled FROM loom.task_leases",
-        params={"before": before},
-    )
-    tasks = await ch.query_all(
-        "SELECT toString(task_id) AS id, org, inbox, toString(status) AS task_status, fence, "
-        "updated_at < {before:DateTime} AS settled FROM loom.tasks FINAL "
-        "WHERE is_deleted = 0 "
-        "AND ((status IN ('todo', 'triage') AND updated_at < {before:DateTime}) "
-        "OR toString(task_id) IN (SELECT task_id FROM loom.task_leases)) "
+    missing = await ch.query_all(
+        "SELECT toString(task_id) AS task_id, org, inbox, fence FROM loom.tasks FINAL "
+        "WHERE is_deleted = 0 AND status IN ('todo', 'triage') AND updated_at < {before:DateTime} "
+        "AND toString(task_id) NOT IN (SELECT task_id FROM loom.task_leases) "
+        "ORDER BY updated_at LIMIT {limit:UInt32} "
         "SETTINGS select_sequential_consistency = 1",
-        params={"before": before},
+        params={"before": before, "limit": int(limit)},
     )
-    by_id = {str(t["id"]): t for t in tasks}
-    leased = {str(r["task_id"]) for r in leases}
-    missing = [
-        MissingLeaseRow(
-            task_id=str(t["id"]),
-            org=str(t["org"]),
-            inbox=str(t["inbox"]),
-            fence=int(t["fence"]),
-        )
-        for t in tasks
-        # `settled` too: a task the lease table names in the second read but not the
-        # first is one created between them, within its grace.
-        if t["settled"] and t["task_status"] in ("todo", "triage") and str(t["id"]) not in leased
-    ][: int(limit)]
-    stray: list[StrayLeaseRow] = []
-    for row in sorted((r for r in leases if r["settled"]), key=lambda r: str(r["task_id"])):
-        task = by_id.get(str(row["task_id"]))
-        if task and task["task_status"] not in terminal and int(task["fence"]) == int(row["fence"]):
-            continue
-        stray.append(
-            StrayLeaseRow(
-                task_id=str(row["task_id"]),
-                owner=str(row["owner"]),
-                lease_fence=int(row["fence"]),
-                found=str(task["id"]) if task else "",
-                status=str(task["task_status"]) if task else "",
-                fence=int(task["fence"]) if task else 0,
+    # A row is stray when no live task holds its id (the join's empty `found`), or its
+    # task ended or is at another fence. Only the tasks the lease rows name are read.
+    stray = await ch.query_all(
+        "SELECT l.task_id AS task_id, l.owner AS owner, l.fence AS lease_fence, "
+        "t.id AS found, t.task_status AS status, t.fence AS fence "
+        "FROM loom.task_leases AS l "
+        "LEFT JOIN (SELECT toString(task_id) AS id, toString(status) AS task_status, fence "
+        "FROM loom.tasks FINAL WHERE is_deleted = 0 "
+        "AND toString(task_id) IN (SELECT task_id FROM loom.task_leases)) AS t "
+        "ON l.task_id = t.id "
+        "WHERE (l.owner = '' OR l.lease_until < {before:DateTime}) "
+        "AND l.updated_at < {before:DateTime} "
+        "AND (t.id = '' OR t.task_status IN {terminal:Array(String)} OR t.fence != l.fence) "
+        "ORDER BY l.task_id LIMIT {limit:UInt32} "
+        "SETTINGS select_sequential_consistency = 1, join_use_nulls = 0",
+        params={"before": before, "terminal": list(terminal), "limit": int(limit)},
+    )
+    return (
+        [
+            MissingLeaseRow(
+                task_id=str(t["task_id"]),
+                org=str(t["org"]),
+                inbox=str(t["inbox"]),
+                fence=int(t["fence"]),
             )
-        )
-        if len(stray) >= int(limit):
-            break
-    return missing, stray
+            for t in missing
+        ],
+        [
+            StrayLeaseRow(
+                task_id=str(r["task_id"]),
+                owner=str(r["owner"]),
+                lease_fence=int(r["lease_fence"]),
+                found=str(r["found"]),
+                status=str(r["status"]),
+                fence=int(r["fence"]),
+            )
+            for r in stray
+        ],
+    )
 
 
 async def inbox_counts(
