@@ -3,11 +3,13 @@ the grant rows naming them, the collections they created and their personal
 collection's directory row (their live grants are revoked first, through
 `server.identity.app.grants.revoke_subject`).
 
-The user is the principal `user:<user_id>` (server/auth/gateway.py). Each step
-rewrites the rows it changes with a newer version, `INSERT ... SELECT *
-REPLACE` from an inner FINAL read, so every column it does not change is
-carried. The saga holds the claim an online writer of the same rows holds, and
-moves the groups watermark after a group change (server/erasure/app/saga_steps.py).
+The user is the principal `user:<user_id>` (server/auth/gateway.py). The group,
+tree and directory steps rewrite the rows they change with a newer version,
+`INSERT ... SELECT * REPLACE` from an inner FINAL read, so every column they do
+not change is carried, and the saga holds the claim an online writer of the same
+rows holds; it moves the groups watermark after a group change. The grant rows,
+already revoked under each grant's claim, are deleted
+(server/erasure/app/saga_steps.py).
 """
 
 from __future__ import annotations
