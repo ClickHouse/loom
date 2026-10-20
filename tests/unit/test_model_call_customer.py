@@ -217,6 +217,7 @@ def test_with_no_customer_header_a_mixed_org_pass_is_one_call(monkeypatch) -> No
     from server.memory.workers import embedding
 
     monkeypatch.setattr(settings, "inference_customer_header", "")
+    genai._identity.set(None)
     rows = [
         {"org": "acme", "content_excerpt": "a"},
         {"org": "beta", "content_excerpt": "bb"},
