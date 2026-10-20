@@ -1217,11 +1217,13 @@ async def test_delete_version_retires_only_the_removed_versions_chunks(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("newer_state", ["live", "high", "deleted again"])
 async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed_version(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, newer_state: str
 ) -> None:
     # A newer value that keeps the removed value's opening passages lands after the
     # delete's check, before its chunks retire: its shared chunks stay live with the rest.
+    # They stay retired when search serves none of it: a high row, or a key deleted again.
     ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
     head = time.time_ns() - 10_000_000_000
     opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
@@ -1236,9 +1238,14 @@ async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed
     async def set_lands_after_the_check(existing: Any, **kw: Any) -> Any:
         answer = await key_moved_on(existing, **kw)
         row = {**_row(newer_value, kw["tombstone"] + 1_000), "memory_type": "semantic"}
+        if newer_state == "high":
+            row["sensitivity"] = "high"
         await ch.insert("loom.memory", [row])
         newer.extend(_chunk_rows((await _read_back(ch)).value))
         await ch.insert("loom.memory_chunks", newer)
+        if newer_state == "deleted again":
+            gone = {**row, "version": row["version"] + 1_000, "tombstoned_at": row["updated_at"]}
+            await ch.insert("loom.memory", [gone])
         return answer
 
     monkeypatch.setattr(hm, "_key_moved_on", set_lands_after_the_check)
@@ -1251,7 +1258,10 @@ async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed
     live = await ch.query_all(
         "SELECT content FROM loom.memory_chunks FINAL WHERE tombstoned_at IS NULL"
     )
-    assert sorted(r["content"] for r in live) == sorted(r["content"] for r in newer)
+    expected = [r["content"] for r in newer]
+    if newer_state != "live":
+        expected = [c for c in expected if c not in shared]
+    assert sorted(r["content"] for r in live) == sorted(expected)
 
 
 async def _owed_after_a_failed_check(
@@ -1381,6 +1391,11 @@ async def test_a_tombstone_that_lands_after_its_check_closed_hides_nothing(
     await commit_late()
     got = await _read_back(ch)
     assert got is not None and got.value == "Tuesdays" and got.version > head
+    # The head has a new version: a retry naming the one it read answers version_changed.
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.reason == "version_changed"
 
 
 @pytest.mark.asyncio

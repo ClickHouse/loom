@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # A lifted row sits within this many nanoseconds above the tombstone (plus one per row of
 # its key in the batch), offset by a hash of its own id and drawn version so two writes
 # lifted over one delete rarely share a version, whatever the clock's resolution.
-_LIFT_SPREAD_NS = 1_000
+LIFT_SPREAD_NS = 1_000
 
 Key = tuple[str, str, str, str]
 
@@ -66,7 +66,7 @@ def _lift(
     moving any row down; their embedding rows follow."""
     ordered = sorted(rows, key=lambda r: int(r["version"]))
     lowest = int(ordered[0]["version"])
-    spread = zlib.crc32(f"{ordered[0]['memory_id']}:{lowest}".encode()) % _LIFT_SPREAD_NS
+    spread = zlib.crc32(f"{ordered[0]['memory_id']}:{lowest}".encode()) % LIFT_SPREAD_NS
     floor = tombstone + 1 + spread
     previous = 0
     for row in ordered:

@@ -152,7 +152,7 @@ async def tombstone_set_chunks(
     ones) except those in `keep` (`(chunk_index, content_sha256)` pairs the
     caller is about to re-insert live), or only those in `only` when given. `strong`
     reads them with sequential consistency. Each tombstone is a replacing row
-    (`_tombstone_row`). Returns the number of tombstones written."""
+    (`_chunk_state_row`). Returns the number of tombstones written."""
     if ch is None:
         from server.core.ch import get_client
 
@@ -166,23 +166,25 @@ async def tombstone_set_chunks(
         ident = (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256")))
         if ident in keep or (only is not None and ident not in only):
             continue
-        tombstones.append(_tombstone_row(r, org=org, namespace=namespace, stamp=stamp))
+        tombstones.append(_chunk_state_row(r, org=org, namespace=namespace, stamp=stamp))
     if tombstones:
         await _insert_chunk_states(ch, tombstones)
     return len(tombstones)
 
 
-def _tombstone_row(
-    r: dict[str, Any], *, org: str, namespace: str, stamp: datetime
+def _chunk_state_row(
+    r: dict[str, Any], *, org: str, namespace: str, stamp: datetime, live: bool = False
 ) -> dict[str, Any]:
-    """The replacing row that retires live chunk row `r`: every persisted
-    column carried forward and `tombstoned_at` set to `stamp`. The version
+    """The replacing row that retires chunk row `r` (or, `live`, puts it back):
+    every persisted column carried forward and `tombstoned_at` set to `stamp`
+    (None when `live`). The version
     column `created_at` is also the monthly partition key, so it keeps `r`'s
     value: a tombstone in a later month's partition would never merge with the
     row it retires, and every read without FINAL (and every merged part) would
     keep the retired chunk. Inserted after `r` with an equal version, the
     tombstone wins the merge and FINAL (the later insert of a tie).
-    `stamp` stands in only when `r` carries no `created_at`."""
+    `stamp` stands in only when `r` carries no `created_at`, and stamps
+    `tombstoned_at`."""
     row = {c: r.get(c) for c in _CHUNK_COLUMNS}
     row.update(
         {
@@ -197,7 +199,7 @@ def _tombstone_row(
             "run_id": str(r.get("run_id") or "-"),
             "user_id": str(r.get("user_id") or "-"),
             "created_at": r.get("created_at") or stamp,
-            "tombstoned_at": stamp,
+            "tombstoned_at": None if live else stamp,
         }
     )
     return row
@@ -300,8 +302,9 @@ async def restore_set_chunks(
     live = []
     for r in rows:
         if (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) in identities:
-            row = _tombstone_row(r, org=org, namespace=namespace, stamp=r["created_at"])
-            live.append({**row, "tombstoned_at": None})
+            live.append(
+                _chunk_state_row(r, org=org, namespace=namespace, stamp=r["created_at"], live=True)
+            )
     if live:
         await _insert_chunk_states(ch, live)
     return len(live)
