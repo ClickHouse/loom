@@ -372,7 +372,7 @@ async def test_a_write_with_a_peer_past_the_floor_is_owed_a_judgement(ch, wired)
         dim, model_name = real.dim, real.model_name
 
         async def embed(self, text: str) -> list[float]:
-            return _vec((10, 0.7), (11, 0.714)) if "cat" in text else _vec((12, 1.0))
+            return _vec((10, 0.75), (11, 0.661)) if "cat" in text else _vec((12, 1.0))
 
     with pytest.MonkeyPatch.context() as m:
         m.setattr(set_commit, "get_embedder", lambda: Placed())

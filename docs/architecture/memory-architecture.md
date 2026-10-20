@@ -116,7 +116,7 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     token learns only that its write was refused.
 
     No verdict on the write calls an LLM. With the conflict resolver on, the peer read
-    reaches down to `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60), and a write
+    reaches down to `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.70), and a write
     that has a peer in that band, or answers `conflict`, is marked for the resolver
     (see [The conflict resolver](#the-conflict-resolver)). A peer below the conflict
     threshold never flags a write.
@@ -201,7 +201,7 @@ time of the revision owed. Neither reads a namespace that
 
 **The cluster.** A row is judged against up to `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS`
 (8) live peers of its `memory_type`, nearest first, at cosine
-`LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60) or more, in its subject: the same
+`LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.70) or more, in its subject: the same
 `user_id`, or for the anonymous user `-` the same agent. Any session counts, so a row of
 the same key written by another session is a peer; the row's own identity is not. Peers
 join their rows by the full identity, never by key alone, since keys repeat across
@@ -361,7 +361,7 @@ actions, verdicts and confidences, never the text.
   same answer.
 
 **Cost.** About $0.005 per judged row on `gpt-6.1-sol`, judged once per written
-version, and only rows with a peer at cosine 0.60 or more, or a flag, are judged. The
+version, and only rows with a peer at cosine 0.70 or more, or a flag, are judged. The
 resolver may spend a quarter of the namespace's daily cost cap
 (`LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE`, 0.25, of `daily_cost_cap_usd`, else
 `LOOM_DEFAULT_DAILY_COST_CAP_USD`, $1), counted over its own calls, and never takes the

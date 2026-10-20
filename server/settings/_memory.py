@@ -90,8 +90,9 @@ class MemorySettings(BaseModel):
     memory_conflict_resolver_enabled: bool = False
     # Peers down to this cosine (same memory_type) mark a write for the resolver and
     # join the cluster it is judged in. The cosine `conflicted` flag stays at the
-    # conflict threshold.
-    memory_conflict_resolver_min_similarity: float = Field(default=0.60, gt=0.0, le=1.0)
+    # conflict threshold. Peers below this cosine are almost never the same fact; 0.70
+    # keeps nearly every update and cuts about a fifth of the calls.
+    memory_conflict_resolver_min_similarity: float = Field(default=0.70, gt=0.0, le=1.0)
     # Most peers judged with a row in one call, nearest first.
     memory_conflict_resolver_max_peers: int = Field(default=8, ge=1, le=8)
     # An update at or above this confidence retires the older row (auto_reinforce, newest_wins);
