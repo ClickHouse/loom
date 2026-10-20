@@ -669,8 +669,8 @@ async def test_an_org_under_erasure_is_left_out_of_the_queue(
 async def test_an_empty_user_is_the_anonymous_user_and_owes_no_other_session(
     ch, wired, monkeypatch, path
 ) -> None:
-    """A write sent with user_id "" stores '-', so the anonymous user's rules hold: the
-    same key from another session is owed no judgement."""
+    """A write sent with user_id "" is stored as sent, and the anonymous user's rules
+    hold for it: the same key from another session is owed no judgement."""
     from server.embedding import get_embedder
     from server.memory.api.models_bulk import MemoryBulkSetInput
     from server.memory.app import after_write, bulk_set, set_commit
@@ -717,7 +717,7 @@ async def test_an_empty_user_is_the_anonymous_user_and_owes_no_other_session(
         " AND tombstoned_at IS NULL SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    assert {r["user_id"] for r in rows} == {"-"}
+    assert {r["user_id"] for r in rows} == {""}
     assert {r["session_id"]: r["mark"] for r in rows} == {"s1": None, "s2": None}
 
 

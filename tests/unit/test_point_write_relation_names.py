@@ -87,16 +87,3 @@ def test_a_statuses_id_is_at_most_64_characters():
     assert MemoryStatusesInput(org="o", namespace="ns", memory_ids=["a" * 64])
     with pytest.raises(ValidationError):
         MemoryStatusesInput(org="o", namespace="ns", memory_ids=["a" * 65])
-
-
-def test_an_empty_user_or_session_is_the_sentinel():
-    """ "" would skip every rule written for the anonymous user and for another
-    session; the wire reads it as `-`."""
-    from server.memory.api.models_bulk import MemoryBulkSetInput
-
-    point = MemorySetInput(**_IDENTITY, memory_key="k", value="v", user_id="", session_id=" ")
-    entry = {"memory_key": "k", "value": "v"}
-    bulk = MemoryBulkSetInput(**_IDENTITY, user_id="", session_id="", entries=[entry])
-    assert (point.user_id, point.session_id) == ("-", "-")
-    assert (bulk.user_id, bulk.session_id) == ("-", "-")
-    assert MemorySetInput(**_IDENTITY, memory_key="k", value="v", user_id="u").user_id == "u"

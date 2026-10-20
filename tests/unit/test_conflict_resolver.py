@@ -101,6 +101,9 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     assert not resolver._cross_session(row, {"agent": "a", "session_id": "s1"})
     other = NS(user_id="u", agent="a", session_id="s1")
     assert not resolver._cross_session(other, {"agent": "a", "session_id": "s2"})
+    # A user_id sent empty is stored as sent and is the anonymous user too.
+    empty = NS(user_id="", agent="a", session_id="s1")
+    assert resolver._cross_session(empty, {"agent": "a", "session_id": "s2"})
 
 
 def test_each_note_shows_when_it_holds_and_its_session() -> None:
@@ -328,7 +331,7 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     assert [p["memory_id"] for p in peers] == ["m1", "m2", "m8"]
     sql, params = ch.calls[0]
     assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
-    assert "user_id = {u:String} AND (user_id != '-' OR agent = {a:String})" in sql
+    assert "user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})" in sql
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12
     # The type, the embedding model and the expiry are applied before the vector LIMIT.
     assert "memory_type = {mt:String}" in sql and "expires_at > now()" in sql
@@ -2121,7 +2124,7 @@ async def test_at_most_half_the_places_go_to_rows_of_the_key_in_other_sessions()
     [
         "org = {org:String}",
         "namespace = {ns:String}",
-        "user_id = {u:String} AND (user_id != '-' OR agent = {a:String})",
+        "user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})",
     ],
 )
 def test_every_cluster_read_keeps_to_the_tenant_and_the_subject(predicate: str) -> None:

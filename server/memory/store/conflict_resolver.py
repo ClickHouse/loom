@@ -226,7 +226,7 @@ _LIVE_VECTORS = """
                cosineDistance(embedding, {emb:Array(Float32)}) AS dist
         FROM loom.memory_embeddings FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
-          AND user_id = {u:String} AND (user_id != '-' OR agent = {a:String})
+          AND user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})
           AND NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})
           AND scope = 'private' AND tombstoned_at IS NULL
           AND status IN ('active', 'conflicted') AND memory_type = {mt:String}
@@ -264,7 +264,7 @@ _PEER_ROWS_SQL = """
         PREWHERE org = {org:String} AND namespace = {ns:String}
           AND (agent, user_id, session_id, memory_key)
               IN {ids:Array(Tuple(String, String, String, String))}
-        WHERE user_id = {u:String} AND (user_id != '-' OR agent = {a:String})
+        WHERE user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})
           AND memory_type = {mt:String}
           AND tombstoned_at IS NULL
           AND NOT pinned

@@ -20,6 +20,7 @@ import server.memory.store as memory_repo
 from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import PreconditionFailedError
 from server.core.leases import LeaseUnavailable
+from server.core.naming import is_anonymous_user
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.llm.fake import FakeLLMClient
 from server.memory.app import intent_marks
@@ -701,7 +702,7 @@ def _cross_session(row: Any, peer: Mapping[str, Any]) -> bool:
     """A peer from another session of a subject with no real user: the anonymous user is
     one subject per agent (the cluster reads only its agent's rows), and an agent's
     sessions are separate tasks."""
-    return str(row.user_id) == "-" and str(peer["session_id"]) != str(row.session_id)
+    return is_anonymous_user(str(row.user_id)) and str(peer["session_id"]) != str(row.session_id)
 
 
 def notes_for(

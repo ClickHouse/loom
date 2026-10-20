@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from server.core.naming import SENTINEL
 
@@ -32,15 +32,6 @@ class _Identity(BaseModel):
     user_id: str = Field(default=SENTINEL)
     session_id: str = Field(default=SENTINEL)
     run_id: str = Field(default=SENTINEL)
-
-    @field_validator("user_id", "session_id", mode="before")
-    @classmethod
-    def _empty_is_none(cls, value: object) -> object:
-        """An empty user or session is no user or session (`-`): every rule for the
-        anonymous user and for another session reads `-`."""
-        if isinstance(value, str) and not value.strip():
-            return SENTINEL
-        return value
 
 
 def run_next_hint(run_id: str | None) -> str:

@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core.naming import is_anonymous_user
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app import conflicts
@@ -125,10 +126,10 @@ async def keys_held_elsewhere(
     """The keys among a write's rows (one writer identity) that hold a live row of the
     same user from another session. Outside `newest_wins` the conflict resolver judges
     such a pair, since a shared key is not proof of one attribute. None for the
-    anonymous user `-`, whose sessions are separate tasks: a verdict there could only
-    clear a flag, and a fresh write has none. Inside the writer's read scope only; a
-    'high' row is never a peer."""
-    if not memory_rows or str(memory_rows[0].get("user_id") or "") == "-":
+    anonymous user (`-`, or a user_id sent empty), whose sessions are separate tasks: a
+    verdict there could only clear a flag, and a fresh write has none. Inside the
+    writer's read scope only; a 'high' row is never a peer."""
+    if not memory_rows or is_anonymous_user(str(memory_rows[0].get("user_id") or "")):
         return set()
     writer = memory_rows[0]
     params: dict[str, Any] = {
