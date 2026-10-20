@@ -240,8 +240,8 @@ matches only if it is listed.
   vector tables may hold that other space: every data-plane request on that
   server is refused (503 `GATEWAY_REQUIRED`, which neither SDK retries, with no
   `Retry-After`) and the server is not ready, until a configuration the check
-  accepts replaces it or it is reset to the environment's. A rolling restart then stops at that server: replace the
-  configuration before rolling.
+  accepts replaces it or it is reset to the environment's. A rolling restart then
+  stops at that server: replace the configuration before rolling.
 - **Rolling it out:** a previous build ignores both settings, so turn them on
   once every replica runs this one. A deployment that already exchanges a token
   refuses to start on this build until `LOOM_INFERENCE_GATEWAY_HOSTS` lists its
