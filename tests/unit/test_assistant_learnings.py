@@ -19,8 +19,10 @@ from server.memory.domain import assistant_rules
 from server.memory.domain.extraction_prompts import AGENT_LEARNINGS_ANCHOR
 from server.memory.store import learnings as learnings_repo
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 from tests.unit.llm_fake import ScriptedLLM
 
+_SUPPORTED = "00000000-0000-0000-0000-0000000000c1"
 _RULE = "I always escalate any refund over $500 to a human."
 _MESSAGES = [
     {"role": "user", "content": "Can you refund my $800 order?"},
@@ -897,6 +899,41 @@ def test_a_bots_promoted_rule_serves_only_that_bot() -> None:
     # A rule for every agent carries no agent tag; any other document is not a rule.
     assert serves_agent(["promoted-from-learning", "source-kind:assistant_turn"], "sales-bot")
     assert serves_agent(["agent:support-bot", "runbook"], "sales-bot")
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_supporter_stats_count_a_session_once_and_quote_one_supporter() -> None:
+    """alice's session holds two rows (two racing filings) and bob's starts at the
+    same millisecond as hers: the session counts once, in the count and the mean,
+    and the quotes are one supporter's pair, never alice's question with bob's quote."""
+
+    def row(user: str, session: str, conf: float, asked: str, said: str, at: str) -> str:
+        return (
+            "INSERT INTO loom.learnings_supporters VALUES ('o', 'ns', "
+            f"'{_SUPPORTED}', '{user}', '{session}', {conf}, '{asked}', '{said}', '{at}')"
+        )
+
+    class _LocalCH:
+        async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            return run(
+                [
+                    ddl("learnings_supporters"),
+                    row("bob", "s2", 0.5, "bob asked", "bob quoted", "2026-01-01 10:00:00.000"),
+                    row(
+                        "alice", "s1", 1.0, "alice asked", "alice quoted", "2026-01-01 10:00:00.000"
+                    ),
+                    row("alice", "s1", 0.0, "again", "again", "2026-01-01 10:00:05.000"),
+                ],
+                sql,
+                params,
+            )
+
+    (got,) = await learnings_repo.supporter_stats("o", "ns", [_SUPPORTED], ch=_LocalCH())
+    assert (int(got["users"]), int(got["sessions"])) == (2, 2)
+    assert got["confidence"] == pytest.approx(0.75)
+    assert [(u, sid) for _, u, sid in got["pairs"]] == [("alice", "s1"), ("bob", "s2")]
+    assert (got["asked"], got["said"]) == ("alice asked", "alice quoted")
 
 
 def test_a_supporter_row_carries_every_column_of_loom_learnings_supporters() -> None:

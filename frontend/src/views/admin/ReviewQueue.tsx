@@ -554,10 +554,11 @@ const sourceLabel = (r: LearningEntry) => SOURCE_LABEL[r.source_kind || "memory_
 const agentLabel = (r: LearningEntry) =>
   r.agent && r.agent !== "-" ? `agent ${r.agent}` : "every agent in this namespace";
 
-// Which agents a promoted rule reaches: a named bot's rule serves that bot only.
+// Which agents a promoted rule reaches: a named bot's context packs, stacks and
+// searches serve it and other agents' do not; knowledge.search is not filtered by agent.
 const promoteNote = (r: LearningEntry) =>
   r.agent && r.agent !== "-"
-    ? `Promote publishes this rule to this namespace's knowledge for ${r.agent} only: ${r.agent}'s reads find it for every user, and other agents' reads do not.`
+    ? `Promote publishes this rule to this namespace's knowledge, tagged for ${r.agent}: ${r.agent}'s context packs, stacks and searches serve it for every user, and other agents' do not; knowledge.search finds it for anyone who can read the namespace.`
     : "Promote publishes this rule to this namespace's knowledge for every agent: every agent's reads find it for every user.";
 
 // A bot's rule is backed by distinct users, its sessions beside them; every other

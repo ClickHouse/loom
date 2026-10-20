@@ -673,7 +673,11 @@ describe("ReviewQueue", () => {
     expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(1);
     // The rows that name an agent ("-" included) say which agents Promote reaches; the old one does not.
     expect(screen.getAllByText(/Promote publishes this rule to this namespace's knowledge/)).toHaveLength(2);
-    expect(screen.getByText(/for support-bot only: .*other agents' reads do not/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        /tagged for support-bot: support-bot's context packs, stacks and searches serve it for every user, and other agents' do not; knowledge\.search finds it for anyone/,
+      ),
+    ).toBeTruthy();
     expect(screen.getByText(/knowledge for every agent: every agent's reads find it/)).toBeTruthy();
   });
 

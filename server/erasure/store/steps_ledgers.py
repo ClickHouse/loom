@@ -280,9 +280,10 @@ async def delete_learnings_queue_by_user(
     Each delete is bounded to what was read, so a review landing after the read
     survives (holding the rule) and the census's residue reopens this step to blank
     it: a pending candidate loses only its `pending` rows, a decided one only its
-    rows that hold the rule at a version no newer than the newest it read. A pending
-    candidate a supporter backed after the read is kept: the delete re-checks for
-    supporter rows, and a filing writes its supporter row before its candidate row."""
+    rows that hold the rule at a version no newer than the one it read for that
+    candidate. A pending candidate a supporter backed after the read is kept: the
+    delete re-checks for supporter rows, and a filing writes its supporter row before
+    its candidate row."""
     ch = ch or _default_client()
     n = await delete_scoped(
         "loom.learnings_supporters", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
@@ -326,14 +327,12 @@ async def delete_learnings_queue_by_user(
         n += await delete_scoped(
             "loom.learnings_queue",
             org=org,
+            # Each candidate is bounded by its own version read, never another's.
             scope_where=(
-                "candidate_id IN {cids:Array(UUID)} AND proposed_value != '' "
-                "AND version <= {read_max:UInt64}"
+                "proposed_value != '' AND arrayExists(r -> r.1 = candidate_id "
+                "AND version <= r.2, {read:Array(Tuple(UUID, UInt64))})"
             ),
-            params={
-                "cids": [str(r["candidate_id"]) for r in decided],
-                "read_max": max(int(r["version"]) for r in decided),
-            },
+            params={"read": [(str(r["candidate_id"]), int(r["version"])) for r in decided]},
             ch=ch,
         )
     return n

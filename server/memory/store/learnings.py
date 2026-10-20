@@ -168,20 +168,32 @@ async def supporter_stats(
 ) -> list[dict[str, Any]]:
     """Per candidate: distinct users, distinct sessions, the mean confidence, the
     first `_SUPPORTER_PAIRS` (user_id, session_id) pairs by time and the earliest
-    remaining supporter's quotes."""
+    remaining supporter's quotes.
+
+    A (user, session) counts once even when two racing filings both wrote its row:
+    the inner query keeps its earliest row. The quotes are one row's pair, the
+    earliest by (time, user_id, session_id), so a tie never mixes two users' words."""
     ch = ch or _default_client()
     return await ch.query_all(
         f"""
         SELECT candidate_id,
                uniqExact(user_id) AS users,
-               uniqExact(user_id, session_id) AS sessions,
-               avg(confidence) AS confidence,
-               groupArraySorted({_SUPPORTER_PAIRS})((created_at, user_id, session_id)) AS pairs,
-               argMin(asked, created_at) AS asked,
-               argMin(said, created_at) AS said
-        FROM loom.learnings_supporters
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND candidate_id IN {{ids:Array(UUID)}}
+               count() AS sessions,
+               avg(c) AS confidence,
+               groupArraySorted({_SUPPORTER_PAIRS})((t, user_id, session_id)) AS pairs,
+               argMin(q, (t, user_id, session_id)) AS quotes,
+               quotes.1 AS asked,
+               quotes.2 AS said
+        FROM (
+            SELECT candidate_id, user_id, session_id,
+                   min(created_at) AS t,
+                   argMin((asked, said), created_at) AS q,
+                   argMin(confidence, created_at) AS c
+            FROM loom.learnings_supporters
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND candidate_id IN {{ids:Array(UUID)}}
+            GROUP BY candidate_id, user_id, session_id
+        )
         GROUP BY candidate_id
         """,
         params={"org": org, "ns": namespace, "ids": candidate_ids},

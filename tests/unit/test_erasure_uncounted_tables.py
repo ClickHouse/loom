@@ -149,9 +149,9 @@ def test_an_orphaned_candidate_goes_when_pending_and_keeps_its_decision_when_dec
     assert pending[1]["cids"] == ["p"] and "proposed_value" not in pending[0]
     # Only its pending rows: a review landing in between survives.
     assert "status = 'pending'" in pending[0]
-    assert decided[1]["cids"] == ["r"] and "proposed_value != ''" in decided[0]
-    # ...no newer than the newest version read.
-    assert "version <= {read_max:UInt64}" in decided[0] and decided[1]["read_max"] == 7
+    assert "proposed_value != ''" in decided[0]
+    # ...no newer than the version read for it.
+    assert "{read:Array(Tuple(UUID, UInt64))}" in decided[0] and decided[1]["read"] == [("r", 7)]
     # The blank row is written before the rows holding the rule are deleted.
     sqls = [sql for sql, _ in ch.commands]
     assert sqls.index("INSERT INTO loom.learnings_queue") < sqls.index(decided[0])
@@ -163,13 +163,20 @@ def _deleted(
     """Whether one recorded delete of loom.learnings_queue takes `row`, given the
     candidates with a supporter row when it runs: a pending delete only `pending`
     rows of a candidate nobody supports, a decided one only rows holding the rule
-    at a version no newer than it read."""
-    if row["candidate_id"] not in params["cids"]:
-        return False
+    at a version no newer than the one it read for that candidate."""
     if "status = 'pending'" in sql:
         assert "candidate_id NOT IN (SELECT candidate_id FROM loom.learnings_supporters" in sql
-        return row["status"] == "pending" and row["candidate_id"] not in supported
-    return bool(row["proposed_value"]) and row["version"] <= params["read_max"]
+        return (
+            row["candidate_id"] in params["cids"]
+            and row["status"] == "pending"
+            and row["candidate_id"] not in supported
+        )
+    read = dict(params["read"])
+    return (
+        bool(row["proposed_value"])
+        and row["candidate_id"] in read
+        and row["version"] <= read[row["candidate_id"]]
+    )
 
 
 def _survivors(
@@ -224,6 +231,20 @@ def test_a_review_landing_after_the_blank_write_survives_the_decided_delete() ->
     asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
     blank = {"candidate_id": "c", "status": "rejected", "proposed_value": "", "version": 8}
     assert _survivors([rejected, promoted], ch) == [promoted, blank]
+
+
+def test_a_late_review_on_the_older_of_two_decided_candidates_survives() -> None:
+    """The step read candidate a at version 200 and b at version 100; b was then
+    re-reviewed at version 150 (a replica's clock behind). b's bound is its own read
+    version, not a's, so the review row stays for the reopened step to blank."""
+    a = {"candidate_id": "a", "status": "rejected", "proposed_value": '"r"', "version": 200}
+    b = {"candidate_id": "b", "status": "rejected", "proposed_value": '"s"', "version": 100}
+    review = {"candidate_id": "b", "status": "promoted", "proposed_value": '"s"', "version": 150}
+    ch = _LearningsCH(["a", "b"], [a, b])
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
+    blank_a = {**a, "proposed_value": "", "version": 201}
+    blank_b = {**b, "proposed_value": "", "version": 101}
+    assert _survivors([a, b, review], ch) == [review, blank_a, blank_b]
 
 
 def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:
