@@ -299,9 +299,7 @@ def test_a_success_from_an_address_does_not_buy_more_guesses() -> None:
 def test_a_refused_signup_is_not_recorded_so_a_retrying_caller_gets_back_in(
     auth_attempts: Any,
 ) -> None:
-    from server.auth.attempts import Attempts
-
-    signups = Attempts("signup.agent", 3, 3600)
+    signups = attempts.Attempts("signup.agent", 3, 3600)
     assert [asyncio.run(signups.allow("10.0.0.9")) for _ in range(5)] == [True] * 3 + [False] * 2
     assert len(auth_attempts.rows) == 3
     auth_attempts.now += 3601
