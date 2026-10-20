@@ -21,6 +21,7 @@ from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password
 from server.identity.app import password_link
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
+from tests.unit.security_headers import assert_security_headers
 
 pytestmark = pytest.mark.usefixtures("auth_attempts")
 
@@ -280,16 +281,15 @@ def test_signing_in_shows_a_confirm_page_that_cannot_be_framed() -> None:
 
 def test_the_server_headers_leave_the_sign_in_page_its_own_policies() -> None:
     from server.main import attach_browser_middleware
-    from server.settings import settings
 
     app = oauth_app()
     attach_browser_middleware(app)
     page = TestClient(app, base_url="http://localhost").get("/oauth/device")
     assert page.status_code == 200
-    # Only the page's values that differ from the middleware's own can show which one won.
-    for name in ("Content-Security-Policy", "Cache-Control"):
-        assert page.headers.get_list(name) == [oauth._PAGE_HEADERS[name]]
-    assert page.headers["strict-transport-security"] == f"max-age={settings.hsts_max_age_seconds}"
+    # CSP is the only page header whose value differs from the middleware default.
+    csp = oauth._PAGE_HEADERS["Content-Security-Policy"]
+    assert page.headers.get_list("Content-Security-Policy") == [csp]
+    assert_security_headers(page)
 
 
 def test_approval_needs_the_ticket_from_the_signed_in_page() -> None:
