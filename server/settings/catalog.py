@@ -4836,6 +4836,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Multiple ALTER UPDATEs are slow; tolerated for compliance.
     "erasure.request": 2000,
     "erasure.status": 25,
+    # One insert of the policy row and its audit row.
+    "extraction_policy.clear": 100,
+    # A point read of the org's and the namespace's rows.
+    "extraction_policy.get": 50,
+    # One insert of the policy row and its audit row.
+    "extraction_policy.set": 100,
     "facts.expire_by_adapter": 500,
     "facts.list": 80,
     # One frontier query per hop, at most max_hops of them.

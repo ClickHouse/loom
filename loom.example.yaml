@@ -392,12 +392,13 @@ settings:
   # inference_feature_map_json: ""
 
   # Seconds between each process's reads of the orgs whose model calls are switched off
-  # (loom.org_model_calls); a change reaches every process within it. [restart]
+  # (loom.org_model_calls) and of the operators' extraction policies
+  # (loom.extraction_policies); a change reaches every process within it. [restart]
   # model_calls_policy_refresh_seconds: 10.0
 
-  # Seconds a process trusts its copy of the org model-call switch when it cannot read
-  # it again; past it, every model call for an org is refused (fail closed). 15 to 300.
-  # [restart]
+  # Seconds a process trusts its copy of the org model-call switch, and of the
+  # extraction policies, when it cannot read it again; past it, every model call for an
+  # org is refused and no extraction runs (fail closed). 15 to 300. [restart]
   # model_calls_policy_max_stale_seconds: 60.0
 
   # Days a switched-off org's queued requests (the extraction queue) wait, from when the
@@ -2054,11 +2055,12 @@ settings:
 
   # session.brief_save. `session_brief_llm` off = every brief comes from the
   # deterministic builder (goal, status, files, errors, rules, pointers; no decisions or
-  # dead ends). The model is the deployment's LLM when `session_brief_llm_model` has no
-  # key. A save condenses its events into windows of `session_brief_window_chars` (≈6k
-  # tokens each) and revises the brief once per window, at most
-  # `session_brief_max_windows` calls per save (the last window takes the remainder,
-  # condensed harder). [live]
+  # dead ends), except under an operator's extraction policy, where a save of events
+  # alone with no model to call writes nothing. The model is the deployment's LLM when
+  # `session_brief_llm_model` has no key. A save condenses its events into windows of
+  # `session_brief_window_chars` (≈6k tokens each) and revises the brief once per
+  # window, at most `session_brief_max_windows` calls per save (the last window takes
+  # the remainder, condensed harder). [live]
   # session_brief_llm: true
 
   # Condensed size, characters, of one brief window (floor 2000); a window holds about
@@ -3740,7 +3742,7 @@ settings:
   # Op-name prefixes the auto-register hook ignores: ops on a namespace rather than into
   # it, the code plane (registers `kind = 'code'` itself), and the operator planes.
   # [restart]
-  # namespace_autoregister_skip_prefixes: "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure."
+  # namespace_autoregister_skip_prefixes: "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.,extraction_policy."
 
   # Comma-separated name prefixes of throwaway harness namespaces: stamped `kind =
   # 'bench'` by `namespace.register` (when no kind is given) and auto-register, and

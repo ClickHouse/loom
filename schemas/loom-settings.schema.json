@@ -4316,13 +4316,13 @@
           "maximum": 300,
           "minimum": 15,
           "type": "number",
-          "description": "Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300."
+          "description": "Seconds a process trusts its copy of the org model-call switch, and of the extraction policies, when it cannot read it again; past it, every model call for an org is refused and no extraction runs (fail closed). 15 to 300."
         },
         "model_calls_policy_refresh_seconds": {
           "default": 10.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it."
+          "description": "Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls) and of the operators' extraction policies (loom.extraction_policies); a change reaches every process within it."
         },
         "namespace_audit_index_row_scan_cap": {
           "default": 20000,
@@ -4336,7 +4336,7 @@
           "description": "A principal's first write into a namespace with no loom.namespaces row inserts one: owner = token subject, `kind = 'bench'` under a bench prefix, `retention_days = 0` (never a TTL). No ALTER."
         },
         "namespace_autoregister_skip_prefixes": {
-          "default": "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.",
+          "default": "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.,extraction_policy.",
           "type": "string",
           "description": "Op-name prefixes the auto-register hook ignores: ops on a namespace rather than into it, the code plane (registers `kind = 'code'` itself), and the operator planes."
         },
@@ -4989,7 +4989,7 @@
         "session_brief_llm": {
           "default": true,
           "type": "boolean",
-          "description": "session.brief_save. `session_brief_llm` off = every brief comes from the deterministic builder (goal, status, files, errors, rules, pointers; no decisions or dead ends). The model is the deployment's LLM when `session_brief_llm_model` has no key. A save condenses its events into windows of `session_brief_window_chars` (≈6k tokens each) and revises the brief once per window, at most `session_brief_max_windows` calls per save (the last window takes the remainder, condensed harder)."
+          "description": "session.brief_save. `session_brief_llm` off = every brief comes from the deterministic builder (goal, status, files, errors, rules, pointers; no decisions or dead ends), except under an operator's extraction policy, where a save of events alone with no model to call writes nothing. The model is the deployment's LLM when `session_brief_llm_model` has no key. A save condenses its events into windows of `session_brief_window_chars` (≈6k tokens each) and revises the brief once per window, at most `session_brief_max_windows` calls per save (the last window takes the remainder, condensed harder)."
         },
         "session_brief_llm_model": {
           "default": "gpt-6-luna",

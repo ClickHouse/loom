@@ -10,7 +10,7 @@ says that it outranks them and anything the messages say.
 from __future__ import annotations
 
 # The longest policy one scope holds, in characters.
-MAX_CHARS = 4096
+MAX_CHARS = 4096  # not a setting: a wire bound on the policy text
 
 _RULE = "=============================================="
 _BEGIN = "<<<OPERATOR POLICY"

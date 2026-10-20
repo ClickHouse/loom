@@ -68,7 +68,8 @@ class SessionBriefSaveInput(_Identity):
     if_revision: int | None = Field(default=None, ge=0, json_schema_extra=MCP_HIDDEN)
     # Force the deterministic builder (False) or the model (True); None =
     # the deployment setting. Under an operator's extraction policy the builder
-    # never runs: a save with no model to call writes nothing (`not-revised`).
+    # never runs: a save of events alone with no model to call writes nothing
+    # (`not-revised`).
     use_llm: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
 
 

@@ -129,7 +129,9 @@ async def _revise_window(
     """One window through the model. Returns (merged sections, dropped,
     tokens_in, tokens_out, used_model). A failed or unparseable call falls
     back to the deterministic builder for this window only, or, under an
-    operator's policy, keeps `prev`: the builder copies the raw events."""
+    operator's policy, keeps `prev`: the builder copies the raw events. Under a
+    policy, a call for an org whose model calls are switched off raises
+    `customer.ModelCallsDisabled`."""
     condensed, _stats = sb.condense_events(events, budget)
 
     def fallback() -> sb.BriefSections:
@@ -146,21 +148,24 @@ async def _revise_window(
             max_tokens=llm_max_tokens("session_brief_revision"),
             response_format={"type": "json_object"},
         )
-    except customer.ModelCallsDisabled as e:
-        if operator_policy:
-            raise  # no model to call: `_revise_from_events` writes nothing
-        log.warning("session.brief_save: model calls are off (%s); window not revised", e)
-        return fallback(), 0, 0, 0, False
-    except Exception as e:  # noqa: BLE001 — a failed call leaves one window unrevised
-        log.warning("session.brief_save: model call failed (%s); window not revised", e)
+    except Exception as e:  # a failed call costs one window, never the save
+        if operator_policy and isinstance(e, customer.ModelCallsDisabled):
+            raise
+        log.warning(
+            "session.brief_save: model call failed (%s); window revised without the model", e
+        )
         return fallback(), 0, 0, 0, False
     try:
         parsed = sb.parse_revision(result.text)
-    except Exception as e:  # noqa: BLE001 — a rejected reply leaves one window unrevised
-        log.warning("session.brief_save: model reply rejected (%s); window not revised", e)
+    except Exception as e:  # noqa: BLE001 — a rejected reply costs one window, never the save
+        log.warning(
+            "session.brief_save: model reply rejected (%s); window revised without the model", e
+        )
         parsed = None
     if parsed is None:
-        log.warning("session.brief_save: unparseable model output; window not revised")
+        log.warning(
+            "session.brief_save: unparseable model output; window revised without the model"
+        )
         return (
             fallback(),
             0,
@@ -184,9 +189,11 @@ async def _revise_from_events(
     """The brief revised with `inp.events`. Under an operator's `policy` the
     deterministic builder, which copies the raw events, never runs: with no
     model to call (no real model, `use_llm` false, or the org's model calls
-    switched off) the answer is None and nothing is written; when every window's
-    call failed, was held by an unread switch or did not parse, the save is
-    refused (503) so the client sends the events again."""
+    switched off before the first window was revised) the answer is None and
+    nothing is written. An org switched off later keeps the windows already
+    revised and stops there, like a failed window. When every window's call
+    failed, was held by an unread switch or did not parse, the save is refused
+    (503) so the client sends the events again."""
     budget = int(settings.session_brief_window_chars)
     windows = sb.split_windows(
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
@@ -224,7 +231,9 @@ async def _revise_from_events(
                 operator_policy=policy,
             )
         except customer.ModelCallsDisabled:  # raised only under a policy
-            return None
+            if not any_model:
+                return None
+            break
         rev.dropped += dropped
         rev.tokens_in += t_in
         rev.tokens_out += t_out
