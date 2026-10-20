@@ -31,7 +31,8 @@ CURRENT_FACTS = """
     -- a high row is readable by key only, never folded into the profile
     AND sensitivity != 'high'
     AND memory_type IN {types:Array(String)}
-    AND status NOT IN ('superseded', 'rejected', 'proposed')  -- proposed: not a fact yet
+    -- proposed: not a fact yet; duplicate: its canonical row is the fact
+    AND status NOT IN ('superseded', 'rejected', 'proposed', 'duplicate')
     AND (valid_to IS NULL OR valid_to > now())
     AND (expires_at IS NULL OR expires_at > now())
     AND NOT arrayExists(t -> startsWith(t, 'attribute:'), tags)
@@ -42,13 +43,18 @@ CURRENT_FACTS = """
 # The memory types a structured profile reads.
 STRUCTURED_TYPES = ["semantic", "preference", "decision"]
 
-# The aggregate that digests a user's source rows, 16 hex characters in constant
-# memory: an XOR of each row's hash over what a build reads and ranks by (the row,
-# its content, its confidence, its date), so the order of rows does not matter.
+# The aggregate that digests a user's source rows: an XOR of each row's hash over
+# what a build reads and ranks by (the row, its content, its confidence, its date), so
+# it is fixed in size and the order of rows does not matter. `hex` drops leading
+# zeros, so it is padded to 16 hex characters.
 SOURCES_DIGEST = (
-    "lower(hex(groupBitXor(sipHash64("
-    "memory_id, content_sha256, confidence, coalesce(valid_at, toDateTime(0))))))"
+    "leftPad(lower(hex(groupBitXor(sipHash64(memory_id, content_sha256, confidence, "
+    "coalesce(valid_at, toDateTime(0)))))), 16, '0')"
 )
+# The scan reads a whole namespace's current facts: a statement that runs past these
+# fails the scan (counted, retried on the next rotation) instead of holding the pass.
+SCAN_MAX_EXECUTION_S = 60
+SCAN_MAX_MEMORY_BYTES = 4 * 1024**3
 
 # A live structured profile row: not deleted, expired or redacted.
 _LIVE_PROFILE = """
@@ -91,7 +97,8 @@ async def user_facts(
     user_keys_only: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The user's current facts, most confident and newest first, at most `limit`."""
+    """The user's current facts, most confident and most recently changed first, at
+    most `limit`; each dated by when it became true, else when it last changed."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -105,12 +112,12 @@ async def user_facts(
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT toString(memory_id) AS memory_id, value,
-               toString(coalesce(valid_at, created_at)) AS since
+               toString(coalesce(valid_at, updated_at)) AS since
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND user_id = {{uid:String}} AND {CURRENT_FACTS}
           {keys}{scope_and(scope, params)}
-        ORDER BY confidence DESC, created_at DESC
+        ORDER BY confidence DESC, updated_at DESC
         LIMIT {{lim:UInt32}}
         """,
         params=params,
@@ -293,7 +300,8 @@ async def users_behind(
         ORDER BY has({{refused:Array(String)}}, who), has(p.tags, {{schema_tag:String}}),
                  p.updated_at, who
         LIMIT {{lim:UInt32}}
-        SETTINGS join_use_nulls = 0
+        SETTINGS join_use_nulls = 0, max_execution_time = {SCAN_MAX_EXECUTION_S},
+                 max_memory_usage = {SCAN_MAX_MEMORY_BYTES}
         """,
         params=params,
     )

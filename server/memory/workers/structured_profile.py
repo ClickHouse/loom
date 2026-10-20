@@ -28,13 +28,13 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.errors import LoomServerError
+from server.core.datetimes import naive_utc_now_seconds
+from server.core.errors import LoomServerError, ValidationError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.llm import client as llm_client
 from server.llm import customer
@@ -46,7 +46,7 @@ from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
 from server.memory.domain.provenance import pipeline_actor
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store import profile_schemas, profile_sources
-from server.memory.store.profile_schemas import ActiveSchema
+from server.memory.store.profile_sources import Behind
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -65,6 +65,16 @@ BACKOFF_CAP_SECONDS = 6 * 3600.0
 # A refused user is tried again after this long even when nothing changed, so a
 # lock whose `lock_until` ran out without a write does not hold the profile back.
 REFUSAL_RETRY_SECONDS = 6 * 3600.0
+# One scan of a namespace finds up to this many times the users a pass builds there,
+# and the next passes take from that list, so a namespace's whole set of facts is read
+# once per SCAN_FACTOR builds, not on every pass.
+SCAN_FACTOR = 10
+# A list older than this is scanned again: a user who fell behind since waits at most
+# this long on top of the cooldown. Ten minutes is five passes at the default interval.
+SCAN_MAX_AGE_SECONDS = 600.0
+# 4xx refusals that clear on their own (a conflicting concurrent write, a rate limit):
+# a failure that backs off, not a refusal that waits for the user's memories to change.
+_TRANSIENT_4XX = frozenset({409, 429})
 
 # Both kept in this process only, so they start over when the worker lease moves.
 # (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
@@ -72,6 +82,30 @@ _backoff: dict[tuple[str, str, str], tuple[float, float]] = {}
 # (org, namespace, user_id) -> (digest, profile row version, monotonic time it lapses):
 # what a refused build saw.
 _refused: dict[tuple[str, str, str], tuple[str, int, float]] = {}
+
+
+@dataclass
+class _Scanned:
+    """A namespace's users behind as one scan found them, taken from by later passes."""
+
+    schema_sha256: str
+    scanned_at: float
+    behind: list[Behind]
+
+
+# (org, namespace) -> the namespace's last scan, in this process only.
+_scans: dict[tuple[str, str], _Scanned] = {}
+
+
+@dataclass(frozen=True)
+class ActiveSchema:
+    """A namespace's schema as a pass uses it, parsed once."""
+
+    org: str
+    namespace: str
+    props: list[profile_schema.ProfileProperty]
+    sha256: str
+
 
 _SYSTEM = (
     "You fill a structured profile of one user for an AI assistant. Given the "
@@ -116,7 +150,7 @@ class StructuredProfileConfig:
 class StructuredProfileResult:
     namespaces_scanned: int = 0
     profiles_written: int = 0
-    # Builds dropped because the user's facts were erased while the model ran.
+    # Builds that wrote nothing: already current, or a fact erased while the model ran.
     skipped: int = 0
     # Builds the profile row refused; the user waits for their memories to change.
     refused: int = 0
@@ -155,8 +189,8 @@ def _note_failure(key: tuple[str, str, str]) -> None:
 
 
 def _prune() -> None:
-    """Drop the waits that are over (a backoff past its cap, a refusal that lapsed),
-    so the maps hold only users still waiting."""
+    """Drop what is over (a backoff past its cap, a refusal that lapsed, a scan too
+    old to use), so the maps hold only what a pass may still read."""
     now = time.monotonic()
     for key, (until, _) in list(_backoff.items()):
         if until + BACKOFF_CAP_SECONDS < now:
@@ -164,6 +198,9 @@ def _prune() -> None:
     for key, (_, _, lapses) in list(_refused.items()):
         if lapses <= now:
             del _refused[key]
+    for space, scanned in list(_scans.items()):
+        if now - scanned.scanned_at > SCAN_MAX_AGE_SECONDS:
+            del _scans[space]
 
 
 def backing_off(org: str, namespace: str) -> tuple[str, ...]:
@@ -228,15 +265,41 @@ async def _build_users(
             result.values_dropped += dropped
 
 
+def _take(schema: ActiveSchema, limit: int) -> list[str] | None:
+    """Up to `limit` users from the namespace's last scan, leaving out those backing
+    off and those still at a refusal; None when the list is gone, drained, built
+    under another schema or too old, so the caller scans again."""
+    scanned = _scans.get((schema.org, schema.namespace))
+    if (
+        scanned is None
+        or not scanned.behind
+        or scanned.schema_sha256 != schema.sha256
+        or time.monotonic() - scanned.scanned_at > SCAN_MAX_AGE_SECONDS
+    ):
+        return None
+    waiting = set(backing_off(schema.org, schema.namespace))
+    refused = refused_at(schema.org, schema.namespace)
+    out: list[str] = []
+    while scanned.behind and len(out) < limit:
+        b = scanned.behind.pop(0)
+        if b.user_id not in waiting and refused.get(b.user_id) != (b.digest, b.profile_version):
+            out.append(b.user_id)
+    return out
+
+
 async def _scan(
     schema: ActiveSchema,
     cfg: StructuredProfileConfig,
     result: StructuredProfileResult,
     limit: int,
-    tried: set[str],
 ) -> list[str] | None:
-    """Up to `limit` users of the namespace to build, none of `tried`; None (counted
-    and noted) when the scan fails, so one namespace never stops the pass."""
+    """Up to `limit` users of the namespace to build, from its last scan while that
+    holds, else from a new one that keeps SCAN_FACTOR times as many for the passes
+    after; None (counted and noted) when the scan fails, so one namespace never
+    stops the pass."""
+    users = _take(schema, limit)
+    if users is not None:
+        return users
     try:
         behind = await profile_sources.users_behind(
             org=schema.org,
@@ -244,8 +307,8 @@ async def _scan(
             label=cfg.label,
             schema_sha256=schema.sha256,
             cooldown_seconds=cfg.cooldown_seconds,
-            limit=limit,
-            skip=tuple(sorted(set(backing_off(schema.org, schema.namespace)) | tried)),
+            limit=limit * SCAN_FACTOR,
+            skip=backing_off(schema.org, schema.namespace),
             refused=refused_at(schema.org, schema.namespace),
         )
     except Exception as e:  # one namespace's failure never stops the pass
@@ -253,7 +316,20 @@ async def _scan(
         log.exception("structured profile scan failed for %s/%s", schema.org, schema.namespace)
         pass_context.note_failure(e, schema.namespace)
         return None
-    return [b.user_id for b in behind]
+    _scans[(schema.org, schema.namespace)] = _Scanned(schema.sha256, time.monotonic(), behind)
+    return _take(schema, limit) or []
+
+
+def _parse(row: dict[str, Any], result: StructuredProfileResult) -> ActiveSchema | None:
+    """The stored schema, parsed; None (counted and noted) for one that no longer parses."""
+    try:
+        props = profile_schema.parse(json.loads(row["schema_json"]))
+    except (ValueError, ValidationError) as e:
+        result.errors += 1
+        log.warning("profile schema of %s/%s does not parse: %s", row["org"], row["namespace"], e)
+        pass_context.note_failure(e, row["namespace"])
+        return None
+    return ActiveSchema(row["org"], row["namespace"], props, row["schema_sha256"])
 
 
 async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProfileResult:
@@ -264,12 +340,13 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         off = sorted(await customer.switched_off_orgs())
         budget = max(1, cfg.max_users_per_pass)
         # Every namespace reached can build at least once, so a pass reaches at most `budget`.
-        spaces = await profile_schemas.list_active(
+        rows = await profile_schemas.list_active(
             exclude_orgs=off, after=_cursor(), limit=budget, only=cfg.only
         )
+        spaces = [s for s in (_parse(r, result) for r in rows) if s is not None]
         share = math.ceil(budget / len(spaces)) if spaces else 0
-        tried: dict[tuple[str, str], set[str]] = {}
-        # Namespaces that used their whole share: the budget others left goes to them.
+        # Namespaces that used their whole share: the budget others left goes to them,
+        # from the users their scan already found.
         hungry: list[ActiveSchema] = []
         for schema in spaces:
             if budget <= 0:
@@ -281,11 +358,10 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             # is tried again when the rotation comes back to it, never on every pass.
             pass_context.set_cursor(json.dumps([schema.org, schema.namespace]))
             limit = min(share, budget)
-            users = await _scan(schema, cfg, result, limit, set())
+            users = await _scan(schema, cfg, result, limit)
             if users is None:
                 continue
             budget -= len(users)
-            tried[(schema.org, schema.namespace)] = set(users)
             if len(users) == limit:
                 hungry.append(schema)
             await _build_users(schema, users, cfg, result)
@@ -293,9 +369,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             if budget <= 0:
                 break
             pass_context.check_stop()
-            users = await _scan(schema, cfg, result, budget, tried[(schema.org, schema.namespace)])
-            if users is None:
-                continue
+            users = _take(schema, budget) or []
             budget -= len(users)
             await _build_users(schema, users, cfg, result)
         if not result.profiles_written and not result.errors:
@@ -316,13 +390,14 @@ async def build_profile(
     schema: ActiveSchema, user_id: str, cfg: StructuredProfileConfig
 ) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
-    broke the schema and were stored as null, or None when a fact the build read
-    stopped being a current fact while the model ran and nothing was written.
+    broke the schema and were stored as null, or None when nothing was written: the
+    profile was already current, or a fact the build read stopped being a current
+    fact while the model ran.
     Raises `Refused` when the profile row will not take the write."""
     org, ns = schema.org, schema.namespace
     # The digest and its time first: a fact written while the model runs leaves the
     # profile behind it, and the next pass rebuilds it.
-    read_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+    read_at = naive_utc_now_seconds()
     digest, count = await profile_sources.sources_digest(
         org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
     )
@@ -330,6 +405,8 @@ async def build_profile(
         org=org, namespace=ns, user_id=user_id, label=cfg.label, scope=WHOLE_NAMESPACE
     )
     profile_version = int(existing["version"]) if existing else 0
+    if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
+        return None  # built since the scan listed the user (another pass, another replica)
     if _refuses_a_write(existing):
         raise Refused(digest, profile_version)  # checked before paying for the model call
     rows = await profile_sources.user_facts(
@@ -373,8 +450,10 @@ async def build_profile(
             )
         except (HTTPException, LoomServerError) as e:
             # A 4xx (a lock or pin set since the check, the char limit, the blacklist)
-            # refuses the same build again; anything else is a failure to retry.
-            if 400 <= getattr(e, "status_code", 500) < 500:
+            # refuses the same build again; a transient one or anything else is a
+            # failure to retry.
+            status = getattr(e, "status_code", 500)
+            if 400 <= status < 500 and status not in _TRANSIENT_4XX:
                 raise Refused(digest, profile_version) from e
             raise
     return dropped

@@ -158,8 +158,11 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   Its provenance is `derived`; `source_trace` is
   `profile.fold:structured_profile:<memory ids>`, the memories it was built from.
 - **Sources.** The user's current `semantic`, `preference` and `decision` facts, the rows
-  the free-text fold reads: never a `high` row, a fact about someone else
-  (`about:other`), a protected attribute or a stored request to forget.
+  the free-text fold reads: never a `high` row, a duplicate (its canonical row counts), a
+  fact about someone else (`about:other`), a protected attribute or a stored request to
+  forget. Each fact is dated by when it became true (`valid_at`), else when it last
+  changed, and a build reads the most confident and most recently changed first, so an
+  edit is read as the newest statement.
 - **Staleness.** Each profile carries the hash of its schema's properties (a `title` or
   the properties' order changes none), a digest of its sources (each one's id, content
   hash, confidence and date) and their count. A new or edited fact, a revert, a restore,
@@ -180,8 +183,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
 - **Passes.** A pass builds at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` (20)
   profiles. It reaches the namespaces with a schema in order from where the last pass
   stopped, and each gets an equal share; what a namespace leaves goes to those with more
-  users behind. A namespace whose scan fails is counted and passed over until the rotation
-  comes back to it. A user whose build failed (a model error, an
+  users behind. One scan of a namespace lists up to ten times its share, and the next
+  passes take from that list until it is drained, the schema changes, or it is ten
+  minutes old. A namespace whose scan or stored schema fails is counted and passed over
+  until the rotation comes back to it. A user whose build failed (a model error, an
   answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
   tried again after. A build the profile row refuses (locked, pinned, over its size cap,
   blacklisted) is not retried until the user's memories or the profile row change (an

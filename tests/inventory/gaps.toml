@@ -235,11 +235,9 @@
 "setting:retention_reconcile_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:sensitivity_sweep_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:sensitivity_sweep_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:structured_profile_cooldown_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:structured_profile_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:structured_profile_idle_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:structured_profile_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:structured_profile_memory_limit" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_idle_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }

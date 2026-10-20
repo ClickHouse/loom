@@ -10,10 +10,11 @@ in the current schema's shape and says whether it is current.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from server.core.ch import own_write_reads
+from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError, ValidationError
 from server.identity.domain.read_scope import resolve_read_filters
 from server.memory.api.models_crud import MemorySetInput
@@ -36,15 +37,11 @@ from server.settings import settings
 STRUCTURED_CHAR_LIMIT = 32768
 
 
-def _now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
-
-
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:
     """Set the namespace's profile schema. A changed schema leaves every
     profile built under the old one `stale` until the worker rebuilds it."""
     props = profile_schema.parse(input.json_schema)
-    now = _now()
+    now = naive_utc_now()
     row = {
         "org": input.org,
         "namespace": input.namespace,
@@ -75,7 +72,7 @@ async def handle_profile_schema_clear(input: ProfileSchemaInput) -> ProfileSchem
         row = await repo.get(input.org, input.namespace)
     if row is None:
         return ProfileSchemaOutput(found=False)
-    now = _now()
+    now = naive_utc_now()
     cleared = {
         "org": input.org,
         "namespace": input.namespace,

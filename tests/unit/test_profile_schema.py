@@ -305,6 +305,7 @@ async def test_a_profile_is_behind_its_users_memories_until_rebuilt() -> None:
         {"expires_at": "now() - 60"},
         {"valid_to": "now() - 60"},
         {"status": "'superseded'"},
+        {"status": "'duplicate'"},
     ],
 )
 async def test_a_source_that_stops_being_one_brings_the_user_back(change: dict[str, str]) -> None:
@@ -533,8 +534,8 @@ async def test_the_schema_listing_skips_deactivated_namespaces_and_wraps_after_a
 
     async def names(**kw: Any) -> list[tuple[str, str]]:
         rows = await profile_schemas.list_active(ch=ch, **kw)
-        assert all(r.props[0].name == "tz" for r in rows)
-        return [(r.org, r.namespace) for r in rows]
+        assert all(ps.parse(json.loads(r["schema_json"]))[0].name == "tz" for r in rows)
+        return [(r["org"], r["namespace"]) for r in rows]
 
     everything = [("o1", "a"), ("o1", "b"), ("o2", "a"), ("o3", "a")]
     assert await names(exclude_orgs=[], after=None, limit=10) == everything
@@ -579,3 +580,144 @@ async def test_set_and_clear_write_every_column_of_profile_schemas(
     assert written[1]["tombstoned_at"] == written[1]["updated_at"]
     for row in written:
         assert sorted(row) == sorted(column_names("profile_schemas"))
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_every_digest_is_16_hex_characters() -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import profile_sources as src
+
+    users = [f"u{i:02d}" for i in range(64)]
+    facts = [
+        _fact(f"00000000-0000-0000-0004-0000000000{i:02d}", u, "tz", "a")
+        for i, u in enumerate(users)
+    ]
+    found = await src.digests(
+        org="o",
+        namespace="n",
+        user_ids=users,
+        scope=WHOLE_NAMESPACE,
+        ch=_LocalCH(ddl("memory"), *facts),
+    )
+    digests = [d for d, _ in found.values()]
+    assert len(digests) == 64 and all(len(d) == 16 and int(d, 16) >= 0 for d in digests)
+    # `hex` drops leading zeros: the padding is what keeps these 16 long.
+    assert any(d.startswith("0") for d in digests)
+
+
+def _dated(mid: str, value: str, created: str, updated: str, version: int = 1) -> str:
+    return (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_type, value, memory_id, content_sha256, version, created_at, updated_at) "
+        f"VALUES ('o', 'n', 'a', 'u1', '-', 'k{mid[-1]}', 'semantic', '\"{value}\"', '{mid}', "
+        f"'{value[0] * 64}', {version}, {created}, {updated})"
+    )
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_a_fact_edited_last_is_read_last() -> None:
+    """Berlin, then Tokyo, then the Berlin fact edited to Paris: the model must read
+    Paris last, though its row was created first."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import profile_sources as src
+    from server.memory.workers.structured_profile import render_facts
+
+    ch = _LocalCH(
+        ddl("memory"),
+        _dated(_A, "My timezone is Berlin.", "now() - 3 * 86400", "now() - 3 * 86400"),
+        _dated(_B, "My timezone is Tokyo.", "now() - 2 * 86400", "now() - 2 * 86400"),
+        _dated(_A, "My timezone is Paris.", "now() - 3 * 86400", "now() - 86400", version=2),
+    )
+    rows = await src.user_facts(
+        org="o",
+        namespace="n",
+        user_id="u1",
+        types=["semantic"],
+        limit=10,
+        scope=WHOLE_NAMESPACE,
+        ch=ch,
+    )
+    assert [r["value"] for r in rows] == ['"My timezone is Paris."', '"My timezone is Tokyo."']
+    assert render_facts(rows).splitlines()[-1].endswith("My timezone is Paris.")
+
+
+@pytest.fixture
+def local_store(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Point the profile stores at a clickhouse-local setup the test passes in."""
+    from server.memory.store import profile_sources as src
+
+    def use(*setup: str) -> _LocalCH:
+        ch = _LocalCH(*setup)
+        monkeypatch.setattr(src, "_default_client", lambda: ch)
+        return ch
+
+    return use
+
+
+@_needs_ch
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("cooldown", "rebuilt"), [(7200, False), (0, True)])
+async def test_an_edit_waits_out_the_configured_cooldown(
+    cooldown: int, rebuilt: bool, local_store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.store import profile_schemas
+    from server.memory.workers import structured_profile as w
+    from server.settings import settings
+
+    built = await _built(_fact(_A, "u1", "tz", "a"))
+    local_store(*built, _fact(_A, "u1", "tz", "c", version=2))
+    monkeypatch.setattr(settings, "structured_profile_cooldown_seconds", cooldown)
+
+    async def list_active(**kw: Any) -> list[dict[str, Any]]:
+        schema = ps.stored_form(_schema(tz=_TZ))
+        return [{"org": "o", "namespace": "n", "schema_json": schema, "schema_sha256": _SHA}]
+
+    async def no_switch() -> set[str]:
+        return set()
+
+    built_users: list[str] = []
+
+    async def build(schema: Any, user_id: str, cfg: Any) -> int:
+        built_users.append(user_id)
+        return 0
+
+    monkeypatch.setattr(profile_schemas, "list_active", list_active)
+    monkeypatch.setattr(w.customer, "switched_off_orgs", no_switch)
+    monkeypatch.setattr(w, "build_profile", build)
+    w._scans.clear()
+    await w.run_pass()
+    w._scans.clear()
+    assert built_users == (["u1"] if rebuilt else [])
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_a_build_reads_at_most_the_configured_number_of_facts(
+    local_store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.app import profile_schema as schema_app
+    from server.memory.workers import structured_profile as w
+    from server.settings import settings
+
+    local_store(
+        ddl("memory"),
+        _dated(_A, "My timezone is Berlin.", "now() - 3 * 86400", "now() - 3 * 86400"),
+        _dated(_B, "My timezone is Tokyo.", "now() - 2 * 86400", "now() - 2 * 86400"),
+    )
+    monkeypatch.setattr(settings, "structured_profile_memory_limit", 1)
+    read: list[str] = []
+
+    async def ask(org: str, ns: str, props: Any, facts: str, cfg: Any) -> dict[str, Any]:
+        read.append(facts)
+        return {}
+
+    async def write(**kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(w, "_ask", ask)
+    monkeypatch.setattr(schema_app, "write_structured_profile", write)
+    schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
+    assert await w.build_profile(schema, "u1", w.StructuredProfileConfig()) == 0
+    assert read == ["- [" + read[0][3:13] + "] My timezone is Tokyo."]

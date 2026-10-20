@@ -38,10 +38,10 @@ def test_fold_reads_only_current_rows() -> None:
 
     assert "user_keys_only=True" in inspect.getsource(pc._consolidate_identity)
     src = inspect.getsource(profile_sources.user_facts) + profile_sources.CURRENT_FACTS
-    assert "status NOT IN ('superseded', 'rejected', 'proposed')" in src
+    assert "status NOT IN ('superseded', 'rejected', 'proposed', 'duplicate')" in src
     assert "(valid_to IS NULL OR valid_to > now())" in src
     assert "(expires_at IS NULL OR expires_at > now())" in src
-    assert "coalesce(valid_at, created_at)" in src
+    assert "coalesce(valid_at, updated_at)" in src
     # The user's own facts only, never a stored request to forget
     assert "startsWith(memory_key, 'user_')" in src and "NOT has(tags, 'forget')" in src
 

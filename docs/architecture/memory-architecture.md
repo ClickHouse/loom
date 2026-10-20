@@ -315,7 +315,11 @@ size), and their count. The worker finds the users
 behind in one aggregate over `loom.memory FINAL` that digests every user's current facts,
 so the answer is exact: an edit, a revert, a restore, a deletion, an expiry or a passed
 `valid_to` changes a digest, and a restatement or a recall does not. Its cost follows the
-namespace's live rows, not their history. `profile.structured` recomputes one user's
+namespace's live rows, not their history, and it runs under its own `max_execution_time`
+and `max_memory_usage`. Each scan lists up to ten times the namespace's share of a pass,
+kept in the worker's process; later passes take from that list until it is drained, the
+schema hash changes or it is ten minutes old, so a namespace is read once per several
+passes. A build skips a user whose profile is already current. `profile.structured` recomputes one user's
 digest to answer `stale` without a model call ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by

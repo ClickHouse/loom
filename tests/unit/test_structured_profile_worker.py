@@ -13,7 +13,6 @@ from fastapi import HTTPException
 from server.memory.app import profile_schema as schema_app
 from server.memory.domain import profile_schema as ps
 from server.memory.store import profile_schemas, profile_sources
-from server.memory.store.profile_schemas import ActiveSchema
 from server.memory.store.profile_sources import Behind
 from server.memory.workers import structured_profile as w
 from server.workers import pass_context
@@ -25,34 +24,54 @@ _SPACES = [("o1", "a"), ("o1", "b"), ("o2", "a")]
 _USERS = [f"u{i}" for i in range(5)]
 
 
-def _schema(org: str, ns: str) -> ActiveSchema:
-    return ActiveSchema(org=org, namespace=ns, props=_PROPS, sha256="h" * 64)
+_SCHEMA_JSON = ps.stored_form(
+    {"type": "object", "properties": {"tz": {"type": "string", "description": "time zone"}}}
+)
+
+
+def _schema(org: str, ns: str) -> w.ActiveSchema:
+    return w.ActiveSchema(org=org, namespace=ns, props=_PROPS, sha256="h" * 64)
+
+
+def _row(org: str, ns: str, schema_json: str = _SCHEMA_JSON) -> dict[str, Any]:
+    return {"org": org, "namespace": ns, "schema_json": schema_json, "schema_sha256": "h" * 64}
 
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     """Three namespaces with a schema and five users behind in each; records
     which (org, namespace, user) the pass built, in order."""
-    state: dict[str, Any] = {"off": set(), "built": [], "fail": set(), "refuse": set()}
+    state: dict[str, Any] = {
+        "off": set(),
+        "built": [],
+        "fail": set(),
+        "refuse": set(),
+        "scans": 0,
+        "bad": set(),
+    }
     w._backoff.clear()
     w._refused.clear()
+    w._scans.clear()
 
     async def switched_off_orgs() -> set[str]:
         return set(state["off"])
 
     async def list_active(
         *, exclude_orgs: list[str], after: Any, limit: int, only: Any = None, ch: Any = None
-    ) -> list[ActiveSchema]:
+    ) -> list[dict[str, Any]]:
         keys = [k for k in _SPACES if k[0] not in exclude_orgs and (only is None or k == only)]
         # After the cursor first, then from the start: the store's order.
         keys.sort(key=lambda k: (after is not None and k <= after, k))
-        return [_schema(o, n) for o, n in keys[:limit]]
+        return [
+            _row(o, n, "{}" if (o, n) in state["bad"] else _SCHEMA_JSON) for o, n in keys[:limit]
+        ]
 
     async def users_behind(**kw: Any) -> list[Behind]:
+        state["scans"] += 1
         users = [u for u in _USERS if u not in kw["skip"] and u not in kw["refused"]]
         return [Behind(u, "d1", 0) for u in users[: kw["limit"]]]
 
-    async def build(schema: ActiveSchema, user_id: str, cfg: Any) -> int | None:
+    async def build(schema: w.ActiveSchema, user_id: str, cfg: Any) -> int | None:
         key = (schema.org, schema.namespace, user_id)
         if key in state["fail"]:
             raise ValueError("the profile model's answer is not a JSON object")
@@ -68,6 +87,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     yield state
     w._backoff.clear()
     w._refused.clear()
+    w._scans.clear()
     pass_context.clear()
 
 
@@ -90,22 +110,6 @@ async def test_each_namespace_gets_an_equal_share_of_the_budget(world: dict[str,
     # ceil(4 / 3) = 2 each, until the budget runs out.
     assert _per_space(world["built"]) == {("o1", "a"): 2, ("o1", "b"): 2, ("o2", "a"): 0}
     assert result.profiles_written == 4
-
-
-@pytest.mark.asyncio
-async def test_the_budget_a_namespace_leaves_goes_to_one_still_behind(
-    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def users_behind(**kw: Any) -> list[Behind]:
-        # o1/a has one user behind; o1/b has many; o2/a none.
-        behind = {("o1", "a"): ["u0"], ("o1", "b"): _USERS, ("o2", "a"): []}
-        users = [u for u in behind[(kw["org"], kw["namespace"])] if u not in kw["skip"]]
-        return [Behind(u, "d1", 0) for u in users[: kw["limit"]]]
-
-    monkeypatch.setattr(profile_sources, "users_behind", users_behind)
-    await w.run_pass(_cfg(6))
-    # Shares of 2: o1/a builds 1 and o2/a none, so o1/b gets the 3 left over too.
-    assert _per_space(world["built"]) == {("o1", "a"): 1, ("o1", "b"): 5, ("o2", "a"): 0}
 
 
 @pytest.mark.asyncio
@@ -151,7 +155,7 @@ async def test_a_pass_stopped_between_users_builds_no_more(
     ctx = pass_context.begin("structured_profile")
     real_build = w.build_profile
 
-    async def build_then_stop(schema: ActiveSchema, user_id: str, cfg: Any) -> int | None:
+    async def build_then_stop(schema: w.ActiveSchema, user_id: str, cfg: Any) -> int | None:
         out = await real_build(schema, user_id, cfg)
         ctx.stopped.set()  # the supervisor stops the pass after this build
         return out
@@ -281,6 +285,7 @@ def _one_user(
 
 
 _ONE = _schema("o", "n")
+_real_write = schema_app.write_structured_profile
 
 
 @pytest.mark.asyncio
@@ -296,23 +301,48 @@ async def test_a_fact_erased_while_the_model_ran_stops_the_write(
 async def test_a_build_writes_its_label_tags_and_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
-    written = _one_user(monkeypatch, {"m1", "m2"})
+    _one_user(monkeypatch, {"m1", "m2"})
+    monkeypatch.setattr(schema_app, "write_structured_profile", _real_write)
+    sections: list[Any] = []
+
+    async def write_section(mset: Any) -> None:
+        sections.append(mset)
+
+    monkeypatch.setattr(schema_app, "write_section", write_section)
     monkeypatch.setattr(settings, "structured_profile_label", "my_profile")
     assert await w.build_profile(_ONE, "u1", w.StructuredProfileConfig()) == 0
-    (row,) = written
-    assert (row["label"], row["value"], row["memory_ids"]) == (
+    (mset,) = sections
+    assert (mset.memory_key, mset.memory_type, mset.agent, mset.value) == (
         "my_profile",
+        "profile",
+        "-",
         {"tz": "UTC"},
-        ["m1", "m2"],
     )
-    assert (row["sources_digest"], row["source_count"]) == ("d1", 2)
+    assert mset.tags == ["profile_schema:" + "h" * 16, "profile_sources:d1", "profile_count:2"]
+    assert mset.source_trace == "profile.fold:my_profile:m1,m2"
+
+
+@pytest.mark.asyncio
+async def test_a_profile_already_current_is_not_built_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = {
+        "version": 4,
+        "pinned": 0,
+        "lock_mode": "",
+        "lock_until": None,
+        "tags": ["profile_schema:" + "h" * 16, "profile_sources:d1", "profile_count:2"],
+    }
+    written = _one_user(monkeypatch, {"m1", "m2"}, existing=current)
+    assert await w.build_profile(_ONE, "u1", w.StructuredProfileConfig()) is None
+    assert written == []
 
 
 @pytest.mark.asyncio
 async def test_a_pinned_profile_is_refused_before_the_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    pinned = {"version": 7, "pinned": 1, "lock_mode": "", "lock_until": None}
+    pinned = {"version": 7, "pinned": 1, "lock_mode": "", "lock_until": None, "tags": []}
     written = _one_user(monkeypatch, {"m1", "m2"}, existing=pinned)
 
     async def no_call(*a: Any) -> dict[str, Any]:
@@ -370,3 +400,69 @@ async def test_the_configured_model_answers(monkeypatch: pytest.MonkeyPatch) -> 
             "o", "n", _PROPS, "- [2026-01-01] My tz is UTC.", w.StructuredProfileConfig()
         )
     assert asked == ["profile-model"] and answer == {"tz": "My tz is UTC"}
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_or_a_rate_limit_is_a_failure_not_a_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _one_user(monkeypatch, {"m1", "m2"})
+    for status in (409, 429):
+
+        async def transient(**kw: Any) -> None:
+            raise HTTPException(status_code=status, detail={"code": "BUSY"})  # noqa: B023
+
+        monkeypatch.setattr(schema_app, "write_structured_profile", transient)
+        with pytest.raises(HTTPException):
+            await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
+
+
+@pytest.mark.asyncio
+async def test_one_scan_serves_the_passes_after_it(world: dict[str, Any]) -> None:
+    cfg = _cfg(1, ("o2", "a"))
+    for _ in range(5):
+        await w.run_pass(cfg)
+    # The first scan found up to SCAN_FACTOR users; the next four passes took from it.
+    assert world["scans"] == 1 and len(world["built"]) == 5
+    await w.run_pass(cfg)  # drained: scanned again
+    assert world["scans"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_schema_change_or_an_old_scan_scans_again(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg(1, ("o2", "a"))
+    await w.run_pass(cfg)
+    w._scans[("o2", "a")].scanned_at -= w.SCAN_MAX_AGE_SECONDS + 1
+    await w.run_pass(cfg)
+    assert world["scans"] == 2
+    w._scans[("o2", "a")].schema_sha256 = "x" * 64
+    await w.run_pass(cfg)
+    assert world["scans"] == 3
+
+
+@pytest.mark.asyncio
+async def test_the_leftover_budget_takes_from_the_scan_already_made(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def users_behind(**kw: Any) -> list[Behind]:
+        world["scans"] += 1
+        behind = {("o1", "a"): ["u0"], ("o1", "b"): _USERS, ("o2", "a"): []}
+        return [Behind(u, "d1", 0) for u in behind[(kw["org"], kw["namespace"])][: kw["limit"]]]
+
+    monkeypatch.setattr(profile_sources, "users_behind", users_behind)
+    await w.run_pass(_cfg(6))
+    assert _per_space(world["built"]) == {("o1", "a"): 1, ("o1", "b"): 5, ("o2", "a"): 0}
+    assert world["scans"] == 3  # one per namespace, none for the leftover round
+
+
+@pytest.mark.asyncio
+async def test_a_schema_that_does_not_parse_is_counted_and_passed_over(
+    world: dict[str, Any],
+) -> None:
+    world["bad"] = {("o1", "a")}
+    ctx = pass_context.begin("structured_profile")
+    result = await w.run_pass(_cfg(3))
+    assert result.errors == 1 and ctx.count == 1
+    assert ("o1", "a") not in _spaces_built(world["built"])
