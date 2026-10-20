@@ -1477,6 +1477,48 @@ def test_only_the_orgs_admin_sets_reads_or_clears_its_extraction_policy(
     assert (r.json()["policy"], r.json()["updated_by"]) == (policy, "ann")
 
 
+def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_it_resolves_to(
+    control_plane_url, mint_test_token
+) -> None:
+    """`namespace: "@me"` resolves to the end user's personal collection before
+    the handler reads the policy, so a policy set for that collection's name
+    applies to the user's `@me` extractions, and its clear stops applying."""
+    from server.core.principals import personal_name
+    from tests import end_user_issuer
+    from tests.integration._eventually import policy_change_adopted
+
+    if not end_user_issuer.configured():
+        pytest.skip("no test end-user issuer: run `python -m tests.end_user_issuer <dir>`")
+    org, user = unique_org("xpol-me"), "u-policy"
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"], subject="ann")
+    target = {"org": org, "scope": "namespace", "namespace": personal_name(org, "user:" + user)}
+
+    def key() -> str:
+        body = {
+            "org": org,
+            "namespace": "@me",
+            "agent": "chat",
+            "messages": [{"role": "user", "content": "I moved to Lisbon in 2021."}],
+            "observation_date": "2026-01-15",
+            "pipeline_steps": [{"step_id": "loom.llm_extract"}],
+        }
+        r = _post_as(control_plane_url, org, user, "memory.set_from_messages", body)
+        assert r.status_code == 200, r.text[:300]
+        return str(r.json()["extract_prompt_keys"][0])
+
+    bare = key()
+    body = {**target, "policy": "Never store home addresses."}
+    r = _post(control_plane_url, admin, "extraction_policy.set", body)
+    assert r.status_code == 200, r.text[:300]
+    policy_change_adopted()
+    ruled = key()
+    assert ruled != bare
+    r = _post(control_plane_url, admin, "extraction_policy.clear", target)
+    assert r.status_code == 200, r.text[:300]
+    policy_change_adopted()
+    assert key() == bare
+
+
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────
 #
 # A service's end users, signed in with end-user tokens, own collections: a parent shared with a group and one

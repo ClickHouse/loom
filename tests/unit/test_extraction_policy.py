@@ -368,10 +368,12 @@ async def test_a_copy_too_old_to_trust_refuses_the_extraction(table) -> None:
     table.rows = [{"org": "acme", "namespace": "", "policy": "org rule"}]
     assert await extraction_policy.effective("acme", "n") == "org rule"
     table.down = True
-    extraction_policy._read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
-    extraction_policy._next_read = 0.0
+    extraction_policy._policies.read_at = (
+        time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
+    )
+    extraction_policy._policies.next_read = 0.0
     assert await extraction_policy.effective("acme", "n") == "org rule", "still young enough"
-    extraction_policy._read_at = (
+    extraction_policy._policies.read_at = (
         time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
     )
     with pytest.raises(BackendUnavailableError):
@@ -488,6 +490,7 @@ async def test_an_org_admin_sets_reads_and_clears_the_policy(stored) -> None:
         ("-", "org", "", "x"),
         ("acme", "namespace", "*", "x"),
         ("acme", "namespace", "-", "x"),
+        ("acme", "namespace", "@me", "x"),
         ("acme", "namespace", "", "x"),
         ("acme", "org", "", "  "),
     ],

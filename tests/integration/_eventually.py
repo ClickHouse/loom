@@ -31,6 +31,13 @@ async def overrides_adopted() -> None:
     await asyncio.sleep(max(1.0, refresh) + 1.0)
 
 
+def policy_change_adopted() -> None:
+    """An extraction policy (or model-call switch) change binds the worker that
+    took it at once and every other process within one refresh; wait that out."""
+    refresh = float(os.environ.get("LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS", "10"))
+    time.sleep(refresh + 1.0)
+
+
 # The ops that change who may read what: a grant, a SCIM group or the collection tree.
 ACL_OPS = frozenset(
     {

@@ -13,13 +13,14 @@ waits, rather than run without its policy.
 
 from __future__ import annotations
 
-import asyncio
-import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.sharing import PERSONAL_ALIAS
 from server.core.errors import ValidationError
+from server.core.polled_copy import PolledCopy
+from server.identity.app.model_calls import _one_org
 from server.llm import customer
 from server.memory.api.models_extraction_policy import (
     ExtractionPolicyClearInput,
@@ -31,85 +32,62 @@ from server.memory.domain.extraction_policy import combine
 from server.memory.store import extraction_policy as repo
 from server.settings import settings
 
-log = logging.getLogger(__name__)
 
-# Every live policy by (org, namespace), namespace "" for the org's own; when it
-# was read (monotonic, 0.0 = never), when the next read is due, and when a change
-# here last asked for one.
-_policies: dict[tuple[str, str], str] = {}
-_read_at = 0.0
-_next_read = 0.0
-_forgot_at = 0.0
-_lock = asyncio.Lock()
+async def _read() -> dict[tuple[str, str], str]:
+    from server.core.ch import own_write_reads
+
+    # Sequentially consistent: the read after a change made here must see it.
+    with own_write_reads():
+        rows = await repo.live_rows()
+    return {(str(r["org"]), str(r["namespace"])): str(r["policy"]) for r in rows}
+
+
+# Every live policy by (org, namespace), namespace "" for the org's own.
+_policies: PolledCopy[dict[tuple[str, str], str]] = PolledCopy("extraction policy", {}, _read)
 
 
 async def effective(org: str, namespace: str) -> str:
     """The policy an extraction in (org, namespace) runs under; "" when none is
-    set. Raises `customer.SwitchUnread` when this process's copy is too old."""
+    set. `namespace` is the one the request resolved to: HTTP maps an end
+    user's `@me` to their personal collection before any handler runs. Raises
+    `customer.SwitchUnread` when this process's copy is too old."""
     if not org:
         return ""
-    if time.monotonic() >= _next_read:
-        async with _lock:
-            if time.monotonic() >= _next_read:
-                await _read()
-    if not _read_at or time.monotonic() - _read_at > settings.model_calls_policy_max_stale_seconds:
+    policies = await _policies.get(
+        refresh_s=settings.model_calls_policy_refresh_seconds,
+        max_stale_s=settings.model_calls_policy_max_stale_seconds,
+    )
+    if policies is None:
         raise customer.SwitchUnread(
             "the extraction policy could not be read; extraction waits until it is"
         )
-    return combine(_policies.get((org, ""), ""), _policies.get((org, namespace), ""))
-
-
-async def _read() -> None:
-    global _policies, _read_at, _next_read
-    from server.core.ch import own_write_reads
-
-    started = time.monotonic()
-    try:
-        # Sequentially consistent: the read after a change made here must see it.
-        with own_write_reads():
-            rows = await repo.live_rows()
-    except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
-        log.warning("extraction policy: read failed (%s); serving the last copy", e)
-    else:
-        _policies = {(str(r["org"]), str(r["namespace"])): str(r["policy"]) for r in rows}
-        _read_at = time.monotonic()
-    # Due again only once this read is over, so a caller that arrives during the
-    # first one waits on the lock rather than finding no copy, and a cancelled read
-    # leaves the next caller to read. A change made here while it ran may postdate
-    # it, so the next caller reads again.
-    refresh = settings.model_calls_policy_refresh_seconds
-    _next_read = 0.0 if _forgot_at >= started else started + refresh
+    return combine(policies.get((org, ""), ""), policies.get((org, namespace), ""))
 
 
 def forget() -> None:
     """Make the next extraction read the policies again, for a change just made
     here. The copy in hand keeps its age, so a failed read serves it as before."""
-    global _next_read, _forgot_at
-    _next_read, _forgot_at = 0.0, time.monotonic()
+    _policies.forget()
 
 
 def _reset_for_tests(
     policies: dict[tuple[str, str], str] | None = None, *, read: bool = True
 ) -> None:
-    global _policies, _read_at, _next_read
-    now = time.monotonic()
-    _policies = dict(policies or {})
-    _read_at = now if read else 0.0
-    _next_read = now + settings.model_calls_policy_refresh_seconds if read else 0.0
+    _policies.reset_for_tests(
+        dict(policies or {}), read=read, refresh_s=settings.model_calls_policy_refresh_seconds
+    )
 
 
 def _scope(input: Any) -> tuple[str, str]:
     """(org, namespace) of the row the request names; namespace "" for the org's."""
-    # "", "-" and "*" name no org or namespace.
-    org = input.org
-    if org.strip() in ("", "-", "*") or org != org.strip():
-        raise ValidationError(f"org must name one org, got {org!r}")
+    _one_org(input.org)
     if input.scope == "org":
-        return org, ""
+        return input.org, ""
+    # "", "-" and "*" name no namespace; "@me" is an end user's alias, never a row.
     namespace = input.namespace
-    if namespace.strip() in ("", "-", "*") or namespace != namespace.strip():
+    if namespace.strip() in ("", "-", "*", PERSONAL_ALIAS) or namespace != namespace.strip():
         raise ValidationError(f"scope 'namespace' needs one namespace, got {namespace!r}")
-    return org, namespace
+    return input.org, namespace
 
 
 def _caller() -> str:

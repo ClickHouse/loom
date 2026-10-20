@@ -2707,6 +2707,35 @@ export interface ErasureStatusOutput {
   verified_at?: string | null;
 }
 
+export interface ExtractionPolicyClearInput {
+  org: string;
+  scope: "org" | "namespace";
+  namespace?: string;
+}
+
+export interface ExtractionPolicyOutput {
+  org: string;
+  scope: "org" | "namespace";
+  namespace?: string;
+  policy?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+  effective?: string;
+}
+
+export interface ExtractionPolicyGetInput {
+  org: string;
+  scope: "org" | "namespace";
+  namespace?: string;
+}
+
+export interface ExtractionPolicySetInput {
+  org: string;
+  scope: "org" | "namespace";
+  namespace?: string;
+  policy: string;
+}
+
 export interface FactsExpireByAdapterInput {
   org: string;
   namespace: string;
@@ -8657,6 +8686,9 @@ export type OpName =
   | "erasure.list"
   | "erasure.request"
   | "erasure.status"
+  | "extraction_policy.clear"
+  | "extraction_policy.get"
+  | "extraction_policy.set"
   | "facts.expire_by_adapter"
   | "facts.list"
   | "facts.path"
@@ -8974,6 +9006,9 @@ export interface OpMap {
   "erasure.list": { input: ErasureListInput; output: ErasureListOutput };
   "erasure.request": { input: ErasureRequestInput; output: ErasureRequestOutput };
   "erasure.status": { input: ErasureStatusInput; output: ErasureStatusOutput };
+  "extraction_policy.clear": { input: ExtractionPolicyClearInput; output: ExtractionPolicyOutput };
+  "extraction_policy.get": { input: ExtractionPolicyGetInput; output: ExtractionPolicyOutput };
+  "extraction_policy.set": { input: ExtractionPolicySetInput; output: ExtractionPolicyOutput };
   "facts.expire_by_adapter": { input: FactsExpireByAdapterInput; output: FactsExpireByAdapterOutput };
   "facts.list": { input: FactsListInput; output: FactsListOutput };
   "facts.path": { input: FactsPathInput; output: FactsPathOutput };
@@ -9291,6 +9326,9 @@ export const OPS: readonly OpSpec[] = [
   { name: "erasure.list", group: "erasure", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "erasure.request", group: "erasure", method: "request", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "erasure.status", group: "erasure", method: "status", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 25, audit: false, readOnly: true },
+  { name: "extraction_policy.clear", group: "extraction_policy", method: "clear", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
+  { name: "extraction_policy.get", group: "extraction_policy", method: "get", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
+  { name: "extraction_policy.set", group: "extraction_policy", method: "set", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "facts.expire_by_adapter", group: "facts", method: "expireByAdapter", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "facts.list", group: "facts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "facts.path", group: "facts", method: "path", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
@@ -9514,4 +9552,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 314;
+export const GENERATED_OP_COUNT = 317;

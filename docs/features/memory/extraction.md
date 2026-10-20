@@ -117,6 +117,8 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
 - **Scope.** Every call names its `scope`: `org` (the org's own policy; `namespace` is
   ignored, since an MCP session fills it in) or `namespace` (rules that `namespace` adds
   to the org's). An extraction in a namespace runs under both, the org's rules first.
+  The namespace is the one the request resolves to: an end user's `@me` runs under the
+  policy set for their personal collection's name, and `@me` itself is refused as a scope.
   `extraction_policy.get` returns a scope's policy and the `effective` text its
   extractions run under; `extraction_policy.clear` removes one scope's policy (clearing a
   namespace's leaves the org's in force). A policy is at most 4,096 characters.
