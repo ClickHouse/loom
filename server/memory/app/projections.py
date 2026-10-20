@@ -1239,21 +1239,10 @@ async def end_edges(
     open_only: bool = False,
     skip_versions: Sequence[tuple[str, str]] = (),
 ) -> list[str]:
-    """End each edge (entity_a, entity_b, end) still valid after its `end`, or only the
-    still-open ones with `open_only`, as a close ends a triple, unless a live row still
-    names both entities: its current value has a link to the pair (`entity_edge_rows`),
-    the revised or retired rows included, as the edge is its co-occurrence too. A row
-    with no edge link of its own keeps it through its key's link
-    (`entity_edge_memories`, `_HELD_PAIRS_CTES`). No `invalid_at`: the edge walk never
-    walks a retired edge, and the fact did hold until then. One read, and an UPDATE only
-    when it finds an open edge to end, then a check for a row written meanwhile
-    (`reopen_held_edges`), then one for the edges with a stated later end of the pairs no
-    row named. The UPDATE stamps the rows it ends with this close's id (`closed_by`), so
-    the reopen opens only those. The links of the values `skip_versions` ((memory_id,
-    content_sha256)) hold nothing while their row is 'high': they are about to be
-    deleted. The edges go a parameter's worth at a time (`param_slices`): long entity
-    names make a long list of pairs. Returns the ids the closes stamped, one per slice
-    that ended an open edge (`reopen_closed_by` undoes them)."""
+    """End each edge (entity_a, entity_b, end) still valid after its `end` (only open ones
+    with `open_only`) unless a live row still names both entities (`_HELD_PAIRS_CTES`);
+    the values `skip_versions` hold nothing while their row is 'high'. The UPDATE stamps
+    what it ends with the close's id, and the ids come back for `reopen_closed_by`."""
     close_ids = []
     for part in param_slices(ends):
         close_id = await _end_edges_slice(
@@ -1308,14 +1297,9 @@ async def _end_edges_slice(
     if not found:
         return ""
     pairs = {(str(r["entity_a"]), str(r["entity_b"])): r for r in found}
-    # The open edges first: if a row names the pair meanwhile, the check after opens them
-    # again. An edge with a stated later end ("until Dec 2026") ends after that check,
-    # only for the pairs it found no row for: opening it again would lose its end.
-    # Known window: a row naming such a pair that lands between that check and the
-    # stated-end UPDATE below still sees the edge ended. Checking again and opening it
-    # would set valid_to to NULL and lose the stated end, which is worse, so the window
-    # is left. The close also ends an open edge that landed after the read: its writer
-    # landed the row's links first, so the check finds them and opens it again.
+    # The open edges first, then the check that opens again those a row wrote meanwhile;
+    # an edge with a stated later end ends after that check, as opening it would lose the
+    # end (a row landing between the two still sees it ended: the lesser loss).
     closing = sorted(p for p, r in pairs.items() if r["open"])
     if closing:
         await _end_edge_rows(ch, _STILL_OPEN_EDGES_WHERE, params, closing, tag=True)

@@ -35,14 +35,10 @@ _REPAIR_READ_SETTINGS = "SETTINGS select_sequential_consistency = 1, apply_mutat
 
 
 async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
-    """The close of a late projection recorded without its value (a 'high' row's): each
-    value of the row linked to an edge that can close, dated by its own end, with one
-    `end_edges` a page. A pair can close when its edge is open, no live row holds it
-    (`held_pairs_ctes`, as `end_edges` reads it) and the row does not name both its
-    entities now: a 'high' row keeps the edges of the entities on it. The value the row
-    still holds is the drop's. So every value read closes and leaves the read set, and
-    a pass that runs out of pages raises: the failure stays active, and the next pass,
-    from the start, reads what is left."""
+    """The close recorded without a value (a 'high' row's): end, one `end_edges` a page,
+    the pairs of the row's older values that can close (open, held by no live row, not
+    named by the row now). Each value read closes, so a pass that runs out of pages
+    raises and the next one, from the start, reads what is left."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id}
     named = await ch.query_all(
         f"""

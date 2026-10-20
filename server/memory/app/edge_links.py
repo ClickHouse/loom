@@ -221,11 +221,9 @@ async def _drop_links_of(
 async def _restore_kept_links(
     input: Any, drop: list[tuple[str, str, str, str]], close_ids: list[str], *, ch: Any
 ) -> None:
-    """After the DELETE, the links of `drop` whose row holds them now: a write that
-    landed since the drop read them (a plain re-set of the same value, or a high one
-    naming more entities). They are written back, and the ends this drop's close
-    (`close_ids`) stamped on their pairs are undone. A write landing after this read
-    lost nothing: no DELETE follows it."""
+    """After the DELETE, write back the links of `drop` whose row holds them now (a write
+    landed since the drop read them) and undo the ends this drop's close (`close_ids`)
+    stamped on their pairs."""
     rows = await query_all_sliced(
         ch,
         f"""
