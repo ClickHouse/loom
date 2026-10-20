@@ -102,6 +102,5 @@ A build that does not have a setting, does not read it live, or whose field refu
 stored value, logs the stored override once and ignores it; the other processes keep
 applying it. A build from before runtime settings existed ignores the stored overrides
 without a word, so while one still serves, an override applies on the newer replicas
-only. Ranking settings change what
-`memory.search` returns: measure a change with a benchmark before you keep it
-([running a benchmark](../benchmarks/running.md)).
+only. Ranking settings change what `memory.search` returns: measure a change with a
+benchmark before you keep it ([running a benchmark](../benchmarks/running.md)).

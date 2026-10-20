@@ -118,10 +118,8 @@ async def test_the_gateway_token_exchange_waits_its_setting(
     monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
     monkeypatch.setattr(http_client, "get_model_client", lambda: _Http())
     monkeypatch.setattr(gateway, "_identity_token", _identity_token)
-    try:
+    with pytest.raises(_Stop):
         await gateway._renew()
-    except _Stop:
-        pass
     assert seen == [3.0]
 
 
