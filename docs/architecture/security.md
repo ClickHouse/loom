@@ -615,7 +615,28 @@ Everything an agent stores is untrusted input to later prompts. Two mechanisms b
   breaks ties. A request's `prior_cap` overrides it.
 
 Loom does not classify stored text as instruction-like and refuses nothing on that
-basis. The read-side bounds (`read_scope`, `top_k`, the exposure ledger, breadth budgets)
+basis.
+
+### Extraction policy
+
+An org admin sets rules for what extraction never stores, once for the org and
+optionally added to for a namespace (`extraction_policy.set`, audited, `org_admin` of
+that org only; an end-user token holds `viewer` and cannot set, clear or read one). The
+rows live in `loom.extraction_policies`; every server keeps a copy, read at most every
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted for no longer than
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`. Past that it fails closed: inline
+extraction answers 503 and queued requests wait.
+
+The handler reads the policy for the request's `(org, namespace)` itself; no request
+field carries it. Each model call that writes memory from raw text (fact extraction and
+its coverage sweep, the typed-record value stage, the session digest, observation
+distillation) ends its system prompt with it, after the request's
+`extraction_instructions`, in a delimited block that states it outranks them and the
+messages. The deterministic passes that would add rows the model left out do not run
+under a policy. The rule is given to the model, not checked against what it returns;
+verbatim evidence, chunks and observations are stored as sent. The
+[extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists
+the paths. The read-side bounds (`read_scope`, `top_k`, the exposure ledger, breadth budgets)
 are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 ## Sensitivity
@@ -782,6 +803,7 @@ hashing are engineering primitives, not a compliance guarantee.
 | Rate limiter                | `server/core/ratelimit.py` (`Limiter.check`, `op_class_for`), `server/core/ratelimit_shared.py`                             |
 | Blacklist                   | `server/memory/app/blacklist_guard.py` (`enforce_on_insert`), `server/memory/app/blacklist_sweep.py`                        |
 | Prompt fence                | `server/memory/domain/prompt_fence.py`                                                                                      |
+| Extraction policy           | `server/memory/app/extraction_policy.py` (`effective`), `server/memory/domain/extraction_policy.py`                         |
 | Sensitivity                 | `server/memory/domain/sensitivity.py`, `server/memory/app/sensitivity_sweep.py`                                             |
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |

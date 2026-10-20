@@ -21,7 +21,7 @@ class NamespaceSettings(BaseModel):
     # rather than into it, the code plane (registers `kind = 'code'` itself),
     # and the operator planes.
     namespace_autoregister_skip_prefixes: str = (
-        "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure."
+        "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.,extraction_policy."
     )
     # Comma-separated name prefixes of throwaway harness namespaces: stamped
     # `kind = 'bench'` by `namespace.register` (when no kind is given) and

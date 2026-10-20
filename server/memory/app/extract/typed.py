@@ -15,6 +15,7 @@ from server.llm.json_text import strip_code_fence
 from server.memory.app.extract.client import _merge_llm_results
 from server.memory.app.extract.models import ExtractedRecord, ExtractionError, RecordValue
 from server.memory.app.extract.prompts import _build_extraction_user_prompt
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.extraction_prompts import with_strict_examples_preamble
 from server.observability.genai import staged
 
@@ -251,6 +252,7 @@ async def extract_typed_record_iterative(
     *,
     max_tokens: int = 1024,
     observation_date: str | None = None,
+    operator_policy: str = "",
 ) -> tuple[ExtractedRecord, LLMResult]:
     """Gated, per-field schema-aware extraction.
 
@@ -352,6 +354,13 @@ async def extract_typed_record_iterative(
         + "You extract values for specific fields from source evidence. "
         + detection_note,
     )
+    # The value stage writes what is stored, so it ends with the operator's policy.
+    if operator_policy.strip():
+        value_system = with_policy(
+            value_system + "\n\nA field whose value the operator policy below excludes "
+            "takes the schema's unknown/empty value.",
+            operator_policy,
+        )
 
     # --- Stage 3: field-value extraction with per-field gate ---
     value_result = await client.complete(system=value_system, user=source, max_tokens=max_tokens)

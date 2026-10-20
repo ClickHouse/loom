@@ -35,6 +35,7 @@ from server.memory.api import ops_context as context
 from server.memory.api import ops_context_offload as context_offload
 from server.memory.api import ops_decision as decision
 from server.memory.api import ops_demonstrate as demonstrate
+from server.memory.api import ops_extraction_policy as extraction_policy
 from server.memory.api import ops_facts as facts
 from server.memory.api import ops_learnings as learnings
 from server.memory.api import ops_loom_search as search
@@ -61,6 +62,7 @@ _OPERATION_MODULES = (
     context_offload,
     learnings,
     blacklist,
+    extraction_policy,
     conflicts,
     erasure,
     cost,

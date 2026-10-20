@@ -10,6 +10,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.sensitivity import value_reads_high
 from server.observability.genai import staged
 
@@ -132,10 +133,14 @@ async def _draft_session_summary(
     input: Any,
     msgs: list[dict[str, str]],
     observation_date: str | None,
+    *,
+    operator_policy: str = "",
 ) -> SessionSummaryDraft | None:
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the
-    embedder returns an empty vector (the read leg filters embedding_dim > 0)."""
+    embedder returns an empty vector (the read leg filters embedding_dim > 0).
+    The digest is written from the raw turns, so it follows the operator's
+    extraction policy as the extractor does."""
     from server.llm.client import get_llm_client
 
     if not msgs:
@@ -143,7 +148,7 @@ async def _draft_session_summary(
     user_prompt = _build_session_summary_user_prompt(msgs, observation_date or None)
     llm = get_llm_client()
     result = await llm.complete(
-        _SESSION_SUMMARY_SYSTEM,
+        with_policy(_SESSION_SUMMARY_SYSTEM, operator_policy),
         user_prompt,
         max_tokens=_SESSION_SUMMARY_MAX_TOKENS,
     )
@@ -252,7 +257,12 @@ async def _write_session_summary(
         return
     if draft is None:
         observation_date = getattr(state, "observation_date", None) or None
-        draft = await _draft_session_summary(input, msgs, observation_date)
+        draft = await _draft_session_summary(
+            input,
+            msgs,
+            observation_date,
+            operator_policy=str(getattr(state, "operator_policy", "") or ""),
+        )
     if draft is None:
         return
     await _insert_session_summary(input, state, draft)

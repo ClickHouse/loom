@@ -328,7 +328,9 @@ async def test_schema_mode_records_stubbed_fields(monkeypatch: pytest.MonkeyPatc
     async def _none(*a, **k):
         return None
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(
                 record={"category": None, "amount": None}, stubbed_fields=["category", "amount"]

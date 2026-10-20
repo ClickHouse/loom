@@ -57,6 +57,7 @@ from server.memory.app.extract.speakers import (
     attribute_assistant_introduced,
 )
 from server.memory.app.extract.sweep import _coverage_sweep
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.extraction_prompts import (
     _NO_RECITATION_ADDENDUM,
     _RETRY_PROMPT_ADDENDUM,
@@ -166,10 +167,11 @@ def _extraction_system_prompt(
     existing_memories: list[dict[str, str]] | None,
     namespace_categories: list[dict[str, str]] | None,
     custom_instructions: str,
+    operator_policy: str = "",
 ) -> str:
     """The extractor's system prompt: the base prompt under the strict-examples
-    preamble, the fence note, the namespace's categories and the caller's
-    instructions."""
+    preamble, the fence note, the namespace's categories, the caller's
+    instructions and, last, the operator's policy, which outranks them."""
     system_prompt = with_strict_examples_preamble(_extraction_base_prompt(compact))
     if existing_memories:
         from server.memory.domain.prompt_fence import FENCE_NOTE
@@ -201,7 +203,7 @@ def _extraction_system_prompt(
             "\n=============================================="
             f"\n{custom_instructions.strip()}\n"
         )
-    return system_prompt
+    return with_policy(system_prompt, operator_policy)
 
 
 def _parses(parse: Any, text: str) -> bool:
@@ -360,6 +362,7 @@ def _settle_facts(
     observation_date: str | None,
     existing_memories: list[dict[str, str]] | None,
     speaker_attribution: bool,
+    recover_rows: bool = True,
 ) -> list[ExtractedFact]:
     """The deterministic passes between the model's answer and the judge:
     stable and relation keys, citation repair, temporal anchors and
@@ -391,7 +394,11 @@ def _settle_facts(
     # closed-class relative qualifier verbatim and emitted no anchor.
     if facts and observation_date:
         facts = _apply_temporal_anchor_backstop(facts, observation_date, messages)
-    facts = apply_message_timestamps(_recover_rows(facts, messages), messages)
+    # The rows the model left out are recovered from the turns, unless an
+    # operator policy is in force: the model may have left them out for it.
+    if recover_rows:
+        facts = _recover_rows(facts, messages)
+    facts = apply_message_timestamps(facts, messages)
     facts = strip_variant_suffixes(facts)
     if facts:
         facts = strip_value_suffixes(facts)
@@ -433,6 +440,7 @@ async def extract_from_messages(
     existing_memories: list[dict[str, str]] | None = None,
     last_messages: list[dict[str, object]] | None = None,
     custom_instructions: str = "",
+    operator_policy: str = "",
     judge: bool = True,
     namespace_categories: list[dict[str, str]] | None = None,
     coverage_sweep: bool | None = None,
@@ -453,6 +461,11 @@ async def extract_from_messages(
     extractor uses for write-time deduplication and refinement linking.
     Pass the last ~20 facts under the same identity so the LLM doesn't
     re-extract things you already know.
+
+    `operator_policy` is the operator's extraction policy for the namespace
+    (`extraction_policy.effective`): it ends the system prompt, above
+    `custom_instructions`, and while it is set no row is recovered from the
+    turns past the model.
 
     `judge` enables the LLM-judge gate. After extraction, a second
     LLM call grades each fact CORRECT/UNCERTAIN/WRONG against the
@@ -492,6 +505,7 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         namespace_categories=namespace_categories,
         custom_instructions=custom_instructions,
+        operator_policy=operator_policy,
     )
     # JSON mode constrains the model to valid JSON; the try/except below
     # is a single belt-and-suspenders parse-retry on top of it.
@@ -576,6 +590,7 @@ async def extract_from_messages(
         observation_date=observation_date,
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
+        recover_rows=not operator_policy.strip(),
     )
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date

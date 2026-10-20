@@ -41,6 +41,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.transcript_rows import EVENT_SOURCE_TRACE, EVENT_TAG, FROM_OBSERVATION_TAG
 from server.observability.genai import llm_stage
 
@@ -424,11 +425,16 @@ async def distill_events(
     """One model call per transition pair → one `semantic` memory tagged
     `event`, dated at the later observation, chained to the previous event
     with a `precedes` edge. Fail-open per pair, except for a call the switch
-    holds (`customer.HOLDS`), which propagates."""
+    holds (`customer.HOLDS`), which propagates, as does an extraction policy
+    this process cannot read. Each call ends with the operator's policy."""
+    from server.memory.app import extraction_policy
     from server.memory.app.write import handle_memory_set
 
     res = res or ExtrasResult()
     pairs = transition_pairs(observations, max_pairs=max_events, only_after=only_after)
+    system = with_policy(
+        _EVENT_SYSTEM, await extraction_policy.effective(session["org"], session["namespace"])
+    )
     ordered = sorted(
         observations, key=lambda o: (o.created_at is None, o.created_at or datetime.min)
     )
@@ -444,7 +450,7 @@ async def distill_events(
     for before, after in pairs:
         try:
             with llm_stage("observe_extract.event"):
-                out = await llm.complete(_EVENT_SYSTEM, event_prompt(before, after), max_tokens=300)
+                out = await llm.complete(system, event_prompt(before, after), max_tokens=300)
             res.llm_calls += 1
             parsed = parse_event(str(getattr(out, "text", "") or ""))
             if parsed is None:
@@ -517,7 +523,8 @@ async def distill_notes(
 ) -> ExtrasResult:
     """One model call per session → a procedure (procedure plane) and a hint
     (`semantic` memory tagged `hint`). Fail-open, except for a call the switch
-    holds (`customer.HOLDS`), which propagates."""
+    holds (`customer.HOLDS`), which propagates, as does an extraction policy
+    this process cannot read. The call ends with the operator's policy."""
     res = res or ExtrasResult()
     useful = [o for o in observations if not o.trivial]
     # A procedure (and the session hint) is mined only from a
@@ -529,9 +536,14 @@ async def distill_notes(
 
     if len(useful) < int(settings.observe_extract_notes_min_observations):
         return res
+    from server.memory.app import extraction_policy
+
+    system = with_policy(
+        _NOTES_SYSTEM, await extraction_policy.effective(session["org"], session["namespace"])
+    )
     try:
         with llm_stage("observe_extract.notes"):
-            out = await llm.complete(_NOTES_SYSTEM, notes_prompt(observations), max_tokens=900)
+            out = await llm.complete(system, notes_prompt(observations), max_tokens=900)
         res.llm_calls += 1
         notes = parse_notes(str(getattr(out, "text", "") or ""))
     except customer.HOLDS:

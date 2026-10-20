@@ -665,6 +665,23 @@
             ]
           }
         },
+        "extraction_policy": {
+          "class": "ExtractionPolicyOps",
+          "methods": {
+            "clear": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "facts": {
           "class": "FactsOps",
           "methods": {
