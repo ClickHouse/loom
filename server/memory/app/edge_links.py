@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.datetimes import naive_utc_now
 from server.core.repo_base import param_slices, query_all_sliced
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app import graph_holders, projections, set_entities
@@ -172,6 +173,8 @@ async def _drop_links_of(
         for r in links
         if not {str(r["entity_a"]), str(r["entity_b"])} <= keep[str(r["id"])]
     )
+    if not drop:
+        return
     # A pair another of these rows keeps stays open; it holds through that row's link.
     kept = {
         (str(r["entity_a"]), str(r["entity_b"]))
@@ -194,20 +197,15 @@ async def _drop_links_of(
         skip_versions=sorted({(memory_id, sha) for memory_id, sha, _, _ in drop}),
     )
     # Read again right before the DELETE: a row re-set plain since the first read (its
-    # value maybe the same), or re-set high naming more entities, keeps those links. No
-    # key lock: one drop spans many keys, and a write may own the drop while holding its
-    # own. So a same-value plain re-set landing between this read and the DELETE loses
-    # its links. Parameters only: a mutation with a subquery is refused on a replicated
-    # table.
-    if not drop:
-        return
+    # value maybe the same), or re-set high naming more entities, keeps those links.
+    # Parameters only: a mutation with a subquery is refused on a replicated table.
     high = await _rows_still_high(input, sorted({memory_id for memory_id, *_ in drop}), ch=ch)
-    drop = [
+    deleted = [
         (memory_id, sha, a, b)
         for memory_id, sha, a, b in drop
         if memory_id in high and not {a, b} <= high[memory_id]
     ]
-    for part in param_slices(drop):
+    for part in param_slices(deleted):
         await ch.execute(
             """
             DELETE FROM loom.entity_edge_rows
@@ -222,6 +220,94 @@ async def _drop_links_of(
                 "links": part,
             },
         )
+    await _restore_kept_links(input, drop, set(deleted), ch=ch)
+
+
+async def _restore_kept_links(
+    input: Any,
+    drop: list[tuple[str, str, str, str]],
+    deleted: set[tuple[str, str, str, str]],
+    *,
+    ch: Any,
+) -> None:
+    """After the DELETE, the links of `drop` whose row keeps them now: a write that
+    landed before this read (a plain re-set of the same value, or a high one naming
+    more entities) holds them. A deleted one is written back, and the pair's edge
+    opens again if `end_edges` ended it. A write landing after this read lost nothing:
+    no DELETE follows it."""
+    rows = await query_all_sliced(
+        ch,
+        """
+        SELECT toString(memory_id) AS id, user_id, toString(content_sha256) AS sha,
+               sensitivity, entities
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_id IN {ids:Array(UUID)} AND tombstoned_at IS NULL
+        SETTINGS select_sequential_consistency = 1
+        """,
+        {"org": input.org, "ns": input.namespace, "ids": sorted({link[0] for link in drop})},
+        "ids",
+    )
+    current = {str(r["id"]): r for r in rows}
+    kept = []
+    for memory_id, sha, a, b in drop:
+        row = current.get(memory_id)
+        if row is None or str(row["sha"]) != sha:
+            continue  # gone, or a later value: that write's own links and edges
+        named = set(set_entities.declared_entities(row["entities"]))
+        if row["sensitivity"] != "high" or {a, b} <= named:
+            kept.append((memory_id, sha, a, b, str(row["user_id"])))
+    if not kept:
+        return
+    links = [
+        projections.edge_row_link(
+            SimpleNamespace(org=input.org, namespace=input.namespace, user_id=user_id),
+            memory_id,
+            sha,
+            (a, b),
+        )
+        for memory_id, sha, a, b, user_id in kept
+        if (memory_id, sha, a, b) in deleted
+    ]
+    if links:
+        await ch.insert("loom.entity_edge_rows", links)
+    await _open_ended_edges(input, sorted({(a, b) for _, _, a, b, _ in kept}), ch=ch)
+
+
+async def _open_ended_edges(input: Any, pairs: list[tuple[str, str]], *, ch: Any) -> None:
+    """Open again, as a write opens one, the edges of `pairs` with no open row left."""
+    ended = await query_all_sliced(
+        ch,
+        """
+        SELECT entity_a, entity_b FROM loom.entity_edges
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+          AND invalid_at IS NULL
+        GROUP BY entity_a, entity_b
+        HAVING countIf(valid_to IS NULL) = 0
+        -- The ends `end_edges` just queued count.
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
+        """,
+        {"org": input.org, "ns": input.namespace, "pairs": pairs},
+        "pairs",
+    )
+    if not ended:
+        return
+    now = naive_utc_now()
+    edges = [
+        projections.entity_edge_row(
+            input.org, input.namespace, str(r["entity_a"]), str(r["entity_b"]), last_seen=now
+        )
+        for r in ended
+    ]
+    await ch.insert(
+        "loom.entity_edges",
+        edges,
+        settings=projections.graph_insert_settings("entity_edges", wait=True, dedup_token=""),
+    )
+    from server.memory.app import graph_write_marks
+
+    graph_write_marks.note_write(input.org, input.namespace)
 
 
 def drop_payload(versions: Mapping[str, int]) -> dict[str, Any]:

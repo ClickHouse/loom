@@ -11,8 +11,8 @@ _ROW = "00000000-0000-0000-0000-0000000000a1"
 
 
 class _CH:
-    """Answers every read with `rows` (a re-read of which memories are live: `live`);
-    records every statement sent to execute."""
+    """Answers every read with `rows` (a re-read of which memories are live: `live`;
+    the drop's read after its DELETE: none); records every statement sent to execute."""
 
     def __init__(self, rows: list[dict[str, Any]], live: tuple[str, ...] = ()) -> None:
         self.rows = rows
@@ -22,6 +22,8 @@ class _CH:
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "tombstoned_at IS NULL OR updated_at" in sql:
             return [{"id": i} for i in params["ids"] if i in self.live]
+        if "sensitivity, entities" in sql:
+            return []  # after the DELETE: the row is gone, so nothing is written back
         return self.rows
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
