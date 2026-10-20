@@ -2,7 +2,7 @@
 
 Users U and V write into the SAME namespace: facts (one key both hold, the
 rest V's alone, across two sessions), raw turns through set_from_messages
-(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block, a procedure and a blacklist pattern. V's rows
+(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block, a procedure, a saved chat message (one conversation id for both) and a blacklist pattern. V's rows
 carry a nonce (each fact row its own, all starting with V's). A token minted with `read_user_id=U` then drives every op the
 registry holds:
 
@@ -412,8 +412,8 @@ def test_the_walk_reaches_vs_rows_without_the_bound(
 def test_the_walk_reaches_vs_saved_messages(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str]
 ) -> None:
-    """Saved messages take no `user_id="*"`: the same bodies asked for V under a
-    namespace-scoped token return V's saved message."""
+    """These ops read `user_id="*"` as a literal user, so the same bodies are asked
+    for V under a namespace-scoped token, and they return V's saved message."""
     from server.operations.registry import OPERATIONS_BY_NAME
 
     for name in (
@@ -425,6 +425,40 @@ def test_the_walk_reaches_vs_saved_messages(
         assert body is not None, name
         r = _post(control_plane_url, tokens["namespace"], name, body)
         assert r.status_code == 200 and seed.nonce_v in r.text, f"{name}: {r.text[:300]}"
+
+
+def test_a_pinned_token_cannot_save_or_unsave_vs_saved_message(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    """W re-saves and unsaves V's saved message as itself: the save is refused as
+    another user's turn, the unsave finds nothing, and V's message stays saved.
+    Both answers echo the message id W sent, so they are checked here and not by
+    the write walk's nonce check."""
+    conv = {
+        "org": seed.org,
+        "namespace": seed.ns,
+        "agent": "a",
+        "conversation_id": seed.conversation_id,
+    }
+    msg = {**conv, "message_id": f"msg-{seed.nonce_v}"}
+    saved = _write(
+        control_plane_url,
+        tokens["pinned_w"],
+        "conversation.save_message",
+        {**msg, "user_id": W, "role": "user", "content": "canary"},
+    )
+    assert saved["reason"] == "owner_mismatch", saved
+    unsaved = _write(
+        control_plane_url, tokens["pinned_w"], "conversation.unsave_message", {**msg, "user_id": W}
+    )
+    assert unsaved["found"] is False, unsaved
+    status = _write(
+        control_plane_url,
+        tokens["namespace"],
+        "conversation.saved_status",
+        {**conv, "user_id": V, "message_ids": [msg["message_id"]]},
+    )
+    assert status["saved"] == [f"msg-{seed.nonce_v}"], status
 
 
 @pytest.mark.parametrize("other_user", ["*", V])
