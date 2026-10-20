@@ -2077,11 +2077,10 @@ async def test_a_bulk_update_inside_the_batch_is_owed_under_every_policy_but_app
 def test_the_defaults_are_the_benched_operating_point() -> None:
     # gpt-6.1-sol at low effort: update precision 0.99 or more at >= 0.98 on held-out pairs
     # (below it, the wrong retirements sat at 0.96), clear precision 0.96-0.98 at >= 0.90;
-    # a 0.60 floor flagged nothing it should not; between 0.60 and 0.70, 1 labelled pair
-    # in 2,001 was an update, so the floor is 0.70.
+    # a 0.60 floor flagged nothing it should not, and 0.70 missed updates at cosine 0.696.
     defaults = {n: f.default for n, f in Settings.model_fields.items()}
     assert defaults["conflict_resolver_model"] == "gpt-6.1-sol"
-    assert defaults["memory_conflict_resolver_min_similarity"] == 0.70
+    assert defaults["memory_conflict_resolver_min_similarity"] == 0.60
     assert defaults["memory_conflict_resolver_max_peers"] == 8
     assert defaults["memory_conflict_resolver_retire_confidence"] == 0.98
     assert defaults["memory_conflict_resolver_clear_confidence"] == 0.90

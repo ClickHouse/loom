@@ -353,8 +353,9 @@ async def test_one_pass_retires_clears_and_leaves_the_rest_then_changes_nothing(
 
 
 async def test_a_write_with_a_peer_past_the_floor_is_owed_a_judgement(ch, wired) -> None:
-    """The write path marks a row whose peer sits between the floor and the threshold;
-    a row with no peer that near is not marked."""
+    """The write path marks a row whose peer sits between the 0.60 floor and the
+    threshold (0.65 here); one whose nearest peer is at 0.55, or that has none that
+    near, is not marked."""
     from server.memory.app import after_write
 
     org, _llm = wired
@@ -373,14 +374,19 @@ async def test_a_write_with_a_peer_past_the_floor_is_owed_a_judgement(ch, wired)
         dim, model_name = real.dim, real.model_name
 
         async def embed(self, text: str) -> list[float]:
-            return _vec((10, 0.75), (11, 0.661)) if "cat" in text else _vec((12, 1.0))
+            if "cat" in text:
+                return _vec((10, 0.65), (11, 0.76))
+            if "parrot" in text:
+                return _vec((10, 0.55), (13, 0.835))
+            return _vec((12, 1.0))
 
     with pytest.MonkeyPatch.context() as m:
         m.setattr(set_commit, "get_embedder", lambda: Placed())
         await _set(org, "s2", "pet_new", "The user also has a cat named Tom")
+        await _set(org, "s2", "bird", "The user keeps a parrot named Kiwi")
         await _set(org, "s2", "car", "The user drives a blue car")
     marks = await _marks(ch, org)
-    assert marks["pet_new"] == 1 and marks["car"] is None
+    assert marks["pet_new"] == 1 and marks["bird"] is None and marks["car"] is None
 
 
 class _SlowLLM:

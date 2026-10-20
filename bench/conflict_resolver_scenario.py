@@ -18,7 +18,7 @@ server, its embedder and its judge).
   confidence (`LOW_CONFIDENCE`) and one answer cut off mid-way (`MALFORMED`).
 - `Fact.at` places each text in the test's vector space, where topic t owns four
   axes. Successive values of an attribute sit at cosine 0.75, between the
-  resolver's 0.70 floor and the 0.85 conflict threshold, so the write only marks
+  resolver's 0.60 floor and the 0.85 conflict threshold, so the write only marks
   the row for the resolver. Pairs at 0.87 to 0.92 are also flagged `conflicted`
   by the write. The bench ignores `at`.
 """
@@ -161,12 +161,12 @@ FACTS: list[Fact] = [
         near("kid", 0.78),
     ),
     # Near a different fact; two of them near an attribute's first value.
-    F(3, "sister_city", "The user's sister lives in Berlin", near("home", 0.72, axis=3)),
-    F(4, "skip_level", "The user's skip-level manager is Priya", near("mgr", 0.73, axis=3)),
+    F(3, "sister_city", "The user's sister lives in Berlin", near("home", 0.65, axis=3)),
+    F(4, "skip_level", "The user's skip-level manager is Priya", near("mgr", 0.66, axis=3)),
     F(4, "car", "The user drives a blue Golf", alone("car")),
     F(10, "partner_car", "The user's partner drives a red Polo", near("car", 0.87)),
     F(5, "dentist", "The user's dentist is Dr. Okafor", alone("doc")),
-    F(11, "gp", "The user's GP is Dr. Mensah", near("doc", 0.72)),
+    F(11, "gp", "The user's GP is Dr. Mensah", near("doc", 0.70)),
     # Pinned, and contradicted later: a pinned row is never retired.
     F(3, "code_freeze", "Code freeze starts every Friday at noon", alone("freeze"), pinned=True),
     F(9, "freeze_change", "Code freeze now starts on Thursday evening", near("freeze", 0.75)),
