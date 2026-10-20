@@ -17,7 +17,7 @@ import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { humanizeError, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
-import { signed, whyTerms } from "../lib/whyNote";
+import { signed, termText, whyTerms } from "../lib/whyNote";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -335,7 +335,7 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
                   .filter((t) => t !== entity)
                   .map((t) => (
                     <span key={t.label}>
-                      {t.label} {signed(t.value)}
+                      {t.label} {termText(t)}
                     </span>
                   ))}
               </span>

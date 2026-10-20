@@ -25,7 +25,7 @@ body:
     id: returned
     attributes:
       label: What came back
-      description: The keys and scores returned, and `abstain`, `abstain_code`, `retrieval_confidence`, `namespaces_searched` and `namespaces_skipped` if present. The `memory.search_trace` output of the same query shows why each hit ranked where it did.
+      description: The keys and scores returned, and `abstain`, `abstain_code`, `retrieval_confidence`, `namespaces_searched` and `namespaces_skipped` if present. The `memory.search` answer to the same query with `explain=true` shows why each hit ranked where it did.
       render: json
     validations:
       required: true
