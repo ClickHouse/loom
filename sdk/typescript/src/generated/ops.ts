@@ -9088,7 +9088,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "grants.list", group: "grants", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "grants.pending_for_me", group: "grants", method: "pendingForMe", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "grants.revoke", group: "grants", method: "revoke", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
-  { name: "grants.share_agent", group: "grants", method: "shareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 50, audit: true, readOnly: false },
+  { name: "grants.share_agent", group: "grants", method: "shareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "grants.unshare_agent", group: "grants", method: "unshareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "inbox.list", group: "inbox", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "inbox.policy_list", group: "inbox", method: "policyList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
