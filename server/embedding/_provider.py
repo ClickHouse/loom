@@ -79,13 +79,16 @@ def split_cached(
     """`(results, misses, hit_texts)` for a batch: `results[i]` is filled from
     the process cache where it can be, `misses` are the `(index, text)` pairs
     left for the provider."""
-    from server.embedding._cache import _cache, batch_key
+    from server.embedding._cache import _cache, batch_key, scope
 
     results: list[list[float] | None] = [None] * len(texts)
     misses: list[tuple[int, str]] = []
     hits: list[str] = []
+    org = scope()
+    if not org:  # no org to scope by: nothing is shared
+        return results, list(enumerate(texts)), hits
     for i, t in enumerate(texts):
-        cached = _cache.get(batch_key(model, t))
+        cached = _cache.get(batch_key(model, t, org))
         if cached is None:
             misses.append((i, t))
         else:
@@ -98,10 +101,11 @@ def store(
     model: str, results: list[list[float] | None], index: int, text: str, vec: list[float]
 ) -> None:
     """Put one validated provider vector in its batch slot and the process cache."""
-    from server.embedding._cache import _cache, batch_key
+    from server.embedding._cache import _cache, batch_key, scope
 
     results[index] = vec
-    _cache.put(batch_key(model, text), vec)
+    if org := scope():
+        _cache.put(batch_key(model, text, org), vec)
 
 
 def filled(results: list[list[float] | None]) -> list[list[float]]:

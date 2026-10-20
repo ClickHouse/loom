@@ -383,7 +383,10 @@ def test_one_provider_embed_across_vector_prefix_twin_and_cards_and_a_cache_hit(
 ) -> None:
     from server.embedding import _cache
     from server.embedding.prefix import PrefixEmbedder
+    from server.observability import genai
 
+    # One org's request: the embedding cache is scoped by it.
+    monkeypatch.setattr(genai, "request_org", lambda: "acme")
     fetches: list[str] = []
 
     async def fetch(text: str) -> list[float]:

@@ -400,16 +400,16 @@ _BEHAVIORAL_EXTRA_SKIP = {
 }
 
 
-def embedding_cache_key(model: str, text: str) -> str:
+def embedding_cache_key(model: str, text: str, org: str) -> str:
     """The shared embedding cache's row key: the server's own
-    `server/embedding/_cache._key` (sha1 of model NUL [version salt]
-    normalised-text; the salt is versioned while the read side embeds the
-    normalised text). The text is not stored; the key is the only way to ask
+    `server/embedding/_cache._key` (sha1 of the org, the model, a version salt
+    and the normalised text; the salt is versioned while the read side embeds
+    the normalised text). The text is not stored; the key is the only way to ask
     whether a text's vector is still in the table, so it must be computed by
     the one function the server writes rows with."""
     from server.embedding._cache import _key
 
-    return _key(model, text)
+    return _key(model, text, org)
 
 
 def write_shaped_ops() -> set[str]:
@@ -619,6 +619,7 @@ def focus_counts(
     *,
     model: str,
     texts: list[str],
+    org: str,
     key_canary: str = "",
     database: str = "loom",
 ) -> dict[str, int]:
@@ -638,7 +639,7 @@ def focus_counts(
         except Exception as e:  # noqa: BLE001
             print(f"  count {table} failed: {str(e)[:120]}", file=sys.stderr)
             out[table] = -1
-    keys = [embedding_cache_key(model, t) for t in texts]
+    keys = [embedding_cache_key(model, t, org) for t in texts]
     if keys:
         try:
             v = _ch(
@@ -771,7 +772,9 @@ def run_scope(
     time.sleep(args.settle_seconds)
     ch = (args.ch_url, args.ch_user, args.ch_password)
     rep = ScopeReport(scope_type=scope_type, scope_value=ns if scope_type != "user_id" else user_id)
-    counts = dict(model=model, texts=pl.texts, key_canary=pl.key_canary, database=args.ch_database)
+    counts = dict(
+        model=model, texts=pl.texts, org=org, key_canary=pl.key_canary, database=args.ch_database
+    )
     rep.before = focus_counts(*ch, canary, **counts)
     # positive control: the tenant reads its own canary back before the erasure
     r = _try(

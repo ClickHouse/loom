@@ -73,7 +73,7 @@ class ProviderSettings(ModelSettings):
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
     # Shared query-embedding cache in loom.embedding_cache behind the
-    # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
+    # per-process LRU, keyed (org, model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
     # it. Off = process cache only.
     embedding_cache_shared: bool = True
