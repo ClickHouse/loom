@@ -80,8 +80,9 @@ def test_the_review_moved_the_named_tables_into_the_census() -> None:
         assert t not in user, t  # no user axis on these
     # namespace_snapshots stays out: it holds counts and a namespace name, never the payload
     assert "loom.namespace_snapshots" in erasure_census.NO_MEMORY_CONTENT
-    # embedding_cache cannot be scoped (no tenant axis); the reason says so
-    assert "no org/namespace column" in erasure_census.NO_MEMORY_CONTENT["loom.embedding_cache"]
+    # embedding_cache has no namespace or user axis, and goes by org; the reason says so
+    reason = erasure_census.NO_MEMORY_CONTENT["loom.embedding_cache"]
+    assert "no namespace or user axis" in reason and "delete_embedding_cache_for_org" in reason
 
 
 def test_a_plain_mergetree_with_a_live_predicate_is_marked_final_false() -> None:

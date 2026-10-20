@@ -305,3 +305,13 @@ async def delete_projection_failures_by_namespace(
         params={"ns": namespace},
         ch=ch,
     )
+
+
+async def delete_embedding_cache_for_org(org: str, *, ch: _CHClient | None = None) -> int:
+    """Every cached query vector an org's requests left, for the erasure of a
+    whole customer: the table has no namespace or user axis, and its rows hold
+    vectors, never text. Rows a build before `org` wrote carry '' and are no
+    one's; the 30-day TTL takes them."""
+    return await delete_scoped(
+        "loom.embedding_cache", org=org, scope_where="1", params={}, ch=ch, lightweight=True
+    )

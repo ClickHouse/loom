@@ -444,12 +444,15 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "join rule, an encrypted fetch token) — deployment configuration keyed by "
         "(org, namespace), holding no memory or source content; retired by active=false."
     ),
-    # -- no tenant axis: cannot be scoped by namespace or user -----------------
+    # -- org-scoped: no namespace or user axis ----------------------------------
     "loom.embedding_cache": (
-        "no org/namespace column; a vector keyed by sha1(org, model, normalised text) — "
-        "the text is not stored, so an org's rows are found only by recomputing the key; "
-        "30-day TTL. The compliance bench counts the canary's key."
+        "cached query vectors, never text: keyed by sha1(org, model, normalised text), "
+        "with the org in its own column; no namespace or user axis, so a namespace or "
+        "user erasure cannot scope it. A customer's rows are deleted by org "
+        "(steps_ledgers.delete_embedding_cache_for_org); 30-day TTL. The compliance "
+        "bench counts the canary's key."
     ),
+    # -- no tenant axis: cannot be scoped by namespace or user -----------------
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",
     "loom.blacklist_version": "singleton version counter for the blacklist cache.",
     "loom.worker_status": (

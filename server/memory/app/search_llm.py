@@ -123,6 +123,16 @@ async def extract_derived_intent_llm(
     }
 
 
+def _org_key(key: str) -> str:
+    """`key` within the request's org, as the embedding cache scopes it; ""
+    outside a request, where nothing is cached: an org never learns from a
+    fast reply what another asked."""
+    from server.observability.genai import request_org
+
+    org = request_org()
+    return f"{org}\0{key}" if org else ""
+
+
 _QUERY_ENTITY_CACHE: dict[str, list[list[str]]] = {}
 
 
@@ -138,7 +148,7 @@ async def extract_query_triples_llm(
 ) -> list[tuple[str, str, str]]:
     """LLM-extracted (s, v, o) triples from a query. Used to look up
     matching stored triples in loom.entity_triples for the triple-boost
-    leg of graph mode. Cached per-query, fail-open ([] on error).
+    leg of graph mode. Cached per org and query, fail-open ([] on error).
     Wildcard '?' permitted for unknown subject or object — the matcher
     treats it as a SQL LIKE %% on that field.
 
@@ -147,8 +157,8 @@ async def extract_query_triples_llm(
     """
     if not query or not query.strip():
         return []
-    key = "TRIPLES:" + query.strip().lower()
-    cached = _QUERY_ENTITY_CACHE.get(key)
+    key = _org_key("TRIPLES:" + query.strip().lower())
+    cached = _QUERY_ENTITY_CACHE.get(key) if key else None
     if cached is not None:
         return [tuple(t) for t in cached]  # type: ignore[misc]
     try:
@@ -186,9 +196,10 @@ async def extract_query_triples_llm(
             if not s and not o:
                 continue
             out.append((s or "?", v, o or "?"))
-        if len(_QUERY_ENTITY_CACHE) >= _QUERY_ENTITY_CACHE_MAX:
-            _QUERY_ENTITY_CACHE.pop(next(iter(_QUERY_ENTITY_CACHE)))
-        _QUERY_ENTITY_CACHE[key] = [list(t) for t in out]
+        if key:
+            if len(_QUERY_ENTITY_CACHE) >= _QUERY_ENTITY_CACHE_MAX:
+                _QUERY_ENTITY_CACHE.pop(next(iter(_QUERY_ENTITY_CACHE)))
+            _QUERY_ENTITY_CACHE[key] = [list(t) for t in out]
         return out
     except Exception:  # noqa: BLE001 — a failed entity extraction means no query entities
         return []
@@ -209,7 +220,7 @@ async def expand_verb_synonyms(
 ) -> list[str]:
     """LLM-expand a verb into its synonym set. Returns the input verb +
     3-5 synonyms, all canonicalized (stemmed + lowercased + underscore-
-    joined). Cached process-wide by canonicalized form.
+    joined). Cached per org by canonicalized form.
 
     Fail-open: returns [verb] on any error so the matcher still works.
     Used at query time to widen the relation filter in
@@ -221,7 +232,8 @@ async def expand_verb_synonyms(
     canon = canonicalize_verb(verb)
     if not canon:
         return []
-    cached = _VERB_SYNONYM_CACHE.get(canon)
+    key = _org_key(canon)
+    cached = _VERB_SYNONYM_CACHE.get(key) if key else None
     if cached is not None:
         return list(cached)
     try:
@@ -254,9 +266,10 @@ async def expand_verb_synonyms(
             if cv and cv not in seen and len(cv) >= 2:
                 seen.add(cv)
                 out.append(cv)
-        if len(_VERB_SYNONYM_CACHE) >= _VERB_SYNONYM_CACHE_MAX:
-            _VERB_SYNONYM_CACHE.pop(next(iter(_VERB_SYNONYM_CACHE)))
-        _VERB_SYNONYM_CACHE[canon] = out
+        if key:
+            if len(_VERB_SYNONYM_CACHE) >= _VERB_SYNONYM_CACHE_MAX:
+                _VERB_SYNONYM_CACHE.pop(next(iter(_VERB_SYNONYM_CACHE)))
+            _VERB_SYNONYM_CACHE[key] = out
         return out
     except Exception:  # noqa: BLE001 — a failed synonym call keeps the verb alone
         return [canon]

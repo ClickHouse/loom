@@ -241,6 +241,8 @@ def _shared_put(model: str, key: str, text: str, vec: list[float]) -> None:
     row = {
         "model": model,
         "key": key,
+        # The org the key hashes, so its rows can be deleted without their texts.
+        "org": scope(),
         "dim": len(vec),
         "embedding": [float(x) for x in vec],
         "created_at": naive_utc_now(),

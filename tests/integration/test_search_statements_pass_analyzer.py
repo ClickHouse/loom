@@ -399,7 +399,7 @@ async def test_llm_response_cache_statements_pass_the_analyzer_and_round_trip(ch
             return LLMResult(text="", tokens_in=0, tokens_out=0, provider="fake", model=self.model)
 
     stub = _Stub()
-    await CachedLLMClient(_Inner(), ch=stub).complete("sys", "user", max_tokens=600)
+    await CachedLLMClient(_Inner(), org="o", ch=stub).complete("sys", "user", max_tokens=600)
     assert len(stub.query_all_calls) == 1
     sql, params = stub.query_all_calls[0]
     assert sql == read_sql()

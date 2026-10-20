@@ -115,6 +115,7 @@ async def test_a_vector_is_never_served_to_another_org(ch: _CH) -> None:
     _, acme_again = await ec.cached_embed("m", "the same query", fetch, dim=2)
     assert (hit, beta_hit, acme_again) == (False, False, True)
     assert beta_shared is True and ec.last_tier() == "shared"  # beta's own row
+    assert sorted(r["org"] for r in ch.rows.values()) == ["acme", "beta"]  # deletable by org
     assert fetched == ["acme", "beta"]
 
 
@@ -255,3 +256,38 @@ def test_the_mcp_transport_scopes_the_cache_by_the_calls_org(ch: _CH, monkeypatc
         result = client.post("/mcp", json=rpc).json()["result"]
         assert not result.get("isError"), result
     assert calls == ["acme", "beta"]
+
+
+# ---- search's in-process LLM caches ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_triples_and_verb_synonyms_are_cached_per_org(monkeypatch) -> None:
+    from server.llm import client as llm_client
+    from server.memory.app import search_llm
+
+    asked: list[str] = []
+
+    class _LLM:
+        async def complete(self, system: str, user: str, **kw: Any) -> Any:
+            asked.append(genai.request_org())
+            text = (
+                '[{"s": "alice", "v": "visit", "o": "paris"}]' if "verb" not in user else '["go"]'
+            )
+            return LLMResult(text=text, tokens_in=1, tokens_out=1, provider="fake", model="m")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
+    monkeypatch.setattr(search_llm, "_QUERY_ENTITY_CACHE", {})
+    monkeypatch.setattr(search_llm, "_VERB_SYNONYM_CACHE", {})
+    try:
+        for org in ("acme", "beta", "acme"):
+            _as(org)
+            await search_llm.extract_query_triples_llm("where did alice visit")
+            await search_llm.expand_verb_synonyms("visit")
+        assert asked == ["acme", "acme", "beta", "beta"]  # beta asked its own; acme's repeat hit
+        genai._identity.set(None)
+        genai.set_worker_identity("observe_extract", org="acme")  # no request: nothing kept
+        await search_llm.expand_verb_synonyms("visit")
+        assert len(asked) == 5 and len(search_llm._VERB_SYNONYM_CACHE) == 2
+    finally:
+        genai._identity.set(None)
