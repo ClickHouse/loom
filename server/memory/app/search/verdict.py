@@ -13,18 +13,32 @@ if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration
 
 
-def _gate_top_sim(hits: list[Any]) -> float | None:
-    """The cosine the below-threshold gate reads: the fused rank-1 row's by default, or the
-    best cosine among the returned rows when memory_search_abstain_top_sim_scope == "window" —
-    under rrf a lexical-only match can hold rank 1 while the relevant row sits at rank 2 with
-    0.36."""
-    if not hits:
+def gate_order(hits: list[Any]) -> list[Any]:
+    """The served rows as the confidence gates read them: the rows an external reranker moved
+    back at their fused positions (`rerank_from`); rows under the similarity floor stay put."""
+    comps = [h.score_components for h in hits]
+    slots = [i for i, c in enumerate(comps) if "rerank_from" in c and not c.get("below_floor")]
+    if not any(comps[i].get("rerank_delta") for i in slots):
+        return hits
+    fused = [hits[i] for i in sorted(slots, key=lambda i: float(comps[i]["rerank_from"]))]
+    out = list(hits)
+    for i, h in zip(slots, fused, strict=True):
+        out[i] = h
+    return out
+
+
+def _gate_top_sim(gated: list[Any]) -> float | None:
+    """The cosine the below-threshold gate reads, over rows in the gates' order
+    (`gate_order`): the first row's by default, or the best cosine among them when
+    memory_search_abstain_top_sim_scope == "window" — under rrf a lexical-only match can
+    hold rank 1 while the relevant row sits at rank 2 with 0.36."""
+    if not gated:
         return None
     from server.settings import settings as _s_gate
 
     if str(_s_gate.memory_search_abstain_top_sim_scope) == "window":
-        return max(1.0 - float(h.distance) for h in hits)
-    return 1.0 - float(hits[0].distance)
+        return max(1.0 - float(h.distance) for h in gated)
+    return 1.0 - float(gated[0].distance)
 
 
 # Hit `source` values whose `distance` is a genuine cosine — the planes the
@@ -39,8 +53,9 @@ _TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
 
 def _flag_below_threshold(hits: list[Any], abstain_threshold: float) -> int:
     """Mark every served row whose un-boosted similarity is below the abstain threshold the
-    response's gate used. The gate reads the rank-1 row; a k=30 window carries a tail the gate
-    never looked at, and a caller who wants "abstain means abstain" per row reads this flag.
+    response's gate used. The gate reads the first row of `gate_order`; a k=30 window carries
+    a tail the gate never looked at, and a caller who wants "abstain means abstain" per row
+    reads this flag.
     Rows without a cosine (tier rows, derived / computed evidence, record-plane lexical rows)
     are left unset. Returns how many rows were flagged."""
     if abstain_threshold <= 0.0 or not hits:
@@ -73,7 +88,8 @@ def _finalize_abstain(
     query_text: str = "",
     work: dict[str, Any] | None = None,
 ) -> tuple[bool, str, str]:
-    """Decide the abstain envelope for a finished hit list.
+    """Decide the abstain envelope for a finished hit list; `hits` arrive in the gates'
+    order (`gate_order`).
 
     Precedence is load-bearing and matches the main path: an empty set is `no_match`, a weak
     top hit is `below_threshold` (carrying the actual threshold, which is what an operator
@@ -153,7 +169,8 @@ def _calibrate_final_hits(
     )
     from server.memory.domain.retrieval_calibration import calibrate_retrieval
 
-    # KNOWN ISSUE, deliberately not fixed here. Rank 0 is not guaranteed to carry the best
+    # KNOWN ISSUE, deliberately not fixed here. The first row of `gate_order` (the served rank
+    # 1, or after a rerank the fused rank 1) is not guaranteed to carry the best
     # cosine: RRF/lexical fusion can put a weak row first, and under the default
     # namespace_scope="all_mine" a row from another namespace can win it, so a query can
     # abstain while a 0.63 hit sits at rank 1. Taking max/second-max by value instead is wrong
@@ -162,12 +179,15 @@ def _calibrate_final_hits(
     # suppresses abstention indefinitely; (b) second-highest-by-value is by construction the
     # smallest gap in the set, which collapses `calibrate_retrieval`'s margin term and invents
     # a *new* class of false abstention ([0.35, 0.05, 0.34] goes 0.443/"high" ->
-    # 0.327/"abstain"); (c) the iterative judge reads rank 0 too, and would disagree with the
-    # verdict about what the top hit is.
+    # 0.327/"abstain"); (c) the iterative judge reads the same first row, and would disagree
+    # with the verdict about what the top hit is.
     # A real fix needs the hit model to distinguish cosine from synthesized distances.
-    second_similarity = 1.0 - final_hits[1].distance if len(final_hits) > 1 else 0.0
+    # One list for every gate below: the served rows in fused order (a reranker's moves
+    # undone among them).
+    gated = gate_order(final_hits)
+    second_similarity = 1.0 - gated[1].distance if len(gated) > 1 else 0.0
     calibration = calibrate_retrieval(
-        top_similarity=_gate_top_sim(final_hits) or 0.0,
+        top_similarity=_gate_top_sim(gated) or 0.0,
         second_similarity=second_similarity,
         result_count=len(final_hits),
         graph_seeds=run.graph_seeds,
@@ -177,9 +197,10 @@ def _calibrate_final_hits(
         evidence_support_count=evidence_support_count,
         abstain_threshold=abstain_threshold,
     )
-    # Rank-0 based, matching the calibrator above; see the note there before changing it.
+    # The first row of `gate_order`, as the calibrator above; see the note there before
+    # changing it.
     abstain, abstain_code, abstain_reason = _finalize_abstain(
-        final_hits,
+        gated,
         calibration=calibration,
         abstain_threshold=abstain_threshold,
         query_text=input.query,
