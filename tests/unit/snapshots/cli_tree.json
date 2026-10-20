@@ -7654,9 +7654,7 @@
        ],
        "dest": "roles",
        "action": "_StoreAction",
-       "default": [
-        "writer"
-       ],
+       "default": null,
        "const": null,
        "choices": [
         "viewer",
@@ -7666,7 +7664,7 @@
        "nargs": "+",
        "type": null,
        "required": false,
-       "help": null,
+       "help": "Roles on --namespaces (default: writer).",
        "metavar": null
       },
       {

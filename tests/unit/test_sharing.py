@@ -530,3 +530,99 @@ def test_the_op_endpoint_runs_a_gateway_token_as_the_user_it_names(
     headers = {"Authorization": "Bearer gw", "X-Loom-On-Behalf-Of": "user:alice"}
     auth = http._extract_auth(SimpleNamespace(headers=headers))  # type: ignore[arg-type]
     assert auth is not None and auth.subject == "user:alice"
+
+
+def test_a_tree_or_group_row_outranks_the_row_it_replaces_whatever_the_clock() -> None:
+    ahead = 2**62  # a row written from a host whose clock ran far ahead
+    assert collection_row(ORG, "col-q3", deleted=True, after=ahead)["version"] > ahead
+    assert (
+        group_row(ORG, "g", display_name="", external_id="", members=[], after=ahead)["version"]
+        > ahead
+    )
+
+
+def test_a_collection_delete_cut_short_is_closed_by_its_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tree is retired before the directory row goes inactive, so a retry
+    after a failed retire finds the row still active and retires again."""
+    from contextlib import asynccontextmanager
+
+    from server.identity.api.models import NamespaceDeleteInput
+    from server.identity.app import collections, namespace
+
+    directory = {"org": ORG, "namespace": "col-hr", "kind": "collection", "active": True}
+    retired: list[str] = []
+
+    @asynccontextmanager
+    async def _claim(*_a: Any) -> Any:
+        yield
+
+    async def _row(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return dict(directory)
+
+    async def _retire(org: str, ns: str) -> None:
+        if not retired:
+            retired.append("failed")
+            raise RuntimeError("claim busy")
+        retired.append(ns)
+
+    class _CH:
+        async def insert(self, table: str, rows: list[dict[str, Any]], **_k: Any) -> None:
+            directory.update(active=rows[0]["active"])
+
+    async def _changed(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(namespace, "account_change", _claim)
+    monkeypatch.setattr(namespace, "get_client", lambda: _CH())
+    monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _row)
+    monkeypatch.setattr(namespace.grant_cache, "changed", _changed)
+    monkeypatch.setattr(collections, "retire", _retire)
+    delete = NamespaceDeleteInput(org=ORG, namespace="col-hr")
+    with pytest.raises(RuntimeError):
+        asyncio.run(namespace.handle_namespace_delete(delete))
+    assert directory["active"] is True, "nothing closed the row while the tree stands"
+    assert asyncio.run(namespace.handle_namespace_delete(delete)).deleted is True
+    assert retired == ["failed", "col-hr"] and directory["active"] is False
+
+
+def test_a_grant_to_a_group_is_written_under_the_groups_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SCIM delete holds the same claim, so it cannot pass between the check
+    that the group exists and the grant's write."""
+    from contextlib import asynccontextmanager
+
+    from server.core.errors import ValidationError
+    from server.identity.app import grants, scim_groups
+
+    held: list[str] = []
+    events: list[str] = []
+
+    @asynccontextmanager
+    async def _group_change(org: str, group_id: str) -> Any:
+        held.append(group_id)
+        yield
+        held.remove(group_id)
+
+    async def _fetch(org: str, group_id: str) -> dict[str, Any] | None:
+        events.append(f"check {group_id} held={held}")
+        return None if group_id == "gone" else {"group_id": group_id}
+
+    async def _create(_input: Any) -> Any:
+        events.append(f"write held={held}")
+        return None
+
+    monkeypatch.setattr(grants, "group_change", _group_change)
+    monkeypatch.setattr(scim_groups, "fetch_group", _fetch)
+    monkeypatch.setattr(grants, "_create_grant", _create)
+
+    async def _run(subject: str) -> None:
+        async with grants._group_held(ORG, subject):
+            await grants._create_grant(None)
+
+    asyncio.run(_run("group:eng"))
+    assert events == ["check eng held=['eng']", "write held=['eng']"]
+    with pytest.raises(ValidationError, match="no group"):
+        asyncio.run(_run("group:gone"))

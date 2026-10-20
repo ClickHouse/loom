@@ -100,7 +100,14 @@ async def handle_collection_create(input: CollectionCreateInput) -> CollectionCr
             check_placement(await sharing.load_tree(org), namespace, parent)
         ch = get_client()
         await collections_repo.write(
-            collections_repo.collection_row(org, namespace, parent=parent, owner=caller), ch=ch
+            collections_repo.collection_row(
+                org,
+                namespace,
+                parent=parent,
+                owner=caller,
+                after=await collections_repo.stored_version(org, namespace),
+            ),
+            ch=ch,
         )
         await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
         await insert_admin_grant(ch, org, namespace, caller)
@@ -137,6 +144,7 @@ async def handle_collection_move(input: CollectionMoveInput) -> CollectionMoveOu
                 parent=parent,
                 owner=current["owner"],
                 created_at=current["created_at"],
+                after=current["version"],
             )
         )
     await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
@@ -195,6 +203,7 @@ async def retire(org: str, namespace: str) -> None:
                     child["namespace"],
                     owner=child["owner"],
                     created_at=child["created_at"],
+                    after=child["version"],
                 )
             )
         await collections_repo.write(
@@ -205,6 +214,7 @@ async def retire(org: str, namespace: str) -> None:
                 owner=current["owner"],
                 created_at=current["created_at"],
                 deleted=True,
+                after=current["version"],
             )
         )
     await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)

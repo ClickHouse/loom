@@ -195,7 +195,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             subject=args.subject,
             org=args.org,
             namespaces=namespaces,
-            roles=args.roles,
+            roles=args.roles or ["writer"],
             ttl_seconds=ttl_seconds,
             is_service_account=args.service_account,
             read_scope=args.read_scope,
@@ -210,7 +210,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "subject": args.subject,
             "org": args.org,
             "namespaces": namespaces,
-            "roles": args.roles,
+            "roles": args.roles or ["writer"],
             "ttl_days": args.ttl_days,
             "is_service_account": args.service_account,
             "read_scope": args.read_scope or "namespace",
@@ -230,7 +230,7 @@ def _mint_gateway_token(args: argparse.Namespace, ttl_seconds: int | None, jti: 
     claims = {
         "--namespaces": args.namespaces,
         "--namespace-role": args.namespace_role,
-        "--roles": args.roles != ["writer"],  # the flag's default
+        "--roles": args.roles,
         "--read-scope": args.read_scope,
         "--read-user-id": args.read_user_id,
         "--traffic-class": args.traffic_class,
@@ -569,7 +569,11 @@ def _add_mint_token_parser(sub: Any) -> None:
         "for wildcard. Mutually exclusive with --namespace-role.",
     )
     p_mint.add_argument(
-        "--roles", nargs="+", default=["writer"], choices=["viewer", "writer", "admin"]
+        "--roles",
+        nargs="+",
+        default=None,
+        choices=["viewer", "writer", "admin"],
+        help="Roles on --namespaces (default: writer).",
     )
     p_mint.add_argument(
         "--namespace-role",

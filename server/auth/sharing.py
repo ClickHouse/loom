@@ -192,7 +192,10 @@ async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
 async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Role | None]:
     """The request's role on each collection of `namespaces`, reading the tree,
     the principals and their grant maps once. A personal collection needs no
-    read: its name says whose it is."""
+    read: its name says whose it is. A platform admin holds admin on every one
+    (`check` admits it)."""
+    if auth.has_role(Role.PLATFORM_ADMIN):
+        return dict.fromkeys(namespaces, Role.ADMIN)
     out = {
         ns: (Role.ADMIN if owns_personal(auth, org, ns) else None)
         for ns in namespaces

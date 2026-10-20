@@ -158,11 +158,12 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     # The input carries no `namespace`, so the transport bound an org-only check. A
     # namespace export is authorized against the namespace itself (a restricted one needs
     # the two-factor ADMIN check); a subject export spans every namespace of the org and
-    # needs the org-wide view, less the restricted namespaces this caller may not read.
-    # It shows what the user wrote in every collection too: the subject's own data,
-    # which this caller may erase.
+    # needs the org-wide view, less the restricted namespaces and the collections this
+    # caller may not read (an org admin may erase what it may not read).
     auth = auth_context.current_auth()
     hidden: set[str] = set()
+    # The collections the export may show; None: every one (no auth, a platform admin).
+    readable_collections: set[str] | None = None
     if auth is not None:
         if input.scope_type == "namespace":
             try:
@@ -181,11 +182,20 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
                 raise AuthInsufficientError(
                     f"cannot export {input.org}: namespace classification unavailable"
                 )
+            if not auth.has_role(Role.PLATFORM_ADMIN):
+                readable_collections = set(await sharing.readable(auth, input.org))
+
+    def _shown(namespace: str) -> bool:
+        if namespace in hidden:
+            return False
+        return (
+            readable_collections is None
+            or not sharing.is_collection(namespace)
+            or namespace in readable_collections
+        )
 
     def _visible(rows: list[dict[str, object]], count: int) -> tuple[list[dict[str, object]], int]:
-        if not hidden:
-            return rows, count
-        kept = [r for r in rows if str(r.get("namespace") or "") not in hidden]
+        kept = [r for r in rows if _shown(str(r.get("namespace") or ""))]
         return kept, count - (len(rows) - len(kept))
 
     mem_rows, mem_count, mem_trunc = await _export_memory(

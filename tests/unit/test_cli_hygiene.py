@@ -299,7 +299,7 @@ def test_serve_runs_with_no_command_context_bound() -> None:
     ("extra", "said"),
     [
         (["--subject", "user:x"], "grant principal"),
-        (["--subject", "sa:chat", "--roles", "admin"], "--roles"),
+        (["--subject", "sa:chat", "--roles", "writer"], "--roles"),
         (["--subject", "sa:chat", "--read-scope", "own_user"], "--read-scope"),
     ],
 )

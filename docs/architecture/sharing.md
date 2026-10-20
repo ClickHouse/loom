@@ -156,8 +156,9 @@ every grant naming `user:<id>`, removes them from every group, and retires their
 collection's directory row. Deleting a SCIM group revokes the grants that named it, so a
 group made later under the same id starts with none. Collections that hold other writers'
 documents stay: Loom deletes only what its writer asked to delete. A user-scope
-`erasure.export` returns every chunk that user wrote, in any collection, their personal
-collection included: the org admin who runs it may erase each one.
+`erasure.export` returns the chunks that user wrote in the collections its caller may
+read: an org admin may erase a collection's rows without reading them, and a platform
+admin sees every collection.
 
 ## Alternatives not taken
 

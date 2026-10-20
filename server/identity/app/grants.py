@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
-from server.auth.grant_claims import admins_change, grant_change
+from server.auth.grant_claims import admins_change, grant_change, group_change
 from server.core.errors import GrantBusyError, ValidationError
 from server.identity.api.models_grants import (
     GrantsApproveInput,
@@ -151,15 +152,22 @@ def _enforce_principal_target(namespace: str, subject: str) -> None:
         raise ValidationError("groups and agents hold grants on collections only")
 
 
-async def _enforce_group_exists(org: str, subject: str) -> None:
-    """A grant to a group names one the org's SCIM client created and has not
-    deleted: a deleted group's grants were revoked with it."""
+@asynccontextmanager
+async def _group_held(org: str, subject: str) -> AsyncIterator[None]:
+    """For a grant to a group, the group's claim from the check that it exists
+    to the grant's write, so a SCIM delete cannot pass between them and leave
+    the grant to a group made later under its id. Nothing for anyone else."""
     from server.core.principals import GROUP, principal_id
     from server.identity.app.scim_groups import fetch_group
 
     group_id = principal_id(subject, GROUP)
-    if group_id and await fetch_group(org, group_id) is None:
-        raise ValidationError(f"no group {group_id!r} in {org}")
+    if not group_id:
+        yield
+        return
+    async with group_change(org, group_id):
+        if await fetch_group(org, group_id) is None:
+            raise ValidationError(f"no group {group_id!r} in {org}")
+        yield
 
 
 async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
@@ -170,7 +178,19 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
 
     await _enforce_code_ceiling(input.org, input.namespace, input.role)
     _enforce_principal_target(input.namespace, input.subject)
-    await _enforce_group_exists(input.org, input.subject)
+    async with _group_held(input.org, input.subject):
+        now = await _create_grant(input)
+    return GrantsCreateOutput(
+        org=input.org,
+        namespace=input.namespace,
+        subject=input.subject,
+        role=input.role,
+        granted_at=now,
+    )
+
+
+async def _create_grant(input: GrantsCreateInput) -> datetime:
+    """`grants.create`'s write and what follows it; returns when it was granted."""
     # A human's grant is written under the login handle, so one person keeps one row
     # whichever spelling the granter typed; the downgrade guard reads that same row.
     from server.auth.aliases import canonical_subject
@@ -191,13 +211,7 @@ async def handle_grants_create(input: GrantsCreateInput) -> GrantsCreateOutput:
         from server.code.app.index import maintainers
 
         await maintainers.sync_quietly(input.org, input.namespace)
-    return GrantsCreateOutput(
-        org=input.org,
-        namespace=input.namespace,
-        subject=input.subject,
-        role=input.role,
-        granted_at=now,
-    )
+    return now
 
 
 async def _write_grant(input: GrantsCreateInput, subject: str) -> datetime:

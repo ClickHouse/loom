@@ -113,8 +113,10 @@ def group_row(
     members: list[str],
     created_at: datetime | None = None,
     deleted: bool = False,
+    after: int = 0,
 ) -> dict[str, Any]:
-    """One whole loom.principal_groups row."""
+    """One whole loom.principal_groups row, versioned above `after` (the
+    version of the row it replaces) whatever this host's clock says."""
     now = datetime.now(UTC).replace(tzinfo=None)
     return {
         "org": org,
@@ -125,8 +127,19 @@ def group_row(
         "deleted": deleted,
         "created_at": created_at or now,
         "updated_at": now,
-        "version": time.time_ns(),
+        "version": max(time.time_ns(), after + 1),
     }
+
+
+async def _stored_version(org: str, group_id: str) -> int:
+    """The version of the group's newest row, a deleted one included; 0 for none."""
+    with own_write_reads():
+        row = await get_client().query_one(
+            "SELECT max(version) AS v FROM loom.principal_groups"
+            " WHERE org = {org:String} AND group_id = {gid:String}",
+            params={"org": org, "gid": group_id},
+        )
+    return int((row or {}).get("v") or 0)
 
 
 async def fetch_group(org: str, group_id: str) -> dict[str, Any] | None:
@@ -270,6 +283,7 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
             display_name=str(body.get("displayName") or ""),
             external_id=external,
             members=members,
+            after=await _stored_version(org, group_id),  # above a deleted group of this id
         )
         await _write(row, event="scim.group_created", actor=caller.actor)
     resource = _resource(request, row)
@@ -290,6 +304,7 @@ async def replace_group(group_id: str, request: Request, caller: _Caller = _CALL
             external_id=str(body.get("externalId") or current["external_id"]),
             members=members,
             created_at=current["created_at"],
+            after=current["version"],
         )
         await _write(row, event="scim.group_replaced", actor=caller.actor)
     return _answer(_resource(request, row))
@@ -336,6 +351,7 @@ async def patch_group(group_id: str, request: Request, caller: _Caller = _CALLER
             external_id=current["external_id"],
             members=sorted(members),
             created_at=current["created_at"],
+            after=current["version"],
         )
         await _write(row, event="scim.group_changed", actor=caller.actor)
     return _answer(_resource(request, row))
@@ -358,6 +374,7 @@ async def delete_group(group_id: str, caller: _Caller = _CALLER) -> Response:
             members=[],
             created_at=current["created_at"],
             deleted=True,
+            after=current["version"],
         )
         # The grants first: a delete cut short is retried, and finds the group still there.
         await revoke_subject(org, f"group:{group_id}", actor=caller.actor)

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import logging
 from typing import TYPE_CHECKING
 
 from server.auth.fanout import namespaces_to_search
-from server.core.vectors.private_first import best_similarity, private_first_passes
+from server.core.vectors.private_first import search_private_first
 from server.embedding import get_embedder
 from server.identity.app import namespace_visibility
 from server.knowledge.api.models_knowledge import (
@@ -130,24 +131,20 @@ async def _search_private_first(
     namespaces: list[str],
     search: Callable[[list[str]], Awaitable[list[tuple[str, list[ChunkHit]]]]],
 ) -> list[tuple[str, list[ChunkHit]]]:
-    """The addressed namespace and the private ones first; the public ones
-    only when that pass found nothing within PRIVATE_HIT_THRESHOLD."""
     from server.observability.otel import traced
 
-    passes = None
-    if input.namespace_scope == "all_mine" and len(namespaces) > 1:
-        visibility = await namespace_visibility.visibility_map(input.org, namespaces)
-        passes = private_first_passes(input.namespace, namespaces, visibility)
-    if passes is None:
-        with traced("ch.query.chunks", op="vector_search", namespaces=len(namespaces)):
-            return await search(namespaces)
-    first, second = passes
-    with traced("ch.query.chunks", op="vector_search.private", namespaces=len(first)):
-        results = await search(first)
-    if second and best_similarity(results) < PRIVATE_HIT_THRESHOLD:
-        with traced("ch.query.chunks", op="vector_search.public", namespaces=len(second)):
-            results += await search(second)
-    return results
+    return await search_private_first(
+        input.namespace,
+        namespaces,
+        search,
+        visibility=(
+            functools.partial(namespace_visibility.visibility_map, input.org)
+            if input.namespace_scope == "all_mine"
+            else None
+        ),
+        threshold=PRIVATE_HIT_THRESHOLD,
+        span=functools.partial(traced, "ch.query.chunks", top_k=input.top_k),
+    )
 
 
 def _as_search_hits(results_per_ns: list[tuple[str, list[ChunkHit]]]) -> list[_SearchHit]:

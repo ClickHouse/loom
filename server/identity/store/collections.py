@@ -23,8 +23,10 @@ def collection_row(
     owner: str = "",
     created_at: datetime | None = None,
     deleted: bool = False,
+    after: int = 0,
 ) -> dict[str, Any]:
-    """One whole loom.collections row."""
+    """One whole loom.collections row, versioned above `after` (the version of
+    the row it replaces) whatever this host's clock says."""
     return {
         "org": org,
         "namespace": namespace,
@@ -32,7 +34,7 @@ def collection_row(
         "owner": owner,
         "created_at": created_at or datetime.now(UTC).replace(tzinfo=None),
         "deleted": deleted,
-        "version": time.time_ns(),
+        "version": max(time.time_ns(), after + 1),
     }
 
 
@@ -41,6 +43,20 @@ async def write(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
     await ch.insert(
         "loom.collections", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
     )
+
+
+async def stored_version(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:
+    """The version of the collection's newest row, a deleted one included; 0 for none."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        row = await ch.query_one(
+            "SELECT max(version) AS v FROM loom.collections"
+            " WHERE org = {org:String} AND namespace = {ns:String}",
+            params={"org": org, "ns": namespace},
+        )
+    return int((row or {}).get("v") or 0)
 
 
 async def fetch(org: str, namespace: str, *, ch: _CHClient | None = None) -> dict[str, Any] | None:

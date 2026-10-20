@@ -7,13 +7,12 @@ Skips without LOOM_BASE_URL."""
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from typing import Any
 
 import httpx
 import pytest
 
-from tests.integration._eventually import wait_until
+from tests.integration._eventually import ACL_OPS, acl_change_adopted, wait_until
 from tests.integration._resources import unique_org
 
 pytestmark = pytest.mark.slow
@@ -37,9 +36,12 @@ class Gateway:
         headers = {"Authorization": f"Bearer {self.token}", "X-Loom-On-Behalf-Of": f"user:{user}"}
         if agent:
             headers["X-Loom-Agent"] = f"agent:{agent}"
-        return httpx.post(
+        r = httpx.post(
             f"{self.base}/v1/{op}", json={"org": self.org, **payload}, headers=headers, timeout=60
         )
+        if op in ACL_OPS and r.status_code == 200:
+            acl_change_adopted()
+        return r
 
     def ok(self, user: str, op: str, payload: dict[str, Any], **kw: str) -> dict[str, Any]:
         r = self.call(user, op, payload, **kw)
@@ -47,13 +49,16 @@ class Gateway:
         return r.json()
 
     def scim(self, method: str, path: str, body: dict[str, Any] | None = None) -> httpx.Response:
-        return httpx.request(
+        r = httpx.request(
             method,
             f"{self.base}/scim/v2/{path}",
             json=body,
             headers={"Authorization": f"Bearer {self.token}"},
             timeout=30,
         )
+        if method != "GET" and r.status_code < 300:
+            acl_change_adopted()
+        return r
 
 
 def _search(gw: Gateway, user: str, namespace: str, query: str, **kw: str) -> list[dict]:
@@ -64,16 +69,6 @@ def _search(gw: Gateway, user: str, namespace: str, query: str, **kw: str) -> li
         **kw,
     )
     return r.json().get("results", []) if r.status_code == 200 else []
-
-
-def _soon(check: Callable[[], bool], description: str) -> None:
-    """A change is enforced at once on the server process that made it, and on
-    its others at their next watermark poll (1 s)."""
-    wait_until(check, max_wait=5, description=description)
-
-
-def _refused(gw: Gateway, user: str, op: str, payload: dict[str, Any]) -> Callable[[], bool]:
-    return lambda: gw.call(user, op, payload).status_code == 403
 
 
 def _nonce() -> str:
@@ -141,7 +136,7 @@ def test_a_removed_member_and_a_revoked_grant_read_nothing(gw: Gateway) -> None:
     gw.ok("alice", "grants.revoke", {"namespace": col, "subject": "user:erin"})
     for user in ("dan", "erin"):
         search = {"namespace": col, "query": nonce}
-        _soon(_refused(gw, user, "knowledge.search", search), f"{user} refused")
+        assert gw.call(user, "knowledge.search", search).status_code == 403, user
         assert not any(nonce in h["content"] for h in _search(gw, user, "@me", nonce)), user
     assert any(nonce in h["content"] for h in _search(gw, "bob", col, nonce)), "bob stays"
 
@@ -273,16 +268,22 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
     admin = mint_test_token(
         org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="ops"
     )
-    export = httpx.post(
-        f"{control_plane_url}/v1/erasure.export",
-        json={"org": gw.org, "scope_type": "user_id", "scope_value": "bob", "requester": "ops"},
-        headers={"Authorization": f"Bearer {admin}"},
-        timeout=60,
-    )
-    assert export.status_code == 200, export.text
-    exported = {(r["namespace"], r["source_uri"]) for r in export.json()["knowledge"]["rows"]}
-    uris = {uri for _, uri in exported}
-    assert (col, bobs) in exported and uris == {bobs, "chat/c1/m1"}, exported
+    root = mint_test_token(org=gw.org, namespaces=["*"], roles=["platform_admin"], subject="root")
+
+    def _exported(token: str) -> set[tuple[str, str]]:
+        r = httpx.post(
+            f"{control_plane_url}/v1/erasure.export",
+            json={"org": gw.org, "scope_type": "user_id", "scope_value": "bob", "requester": "ops"},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=60,
+        )
+        assert r.status_code == 200, r.text
+        return {(row["namespace"], row["source_uri"]) for row in r.json()["knowledge"]["rows"]}
+
+    # The org admin may erase bob's rows in collections it cannot read, not read them.
+    assert _exported(admin) == set()
+    everything = _exported(root)
+    assert (col, bobs) in everything and {u for _, u in everything} == {bobs, "chat/c1/m1"}
     r = httpx.post(
         f"{control_plane_url}/v1/erasure.request",
         json={
@@ -396,12 +397,8 @@ def test_a_deleted_collection_leaves_its_children_top_level(gw: Gateway) -> None
     child = _collection(gw, "alice", f"col-child-{tag}", parent=top)
     gw.ok("alice", "grants.create", {"namespace": child, "subject": "user:bob", "role": "viewer"})
     assert gw.ok("alice", "collection.delete", {"namespace": top})["deleted"] is True
-
-    def _child_on_top() -> bool:
-        listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
-        return listed[child]["parent"] == ""
-
-    _soon(_child_on_top, "the child keeps its own grant, at the top")
+    listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
+    assert listed[child]["parent"] == "", "the child keeps its own grant, at the top"
     assert gw.call("bob", "collection.delete", {"namespace": child}).status_code == 403
 
 
@@ -433,7 +430,7 @@ def test_a_deleted_collection_is_closed_even_by_name(gw: Gateway) -> None:
     nonce = _nonce()
     _add(gw, "alice", col, f"before the delete {nonce}")
     gw.ok("alice", "collection.delete", {"namespace": col})
-    _soon(_refused(gw, "bob", "knowledge.search", {"namespace": col, "query": nonce}), "closed")
+    assert gw.call("bob", "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
     r = gw.call("bob", "knowledge.add", {"namespace": col, "source_uri": "x", "content": "y"})
     assert r.status_code == 403
 
@@ -449,4 +446,4 @@ def test_a_deleted_group_takes_no_grant_and_keeps_none(gw: Gateway) -> None:
     assert again.status_code == 422 and "no group" in again.text
     gw.scim("POST", "Groups", {"externalId": "temps", "members": [{"value": "bob"}]})
     search = {"namespace": col, "query": "x"}
-    _soon(_refused(gw, "bob", "knowledge.search", search), "a recreated group inherits nothing")
+    assert gw.call("bob", "knowledge.search", search).status_code == 403, "inherits nothing"

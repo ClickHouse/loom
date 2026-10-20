@@ -31,7 +31,7 @@ from typing import Any
 import httpx
 import pytest
 
-from tests.integration._eventually import wait_until
+from tests.integration._eventually import ACL_OPS, acl_change_adopted, wait_until
 from tests.integration._resources import unique_org
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1449,6 +1449,8 @@ class _Shared:
     def ok(self, user: str, op: str, payload: dict[str, Any]) -> dict[str, Any]:
         r = _post_as(self.base, self.token, user, op, {"org": self.org, **payload})
         assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
+        if op in ACL_OPS:
+            acl_change_adopted()
         return r.json()
 
 
@@ -1468,6 +1470,7 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
         headers={"Authorization": f"Bearer {s.token}"},
     )
     assert groups.status_code == 201, groups.text
+    acl_change_adopted()
     for subject in ("group:readers", "user:direct", "user:revoked"):
         s.ok(
             "owner", "grants.create", {"namespace": s.parent, "subject": subject, "role": "viewer"}
@@ -1479,6 +1482,7 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
         headers={"Authorization": f"Bearer {s.token}"},
     )
     assert removed.status_code == 200, removed.text
+    acl_change_adopted()
     for ns, uri in ((s.child, "doc/plan"), (s.parent, "doc/top"), ("@me", "chat/c1/m1")):
         nonce = _canary()
         s.seed.nonces.append(nonce)

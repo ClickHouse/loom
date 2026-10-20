@@ -606,14 +606,16 @@ async def handle_namespace_delete(
                 namespace=input.namespace,
                 updated_at=now,
             )
+        if existing.get("kind") in ("collection", "personal"):
+            # The tree first: only it decides access, and a delete cut short
+            # after it is retried while the directory row is still active.
+            from server.identity.app.collections import retire
+
+            await retire(input.org, input.namespace)
         row = dict(existing)
         row["active"] = False
         row["updated_at"] = now
         await ch.insert("loom.namespaces", [row])
-    if existing.get("kind") in ("collection", "personal"):
-        from server.identity.app.collections import retire
-
-        await retire(input.org, input.namespace)
     # The claim cap reads which accounts tie a person's spellings from this table.
     await grant_cache.changed(input.org)
     return NamespaceDeleteOutput(

@@ -194,7 +194,8 @@ async def changed(org: str, subjects: Iterable[str] | None = None, *, kind: str 
         await get_client().insert(
             "loom.acl_versions",
             [watermark_row(org, kind)],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+            # Two changes in one millisecond write equal rows; each must count.
+            settings={"async_insert": 0, "wait_for_async_insert": 1, "insert_deduplicate": 0},
         )
     except Exception as e:  # noqa: BLE001 — the grant write landed; the TTL bounds it elsewhere
         log.warning("grant cache: watermark for org %s not written: %s", org, e)
