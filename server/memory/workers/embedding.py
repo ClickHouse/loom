@@ -436,11 +436,16 @@ async def run_pass(
             log.warning("embedding worker: reconciliation pass failed: %s", e)
             pass_context.note_failure(e, "reconciliation")
 
+        from server.llm import customer
+
+        # An org whose model calls are switched off keeps its stubs, attempts
+        # untouched, until it is switched back on.
         rows = await memory_repo.find_embedding_stubs(
             batch_size=cfg.batch_size,
             max_attempts=cfg.max_attempts,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
+            exclude_orgs=await customer.switched_off_orgs(),
         )
 
         replacements: list[dict[str, Any]] = []

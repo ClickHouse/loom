@@ -163,9 +163,12 @@ async def claim_batch(
     ch: Any | None = None,
     org_filter: str | None = None,
     namespace_filter: str | None = None,
+    exclude_orgs: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Oldest pending (or lease-expired running) rows, rewritten `running`
     with a fresh lease. Returns the claimed rows (post-rewrite projection).
+    `exclude_orgs` (orgs whose model calls are switched off) leaves their rows
+    pending and unclaimed.
 
     FINAL collapses the RMT so a row already marked done by another replica is
     not seen as pending. The claim write itself is not atomic across replicas;
@@ -186,6 +189,9 @@ async def claim_batch(
     if namespace_filter is not None:
         scope += " AND namespace = {ns_f:String}"
         params["ns_f"] = namespace_filter
+    if exclude_orgs:
+        scope += " AND org NOT IN {xo:Array(String)}"
+        params["xo"] = sorted(exclude_orgs)
     cols = ", ".join(COLUMNS)
     rows = await ch.query_all(
         f"""

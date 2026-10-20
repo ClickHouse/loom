@@ -94,7 +94,7 @@ class OpenAIEmbedder:
         resp = await _http_client().post(
             url,
             json=payload,
-            headers={"Authorization": f"Bearer {bearer}", **customer.headers()},
+            headers={"Authorization": f"Bearer {bearer}", **(await customer.headers())},
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()

@@ -34,6 +34,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "sso_links": ("builder", "test_sso_links.py"),
     "scim_users": ("builder", "test_scim.py"),
     "machine_identities": ("builder", "test_machines.py"),
+    "org_model_calls": ("builder", "test_model_calls_switch.py"),
     "deployment_config": ("builder", "test_deployment_config.py"),
     "document_blobs": (
         "insert_once",

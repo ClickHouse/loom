@@ -407,6 +407,8 @@ async def _flush(
         return
     from server.llm import customer
 
+    if await customer.switched_off(org):
+        return  # the items stay unembedded until the org is switched back on
     with customer.for_org(org):
         vectors = await embed_many(emb, [p["text"] for p in pending])
     rows = build_rows(

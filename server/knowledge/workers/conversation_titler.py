@@ -172,6 +172,8 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 if existing is not None and str(existing.get("title") or "").strip():
                     result.skipped_titled += 1
                     continue
+                if await customer.switched_off(str(row["org"])):
+                    continue  # titled once the org's model calls are switched back on
                 if await _make_title(row, cfg, llm, existing):
                     result.titled += 1
             except Exception as e:

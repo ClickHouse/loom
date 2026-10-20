@@ -428,6 +428,15 @@ owner's grant follows; a later exchange writes the grant only if it was never wr
 the grant's claim, so one revoked since stays revoked. A person reaches an agent's memory
 only as any namespace's: granted by its admin, or by joining.
 
+**An org's model calls switched off** (`server/llm/customer.py`). An org admin's
+`org.set_model_calls` (`loom.org_model_calls`) stops every model request for the org's data:
+each send point refuses a call for a switched-off org (403 `MODEL_CALLS_DISABLED`) before
+anything is sent, and background jobs leave the org's work queued. The server that took the
+change applies it at once, every other within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. It
+fails closed: a process whose copy of the switch is older than
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` refuses every model call until it reads it again. An
+org admin reaches only its own org's switch.
+
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
 replaces with the `X-Forwarded-For` client only when the peer is in

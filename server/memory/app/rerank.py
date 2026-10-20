@@ -176,7 +176,8 @@ async def rerank(
     from server.llm import customer
     from server.observability.otel import traced
 
-    headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
+    # Outside the fail-open: a refused call is an error, not a kept order.
+    headers = await customer.headers()
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -252,7 +253,7 @@ async def _rerank_with_builtin_cohere(
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        **customer.headers(),  # outside the fail-open: a call naming no customer is a bug
+        **(await customer.headers()),  # outside the fail-open: a refusal is an error
     }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):

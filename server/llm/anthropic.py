@@ -123,7 +123,7 @@ async def _post(client: Any, model: str, api_key: str, payload: dict[str, Any]) 
         "x-api-key": api_key,
         "anthropic-version": _API_VERSION,
         "Content-Type": "application/json",
-        **customer.headers(),
+        **(await customer.headers()),
     }
     if root != _ANTHROPIC_ROOT:
         headers["Authorization"] = f"Bearer {api_key}"  # what gateways in front of it take

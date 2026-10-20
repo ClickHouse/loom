@@ -72,7 +72,7 @@ class CompatibleEmbedder:
         if self._send_dimensions:
             payload["dimensions"] = self.dim
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
-        headers |= customer.headers()
+        headers |= await customer.headers()
         async for attempt in retrying():
             with attempt:
                 response = await get_client().post(

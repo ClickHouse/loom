@@ -334,6 +334,10 @@ async def _judge_one(item: dict[str, Any]) -> None:
         + "\n---\n".join(f"[{i}] {e}" for i, e in enumerate(excerpts, start=1))
     )
 
+    from server.llm import customer
+
+    if await customer.switched_off(str(item["org"])):
+        return  # a sample, not owed work: an org switched off sends none of its text
     model = settings.retrieval_judge_model.strip()
     client = get_llm_client_for_model(model) if model else get_llm_client()
 
@@ -359,8 +363,6 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        from server.llm import customer
-
         with llm_stage("classify"), customer.for_org(str(item["org"])):
             out = await client.complete(
                 _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}

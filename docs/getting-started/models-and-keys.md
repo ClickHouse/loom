@@ -254,6 +254,31 @@ LOOM_INFERENCE_SYSTEM_CUSTOMER=loom            # calls that belong to no org
 Cached answers make no call: an embedding or a model answer served from Loom's
 cache is not metered again.
 
+#### Switching an org's model calls off
+
+An org admin can stop every model call for the org's data, with or without a
+gateway:
+
+```bash
+curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Bearer $ORG_ADMIN_TOKEN" \
+  -d '{"org":"acme","enabled":false,"reason":"customer turned AI off"}'
+```
+
+- While off, no chat, embedding, rerank or classify request is sent for the
+  org: a request that needs one is refused (403 `MODEL_CALLS_DISABLED`), and
+  background work waits. The embedding worker, the extraction queue and the
+  entity extractor leave the org's queued rows where they are, attempts
+  untouched; the other jobs pass the org over until it is back on.
+- `"enabled": true` switches it back on, and the waiting work runs.
+- The server that took the change applies it at once; every other within
+  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` (default 10).
+- A server that cannot read the switch for longer than
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` makes no model call for any org
+  until it can.
+- [`org.model_calls`](../reference/operations/org.md#orgmodel_calls) reads the
+  current setting. The deployment's own calls (its startup check, calibration)
+  are never switched off.
+
 #### Without a workload token
 
 Where the platform gives Loom no token (a VM, a container host), Loom signs

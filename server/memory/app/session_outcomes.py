@@ -257,6 +257,8 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
     result.sessions_scanned = len(rows)
     out_rows: list[dict[str, Any]] = []
     for r in rows:
+        if await customer.switched_off(str(r["org"])):
+            continue  # judged once the org's model calls are switched back on
         try:
             system, user = judge_prompt(
                 str(r.get("summary_text") or ""), list(r.get("key_facts") or [])
@@ -402,6 +404,8 @@ async def distil_contrasts(
     )
     result.contrast_candidates = len(negatives)
     for neg in negatives:
+        if await customer.switched_off(str(neg["org"])):
+            continue
         sid = str(neg.get("session_id") or "")
         try:
             vec = [float(x) for x in (neg.get("summary_embedding") or [])]

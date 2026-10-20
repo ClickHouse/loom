@@ -114,6 +114,8 @@ async def run_pass(
         )
         result.identities_scanned = len(identities)
         for row in identities:
+            if await customer.switched_off(str(row["org"])):
+                continue  # folded once the org's model calls are switched back on
             try:
                 if await _consolidate_identity(ch, row, cfg):
                     result.profiles_written += 1

@@ -760,8 +760,9 @@ def _vector_read_state_not_probed() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _revocation_snapshot_loaded() -> Iterator[None]:
-    """A unit test models a booted process: the revocation snapshot and the
-    signing keyring have been read just now (both empty), and no creator's account state
+    """A unit test models a booted process: the revocation snapshot, the
+    signing keyring and the model-call switch have been read just now (all empty),
+    and no creator's account state
     or service-account row is cached yet. Tests of the not-yet-loaded state
     set them back to not loaded. Saved and restored by hand, not through
     `monkeypatch`: requesting it here would set it up before
@@ -770,14 +771,17 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
     import server.auth.keyring as keyring
     import server.auth.revocation as rev
     import server.auth.service_accounts as service_accounts
+    import server.llm.customer as customer
 
     saved = rev._loaded, rev._loaded_at, keyring._view
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
     keyring._view = keyring._View(read_at=keyring.time.monotonic(), loaded=True)
+    customer._reset_for_tests()
     delegation._account_active.clear()
     service_accounts._creators.clear()
     yield
     rev._loaded, rev._loaded_at, keyring._view = saved
+    customer._reset_for_tests(read=False)
 
 
 # The scalar repository the code-plane fixtures model, with its repository-shaped

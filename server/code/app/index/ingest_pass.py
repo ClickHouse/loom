@@ -149,6 +149,10 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             )
             break
         pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
+        if await customer.switched_off(cfg.org):
+            # Its chunks are embedded and described: the repository waits,
+            # watermark unmoved, until the org's model calls are back on.
+            continue
         try:
             with customer.for_org(cfg.org):
                 plan = await _run_repo(cfg, result, commit_budget)

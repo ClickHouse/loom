@@ -288,6 +288,8 @@ async def _embed_rows(
     for r in rows:
         groups.setdefault((str(r["org"]), str(r["namespace"])), []).append(r)
     for (org, ns), whole in groups.items():
+        if await customer.switched_off(org):
+            continue  # its stubs wait, attempts untouched, until it is switched back on
         set_worker_identity("code_embed_recovery", org=org, namespace=ns)
         pass_context.set_namespace(ns)
         batch = _batch()

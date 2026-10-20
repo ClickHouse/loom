@@ -11,18 +11,30 @@ startup probe, calibration, a provider check) runs under `system()` and names
 `LOOM_INFERENCE_SYSTEM_CUSTOMER`. A call that names none is refused
 (`Unattributed`), never sent to be billed to no one: one call never carries two
 customers, so a job batching several orgs' rows splits them first.
+
+An org an admin switched off (`org.set_model_calls`, loom.org_model_calls)
+gets no model call at all, header or not: each process reads the switched-off
+orgs at most every `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`, and refuses
+every call for an org (`BackendUnavailableError`) once its copy is older than
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`: the switch is a security path and
+fails closed. The deployment's own calls are never switched off.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
+import logging
+import time
 from collections.abc import Iterator
 from urllib.parse import quote
 
-from server.core.errors import LoomServerError
+from server.core.errors import BackendUnavailableError, LoomServerError
 from server.observability import genai
 from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 # The org a background job is working for; a request's comes from its identity.
 _org: contextvars.ContextVar[str] = contextvars.ContextVar("loom_model_call_org", default="")
@@ -40,6 +52,22 @@ class Unattributed(LoomServerError):
 
     code = "MODEL_CALL_UNATTRIBUTED"
     status_code = 500
+    not_sent = True  # not the provider's failure (provider_health.recording)
+
+
+class ModelCallsDisabled(LoomServerError):
+    """The org's admin switched its model calls off: nothing is sent for it."""
+
+    code = "MODEL_CALLS_DISABLED"
+    status_code = 403
+    not_sent = True
+
+
+# The orgs switched off, as this process last read them, and when (monotonic;
+# 0.0 = never read).
+_off: frozenset[str] = frozenset()
+_read_at = 0.0
+_lock = asyncio.Lock()
 
 
 @contextlib.contextmanager
@@ -73,14 +101,16 @@ def current() -> str:
     return "" if org in _NO_ORG else org
 
 
-def headers() -> dict[str, str]:
+async def headers() -> dict[str, str]:
     """The customer and feature headers for one model request; {} with no
     customer header configured. Raises Unattributed when the call names no
-    customer."""
+    customer, ModelCallsDisabled when its org is switched off."""
+    org = current()
+    if org and not _system.get() and await switched_off(org):
+        raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
     name = settings.inference_customer_header
     if not name:
         return {}
-    org = current()
     if not org:
         if not _system.get():
             raise Unattributed(
@@ -103,3 +133,57 @@ def feature() -> str:
     if stage != "other":
         return stage
     return genai.current_operation() or "other"
+
+
+async def switched_off(org: str) -> bool:
+    """Whether `org`'s model calls are switched off. Raises
+    BackendUnavailableError when this process's copy of the switch is too old
+    to trust."""
+    return org in await switched_off_orgs()
+
+
+async def switched_off_orgs() -> frozenset[str]:
+    """The orgs whose model calls are switched off, for a job to pass over;
+    raises BackendUnavailableError when this process's copy is too old."""
+    if not _fresh():
+        async with _lock:
+            if not _fresh():
+                await _read()
+    if not _read_at or time.monotonic() - _read_at > settings.jwt_revocation_max_stale_seconds:
+        raise BackendUnavailableError(
+            "the model-call switch could not be read; model calls wait until it is"
+        )
+    return _off
+
+
+def _fresh() -> bool:
+    return bool(_read_at) and (
+        time.monotonic() - _read_at < settings.model_calls_policy_refresh_seconds
+    )
+
+
+async def _read() -> None:
+    global _off, _read_at
+    from server.core.ch import get_client
+
+    try:
+        rows = await get_client().query_all(
+            "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0 LIMIT 100000"
+        )
+    except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
+        log.warning("model-call switch: read failed (%s); serving the last copy", e)
+        return
+    _off, _read_at = frozenset(str(r["org"]) for r in rows), time.monotonic()
+
+
+def forget_switch() -> None:
+    """Make the next call read the switch again, for a change just made here.
+    The copy in hand keeps its age, so a failed read serves it as before."""
+    global _read_at
+    if _read_at:
+        _read_at = min(_read_at, time.monotonic() - settings.model_calls_policy_refresh_seconds)
+
+
+def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
+    global _off, _read_at
+    _off, _read_at = off, (time.monotonic() if read else 0.0)

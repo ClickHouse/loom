@@ -76,7 +76,9 @@ class GeminiEmbedder:
 
     async def _post(self, url: str, payload: dict[str, object]) -> dict[str, Any]:
         resp = await _http_client().post(
-            url, json=payload, headers={"x-goog-api-key": self._api_key, **customer.headers()}
+            url,
+            json=payload,
+            headers={"x-goog-api-key": self._api_key, **(await customer.headers())},
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()

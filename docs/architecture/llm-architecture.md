@@ -270,6 +270,16 @@ the shared HTTP client also carries non-model calls, which name no customer.
   (`MODEL_CALL_UNATTRIBUTED`) before anything is sent. A missed call path fails loudly
   instead of being billed to no one.
 
+- **An org switched off makes no call.** `org.set_model_calls` writes `loom.org_model_calls`;
+  every send point checks the call's org against each process's copy of the switched-off
+  orgs (`customer.switched_off_orgs`), read at most every
+  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
+  `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`, past which every call is refused. The embedding
+  worker, the extraction queue and the entity extractor leave out a switched-off org when they
+  select work, so its queued rows keep their attempts and wait; the per-row jobs check the
+  org before the call and leave the row for a later pass. A refusal before sending
+  (`not_sent`) is never recorded as a provider failure.
+
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no
 gain in what the gateway can check. The org in the header is the one Loom verified, never a

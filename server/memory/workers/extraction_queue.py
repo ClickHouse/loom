@@ -52,6 +52,8 @@ class ExtractionQueueResult:
     done: list[dict[str, Any]] = field(default_factory=list)
     written_memories: int = 0
     failures: list[str] = field(default_factory=list)
+    # Claimed rows left for later: their org's model calls were switched off.
+    skipped: int = 0
 
     @property
     def done_count(self) -> int:
@@ -98,6 +100,7 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     """One pass; the supervisor calls it with no config, which reads the
     `extraction_queue_*` settings at pass time."""
     from server.core.ch import get_client
+    from server.llm import customer
 
     cfg = cfg or _config_from_settings()
     result = ExtractionQueueResult()
@@ -106,6 +109,11 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     async def _replay_one(row: dict[str, Any]) -> None:
         try:
             written = await q.replay_row(row)
+        except customer.ModelCallsDisabled:
+            # Switched off after the claim: no attempt spent. The lease runs
+            # out and the row waits, unclaimed, until the org is back on.
+            result.skipped += 1
+            return
         except Exception as e:
             log.exception(
                 "extraction_queue replay failed for %s/%s queue_id=%s",
@@ -142,12 +150,14 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
                 await _replay_one(row)
 
     with record_pass("extraction_queue") as rec:
+        # A switched-off org's requests stay pending until it is switched back on.
         rows = await q.claim_batch(
             limit=cfg.max_batches_per_pass,
             lease_seconds=cfg.lease_seconds,
             ch=ch,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
+            exclude_orgs=await customer.switched_off_orgs(),
         )
         groups = order_within_namespace(rows)
         # A group can still raise (its mark_done / mark_error insert failing).
@@ -168,6 +178,7 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
             "done": result.done_count,
             "written_memories": result.written_memories,
             "failed": len(result.failures),
+            "skipped": result.skipped,
         }
 
     if result.done_count or result.failures:

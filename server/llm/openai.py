@@ -162,7 +162,7 @@ class OpenAILLMClient:
                 headers = {
                     "Authorization": f"Bearer {bearer}",
                     "Content-Type": "application/json",
-                    **customer.headers(),
+                    **(await customer.headers()),
                 }
                 async for attempt in retrying():
                     with attempt:

@@ -1072,6 +1072,7 @@ Source: `server/settings/_providers.py`
 | `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
 | `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` | Header naming the feature that made the call (search, extraction, ...); "" sends none. |
 | `LOOM_INFERENCE_SYSTEM_CUSTOMER` | `str` | `'loom'` | The customer named on calls made for the deployment itself (startup probe, calibration, provider checks), which belong to no org. |
+| `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it. |
 | `LOOM_EMBEDDING_CACHE_SHARED` | `bool` | `True` | Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, keyed (model, sha1 of normalised text). Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only. |
 | `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS` | `int` | `2000` | Longest query text, characters, that uses the shared cache; 0 = no cap. |
 | `LOOM_EMBEDDING_CACHE_SIZE` | `int` | `10000` | The per-process query-embedding LRU: entries held (0 = cache nothing) and seconds each lives. |

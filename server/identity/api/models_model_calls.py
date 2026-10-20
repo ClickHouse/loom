@@ -1,0 +1,36 @@
+"""org.set_model_calls / org.model_calls — wire models.
+
+An org admin switches the org's model calls off (or back on): while off, no
+chat, embedding, rerank or classify call is made for the org's data, on a
+request or by a background job, and its queued work waits.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field
+
+
+class OrgSetModelCallsInput(BaseModel):
+    org: str
+    # False switches the org's model calls off; true switches them back on.
+    enabled: bool
+    # A note on why, kept with the setting; at most 500 characters.
+    reason: str = Field(default="", max_length=500)
+
+
+class OrgModelCallsInput(BaseModel):
+    org: str
+
+
+class OrgModelCallsOutput(BaseModel):
+    org: str
+    # Whether the org's data may go to a model; true when it was never set.
+    enabled: bool
+    # The note given with the last change; "" when none.
+    reason: str = ""
+    # Who made the last change; "" when it was never set.
+    updated_by: str = ""
+    # When the last change was written (UTC); None when it was never set.
+    updated_at: datetime | None = None

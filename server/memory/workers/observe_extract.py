@@ -380,6 +380,8 @@ async def run_pass(
     with record_pass("observe_extract") as rec:
         sessions = await find_ready_sessions(cfg, ch=ch)
         for session in sessions:
+            if await customer.switched_off(str(session["org"])):
+                continue  # its observations wait until the org is switched back on
             try:
                 observations = await _load_session_observations(session, cfg, ch)
                 if not observations:

@@ -48,9 +48,11 @@ async def run_pass(
             limit=max(1, int(cfg.max_failures_per_pass)),
         )
         result.scanned = len(failures)
-        for failure in failures:
-            from server.llm import customer
+        from server.llm import customer
 
+        for failure in failures:
+            if await customer.switched_off(str(failure.org)):
+                continue  # retried once the org is switched back on, no attempt spent
             with customer.for_org(str(failure.org)):
                 retry = await retry_projection_failure(failure)
             if retry.retried:

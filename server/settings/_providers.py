@@ -80,6 +80,9 @@ class ProviderSettings(ModelSettings):
     # The customer named on calls made for the deployment itself (startup probe,
     # calibration, provider checks), which belong to no org.
     inference_system_customer: str = "loom"
+    # Seconds between each process's reads of the orgs whose model calls are
+    # switched off (loom.org_model_calls); a change reaches every process within it.
+    model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use

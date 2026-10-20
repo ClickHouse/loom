@@ -266,6 +266,8 @@ OpName = Literal[
     "ops.projection_failures.list",
     "ops.projection_failures.resolve",
     "ops.projection_failures.retry",
+    "org.model_calls",
+    "org.set_model_calls",
     "policy.check",
     "policy.decisions",
     "policy.delete",
@@ -571,6 +573,8 @@ OP_NAMES: tuple[str, ...] = (
     "ops.projection_failures.list",
     "ops.projection_failures.resolve",
     "ops.projection_failures.retry",
+    "org.model_calls",
+    "org.set_model_calls",
     "policy.check",
     "policy.decisions",
     "policy.delete",
@@ -3370,6 +3374,30 @@ OPS: dict[str, OpSpec] = {
         "org_admin",
         "experimental",
         3000,
+        True,
+        False,
+    ),
+    "org.model_calls": OpSpec(
+        "org.model_calls",
+        "OrgModelCallsInput",
+        "OrgModelCallsBody",
+        "OrgModelCallsOutput",
+        True,
+        "org_admin",
+        "experimental",
+        50,
+        False,
+        False,
+    ),
+    "org.set_model_calls": OpSpec(
+        "org.set_model_calls",
+        "OrgSetModelCallsInput",
+        "OrgSetModelCallsBody",
+        "OrgModelCallsOutput",
+        True,
+        "org_admin",
+        "experimental",
+        100,
         True,
         False,
     ),
@@ -14316,6 +14344,34 @@ class ProjectionFailureRetryRow(TypedDict, total=False):
     resolved: Required[bool]
     reason: NotRequired[str]
     error: NotRequired[str]
+
+
+class OrgModelCallsInput(TypedDict, total=False):
+    org: Required[str]
+
+
+class OrgModelCallsBody(TypedDict, total=False):
+    org: NotRequired[str]
+
+
+class OrgModelCallsOutput(TypedDict, total=False):
+    org: Required[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+
+
+class OrgSetModelCallsInput(TypedDict, total=False):
+    org: Required[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+
+
+class OrgSetModelCallsBody(TypedDict, total=False):
+    org: NotRequired[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
 
 
 class PolicyCheckInput(TypedDict, total=False):

@@ -15,6 +15,7 @@ from server.code.api import ops_coverage_watch as code_watch
 from server.erasure.api import ops as erasure
 from server.identity.api import ops_admin_users as admin_users
 from server.identity.api import ops_grants as grants
+from server.identity.api import ops_model_calls as model_calls
 from server.identity.api import ops_namespace as namespace
 from server.identity.api import ops_policy as policy
 from server.insights.api import ops_agents as agents
@@ -71,6 +72,7 @@ _OPERATION_MODULES = (
     grants,
     agents,
     admin_users,
+    model_calls,
     facts,
     profile,
     working_memory,
