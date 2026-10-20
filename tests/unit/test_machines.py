@@ -560,7 +560,7 @@ def test_an_agents_token_stays_under_a_proxys_header_limit(
     claims = pyjwt.decode(token, options={"verify_signature": False})
     named = claims["namespaces"]
     kept = [ns for ns in named if ns in set(lent)]
-    used = sum(map(agents.token_bytes, named))
+    used = agents.names_bytes(named)
     next_one = agents.token_bytes(lent[len(kept)])
     assert used <= agents.TOKEN_NAMESPACE_BYTES < used + next_one  # the budget is full
     # A 4096-bit key signs 683 base64 characters; the test key fewer, so count the difference.

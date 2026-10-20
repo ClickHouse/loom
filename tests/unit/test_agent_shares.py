@@ -192,7 +192,7 @@ def test_the_limit_counts_what_the_grantees_token_would_name(calls, world) -> No
 def _filling(own: list[str]) -> dict[str, int]:
     """Lent namespaces that leave the token less room than fleet-a's 29 bytes."""
     full: dict[str, int] = {}
-    used = sum(map(agents.token_bytes, own))
+    used = agents.names_bytes(own)
     i = 0
     while used + agents.token_bytes("fleet-a") <= agents.TOKEN_NAMESPACE_BYTES:
         ns = f"ns-{i:03}"
@@ -228,9 +228,7 @@ def test_a_trust_namespace_no_longer_active_is_not_counted(calls, world) -> None
 def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world) -> None:
     _as("sa:fleet:a")
     full = _filling(own=["fleet-b"])
-    assert (
-        sum(map(agents.token_bytes, ["fleet-b", *full, "fleet-a"])) > agents.TOKEN_NAMESPACE_BYTES
-    )
+    assert agents.names_bytes(["fleet-b", *full, "fleet-a"]) > agents.TOKEN_NAMESPACE_BYTES
     world["ranks"] = full | {"fleet-b": 3}
     with pytest.raises(PreconditionFailedError):
         _share()
