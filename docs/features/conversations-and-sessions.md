@@ -51,7 +51,7 @@ up front.
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
 `conversation.search_saved_messages` (viewer) is its search. They differ from
-`conversation.append` and `conversation.search` in four ways:
+`conversation.append` and `conversation.search` in six ways:
 
 - **The logging switch does not apply.** The save is stored even when
   `conversation.set_logging` is off, and it does not turn logging on.
@@ -61,6 +61,19 @@ namespace's transcripts. `conversation.save_message` (writer) is that opt-in, an
 - **The search is per user.** `conversation.search_saved_messages` returns only flagged
   messages owned by `user_id`, in the one namespace named. `conversation.search` ranks
   every recorded turn and fans out over the caller's namespaces by default.
+- **The search is hybrid.** The vector leg embeds a message's first 2,048 characters;
+  a BM25 leg reads its whole text, so an exact term (a ticket id, a table name) or a
+  phrase deep in a long saved answer still ranks. `search_mode="hybrid"` (default) fuses
+  the two by reciprocal rank, `semantic` and `lexical` run one leg, and `lexical_weight`
+  (0–1) scales the BM25 leg. A BM25 hit's excerpt is centred on the matched terms. The
+  corpus is one user's saved messages, so its statistics are computed per query.
+- **A token pinned to one user works here.** An integration that serves many users through
+  one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
+  user). Both saved-message ops then act as that user only: a body naming another
+  `user_id` is refused with 403, and every statement carries the token's user. The
+  conversation tables have no `session_id`, so an `own_session` token is refused.
+  `conversation.search` and `conversation.get` stay refused under such a token, because
+  a thread mixes users and has no user axis to bound.
 - **Ownership, deletion and role are checked on every save.** Saving a message stored
   under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A
   tombstoned message answers `reason: "deleted"`, and a stored system or tool turn,
@@ -80,6 +93,21 @@ flags any row still unflagged. A save whose embed fails stores the message saved
 answers `indexed: false, reason: "embed_failed"`; saving it again retries the embed. A
 transcript append whose embedding lands after a concurrent save flags its own embedding
 row.
+
+`conversation.list_saved_messages` (viewer) pages through one user's saved messages with
+no query, most recently saved first (`limit` up to 200, an opaque `cursor`, and an
+optional `conversation_id`). It is the first view of a "Saved" panel; the search narrows
+it once the user types. `conversation.saved_status` (viewer) takes one `conversation_id`
+and up to 500 `message_ids` and answers which of them this user has saved, so a client
+draws every message's saved state when it opens a conversation in one call.
+
+`conversation.unsave_message` (writer) withdraws a saved message from its owner's
+search. Where the namespace records transcripts, the turn stays in the transcript with
+the flag cleared, because the owner chose to record it. Where it does not, the turn is
+tombstoned too, because it existed only because of the save (`removed: true`). A message
+the caller's user never saved, or one another user saved, answers `found: false`; it
+never says which. Unsaving is idempotent, and saving again restores the message. Erasure
+by user removes saved messages with the rest of that user's conversation rows.
 
 ### Reading and searching
 
@@ -117,7 +145,9 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   failed run left (its turns all still live and in the window, at the first one's `ts`)
   is replaced unread. A summary further into the window takes prompt budget like any
   turn and is replaced with it.
-  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
+  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`). A turn
+  saved with `conversation.save_message` is never summarised or tombstoned; it stays
+  verbatim between the summary and the recent turns.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the
