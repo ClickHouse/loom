@@ -106,7 +106,7 @@ grants_share_agent = Operation(
     output_model=GrantsShareAgentOutput,
     handler=handle_grants_share_agent,
     idempotent=True,
-    budget_p99_ms=50,
+    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=True,
 )

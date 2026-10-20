@@ -287,15 +287,17 @@ def test_an_unshare_rechecks_the_row_under_the_grants_claim(monkeypatch) -> None
 
 
 @pytest.mark.parametrize(
-    "made_by, role, refusal",
+    "made_by, role, error, refusal",
     [
-        ("alice@acme.com", "viewer", "made by alice@acme.com"),  # as the admin's, not a downgrade
-        ("alice@acme.com", "writer", "made by alice@acme.com"),
-        ("sa:fleet:a", "viewer", "would lower"),  # the agent's own: unshare, then share
+        # As the admin's, not as a downgrade the agent could undo.
+        ("alice@acme.com", "viewer", PreconditionFailedError, "made by alice@acme.com"),
+        ("alice@acme.com", "writer", PreconditionFailedError, "made by alice@acme.com"),
+        # The agent's own: it unshares, then shares again.
+        ("sa:fleet:a", "viewer", GrantWouldDowngradeError, "would lower"),
     ],
 )
-def test_a_share_rechecks_the_row_under_the_grants_claim(
-    monkeypatch, made_by: str, role: str, refusal: str
+def test_a_share_refuses_the_row_read_under_the_grants_claim(
+    monkeypatch, made_by: str, role: str, error: type[Exception], refusal: str
 ) -> None:
     # The row read under the claim is a writer grant: the share writes nothing.
     from server.auth import aliases
@@ -330,14 +332,12 @@ def test_a_share_rechecks_the_row_under_the_grants_claim(
     monkeypatch.setattr(aliases, "canonical_subject", canonical)
     check = agent_shares._made_by("sa:fleet:a", "sa:fleet:b", "fleet-a")
     body = GrantsCreateInput(org="acme", namespace="fleet-a", subject="sa:fleet:b", role=role)
-    with pytest.raises((PreconditionFailedError, GrantWouldDowngradeError), match=refusal):
+    with pytest.raises(error, match=refusal):
         asyncio.run(grants_app.create_grant(body, check))
     assert written == []
 
 
 def test_a_share_that_would_lower_a_grant_says_how_an_agent_lowers_it(monkeypatch, world) -> None:
-    from server.core.errors import GrantWouldDowngradeError
-
     async def lowering(input: Any, may_replace: Any) -> Any:
         raise GrantWouldDowngradeError("", current_role="writer", requested_role=input.role)
 

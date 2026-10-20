@@ -148,6 +148,7 @@ async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: An
     from server.auth.jwt import AuthInfo
     from server.identity.api.models_grants import GrantsShareAgentInput, GrantsUnshareAgentInput
     from server.identity.app import agent_shares
+    from server.identity.store import grants as grants_repo
     from server.operations.base import Role
 
     m = _trust()
@@ -173,6 +174,14 @@ async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: An
         set_current_auth(token("a1", [(a1, "writer")]))
         await agent_shares.handle_grants_share_agent(
             GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2")
+        )
+        with own_write_reads():
+            row = await grants_repo.find_any_grant(m["org"], a1, agents.subject(m["name"], "a2"))
+        assert row is not None
+        assert (row.role, row.granted_by, row.status) == (
+            "viewer",
+            agents.subject(m["name"], "a1"),
+            "active",
         )
         assert await roles("a2") == {a2: "writer", a1: "viewer"}
         assert await roles("a1") == {a1: "writer"}
