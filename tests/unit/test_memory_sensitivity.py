@@ -453,6 +453,9 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "order 4111111111111112 shipped",
         "order 20240115103000 shipped",  # a yyyymmdd run: no card prefix
         "build 18446744073709551615",  # 20 digits: longer than any card
+        "dev stack ports 3000 5432 6379 9200",  # Luhn-valid, but no network's prefix and length
+        "ports 4000 4001 4002 4003 4004 4005 4006 4007",  # a table, not a card in it
+        "IMEI 490154203237518",  # 15 digits, always Luhn-valid, no network issues 4 at 15
         "SSN 000-12-3456",  # never-issued area
         "SSN 666-12-3456",
         "SSN 912-34-5678",
@@ -465,11 +468,14 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "pin 128 rows before the import",
         "GPIO pin 115",
         "wire it to pin #115",
+        "ship to MG Road, Bengaluru, PIN code 560001",  # a postal code
+        "PIN code: 560001",
         "passcode 100 of the batch",
         "the spinner took 1500 ms",
         "a pin is 2 mm wide",
         "iban GB82 WEST 1234 5698 7654 33",  # fails mod-97
         "ticket AB12 CDEF GHIJ KLMN",
+        "fullwidth ＰＩＮ is ４４７１",  # ASCII only, as the sweep's RE2 filter is
     ],
 )
 def test_lookalike_numbers_stay_unset(text: str) -> None:
@@ -543,3 +549,12 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
 
     assert not re.search(COARSE_SHAPE_RE, "pin numpy to 1.26 in the lockfile")
     assert not re.search(COARSE_SHAPE_RE, "the passcode screen and the CVV field")
+    assert not re.search(COARSE_SHAPE_RE, "verify SHA256SUMS before the upload")
+
+
+def test_a_question_for_a_bank_account_is_contact_intent() -> None:
+    from server.memory.domain.sensitivity import contact_intent
+
+    assert contact_intent("which IBAN does my salary go to?")
+    assert contact_intent("what is the bank account for rent")
+    assert not contact_intent("what did we decide about the deploy schedule")

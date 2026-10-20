@@ -63,36 +63,49 @@ _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])"),
 )
 
+# The patterns below are ASCII-only (`re.ASCII`), as RE2 is in the sweep's coarse filter,
+# so a row the write path labels is a row the sweep can select.
+#
 # A run of digit groups joined by single spaces or dashes, not after `+` (an international
-# phone number). A card number is one group of 13-19 digits of such a run, or consecutive
-# groups in a card's own grouping, so a card pasted with its expiry or CVV
-# ("4111 1111 1111 1111 12/29") or after another number is still found, and two phone
-# numbers side by side (3-3-4 groups) are not read as one.
-_DIGIT_GROUPS = re.compile(r"(?<![\d+])\d+(?:[ -]\d+)*")
+# phone number). A card number is one group of such a run, or consecutive groups in a
+# card's own grouping with at most one other group on each side, so a card pasted with
+# its expiry or CVV ("4111 1111 1111 1111 12/29") or after another number is still found,
+# and two phone numbers side by side (3-3-4 groups) or a long table of numbers are not.
+_DIGIT_GROUPS = re.compile(r"(?<![\d+])\d+(?:[ -]\d+)*", re.ASCII)
 # Group lengths of a printed card: 16 and 19 digits in fours, and Amex and Diners 4-6-5
 # and 4-6-4.
 _CARD_GROUPINGS = {(4, 4, 4, 4), (4, 4, 4, 4, 3), (4, 6, 5), (4, 6, 4)}
-# Leading digits of the card networks: Amex/Diners 3, Visa 4, Mastercard 51-55 and 22-27,
-# Discover/UnionPay 6. A number starting any other way (0, 1, 7, 8, 9, 20, 21, 28, 29:
-# epoch milliseconds, yyyymmdd dates) is never a card.
-_CARD_PREFIXES = ("3", "4", "5", "6", "22", "23", "24", "25", "26", "27")
+# Leading digits and lengths of the card networks: Visa, Mastercard (51-55 and 22-27),
+# Amex, Diners, JCB, and Discover/UnionPay. A number with other leading digits or another
+# length (epoch milliseconds, yyyymmdd dates, a 15-digit IMEI, which always passes Luhn)
+# is never a card.
+_CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
+    (("4",), (13, 16, 19)),
+    (("51", "52", "53", "54", "55", "22", "23", "24", "25", "26", "27"), (16,)),
+    (("34", "37"), (15,)),
+    (("30", "36", "38"), (14,)),
+    (("35", "6"), (16, 17, 18, 19)),
+)
 # A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
 # area 000, 666 or 9xx, group 00, serial 0000.
-_SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])")
+_SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
 # A PIN, passcode, CVV/CVC or security code stated with its 3-8 digit value. Every label
 # takes the value after `is`, `was`, `:` or `=` ("PIN is 4471", "cvv: 123"). All but a
 # bare `pin`, which is also a verb and a connector pin ("pin 115", "pin #115"), take it
-# directly too ("CVV 123", "pin code 0042"), unless an `of` follows ("passcode 100 of the
-# batch" names a position).
-# Each whitespace run has its own anchor, so a long run of spaces is read once.
+# directly too ("CVV 123"), unless an `of` follows ("passcode 100 of the batch" names a
+# position). A `PIN code` takes 3-5 digits only: a 6-digit PIN code is an Indian postal
+# code. Each whitespace run has its own anchor, so a long run of spaces is read once.
+_PIN_VALUE_AFTER = r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*"
 _STATED_PIN = re.compile(
-    r"(?i)\b(?:pin(?: code| number)?|passcode|cvv2?|cvc2?|security code)"
-    r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*\d{3,8}(?!\d)"
-    r"|\b(?:pin code|pin number|passcode|cvv2?|cvc2?|security code)\s+\d{3,8}(?!\d)(?!\s+of\b)"
+    r"(?i)\b(?:pin(?: number)?|passcode|cvv2?|cvc2?|security code)"
+    rf"{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
+    r"|\b(?:pin number|passcode|cvv2?|cvc2?|security code)\s+\d{3,8}(?!\d)(?!\s+of\b)"
+    rf"|\bpin code(?:{_PIN_VALUE_AFTER}|\s+)\d{{3,5}}(?!\d)",
+    re.ASCII,
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
 # not) with a short last group; 15-34 characters once the spaces are gone.
-_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b")
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b", re.ASCII)
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -106,28 +119,37 @@ def _luhn_ok(digits: str) -> bool:
 
 
 def _is_card(digits: str) -> bool:
-    return digits.startswith(_CARD_PREFIXES) and _luhn_ok(digits)
+    return any(
+        digits.startswith(prefixes) and len(digits) in lengths
+        for prefixes, lengths in _CARD_NETWORKS
+    ) and _luhn_ok(digits)
 
 
 def _has_card(text: str) -> bool:
-    """Whether a digit run holds a card number: one group of 13-19 digits, or consecutive
-    groups in a card's grouping, with a card network's leading digits and the Luhn check."""
+    """Whether a digit run holds a card number: one group, or consecutive groups in a
+    card's grouping with at most one other group on each side, that has a card network's
+    leading digits and length and passes the Luhn check."""
     for m in _DIGIT_GROUPS.finditer(text):
         groups = re.split(r"[ -]", m.group())
         for i, group in enumerate(groups):
-            if 13 <= len(group) <= 19 and _is_card(group):
+            if _is_card(group):
                 return True
             for n in (3, 4, 5):
                 window = groups[i : i + n]
-                if tuple(map(len, window)) in _CARD_GROUPINGS and _is_card("".join(window)):
+                if (
+                    i <= 1
+                    and len(groups) - (i + n) <= 1
+                    and tuple(map(len, window)) in _CARD_GROUPINGS
+                    and _is_card("".join(window))
+                ):
                     return True
     return False
 
 
 def _is_iban(candidate: str) -> bool:
-    """ISO 13616: move the first four characters to the end, letters become 10-35, and the
-    number is 1 mod 97."""
-    if not (15 <= len(candidate) <= 34 and candidate[:2].isalpha()):
+    """ISO 13616: a country code and numeric check digits; move the first four characters
+    to the end, letters become 10-35, and the number is 1 mod 97."""
+    if not (15 <= len(candidate) <= 34 and candidate[:2].isalpha() and candidate[2:4].isdigit()):
         return False
     moved = candidate[4:] + candidate[:4]
     return int("".join(str(int(ch, 36)) for ch in moved)) % 97 == 1
@@ -148,7 +170,9 @@ def _has_iban(text: str) -> bool:
 
 def _has_high_number(text: str) -> bool:
     """A card number, an SSN or a stated PIN in `text`."""
-    return bool(_SSN.search(text) or _STATED_PIN.search(text)) or _has_card(text)
+    if _SSN.search(text) is not None or _STATED_PIN.search(text) is not None:
+        return True
+    return _has_card(text)
 
 
 # --- Protected-attribute classes --------------------------------------------
@@ -362,7 +386,9 @@ _CONTACT_INTENT = re.compile(
     r"\b(?:reach|contact|e-?mail(?:s|ed|ing)?|phone|get (?:a )?hold of|"
     r"call (?:him|her|them|me|us|the)|"
     r"how (?:do|can) i (?:reach|contact|get)|"
-    r"who (?:do|should) i (?:call|email|contact))\b",
+    r"who (?:do|should) i (?:call|email|contact)|"
+    # an IBAN is labelled medium too: a question for the account is asking for it
+    r"iban|bank account|account number)\b",
     re.IGNORECASE,
 )
 
@@ -389,7 +415,7 @@ def sensitivity_tags(level: str | None, existing: Iterable[str] = ()) -> list[st
 
 
 def contact_intent(query: str) -> bool:
-    """Does the question ask for a way to reach someone? Then a labelled
-    contact detail is the answer, not collateral, and the ranking must not
+    """Does the question ask for a way to reach someone, or for a bank account? Then a
+    labelled contact detail or IBAN is the answer, not collateral, and the ranking must not
     demote it."""
     return bool(_CONTACT_INTENT.search(query or ""))

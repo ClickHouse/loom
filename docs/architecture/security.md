@@ -632,19 +632,24 @@ The `high` shapes:
 
 - Credential: a prefixed API key, an access key id, a private-key block, a JWT, or a
   `password=` / `api_key:` assignment of an 8+ character token.
-- Card number: in a run of digit groups joined by single spaces or dashes, one group of
-  13-19 digits or consecutive groups in a card's grouping (4-4-4-4, 4-4-4-4-3, 4-6-5,
-  4-6-4), so a card pasted with its expiry or CVV still counts and two phone numbers side
-  by side do not; it starts with a card network's leading digits (3, 4, 5, 6, 22-27) and
-  passes the Luhn check.
+- Card number: in a run of digit groups joined by single spaces or dashes, one group, or
+  consecutive groups in a card's grouping (4-4-4-4, 4-4-4-4-3, 4-6-5, 4-6-4) with at most
+  one other group on each side, so a card pasted with its expiry or CVV still counts and
+  two phone numbers side by side or a table of numbers do not. It has a card network's
+  leading digits and length (Visa 4 at 13, 16 or 19 digits; Mastercard 51-55 and 22-27 at
+  16; Amex 34 and 37 at 15; Diners 30, 36 and 38 at 14; JCB 35 and Discover/UnionPay 6 at
+  16-19) and passes the Luhn check, so a 15-digit IMEI is not a card.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value
   after `is`, `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`). Every label but a bare `pin`,
   which is also a verb and a connector pin (`pin 115`, `pin #115`), also takes the value
-  directly (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`).
+  directly (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`). A `PIN code`
+  takes 3-5 digits only, since a 6-digit PIN code is an Indian postal code.
 
-An IBAN counts when it passes the ISO 13616 mod-97 check. A JSON value is read scalar by
+An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN,
+a bank account or an account number counts as contact intent, so ranking does not demote
+the row that answers it. A JSON value is read scalar by
 scalar (`detector_text`): a key is not a label for the scalar after it, so
 `{"pin": "4471"}` stays unlabelled where `{"note": "PIN is 4471"}` is `high`, as
 `{"password": ...}` does for credentials.
@@ -660,17 +665,17 @@ leg returns it. The other reads that could serve its value follow three rules:
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
   duplicate's place), the profile fold, the entity graph (a row written as `high` projects
   only the entities its writer declared, and the entity extractor never sends it to its
-  model, nor an unlabelled value that reads as a credential; for a fact
+  model, nor an unlabelled value that reads as `high`; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, the candidates `procedure.match` reads, the bodies
   `procedure.list` summarises and the bodies `bodies: "unit"` reads (each read leaves `high`
   rows out before it picks a row, so another identity's `high` row of a key never hides the
   plain one), the existing memories an extraction prompt shows the LLM (labelled `high` or
-  reading as a credential), the observations `observe_extract` sends its model (labelled
-  `high` or reading as a credential: capture writes them unlabelled), the entities a period
+  reading as `high`), the observations `observe_extract` sends its model (labelled
+  `high` or reading as `high`: capture writes them unlabelled), the entities a period
   digest copies from its sources and `namespace.taxonomy` counts, and a session digest's key
-  facts that read as a credential (left out when the digest is written, listed by
+  facts that read as `high` (left out when the digest is written, listed by
   `memory.digests` and sent to the outcome judge, so a digest an earlier build wrote is
   covered too). A period row an earlier build wrote keeps its `high` sources' entities until
   it is written again: `loom period-digest --org <org> --namespace <ns> --rewrite --apply`
@@ -702,13 +707,13 @@ leg returns it. The other reads that could serve its value follow three rules:
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
-to a key with any `high` version, and those whose text the detector reads as a credential,
+to a key with any `high` version, and those whose text the detector reads as `high`,
 unless asked with `include_high` (each one it then releases is audited). `bodies: "source"`
-leaves out a passage whose text reads as a credential. Other raw text is served to readers
+leaves out a passage whose text reads as `high`. Other raw text is served to readers
 of the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
 row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
 `memory.get` on a `chunk:` key, the session digests `memory.digests` lists (their summary
-text; key facts that read as a credential are left out), what the session-summary draft (the
+text; key facts that read as `high` are left out), what the session-summary draft (the
 conversation turns), the period-digest draft and the outcome judge (session digest text)
 send their model, and `memory.recall`'s raw turns.
 
