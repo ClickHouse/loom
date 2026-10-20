@@ -1216,10 +1216,50 @@ async def test_delete_version_retires_only_the_removed_versions_chunks(
     assert sorted(r["content"] for r in live) == sorted(r["content"] for r in newer)
 
 
-async def _owed_after_a_failed_check(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch) -> int:
+@pytest.mark.asyncio
+async def test_a_set_after_the_check_keeps_the_chunks_it_shares_with_the_removed_version(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A newer value that keeps the removed value's opening passages lands after the
+    # delete's check, before its chunks retire: its shared chunks stay live with the rest.
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    head = time.time_ns() - 10_000_000_000
+    opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
+    removed_value = opening + " " + " ".join(f"old tail {i} of the note." for i in range(300))
+    newer_value = opening + " " + " ".join(f"new tail {i} of the note." for i in range(300))
+    await ch.insert("loom.memory", [{**_row(removed_value, head), "memory_type": "semantic"}])
+    removed = _chunk_rows((await _read_back(ch)).value)
+    await ch.insert("loom.memory_chunks", removed)
+    key_moved_on = hm._key_moved_on
+    newer: list[dict[str, Any]] = []
+
+    async def set_lands_after_the_check(existing: Any, **kw: Any) -> Any:
+        answer = await key_moved_on(existing, **kw)
+        row = {**_row(newer_value, kw["tombstone"] + 1_000), "memory_type": "semantic"}
+        await ch.insert("loom.memory", [row])
+        newer.extend(_chunk_rows((await _read_back(ch)).value))
+        await ch.insert("loom.memory_chunks", newer)
+        return answer
+
+    monkeypatch.setattr(hm, "_key_moved_on", set_lands_after_the_check)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is True
+    shared = {r["content"] for r in removed} & {r["content"] for r in newer}
+    assert shared, "the values share chunks"
+    live = await ch.query_all(
+        "SELECT content FROM loom.memory_chunks FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert sorted(r["content"] for r in live) == sorted(r["content"] for r in newer)
+
+
+async def _owed_after_a_failed_check(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, clock_ahead_ns: int = 0
+) -> int:
     """A delete_version of the key's head whose check fails after the tombstone, with a
     plain set committing between its version check and its tombstone: the 503, and the
-    version it named."""
+    version it named. The delete draws its tombstone on a clock `clock_ahead_ns` ahead."""
     from server.core.errors import BackendUnavailableError
 
     head = time.time_ns() - 10_000_000_000
@@ -1234,6 +1274,7 @@ async def _owed_after_a_failed_check(ch: _StatefulCH, monkeypatch: pytest.Monkey
     with monkeypatch.context() as m:
         m.setattr(hm, "_write_tombstone_row", set_lands_first)
         m.setattr(hm, "_key_moved_on", _times_out)
+        m.setattr(hm, "next_version", lambda: time.time_ns() + clock_ahead_ns)
         with pytest.raises(BackendUnavailableError):
             await hm.handle_memory_delete_version(
                 MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
@@ -1282,25 +1323,83 @@ async def test_running_a_finished_check_again_changes_nothing(
 
 
 @pytest.mark.asyncio
-async def test_the_worker_closes_a_check_whose_tombstone_never_landed(
+async def test_recovery_on_a_clock_behind_the_tombstone_writes_the_set_above_it(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The delete ran on a host whose clock is a minute ahead; the worker's is not. The
+    # set's row still goes back above the tombstone, not at the worker's clock below it.
     from server.memory.workers import delete_version_check
     from server.settings import settings
 
+    await _owed_after_a_failed_check(ch, monkeypatch, clock_ahead_ns=60_000_000_000)
+    (check,) = await _recorded_checks(ch)
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
+    assert got.version > int(check["tombstone"])
+
+
+async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch) -> tuple[int, Any]:
+    """A delete_version of the key's head whose tombstone insert times out but is still
+    queued: the version it named, and the call that commits the insert late."""
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    write_row = hm._write_tombstone_row
+    queued: list[tuple[Any, dict[str, Any]]] = []
 
-    monkeypatch.setattr(hm, "_write_tombstone_row", _times_out)
-    with pytest.raises(RuntimeError):
-        await hm.handle_memory_delete_version(
-            MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
-        )
+    async def times_out_queued(existing: Any, **kw: Any) -> None:
+        queued.append((existing, kw))
+        raise RuntimeError("timeout")
+
+    async def commit_late() -> None:
+        ((existing, kw),) = queued
+        await write_row(existing, **kw)
+
+    with monkeypatch.context() as m:
+        m.setattr(hm, "_write_tombstone_row", times_out_queued)
+        with pytest.raises(RuntimeError):
+            await hm.handle_memory_delete_version(
+                MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+            )
+    return head, commit_late
+
+
+@pytest.mark.asyncio
+async def test_a_tombstone_that_lands_after_its_check_closed_hides_nothing(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worker finds no tombstone and closes the check, writing the head above it first:
+    # the insert that commits later lands under the head, and the key keeps its value.
+    from server.memory.workers import delete_version_check
+    from server.settings import settings
+
+    head, commit_late = await _tombstone_held_back(ch, monkeypatch)
     monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
     assert await delete_version_check.run_pass() == 1
     assert [c["done"] for c in await _recorded_checks(ch)] == [1]
+    await commit_late()
     got = await _read_back(ch)
-    assert got is not None and got.value == "Tuesdays" and got.version == head
+    assert got is not None and got.value == "Tuesdays" and got.version > head
+
+
+@pytest.mark.asyncio
+async def test_a_late_tombstone_does_not_hide_a_set_written_before_its_check_ran(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A plain set lands while the tombstone insert is still queued, at a version below it;
+    # the worker writes the set above the tombstone before the insert commits.
+    from server.memory.workers import delete_version_check
+    from server.settings import settings
+
+    _head, commit_late = await _tombstone_held_back(ch, monkeypatch)
+    (check,) = await _recorded_checks(ch)
+    await set_commit._set_plain_insert(_in_flight_set(int(check["tombstone"]) - 1_000), ch)
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    await commit_late()
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
 
 
 @pytest.mark.asyncio

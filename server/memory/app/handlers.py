@@ -732,8 +732,9 @@ async def finish_delete_check(existing: Any, check: dict[str, Any]) -> MemoryDel
 
 async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput | None:
     """Run an owed check (the caller holds the key lock) and answer as its delete would
-    have, or close it and answer None when there is nothing to check: the tombstone never
-    landed (the delete failed after recording it), or the rows were erased since."""
+    have, or close it and answer None when there is nothing to check: the tombstone is not
+    in the key's history (the delete failed after recording it; the key's newest row is
+    then written above it), or the rows were erased since."""
     import server.memory.store as memory_repo
 
     checked, tombstone = int(check["checked"]), int(check["tombstone"])
@@ -748,6 +749,11 @@ async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput
     removed, landed = mine.get(checked), mine.get(tombstone)
     if removed is not None and landed is not None and landed.tombstoned_at is not None:
         return await finish_delete_check(removed, check)
+    if removed is not None and landed is None:
+        # The tombstone's insert failed, but one that timed out can still commit later. The
+        # key's newest row goes above the tombstone first, so a late one lands under it.
+        if await _key_moved_on(removed, checked=checked, tombstone=tombstone) is None:
+            await _write_above(removed, tombstone=tombstone)
     await memory_repo.record_delete_check(check, done=True)
     return None
 
@@ -800,13 +806,83 @@ async def _key_moved_on(
         # at `checked`: a write after it lifts over it as over this tombstone (a sweep's
         # marker stays on the sweep's tombstone, which keeps the writes it caught).
         trace = {"source_trace": delete_version_trace(checked)} if gone else {}
-        back = memory_repo.build_memory_version_row(
-            row, version=next_version(), updated_at=memory_repo.written_now(), **trace
-        )
-        await insert_memory_versions([back], ch=get_client())
+        await _write_above(row, tombstone=tombstone, **trace)
     if gone:
         return MemoryDeleteVersionOutput(tombstoned=False, found=False)
     return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+
+
+async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
+    """Put back the chunks the removed row `existing` shares with the key's newest value,
+    when that is a live write after it. A chunk row is named by its index and text, so a
+    newer value keeping a passage at the same index shares the row, and its write may land
+    after the delete's check but before the retire. A write inserts its row before its
+    chunks, and this read follows the retire, so it sees any write whose chunks it caught."""
+    import server.memory.store as memory_repo
+    from server.memory.app import set_chunks as _set_chunks
+
+    key = {
+        "agent": existing.agent,
+        "user_id": existing.user_id,
+        "session_id": existing.session_id,
+        "memory_key": existing.memory_key,
+        "version": int(existing.version),
+    }
+    try:
+        committed = await memory_repo.versions_above(existing.org, existing.namespace, [key])
+        above = committed.get(
+            (existing.agent, existing.user_id, existing.session_id, existing.memory_key), []
+        )
+        others = [(v, deleted) for v, deleted, _target in above if v != tombstone]
+        if not others or max(others)[1]:
+            return  # nothing written after it, or the key was deleted again since
+        rows = await memory_repo.fetch_version_rows(
+            existing.org,
+            existing.namespace,
+            [(existing.memory_key, max(others)[0])],
+            sequential=True,
+        )
+        newer = next(
+            (
+                r
+                for r in rows
+                if (r.agent, r.user_id, r.session_id)
+                == (existing.agent, existing.user_id, existing.session_id)
+            ),
+            None,
+        )
+        if newer is None or newer.tombstoned_at is not None:
+            return
+        shared = _set_chunks.set_chunk_identities(
+            newer.value, newer.memory_type
+        ) & _set_chunks.set_chunk_identities(existing.value, existing.memory_type)
+        await _set_chunks.restore_set_chunks(
+            org=existing.org,
+            namespace=existing.namespace,
+            memory_key=existing.memory_key,
+            user_id=str(existing.user_id or "-"),
+            identities=shared,
+            ch=get_client(),
+        )
+    except Exception as e:  # noqa: BLE001 — the newer row stands; its chunks only aid search
+        log.warning(
+            "memory.delete_version: shared chunks of %s not restored: %s", existing.memory_key, e
+        )
+
+
+async def _write_above(row: Any, *, tombstone: int, **changes: Any) -> None:
+    """`row` written again strictly above `tombstone`, with `changes`. The version is drawn
+    on this process's clock but never at or below the tombstone, which another process's
+    clock may have put ahead of it."""
+    import server.memory.store as memory_repo
+
+    back = memory_repo.build_memory_version_row(
+        row,
+        version=max(next_version(), tombstone + 1),
+        updated_at=memory_repo.written_now(),
+        **changes,
+    )
+    await insert_memory_versions([back], ch=get_client())
 
 
 async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
@@ -880,6 +956,8 @@ async def _retire_derived(
         await _set_chunks.tombstone_row_chunks_fail_open(
             existing, ch=ch, only_its_own=only_its_chunks
         )
+        if only_its_chunks:
+            await _restore_newer_chunks(existing, tombstone=version)
 
     # A procedure's run ledger must not outlive the procedure.
     # Best-effort: the tombstone above is the erasure of record; a ledger

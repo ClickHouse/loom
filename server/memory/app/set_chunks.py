@@ -168,7 +168,7 @@ async def tombstone_set_chunks(
             continue
         tombstones.append(_tombstone_row(r, org=org, namespace=namespace, stamp=stamp))
     if tombstones:
-        await _insert_tombstones(ch, tombstones)
+        await _insert_chunk_states(ch, tombstones)
     return len(tombstones)
 
 
@@ -203,12 +203,12 @@ def _tombstone_row(
     return row
 
 
-async def _insert_tombstones(ch: Any, tombstones: list[dict[str, Any]]) -> None:
+async def _insert_chunk_states(ch: Any, rows: list[dict[str, Any]]) -> None:
     # Synchronous: the caller's next search must not lift the parent
     # through a chunk of the value it just replaced or deleted.
     await ch.insert(
         "loom.memory_chunks",
-        tombstones,
+        rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
 
@@ -255,6 +255,56 @@ def set_chunk_identities(value: Any, memory_type: str) -> frozenset[tuple[int, s
     `value`: the identities of that value's chunk rows."""
     chunks, _truncated = plan_set_chunks(value, memory_type)
     return frozenset((i, _chunk_sha(chunk)) for i, (chunk, _start, _end) in enumerate(chunks))
+
+
+async def restore_set_chunks(
+    *,
+    org: str,
+    namespace: str,
+    memory_key: str,
+    user_id: str,
+    identities: frozenset[tuple[int, str]],
+    ch: Any = None,
+) -> int:
+    """Put back, live, the key's tombstoned memory.set chunks among `identities` (under
+    `user_id` and '-'), read with sequential consistency. Each copy keeps the tombstone's
+    `created_at` and is inserted after it, so it wins the tie, while a chunk a newer write
+    re-inserts later still wins on its own `created_at`. Returns the number put back."""
+    if not identities:
+        return 0
+    if ch is None:
+        from server.core.ch import get_client
+
+        ch = get_client()
+    rows: list[dict[str, Any]] = await ch.query_all(
+        f"""
+        SELECT {", ".join(_CHUNK_COLUMNS)}, created_at
+        FROM loom.memory_chunks FINAL
+        WHERE org = {{org:String}}
+          AND namespace = {{ns:String}}
+          AND session_id = {{sid:String}}
+          AND parent_memory_key = {{key:String}}
+          AND user_id IN ('-', {{uid:String}})
+          AND tombstoned_at IS NOT NULL
+        ORDER BY chunk_index ASC
+        {_sequential()}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "sid": set_chunk_session_id(memory_key),
+            "key": memory_key,
+            "uid": user_id or "-",
+        },
+    )
+    live = []
+    for r in rows:
+        if (int(r.get("chunk_index") or 0), _sha_text(r.get("content_sha256"))) in identities:
+            row = _tombstone_row(r, org=org, namespace=namespace, stamp=r["created_at"])
+            live.append({**row, "tombstoned_at": None})
+    if live:
+        await _insert_chunk_states(ch, live)
+    return len(live)
 
 
 async def _embed_chunks(embedder: Any, chunks: list[str]) -> list[list[float]]:
