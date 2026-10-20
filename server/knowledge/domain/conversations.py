@@ -26,7 +26,16 @@ def metadata_object(raw: object) -> dict[str, Any]:
     return meta if isinstance(meta, dict) else {}
 
 
+# The thread-metadata key the titler sets when a thread's title or opening turns read
+# as a credential, so no later pass asks the model again.
+TITLE_REFUSED = "title_refused"
+
+
 def title_refused(raw_metadata: object) -> bool:
-    """Whether the titler marked the thread: its title or its opening turns read as a
-    credential, so no later pass asks the model again."""
-    return metadata_object(raw_metadata).get("title_refused") is True
+    """Whether the titler marked the thread with `TITLE_REFUSED`."""
+    return metadata_object(raw_metadata).get(TITLE_REFUSED) is True
+
+
+def with_title_refused(meta: dict[str, Any]) -> str:
+    """The thread metadata as JSON with the `TITLE_REFUSED` mark set."""
+    return json.dumps({**meta, TITLE_REFUSED: True}, sort_keys=True)

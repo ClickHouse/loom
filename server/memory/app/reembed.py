@@ -317,7 +317,8 @@ async def reembed_table(
                 "left for later"
             )
         after = [str(x) for x in rows[-1]["_k"]]
-        log(f"  {table}: {written}/{total}  resume: {encode_resume(table, after)}")
+        progress = f"{written}/{total}" + (f" ({held} held as credentials)" if held else "")
+        log(f"  {table}: {progress}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
             break
     if held:

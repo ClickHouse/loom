@@ -25,6 +25,7 @@ from server.knowledge.domain.conversations import (
     EMBEDDED_EXCERPT_CHARS,
     LISTED_MARGIN_CHARS,
     THREAD_EXCERPT_CHARS,
+    TITLE_REFUSED,
     ConversationRole,
 )
 
@@ -1565,14 +1566,20 @@ async def titler_candidates(
           AND (c.org, c.namespace, c.thread_id) NOT IN (
               SELECT org, namespace, thread_id FROM loom.conversation_threads FINAL
               WHERE tombstoned_at IS NOT NULL OR title != ''
-                 OR JSONExtractBool(metadata, 'title_refused')
+                 OR JSONExtractBool(metadata, {refused:String})
           )
         GROUP BY c.org, c.namespace, c.thread_id
         HAVING n >= {mt:UInt32}
         ORDER BY max(c.ts) DESC
         LIMIT {lim:UInt32}
         """,
-        params={"wh": window_hours, "mt": min_turns, "lim": limit, "off": sorted(exclude_orgs)},
+        params={
+            "wh": window_hours,
+            "mt": min_turns,
+            "lim": limit,
+            "off": sorted(exclude_orgs),
+            "refused": TITLE_REFUSED,
+        },
     )
 
 

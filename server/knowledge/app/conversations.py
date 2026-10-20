@@ -67,6 +67,7 @@ from server.knowledge.domain.conversations import (
     THREAD_EXCERPT_CHARS,
     metadata_object,
     title_refused,
+    with_title_refused,
 )
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
 from server.observability.genai import staged
@@ -101,10 +102,9 @@ def _metadata_keeping_mark(metadata: dict[str, Any], stored: object) -> str:
     """The caller's new thread metadata as JSON, with the titler's `title_refused` mark
     copied from the stored metadata. The mark is server state: keeping it stops the titler
     from asking the model again for a refused title."""
-    merged = dict(metadata)
     if title_refused(stored):
-        merged["title_refused"] = True
-    return json.dumps(merged, sort_keys=True)
+        return with_title_refused(metadata)
+    return json.dumps(metadata, sort_keys=True)
 
 
 async def handle_conversation_create(
@@ -1142,7 +1142,7 @@ def _snippet(content: str, tokens: list[str]) -> str:
     lowered = content.lower()
     hits = [p for p in (lowered.find(t) for t in tokens) if p >= 0]
     if not hits or min(hits) < size // 2:
-        return _excerpt(content)
+        return _excerpt(content, size)
     start = max(min(hits) - size // 3, 0)
     window = content[start : start + size]
     return "…" + window + ("…" if start + size < len(content) else "")
@@ -1155,6 +1155,8 @@ async def handle_conversation_list_saved_messages(
     from server.knowledge.store import conversations as conversation_repo
     from server.settings import settings
 
+    # Read once, so the length read from ClickHouse and the cut agree.
+    size = settings.conversation_search_excerpt_chars
     scope = _conversation_read_scope()
     before: tuple[datetime, str, str] | None = None
     if input.cursor:
@@ -1170,7 +1172,7 @@ async def handle_conversation_list_saved_messages(
             user_id=input.user_id,
             # The excerpt the listing shows and a margin past it: a key crossing the
             # cut reads as a credential in what is checked.
-            listed=settings.conversation_search_excerpt_chars + LISTED_MARGIN_CHARS,
+            listed=size + LISTED_MARGIN_CHARS,
             conversation_id=input.conversation_id,
             before=before,
             limit=input.limit + 1,  # +1 to detect "more"
@@ -1183,7 +1185,7 @@ async def handle_conversation_list_saved_messages(
             role=r["role"],
             # Listed without the text when it reads as a credential, as memory.list
             # lists a 'high' row.
-            content_excerpt=_excerpt(_listed(r["content"])),
+            content_excerpt=_excerpt(_listed(r["content"]), size),
             ts=r["saved_at"],
         )
         for r in page
@@ -1221,10 +1223,7 @@ async def handle_conversation_saved_status(
     )
 
 
-def _excerpt(content: str) -> str:
-    from server.settings import settings
-
-    size = settings.conversation_search_excerpt_chars
+def _excerpt(content: str, size: int) -> str:
     return content[:size] + "…" if len(content) > size else content
 
 

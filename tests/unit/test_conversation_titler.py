@@ -18,11 +18,13 @@ class StubCH:
         self._title_row = title_row
 
         self.calls: list[str] = []
+        self.params: list[dict | None] = []
 
     async def query_all(self, sql, params=None):
         # The candidate scan groups by c.org; the thread rows are one keyed
         # read; the per-thread turn fetch is the rest.
         self.calls.append(sql)
+        self.params.append(params)
         if "GROUP BY c.org" in sql:
             return self._candidates
         if "IN {keys:Array(Tuple(String, String, String))}" in sql:
@@ -236,7 +238,8 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
     assert res.titled == 0 and len(prompts) == 1
     [written] = writes
     assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
-    assert "JSONExtractBool(metadata, 'title_refused')" in ch.calls[0]
+    assert "JSONExtractBool(metadata, {refused:String})" in ch.calls[0]
+    assert ch.params[0]["refused"] == "title_refused"
 
     # A scan on a merge state behind the write still returns the thread.
     _patch(monkeypatch, StubCH([_CAND], _TURNS, written))

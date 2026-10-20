@@ -15,7 +15,6 @@ provider, so on-by-default is safe out of the box.
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -23,7 +22,11 @@ from datetime import datetime
 from typing import Any, TypedDict, cast
 
 from server.core.datetimes import naive_utc_now_seconds
-from server.knowledge.domain.conversations import metadata_object, title_refused
+from server.knowledge.domain.conversations import (
+    metadata_object,
+    title_refused,
+    with_title_refused,
+)
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
@@ -154,8 +157,7 @@ async def _store_title(
             "tombstoned_at": None,
         }
     if refused:
-        meta = metadata_object(new_row["metadata"])
-        new_row["metadata"] = json.dumps({**meta, "title_refused": True})
+        new_row["metadata"] = with_title_refused(metadata_object(new_row["metadata"]))
     await conversation_repo.insert_thread(new_row)
 
 
