@@ -490,18 +490,22 @@ async def handle_memory_set_from_messages(
 
     Only the deployment setting turns assistant-turn learnings on; a request can
     only turn them off, so its `agent_learnings=true` while the setting is off is
-    dropped and named in `ignored_args`. `rule_agent` is the agent a filed rule
-    is for: None resolves it from the request's token, a deferred replay passes the
-    one stored when it was queued ('' files nothing)."""
+    dropped and named in `ignored_args`. The setting is read once here, so the
+    extraction and `ignored_args` agree even when it changes mid-call; a deferred
+    replay reads it again. `rule_agent` is the agent a filed rule is for: None
+    resolves it from the request's token, a deferred replay passes the one stored
+    when it was queued ('' files nothing)."""
     from server.memory.app.assistant_learnings import request_rule_agent
     from server.settings import settings as _settings
 
-    ignored = bool(input.agent_learnings) and not _settings.memory_extract_agent_learnings
+    setting_on = _settings.memory_extract_agent_learnings
+    learnings_on = setting_on and input.agent_learnings is not False
+    ignored = bool(input.agent_learnings) and not setting_on
     if ignored:
         input = input.model_copy(update={"agent_learnings": None})
     if rule_agent is None:
         rule_agent = request_rule_agent(input.agent)
-    out = await _set_from_messages(input, rule_agent)
+    out = await _set_from_messages(input, rule_agent, learnings_on)
     if ignored:
         out.ignored_args = [*out.ignored_args, "agent_learnings"]
     return out
@@ -510,6 +514,7 @@ async def handle_memory_set_from_messages(
 async def _set_from_messages(
     input: MemorySetFromMessagesInput,
     rule_agent: str,
+    learnings_on: bool,
 ) -> MemorySetFromMessagesOutput:
     """Extract memorable facts from raw messages and bulk-write them (or queue them).
 
@@ -585,6 +590,7 @@ async def _set_from_messages(
         extra_tags=list(input.extra_tags or []),
         valid_at=input.valid_at,
         rule_agent=rule_agent,
+        agent_learnings=learnings_on,
         **_extract_request_pins(input),
     )
     # The session digest is a function of the transcript, not of the extraction result, so
@@ -745,14 +751,12 @@ __all__ = [
 
 
 def _extract_request_pins(input: Any) -> dict[str, Any]:
-    """The per-call pins the pipeline state carries: the coverage sweep, the
-    extractor's response cache and assistant-turn learnings (None = the namespace's or
-    the deployment's setting; the request can only turn learnings off), and the
-    session's served keys and tool values for the echo filters."""
+    """The per-call A/B pins the pipeline state carries: the coverage sweep and the
+    extractor's response cache (None = the namespace's or the deployment's setting),
+    and the session's served keys and tool values for the echo filters."""
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),
-        "agent_learnings": getattr(input, "agent_learnings", None),
         # The keys the session's tools served ride into the workflow state so the echo filter
         # can judge against them.
         "recalled_keys": list(getattr(input, "recalled_keys", None) or []),

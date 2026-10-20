@@ -119,15 +119,13 @@ async def test_the_fake_provider_files_rules_under_the_block(
     assert all("escalate any refund" not in f.value for f in result.facts if f.about != "agent")
 
 
-def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_extractor_asks_for_rules_only_when_the_op_turned_them_on() -> None:
     def on(**state: Any) -> bool:
-        base = {"rule_agent": "bot", "messages": list(_MESSAGES)}
+        base = {"rule_agent": "bot", "messages": list(_MESSAGES), "agent_learnings": True}
         return pipeline._agent_learnings_on(WorkflowState(**{**base, **state}))
 
-    monkeypatch.setattr(settings, "memory_extract_agent_learnings", True)
     assert on() is True
-    assert on(agent_learnings=True) is True
-    # The request can turn it off.
+    # The op settled them off (the setting is off, or the request turned them off).
     assert on(agent_learnings=False) is False
     # No agent to file for (a pinned token that names none): never.
     assert on(rule_agent="") is False
@@ -137,10 +135,6 @@ def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPat
     assert on(messages=[{"role": "user", "content": "I moved to Lisbon."}]) is False
     observations = [{"role": "tool", "content": "ran tests"}, {"role": "user", "content": "ok"}]
     assert on(messages=observations) is False
-    # The request cannot turn it on.
-    monkeypatch.setattr(settings, "memory_extract_agent_learnings", False)
-    assert on() is False
-    assert on(agent_learnings=True) is False
 
 
 _VALUE = "The assistant escalates any refund over $500 to a human."
@@ -485,25 +479,43 @@ def _body(**extra: Any) -> Any:
     )
 
 
-@pytest.mark.parametrize(("setting", "applied"), [(False, None), (True, True)])
+@pytest.mark.parametrize(
+    ("setting", "asked", "applied", "on", "ignored"),
+    [
+        (False, True, None, False, ["agent_learnings"]),
+        (True, True, True, True, []),
+        (True, None, None, True, []),
+        (True, False, False, False, []),
+        (False, None, None, False, []),
+    ],
+)
 @pytest.mark.asyncio
 async def test_a_request_cannot_turn_filing_on(
-    monkeypatch: pytest.MonkeyPatch, setting: bool, applied: bool | None
+    monkeypatch: pytest.MonkeyPatch,
+    setting: bool,
+    asked: bool | None,
+    applied: bool | None,
+    on: bool,
+    ignored: list[str],
 ) -> None:
     from server.memory.api.models_bulk import MemorySetFromMessagesOutput
     from server.memory.app.extract import handler
 
-    seen: list[tuple[Any, str]] = []
+    seen: list[tuple[Any, str, bool]] = []
 
-    async def fake_inner(input: Any, rule_agent: str) -> MemorySetFromMessagesOutput:
-        seen.append((input.agent_learnings, rule_agent))
+    async def fake_inner(
+        input: Any, rule_agent: str, learnings_on: bool
+    ) -> MemorySetFromMessagesOutput:
+        # The setting changes mid-call: the extraction keeps the value read on entry.
+        monkeypatch.setattr(settings, "memory_extract_agent_learnings", not setting)
+        seen.append((input.agent_learnings, rule_agent, learnings_on))
         return MemorySetFromMessagesOutput()
 
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", setting)
     monkeypatch.setattr(handler, "_set_from_messages", fake_inner)
-    out = await handler.handle_memory_set_from_messages(_body(agent_learnings=True))
-    assert seen == [(applied, "body-bot")]
-    assert out.ignored_args == ([] if setting else ["agent_learnings"])
+    out = await handler.handle_memory_set_from_messages(_body(agent_learnings=asked))
+    assert seen == [(applied, "body-bot", on)]
+    assert out.ignored_args == ignored
 
 
 @pytest.mark.asyncio

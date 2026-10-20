@@ -593,16 +593,16 @@ def _is_coding_capture(state: WorkflowState) -> bool:
 
 def _agent_learnings_on(state: WorkflowState) -> bool:
     """Whether the extractor is asked for the assistant's rules about itself: when
-    the deployment setting is on and the request did not turn it off. A coding
-    session's assistant narrates its work, so a coding capture never is; nor is a
-    request with no agent to file for (a token bound to one end user that names no
-    agent), or with no assistant turn to read a rule from (a user-only call, an
-    observation replay)."""
+    the op turned them on (`state.agent_learnings`, settled once from the deployment
+    setting and the request). A coding session's assistant narrates its work, so a
+    coding capture never is; nor is a request with no agent to file for (a token
+    bound to one end user that names no agent), or with no assistant turn to read a
+    rule from (a user-only call, an observation replay)."""
     if _is_coding_capture(state) or not state.rule_agent:
         return False
     if not any(str(m.get("role") or "") == "assistant" for m in state.messages):
         return False
-    return settings.memory_extract_agent_learnings and state.agent_learnings is not False
+    return state.agent_learnings
 
 
 def _user_turns(messages: list[dict[str, Any]] | None) -> int:

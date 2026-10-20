@@ -53,8 +53,9 @@ class WorkflowState:
     # Per-call pin of the extractor's response cache
     # (None = the class policy, else off).
     llm_cache: bool | None = None
-    # Per-call switch for assistant-turn learnings (None = the deployment setting).
-    agent_learnings: bool | None = None
+    # Whether assistant-turn learnings are on for this call: the deployment setting,
+    # read once by the op, unless the request turned them off.
+    agent_learnings: bool = False
     # The agent a filed rule is for (`assistant_learnings.request_rule_agent`):
     # a pinned token's signed agent, else the body's; '' files nothing.
     rule_agent: str = ""
