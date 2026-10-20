@@ -73,6 +73,8 @@ class _Seed:
     keys_v: list[str] = field(default_factory=list)
     memory_ids_v: list[str] = field(default_factory=list)
     brief_key: str = ""
+    # One conversation both users saved a message in; V's message id carries V's nonce.
+    conversation_id: str = ""
     # A blacklist pattern added by a namespace-wide token (its reason carries V's nonce).
     pattern_v: str = ""
     pattern_id_v: str = ""
@@ -175,6 +177,22 @@ def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str
             "sections": {"goal": f"rotate the {nonce} code"},
         },
     )
+    saved = _write(
+        base,
+        tok,
+        "conversation.save_message",
+        {
+            "org": s.org,
+            "namespace": s.ns,
+            "agent": "a",
+            "user_id": user,
+            "conversation_id": s.conversation_id,
+            "message_id": f"msg-{nonce}",
+            "role": "user",
+            "content": f"{s.entity} saved the vault code {nonce}",
+        },
+    )
+    assert saved["indexed"], saved
     return ids
 
 
@@ -188,6 +206,7 @@ def seed(control_plane_url: str) -> _Seed:
         nonce_v=f"NONCEV{uuid.uuid4().hex[:10]}",
         entity=f"Zorblax{uuid.uuid4().hex[:6]}",
         brief_key=f"brief-{uuid.uuid4().hex[:6]}",
+        conversation_id=f"conv-{uuid.uuid4().hex[:8]}",
     )
     writer = _mint(org, s.ns)
     _seed_user(control_plane_url, writer, s, U, s.nonce_u)
@@ -261,6 +280,8 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "messages": [{"role": "user", "content": "canary"}],
         "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
         "failure_ids": [str(uuid.uuid4())],
+        "conversation_id": seed.conversation_id,
+        "message_ids": [f"msg-{seed.nonce_v}"],
     }
     out: dict[str, Any] = {}
     fields = model.model_fields
@@ -386,6 +407,24 @@ def test_the_walk_reaches_vs_rows_without_the_bound(
         "session.brief_get",
     }
     assert must <= reached, sorted(must - reached)
+
+
+def test_the_walk_reaches_vs_saved_messages(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    """Saved messages take no `user_id="*"`: the same bodies asked for V under a
+    namespace-scoped token return V's saved message."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    for name in (
+        "conversation.saved_status",
+        "conversation.list_saved_messages",
+        "conversation.search_saved_messages",
+    ):
+        body = _payload(OPERATIONS_BY_NAME[name].input_model, seed, V)
+        assert body is not None, name
+        r = _post(control_plane_url, tokens["namespace"], name, body)
+        assert r.status_code == 200 and seed.nonce_v in r.text, f"{name}: {r.text[:300]}"
 
 
 @pytest.mark.parametrize("other_user", ["*", V])
