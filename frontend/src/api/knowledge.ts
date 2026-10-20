@@ -248,8 +248,8 @@ export const PREVIEW_TEXT_BYTES = 1 << 20;
  *  carry custom headers, so the auth'd fetch happens here; the caller revokes
  *  `url` when done. The kind comes from `previewKind`, and an image's blob
  *  type from its allowlist, never from the response. A text file's first
- *  PREVIEW_TEXT_BYTES are decoded. Returns null when the document has no preserved blob;
- *  throws on auth / 403 / unexpected errors. */
+ *  PREVIEW_TEXT_BYTES are decoded. Returns null when the document has no
+ *  preserved blob; throws on auth / 403 / unexpected errors. */
 export async function fetchKnowledgePreview(
   id: Pick<Identity, "org" | "namespace">,
   sourceUri: string,
