@@ -32,7 +32,6 @@ REFRESH_LAG_NS = 10 * 1_000_000_000
 LATE_AFTER_NS = REFRESH_LAG_NS // 2
 
 _IDENTITY = "(org, namespace, agent, user_id, session_id, memory_key)"
-_TABLES = ("memory_doc_stats", "memory_term_freq")
 _KEYS = "{keys:Array(Tuple(String, String, String, String, String, String))}"
 
 _DOC_STATS = f"""
@@ -56,6 +55,9 @@ ARRAY JOIN {bm25.terms_sql("content_excerpt")} AS term
 WHERE {_IDENTITY} IN {_KEYS} AND embedding_dim > 0 AND tombstoned_at IS NULL
 GROUP BY org, namespace, term
 """
+
+# Each table with the statement that folds a late row into it.
+_STATEMENTS = {"memory_doc_stats": _DOC_STATS, "memory_term_freq": _TERM_FREQ}
 
 
 def late_rows(rows: list[dict[str, Any]], *, now_ns: int | None = None) -> list[dict[str, Any]]:
@@ -98,10 +100,12 @@ async def index_late_rows(rows: list[dict[str, Any]], *, ch: _CHClient | None = 
 
     # Independent statements, one round trip; both end before this returns, so shutdown's
     # drain never closes the client under one of them.
-    results = await asyncio.gather(_run(_DOC_STATS), _run(_TERM_FREQ), return_exceptions=True)
+    results = await asyncio.gather(
+        *(_run(sql) for sql in _STATEMENTS.values()), return_exceptions=True
+    )
     failed = [
         (table, r)
-        for table, r in zip(_TABLES, results, strict=True)
+        for table, r in zip(_STATEMENTS, results, strict=True)
         if isinstance(r, BaseException)
     ]
     for table, e in failed:

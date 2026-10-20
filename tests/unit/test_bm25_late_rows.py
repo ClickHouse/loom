@@ -147,7 +147,7 @@ async def test_memory_update_answers_before_its_late_row_is_indexed(wired, monke
     assert out.updated and indexed == []
     release.set()
     await after_write.drain()
-    assert indexed
+    assert indexed == ["deploy_day"]
 
 
 @pytest.mark.asyncio
