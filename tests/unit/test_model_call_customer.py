@@ -5,6 +5,7 @@ one, and a job working on several orgs' rows makes one call per org."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import Iterator
 from typing import Any
 
@@ -633,7 +634,7 @@ def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeyp
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, "inference_feature_map_json"),
         ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud/{org}"}, "as they are"),
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": "search/expand"}'}, "as they are"),
-        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": null}'}, "LOOM_INFERENCE_FEATURE_MAP_JSON"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": null}'}, "map names to strings"),
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": ""}'}, "as they are"),
     ],
 )
@@ -665,12 +666,36 @@ def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatc
         asyncio.run(customer.require())
 
 
-def test_a_feature_map_with_a_non_string_value_refuses_to_start(monkeypatch) -> None:
-    from server.settings import Settings
-
-    monkeypatch.setenv("LOOM_INFERENCE_FEATURE_MAP_JSON", '{"hyde": null}')
-    with pytest.raises(ValueError, match="map names to strings"):
-        Settings()
+@pytest.mark.parametrize(
+    "header, required, scope, org",
+    [
+        ("", False, None, ""),
+        ("", True, "org", "acme"),
+        ("X-Customer", False, "org", "acme"),
+        ("X-Customer", False, "request", "acme"),
+        ("X-Customer", False, "worker", "acme"),
+        ("X-Customer", False, "system", ""),
+        ("X-Customer", False, None, ""),
+    ],
+)
+def test_names_one_agrees_with_require(metered, monkeypatch, header, required, scope, org) -> None:
+    monkeypatch.setattr(settings, "inference_customer_header", header)
+    monkeypatch.setattr(settings, "inference_customer_required", required)
+    with contextlib.ExitStack() as stack:
+        if scope == "org":
+            stack.enter_context(customer.for_org(org))
+        elif scope == "request":
+            _request(org)
+        elif scope == "worker":
+            _request(org, op="worker.embedding")
+        elif scope == "system":
+            stack.enter_context(customer.system())
+        try:
+            customer.require()
+            accepted = True
+        except customer.Unattributed:
+            accepted = False
+        assert customer.names_one() is accepted
 
 
 # --- each job names the org of its rows ---------------------------------------
@@ -842,7 +867,7 @@ def test_code_embed_recovery_gives_up_on_a_row_naming_no_customer_without_a_call
             return dict(live)
 
         async def insert_rows(self, table: str, rows: list[Any]) -> None:
-            self.rows = self.rows + list(rows)
+            self.rows = rows
 
     repo = _Repo()
     rows = [
