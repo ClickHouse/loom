@@ -104,6 +104,9 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     # A user_id sent empty is stored as sent and is the anonymous user too.
     empty = NS(user_id="", agent="a", session_id="s1")
     assert resolver._cross_session(empty, {"agent": "a", "session_id": "s2"})
+    # Whitespace is a user, as the cluster SQL (`user_id NOT IN ('-', '')`) reads it.
+    blank = NS(user_id=" ", agent="a", session_id="s1")
+    assert not resolver._cross_session(blank, {"agent": "a", "session_id": "s2"})
 
 
 def test_each_note_shows_when_it_holds_and_its_session() -> None:
@@ -330,6 +333,7 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     # m8 (cosine 0.60) is the row's flag: it takes a place first; below 0.60 never.
     assert [p["memory_id"] for p in peers] == ["m1", "m2", "m8"]
     sql, params = ch.calls[0]
+    sql = " ".join(sql.split())
     assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
     assert "user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})" in sql
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12

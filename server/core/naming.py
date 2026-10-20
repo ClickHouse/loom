@@ -42,7 +42,7 @@ def reserved_for_sso(namespace: str) -> bool:
 
 def is_anonymous_user(user_id: str) -> bool:
     """Whether `user_id` names no user: the sentinel, or sent empty (stored as given)."""
-    return user_id.strip() in ("", SENTINEL)
+    return user_id in ("", SENTINEL)
 
 
 def names_session(session_id: str) -> bool:
