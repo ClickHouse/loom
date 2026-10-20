@@ -24,6 +24,7 @@ from server.memory.domain import session_brief_render as sb_render
 from server.memory.domain.session_brief import BriefEvent as E
 from server.memory.store import session_briefs as repo
 from tests.unit.schema_ddl import column_names, ddl
+from tests.unit.switch_state import policies_read_now, policies_unread
 
 IDENT = {"org": "o", "namespace": "ns", "agent": "claude-code", "session_id": "s1"}
 
@@ -1048,13 +1049,7 @@ _CARD = "My card number is 4111 1111 1111 1111."
 
 def _policy(text: str) -> None:
     """This process's copy of the extraction policies: `text` for IDENT's org."""
-    from server.memory.app import extraction_policy
-
-    extraction_policy._policies._reset_for_tests(
-        {(IDENT["org"], ""): text} if text else {},
-        read_age_s=0.0,
-        due_in_s=h.settings.model_calls_policy_refresh_seconds,
-    )
+    policies_read_now({(IDENT["org"], ""): text} if text else {})
 
 
 def _saved_once(monkeypatch) -> Any:
@@ -1068,25 +1063,32 @@ def _saved_once(monkeypatch) -> Any:
 
 
 @pytest.mark.parametrize("reply", ["RAISE", "not json"])
-def test_under_a_policy_a_save_the_model_cannot_revise_writes_nothing(
+def test_under_a_policy_a_save_whose_every_call_fails_is_refused(
     mem, monkeypatch, reply: str
 ) -> None:
     """The deterministic builder copies the raw events, so under a policy a
-    failed or unparseable model call leaves the brief as it was: no insert, the
-    revision, cursor and event count unchanged, the summary not copied."""
+    save whose every model call failed or did not parse is refused (503) for
+    the client to send again: no insert, the revision, cursor and event count
+    unchanged, the summary not copied."""
+    from server.core.errors import BackendUnavailableError
+
     first = _saved_once(monkeypatch)
     rows = len(mem.rows)
     _policy("Never store payment card data.")
     llm = _llm(monkeypatch, [reply])
-    out = _save(
-        brief_key="k",
-        events=[E(kind="user", text=_CARD), E(kind="summary", text=_CARD)],
-        event_cursor="c2",
-    )
-    assert (out.changed, out.reason, out.revision) == (False, "not-revised", first.revision)
+    with pytest.raises(BackendUnavailableError):
+        _save(
+            brief_key="k",
+            events=[E(kind="user", text=_CARD), E(kind="summary", text=_CARD)],
+            event_cursor="c2",
+        )
     assert len(mem.rows) == rows
     stored = mem._newest()["k"]
-    assert (stored["event_cursor"], stored["events_total"]) == ("c1", 1)
+    assert (stored["revision"], stored["event_cursor"], stored["events_total"]) == (
+        first.revision,
+        "c1",
+        1,
+    )
     assert "4111" not in json.dumps(stored, default=str)
     assert llm.calls and "OPERATOR EXTRACTION POLICY" in llm.calls[0][0]
 
@@ -1119,8 +1121,52 @@ def test_an_unreadable_policy_refuses_the_save(mem, monkeypatch) -> None:
         raise ConnectionError("clickhouse away")
 
     monkeypatch.setattr(extraction_policy.repo, "live_rows", down)
-    extraction_policy._policies._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    policies_unread()
     _llm(monkeypatch, [json.dumps({"goal": "g"})])
     with pytest.raises(customer.SwitchUnread):  # a 503: the client sends the events again
         _save(brief_key="k", events=[E(kind="user", text=_CARD)])
     assert mem.rows == []
+
+
+def test_under_a_policy_a_window_the_model_cannot_revise_keeps_its_place(mem, monkeypatch) -> None:
+    """Two windows: the first call fails, the second revises. The save is
+    written by the model, and the failed window copies none of its raw events."""
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    monkeypatch.setattr(h.settings, "session_brief_window_chars", 200)
+    monkeypatch.setattr(h.settings, "session_brief_max_windows", 2)
+    _llm(monkeypatch, ["RAISE", json.dumps({"goal": "Ship the login fix", "status": "merged"})])
+    events = [E(kind="user", text=_CARD + " " + "x" * 600)] + [
+        E(kind="assistant", text="The login fix is merged. " * 20)
+    ]
+    out = _save(brief_key="k", events=events, event_cursor="c2")
+    assert out.changed is True
+    assert out.stats.windows == 2
+    stored = mem._newest()["k"]
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in out.rendered
+
+
+def test_under_a_policy_agent_sections_with_events_and_no_model_overlay_the_brief(
+    mem, monkeypatch
+) -> None:
+    """The calling agent wrote the sections; the events cannot be revised
+    without a model, so the sections go over the brief as it was and no raw
+    event is stored."""
+    from server.memory.domain.session_brief import BriefSections
+
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    out = _save(
+        brief_key="k",
+        events=[E(kind="user", text=_CARD), E(kind="edit", path="src/billing/cards.py")],
+        sections=BriefSections(status="handed over"),
+        use_llm=False,
+        event_cursor="c2",
+    )
+    assert (out.changed, out.author) == (True, "model")
+    stored = mem._newest()["k"]
+    sections = json.loads(stored["sections"])
+    assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "src/billing/cards.py" not in json.dumps(stored, default=str)

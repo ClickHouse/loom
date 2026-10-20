@@ -17,6 +17,7 @@ from fastapi import HTTPException
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import BackendUnavailableError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
 from server.memory.api.models_session_brief import (
@@ -89,7 +90,8 @@ class _Revision:
 
 def _use_llm(inp: Any) -> tuple[bool, Any]:
     """(use the model, client). The fake provider never runs: its echo is
-    not a brief, and the deterministic builder is the honest fallback."""
+    not a brief, and the deterministic builder is the honest fallback, except under an
+    operator's extraction policy, where it never runs."""
     wanted = inp.use_llm if inp.use_llm is not None else bool(settings.session_brief_llm)
     if not wanted:
         return False, None
@@ -146,12 +148,12 @@ async def _revise_window(
             max_tokens=_REVISION_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
-    except Exception as e:  # noqa: BLE001 — a failed call degrades one window, never the save
+    except Exception as e:  # noqa: BLE001 — a failed call leaves one window unrevised
         log.warning("session.brief_save: model call failed (%s); window not revised", e)
         return fallback(), 0, 0, 0, False
     try:
         parsed = sb.parse_revision(result.text)
-    except Exception as e:  # noqa: BLE001 — a malformed reply degrades one window, never the save
+    except Exception as e:  # noqa: BLE001 — a failed call leaves one window unrevised
         log.warning("session.brief_save: model reply rejected (%s); window not revised", e)
         parsed = None
     if parsed is None:
@@ -176,10 +178,11 @@ async def _revise_window(
 async def _revise_from_events(
     inp: Any, prev: sb.BriefSections | None, policy: str
 ) -> _Revision | None:
-    """The brief revised with `inp.events`; None under an operator's `policy`
-    when the model could not revise any window (no real model, `use_llm`
-    false, or every call failed, was held or did not parse): the deterministic
-    builder copies the raw events, so nothing is written."""
+    """The brief revised with `inp.events`. Under an operator's `policy` the
+    deterministic builder, which copies the raw events, never runs: with no
+    model to call (no real model, `use_llm` false) the answer is None and
+    nothing is written; when every window's call failed, was held or did not
+    parse, the save is refused (503) so the client sends the events again."""
     budget = int(settings.session_brief_window_chars)
     windows = sb.split_windows(
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
@@ -220,7 +223,9 @@ async def _revise_from_events(
         rev.tokens_out += t_out
         any_model = any_model or used
     if not any_model and policy:
-        return None
+        raise BackendUnavailableError(
+            "the brief could not be revised under the operator's extraction policy; try again"
+        )
     rev.sections = cur or sb.BriefSections()
     if not any_model:
         rev.author = "deterministic"
@@ -334,7 +339,7 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     # the save (503), and the client sends the events again.
     from server.memory.app import extraction_policy
 
-    policy = await extraction_policy.effective(inp.org, inp.namespace)
+    policy = await extraction_policy.effective(inp.org, inp.namespace) if inp.events else ""
     if inp.sections is not None:
         base = prev
         if inp.events:

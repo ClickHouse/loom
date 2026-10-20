@@ -68,7 +68,7 @@ class SessionBriefSaveInput(_Identity):
     if_revision: int | None = Field(default=None, ge=0, json_schema_extra=MCP_HIDDEN)
     # Force the deterministic builder (False) or the model (True); None =
     # the deployment setting. Under an operator's extraction policy the builder
-    # never runs: a save the model cannot revise writes nothing (`not-revised`).
+    # never runs: a save with no model to call writes nothing (`not-revised`).
     use_llm: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
 
 
@@ -94,11 +94,12 @@ class SessionBriefSaveOutput(BaseModel):
     # True when a new revision was written; False when `reason` says why not.
     changed: bool
     # "llm" (revised by the model), "deterministic" (no model configured, or
-    # it failed), "model" (the calling agent wrote the sections).
+    # it failed; never under an operator's extraction policy), "model" (the
+    # calling agent wrote the sections).
     author: str = ""
     # Why nothing was written: `nothing-to-save`, `recording_off`, `already-saved` or
-    # `not-revised` (an operator's extraction policy is in force and the model could not
-    # revise the brief); empty when `changed`.
+    # `not-revised` (an operator's extraction policy is in force and there is no model
+    # to revise the brief); empty when `changed`.
     reason: str = ""
     # The brief as text, ready to show; the stored one when nothing changed.
     rendered: str = ""

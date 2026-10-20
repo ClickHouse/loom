@@ -11,7 +11,7 @@ class ContextSettings(BaseModel):
     # session.brief_save. `session_brief_llm` off = every brief comes from the
     # deterministic builder (goal, status, files, errors, rules, pointers; no
     # decisions or dead ends), except under an operator's extraction policy,
-    # where a save the model cannot revise writes nothing. The model is the
+    # where a save with no model to call writes nothing. The model is the
     # deployment's LLM when `session_brief_llm_model` has no key. A save
     # condenses its events into windows of `session_brief_window_chars`
     # (≈6k tokens each) and revises the brief once per window, at most

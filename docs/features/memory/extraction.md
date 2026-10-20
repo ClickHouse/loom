@@ -150,9 +150,9 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   passes cannot read it. An extraction under a policy can therefore keep fewer facts
   than the same extraction without one. `session.brief_save` likewise never runs its
   deterministic builder under a policy, and takes no client summary from the events: a
-  save the model cannot revise (no real model, `use_llm: false`, or a failed, held or
-  unparseable call for every window) writes nothing and answers `changed: false`,
-  `reason: "not-revised"`. `memory.set_from_messages` answers
+  save with no model to call (no real model, `use_llm: false`) writes nothing and
+  answers `changed: false`, `reason: "not-revised"`; one whose every window's call
+  failed, was held or did not parse is refused with 503, for the client to send again. `memory.set_from_messages` answers
   `under_operator_policy: true` when it ran under one (a deferred request answers
   false: its extraction runs later, under the policy then set).
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy

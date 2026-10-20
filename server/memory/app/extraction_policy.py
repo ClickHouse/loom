@@ -57,9 +57,7 @@ async def effective(org: str, namespace: str) -> str:
         max_stale_s=settings.model_calls_policy_max_stale_seconds,
     )
     if policies is None:
-        raise customer.SwitchUnread(
-            "the extraction policy could not be read; extraction waits until it is"
-        )
+        raise customer.SwitchUnread("the extraction policy could not be read; try again")
     return combine(policies.get((org, ""), ""), policies.get((org, namespace), ""))
 
 
