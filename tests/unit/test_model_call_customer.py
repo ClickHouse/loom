@@ -327,7 +327,7 @@ def test_a_refusal_comes_before_the_gateway_the_cache_and_provider_health(
         asyncio.run(embedder._embed_one_raw("text"))
     # A cached vector does not hide the missed path either.
     monkeypatch.setattr(_cache, "_cache", _cache._LRU(max_size=8, ttl_s=60.0))
-    _cache._cache.put(_cache._key(embedder.model_name, "cached"), [1.0] * 8)
+    _cache._cache.put(_cache._key(embedder.model_name, "cached", "acme"), [1.0] * 8)
     with pytest.raises(customer.Unattributed):
         asyncio.run(embedder.embed("cached"))
 

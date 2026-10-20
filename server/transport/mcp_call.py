@@ -286,7 +286,8 @@ async def _call_tool(
     except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
         from server.observability import genai as _genai
 
-        # Not the previous batch entry's org: this entry's model calls name none and refuse.
+        # Not the previous batch entry's org: this entry's model calls name no org,
+        # so they skip the model caches and refuse.
         _genai.set_identity(operation=op.name, capture_level="off")
 
     start = time.perf_counter()

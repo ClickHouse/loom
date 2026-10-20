@@ -70,8 +70,9 @@ class _StubCH:
 def test_namespace_erasure_deletes_the_orgs_replay_rows() -> None:
     ch = _StubCH()
     assert asyncio.run(ledger_steps.delete_idempotency_by_namespace("o", ["a", "b"], ch=ch)) == 1
-    ((sql, params),) = ch.commands
+    (sql, params), vectors = ch.commands  # then the org's cached query vectors
     assert " ".join(sql.split()).startswith("ALTER TABLE loom.idempotency DELETE WHERE")
+    assert "loom.embedding_cache" in vectors[0] and vectors[1]["org"] == "o"
     assert "org = {org:String}" in sql and params["org"] == "o"
     assert "namespace" not in sql  # the table has no namespace column
     assert " FINAL" not in ch.counts[0][0]
@@ -82,7 +83,8 @@ def test_user_erasure_deletes_the_orgs_replay_rows_not_only_the_users_subject() 
     # subject; nothing on the row names the user, so the step fails closed.
     ch = _StubCH()
     asyncio.run(ledger_steps.delete_idempotency_by_user("o", "alice", ch=ch))
-    ((sql, params),) = ch.commands
+    (sql, params), vectors = ch.commands  # then the org's cached query vectors
+    assert "loom.embedding_cache" in vectors[0] and vectors[1]["org"] == "o"
     assert "org = {org:String}" in sql and params["org"] == "o"
     assert "subject" not in sql and "uid" not in params
 

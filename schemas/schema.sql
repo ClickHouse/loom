@@ -1380,7 +1380,8 @@ CREATE TABLE IF NOT EXISTS loom.embedding_cache
     `key` String,
     `dim` UInt16,
     `embedding` Array(Float32),
-    `created_at` DateTime DEFAULT now()
+    `created_at` DateTime DEFAULT now(),
+    `org` LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (model, key)
