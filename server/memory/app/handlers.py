@@ -801,24 +801,25 @@ async def _key_moved_on(
 # What a copy of a tombstone does not carry from it: its own version and write stamps, and
 # the trace a copy replaces with this delete's marker.
 _NOT_CARRIED = frozenset({"version", "updated_at", "tombstoned_at", "source_trace"})
-# What a blacklist sweep stamps on the row it removes besides those (its marker, and the
-# tombstoned status): not what the row said.
-_SWEEP_STAMPS = frozenset({"expire_reason", "status"})
 
 
 async def _head_carries(existing: Any, top: int, row: Any) -> bool:
     """Version `top` of the key, this delete's newest tombstone, already carries every
     column of `row` a copy would: a copy this delete wrote back, or its own tombstone of
-    the row another delete or a sweep removed. Then it is not copied again."""
+    the row another delete or a sweep removed. Then it is not copied again. What the
+    removing write stamped is not the row's: the `tombstoned` status of a by-id tombstone
+    (a sweep, dedup, conflict resolution) and a sweep's marker over the row's own reason."""
     import server.memory.store as memory_repo
     from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 
     head = await _find_version_row(existing, top)
     if head is None:
         return False
-    skip = _NOT_CARRIED
-    if str(row.expire_reason or "").startswith(SWEEP_REASON_PREFIX):
-        skip = _NOT_CARRIED | _SWEEP_STAMPS
+    skip = set(_NOT_CARRIED)
+    if row.status == "tombstoned":
+        skip.add("status")
+    if row.expire_reason.startswith(SWEEP_REASON_PREFIX):
+        skip.add("expire_reason")
     mine, theirs = (memory_repo.build_memory_version_row(r) for r in (head, row))
     return all(mine[c] == theirs[c] for c in mine if c not in skip)
 

@@ -798,19 +798,22 @@ async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("column", "changed"), [("tags", ["reviewed"]), ("expire_reason", "contract ends")]
+)
 async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, column: str, changed: Any
 ) -> None:
-    # After delete_version's check a set writes the same value with other tags, and a plain
-    # memory.delete removes it. The delete's own tombstone has the value but not the tags,
-    # so the plain delete's tombstone is copied on top: a restore brings back the set's.
+    # After delete_version's check a set writes the same value with other metadata, and a
+    # plain memory.delete removes it. The delete's own tombstone has the value but not the
+    # metadata, so the plain delete's tombstone is copied on top: a restore brings it back.
     from server.memory.api.models_crud import MemoryRestoreInput
     from server.memory.app import restore as restore_mod
 
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
-    w.memory_row = {**_row("Tuesdays", w.version), "tags": ["reviewed"]}
+    w.memory_row = {**_row("Tuesdays", w.version), column: changed}
     landed: list[bool] = []
 
     async def check_then_land(identity: Any, key: str, **kw: Any) -> Any:
@@ -832,7 +835,8 @@ async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
     restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
     assert restored.restored is True
     got = await _read_back(ch)
-    assert got is not None and got.value == "Tuesdays" and list(got.tags) == ["reviewed"]
+    assert got is not None and got.value == "Tuesdays"
+    assert (list(got.tags) if column == "tags" else got.expire_reason) == changed
 
 
 @pytest.mark.asyncio
@@ -1089,6 +1093,47 @@ async def test_a_sweep_above_the_tombstone_answers_not_found_and_retires_nothing
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.tombstoned is False and out.found is False and retired == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remover", ["sweep", "dedup"])
+async def test_a_by_id_tombstone_of_the_checked_row_is_not_copied(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, remover: str
+) -> None:
+    # A sweep or a dedup tombstones the very row delete_version checked, after its check:
+    # the delete's own tombstone already carries that row, its status and (under a sweep's
+    # marker) its own expiry reason being the remover's stamps. Nothing is copied.
+    head = time.time_ns() - 10_000_000_000
+    checked_row = {**_row("Tuesdays", head), "expire_reason": "contract ends"}
+    await ch.insert("loom.memory", [checked_row])
+    get_by_key = memory_repo.get_by_key
+    removed: list[bool] = []
+
+    async def check_then_remove(identity: Any, key: str, **kw: Any) -> Any:
+        found = await get_by_key(identity, key, **kw)
+        if not removed:
+            removed.append(True)
+            by_id = {  # what tombstone_cascade_by_ids writes
+                **checked_row,
+                "version": time.time_ns(),
+                "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
+                "status": "tombstoned",
+            }
+            if remover == "sweep":
+                by_id["expire_reason"] = "blacklist.sweep:p1"
+            await ch.insert("loom.memory", [by_id])
+        return found
+
+    monkeypatch.setattr(memory_repo, "get_by_key", check_then_remove)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.found is False
+    marked = await ch.query_all(
+        "SELECT version FROM loom.memory_versions WHERE source_trace = {t:String}",
+        {"t": f"memory.delete_version:{head}"},
+    )
+    assert len(marked) == 1  # the delete's own tombstone, no copy
 
 
 @pytest.mark.asyncio
