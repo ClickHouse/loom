@@ -513,7 +513,18 @@ def test_no_loom_token_carries_a_subject_spelled_like_an_end_user_key(subject: s
 
 @pytest.mark.parametrize("subject", ["user:u-1", "team/everyone"])
 def test_cli_mint_refuses_a_reserved_subject_without_a_traceback(
-    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], subject: str
+    fake_ch: _FakeCH,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    subject: str,
 ) -> None:
+    """Refused before the keyring is read: no such token is minted, connected
+    or not."""
+    from server.auth import keyring
+
+    def _read(**_k: Any) -> None:
+        raise AssertionError("the keyring was read for a subject no token may carry")
+
+    monkeypatch.setattr(keyring, "load_for_offline_mint", _read)
     rc = cli.main(["mint-token", "--subject", subject, "--org", "acme", "--namespaces", "shop"])
     assert rc == 2 and "grant principal" in capsys.readouterr().err
