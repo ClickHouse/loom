@@ -2254,6 +2254,30 @@ export interface ConversationListOutput {
   next_cursor?: string | null;
 }
 
+export interface ConversationListSavedMessagesInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  conversation_id?: string | null;
+  limit?: number;
+  cursor?: string | null;
+  fields?: string[] | null;
+}
+
+export interface SavedMessageHit {
+  conversation_id: string;
+  message_id: string;
+  role: "user" | "assistant";
+  content_excerpt: string;
+  ts: string; // date-time
+}
+
+export interface ConversationListSavedMessagesOutput {
+  rows: SavedMessageHit[];
+  next_cursor?: string | null;
+}
+
 export interface ConversationSaveMessageInput {
   org: string;
   namespace: string;
@@ -2271,6 +2295,19 @@ export interface ConversationSaveMessageOutput {
   indexed: boolean;
   reason?: "" | "duplicate" | "owner_mismatch" | "deleted" | "unsupported_role" | "embed_failed";
   ts: string; // date-time
+}
+
+export interface ConversationSavedStatusInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  conversation_id: string;
+  message_ids: string[];
+}
+
+export interface ConversationSavedStatusOutput {
+  saved: string[];
 }
 
 export interface ConversationSearchInput {
@@ -2309,14 +2346,8 @@ export interface ConversationSearchSavedMessagesInput {
   conversation_id?: string | null;
   role?: "user" | "assistant" | null;
   top_k?: number;
-}
-
-export interface SavedMessageHit {
-  conversation_id: string;
-  message_id: string;
-  role: "user" | "assistant";
-  content_excerpt: string;
-  ts: string; // date-time
+  search_mode?: "hybrid" | "semantic" | "lexical";
+  lexical_weight?: number;
 }
 
 export interface ConversationSearchSavedMessagesOutput {
@@ -2357,6 +2388,23 @@ export interface ConversationThreadSummary {
 
 export interface ConversationThreadsOutput {
   threads: ConversationThreadSummary[];
+}
+
+export interface ConversationUnsaveMessageInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  conversation_id: string;
+  message_id: string;
+  user_id: string;
+}
+
+export interface ConversationUnsaveMessageOutput {
+  conversation_id: string;
+  message_id: string;
+  found: boolean;
+  removed?: boolean;
+  ts: string; // date-time
 }
 
 export interface ConversationUpdateInput {
@@ -8645,11 +8693,14 @@ export type OpName =
   | "conversation.delete"
   | "conversation.get"
   | "conversation.list"
+  | "conversation.list_saved_messages"
   | "conversation.save_message"
+  | "conversation.saved_status"
   | "conversation.search"
   | "conversation.search_saved_messages"
   | "conversation.set_logging"
   | "conversation.threads"
+  | "conversation.unsave_message"
   | "conversation.update"
   | "cost.agent_summary"
   | "cost.budget_status"
@@ -8962,11 +9013,14 @@ export interface OpMap {
   "conversation.delete": { input: ConversationDeleteInput; output: ConversationDeleteOutput };
   "conversation.get": { input: ConversationGetInput; output: ConversationGetOutput };
   "conversation.list": { input: ConversationListInput; output: ConversationListOutput };
+  "conversation.list_saved_messages": { input: ConversationListSavedMessagesInput; output: ConversationListSavedMessagesOutput };
   "conversation.save_message": { input: ConversationSaveMessageInput; output: ConversationSaveMessageOutput };
+  "conversation.saved_status": { input: ConversationSavedStatusInput; output: ConversationSavedStatusOutput };
   "conversation.search": { input: ConversationSearchInput; output: ConversationSearchOutput };
   "conversation.search_saved_messages": { input: ConversationSearchSavedMessagesInput; output: ConversationSearchSavedMessagesOutput };
   "conversation.set_logging": { input: ConversationSetLoggingInput; output: ConversationSetLoggingOutput };
   "conversation.threads": { input: ConversationThreadsInput; output: ConversationThreadsOutput };
+  "conversation.unsave_message": { input: ConversationUnsaveMessageInput; output: ConversationUnsaveMessageOutput };
   "conversation.update": { input: ConversationUpdateInput; output: ConversationUpdateOutput };
   "cost.agent_summary": { input: CostAgentSummaryInput; output: CostAgentSummaryOutput };
   "cost.budget_status": { input: CostBudgetStatusInput; output: CostBudgetStatusOutput };
@@ -9279,11 +9333,14 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.delete", group: "conversation", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 600, audit: true, readOnly: false },
   { name: "conversation.get", group: "conversation", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.list", group: "conversation", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "conversation.list_saved_messages", group: "conversation", method: "listSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
+  { name: "conversation.saved_status", group: "conversation", method: "savedStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.search", group: "conversation", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "conversation.set_logging", group: "conversation", method: "setLogging", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "conversation.threads", group: "conversation", method: "threads", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "conversation.unsave_message", group: "conversation", method: "unsaveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
   { name: "conversation.update", group: "conversation", method: "update", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
   { name: "cost.agent_summary", group: "cost", method: "agentSummary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "cost.budget_status", group: "cost", method: "budgetStatus", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -9520,4 +9577,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 314;
+export const GENERATED_OP_COUNT = 317;
