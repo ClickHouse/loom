@@ -185,16 +185,16 @@ async def test_a_thread_list_reads_the_last_turn_only_when_asked(
 @pytest.mark.asyncio
 async def test_the_saved_list_reads_the_prefix_it_checks() -> None:
     """The saved list never carries a long message whole: the aggregate reads the first
-    LISTED_TEXT_CHARS characters, which the listing checks and cuts."""
+    `listed` characters, which the listing checks and cuts."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
 
     ch = StubCH()
     await conversation_repo.list_saved_messages(
-        "o", "ns", "a", scope=WHOLE_NAMESPACE, user_id="u-1", ch=ch
+        "o", "ns", "a", scope=WHOLE_NAMESPACE, user_id="u-1", listed=1264, ch=ch
     )
     sql, params = ch.calls[0]
     assert "argMax(substringUTF8(content, 1, {listed:UInt32}), ts) AS content" in sql
-    assert "argMax(content," not in sql and params["listed"] == 1024
+    assert "argMax(content," not in sql and params["listed"] == 1264
 
 
 @pytest.mark.asyncio

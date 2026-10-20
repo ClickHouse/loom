@@ -748,8 +748,9 @@ the reads that serve passages check their text too:
 - Listed without the text: `conversation.list_saved_messages` shows an empty
   `content_excerpt` for a saved message that reads as a credential (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
-  whose last turn reads as a credential (its first 1,024 characters are checked, not only
-  the 240-character excerpt), and an empty `title` for a title that reads as one.
+  whose last turn reads as a credential, and an empty `title` for a title that reads as
+  one. Both listings check the excerpt they show and 1,024 characters past it, so a key
+  that crosses the cut is caught.
   `memory.outline` lists a session digest whose summary reads as a credential with an
   empty `headline`. The conversation titler never sends a turn that reads as a credential
   to its model and never stores a title that reads as one: it marks the thread

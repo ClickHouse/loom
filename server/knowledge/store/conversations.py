@@ -23,7 +23,8 @@ from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import (
     EMBEDDED_EXCERPT_CHARS,
-    LISTED_TEXT_CHARS,
+    LISTED_MARGIN_CHARS,
+    THREAD_EXCERPT_CHARS,
     ConversationRole,
 )
 
@@ -520,6 +521,7 @@ async def list_saved_messages(
     *,
     scope: ReadFilters,
     user_id: str,
+    listed: int,
     conversation_id: str | None = None,
     before: tuple[datetime, str, str] | None = None,
     limit: int = 50,
@@ -529,7 +531,7 @@ async def list_saved_messages(
     (saved_at, thread_id, msg_id). Grouped per message: a save racing a
     transcript append can leave two rows of one turn, and a page lists it once.
     `before` is the last key of the previous page. `content` is the message's first
-    `LISTED_TEXT_CHARS` characters, what the listing checks and cuts."""
+    `listed` characters, what the listing checks and cuts."""
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -544,7 +546,7 @@ async def list_saved_messages(
         "ns": namespace,
         "uid": user_id,
         "lim": int(limit),
-        "listed": LISTED_TEXT_CHARS,
+        "listed": int(listed),
     }
     if agent not in ("*", "-"):
         where.append("agent = {agent:String}")
@@ -1142,9 +1144,9 @@ async def recent_threads(
     seen. `count_turns`: the message count is the thread's distinct turns, as an opened
     thread shows; off, the window's raw row count (for a caller that does not read the
     count). `last_turn`: the latest message's agent (`last_agent`), role and first
-    `LISTED_TEXT_CHARS` characters (`last_content`, so the listing can check them for a
-    credential before it cuts the excerpt); off, they are empty. With both off the page is
-    one statement."""
+    `THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS` characters (`last_content`, so the listing
+    can check them for a credential before it cuts the excerpt); off, they are empty. With
+    both off the page is one statement."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -1204,7 +1206,11 @@ async def recent_threads(
           {agent_clause}
         GROUP BY thread_id
         """,
-        params={**params, "tids": [r["thread_id"] for r in rows], "listed": LISTED_TEXT_CHARS},
+        params={
+            **params,
+            "tids": [r["thread_id"] for r in rows],
+            "listed": THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS,
+        },
     )
     by_thread = {r["thread_id"]: r for r in counted}
     out = []

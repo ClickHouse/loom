@@ -61,7 +61,11 @@ from server.knowledge.app.conversation_search import (
     ConversationVectorQuery,
     vector_search,
 )
-from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, THREAD_EXCERPT_CHARS
+from server.knowledge.domain.conversations import (
+    EMBEDDED_EXCERPT_CHARS,
+    LISTED_MARGIN_CHARS,
+    THREAD_EXCERPT_CHARS,
+)
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
 from server.observability.genai import staged
 from server.observability.otel import traced
@@ -1131,6 +1135,7 @@ async def handle_conversation_list_saved_messages(
 ) -> ConversationListSavedMessagesOutput:
     """List one user's saved messages, newest first, a page at a time."""
     from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
 
     scope = _conversation_read_scope()
     before: tuple[datetime, str, str] | None = None
@@ -1145,6 +1150,9 @@ async def handle_conversation_list_saved_messages(
             input.agent,
             scope=scope,
             user_id=input.user_id,
+            # The excerpt the listing shows and a margin past it: a key crossing the
+            # cut reads as a credential in what is checked.
+            listed=settings.conversation_search_excerpt_chars + LISTED_MARGIN_CHARS,
             conversation_id=input.conversation_id,
             before=before,
             limit=input.limit + 1,  # +1 to detect "more"
@@ -1238,9 +1246,9 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         input.org, input.namespace, [str(r["thread_id"]) for r in rows]
     )
     # Listed across the namespace: a last turn or a title that reads as a credential is
-    # listed without its text, as memory.list lists a 'high' row. The turn's first
-    # LISTED_TEXT_CHARS characters are checked, so a key that crosses the excerpt's cut is
-    # caught too.
+    # listed without its text, as memory.list lists a 'high' row. The excerpt and
+    # LISTED_MARGIN_CHARS characters past it are checked, so a key that crosses the
+    # excerpt's cut is caught too.
     threads = [
         ConversationThreadSummary(
             thread_id=str(r["thread_id"]),
@@ -1339,30 +1347,38 @@ def _compacted_from(row: Mapping[str, Any]) -> list[str]:
 
 def _compaction_candidates(
     turns: list[dict[str, Any]], min_to_compact: int
-) -> list[dict[str, Any]]:
-    """The turns before `keep_recent` that compaction may summarize, oldest first.
+) -> tuple[list[dict[str, Any]], list[bool]]:
+    """The turns before `keep_recent` that compaction may summarize, oldest first, and
+    for each whether it is an earlier summary.
 
     A saved turn is the user's explicit choice to keep that message findable: it stays
     verbatim, never folded into a summary and tombstoned. A turn that reads as a
     credential is never sent to the summarizer: it stays live, out of the window, and out
-    of search (it has no embedding row). The credential check stops once the turns kept
-    from the first new one on fill the window and `min_to_compact` new turns are kept:
-    later turns never reach the summarizer."""
+    of search (it has no embedding row). The credential check stops once the window is
+    full and `min_to_compact` new turns are kept: later turns never reach the
+    summarizer. Summaries before the first new turn are not counted toward the window,
+    whose limit still leaves room for them (`_FOLDED_SUMMARY_CHARS`); every turn from
+    the first new one on is."""
     candidates = []
+    is_summary = []
     kept_chars = 0
     new_turns = 0
+    counting = False
     for r in turns:
         window_full = kept_chars > _FOLDED_SUMMARY_CHARS + _COMPACT_TRANSCRIPT_CHARS
         if window_full and new_turns >= min_to_compact:
             break
         if r.get("is_saved") or reads_high(str(r["content"])):
             continue
+        summary = bool(_compacted_from(r))
         candidates.append(r)
-        if not _compacted_from(r):
+        is_summary.append(summary)
+        if not summary:
             new_turns += 1
-        if kept_chars or not _compacted_from(r):
+        counting = counting or not summary
+        if counting:
             kept_chars += len(f"{r['role']}: {r['content']}") + 1
-    return candidates
+    return candidates, is_summary
 
 
 @staged("compact")
@@ -1413,7 +1429,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="nothing-to-compact",
         )
 
-    candidates = _compaction_candidates(rows[: -input.keep_recent], input.min_to_compact)
+    candidates, is_summary = _compaction_candidates(
+        rows[: -input.keep_recent], input.min_to_compact
+    )
     if not candidates:
         return ConversationCompactOutput(
             compacted=False,
@@ -1422,7 +1440,6 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         )
     # An earlier summary in the window is not a new turn: it counts toward neither
     # min_to_compact nor messages_summarized.
-    is_summary = [bool(_compacted_from(r)) for r in candidates]
     # A re-run: an earlier summary sits where the turns it replaced began, so it is
     # the oldest live row and falls among the candidates. A window of nothing but
     # earlier summaries has no new turn to compact.

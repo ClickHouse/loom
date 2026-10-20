@@ -52,8 +52,8 @@ up front.
   written but gets no embedding row, and its text is never sent to the embedder.
   `conversation.search` never returns it, by vector or by the substring fallback, and
   `conversation.threads` lists such a last turn with an empty excerpt (and a title that
-  reads as a credential as empty); it checks a turn's first 1,024 characters, past the
-  240 its excerpt shows. The titler never sends such a turn to its model, and a thread
+  reads as a credential as empty); it checks the 240 characters its excerpt shows and
+  1,024 past them. The titler never sends such a turn to its model, and a thread
   whose generated title reads as a credential stays untitled, marked `title_refused` in
   its metadata so the titler does not ask again.
   `conversation.get` and `conversation.list` still serve the turn in its thread
@@ -100,8 +100,8 @@ They differ from `conversation.append` and `conversation.search` in six ways:
   credential is never embedded either: it answers `reason: "reads_as_credential"`, and a
   new one is not stored. One an earlier build saved is never a vector or keyword hit of
   `conversation.search_saved_messages`, and `conversation.list_saved_messages` lists it
-  with an empty excerpt (it checks the first 1,024 characters, as `conversation.threads`
-  does). The checks also apply to a message that is already saved.
+  with an empty excerpt (it checks the `conversation_search_excerpt_chars` characters it
+  shows and 1,024 past them, as `conversation.threads` does). The checks also apply to a message that is already saved.
 
 Save and unsave share a renewable thread lease with append embedding writes,
 compaction retirement and thread deletion. Append and compaction finish provider

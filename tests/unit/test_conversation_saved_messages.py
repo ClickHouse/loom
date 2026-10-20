@@ -838,3 +838,43 @@ async def test_the_saved_list_shows_no_text_of_a_message_that_reads_as_a_credent
         ConversationListSavedMessagesInput(org="o", namespace="n", agent="client", user_id="u-1")
     )
     assert [(r.message_id, r.content_excerpt) for r in out.rows] == [("m-k", ""), ("m-1", "a")]
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_checks_past_an_excerpt_longer_than_the_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prefix the listing reads follows conversation_search_excerpt_chars: a long
+    excerpt still ends in '…', and a key crossing character 1,024 is caught whole."""
+    from server.knowledge.app import conversations
+    from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS
+    from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 1500)
+    at = datetime(2026, 1, 1, 12, 0, 0)
+    messages = {"m-long": "a" * 3000, "m-key": "a" * 1010 + OPENAI_KEY + "a" * 2000}
+    asked: list[object] = []
+
+    async def fake_list(*_a: object, listed: int, **_kw: object) -> list[dict[str, object]]:
+        asked.append(listed)
+        return [
+            {
+                "thread_id": "c-1",
+                "msg_id": mid,
+                "role": "user",
+                "content": text[:listed],
+                "saved_at": at,
+            }
+            for mid, text in messages.items()
+        ]
+
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    out = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(org="o", namespace="n", agent="client", user_id="u-1")
+    )
+    assert asked == [1500 + LISTED_MARGIN_CHARS]
+    assert [(r.message_id, r.content_excerpt) for r in out.rows] == [
+        ("m-long", "a" * 1500 + "…"),
+        ("m-key", ""),
+    ]
