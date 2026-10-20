@@ -8590,14 +8590,14 @@ class GrantsRevokeOutput(TypedDict, total=False):
 class GrantsShareAgentInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
-    agent: Required[str]
+    grantee: Required[str]
     role: NotRequired[Literal["viewer", "writer"]]
 
 
 class GrantsShareAgentBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
-    agent: NotRequired[str]
+    grantee: Required[str]
     role: NotRequired[Literal["viewer", "writer"]]
 
 
@@ -8611,13 +8611,13 @@ class GrantsShareAgentOutput(TypedDict, total=False):
 class GrantsUnshareAgentInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
-    agent: Required[str]
+    grantee: Required[str]
 
 
 class GrantsUnshareAgentBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
-    agent: NotRequired[str]
+    grantee: Required[str]
 
 
 class GrantsUnshareAgentOutput(TypedDict, total=False):

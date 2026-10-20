@@ -112,7 +112,7 @@ Let another agent of the caller's trust read, or write, the caller's own namespa
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The calling agent's own namespace, the only one it may share. |
-| `agent` | `str` | required | The agent of the same trust to share it with, as its control plane names it. |
+| `grantee` | `str` | required | The agent of the same trust to share it with, as its control plane names it. |
 | `role` | `Literal['viewer', 'writer']` | `'viewer'` | What that agent may do there: `viewer` reads, `writer` also writes. |
 
 | Output field | Type | Meaning |
@@ -132,7 +132,7 @@ Take back what the caller lent another agent of its trust.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The calling agent's own namespace. |
-| `agent` | `str` | required | The agent of the same trust whose grant there to revoke. |
+| `grantee` | `str` | required | The agent of the same trust whose grant there to revoke. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

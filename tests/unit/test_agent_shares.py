@@ -4,6 +4,7 @@ only to agents of its own trust, and nobody else calls them."""
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime
 from typing import Any
 
@@ -112,7 +113,7 @@ def _as(subject: str, org: str = "acme") -> None:
 
 
 def _share(**over: Any) -> Any:
-    body = {"org": "acme", "namespace": "fleet-a", "agent": "b"} | over
+    body = {"org": "acme", "namespace": "fleet-a", "grantee": "b"} | over
     return asyncio.run(agent_shares.handle_grants_share_agent(GrantsShareAgentInput(**body)))
 
 
@@ -127,7 +128,7 @@ def test_an_agent_lends_its_namespace_to_an_agent_of_its_trust(calls) -> None:
 
 
 def _unshare() -> Any:
-    body = GrantsUnshareAgentInput(org="acme", namespace="fleet-a", agent="b")
+    body = GrantsUnshareAgentInput(org="acme", namespace="fleet-a", grantee="b")
     return asyncio.run(agent_shares.handle_grants_unshare_agent(body))
 
 
@@ -270,13 +271,13 @@ def test_with_auth_off_there_is_no_agent_to_share(calls) -> None:
 def test_the_grantee_is_another_agent_named_as_loom_takes_it(calls, agent: str) -> None:
     _as("sa:fleet:a")
     with pytest.raises(ValidationError):
-        _share(agent=agent)
+        _share(grantee=agent)
     assert calls == []
 
 
 def test_a_share_never_grants_admin() -> None:
     with pytest.raises(ValueError):
-        GrantsShareAgentInput(org="acme", namespace="fleet-a", agent="b", role="admin")
+        GrantsShareAgentInput(org="acme", namespace="fleet-a", grantee="b", role="admin")
 
 
 def test_the_ops_need_only_the_agents_writer_role_on_its_namespace() -> None:
@@ -387,3 +388,55 @@ def test_a_share_that_would_lower_a_grant_says_how_an_agent_lowers_it(monkeypatc
         assert e.value.extra == {"current_role": "writer", "requested_role": "viewer"}
     finally:
         set_current_auth(None)
+
+
+@pytest.mark.parametrize("op", ["grants.share_agent", "grants.unshare_agent"])
+def test_a_share_naming_no_grantee_fails_validation_over_http(monkeypatch, op: str) -> None:
+    # Clients fill `agent` from the caller; the grantee is its own field, so a
+    # call that leaves it out is refused, never a grant to the caller's agent.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.settings import settings
+    from server.transport.http import build_router
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    app.include_router(build_router())
+    body = {"org": "acme", "namespace": "fleet-a", "agent": "a"}
+    r = TestClient(app).post(f"/v1/{op}", json=body)
+    assert r.status_code == 422 and "grantee" in r.text
+
+
+@pytest.mark.parametrize("op", ["grants.share_agent", "grants.unshare_agent"])
+def test_a_share_naming_no_grantee_fails_validation_over_mcp(monkeypatch, op: str) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import server.transport.mcp as mcp
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    mcp.attach(app)
+    call = {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "tools/call",
+        "params": {
+            "name": "loom_op",
+            "arguments": {"op": op, "arguments": {"org": "acme", "namespace": "fleet-a"}},
+        },
+    }
+    r = TestClient(app).post("/mcp", json=call, headers={"X-Loom-Agent": "a"})
+    result = r.json()["result"]
+    assert result["isError"] and "grantee" in json.dumps(result)
+
+
+def test_the_grantee_is_never_an_identity_field_clients_fill() -> None:
+    from server.transport._common import IDENTITY_FIELDS
+    from server.transport.arg_check import IDENTITY_KEYS
+
+    assert "grantee" not in IDENTITY_FIELDS and "grantee" not in IDENTITY_KEYS
+    with pytest.raises(ValueError, match="grantee"):
+        GrantsShareAgentInput.model_validate({"org": "acme", "namespace": "fleet-a", "agent": "a"})

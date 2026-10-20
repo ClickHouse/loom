@@ -2826,7 +2826,7 @@ export interface GrantsRevokeOutput {
 export interface GrantsShareAgentInput {
   org: string;
   namespace: string;
-  agent: string;
+  grantee: string;
   role?: "viewer" | "writer";
 }
 
@@ -2840,7 +2840,7 @@ export interface GrantsShareAgentOutput {
 export interface GrantsUnshareAgentInput {
   org: string;
   namespace: string;
-  agent: string;
+  grantee: string;
 }
 
 export interface GrantsUnshareAgentOutput {

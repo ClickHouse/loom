@@ -24,11 +24,8 @@ from server.core.ch import get_client
 # a namespace, so it is refused, never rewritten into another agent's name.
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
-# The most bytes an agent's token spends on the namespaces it names, its own and
-# its trust's included: fifteen of the longest names. Base64 adds a third, and the
-# other claims, the header and a 4096-bit signature leave this much of a proxy's
-# default 8 KB header limit (test_an_agents_token_stays_under_a_proxys_header_limit).
-# An agent trust whose shared namespaces pass it is refused (`account_admin.bot_from`).
+# Bytes a token spends on the namespaces it names: room for a 4096-bit signature
+# under a proxy's 8 KB header limit (docs/architecture/security.md).
 TOKEN_NAMESPACE_BYTES = 4096
 
 log = logging.getLogger(__name__)

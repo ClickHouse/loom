@@ -173,7 +173,7 @@ async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: An
     try:
         set_current_auth(token("a1", [(a1, "writer")]))
         await agent_shares.handle_grants_share_agent(
-            GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2")
+            GrantsShareAgentInput(org=m["org"], namespace=a1, grantee="a2")
         )
         with own_write_reads():
             row = await grants_repo.find_any_grant(m["org"], a1, agents.subject(m["name"], "a2"))
@@ -192,7 +192,7 @@ async def test_an_agent_reads_what_another_lent_it_until_it_is_taken_back(ch: An
             await check_authorized(reader, Role.WRITER, m["org"], a1)
 
         await agent_shares.handle_grants_unshare_agent(
-            GrantsUnshareAgentInput(org=m["org"], namespace=a1, agent="a2")
+            GrantsUnshareAgentInput(org=m["org"], namespace=a1, grantee="a2")
         )
         with pytest.raises(PermissionError):
             await check_authorized(reader, Role.VIEWER, m["org"], a1)
@@ -235,16 +235,16 @@ async def test_an_agent_neither_lowers_nor_takes_back_an_admins_grant(ch: Any) -
         # the agent could undo by unsharing.
         with pytest.raises(PreconditionFailedError, match="made by"):
             await agent_shares.handle_grants_share_agent(
-                GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2")
+                GrantsShareAgentInput(org=m["org"], namespace=a1, grantee="a2")
             )
         # At the same role it would make the row the agent's, to take back next.
         with pytest.raises(PreconditionFailedError):
             await agent_shares.handle_grants_share_agent(
-                GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2", role="writer")
+                GrantsShareAgentInput(org=m["org"], namespace=a1, grantee="a2", role="writer")
             )
         with pytest.raises(PreconditionFailedError):
             await agent_shares.handle_grants_unshare_agent(
-                GrantsUnshareAgentInput(org=m["org"], namespace=a1, agent="a2")
+                GrantsUnshareAgentInput(org=m["org"], namespace=a1, grantee="a2")
             )
     finally:
         set_current_auth(None)
@@ -285,7 +285,7 @@ async def test_a_share_never_takes_over_an_admins_lower_grant(ch: Any) -> None:
         )
         with pytest.raises(PreconditionFailedError):  # higher than the admin's
             await agent_shares.handle_grants_share_agent(
-                GrantsShareAgentInput(org=m["org"], namespace=a1, agent="a2", role="writer")
+                GrantsShareAgentInput(org=m["org"], namespace=a1, grantee="a2", role="writer")
             )
     finally:
         set_current_auth(None)

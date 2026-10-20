@@ -53,7 +53,7 @@ def _parties(org: str, namespace: str, agent: str) -> tuple[str, str, str]:
     if namespace != own:
         raise AuthInsufficientError(f"an agent shares only its own namespace, {own}")
     if not agents.AGENT.fullmatch(agent):
-        raise ValidationError("agent: lower-case letters, digits and '-', at most 63")
+        raise ValidationError("grantee: lower-case letters, digits and '-', at most 63")
     if agent == me:
         raise ValidationError("an agent already owns its namespace")
     return trust, auth.subject, agents.subject(trust, agent)
@@ -77,7 +77,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     """Let another agent of the caller's trust read, or write, the caller's own namespace."""
     from server.auth.authz import may_be_restricted
 
-    trust, me, subject = _parties(input.org, input.namespace, input.agent)
+    trust, me, subject = _parties(input.org, input.namespace, input.grantee)
     if await may_be_restricted(input.org, input.namespace):
         # A restricted read needs a grant its admin gave, never a writer's.
         raise AuthInsufficientError(
@@ -94,7 +94,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
         agents.names_bytes([*named, input.namespace]) > agents.TOKEN_NAMESPACE_BYTES
     ):
         raise PreconditionFailedError(
-            f"agent {input.agent}'s token has no room for {input.namespace}: its namespaces "
+            f"agent {input.grantee}'s token has no room for {input.namespace}: its namespaces "
             f"fill {agents.TOKEN_NAMESPACE_BYTES} bytes"
         )
     # Never lowering and never over someone else's grant: an agent lowers its
@@ -121,7 +121,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
 
 async def handle_grants_unshare_agent(input: GrantsUnshareAgentInput) -> GrantsUnshareAgentOutput:
     """Take back what the caller lent another agent of its trust."""
-    _, me, subject = _parties(input.org, input.namespace, input.agent)
+    _, me, subject = _parties(input.org, input.namespace, input.grantee)
     out = await revoke_grant(
         GrantsRevokeInput(org=input.org, namespace=input.namespace, subject=subject),
         _made_by(me, subject, input.namespace),

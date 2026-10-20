@@ -170,7 +170,8 @@ class GrantsShareAgentInput(BaseModel):
     # The calling agent's own namespace, the only one it may share.
     namespace: str
     # The agent of the same trust to share it with, as its control plane names it.
-    agent: str
+    # Not `agent`: clients fill that identity field from the caller.
+    grantee: str
     # What that agent may do there: `viewer` reads, `writer` also writes.
     role: Literal["viewer", "writer"] = "viewer"
 
@@ -190,7 +191,7 @@ class GrantsUnshareAgentInput(BaseModel):
     # The calling agent's own namespace.
     namespace: str
     # The agent of the same trust whose grant there to revoke.
-    agent: str
+    grantee: str
 
 
 class GrantsUnshareAgentOutput(BaseModel):

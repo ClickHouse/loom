@@ -194,7 +194,7 @@ with more than one admin, registered first, in one org); its tokens are for
 
   ```bash
   curl -s -X POST "$LOOM_BASE_URL/v1/grants.share_agent" -H "Authorization: Bearer $A_TOKEN" \
-    -d '{"org":"acme","namespace":"fleet-a","agent":"b","role":"viewer"}'
+    -d '{"org":"acme","namespace":"fleet-a","grantee":"b","role":"viewer"}'
   ```
 
   Agent `b`'s next token names `fleet-a` as viewer (minted on another server,
