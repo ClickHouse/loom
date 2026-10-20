@@ -25,6 +25,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateInput,
     MemoryUpdateOutput,
 )
+from server.memory.app import after_write
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
 from server.memory.app.high_fence import fence_high
@@ -701,7 +702,7 @@ async def _write_revision(
             # and even when the gather failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
-    await memory_repo.index_late_rows(emb_rows, ch=ch)
+    after_write.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
     if emb_rows:  # a deferred judge needs the vector
         _cd.schedule_settle(
