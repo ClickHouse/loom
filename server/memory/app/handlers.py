@@ -798,11 +798,24 @@ async def _key_moved_on(
     return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
 
 
+# What a copy of a tombstone does not carry from it: its own version and write stamps,
+# and the markers only the original keeps.
+_NOT_CARRIED = frozenset(
+    {"version", "updated_at", "tombstoned_at", "expire_reason", "source_trace"}
+)
+
+
 async def _head_carries(existing: Any, top: int, row: Any) -> bool:
-    """Version `top` of the key, this delete's newest tombstone, already carries `row`'s
-    value: a copy of it this delete wrote back, so it is not copied twice."""
+    """Version `top` of the key, this delete's newest tombstone, already carries every
+    column of `row` a copy would: a copy this delete wrote back, or its own tombstone of
+    the row another delete or a sweep removed. Then it is not copied again."""
+    import server.memory.store as memory_repo
+
     head = await _find_version_row(existing, top)
-    return head is not None and (head.memory_id, head.value) == (row.memory_id, row.value)
+    if head is None:
+        return False
+    carried = [memory_repo.build_memory_version_row(r) for r in (head, row)]
+    return all(carried[0][c] == carried[1][c] for c in carried[0] if c not in _NOT_CARRIED)
 
 
 async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:

@@ -796,6 +796,44 @@ async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores
 
 
 @pytest.mark.asyncio
+async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # After delete_version's check a set writes the same value with other tags, and a plain
+    # memory.delete removes it. The delete's own tombstone has the value but not the tags,
+    # so the plain delete's tombstone is copied on top: a restore brings back the set's.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    head = time.time_ns() - 10_000_000_000
+    await ch.insert("loom.memory", [_row("Tuesdays", head)])
+    w = _in_flight_set(time.time_ns() - 1_000_000)
+    w.memory_row = {**_row("Tuesdays", w.version), "tags": ["reviewed"]}
+    landed: list[bool] = []
+
+    async def check_then_land(identity: Any, key: str, **kw: Any) -> Any:
+        found = await get_by_key(identity, key, **kw)
+        if not landed:
+            landed.append(True)
+            await set_commit._set_plain_insert(w, ch)
+            await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
+        return found
+
+    get_by_key = memory_repo.get_by_key
+    monkeypatch.setattr(memory_repo, "get_by_key", check_then_land)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.found is False
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    assert restored.restored is True
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Tuesdays" and list(got.tags) == ["reviewed"]
+
+
+@pytest.mark.asyncio
 async def test_a_restored_key_does_not_carry_the_delete_version_marker(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -972,10 +1010,10 @@ def test_no_caller_writes_a_delete_version_trace() -> None:
 async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, other: str
 ) -> None:
-    # Another delete (or a sweep) removes the key after delete_version's check; a set that
-    # began after it reads its fence before the tombstone lands and inserts after the
-    # write back. The copy is delete_version's own tombstone, so the set lifts over it:
-    # the key ends with the set's row (the other delete, delete_version, then the set).
+    # A newer value lands and another delete (or a sweep) removes it after delete_version's
+    # check; a set that began after it reads its fence before the tombstone lands and
+    # inserts after the write back. The copy of the other tombstone is delete_version's
+    # own, so the set lifts over it: the key ends with the set's row.
     from server.memory.app.write_fence import lift_after_insert
 
     head = time.time_ns() - 10_000_000_000
@@ -987,11 +1025,12 @@ async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
         found = await get_by_key(identity, key, **kw)
         if not write:
             write.update(_row("Fridays", 0))  # the plain delete reads through here too
+            await ch.insert("loom.memory", [_row("Wednesdays", time.time_ns())])
             if other == "memory.delete":
                 await hm.handle_memory_delete(MemoryDeleteInput(**_ID, memory_key=_KEY))
             else:
                 swept = {
-                    **_row("Tuesdays", time.time_ns()),
+                    **_row("Wednesdays", time.time_ns()),
                     "tombstoned_at": datetime.now(UTC).replace(tzinfo=None, microsecond=0),
                     "expire_reason": "blacklist.sweep:p1",
                 }
@@ -1004,6 +1043,12 @@ async def test_a_write_after_a_written_back_tombstone_lifts_over_it(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
     assert out.found is False
+    copies = await ch.query_all(
+        "SELECT value FROM loom.memory_versions WHERE source_trace = {t:String} "
+        "AND value != {v:String}",
+        {"t": f"memory.delete_version:{head}", "v": json.dumps("Tuesdays")},
+    )
+    assert [json.loads(c["value"]) for c in copies] == ["Wednesdays"]
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     await ch.insert("loom.memory", [write])
     lifted = await lift_after_insert("o", "n", [write], [], ch=ch)
@@ -1596,6 +1641,28 @@ async def test_a_plain_delete_above_a_late_tombstone_of_the_same_delete_is_copie
     assert restored.restored is True
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays"
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_check_run_again_stands_on_the_tombstone_it_wrote(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The worker wrote the missing tombstone, but its done mark was lost: the next run
+    # stands on that tombstone, answers the same and writes nothing.
+    head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
+    (owed,) = await _recorded_checks(ch)
+    check = {**_ID, "memory_key": _KEY, "checked": head, "tombstone": owed["tombstone"]}
+    first = await hm.rerun_delete_check(check)
+    assert first is not None and first.tombstoned is True
+    assert first.version is not None and first.version > int(owed["tombstone"])
+    await memory_repo.record_delete_check(check, done=False)  # the mark was lost
+    rows_before = await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
+    again = await hm.rerun_delete_check(check)
+    assert again is not None and (again.tombstoned, again.version) == (True, first.version)
+    assert (
+        await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
+        == rows_before
+    )
 
 
 @pytest.mark.asyncio
