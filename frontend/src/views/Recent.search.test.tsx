@@ -708,7 +708,10 @@ describe("Recent search finds every row that names the word", () => {
     );
     expect(kw[2]).toMatchObject({ contains: "Azure" });
     expect(await screen.findAllByRole("button", { name: "Why this result" })).toHaveLength(2);
-    // A keyword row shows no score, a ranked hit that holds the text (coffee_pref) included.
+    // A keyword row shows no score, a ranked hit that holds the text (coffee_pref) included,
+    // once the ranked search has answered.
+    await waitFor(() => expect(searchMemory).toHaveBeenCalled(), { timeout: 3000 });
+    await act(async () => {});
     expect(screen.queryAllByTestId("search-score")).toHaveLength(0);
     await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
     expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');

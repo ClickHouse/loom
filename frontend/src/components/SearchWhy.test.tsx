@@ -60,12 +60,12 @@ describe("SearchWhy", () => {
     expect(screen.getByTestId("search-score")).toHaveTextContent("similarity 0.62 · score 0.71");
   });
 
-  it("leaves out a score the server did not send", () => {
+  it("leaves out the similarity when it is not a number", () => {
     render(<SearchScores hit={hit({ similarity: Number.NaN })} />);
     expect(screen.getByTestId("search-score")).toHaveTextContent(/^score 0\.71$/);
   });
 
-  it("leaves out a score that is not a number", () => {
+  it("leaves out the score when it is not a number", () => {
     render(<SearchScores hit={hit({ rank_score: Number.NaN })} />);
     expect(screen.getByTestId("search-score")).toHaveTextContent(/^similarity 0\.62$/);
   });
