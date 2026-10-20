@@ -343,9 +343,9 @@ async def handle_conversation_save_message(
     changed = False
     embedded: EmbeddedTurn | None = None
     stored = await _stored_turn(key, user_id)
-    if stored is None and reads_high(input.content):
-        return _save_refused(input, "reads_as_credential")  # nothing written
     if stored is None:
+        if reads_high(input.content):
+            return _save_refused(input, "reads_as_credential")  # nothing written
         # The vector is needed either way, so embed while the row is written.
         _, embedded = await asyncio.gather(
             _write_saved_turn(input, once_per_identity=True),
@@ -404,7 +404,8 @@ async def handle_conversation_save_message(
                 thread_id=key.thread_id,
                 msg_id=key.msg_id,
             )
-        assert embedded is not None, "`_save_refusal` refuses a credential turn"
+        if embedded is None:
+            return _save_refused(input, "reads_as_credential")
         await _store_embedding(
             conversation_repo.MessageInsert(
                 org=key.org,

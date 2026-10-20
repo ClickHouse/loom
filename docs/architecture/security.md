@@ -18,7 +18,7 @@ vulnerability, and for the deployment hardening checklist, see
 | One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
 | An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
 | Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows and chunks are never embedded                                                           | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as a credential, are never embedded            | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
 | Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
 | Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
 | A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
@@ -704,8 +704,10 @@ and accepts those that read as a credential. `loom reembed` keeps a conversation
 reads as a credential on its old model, which search does not read, until `--delete-old`
 removes it (a memory row's vector follows its sensitivity label); `loom reembed
 --in-database` runs the embedding inside ClickHouse, cannot check the text, and re-embeds
-it. Chunks, digests and turn embeddings that an earlier build embedded keep their vector,
-so the reads that serve passages check their text too:
+it.
+
+Chunks, digests and turn embeddings that an earlier build embedded keep their vector, so
+the reads that serve passages check their text too:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
   its model and the context pack built from search), the chunks `memory.ask` injects for

@@ -1,7 +1,5 @@
 """Embedding raw passages (conversation chunks, chunks of a long value, session digests):
-a passage that reads as a credential is stored as written and never sent to the embedder.
-`Embedded` is what a writer stores per passage; the read-side helpers (`HELD_MARGIN`,
-`without_credentials`) live beside `reads_high` in `server/memory/domain/sensitivity.py`."""
+a passage that reads as a credential is stored as written and never sent to the embedder."""
 
 from __future__ import annotations
 

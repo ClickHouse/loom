@@ -157,7 +157,7 @@ async def _draft_session_summary(
     # reads only digests that have one, and the text never reaches the embedder.
     embedding: list[float] = []
     if not reads_high(summary_text):
-        embedding = list(await embedder.embed(summary_text) or [])
+        embedding = list(await embedder.embed(summary_text))
         if not embedding:
             log.info(
                 "session_summaries: empty embedding for session=%r; skipping", input.session_id

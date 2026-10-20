@@ -108,11 +108,10 @@ async def test_an_emptied_plain_passage_fails_verification(verification):
 @pytest.mark.parametrize(
     "source",
     [
-        {
-            "has_vector": [False, True],
-            "live": True,
-        },  # an all-zero placeholder, which rebuilds empty
-        {"has_vector": [True, True], "live": False},  # a tombstoned row, which rebuilds empty
+        # An all-zero placeholder in the emptied column, which rebuilds empty.
+        {"has_vector": [False, True], "live": True},
+        # A tombstoned row, which rebuilds empty.
+        {"has_vector": [True, True], "live": False},
     ],
 )
 async def test_an_emptied_row_that_lost_no_vector_is_not_counted(verification, source):

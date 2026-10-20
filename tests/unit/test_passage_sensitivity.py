@@ -56,7 +56,7 @@ async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
     from server.settings import settings
 
     # The text decides, whatever the autodetect setting says.
-    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False, raising=False)
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False)
 
     async def embed(texts: list[str]) -> list[list[float]]:
         raise AssertionError("no text may reach the embedder")
