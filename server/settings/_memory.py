@@ -185,6 +185,8 @@ class MemorySettings(BaseModel):
     structured_profile_enabled: bool = True
     # Seconds between structured profile passes.
     structured_profile_interval_seconds: int = 120
+    # Seconds to wait after a pass that found no profile to build.
+    structured_profile_idle_interval_seconds: int = 600
     # Profiles one pass builds; each namespace the pass reaches gets an equal share.
     structured_profile_max_users_per_pass: int = 20
     # Memories read into one build, highest confidence then newest first.

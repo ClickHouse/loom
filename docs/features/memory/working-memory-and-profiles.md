@@ -161,10 +161,15 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   the free-text fold reads: never a `high` row, a fact about someone else
   (`about:other`), a protected attribute or a stored request to forget.
 - **Staleness.** Each profile carries the hash of its schema's properties (a `title` or
-  the properties' order changes none), a digest of its sources' ids and content hashes,
-  and their count. A new or edited fact, a revert, a restore, a deleted fact, one that
-  turned `high`, changed type or tags, expired or passed its `valid_to` changes the digest;
-  a recall, a reinforcement or a restatement does not. A schema change or a deletion
+  the properties' order changes none), a digest of its sources (each one's id, content
+  hash, confidence and date) and their count. A new or edited fact, a revert, a restore,
+  a deleted fact, a changed confidence or date, and a change that moves a row into or out
+  of the sources (it turns `high`, changes type, gains or loses an `about:other`,
+  `attribute:` or `forget` tag, expires or passes its `valid_to`) changes the digest; a
+  recall, a reinforcement or a restatement does not. The digest covers every source,
+  while a build reads only the `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` (100) most confident
+  and newest: for a user with more facts than that, a change to one outside that set still
+  costs a model call that cannot change the answer. A schema change or a deletion
   (fewer sources than the profile was built from) is rebuilt on the next pass; other
   changes after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
   whose facts are all gone gets an all-`null` profile without a model call. An expired or
@@ -179,10 +184,15 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   comes back to it. A user whose build failed (a model error, an
   answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
   tried again after. A build the profile row refuses (locked, pinned, over its size cap,
-  blacklisted) is not retried until the user's memories change. Both waits are kept by the
-  worker's process and start over when another process takes the worker lease.
+  blacklisted) is not retried until the user's memories or the profile row change (an
+  unpin, an unlock), or 6 hours pass, so a lock that lapses on its own is retried. Both
+  waits are kept by the worker's process and start over when another process takes the
+  worker lease. A pass that finds nothing to build waits
+  `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next.
 - **Erasure.** A build writes nothing when a fact it read is no longer current once the
-  model has answered (erased, deleted), so the profile cannot come back above an erasure.
+  model has answered (erased or deleted while it ran). That narrows the window in which a
+  profile could land above an erasure; one that does is a live row the erasure saga's
+  final census finds, and the saga fails closed on it.
   `memory.redact` does not scrub earlier profile versions built from the redacted text;
   see [security](../../architecture/security.md#sensitivity).
 - **Scope.** The read is always for one `user_id`. A token pinned to a user

@@ -13,7 +13,9 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
+from server.core.ch import own_write_reads
 from server.core.errors import AuthInsufficientError, ValidationError
+from server.identity.domain.read_scope import resolve_read_filters
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_profile import (
     ProfileSchemaInput,
@@ -22,6 +24,7 @@ from server.memory.api.models_profile import (
     ProfileStructuredInput,
     ProfileStructuredOutput,
 )
+from server.memory.app.profile import write_section
 from server.memory.app.provenance import writer_actor
 from server.memory.domain import profile_schema
 from server.memory.store import profile_schemas as repo
@@ -58,8 +61,6 @@ async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSche
 
 async def handle_profile_schema_get(input: ProfileSchemaInput) -> ProfileSchemaOutput:
     """The namespace's profile schema, its hash, and who set it when."""
-    from server.core.ch import own_write_reads
-
     with own_write_reads():  # an admin reads right after setting it, on any replica
         row = await repo.get(input.org, input.namespace)
     return _output(row) if row else ProfileSchemaOutput(found=False)
@@ -70,8 +71,6 @@ async def handle_profile_schema_clear(input: ProfileSchemaInput) -> ProfileSchem
     reads answer `no_schema`. The profiles already built stay, as memory rows
     their users' erasure removes. Answers the schema it cleared (`found` true), or
     `found` false when there was none."""
-    from server.core.ch import own_write_reads
-
     with own_write_reads():
         row = await repo.get(input.org, input.namespace)
     if row is None:
@@ -117,8 +116,6 @@ async def write_structured_profile(
     """Write a built profile as a new version of the user's profile row. The trace
     names the build and the memories it read, so provenance classes it `derived`;
     `valid_at` is when those memories were read, the point the profile is true as of."""
-    from server.memory.app.profile import write_section
-
     await write_section(
         MemorySetInput(
             org=org,
@@ -139,9 +136,8 @@ async def write_structured_profile(
 async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStructuredOutput:
     """The user's structured profile and whether it is current. No model call:
     a profile that is behind is served as built, marked `stale`."""
+    # Lazy: server.auth.context pulls in authz -> operations -> the handlers, this one too.
     from server.auth.context import current_auth
-    from server.core.ch import own_write_reads
-    from server.identity.domain.read_scope import resolve_read_filters
 
     rf = resolve_read_filters(
         requested=input.read_scope,

@@ -8,7 +8,7 @@ facts the extractor keyed on the user (`user_…`).
 
 A structured profile carries its tags (`profile_tags`): the hash of the schema
 it was built under, the digest of the rows it was built from (`SOURCES_DIGEST`,
-the user's (memory_id, content hash) pairs) and their count. An edit, a revert, a
+over each row's id, content hash, confidence and date) and their count. An edit, a revert, a
 restore, a deletion or a new fact changes the digest; a recall or a
 reinforcement, which change neither, does not. Its `valid_at` is when its
 sources were read.
@@ -19,6 +19,7 @@ a worker passes `WHOLE_NAMESPACE`.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
@@ -41,10 +42,12 @@ CURRENT_FACTS = """
 # The memory types a structured profile reads.
 STRUCTURED_TYPES = ["semantic", "preference", "decision"]
 
-# The aggregate that digests a user's source rows; 16 hex characters.
+# The aggregate that digests a user's source rows, 16 hex characters in constant
+# memory: an XOR of each row's hash over what a build reads and ranks by (the row,
+# its content, its confidence, its date), so the order of rows does not matter.
 SOURCES_DIGEST = (
-    "substring(lower(hex(SHA256(arrayStringConcat(arraySort(groupArray("
-    "concat(toString(memory_id), ':', content_sha256))), ',')))), 1, 16)"
+    "lower(hex(groupBitXor(sipHash64("
+    "memory_id, content_sha256, confidence, coalesce(valid_at, toDateTime(0))))))"
 )
 
 # A live structured profile row: not deleted, expired or redacted.
@@ -215,6 +218,15 @@ async def profile_row(
     return row
 
 
+@dataclass(frozen=True)
+class Behind:
+    """A user whose profile is behind, with what a refusal is keyed on."""
+
+    user_id: str
+    digest: str
+    profile_version: int
+
+
 async def users_behind(
     *,
     org: str,
@@ -224,14 +236,14 @@ async def users_behind(
     cooldown_seconds: int,
     limit: int,
     skip: tuple[str, ...] = (),
-    refused: dict[str, str] | None = None,
+    refused: dict[str, tuple[str, int]] | None = None,
     ch: _CHClient | None = None,
-) -> list[str]:
+) -> list[Behind]:
     """Users of the namespace whose structured profile is missing, built under
     another schema, or built from other sources than they have now; at most
-    `limit`, none of `skip`, and none whose digest is still the one `refused`
-    holds for them. Those with no profile under this schema come first, then the
-    oldest; refused users last.
+    `limit`, none of `skip`, and none still at the (digest, profile version) a
+    refusal in `refused` was made at. Those with no profile under this schema come
+    first, then the oldest; refused users last.
 
     One aggregate digests every user's current facts, so the answer is exact: a
     restatement or a recall changes no digest, and an edit, a revert, a restore,
@@ -248,14 +260,15 @@ async def users_behind(
         "refused": sorted(refused),
         "label": label,
         "schema_tag": schema_tag(schema_sha256),
-        "cool": int(max(0, cooldown_seconds)),
-        "lim": int(max(1, limit)) + len(refused),
+        "cool": max(0, cooldown_seconds),
+        "lim": max(1, limit) + len(refused),
     }
     # join_use_nulls = 0: a user missing from one side reads '' / 0 / [], so
     # `NOT has(p.tags, ...)` is true for a user with no profile, never NULL.
     rows = await ch.query_all(
         f"""
-        SELECT if(s.user_id != '', s.user_id, p.user_id) AS who, s.digest AS digest
+        SELECT if(s.user_id != '', s.user_id, p.user_id) AS who, s.digest AS digest,
+               p.version AS profile_version
         FROM (
             SELECT user_id, {SOURCES_DIGEST} AS digest, count() AS n
             FROM loom.memory FINAL
@@ -264,7 +277,7 @@ async def users_behind(
             GROUP BY user_id
         ) AS s
         FULL JOIN (
-            SELECT user_id, tags, updated_at,
+            SELECT user_id, tags, updated_at, version,
                    toUInt32OrZero(substring(
                        arrayFirst(t -> startsWith(t, 'profile_count:'), tags), 15
                    )) AS built_from
@@ -284,6 +297,8 @@ async def users_behind(
         """,
         params=params,
     )
-    # A refused user comes back once their digest moves on from the refused one.
-    behind = [str(r["who"]) for r in rows if refused.get(str(r["who"])) != str(r["digest"])]
+    behind = [Behind(r["who"], r["digest"], int(r["profile_version"])) for r in rows]
+    # A refused user comes back once their digest or their profile row moved on
+    # (an unpin, an unlock, an edit).
+    behind = [b for b in behind if refused.get(b.user_id) != (b.digest, b.profile_version)]
     return behind[: max(1, limit)]

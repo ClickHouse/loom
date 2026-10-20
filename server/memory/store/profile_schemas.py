@@ -7,9 +7,22 @@ the newest wins; a row with `tombstoned_at` set means the schema was cleared.
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.domain.profile_schema import ProfileProperty, parse
+
+
+@dataclass(frozen=True)
+class ActiveSchema:
+    """A namespace's schema as a pass uses it, parsed once."""
+
+    org: str
+    namespace: str
+    props: list[ProfileProperty]
+    sha256: str
 
 
 async def insert_row(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
@@ -42,12 +55,12 @@ async def list_active(
     limit: int,
     only: tuple[str, str] | None = None,
     ch: _CHClient | None = None,
-) -> list[dict[str, Any]]:
+) -> list[ActiveSchema]:
     """At most `limit` active namespaces with a schema in (org, namespace) order,
     starting just after `after` and wrapping around to the first; `only` keeps
     one namespace. Those of `exclude_orgs` are left out."""
     ch = ch or _default_client()
-    rows: list[dict[str, Any]] = await ch.query_all(
+    rows = await ch.query_all(
         "SELECT s.org AS org, s.namespace AS namespace, s.schema_json AS schema_json, "
         "s.schema_sha256 AS schema_sha256 "
         "FROM loom.profile_schemas AS s FINAL "
@@ -68,4 +81,12 @@ async def list_active(
             "lim": int(limit),
         },
     )
-    return rows
+    return [
+        ActiveSchema(
+            org=r["org"],
+            namespace=r["namespace"],
+            props=parse(json.loads(r["schema_json"])),
+            sha256=r["schema_sha256"],
+        )
+        for r in rows
+    ]

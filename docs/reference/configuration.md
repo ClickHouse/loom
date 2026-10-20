@@ -688,6 +688,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_PROFILE_CONSOLIDATION_LABEL` | `str` | `'consolidated_profile'` | `memory_key` of the folded profile row. |
 | `LOOM_STRUCTURED_PROFILE_ENABLED` | `bool` | `True` | Keep each user's structured profile (memory_type='profile') current in the shape `profile_schema.set` gives the namespace. LLM calls, only for a namespace with a schema: setting one is the opt-in. |
 | `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | `int` | `120` | Seconds between structured profile passes. |
+| `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` | `int` | `600` | Seconds to wait after a pass that found no profile to build. |
 | `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` | `int` | `20` | Profiles one pass builds; each namespace the pass reaches gets an equal share. |
 | `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` | `int` | `100` | Memories read into one build, highest confidence then newest first. |
 | `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | Seconds after a profile is built before new memories rebuild it; a schema change rebuilds it at once. |

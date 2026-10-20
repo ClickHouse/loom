@@ -310,7 +310,8 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 (`profile_schema.set`, one ReplacingMergeTree row per namespace, holding no memory
 content). A profile is a `profile` memory row, so its history, erasure and read scope are
 memory's own. It carries three tags: the hash of the schema's properties, a digest of its
-sources' `(memory_id, content_sha256)` pairs, and their count. The worker finds the users
+sources (an XOR of a hash of each one's id, content hash, confidence and date, fixed in
+size), and their count. The worker finds the users
 behind in one aggregate over `loom.memory FINAL` that digests every user's current facts,
 so the answer is exact: an edit, a revert, a restore, a deletion, an expiry or a passed
 `valid_to` changes a digest, and a restatement or a recall does not. Its cost follows the

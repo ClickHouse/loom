@@ -815,7 +815,7 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         cooldown_seconds=600,
         limit=10,
         skip=("u2",),
-        refused={"u3": "0" * 16},
+        refused={"u3": ("0" * 16, 1)},
         ch=ch,
     )
 

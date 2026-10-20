@@ -10,6 +10,7 @@ import pytest
 
 from server.core.errors import ValidationError
 from server.memory.domain import profile_schema as ps
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 def _schema(**props: Any) -> dict[str, Any]:
@@ -175,7 +176,6 @@ def test_the_prompt_fences_the_facts_and_names_each_property() -> None:
 
 # --- staleness, on clickhouse-local against the real tables ------------------
 
-from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run  # noqa: E402
 
 _needs_ch = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 
@@ -225,11 +225,11 @@ async def _behind(
     sha: str = _SHA,
     cool: int = 0,
     limit: int = 10,
-    refused: dict[str, str] | None = None,
+    refused: dict[str, tuple[str, int]] | None = None,
 ) -> list[str]:
     from server.memory.store import profile_sources as src
 
-    return await src.users_behind(
+    behind = await src.users_behind(
         org="o",
         namespace="n",
         label="structured_profile",
@@ -239,6 +239,7 @@ async def _behind(
         refused=refused,
         ch=ch,
     )
+    return [b.user_id for b in behind]
 
 
 async def _digest(ch: _LocalCH, user: str) -> tuple[str, int]:
@@ -375,10 +376,31 @@ async def test_a_refused_user_sorts_last_and_waits_until_their_digest_changes() 
     built = [ddl("memory"), *facts, *await _profiles_for([ddl("memory"), *facts], ["u1", "u2"])]
     edited = [*built, _fact(_A, "u1", "tz", "c", version=2), _fact(_B, "u2", "tz", "d", version=2)]
     digest, _ = await _digest(_LocalCH(*edited), "u1")
-    assert await _behind(_LocalCH(*edited), limit=1, refused={"u1": digest}) == ["u2"]
-    assert await _behind(_LocalCH(*edited), refused={"u1": digest}) == ["u2"]
+    at = {"u1": (digest, 1)}  # the digest and the profile row version the refusal saw
+    assert await _behind(_LocalCH(*edited), limit=1, refused=at) == ["u2"]
+    assert await _behind(_LocalCH(*edited), refused=at) == ["u2"]
     again = [*edited, _fact(_A, "u1", "tz", "e", version=3)]
-    assert await _behind(_LocalCH(*again), refused={"u1": digest}) == ["u2", "u1"]
+    assert await _behind(_LocalCH(*again), refused=at) == ["u2", "u1"]
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_an_unpinned_or_unlocked_profile_is_rebuilt() -> None:
+    from server.memory.store.profile_sources import profile_tags
+
+    setup = [ddl("memory"), _fact(_A, "u1", "tz", "a")]
+    pinned = await _profiles_for(setup, ["u1"], pinned="1")
+    edited = [*setup, *pinned, _fact(_A, "u1", "tz", "c", version=2)]
+    digest, _ = await _digest(_LocalCH(*edited), "u1")
+    at = {"u1": (digest, 1)}
+    assert await _behind(_LocalCH(*edited), refused=at) == []
+    # The unpin (or unlock) writes a new version of the profile row: the refusal no
+    # longer holds, though the digest is the same.
+    old_digest, count = await _digest(_LocalCH(*setup), "u1")
+    unpinned = _profile("u1", profile_tags(_SHA, old_digest, count)).replace(
+        "'profile', '{}', 1,", "'profile', '{}', 2,"
+    )
+    assert await _behind(_LocalCH(*edited, unpinned), refused=at) == ["u1"]
 
 
 @_needs_ch
@@ -493,7 +515,8 @@ async def test_the_schema_listing_skips_deactivated_namespaces_and_wraps_after_a
     def schema(org: str, ns: str) -> str:
         return (
             "INSERT INTO loom.profile_schemas (org, namespace, schema_json, schema_sha256, "
-            f"updated_at, version) VALUES ('{org}', '{ns}', '{{}}', 'h', now(), 1)"
+            f"updated_at, version) VALUES ('{org}', '{ns}', '{ps.stored_form(_schema(tz=_TZ))}', "
+            "'h', now(), 1)"
         )
 
     ch = _LocalCH(
@@ -510,7 +533,8 @@ async def test_the_schema_listing_skips_deactivated_namespaces_and_wraps_after_a
 
     async def names(**kw: Any) -> list[tuple[str, str]]:
         rows = await profile_schemas.list_active(ch=ch, **kw)
-        return [(r["org"], r["namespace"]) for r in rows]
+        assert all(r.props[0].name == "tz" for r in rows)
+        return [(r.org, r.namespace) for r in rows]
 
     everything = [("o1", "a"), ("o1", "b"), ("o2", "a"), ("o3", "a")]
     assert await names(exclude_orgs=[], after=None, limit=10) == everything

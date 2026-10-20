@@ -265,6 +265,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.memory.workers.structured_profile",
         "structured_profile_enabled",
         "structured_profile_interval_seconds",
+        idle_interval="structured_profile_idle_interval_seconds",
     ),
     _Worker(
         "reflection_distill",
