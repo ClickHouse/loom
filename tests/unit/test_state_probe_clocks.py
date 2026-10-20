@@ -242,7 +242,7 @@ def test_a_handoff_stops_the_old_holders_series_at_once(monkeypatch: pytest.Monk
     assert not cache._refreshing
 
 
-def test_a_census_skipped_off_the_lease_is_due_again_within_30_s(
+def test_a_process_back_on_the_lease_takes_its_census_at_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.workers import leader
@@ -256,21 +256,21 @@ def test_a_census_skipped_off_the_lease_is_due_again_within_30_s(
         return {"agent_trust_agents": [(3.0, {})]}
 
     cache = _census_cache(monkeypatch, probe)
+    cache._refresh()  # the holder's census at t=1000
     monkeypatch.setattr(leader, "_CURRENT", _lease(False))
-    cache._refresh()  # skipped: this process does not hold the lease
-    # The lease arrives; the first census follows within 30 s, not a 300 s TTL later.
+    now[0] = 1010.0
+    assert cache.get() is None  # off the lease: nothing
+    # Back on the lease within the 300 s TTL: the census is taken now, not at t=1300.
     monkeypatch.setattr(leader, "_CURRENT", _lease(True))
     now[0] = 1020.0
     cache.get()
-    assert not cache._refreshing
-    now[0] = 1031.0
-    cache.get()
     _drain(cache)
-    assert calls == [1031.0]
+    assert calls == [1000.0, 1020.0]
+    assert _observed(cache, "agent_trust_agents") == [3.0]
     # A census taken keeps its TTL.
-    now[0] = 1062.0
+    now[0] = 1060.0
     cache.get()
-    assert not cache._refreshing and calls == [1031.0]
+    assert not cache._refreshing and calls == [1000.0, 1020.0]
 
 
 def _drain(cache: Any) -> None:

@@ -61,8 +61,6 @@ class _TTLCache:
         self._reads_here: Callable[[], bool] | None = getattr(producer, "reads_here", None)
         self._value: Any = None
         self._fetched_at = 0.0
-        # Seconds after `_fetched_at` the next refresh is due.
-        self._due_s = ttl_s
         self._refreshing = False
         self._lock = threading.Lock()
 
@@ -78,10 +76,7 @@ class _TTLCache:
             if not failed:
                 self._value = v
             # Stamped on failure too, so a down CH is re-probed at the TTL
-            # cadence — not with a new thread on every 3s export. A census skipped
-            # off the lease is due in 30 s, so a new holder takes one soon after a handoff.
-            skipped = v is None and not failed
-            self._due_s = min(self._ttl, 30.0) if skipped else self._ttl
+            # cadence — not with a new thread on every 3s export.
             self._fetched_at = time.monotonic()
             self._refreshing = False
 
@@ -90,8 +85,9 @@ class _TTLCache:
         with self._lock:
             # A census another process takes is not this one's to export,
             # whatever it read while it held the lease. In memory, no ClickHouse.
+            # Back on the lease, the first read is never fetched and refreshes at once.
             if self._reads_here is not None and not self._reads_here():
-                self._value = None
+                self._value, self._fetched_at = None, 0.0
                 return None
             # "Never fetched" is always due: monotonic() counts from boot, so on
             # a host up for less than one TTL (a fresh CI runner, a container
@@ -99,7 +95,7 @@ class _TTLCache:
             # 15-minute cache would take no first refresh.
             never = self._fetched_at <= 0.0
             if not self._refreshing and (
-                never or (time.monotonic() - self._fetched_at) >= self._due_s
+                never or (time.monotonic() - self._fetched_at) >= self._ttl
             ):
                 self._refreshing = start = True
             value = self._value
