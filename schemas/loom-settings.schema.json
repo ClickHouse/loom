@@ -2420,6 +2420,12 @@
           "type": "number",
           "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written."
         },
+        "hsts_max_age_seconds": {
+          "default": 31536000,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Strict-Transport-Security max-age, seconds; browsers ignore it over plain HTTP. 0 sends no header."
+        },
         "http_client_connect_timeout_s": {
           "default": 5.0,
           "exclusiveMinimum": 0,

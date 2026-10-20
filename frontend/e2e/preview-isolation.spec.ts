@@ -47,7 +47,7 @@ const DASHBOARD_CSP =
   "style-src 'self' 'unsafe-inline'; " +
   "font-src 'self' data:; " +
   "img-src 'self' data: blob:; " +
-  "frame-src 'self' blob:; " +
+  "frame-src blob:; " +
   "connect-src 'self'; " +
   "object-src 'none'; " +
   "base-uri 'none'; " +
@@ -64,7 +64,7 @@ async function serveUnderDashboardCsp(page: Page) {
       window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`),
     );
   });
-  // Dashboard page loads only: an API document (a preview frame's download URL) keeps its own headers.
+  // Dashboard page loads only: an API document (the download URL opened on its own) keeps its own headers.
   await page.route(
     (url) => !url.pathname.startsWith("/v1/"),
     async (r) => {
@@ -216,7 +216,7 @@ test("the download URL opened on its own cannot run script", async ({ page }) =>
       status: 200,
       headers: {
         "Content-Type": "text/html",
-        "Content-Security-Policy": "sandbox; default-src 'none'",
+        "Content-Security-Policy": "sandbox; default-src 'none'; frame-ancestors 'none'",
         "X-Content-Type-Options": "nosniff",
       },
       body: HTML,

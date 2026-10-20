@@ -445,6 +445,7 @@
  "facts_traverse_rank_by": "cosine",
  "git_history": "local",
  "grant_cache_ttl_seconds": 10.0,
+ "hsts_max_age_seconds": 31536000,
  "http_client_connect_timeout_s": 5.0,
  "http_client_max_connections": 100,
  "http_client_max_keepalive_connections": 20,

@@ -704,6 +704,10 @@ settings:
   # PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables. [restart]
   # max_request_bytes: 33554432
 
+  # Strict-Transport-Security max-age, seconds; browsers ignore it over plain HTTP. 0
+  # sends no header. [restart]
+  # hsts_max_age_seconds: 31536000
+
   # History policy over the agent trace: "off" reads/writes nothing; "shadow" records
   # verdicts in loom.policy_decisions without blocking; "enforce" denies (403
   # POLICY_FORBIDDEN) and records them too. In enforce, writes fail closed on evaluation

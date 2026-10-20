@@ -1,7 +1,8 @@
 """What a server reachable from a browser or a network refuses: startup on a
 non-loopback bind without its safeguards, CORS `*` with credentials, a foreign
 Host while auth is off, URLs built from spoofed forwarded headers, and the
-dashboard page's inline script without its nonce."""
+dashboard page's inline script without its nonce. It also checks the headers every
+answer carries."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from starlette.requests import Request
 
 from server.boot import InsecureBindRefused, require_safe_bind
 from server.settings import settings
+from tests.unit.security_headers import assert_security_headers
 
 # ---- startup refusal on a non-loopback bind ----
 
@@ -88,15 +90,15 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _gated_client(base_url: str) -> TestClient:
-    """An app behind the web gate exactly as server.main attaches it."""
+    """An app behind the web gate and the header middleware, as server.main attaches them."""
     from fastapi import FastAPI
 
-    from server.main import attach_web_gate
+    from server.main import attach_browser_middleware
 
     app = FastAPI()
     app.get("/")(lambda: {"ok": True})
     app.post("/v1/memory.list")(lambda: {"ok": True})
-    attach_web_gate(app)
+    attach_browser_middleware(app)
     return TestClient(app, base_url=base_url)
 
 
@@ -109,7 +111,7 @@ def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
     r = _gated_client("http://rebind.evil.example").get("/")
     assert r.status_code == 421
     assert r.json()["detail"]["code"] == "MISDIRECTED_REQUEST"
-    assert r.headers["x-content-type-options"] == "nosniff"
+    assert_security_headers(r)
 
 
 @pytest.mark.usefixtures("auth_off")
@@ -149,7 +151,7 @@ def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) 
     r = _post(**{"content-type": "text/plain", **headers})
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
-    assert r.headers["x-content-type-options"] == "nosniff"
+    assert_security_headers(r)
 
 
 @pytest.mark.usefixtures("auth_off")
@@ -215,6 +217,7 @@ def test_auth_on_refuses_a_cross_site_post_that_carries_a_bearer(path: str) -> N
     r = client.post(path, content=b'{"org":"o","namespace":"n","agent":"a"}', headers=headers)
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+    assert_security_headers(r)
 
 
 @pytest.mark.usefixtures("auth_on")
@@ -272,11 +275,43 @@ def test_auth_on_with_a_public_url_compares_the_scheme_too(
     assert _post_to("http://loom.example", origin="http://loom.example") == 403
 
 
-def test_every_response_is_nosniff() -> None:
+# ---- response headers ----
+
+
+@pytest.mark.usefixtures("auth_off")
+def test_a_refusal_while_draining_closes_the_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import readiness
+
+    monkeypatch.setattr(readiness, "draining", lambda: True)
+    r = _post(**{"content-type": "text/plain", "origin": "https://evil.example"})
+    assert r.status_code == 403
+    assert r.headers["connection"] == "close"
+
+
+# Auth off, so the gate checks the preflight's Origin too.
+@pytest.mark.usefixtures("auth_off")
+def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "cors_origins", "https://app.example")
+    r = _gated_client("http://localhost").options(
+        "/v1/memory.list",
+        headers={"origin": "https://app.example", "access-control-request-method": "POST"},
+    )
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "https://app.example"
+    assert_security_headers(r)
+
+
+def test_a_body_limit_refusal_carries_the_security_headers() -> None:
     from server.main import app
 
-    r = TestClient(app, base_url="http://localhost").get("/", follow_redirects=False)
-    assert r.headers["x-content-type-options"] == "nosniff"
+    client = TestClient(app, base_url="http://localhost")
+    r = client.post(
+        "/v1/memory.list",
+        content=b"{}",
+        headers={"content-length": str(settings.max_request_bytes + 1)},
+    )
+    assert r.status_code == 413
+    assert_security_headers(r)
 
 
 # ---- generated URLs use the canonical base ----
@@ -367,9 +402,10 @@ def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
 
 
 def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
-    """frontend/e2e/preview-isolation.spec.ts hand-copies the policy (vite preview sends
-    no headers), so a change to dashboard_csp must change the spec too."""
+    """frontend/e2e/preview-isolation.spec.ts hand-copies the dashboard and download
+    policies (vite preview sends no headers), so a change to either must change the spec too."""
     from server.identity.app.dashboard_routes import dashboard_csp
+    from server.knowledge.app.download_routes import _DOWNLOAD_CSP
 
     spec = (
         Path(__file__).resolve().parents[2] / "frontend/e2e/preview-isolation.spec.ts"
@@ -380,6 +416,7 @@ def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
     parts = re.findall(r'"([^"]*)"|`([^`]*)`', block.group(1))
     copied = "".join(a or b for a, b in parts).replace("${NONCE}", nonce.group(1))
     assert copied == dashboard_csp(nonce.group(1))
+    assert f'"Content-Security-Policy": "{_DOWNLOAD_CSP}"' in spec
 
 
 # ---- `loom serve` ----
