@@ -49,15 +49,11 @@ import httpx
 
 from server.clients._http import refuse_provider_api
 from server.llm.json_text import strip_code_fence
-from server.memory.domain.rerank_names import (
-    BUILTIN_COHERE,
-    BUILTIN_OPENAI,
-    is_rerank_choice,
-)
+from server.memory.domain.rerank_names import BUILTIN_OPENAI, is_rerank_choice
 from server.observability import degradations as _degradations
 from server.observability.genai import llm_stage
 from server.settings import settings
-from server.settings._providers import is_builtin_cohere
+from server.settings._providers import BUILTIN_COHERE, is_builtin_cohere
 
 log = logging.getLogger(__name__)
 
@@ -422,7 +418,8 @@ async def get_namespace_rerank_config(
     if settings.gateway_required() and is_builtin_cohere(endpoint):
         # Stored before the gateway was required: Cohere's own API would be
         # refused at each search, unseen behind the fail-open, so it is unset.
-        if (org, namespace) not in _COHERE_UNSET_LOGGED:
+        # Past the cap the namespace still gets no reranker; it is just not logged.
+        if (org, namespace) not in _COHERE_UNSET_LOGGED and len(_COHERE_UNSET_LOGGED) < 1000:
             _COHERE_UNSET_LOGGED.add((org, namespace))
             log.warning(
                 "%s/%s reranks with builtin:cohere, refused while %s is set: not reranked",

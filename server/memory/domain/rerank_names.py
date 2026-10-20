@@ -16,12 +16,13 @@ from server.settings import settings
 from server.settings._providers import is_builtin_cohere
 
 BUILTIN_OPENAI = "builtin:openai"
-BUILTIN_COHERE = "builtin:cohere"
 
 
 def is_builtin(name: str) -> bool:
     """`builtin:openai` / `builtin:cohere`, optionally with `:<model>`."""
-    return any(name == b or name.startswith(b + ":") for b in (BUILTIN_OPENAI, BUILTIN_COHERE))
+    return (
+        name == BUILTIN_OPENAI or name.startswith(BUILTIN_OPENAI + ":") or is_builtin_cohere(name)
+    )
 
 
 def is_rerank_choice(name: str) -> bool:

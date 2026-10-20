@@ -35,9 +35,13 @@ def is_provider_api(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in PROVIDER_API_HOSTS)
 
 
+# The rerank choice that calls Cohere's own API, optionally `:<model>`.
+BUILTIN_COHERE = "builtin:cohere"
+
+
 def is_builtin_cohere(name: str) -> bool:
     """Whether a rerank choice is `builtin:cohere[:<model>]`, which calls Cohere's own API."""
-    return name == "builtin:cohere" or name.startswith("builtin:cohere:")
+    return name == BUILTIN_COHERE or name.startswith(BUILTIN_COHERE + ":")
 
 
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.

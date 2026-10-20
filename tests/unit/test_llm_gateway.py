@@ -575,6 +575,24 @@ def test_a_namespace_that_stored_builtin_cohere_reranks_with_nothing(
     assert config == ("builtin:cohere", "p")
 
 
+def test_past_its_log_cap_a_stored_builtin_cohere_still_gets_no_reranker(
+    required: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.core import ch
+    from server.memory.app import rerank
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
+            return {"rerank_endpoint": "builtin:cohere", "rerank_prompt_template": ""}
+
+    full = {("acme", f"ns-{i}") for i in range(1000)}
+    monkeypatch.setattr(ch, "get_client", lambda: _CH())
+    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", set(full))
+    assert asyncio.run(rerank.get_namespace_rerank_config("acme", "new")) == ("", "")
+    assert rerank._COHERE_UNSET_LOGGED == full
+    assert not [r for r in caplog.records if "builtin:cohere" in r.getMessage()]
+
+
 def test_a_refused_cohere_names_the_setting_that_requires_the_gateway(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
