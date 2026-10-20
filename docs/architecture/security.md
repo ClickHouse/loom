@@ -562,7 +562,8 @@ is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 ## Response headers
 
 Every response carries these except an unhandled 500, which Starlette's error middleware
-answers outside the app's own. A route that sets one of them itself keeps its value.
+answers outside every middleware the app adds. A route that sets one of them itself keeps
+its value.
 
 | Header                      | Value                                                                      |
 | --------------------------- | -------------------------------------------------------------------------- |
@@ -587,13 +588,13 @@ answers outside the app's own. A route that sets one of them itself keeps its va
 - HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
   terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
 
-**Browser.** The dashboard page carries a Content-Security-Policy whose `script-src` admits
-the bundle's origin and the one boot snippet by a per-response nonce, never `unsafe-inline`.
-An uploaded document is attacker-chosen bytes under an attacker-chosen type, so
-`knowledge.download` previews inline only plain text (text, Markdown, CSV and JSON, all
-served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type; anything
-else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
-attachment, and every download carries
+**Route policies.** The dashboard page carries a Content-Security-Policy whose
+`script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
+never `unsafe-inline`. An uploaded document is attacker-chosen bytes under an
+attacker-chosen type, so `knowledge.download` previews inline only plain text (text,
+Markdown, CSV and JSON, all served as `text/plain`) and PNG, JPEG, GIF and WebP whose
+bytes match their type; anything else (HTML, SVG, XML, PDF, unknown, mismatched) is an
+`application/octet-stream` attachment, and every download carries
 `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`. The
 dashboard applies the same allowlist itself, because a `blob:` URL ignores the server's
 headers: it re-types text as `text/plain` in an `<iframe sandbox="">`, shows images with

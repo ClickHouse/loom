@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from server import __version__, boot
 from server.auth.public_url import (
@@ -318,8 +318,6 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _refused(status: int, *, code: str, message: str) -> Response:
-    from fastapi.responses import JSONResponse
-
     return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message}})
 
 
