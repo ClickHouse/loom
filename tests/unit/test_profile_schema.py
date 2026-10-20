@@ -594,6 +594,25 @@ async def test_set_and_clear_write_every_column_of_profile_schemas(
         assert sorted(row) == sorted(column_names("profile_schemas"))
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored", ["{not json", json.dumps({"type": "array"})])
+async def test_a_stored_schema_that_no_longer_parses_reads_as_no_schema(
+    monkeypatch: pytest.MonkeyPatch, stored: str
+) -> None:
+    from server.memory.api.models_profile import ProfileStructuredInput
+    from server.memory.app import profile_schema as app
+    from server.memory.store import profile_schemas
+
+    async def get(org: str, namespace: str, **kw: Any) -> dict[str, Any]:
+        return {"schema_json": stored, "schema_sha256": "h"}
+
+    monkeypatch.setattr(profile_schemas, "get", get)
+    out = await app.handle_profile_structured(
+        ProfileStructuredInput(org="o", namespace="n", agent="a", user_id="u1")
+    )
+    assert out.status == "no_schema" and out.profile == {}
+
+
 @_needs_ch
 @pytest.mark.asyncio
 async def test_every_digest_is_16_hex_characters() -> None:
@@ -801,9 +820,9 @@ async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(src, "_default_client", lambda: _Timed())
     monkeypatch.setattr(settings, "structured_profile_scan_timeout_seconds", 7)
-    w.forget_scans("o", "n")
+    w._scans.pop(("o", "n"), None)
     await w._scan(_active(), w.StructuredProfileConfig(), w.StructuredProfileResult(), 1)
-    w.forget_scans("o", "n")
+    w._scans.pop(("o", "n"), None)
     assert seen == [7]
 
 
@@ -816,6 +835,10 @@ def test_a_scan_timeout_or_memory_cap_below_its_floor_is_refused() -> None:
         MemorySettings(structured_profile_scan_timeout_seconds=0)
     with pytest.raises(PydanticError):
         MemorySettings(structured_profile_scan_max_memory_bytes=1000)
+    with pytest.raises(PydanticError):
+        MemorySettings(structured_profile_max_users_per_pass=0)
+    with pytest.raises(PydanticError):
+        MemorySettings(structured_profile_memory_limit=0)
 
 
 @_needs_ch

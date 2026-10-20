@@ -166,7 +166,7 @@ class StructuredProfileConfig:
 
 @dataclass
 class StructuredProfileResult:
-    namespaces_scanned: int = 0
+    namespaces_reached: int = 0
     profiles_written: int = 0
     # Builds that wrote nothing: already current, or a fact erased while the model ran.
     skipped: int = 0
@@ -263,11 +263,6 @@ def refused_at(org: str, namespace: str) -> dict[str, tuple[str, int]]:
     }
 
 
-def forget_scans(org: str, namespace: str) -> None:
-    """Drop the namespace's last scan, so the next pass scans it again."""
-    _scans.pop((org, namespace), None)
-
-
 def _cursor() -> tuple[str, str] | None:
     """The (org, namespace) the last pass stopped at; None for the first pass."""
     try:
@@ -295,7 +290,7 @@ async def _build_users(
             log.info("structured profile refused for %s/%s: %s", schema.namespace, user_id, e)
             _refused[key] = (e.digest, e.profile_version, time.monotonic() + REFUSAL_RETRY_SECONDS)
             continue
-        except Exception as e:  # one user's build never stops the pass
+        except Exception as e:  # one user's build must not stop the pass
             result.errors += 1
             _note_failure(key)
             log.exception("structured profile failed for %s/%s", schema.namespace, user_id)
@@ -360,7 +355,7 @@ async def _scan(
             timeout_seconds=cfg.scan_timeout_seconds,
             max_memory_bytes=cfg.scan_max_memory_bytes,
         )
-    except Exception as e:  # one namespace's failure never stops the pass
+    except Exception as e:  # one namespace's scan must not stop the pass
         result.errors += 1
         _note_namespace_failure(schema.org, schema.namespace, schema.sha256)
         log.exception("structured profile scan failed for %s/%s", schema.org, schema.namespace)
@@ -412,7 +407,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             if budget <= 0:
                 break
             pass_context.check_stop()
-            result.namespaces_scanned += 1
+            result.namespaces_reached += 1
             pass_context.set_namespace(schema.namespace)
             # The cursor moves on before the namespace's work, so one that keeps failing
             # is tried again when the rotation comes back to it, never on every pass.

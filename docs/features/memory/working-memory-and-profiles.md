@@ -150,17 +150,17 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
 | `ready`     | Built from the user's current memories under the current schema.                        |
 | `stale`     | A memory or the schema changed since it was built; served as built until the next pass. |
 | `pending`   | Not built yet; every property reads `null`.                                             |
-| `no_schema` | The namespace has no schema; `profile` is `{}`.                                         |
+| `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.     |
 
 - **Storage.** The profile is the user's `profile` row with key `structured_profile`
   (`agent` `-`), so `profile.render` and `context.pack` carry it too, and
   [`memory.history`](./history-and-provenance.md#versions-memoryhistory) lists its versions.
   Its provenance is `derived`; `source_trace` is
   `profile.fold:structured_profile:<memory ids>`, the memories it was built from.
-- **Sources.** The user's current `semantic`, `preference` and `decision` facts, the rows
-  the free-text fold reads: never a `high` row, a duplicate (its canonical row counts), a
-  fact about someone else (`about:other`), a protected attribute or a stored request to
-  forget. Each fact is dated by when it became true (`valid_at`), else when it last
+- **Sources.** The user's current `semantic`, `preference` and `decision` facts, under the
+  same filter as the free-text fold: never a `high` row, a duplicate (its canonical row
+  counts), a fact about someone else (`about:other`), a protected attribute or a stored
+  request to forget. Each fact is dated by when it became true (`valid_at`), else when it last
   changed, and a build reads the most confident and most recently changed first, so an
   edit is read as the newest statement.
 - **Staleness.** Each profile carries the hash of its schema's properties (a `title` or
@@ -185,10 +185,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   integer past 2^53), or a property the schema does not declare is dropped (`null`).
 - **Passes.** A pass builds at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` (20)
   profiles. It reaches the namespaces with a schema in order from where the last pass
-  stopped, and each gets an equal share; what a namespace leaves goes to those with more
-  users behind. One scan of a namespace lists up to ten times its share, and the next
-  passes take from that list until it is drained, the schema changes, or it is ten minutes
-  old; a scan that found every user behind (fewer than it asked for) is not repeated for
+  stopped, and each gets an equal share; what a namespace leaves goes to the namespaces
+  that used their whole share, from the users their scan already listed. One scan of a
+  namespace lists up to ten times its share, and the next passes take from that list
+  until it is drained, the schema changes, or it is ten minutes old; a scan that found every user behind (fewer than it asked for) is not repeated for
   ten minutes once drained, so a namespace is scanned at most once per ten minutes while
   nobody else is behind. A namespace whose scan or stored schema fails is counted and
   backs off as a failing user does (5 minutes, doubling up to 6 hours) until the wait is

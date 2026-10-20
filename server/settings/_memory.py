@@ -194,9 +194,9 @@ class MemorySettings(BaseModel):
     # least 1 MiB.
     structured_profile_scan_max_memory_bytes: int = Field(default=4 * 1024**3, ge=1024**2)
     # Profiles one pass builds; each namespace the pass reaches gets an equal share.
-    structured_profile_max_users_per_pass: int = 20
+    structured_profile_max_users_per_pass: int = Field(default=20, ge=1)
     # Memories read into one build, highest confidence then newest first.
-    structured_profile_memory_limit: int = 100
+    structured_profile_memory_limit: int = Field(default=100, ge=1)
     # Seconds after a profile is built before new memories rebuild it; a schema
     # change rebuilds it at once.
     structured_profile_cooldown_seconds: int = 600

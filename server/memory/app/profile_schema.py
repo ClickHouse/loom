@@ -155,7 +155,12 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
         schema = await repo.get(input.org, input.namespace)
         if schema is None:
             return ProfileStructuredOutput(status="no_schema")
-        props = profile_schema.parse(json.loads(schema["schema_json"]))
+        try:
+            props = profile_schema.parse(json.loads(schema["schema_json"]))
+        except (ValueError, ValidationError):
+            # A stored schema that no longer parses is the namespace's to fix, never
+            # the reader's: the worker builds nothing under it either.
+            return ProfileStructuredOutput(status="no_schema")
         sha = str(schema["schema_sha256"])
         row = await profile_sources.profile_row(
             org=input.org,

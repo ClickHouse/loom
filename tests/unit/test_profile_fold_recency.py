@@ -8,7 +8,12 @@ recent statement when two disagree.
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from server.memory.workers import profile_consolidation as pc
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 
 def test_render_fold_input_is_dated_oldest_first_and_skips_blanks() -> None:
@@ -44,6 +49,48 @@ def test_fold_reads_only_current_rows() -> None:
     assert "coalesce(valid_at, updated_at)" in src
     # The user's own facts only, never a stored request to forget
     assert "startsWith(memory_key, 'user_')" in src and "NOT has(tags, 'forget')" in src
+
+
+class _LocalCH:
+    def __init__(self, *setup: str) -> None:
+        self.setup = list(setup)
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        return run(self.setup, sql, params)
+
+
+def _preference(mid: str, value: str, status: str) -> str:
+    return (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
+        "memory_type, value, memory_id, content_sha256, version, status) VALUES ('o', 'n', "
+        f"'a', 'u1', '-', 'user_{mid[-1]}', 'preference', '{value}', '{mid}', "
+        f"'{value[0] * 64}', 1, '{status}')"
+    )
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_fold_leaves_out_a_duplicate_row() -> None:
+    """A duplicate's canonical row is the fact: the fold reads that one only."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store.profile_sources import user_facts
+
+    ch = _LocalCH(
+        ddl("memory"),
+        _preference("00000000-0000-0000-0000-00000000000a", "Uses uv.", "active"),
+        _preference("00000000-0000-0000-0000-00000000000b", "Likes uv.", "duplicate"),
+    )
+    rows = await user_facts(
+        org="o",
+        namespace="n",
+        user_id="u1",
+        types=["preference", "decision"],
+        limit=10,
+        user_keys_only=True,
+        scope=WHOLE_NAMESPACE,
+        ch=ch,
+    )
+    assert [r["value"] for r in rows] == ["Uses uv."]
 
 
 def test_fold_config_reads_the_model_setting() -> None:

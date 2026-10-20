@@ -84,7 +84,7 @@ async def _build(ns: str) -> None:
     keeps a namespace's last scan for minutes, longer than a test waits."""
     from server.memory.workers import structured_profile as sp
 
-    sp.forget_scans(ORG, ns)
+    sp._scans.pop((ORG, ns), None)
     cfg = sp.StructuredProfileConfig(cooldown_seconds=0, max_users_per_pass=50, only=(ORG, ns))
     result = await sp.run_pass(cfg)
     assert result.errors == 0
