@@ -807,9 +807,9 @@ _NOT_CARRIED = frozenset({"version", "updated_at", "tombstoned_at", "source_trac
 async def _head_carries(existing: Any, top: int, row: Any) -> bool:
     """Version `top` of the key, this delete's newest tombstone, already carries every
     column of `row` a copy would: a copy this delete wrote back, or its own tombstone of
-    the row another remover took. Then it is not copied again. What the
-    removing write stamped is not the row's: the `tombstoned` status of a by-id tombstone
-    (a sweep, dedup, conflict resolution) and a sweep's marker over the row's own reason."""
+    the row another remover took. Then it is not copied again. What the removing write
+    stamped is not the row's: the `tombstoned` status of a by-id tombstone (a sweep, dedup,
+    conflict resolution) and a sweep's marker over the row's own reason."""
     import server.memory.store as memory_repo
     from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 
