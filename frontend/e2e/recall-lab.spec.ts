@@ -54,7 +54,17 @@ for (const width of [1400, 375]) {
       const table = await open(page);
       const bars = table.locator(".recall-bar > span");
       await expect(bars).toHaveCount(5);
-      expect(await bars.first().evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(223, 223, 223)");
+      // The bar is Click UI's table bar-chart colour, in whichever theme is loaded.
+      const bar = await bars.first().evaluate((el) => {
+        const probe = document.createElement("span");
+        probe.style.background = "var(--click-table-row-color-barChart-default)";
+        document.body.append(probe);
+        const want = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return { got: getComputedStyle(el).backgroundColor, want };
+      });
+      expect(bar.want, "Click UI defines the bar-chart colour").not.toBe("rgba(0, 0, 0, 0)");
+      expect(bar.got).toBe(bar.want);
       expect(await sideways(page)).toBeLessThanOrEqual(0);
       // Nor does the table inside its own box: on a phone a card never runs past the edge.
       expect(
