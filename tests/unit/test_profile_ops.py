@@ -332,7 +332,7 @@ def test_profile_set_refuses_the_delete_version_marker() -> None:
 
     from server.memory.api.models_profile import ProfileSetInput
 
-    with pytest.raises(pydantic.ValidationError):
+    with pytest.raises(pydantic.ValidationError, match="may not start with"):
         ProfileSetInput(
             org="o",
             namespace="n",

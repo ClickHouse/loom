@@ -31,7 +31,8 @@ class ProfileSetInput(_Identity):
     value: str
     # The section's size cap, measured on the JSON-encoded value; a longer value is a 422.
     char_limit: int = DEFAULT_CHAR_LIMIT
-    # Where the section came from. A worker that folds facts with an LLM
+    # Where the section came from; a trace starting with `memory.delete_version:` is
+    # refused (that op's tombstone marker). A worker that folds facts with an LLM
     # writes "profile.fold:<label>" so provenance classes the row `derived`;
     # a client writing a persona leaves it empty (`asserted`).
     source_trace: str = ""

@@ -127,7 +127,7 @@ WHAT: Create or replace a profile section at `label`.
 | `label` | `str` | required | The section's name (its memory key), e.g. |
 | `value` | `str` | required | The section's whole new text. |
 | `char_limit` | `int` | `8192` | The section's size cap, measured on the JSON-encoded value; a longer value is a 422. |
-| `source_trace` | `str` | `''` | Where the section came from. |
+| `source_trace` | `str` | `''` | Where the section came from; a trace starting with `memory.delete_version:` is refused (that op's tombstone marker). |
 | `if_match_sha256` | `str` | `''` | Write only if the section's current content hash equals this (409 otherwise); empty = no check. |
 
 | Output field | Type | Meaning |

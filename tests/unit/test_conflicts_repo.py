@@ -223,3 +223,27 @@ async def test_allowlist_remove_emits_soft_delete_mutation() -> None:
     assert "reason = concat(reason, ' | ', {note:String})" in sql
     assert params["a"] == "a"
     assert params["note"] == "unallow:x"
+
+
+@pytest.mark.asyncio
+async def test_a_conflict_tombstone_does_not_carry_the_delete_version_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A live row an older build restored keeps memory.delete_version's marker; the
+    # resolution's tombstone appends its note to the row's own trace without it.
+    from types import SimpleNamespace
+
+    from server.memory import store as memory_repo
+
+    seen: dict[str, Any] = {}
+
+    async def capture(_org: str, _ids: list[str], **kw: Any) -> None:
+        seen["update"] = kw["update"]
+
+    monkeypatch.setattr(memory_repo, "tombstone_cascade_by_ids", capture)
+    await tombstone_ids("o", ["m"], "resolve:keep", datetime(2026, 5, 17, tzinfo=UTC))
+    note = seen["update"]
+    marked = SimpleNamespace(source_trace="memory.delete_version:42")
+    assert note(marked) == {"source_trace": "resolve:keep"}
+    plain = SimpleNamespace(source_trace="observed://alerts")
+    assert note(plain) == {"source_trace": "observed://alerts | resolve:keep"}
