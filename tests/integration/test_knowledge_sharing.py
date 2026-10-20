@@ -358,8 +358,8 @@ def test_another_end_user_reads_none_of_my_memories(gw: Gateway) -> None:
         evidence = _chat(gw, "bob", "memory.evidence", {"session_id": "c1", "memory_key": key})
         assert evidence.status_code == 200 and alice_nonce not in evidence.text, evidence.text
     # The same reads answer Bob with his own rows.
-    search = {"query": bob_nonce, "namespace_scope": "all_mine"}
-    hits = _chat_ok(gw, "bob", "memory.search", search)["results"]
+    bob_search = {"query": bob_nonce, "namespace_scope": "all_mine"}
+    hits = _chat_ok(gw, "bob", "memory.search", bob_search)["results"]
     assert any(h["memory_key"] == "pref/drink" for h in hits), hits
     assert bob_nonce in _chat_ok(gw, "bob", "context.pack", {"query": bob_nonce})["rendered"]
     for key in bob_keys:
