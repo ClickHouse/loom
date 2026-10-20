@@ -13,6 +13,7 @@ from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
+from server.core import bm25
 from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
@@ -544,6 +545,88 @@ async def saved_message_ids(
         params=params,
     )
     return {str(r["msg_id"]) for r in rows}
+
+
+async def lexical_saved_messages(
+    org: str,
+    namespace: str,
+    agent: str,
+    tokens: list[str],
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    conversation_id: str | None = None,
+    role: str | None = None,
+    limit: int = 20,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """Okapi BM25 over the whole text of `user_id`'s saved messages, best
+    first, rows scoring 0 dropped. The corpus is one user's explicit saves, so
+    its statistics (size, average length, per-token document frequency) are
+    computed in the same statement rather than kept in a term-frequency view.
+    One row per message: a save racing an append can leave two rows of a turn."""
+    if not tokens:
+        return []
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "toks": list(tokens),
+        "lim": int(limit),
+    }
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    if conversation_id:
+        where.append("thread_id = {tid:String}")
+        params["tid"] = conversation_id
+    if role:
+        where.append("role = {role:String}")
+        params["role"] = role
+    where.extend(scope_where(scope, params))
+    words = (
+        f"arrayFilter(t -> length(t) >= {bm25.MIN_TERM_LEN}, "
+        "arrayMap(t -> lowerUTF8(t), splitByNonAlpha(body)))"
+    )
+    score = bm25.bm25_sum_sql(
+        "arrayMap(tok -> countEqual(d.words, tok), {toks:Array(String)})",
+        "arrayMap(df -> log(1 + (s.n - df + 0.5) / (df + 0.5)), s.dfs)",
+        dl="length(d.words)",
+        avgdl="greatest(s.avgdl, 1.0)",
+    )
+    return await ch.query_all(
+        f"""
+        WITH docs AS (
+            SELECT thread_id, msg_id, any(role) AS msg_role, argMax(content, ts) AS body,
+                   max(ts) AS saved_at, {words} AS words
+            FROM loom.conversations
+            WHERE {" AND ".join(where)}
+            GROUP BY thread_id, msg_id
+        ),
+        stats AS (
+            SELECT count() AS n, avg(length(words)) AS avgdl,
+                   sumForEach(
+                       arrayMap(tok -> toUInt64(has(words, tok)), {{toks:Array(String)}})
+                   ) AS dfs
+            FROM docs
+        )
+        SELECT d.thread_id AS thread_id, d.msg_id AS msg_id, d.msg_role AS role,
+               d.body AS content, d.saved_at AS saved_at, {score} AS score
+        FROM docs AS d CROSS JOIN stats AS s
+        WHERE score > 0
+        ORDER BY score DESC, saved_at DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
 
 
 async def namespace_logging_enabled(

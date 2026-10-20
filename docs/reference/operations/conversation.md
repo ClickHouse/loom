@@ -248,7 +248,7 @@ Rank conversation messages by embedding similarity to `query`.
 
 ## `conversation.search_saved_messages`
 
-Semantic search over only the messages one user saved with conversation.save_message, not the whole transcript.
+Hybrid search over only the messages one user saved with conversation.save_message, not the whole transcript.
 
 `POST /v1/conversation.search_saved_messages` · MCP `loom_conversation_search_saved_messages` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -262,6 +262,8 @@ Semantic search over only the messages one user saved with conversation.save_mes
 | `conversation_id` | `str \| None` | `None` |  |
 | `role` | `Literal['user', 'assistant'] \| None` | `None` |  |
 | `top_k` | `int` | `20` |  |
+| `search_mode` | `Literal['hybrid', 'semantic', 'lexical']` | `'hybrid'` | hybrid: the vector leg and a BM25 leg over each message's whole text, fused by reciprocal rank; semantic: vector only; lexical: BM25 only. |
+| `lexical_weight` | `float` | `1.0` | Weight of the BM25 leg in the fusion (hybrid mode); 1.0 = equal weight. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

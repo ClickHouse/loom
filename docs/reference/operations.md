@@ -287,7 +287,7 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 | [`conversation.save_message`](operations/conversation.md#conversationsave_message) | Save one chat message a user picked for search, whether or not the namespace records transcripts. | writer | idempotent | no |  |
 | [`conversation.saved_status`](operations/conversation.md#conversationsaved_status) | Which of a conversation's messages a user has saved, in one call: a chat client draws every message's saved state when it opens the conversation. | viewer | read | no |  |
 | [`conversation.search`](operations/conversation.md#conversationsearch) | Rank conversation messages by embedding similarity to `query`. | viewer | read | no |  |
-| [`conversation.search_saved_messages`](operations/conversation.md#conversationsearch_saved_messages) | Semantic search over only the messages one user saved with conversation.save_message, not the whole transcript. | viewer | read | no |  |
+| [`conversation.search_saved_messages`](operations/conversation.md#conversationsearch_saved_messages) | Hybrid search over only the messages one user saved with conversation.save_message, not the whole transcript. | viewer | read | no |  |
 | [`conversation.set_logging`](operations/conversation.md#conversationset_logging) | Toggle whether this namespace records conversation transcripts. | admin | idempotent | no | yes |
 | [`conversation.threads`](operations/conversation.md#conversationthreads) | Recent conversation threads of a namespace, newest first. | viewer | read | yes |  |
 | [`conversation.unsave_message`](operations/conversation.md#conversationunsave_message) | Withdraw one message from a user's saved-message search. | writer | idempotent | no |  |

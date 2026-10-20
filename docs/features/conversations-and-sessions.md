@@ -51,7 +51,7 @@ up front.
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
 `conversation.search_saved_messages` (viewer) is its search. They differ from
-`conversation.append` and `conversation.search` in five ways:
+`conversation.append` and `conversation.search` in six ways:
 
 - **The logging switch does not apply.** The save is stored even when
   `conversation.set_logging` is off, and it does not turn logging on.
@@ -61,6 +61,12 @@ namespace's transcripts. `conversation.save_message` (writer) is that opt-in, an
 - **The search is per user.** `conversation.search_saved_messages` returns only flagged
   messages owned by `user_id`, in the one namespace named. `conversation.search` ranks
   every recorded turn and fans out over the caller's namespaces by default.
+- **The search is hybrid.** The vector leg embeds a message's first 2,048 characters;
+  a BM25 leg reads its whole text, so an exact term (a ticket id, a table name) or a
+  phrase deep in a long saved answer still ranks. `search_mode="hybrid"` (default) fuses
+  the two by reciprocal rank, `semantic` and `lexical` run one leg, and `lexical_weight`
+  (0–1) scales the BM25 leg. A BM25 hit's excerpt is centred on the matched terms. The
+  corpus is one user's saved messages, so its statistics are computed per query.
 - **A token pinned to one user works here.** An integration that serves many users through
   one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
   user). Both saved-message ops then act as that user only: a body naming another
