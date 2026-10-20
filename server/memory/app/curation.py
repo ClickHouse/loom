@@ -636,8 +636,11 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
     # quote in place is not a completed redaction.
-    cache_rows = await memory_repo.delete_llm_response_cache_by_key(input.org, target.memory_key)
-    precedent_rows = await memory_repo.delete_ask_precedents_by_key(input.org, target.memory_key)
+    # A scrubbed profile key may be the only row of a window that quoted the text.
+    cache_rows = precedent_rows = 0
+    for key in [target.memory_key, *sorted({p.memory_key for p in profiles})]:
+        cache_rows += await memory_repo.delete_llm_response_cache_by_key(input.org, key)
+        precedent_rows += await memory_repo.delete_ask_precedents_by_key(input.org, key)
     return MemoryRedactOutput(
         redacted=True,
         redacted_at=now,
@@ -703,14 +706,17 @@ async def _redact_profiles(
 ) -> None:
     """Scrub every listed profile version, the live one included, and each profile
     key's derived rows: a model wrote them from the redacted text. The worker
-    rebuilds a scrubbed head from the user's current facts."""
+    rebuilds a scrubbed head from the user's current facts. All the versions go
+    in one statement per table, so a user with many versions costs two mutations."""
     import server.memory.store as memory_repo
 
+    await memory_repo.redact_versions(
+        org,
+        [v for p in profiles for v in p.versions],
+        when=when,
+        reason_blob=reason_blob,
+    )
     for p in profiles:
-        for memory_id, version in p.versions:
-            await memory_repo.redact_row(
-                org, memory_id, version, when=when, reason_blob=reason_blob
-            )
         # A scrubbed head keeps no text, so none of the key's derived rows is live.
         head = p.head
         if head is not None and head.version in {v for _, v in p.versions}:

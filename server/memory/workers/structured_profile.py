@@ -434,10 +434,11 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             users = _take(schema, budget) or []
             budget -= len(users)
             await _build_users(schema, users, result)
-        # Idle only when the rotation came round: until then the namespaces past this
-        # pass's page are reached at the busy interval.
+        # Idle only when the rotation came round and this pass reached every namespace
+        # in its page: until then the namespaces left are reached at the busy interval.
         wrapped = _wrapped(rows, start, page)
-        if wrapped and not result.profiles_written and not result.errors:
+        reached_all = result.namespaces_reached == len(spaces)
+        if wrapped and reached_all and not result.profiles_written and not result.errors:
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
     return result

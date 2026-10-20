@@ -636,6 +636,24 @@ async def test_a_pass_with_nothing_to_build_is_idle_only_once_the_rotation_wraps
 
 
 @pytest.mark.asyncio
+async def test_a_pass_that_spent_its_budget_on_current_profiles_is_not_idle(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
+) -> None:
+    async def already_current(schema: w.ActiveSchema, user_id: str) -> int | None:
+        return None
+
+    monkeypatch.setattr(w, "build_profile", already_current)
+    # The page holds all three namespaces, but the first two use the budget of four.
+    settings_override(structured_profile_max_users_per_pass=4)
+    ctx = pass_context.begin("structured_profile")
+    result = await w.run_pass(_cfg())
+    assert result.namespaces_reached == 2 and not result.profiles_written
+    assert not ctx.idle
+
+
+@pytest.mark.asyncio
 async def test_a_user_with_no_facts_and_no_profile_gets_no_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

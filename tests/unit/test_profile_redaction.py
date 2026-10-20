@@ -3,7 +3,9 @@
 A profile version names the memories it was built from in its trace
 (`profile.fold:<label>:<memory ids>`); redacting one of them scrubs every
 version that names it, and leaves the versions built without it. A lock on
-the profile key refuses the redact before anything is scrubbed.
+the profile key refuses the redact before anything is scrubbed. However many
+versions match, the scrub is one statement per version table, and the cached
+answers and precedents whose window held a scrubbed profile key are deleted.
 """
 
 from __future__ import annotations
@@ -36,9 +38,11 @@ class _StatefulLocalCH:
 
     def __init__(self, *setup: str) -> None:
         self.setup = list(setup)
+        self.executed: list[str] = []
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
         self.setup += [*_set_params(params), sql]
+        self.executed.append(sql)
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         return run([*self.setup, *_set_params(params)], sql)
@@ -58,6 +62,29 @@ def _profile_version(table: str, version: int, value: str, sources: list[str]) -
     )
 
 
+_PROFILE_TABLES = (
+    ddl("memory"),
+    ddl("memory_versions"),
+    ddl("memory_embeddings"),
+    ddl("memory_chunks"),
+    ddl("memory_code_links"),
+)
+
+
+def _profile_rows(built_with: str, built_without: str) -> list[str]:
+    """Versions 1-3 were built from the secret memory, version 4 (the head) was not."""
+    return [
+        _profile_version(table, version, value, sources)
+        for table in ("memory", "memory_versions")
+        for version, value, sources in (
+            (1, built_with, [_SECRET, _OTHER]),
+            (2, built_with, [_OTHER, _SECRET]),
+            (3, built_with, [_SECRET]),
+            (4, built_without, [_OTHER]),
+        )
+    ]
+
+
 _TARGET_KW: dict[str, Any] = {
     "namespace": "n",
     "agent": "a",
@@ -70,7 +97,7 @@ _TARGET_KW: dict[str, Any] = {
 
 
 class _Head:
-    version = 2
+    version = 4
     lock_mode = ""
     lock_until = None
 
@@ -85,22 +112,7 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
 
     built_with = '{"timezone":"secret place"}'
     built_without = '{"timezone":null}'
-    rows = [
-        _profile_version(table, version, value, sources)
-        for table in ("memory", "memory_versions")
-        for version, value, sources in (
-            (1, built_with, [_SECRET, _OTHER]),
-            (2, built_without, [_OTHER]),
-        )
-    ]
-    ch = _StatefulLocalCH(
-        ddl("memory"),
-        ddl("memory_versions"),
-        ddl("memory_embeddings"),
-        ddl("memory_chunks"),
-        ddl("memory_code_links"),
-        *rows,
-    )
+    ch = _StatefulLocalCH(*_PROFILE_TABLES, *_profile_rows(built_with, built_without))
     monkeypatch.setattr(redaction, "_default_client", lambda: ch)
 
     async def head(*_a: Any, **_k: Any) -> _Head:
@@ -117,14 +129,21 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
         "o", target, profiles, when=datetime(2026, 1, 1), reason_blob="r|admin"
     )
 
+    # Three versions name the memory; each version table takes one statement for all of them.
+    assert sum(1 for sql in ch.executed if "UPDATE" in sql and "redacted_at" in sql) == 2
     for table in ("memory", "memory_versions"):
         values = await ch.query_all(
             f"SELECT version, value, redacted_at IS NOT NULL AS redacted FROM loom.{table} "
             "WHERE memory_key = 'structured_profile' ORDER BY version"
         )
-        assert [(int(r["version"]), r["redacted"]) for r in values] == [(1, 1), (2, 0)]
+        assert [(int(r["version"]), r["redacted"]) for r in values] == [
+            (1, 1),
+            (2, 1),
+            (3, 1),
+            (4, 0),
+        ]
         assert not any("secret place" in r["value"] for r in values)
-        assert values[1]["value"] == built_without
+        assert values[3]["value"] == built_without
     # A second redaction finds nothing left to scrub.
     assert await memory_repo.profile_versions_built_from("o", "n", "u1", _SECRET) == []
 
@@ -164,3 +183,56 @@ async def test_a_locked_profile_refuses_the_redact_before_any_scrub(monkeypatch,
     with pytest.raises(HTTPException) as e:
         await curation._profiles_built_from("o", HistoryTarget(**_TARGET_KW), _SECRET)
     assert e.value.status_code == 423
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
+    monkeypatch,
+) -> None:
+    import server.auth.authz as authz
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+    from server.memory.store import redaction
+    from server.memory.store.history import HistoryTarget
+
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        ddl("llm_response_cache"),
+        ddl("memory_ask_precedents"),
+        *_profile_rows('{"timezone":"secret place"}', '{"timezone":null}'),
+        "INSERT INTO loom.llm_response_cache (model, key, org, text, window_keys) VALUES "
+        "('m', 'k1', 'o', 'secret place', ['structured_profile']), "
+        "('m', 'k2', 'o', 'other', ['user_name'])",
+        "INSERT INTO loom.memory_ask_precedents (org, namespace, precedent_key, question, "
+        f"answer, window_keys) VALUES ('o', 'n', '{'p' * 64}', 'where?', 'secret place', "
+        "['structured_profile'])",
+    )
+    monkeypatch.setattr(redaction, "_default_client", lambda: ch)
+
+    async def target(*_a: Any) -> HistoryTarget:
+        return HistoryTarget(**_TARGET_KW)
+
+    async def in_scope(*_a: Any) -> bool:
+        return True
+
+    async def head(*_a: Any, **_k: Any) -> _Head:
+        return _Head()
+
+    async def no_links(*_a: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(memory_repo, "find_history_target", target)
+    monkeypatch.setattr(authz, "row_in_scope", in_scope)
+    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(curation, "_live_link_inputs", no_links)
+
+    out = await curation.handle_memory_redact(
+        MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+    )
+
+    assert out.redacted and out.cache_rows_deleted == 1 and out.precedent_rows_deleted == 1
+    cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
+    assert [r["key"] for r in cached] == ["k2"]
+    assert await ch.query_all("SELECT answer FROM loom.memory_ask_precedents") == []

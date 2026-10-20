@@ -139,6 +139,7 @@ from server.memory.store.redaction import (
     key_derivative_scrubs,
     profile_versions_built_from,
     redact_row,
+    redact_versions,
     run_scrubs,
 )
 from server.memory.store.rows import (
@@ -273,6 +274,7 @@ __all__ = [
     "key_derivative_scrubs",
     "profile_versions_built_from",
     "redact_row",
+    "redact_versions",
     "run_scrubs",
     "reemit_embedding_rows_for_key",
     "reemit_embedding_rows_for_keys",
