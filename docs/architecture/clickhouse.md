@@ -297,8 +297,13 @@ fan-out would pay each round trip and fail when any failed. The response path ke
 what the caller's next read needs: the `memory` row, its `memory_embeddings` row, the
 same-key supersession and the audit receipt. Projections are fail-open
 (`memory/app/after_write.py`), and a read of the same namespace in the same process waits
-for them (`after_write.settle`). A derived table lags its source by seconds; the BM25 legs
-merge that lag themselves.
+for the graph projection (`after_write.settle`). A derived table lags its source by
+seconds; the BM25 legs merge that lag themselves.
+
+An embedding row may land under the refresh watermark when its version is more than 5 s
+old once it is in (half the views' 10 s lag). A long embed or judge, or slow inserts, do
+that. Its own write folds such a row into the BM25 tables after the response
+(`after_write.index_late_rows`), so a slow write does not also wait on two more inserts.
 
 ## The memory_versions mirror
 

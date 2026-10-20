@@ -33,6 +33,9 @@ class _CH:
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserted.append((table, rows))
 
+    async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
+        self.sql.append(sql)  # the late-row BM25 statements
+
 
 class _Embedder:
     model_name = "fake-model"
