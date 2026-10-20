@@ -218,6 +218,8 @@ async def test_each_write_path_leaves_its_event_and_version(
     await ops.register(receiver.url)
     a = {"agent": "assistant"}
     first = await ops("memory.set", memory_key="k/one", value="first value", **a)
+    # The same value again is a restatement: no event.
+    await ops("memory.set", memory_key="k/one", value="first value", **a)
     revised = await ops("memory.set", memory_key="k/one", value="second value", **a)
     bulk = await ops(
         "memory.bulk_set",
@@ -227,6 +229,8 @@ async def test_each_write_path_leaves_its_event_and_version(
         ],
         **a,
     )
+    # An unchanged entry of a batch writes nothing: no event.
+    await ops("memory.bulk_set", entries=[{"memory_key": "k/two", "value": "bulk new"}], **a)
     by_id = await ops("memory.update_by_id", memory_id=first["memory_id"], value="by id")
     deleted = await ops("memory.delete", memory_key="k/one", **a)
     restored = await ops("memory.restore", memory_key="k/one", **a)

@@ -169,20 +169,24 @@ async def due_events(
 ) -> list[dict[str, Any]]:
     """Events of `hooks` since `since` with no attempt yet, or whose newest
     attempt is pending (or a lease) and due: oldest first, at most `per_webhook`
-    of each webhook and `limit` in all, each with its `attempts` so far."""
+    of each webhook and `limit` in all, each with its `attempts` so far.
+
+    Two statements: the events not settled or waiting (a set of ids, not a join
+    of every attempt), then the attempt counts of the few chosen."""
     if not hooks:
         return []
     ch = ch or _default_client()
-    cols = ", ".join(f"o.{c} AS {c}" for c in OUTBOX_COLS)
     with own_write_reads():  # a lease just written must be seen
-        return await ch.query_all(
-            f"SELECT {cols}, ifNull(a.attempts, 0) AS attempts FROM {OUTBOX} AS o "
-            f"LEFT JOIN ({_latest_attempts(_HOOK_EVENTS)}) AS a ON a.event_id = o.event_id "
-            f"WHERE (o.org, o.namespace, o.webhook_id) IN {_HOOKS} "
-            "AND o.occurred_at >= {since:DateTime64(3)} AND (ifNull(a.event_id, '') = '' "
-            "OR (a.status IN ('pending', 'leased') AND a.next_attempt_at <= {now:DateTime64(3)})) "
-            "ORDER BY o.occurred_at "
-            "LIMIT {per:UInt32} BY o.webhook_id LIMIT {limit:UInt32}",
+        rows = await ch.query_all(
+            f"SELECT {', '.join(OUTBOX_COLS)} FROM {OUTBOX} "
+            f"WHERE (org, namespace, webhook_id) IN {_HOOKS} "
+            "AND occurred_at >= {since:DateTime64(3)} "
+            f"AND event_id NOT IN (SELECT event_id FROM {ATTEMPTS} "
+            "WHERE recorded_at >= {since:DateTime64(3)} GROUP BY event_id "
+            "HAVING argMax(status, version) IN ('delivered', 'dead') "
+            "OR argMax(next_attempt_at, version) > {now:DateTime64(3)}) "
+            "ORDER BY occurred_at "
+            "LIMIT {per:UInt32} BY webhook_id LIMIT {limit:UInt32}",
             params={
                 "now": now,
                 "since": since,
@@ -191,6 +195,15 @@ async def due_events(
                 "limit": int(limit),
             },
         )
+        if not rows:
+            return []
+        counts = await ch.query_all(
+            f"SELECT event_id, argMax(attempts, version) AS attempts FROM {ATTEMPTS} "
+            "WHERE event_id IN {ids:Array(String)} GROUP BY event_id",
+            params={"ids": [str(r["event_id"]) for r in rows]},
+        )
+    attempts = {str(c["event_id"]): int(c["attempts"]) for c in counts}
+    return [{**r, "attempts": attempts.get(str(r["event_id"]), 0)} for r in rows]
 
 
 async def mark_dead(

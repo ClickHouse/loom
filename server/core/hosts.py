@@ -42,10 +42,14 @@ def _resolve(host: str) -> list[str]:
     return list(dict.fromkeys(str(i[4][0]) for i in infos))
 
 
-async def vet_host(host: str, *, allow_private: bool = False) -> tuple[str, str]:
+async def vet_host(
+    host: str, *, allow_private: bool = False, name_address: bool = True
+) -> tuple[str, str]:
     """(refusal, address): refusal is "" when the host is acceptable, else one
     sentence saying why not; address is the validated one to connect to ("" when
-    refused, or when `allow_private` (a dev stack) uses the name as given)."""
+    refused, or when `allow_private` (a dev stack) uses the name as given).
+    `name_address=False` keeps the resolved address out of the refusal, for a
+    caller whose refusal reaches someone who should not learn it."""
     h = (host or "").strip()
     if not h:
         return "host is required", ""
@@ -63,7 +67,8 @@ async def vet_host(host: str, *, allow_private: bool = False) -> tuple[str, str]
         except ValueError:
             return f"{h} resolved to {a!r}, not an address", ""
         if not public:
+            named = f" to {a}," if name_address else " to"
             return (
-                f"{h} resolves to a private or local address; loom reaches only public hosts"
+                f"{h} resolves{named} a private or local address; loom reaches only public hosts"
             ), ""
     return "", addrs[0]

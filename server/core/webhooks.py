@@ -119,7 +119,9 @@ async def pinned_target(
         port = parts.port
     except ValueError:
         return "the URL has an invalid port", "", "", ""
-    refusal, address = await vet_host(host, allow_private=host.lower() in private_hosts)
+    refusal, address = await vet_host(
+        host, allow_private=host.lower() in private_hosts, name_address=False
+    )
     if refusal:
         return refusal, "", "", ""
     suffix = f":{port}" if port else ""

@@ -257,7 +257,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `memory_usage_totals` | `SummingMergeTree` | `(org, namespace, memory_id)` |  |  |  |
 | `memory_versions` | `ReplacingMergeTree` | `(org, namespace, agent, user_id, session_id, memory_key, version)` | `toYYYYMM(created_at)` |  | 1 skip index (bloom_filter) |
 | `memory_webhook_attempts` | `MergeTree` | `(event_id, version)` | `toDate(recorded_at)` | `toDateTime(recorded_at) + toIntervalDay(3)` |  |
-| `memory_webhook_outbox` | `MergeTree` | `(occurred_at, event_id)` | `toDate(occurred_at)` | `toDateTime(occurred_at) + toIntervalDay(3)` |  |
+| `memory_webhook_outbox` | `MergeTree` | `(org, namespace, webhook_id, occurred_at, event_id)` | `toDate(occurred_at)` | `toDateTime(occurred_at) + toIntervalDay(3)` |  |
 | `memory_webhooks` | `ReplacingMergeTree(version)` | `(org, namespace, webhook_id)` |  |  |  |
 | `namespace_calibration_result` | `ReplacingMergeTree(version)` | `(org, namespace)` |  |  |  |
 | `namespace_grants` | `ReplacingMergeTree(version)` | `(org, namespace, subject)` | `org` |  |  |
