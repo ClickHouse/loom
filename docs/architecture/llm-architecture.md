@@ -295,8 +295,7 @@ the shared HTTP client also carries non-model calls, which name no customer.
   switch-off (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild
   step runs again, and a fail-open reranker, classifier or judge lets it through. A call made
   during a read waits for it when the copy is too old or a change made in this process has
-  had no read attempted since (a failed read counts as that attempt); otherwise it is served
-  the copy in hand. Every job leaves a
+  not been read yet; otherwise it is served the copy in hand. Every job leaves a
   switched-off org out when it selects work (in the query, so its rows neither spend attempts
   nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
   whole code index. A conflict mark older than the sweep's hour when the org comes back is past
