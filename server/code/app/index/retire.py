@@ -31,8 +31,9 @@ KEEP_TABLES: frozenset[str] = frozenset(
 
 
 # The table a refreshable view replaces whole on each refresh (`REFRESH ... TO`,
-# no APPEND): the view's header, before its column list.
-_REFRESH_TARGET = r"\\bREFRESH\\b[^(]*?\\bTO\\s+`?loom`?\\.`?(\\w+)"
+# no APPEND): the view's header, before its column list. ClickHouse stores the
+# target under the configured database's name; the view's own filter keeps it Loom's.
+_REFRESH_TARGET = r"\\bREFRESH\\b[^(]*?\\bTO\\s+(?:`[^`]+`|\\w+)\\.`?(\\w+)"
 _REFRESH_APPEND = r"\\bREFRESH\\b[^(]*\\bAPPEND\\b"
 
 

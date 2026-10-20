@@ -39,7 +39,7 @@ from server.core.ch_errors import (
     is_unknown_quantized_setting,
     strip_quantized_setting,
 )
-from server.core.ch_names import NamedClient, split_table
+from server.core.ch_names import NamedClient, qualify, split_table
 from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest
@@ -582,7 +582,7 @@ def _fenced_statement(
         f"{quote_identifier(c)} {t}" for c, t in zip(columns, type_names, strict=True)
     )
     return (
-        f"INSERT INTO {table} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
+        f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
         f"WHERE throwIf(({_stray_columns_sql(table, stored)}) != 0, "
         f"{_sql_string(FENCE_MESSAGE)}) = 0 "
         f"AND throwIf(toUnixTimestamp64Milli(now64(3)) > {round(deadline * 1000)}, "

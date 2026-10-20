@@ -423,7 +423,7 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
         query = {k: str(v) for k, v in statement_settings(READER_PROBE_SQL).items()}
     try:
         with httpx.Client(timeout=10.0) as c:
-            r = c.post(f"{base}/", params=query, content=READER_PROBE_SQL, auth=auth)
+            r = c.post(f"{base}/", params=query, content=qualify(READER_PROBE_SQL), auth=auth)
     except httpx.HTTPError:
         return "not_probed", ""
     if r.status_code != 200:

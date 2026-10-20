@@ -5,12 +5,15 @@ schema, and `loom_telemetry`, what Loom derives from its own tables. `qualify` m
 each to its configured database (`LOOM_CH_DATABASE`, `LOOM_CH_TELEMETRY_DATABASE`)
 where a statement reaches the driver, so a migration file's text, and the checksum
 its ledger keeps, stay as written. At the defaults it returns the statement as it
-is. A name passed as a value (`system.tables` filters, rows read back from it) goes
-through `physical` or `logical`; ClickStack's OTel tables are `otel_table(name)`.
+is. DDL read back from ClickHouse (`create_table_query`, `SHOW CREATE`) names the
+configured databases; `unqualify` turns it back into the aliases the code parses. A
+name passed as a value (`system.tables` filters, rows read back from it) goes through
+`physical`, `logical` or `split_table`; ClickStack's OTel tables are `otel_table(name)`.
 """
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any
 
@@ -20,23 +23,6 @@ from server.settings import settings
 SCHEMA = "loom"
 TELEMETRY = "loom_telemetry"
 
-# What a statement holds that is not SQL to map: a string literal (doubled quote or
-# backslash escapes), a comment, a quoted identifier; else an alias that qualifies a
-# name (`loom.memory`, `` `loom`.memory ``) or follows DATABASE
-# (`CREATE DATABASE IF NOT EXISTS loom_telemetry`), not part of another identifier.
-# A KeeperMap path under `/loom/` is the schema's too: its keys live in Keeper, outside
-# any database, and two schemas on one service must not share them.
-_TOKENS = re.compile(
-    r"""(?P<keeper>\bKeeperMap\s*\(\s*')/loom/(?P<path>(?:[^'\\]|\\.|'')*')
-    |'(?:[^'\\]|\\.|'')*'
-    |"(?:[^"\\]|\\.)*"
-    |--[^\n]*
-    |/\*.*?\*/
-    |(?<![\w.`$])(?P<q>`?)(?P<alias>loom_telemetry|loom)(?P=q)(?=\.)
-    |(?P<ddl>\bDATABASE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?)
-     (?P<dq>`?)(?P<db>loom_telemetry|loom)(?P=dq)(?![\w.`$])""",
-    re.S | re.X | re.I,
-)
 _PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -82,36 +68,62 @@ def split_table(table: str) -> tuple[str, str]:
     return (physical(db) if db else database(), name)
 
 
-def _mapped() -> dict[str, str]:
-    return {
-        alias: target
-        for alias, target in ((SCHEMA, database()), (TELEMETRY, telemetry_database()))
-        if target != alias
-    }
+@functools.cache
+def _tokens(names: tuple[str, ...], keeper: str) -> re.Pattern[str]:
+    """What a statement holds, for mapping the database `names`: a KeeperMap path
+    under `keeper` (its keys live in Keeper, outside any database, so two schemas on
+    one service must not share them); a string literal (doubled quote or backslash
+    escapes) or a comment, left alone; a name that qualifies another (`loom.memory`,
+    `` `loom`.memory ``, `"loom".memory`) or follows DATABASE (`CREATE DATABASE IF
+    NOT EXISTS loom_telemetry`); any other quoted identifier, left alone."""
+    alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+    name = rf"(?:`(?P<bt{{0}}>{alt})`|\"(?P<dq{{0}}>{alt})\"|(?P<bare{{0}}>{alt}))"
+    path = re.escape(keeper) if keeper else r"(?!)"
+    return re.compile(
+        rf"""(?P<keeper>\bKeeperMap\s*\(\s*')/{path}/(?P<path>(?:[^'\\]|\\.|'')*')
+        |'(?:[^'\\]|\\.|'')*'
+        |--[^\n]*
+        |/\*.*?\*/
+        |(?<![\w.`"$]){name.format(1)}(?=\.)
+        |(?P<ddl>\bDATABASE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?){name.format(2)}(?![\w.`"$])
+        |`(?:[^`\\]|\\.|``)*`
+        |"(?:[^"\\]|\\.)*\"""",
+        re.S | re.X | re.I,
+    )
+
+
+def _translate(sql: str, pairs: list[tuple[str, str]]) -> str:
+    """`sql` with each database name replaced by its pair's second; the first pair is
+    the schema's, whose KeeperMap paths move with it."""
+    mapping = {old: new for old, new in pairs if old != new}
+    if not mapping or not any(old in sql for old in mapping):
+        return sql
+    keeper = pairs[0][0] if pairs[0][0] in mapping else ""
+
+    def swap(m: re.Match[str]) -> str:
+        if m["keeper"] is not None:
+            return f"{m['keeper']}/{mapping[keeper]}/{m['path']}"
+        # A name is written as `quote` spells it, however the statement quoted it.
+        for i, prefix in (("1", ""), ("2", m["ddl"] or "")):
+            old = m[f"bt{i}"] or m[f"dq{i}"] or m[f"bare{i}"]
+            if old is not None:
+                return prefix + quote(mapping[old])
+        return m.group(0)
+
+    return _tokens(tuple(mapping), keeper).sub(swap, sql)
 
 
 def qualify(sql: str) -> str:
     """`sql` with every `loom.` and `loom_telemetry.` qualifier naming its configured
-    database, and a KeeperMap path under `/loom/` under the schema's database. Other
-    string literals, comments and quoted identifiers are left as written."""
-    mapped = _mapped()
-    if not mapped or ("loom" not in sql):
-        return sql
+    database, and a KeeperMap path under `/loom/` under the schema's database. String
+    literals, comments and other quoted identifiers are left as written."""
+    return _translate(sql, [(SCHEMA, database()), (TELEMETRY, telemetry_database())])
 
-    def swap(m: re.Match[str]) -> str:
-        if m["keeper"] is not None:
-            if SCHEMA not in mapped:
-                return m.group(0)
-            return f"{m['keeper']}/{mapped[SCHEMA]}/{m['path']}"
-        alias, backticked, prefix = m["alias"], m["q"], ""
-        if m["db"] is not None:
-            alias, backticked, prefix = m["db"], m["dq"], m["ddl"]
-        if alias is None or alias not in mapped:
-            return m.group(0)
-        name = f"`{mapped[alias]}`" if backticked else quote(mapped[alias])
-        return prefix + name
 
-    return _TOKENS.sub(swap, sql)
+def unqualify(sql: str) -> str:
+    """DDL read back from ClickHouse, naming the aliases where it names the
+    configured databases: the inverse of `qualify`."""
+    return _translate(sql, [(database(), SCHEMA), (telemetry_database(), TELEMETRY)])
 
 
 # The driver methods that take a statement first, positionally or by name.
@@ -126,6 +138,8 @@ _SQL_METHODS = {
     "query_row_block_stream": "query",
     "query_rows_stream": "query",
 }
+# The driver methods that take an insert target first, positionally or as `table`.
+_INSERT_METHODS = frozenset({"insert", "create_insert_context", "insert_df", "insert_arrow"})
 
 
 class NamedClient:
@@ -141,29 +155,21 @@ class NamedClient:
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._inner, name)
         keyword = _SQL_METHODS.get(name)
-        if keyword is not None:
+        if keyword is None and name in _INSERT_METHODS:
+            keyword = "table"
+        if keyword is None:
+            return attr
 
-            def run(*args: Any, **kwargs: Any) -> Any:
-                if args and isinstance(args[0], str):
-                    args = (qualify(args[0]), *args[1:])
-                elif isinstance(kwargs.get(keyword), str):
-                    kwargs[keyword] = qualify(kwargs[keyword])
-                return attr(*args, **kwargs)
+        def run(*args: Any, **kwargs: Any) -> Any:
+            if args and isinstance(args[0], str):
+                args = (qualify(args[0]), *args[1:])
+            elif isinstance(kwargs.get(keyword), str):
+                kwargs[keyword] = qualify(kwargs[keyword])
+            if keyword == "table" and kwargs.get("database"):
+                kwargs["database"] = physical(str(kwargs["database"]))
+            return attr(*args, **kwargs)
 
-            return run
-        if name == "insert":
-
-            def insert(*args: Any, **kwargs: Any) -> Any:
-                if args and isinstance(args[0], str):
-                    args = (qualify(args[0]), *args[1:])
-                elif isinstance(kwargs.get("table"), str):
-                    kwargs["table"] = qualify(kwargs["table"])
-                if kwargs.get("database"):
-                    kwargs["database"] = physical(str(kwargs["database"]))
-                return attr(*args, **kwargs)
-
-            return insert
-        return attr
+        return run
 
     def __setattr__(self, name: str, value: Any) -> None:
         setattr(self._inner, name, value)

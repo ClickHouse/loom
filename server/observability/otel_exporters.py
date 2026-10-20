@@ -78,7 +78,7 @@ def _unwritable(exc: BaseException) -> str:
 
 def _traces_backend_available(exporter_mode: str, endpoint: str | None) -> bool:
     """True only when spans have somewhere to go: an OTLP endpoint, or (ch mode)
-    the ClickStack ClickStack's `otel_traces` table actually exists.
+    ClickStack's `otel_traces` table actually exists.
 
     Gates FastAPI auto-instrumentation. Without a backend, instrumenting is pure
     overhead AND — on the opentelemetry-instrumentation-asgi version CI resolves
@@ -496,7 +496,7 @@ def _attrs_to_map(attrs: Any) -> dict[str, str]:
 
 
 def _span_to_row(span: Any, service_name: str) -> dict[str, Any]:
-    """Convert a ReadableSpan to a ClickStack's `otel_traces` row dict.
+    """Convert a ReadableSpan to a row of ClickStack's `otel_traces`.
 
     Column ordering matches the schema in
     `schemas/otel/clickstack_otel_tables.sql`. Nested columns are written
@@ -584,7 +584,7 @@ _SEVERITY_TEXT = {
 
 
 def _log_to_row(record: Any, service_name: str) -> dict[str, Any]:
-    """Convert an OTel LogData (record + resource) to a ClickStack's `otel_logs` row."""
+    """Convert an OTel LogData (record + resource) to a row of ClickStack's `otel_logs`."""
     from datetime import datetime
 
     lr = record.log_record

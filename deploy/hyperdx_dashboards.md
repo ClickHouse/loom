@@ -1,6 +1,7 @@
 # ClickStack / HyperDX setup + dashboards for Loom
 
-Loom writes OTel data **directly** into `default.otel_*` on the same
+Loom writes OTel data **directly** into `default.otel_*` (the
+`LOOM_CLICKSTACK_DATABASE` database when it is set) on the same
 ClickHouse service it uses for `loom.*` — no OTel collector. So when
 onboarding a hosted ClickStack (ClickHouse Cloud → service →
 Observability), skip the wizard's "install the collector / here is your

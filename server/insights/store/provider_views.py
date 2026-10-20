@@ -2,7 +2,7 @@
 
 from uuid import UUID, uuid4
 
-from server.core.ch_names import database
+from server.core.ch_names import database, unqualify
 from server.core.repo_base import _CHClient, _default_client
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_views import RebuildView
@@ -38,7 +38,10 @@ async def capture_rebuild_views(*, ch: _CHClient | None = None) -> tuple[Rebuild
         if row["engine"] != "MaterializedView":
             raise ValueError("Rebuild dependency is not a supported materialized view")
         plan = RebuildView(
-            str(row["name"]), UUID(str(row["uuid"])), uuid4(), str(row["create_table_query"])
+            str(row["name"]),
+            UUID(str(row["uuid"])),
+            uuid4(),
+            unqualify(str(row["create_table_query"])),
         )
         plan.creation_sql()
         plans.append(plan)

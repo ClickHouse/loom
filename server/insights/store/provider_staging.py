@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from server.core.ch_names import qualify, unqualify
 from server.core.repo_base import _CHClient, _default_client
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES, REBUILD_TABLES
 from server.insights.domain.provider_source_policy import MODEL_KEYED_SOURCES, SOURCE_POLICY_VERSION
@@ -104,7 +105,7 @@ async def source_schema(names: StagingNames, *, ch: _CHClient | None = None) -> 
     fingerprint = hashlib.sha256(
         json.dumps(
             {
-                "ddl": table["create_table_query"],
+                "ddl": unqualify(table["create_table_query"]),
                 "columns": columns,
                 "source_policy_version": SOURCE_POLICY_VERSION,
             },
@@ -300,7 +301,7 @@ async def snapshot_query_running(names: StagingNames, *, ch: _CHClient | None = 
     client = ch or _default_client()
     result = await client.query_one(
         "SELECT count() AS running FROM system.processes WHERE startsWith(query, {prefix:String})",
-        {"prefix": f"CREATE TABLE loom.{names.snapshot} "},
+        {"prefix": qualify(f"CREATE TABLE loom.{names.snapshot} ")},
     )
     if result is None or type(result.get("running")) is not int or result["running"] < 0:
         raise ValueError("Cannot establish snapshot query status")

@@ -73,6 +73,7 @@ from typing import Any
 if (_ROOT := str(Path(__file__).resolve().parents[2])) not in sys.path:  # run as a file
     sys.path.insert(0, _ROOT)
 
+from server.core.ch_names import unqualify
 from server.core.schema import table_rebuild as tr
 from server.core.schema.table_rebuild import (
     ABORTED,
@@ -126,11 +127,11 @@ def key_literal(v: Any) -> str:
 REPAIR_BATCH = 500  # keys per repair INSERT: a literal list the statement carries
 
 
-def patch_parts_sql(db: str, name: str) -> str:
-    """Active patch parts of one table (the --require-patch-free gate). Pure."""
+def patch_parts_sql(name: str) -> str:
+    """Active patch parts of one schema table (the --require-patch-free gate). Pure."""
     return (
         "SELECT countIf(startsWith(name, 'patch')) FROM system.parts "
-        f"WHERE database = '{db}' AND table = '{name}' AND active"
+        f"WHERE database = currentDatabase() AND table = '{name}' AND active"
     )
 
 
@@ -312,7 +313,7 @@ class VectorRebuild:
         self.ch.command(sql, settings=st or None)
 
     def ddl(self, name: str) -> str:
-        return str(self.q(f"SHOW CREATE TABLE loom.{name}")[0][0])
+        return unqualify(str(self.q(f"SHOW CREATE TABLE loom.{name}")[0][0]))
 
     def exists(self, name: str) -> bool:
         return tr.table_row(self.ch, name) is not None
@@ -439,7 +440,7 @@ class VectorRebuild:
         if self.aborted():
             raise Aborted(f"abort file {self.abort} present before start")
         if self.a.require_patch_free:
-            log("live patch parts before:", self.q(patch_parts_sql("loom", self.t))[0][0])
+            log("live patch parts before:", self.q(patch_parts_sql(self.t))[0][0])
         why = self.refusal(ddl)
         if why:
             log("REFUSED:", why)
@@ -655,7 +656,7 @@ class VectorRebuild:
             log("GATE FAILED: recall; the twin is left for inspection")
             return GATE_FAILED
         if self.a.require_patch_free:
-            patches = self.q(patch_parts_sql("loom", self.twin))[0][0]
+            patches = self.q(patch_parts_sql(self.twin))[0][0]
             log("twin patch parts:", patches)
             if patches:
                 log("GATE FAILED: a lightweight UPDATE landed on the twin during the copy; no swap")
@@ -754,9 +755,7 @@ def parse(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument(
-        "--table", required=True, help="e.g. memory_chunks (the database is always loom)"
-    )
+    ap.add_argument("--table", required=True, help="e.g. memory_chunks, in LOOM_CH_DATABASE")
     ap.add_argument("--columns", required=True, help="comma list of vector columns")
     ap.add_argument(
         "--chain", default="", help="general codec after the codes, e.g. LZ4 (repeated vectors)"

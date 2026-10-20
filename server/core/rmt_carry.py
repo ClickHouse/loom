@@ -33,6 +33,7 @@ from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.ch_names import logical, split_table
 from server.core.errors import BackendUnavailableError
 
 log = logging.getLogger(__name__)
@@ -175,10 +176,10 @@ def carries(table: str) -> bool:
 
 async def _stored(ch: Any, tables: Iterable[str]) -> dict[str, set[str]]:
     tables = list(tables)
-    rows = await ch.query_all(_STORED_SQL, {"keys": [tuple(t.split(".", 1)) for t in tables]})
+    rows = await ch.query_all(_STORED_SQL, {"keys": [split_table(t) for t in tables]})
     stored: dict[str, set[str]] = {table: set() for table in tables}
     for r in rows:
-        stored.setdefault(f"{r['database']}.{r['table']}", set()).add(str(r["name"]))
+        stored.setdefault(f"{logical(r['database'])}.{r['table']}", set()).add(str(r["name"]))
     return stored
 
 
@@ -597,7 +598,7 @@ async def _schema_stamp(ch: Any) -> tuple[Any, ...] | None:
                    (SELECT max(metadata_modification_time) FROM system.tables
                     WHERE (database, name) IN {keys:Array(Tuple(String, String))}) AS altered
             """,
-            {"keys": [tuple(table.split(".", 1)) for table in _TABLES]},
+            {"keys": [split_table(table) for table in _TABLES]},
         )
     except Exception as e:  # noqa: BLE001 — the next poll tries again
         log.debug("rmt carry: schema unreadable (%s)", e)

@@ -652,6 +652,9 @@ class ClickHouseSettings(BaseModel):
                 "LOOM_CH_DATABASE must not be 'loom_telemetry', nor "
                 "LOOM_CH_TELEMETRY_DATABASE 'loom'"
             )
+        # A second schema on the service would read and roll up into the first's.
+        if self.ch_database != "loom" and self.ch_telemetry_database == "loom_telemetry":
+            raise ValueError("LOOM_CH_DATABASE is renamed: name its LOOM_CH_TELEMETRY_DATABASE too")
         return self
 
 

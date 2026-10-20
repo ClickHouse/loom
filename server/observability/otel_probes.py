@@ -564,9 +564,12 @@ _STORAGE_PARTS_SQL = """
         GROUP BY table
 """
 
-# A view outside the schema is named with its database (loom_telemetry.sli_minute_refresh).
+# A view outside the schema is named with its alias (loom_telemetry.sli_minute_refresh)
+# whatever LOOM_CH_TELEMETRY_DATABASE calls it, as the docs and dashboards do.
 _VIEW_REFRESH_SQL = """
-        SELECT if(database = {loom_db:String}, view, concat(database, '.', view)) AS view,
+        SELECT multiIf(database = {loom_db:String}, view,
+                       database = {telemetry_db:String}, concat('loom_telemetry.', view),
+                       concat(database, '.', view)) AS view,
                status, last_success_time, exception
         FROM system.view_refreshes
         WHERE database IN ({loom_db:String}, {telemetry_db:String})

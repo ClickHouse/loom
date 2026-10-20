@@ -302,21 +302,33 @@ def _lacks(user: str, grants: str, database: str = "") -> PreflightError:
 
 
 def _refuse_moved_schema(ch: Client) -> None:
-    """Refuse to create a new LOOM_CH_DATABASE while Loom's schema is in `loom`: a
-    renamed setting would start an empty schema beside the deployment's data. An
-    operator who means a new schema creates the database first."""
+    """Refuse to migrate a LOOM_CH_DATABASE other than `loom` that holds no Loom
+    ledger while Loom's schema is in `loom`: the setting would start an empty schema
+    beside the deployment's data, or inside another application's database. An
+    operator who means a new schema there creates the database, empty, first."""
     if database_name() == SCHEMA:
         return
-    ledger = ch.command(
-        "SELECT count() FROM system.tables WHERE database = {db:String} AND name = '_migrations'",
-        parameters={"db": SCHEMA},
+    rows = ch.query(
+        "SELECT countIf(database = {schema:String} AND name = '_migrations') AS other, "
+        "countIf(database = {db:String}) AS tables, "
+        "countIf(database = {db:String} AND name = '_migrations') AS ledger "
+        "FROM system.tables WHERE database IN ({schema:String}, {db:String})",
+        parameters={"schema": SCHEMA, "db": database_name()},
+    ).result_rows
+    other, tables, ledger = rows[0] if rows else (0, 0, 0)
+    if not other or ledger:
+        return
+    if not _database_count(ch):
+        where = "which does not exist"
+    elif tables:
+        where = f"which holds {tables} tables and no Loom ledger"
+    else:
+        return  # created empty for a new schema
+    raise PreflightError(
+        f"LOOM_CH_DATABASE is {database_name()!r}, {where}, and a Loom schema is in "
+        f"{SCHEMA!r}: set LOOM_CH_DATABASE={SCHEMA}, or create an empty "
+        f"{quote(database_name())} first to start a new schema there"
     )
-    if ledger:
-        raise PreflightError(
-            f"LOOM_CH_DATABASE is {database_name()!r}, which does not exist, and a Loom "
-            f"schema is in {SCHEMA!r}: set LOOM_CH_DATABASE={SCHEMA}, or create "
-            f"{quote(database_name())} first to start a new schema there"
-        )
 
 
 def _cannot_create(user: str) -> PreflightError:
@@ -355,6 +367,8 @@ def check(
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
+    if migrates:
+        _refuse_moved_schema(ch)
     if not database:
         if not migrates:
             raise PreflightError(
@@ -363,7 +377,6 @@ def check(
                 needs_admin=True,
             )
         if create_database:
-            _refuse_moved_schema(ch)
             try:
                 ch.command(f"CREATE DATABASE IF NOT EXISTS {quote(database_name())}")
             except Exception as e:

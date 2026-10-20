@@ -62,8 +62,8 @@ ORDER BY Timestamp;
 
 The `log_comment` tags are listed in
 [query attribution](../operations/monitoring.md#logs-traces-and-query-attribution).
-Spans go to `default.otel_traces` when `LOOM_OTEL_EXPORTER` resolves to `ch`, or to the
-OTLP endpoint. With Langfuse configured they also go to
+Spans go to `default.otel_traces` (in `LOOM_CLICKSTACK_DATABASE` when it is set) when
+`LOOM_OTEL_EXPORTER` resolves to `ch`, or to the OTLP endpoint. With Langfuse configured they also go to
 [Langfuse](../features/integrations/langfuse.md).
 
 > **Note:** the ledger never stores query text. `loom.agent_events` replaces every

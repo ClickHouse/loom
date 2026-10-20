@@ -183,7 +183,7 @@ def reader_status(reader: str) -> tuple[bool | None, str]:
         return True, f"its login lands as {name!r}, not {reader!r}"
     if actual != profile:
         return True, PROFILE_DIFFERS
-    if grants != [f"GRANT SELECT ON {quote(database())}.* TO {reader}"]:
+    if grants != [f"GRANT SELECT ON {database()}.* TO {reader}"]:
         return True, f"its grants are not SELECT on {quote(database())}.* alone"
     return True, ""
 
