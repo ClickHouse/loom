@@ -4,7 +4,6 @@ they keep)."""
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
 from typing import Any
 
 from server.auth import sharing
@@ -158,14 +157,9 @@ async def handle_collection_move(input: CollectionMoveInput) -> CollectionMoveOu
             created_at=current["created_at"],
             after=current["version"],
         )
-        await _announced(org, collections_repo.write(row))
+        async with grant_cache.announced(org, kind=grant_cache.COLLECTIONS):
+            await collections_repo.write(row)
     return CollectionMoveOutput(namespace=namespace, parent=parent, moved=True)
-
-
-async def _announced(org: str, write: Awaitable[None]) -> None:
-    """A tree write, announced even when its reply is lost (`grant_cache.announced`)."""
-    async with grant_cache.announced(org, kind=grant_cache.COLLECTIONS):
-        await write
 
 
 async def handle_collection_list(input: CollectionListInput) -> CollectionListOutput:
@@ -222,7 +216,8 @@ async def retire(org: str, namespace: str) -> bool:
         current = await collections_repo.fetch(org, namespace)
         if current is None:
             return False
-        await _announced(org, _retire_rows(org, namespace, current))
+        async with grant_cache.announced(org, kind=grant_cache.COLLECTIONS):
+            await _retire_rows(org, namespace, current)
     return True
 
 
