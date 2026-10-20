@@ -98,17 +98,29 @@ async def insert_row(
     )
 
 
+# loom.learnings_supporters' columns, in table order (tests/unit/test_assistant_learnings.py).
+SUPPORTER_COLUMNS = (
+    "org",
+    "namespace",
+    "candidate_id",
+    "user_id",
+    "session_id",
+    "confidence",
+    "created_at",
+)
+
+
 async def insert_supporter(
     row: dict[str, Any],
     *,
     ch: _CHClient | None = None,
 ) -> None:
     """One session's support for an `assistant_turn` candidate; a repeat of the same
-    (candidate, user, session) collapses into it."""
+    (candidate, user, session) collapses into it. Every column is written."""
     ch = ch or _default_client()
     await ch.insert(
         "loom.learnings_supporters",
-        [row],
+        [{c: row[c] for c in SUPPORTER_COLUMNS}],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
 

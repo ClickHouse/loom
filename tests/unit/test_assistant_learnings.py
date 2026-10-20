@@ -524,3 +524,9 @@ async def test_promoting_a_rule_writes_the_agents_memory_for_every_user(
     assert set_input.source_trace == f"learning:{_cid()}"
     assert class_from_trace(set_input.source_trace) == "extracted"
     assert "source-kind:assistant_turn" in set_input.tags
+
+
+def test_a_supporter_row_carries_every_column_of_loom_learnings_supporters() -> None:
+    from tests.unit.schema_ddl import column_names
+
+    assert column_names("learnings_supporters") == list(learnings_repo.SUPPORTER_COLUMNS)
