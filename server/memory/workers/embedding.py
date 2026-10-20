@@ -181,7 +181,8 @@ async def _embed_rows(
     the stubs were picked gets `(None, SWITCHED_OFF)`: its rows are left as
     they are, attempts untouched."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
-    for org, positions in customer.by_org(str(r.get("org") or "") for r in rows).items():
+    groups = await customer.by_org(str(r.get("org") or "") for r in rows)
+    for org, positions in groups.items():
         try:
             with customer.for_org(org):
                 texts = [rows[i]["content_excerpt"] for i in positions]

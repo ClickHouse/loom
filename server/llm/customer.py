@@ -178,12 +178,14 @@ def feature() -> str:
     return genai.current_operation() or "other"
 
 
-def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
+async def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
     """The positions of `orgs` grouped by org, in first-seen order: one model
     call per group, since a call names a single customer. With no customer
-    header nothing reads the customer, so every position is one group."""
+    header nothing reads the customer, so every position is one group, unless
+    an org among them is switched off: then each org is its own group, so the
+    switch refuses that org's call and the others go on."""
     orgs = list(orgs)
-    if not settings.inference_customer_header:
+    if not settings.inference_customer_header and not set(orgs) & await switched_off_orgs():
         return {"": list(range(len(orgs)))} if orgs else {}
     out: dict[str, list[int]] = {}
     for i, org in enumerate(orgs):

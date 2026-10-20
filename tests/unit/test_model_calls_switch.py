@@ -819,6 +819,49 @@ def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) 
     assert any("switched-off org" in line for line in lines)  # the CLI prints it
 
 
+def test_without_a_header_a_batch_splits_by_org_only_when_one_is_switched_off() -> None:
+    assert settings.inference_customer_header == ""
+    _off()
+    assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"": [0, 1, 2]}
+    _off("acme")
+    assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"acme": [0, 2], "beta": [1]}
+
+
+def test_a_reembed_page_without_a_header_leaves_the_rows_of_an_org_switched_off_mid_run(
+    monkeypatch,
+) -> None:
+    from server.memory.app import reembed
+
+    assert settings.inference_customer_header == ""
+    table = "conversation_embeddings"
+    text = reembed._TABLES[table]["text"]
+    sent: list[str] = []
+
+    class _Emb:
+        model_name, dim = "m", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()
+            sent.append(customer.current())
+            return [[0.5, 0.5] for _ in texts]
+
+    class _CH:
+        rows: list[Any] = []
+
+        async def insert(self, table: str, rows: list[Any], **_: Any) -> None:
+            self.rows = rows
+
+    monkeypatch.setattr(
+        reembed, "rewrite_row", lambda r, cfg, model, dim, vec, kvec: {**r, "vec": vec}
+    )
+    chunk = [{"org": "acme", text: "a"}, {"org": "beta", text: "b"}]
+    ch = _CH()
+    _off("acme")
+    left = asyncio.run(reembed._rewrite_page(ch, _Emb(), table, chunk, key_only=False))
+    assert left == {"acme": 1} and sent == ["beta"]
+    assert [r["org"] for r in ch.rows] == ["beta"]
+
+
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_reembed_delete_old_keeps_the_vectors_of_every_org_it_left(monkeypatch) -> None:
     """acme was off when the run began, gamma was switched off during it: both

@@ -332,7 +332,8 @@ async def _rewrite_page(
     # since a model call names a single customer.
     left: set[int] = set()
     left_by_org: dict[str, int] = {}
-    for org, positions in customer.by_org(str(r.get("org") or "") for r in chunk).items():
+    groups = await customer.by_org(str(r.get("org") or "") for r in chunk)
+    for org, positions in groups.items():
         try:
             with customer.for_org(org):
                 if vecs is not None:

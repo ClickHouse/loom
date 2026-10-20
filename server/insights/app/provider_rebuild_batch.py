@@ -158,7 +158,7 @@ async def rebuild_batch(
         raise RebuildBatchError("embedding_target_invalid")
     texts, slots = _inputs(table, rows, source_texts or {})
     # One call carries one org's texts: a model call names a single customer.
-    by_org = customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
+    by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]
     left: set[int] = set()
     for org, positions in by_org.items():
