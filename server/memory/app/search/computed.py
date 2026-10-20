@@ -43,10 +43,10 @@ def _read_identity(input: Any) -> dict[str, Any]:
 
 async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
     """Derived-answer aggregate leg. Gated on the derived-answer query
-    shapes; fail-open to None. An LLM-free read (the fast posture,
-    context.pack) makes no LLM call here: it takes only the parser's intent,
-    and matches the predicate without LLM synonyms (its deterministic
-    predicate class still applies)."""
+    shapes; fail-open to None. An LLM-free read (`_is_llm_free`) makes no
+    LLM call here: it takes only the parser's intent, and matches the
+    predicate without LLM synonyms (its deterministic predicate class still
+    applies)."""
     input = ctx.input
     cache = ctx.derived_aggregate_cache
     if "v" in cache:

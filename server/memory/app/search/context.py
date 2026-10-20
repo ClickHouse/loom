@@ -36,7 +36,8 @@ class SearchContext:
     input: MemorySearchInput
     search_budget: SearchBudget
     embedder: Embedder
-    # No LLM call on this read: the fast posture, or an LLM-free caller (context.pack).
+    # No LLM call on this read (`_is_llm_free`): the fast posture, context.pack, or
+    # LOOM_READS_LLM_FREE.
     llm_free: bool
 
     # --- enrichment / intent signals (settled before any leg runs) ---
