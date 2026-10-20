@@ -371,7 +371,6 @@ async def write_set_chunks(
     limit: int | None = None,
     ch: Any = None,
     embedder: Any = None,
-    sensitivity: str = "",
 ) -> int:
     """Write the verbatim chunks of a long memory.set value; the number of
     chunk rows written (0 when the value is short, the type is not
@@ -417,13 +416,10 @@ async def write_set_chunks(
 
         embedder = get_embedder()
 
-    # A chunk that reads as a credential is written without a vector, unless its row resolved
-    # to `low`: that row is embedded and served whatever it reads as, so its chunks are too
-    # (as `loom reembed` re-embeds memory rows by their label).
+    # A chunk that reads as a credential is written without a vector, whatever its row's label:
+    # the chunk read path and the provider rebuild decide by the text too.
     embedded = await embed_plain(
-        [c for c, _, _ in chunks],
-        lambda texts: _embed_chunks(embedder, texts),
-        hold=sensitivity != "low",
+        [c for c, _, _ in chunks], lambda texts: _embed_chunks(embedder, texts)
     )
     session_id = set_chunk_session_id(input.memory_key)
     run_id = str(getattr(input, "run_id", "") or "-")
@@ -534,7 +530,6 @@ async def write_set_chunks_fail_open(
     limit: int | None = None,
     ch: Any = None,
     embedder: Any = None,
-    sensitivity: str = "",
 ) -> int:
     """`write_set_chunks` for the memory.set write path: the fact row is
     already in, so a chunk failure is logged and the write answers with
@@ -546,7 +541,6 @@ async def write_set_chunks_fail_open(
             limit=limit,
             ch=ch,
             embedder=embedder,
-            sensitivity=sensitivity,
         )
     except Exception as e:  # noqa: BLE001 — the fact row is written
         log.warning(

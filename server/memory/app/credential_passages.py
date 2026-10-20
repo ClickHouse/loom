@@ -25,12 +25,9 @@ class Embedded(NamedTuple):
 async def embed_plain(
     texts: list[str],
     embed: Callable[[list[str]], Awaitable[list[list[float]]]],
-    *,
-    hold: bool = True,
 ) -> list[Embedded]:
-    """One entry per text; a text that reads as a credential never reaches `embed`.
-    `hold=False` embeds every text: its row is served anyway, by a label its caller set."""
-    held = [hold and reads_high(text) for text in texts]
+    """One entry per text; a text that reads as a credential never reaches `embed`."""
+    held = [reads_high(text) for text in texts]
     plain = [text for text, h in zip(texts, held, strict=True) if not h]
     produced = await embed(plain) if plain else []
     if len(produced) != len(plain):

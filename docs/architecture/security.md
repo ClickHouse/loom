@@ -715,9 +715,8 @@ conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.
 value, a chunk `memory.import_evidence` writes) whose text reads as a credential is stored
 as written with no vector, and its text is never sent to the embedder; every chunk read
 that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns
-it. The chunks of a long `memory.set` value whose row resolves to `low` are all embedded:
-that row is embedded and served whatever it reads as, as `loom reembed` re-embeds a memory
-row by its label. A session digest whose text reads as a credential is likewise written without a
+it. This holds for a chunk of a long `memory.set` value whatever its row's label; a `low`
+row stays findable through its own embedding. A session digest whose text reads as a credential is likewise written without a
 vector, and so is a `conversation.append` turn: the message is stored as written in
 `loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing
 embedding row keeps the turn out of vector search. `conversation.save_message` answers
