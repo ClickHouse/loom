@@ -15,6 +15,10 @@ from server.knowledge.api.models_conversations import (
     ConversationGetOutput,
     ConversationListInput,
     ConversationListOutput,
+    ConversationListSavedMessagesInput,
+    ConversationListSavedMessagesOutput,
+    ConversationSavedStatusInput,
+    ConversationSavedStatusOutput,
     ConversationSaveMessageInput,
     ConversationSaveMessageOutput,
     ConversationSearchInput,
@@ -25,6 +29,8 @@ from server.knowledge.api.models_conversations import (
     ConversationSetLoggingOutput,
     ConversationThreadsInput,
     ConversationThreadsOutput,
+    ConversationUnsaveMessageInput,
+    ConversationUnsaveMessageOutput,
     ConversationUpdateInput,
     ConversationUpdateOutput,
 )
@@ -35,11 +41,14 @@ from server.knowledge.app.conversations import (
     handle_conversation_delete,
     handle_conversation_get,
     handle_conversation_list,
+    handle_conversation_list_saved_messages,
     handle_conversation_save_message,
+    handle_conversation_saved_status,
     handle_conversation_search,
     handle_conversation_search_saved_messages,
     handle_conversation_set_logging,
     handle_conversation_threads,
+    handle_conversation_unsave_message,
     handle_conversation_update,
 )
 from server.operations.base import Operation, Role
@@ -71,6 +80,17 @@ conversation_save_message = Operation(
     input_model=ConversationSaveMessageInput,
     output_model=ConversationSaveMessageOutput,
     handler=handle_conversation_save_message,
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=False,
+)
+
+conversation_unsave_message = Operation(
+    name="conversation.unsave_message",
+    maturity="experimental",
+    input_model=ConversationUnsaveMessageInput,
+    output_model=ConversationUnsaveMessageOutput,
+    handler=handle_conversation_unsave_message,
     idempotent=True,
     required_role=Role.WRITER,
     audit=False,
@@ -153,6 +173,28 @@ conversation_search_saved_messages = Operation(
     audit=False,
 )
 
+conversation_list_saved_messages = Operation(
+    name="conversation.list_saved_messages",
+    maturity="experimental",
+    input_model=ConversationListSavedMessagesInput,
+    output_model=ConversationListSavedMessagesOutput,
+    handler=handle_conversation_list_saved_messages,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+conversation_saved_status = Operation(
+    name="conversation.saved_status",
+    maturity="experimental",
+    input_model=ConversationSavedStatusInput,
+    output_model=ConversationSavedStatusOutput,
+    handler=handle_conversation_saved_status,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
 conversation_threads = Operation(
     name="conversation.threads",
     input_model=ConversationThreadsInput,
@@ -180,6 +222,7 @@ OPERATIONS: list[Operation] = [
     conversation_create,
     conversation_append,
     conversation_save_message,
+    conversation_unsave_message,
     conversation_set_logging,
     conversation_get,
     conversation_update,
@@ -187,6 +230,8 @@ OPERATIONS: list[Operation] = [
     conversation_list,
     conversation_search,
     conversation_search_saved_messages,
+    conversation_list_saved_messages,
+    conversation_saved_status,
     conversation_threads,
     conversation_compact,
 ]
