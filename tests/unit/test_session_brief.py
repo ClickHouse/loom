@@ -16,6 +16,7 @@ from server.memory.api.models_session_brief import (
     SessionBriefGetInput,
     SessionBriefListInput,
     SessionBriefSaveInput,
+    SessionBriefSaveOutput,
 )
 from server.memory.api.ops_session_brief import OPERATIONS
 from server.memory.app import session_brief as h
@@ -404,7 +405,7 @@ class _LLM:
     provider = "openai"
     model = "gpt-test"
 
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list[str | Exception]) -> None:
         self.replies = list(replies)
         self.calls: list[tuple[str, str]] = []
 
@@ -413,6 +414,8 @@ class _LLM:
 
         self.calls.append((system, user))
         text = self.replies.pop(0) if self.replies else "{}"
+        if isinstance(text, Exception):
+            raise text
         if text == "RAISE":
             raise RuntimeError("provider down")
         return LLMResult(
@@ -442,7 +445,7 @@ def mem(monkeypatch) -> _MemCH:
     return ch
 
 
-def _llm(monkeypatch, replies: list[str]) -> _LLM:
+def _llm(monkeypatch, replies: list[str | Exception]) -> _LLM:
     llm = _LLM(replies)
     import server.llm.client as client_mod
 
@@ -1049,10 +1052,10 @@ _CARD = "My card number is 4111 1111 1111 1111."
 
 def _policy(text: str) -> None:
     """This process's copy of the extraction policies: `text` for IDENT's org."""
-    policies_read_now({(IDENT["org"], ""): text} if text else {})
+    policies_read_now({(IDENT["org"], ""): text})
 
 
-def _saved_once(monkeypatch) -> Any:
+def _saved_once(monkeypatch) -> SessionBriefSaveOutput:
     """A brief saved before any policy, by the model."""
     _llm(monkeypatch, [json.dumps({"goal": "Ship the login fix", "status": "in review"})])
     out = _save(
@@ -1102,6 +1105,35 @@ def test_under_a_policy_a_save_with_no_model_writes_nothing(mem, monkeypatch) ->
     assert len(mem.rows) == rows
 
 
+def test_under_a_policy_a_save_for_a_switched_off_org_writes_nothing(mem, monkeypatch) -> None:
+    """The org's model calls are off: there is no model to call, as with none
+    configured, so nothing is written and the save is not refused."""
+    from server.llm import customer
+
+    first = _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    _llm(monkeypatch, [customer.ModelCallsDisabled("model calls are off for this org")])
+    out = _save(brief_key="k", events=[E(kind="user", text=_CARD)], event_cursor="c2")
+    assert (out.changed, out.reason, out.revision) == (False, "not-revised", first.revision)
+    assert len(mem.rows) == rows
+
+
+def test_under_a_policy_a_save_held_by_an_unread_switch_is_refused(mem, monkeypatch) -> None:
+    """An unread switch may yet allow the call, so the save is refused (503)
+    for the client to send again, and nothing is written."""
+    from server.core.errors import BackendUnavailableError
+    from server.llm import customer
+
+    _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    _llm(monkeypatch, [customer.SwitchUnread("the model-call switch could not be read")])
+    with pytest.raises(BackendUnavailableError):
+        _save(brief_key="k", events=[E(kind="user", text=_CARD)], event_cursor="c2")
+    assert len(mem.rows) == rows
+
+
 def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, monkeypatch) -> None:
     _saved_once(monkeypatch)
     _policy("Never store payment card data.")
@@ -1128,9 +1160,12 @@ def test_an_unreadable_policy_refuses_the_save(mem, monkeypatch) -> None:
     assert mem.rows == []
 
 
-def test_under_a_policy_a_window_the_model_cannot_revise_keeps_its_place(mem, monkeypatch) -> None:
-    """Two windows: the first call fails, the second revises. The save is
-    written by the model, and the failed window copies none of its raw events."""
+def test_under_a_policy_a_failed_window_is_skipped_and_the_next_one_revises(
+    mem, monkeypatch
+) -> None:
+    """Two windows: the first call fails, the second revises. The save stores
+    the second window's revision, and the failed window copies none of its raw
+    events."""
     _saved_once(monkeypatch)
     _policy("Never store payment card data.")
     monkeypatch.setattr(h.settings, "session_brief_window_chars", 200)
@@ -1143,6 +1178,7 @@ def test_under_a_policy_a_window_the_model_cannot_revise_keeps_its_place(mem, mo
     assert out.changed is True
     assert out.stats.windows == 2
     stored = mem._newest()["k"]
+    assert json.loads(stored["sections"])["status"] == "merged"
     assert "4111" not in json.dumps(stored, default=str)
     assert "4111" not in out.rendered
 

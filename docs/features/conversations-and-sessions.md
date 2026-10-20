@@ -249,8 +249,10 @@ LLM the deterministic builder writes goal, status, files, errors and pointers (n
 decisions or dead ends). `author` in the response says `llm`, `deterministic` or
 `model` (the calling agent wrote the sections). Under an operator's
 [extraction policy](memory/extraction.md#operator-extraction-policy) the builder never
-runs: with no model to call a save answers `changed: false`, `reason: "not-revised"`,
-and one whose every model call failed is refused with 503 for the client to send again.
+runs: with no model to call (none configured, or the org's model calls switched off) a
+save answers `changed: false`, `reason: "not-revised"`, and one whose every model call
+failed, was held by an unread switch or did not parse is refused with 503 for the client
+to send again.
 State sections are replaced on each revision; decisions, dead ends and done items
 accumulate. Every revision is kept in `loom.session_brief_revisions`; `revision=N` on
 `brief_get` reads one. A save that repeats the previous save's session and

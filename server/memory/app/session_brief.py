@@ -20,6 +20,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.errors import BackendUnavailableError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.llm import customer
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefDeleteOutput,
@@ -90,8 +91,7 @@ class _Revision:
 
 def _use_llm(inp: Any) -> tuple[bool, Any]:
     """(use the model, client). The fake provider never runs: its echo is
-    not a brief, and the deterministic builder is the honest fallback, except under an
-    operator's extraction policy, where it never runs."""
+    not a brief, and the deterministic builder is the honest fallback."""
     wanted = inp.use_llm if inp.use_llm is not None else bool(settings.session_brief_llm)
     if not wanted:
         return False, None
@@ -148,12 +148,17 @@ async def _revise_window(
             max_tokens=_REVISION_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
+    except customer.ModelCallsDisabled as e:
+        if operator_policy:
+            raise  # no model to call: `_revise_from_events` writes nothing
+        log.warning("session.brief_save: model calls are off (%s); window not revised", e)
+        return fallback(), 0, 0, 0, False
     except Exception as e:  # noqa: BLE001 — a failed call leaves one window unrevised
         log.warning("session.brief_save: model call failed (%s); window not revised", e)
         return fallback(), 0, 0, 0, False
     try:
         parsed = sb.parse_revision(result.text)
-    except Exception as e:  # noqa: BLE001 — a failed call leaves one window unrevised
+    except Exception as e:  # noqa: BLE001 — a rejected reply leaves one window unrevised
         log.warning("session.brief_save: model reply rejected (%s); window not revised", e)
         parsed = None
     if parsed is None:
@@ -180,17 +185,18 @@ async def _revise_from_events(
 ) -> _Revision | None:
     """The brief revised with `inp.events`. Under an operator's `policy` the
     deterministic builder, which copies the raw events, never runs: with no
-    model to call (no real model, `use_llm` false) the answer is None and
-    nothing is written; when every window's call failed, was held or did not
-    parse, the save is refused (503) so the client sends the events again."""
+    model to call (no real model, `use_llm` false, or the org's model calls
+    switched off) the answer is None and nothing is written; when every window's
+    call failed, was held by an unread switch or did not parse, the save is
+    refused (503) so the client sends the events again."""
     budget = int(settings.session_brief_window_chars)
     windows = sb.split_windows(
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
     )
     use, client = _use_llm(inp)
-    if not use and policy:
-        return None
     if not use:
+        if policy:
+            return None
         cur = prev
         for w in windows:
             cur = sb.merge_sections(cur, sb.deterministic_revision(w))
@@ -208,16 +214,19 @@ async def _revise_from_events(
     any_model = False
     ctx = _context_line(inp)
     for i, w in enumerate(windows, 1):
-        cur, dropped, t_in, t_out, used = await _revise_window(
-            client,
-            cur,
-            w,
-            index=i,
-            total=len(windows),
-            budget=budget,
-            context_line=ctx,
-            operator_policy=policy,
-        )
+        try:
+            cur, dropped, t_in, t_out, used = await _revise_window(
+                client,
+                cur,
+                w,
+                index=i,
+                total=len(windows),
+                budget=budget,
+                context_line=ctx,
+                operator_policy=policy,
+            )
+        except customer.ModelCallsDisabled:  # raised only under a policy
+            return None
         rev.dropped += dropped
         rev.tokens_in += t_in
         rev.tokens_out += t_out
