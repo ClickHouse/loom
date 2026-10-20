@@ -30,7 +30,7 @@ from server.settings._memory_search import MemorySearchSettings
 from server.settings._models import ModelSettings
 from server.settings._namespaces import NamespaceSettings
 from server.settings._observability import ObservabilitySettings
-from server.settings._providers import ProviderSettings, is_builtin_cohere
+from server.settings._providers import BUILTIN_COHERE, ProviderSettings, is_builtin_cohere
 from server.settings._ratelimit import RateLimitSettings
 from server.settings._runtime import RuntimeSettings
 from server.settings._storage import StorageSettings
@@ -146,4 +146,11 @@ def log_unknown_env_keys() -> None:
         )
 
 
-__all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]
+__all__ = [
+    "BUILTIN_COHERE",
+    "DEV_JWT_SECRET",
+    "Settings",
+    "is_builtin_cohere",
+    "log_unknown_env_keys",
+    "settings",
+]

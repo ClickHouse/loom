@@ -49,11 +49,11 @@ import httpx
 
 from server.clients._http import refuse_off_gateway
 from server.llm.json_text import strip_code_fence
+from server.memory.app.log_once import LogOnce
 from server.memory.domain.rerank_names import BUILTIN_OPENAI, is_rerank_choice
 from server.observability import degradations as _degradations
 from server.observability.genai import llm_stage
-from server.settings import settings
-from server.settings._providers import BUILTIN_COHERE, is_builtin_cohere
+from server.settings import BUILTIN_COHERE, is_builtin_cohere, settings
 
 log = logging.getLogger(__name__)
 
@@ -98,18 +98,16 @@ class RerankCandidate:
 
 # Names already logged as not configured, so a namespace holding one logs once per
 # process, not once per search.
-_UNCONFIGURED_LOGGED: set[str] = set()
-_LOGGED_CAP = 1000  # log-once sets stop growing here
+_UNCONFIGURED_LOGGED = LogOnce()
 # Namespaces whose stored builtin:cohere was unset, logged once per process.
-_COHERE_UNSET_LOGGED: set[tuple[str, str]] = set()
+_COHERE_UNSET_LOGGED = LogOnce()
 
 
 def _note_unconfigured(endpoint: str) -> None:
     """Log once that `endpoint` is not a configured name; nothing is posted to it."""
     shown = f"a URL on host {_host_of(endpoint)!r}" if "://" in endpoint else repr(endpoint[:64])
-    if shown in _UNCONFIGURED_LOGGED or len(_UNCONFIGURED_LOGGED) >= _LOGGED_CAP:
+    if not _UNCONFIGURED_LOGGED.first(shown):
         return
-    _UNCONFIGURED_LOGGED.add(shown)
     log.warning(
         "rerank endpoint %s is not a name in LOOM_RERANK_ENDPOINTS_JSON; not reranking", shown
     )
@@ -419,10 +417,7 @@ async def get_namespace_rerank_config(
     if settings.gateway_required() and is_builtin_cohere(endpoint):
         # Stored before the gateway was required: Cohere's own API would be
         # refused at each search, unseen behind the fail-open, so it is unset.
-        # Past the cap the namespace still gets no reranker; it is just not logged.
-        full = len(_COHERE_UNSET_LOGGED) >= _LOGGED_CAP
-        if (org, namespace) not in _COHERE_UNSET_LOGGED and not full:
-            _COHERE_UNSET_LOGGED.add((org, namespace))
+        if _COHERE_UNSET_LOGGED.first((org, namespace)):
             log.warning(
                 "%s/%s reranks with builtin:cohere, refused while %s is set: not reranked",
                 org,

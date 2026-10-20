@@ -29,6 +29,9 @@ _applied_version = ""
 _environment_settings: dict[str, Any] | None = None
 # Why the stored configuration was not applied ('' when it was): /v1/health says so.
 _refused = ""
+# The configuration whose refusal holds admission, if one does: what replaces it
+# (a queued save or reset) takes the hold over.
+_refused_hold: str | None = None
 
 log = logging.getLogger(__name__)
 _maintenance_config_id: str | None = None
@@ -110,15 +113,9 @@ def apply_configuration(setup: ProviderSetupInput) -> None:
 
     Call at startup, or only after admission and workers have drained for a model
     transition. Embedding changes must not be applied to a live old-model index.
-    A configuration the gateway check refuses is not applied: the settings in
-    force stay, and /v1/health names it.
+    Its callers have run the gateway check (`_refuse`, `_save_locked`).
     """
-    global _refused
     environment_settings()
-    _refused = gateway_refusal(setup.embedding)
-    if _refused:
-        log.error("saved model configuration not applied: %s", _refused)
-        return
     values = llm_setup_settings(
         setup.llm.provider,
         setup.llm.model,
@@ -160,8 +157,13 @@ def _active_setup(active: dict[str, Any]) -> ProviderSetupInput | None:
 
 
 def _hold_admission(config_id: str) -> None:
-    global _maintenance_config_id
-    get_model_work_gate().close(config_id)
+    global _maintenance_config_id, _refused_hold
+    gate = get_model_work_gate()
+    if _refused_hold is not None and _refused_hold != config_id:
+        gate.transfer(_refused_hold, config_id)  # the replacement takes the refusal's hold
+    else:
+        gate.close(config_id)
+    _refused_hold = None
     _maintenance_config_id = config_id
 
 
@@ -282,13 +284,14 @@ def _refuse(setup: ProviderSetupInput, changed: bool, config_id: str) -> bool:
     included. With its embedding the one in force, the settings in force
     serve on; with another, the index may be built for that other space, so
     model work stays held until a configuration the check accepts replaces it."""
-    global _refused
+    global _refused, _refused_hold
     refusal = gateway_refusal(setup.embedding)
     if refusal and refusal != _refused:
         log.error("saved model configuration not applied: %s", refusal)
     _refused = refusal
     if refusal and changed and _maintenance_config_id is None:
         _hold_admission(config_id)
+        _refused_hold = config_id
     return bool(refusal)
 
 

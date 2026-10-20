@@ -165,6 +165,7 @@ class NamespaceRegisterInput(BaseModel):
     # Optional reranker for memory.search: "builtin:openai[:<model>]",
     # "builtin:cohere[:<model>]" or the name of an endpoint in
     # LOOM_RERANK_ENDPOINTS_JSON (a URL is refused); empty ⇒ cosine + entity_boost.
+    # builtin:cohere is refused while the gateway is required.
     # The prompt template is passed through opaquely, not interpreted.
     rerank_endpoint: RerankName | None = None
     # Text forwarded as `prompt_template` in every call to `rerank_endpoint`.

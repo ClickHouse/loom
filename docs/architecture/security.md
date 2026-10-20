@@ -91,8 +91,9 @@ one that fails is not applied, its serving vector settings included
 (`provider_runtime.load_active_configuration`), and `/v1/health` reports
 `model_configuration_refused`. When its embedding differs from the one in force the vector
 tables may hold that other space, so model work stays held (fails closed) until a
-configuration the check accepts, or a reset to the environment, replaces it. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and
-neither SDK retries it.
+configuration the check accepts, or a reset to the environment, replaces it, and the
+transition that replaces it takes the hold over. A refusal (`GATEWAY_REQUIRED`) is a
+setting to fix, and neither SDK retries it.
 
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
 writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse

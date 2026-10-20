@@ -25,6 +25,8 @@ def clean_runtime(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(runtime, "_applied_version", "")
     monkeypatch.setattr(runtime, "_environment_settings", None)
     monkeypatch.setattr(runtime, "_maintenance_config_id", None)
+    monkeypatch.setattr(runtime, "_refused", "")
+    monkeypatch.setattr(runtime, "_refused_hold", None)
     gate = ModelWorkGate()
     monkeypatch.setattr(runtime, "get_model_work_gate", lambda: gate)
     monkeypatch.setattr(runtime, "_refresh_calibration", AsyncMock())

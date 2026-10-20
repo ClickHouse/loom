@@ -14,6 +14,7 @@ import pytest
 from server.clients import _http
 from server.core.errors import GatewayRequiredError
 from server.llm import gateway
+from server.memory.app.log_once import LogOnce
 from server.settings import Settings, settings
 
 _GW = "https://gateway.example/v1/chat/completions"
@@ -663,15 +664,16 @@ def test_a_stored_classify_endpoint_off_the_gateways_hosts_is_never_called(
     assert classify.classify_refusal("https://gateway.example:8443/c")  # stored, another port
 
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", set())
+    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", LogOnce())
     for _ in range(2):
         assert asyncio.run(classify.get_namespace_classify_config("acme", "ns")) == ("", "")
     warned = [r for r in caplog.records if "classify_endpoint is refused" in r.getMessage()]
     assert len(warned) == 1 and "10.0.0.5" in warned[0].getMessage()
-    full = {("acme", f"ns-{i}") for i in range(1000)}
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", set(full))
+    full = LogOnce()
+    full.keys = {("acme", f"ns-{i}") for i in range(1000)}
+    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", full)
     assert asyncio.run(classify.get_namespace_classify_config("acme", "new")) == ("", "")
-    assert classify._OFF_GATEWAY_LOGGED == full  # capped: still refused, not logged
+    assert ("acme", "new") not in full.keys  # capped: still refused, not logged
     monkeypatch.setattr(settings, "inference_gateway_required", False)
     config = asyncio.run(classify.get_namespace_classify_config("acme", "ns"))
     assert config == ("https://10.0.0.5/c", "p")
@@ -694,54 +696,6 @@ def _setup(provider: str = "compatible", base_url: str = "") -> Any:
             "embedding": {"provider": provider, "model": model, "base_url": base_url},
         }
     )
-
-
-@pytest.mark.parametrize(
-    "setup_args",
-    [
-        ("compatible", "https://myres.openai.azure.com/openai"),
-        ("compatible", "https://10.0.0.5/v1"),
-        ("gemini", ""),
-    ],
-)
-def test_a_dashboard_configuration_off_the_gateway_is_not_applied(
-    required: None, roots: None, monkeypatch: pytest.MonkeyPatch, setup_args: tuple[str, str]
-) -> None:
-    from server.insights.app import provider_runtime
-    from server.observability.problems import HealthState, collect_problems
-
-    monkeypatch.setattr(provider_runtime, "_refused", "")
-    before = settings.model_dump(include={"embedding_provider", "embedding_base_url", "llm_model"})
-    provider_runtime.apply_configuration(_setup(*setup_args))
-    after = settings.model_dump(include={"embedding_provider", "embedding_base_url", "llm_model"})
-    assert after == before  # the settings in force stay
-    refused = provider_runtime.refused_configuration()
-    assert refused and ("Gemini" in refused or "LOOM_EMBEDDING_BASE_URL" in refused)
-    state = HealthState(env={}, refused_configuration=refused)
-    assert "model_configuration_refused" in {p.code for p in collect_problems(settings, state)}
-
-
-def test_a_dashboard_configuration_at_the_gateway_applies(
-    required: None,
-    roots: None,
-    monkeypatch: pytest.MonkeyPatch,
-    settings_override: Any,
-) -> None:
-    from server.insights.app import provider_runtime
-
-    applied: list[str] = []
-    monkeypatch.setattr(provider_runtime, "_refused", "stale")
-    monkeypatch.setattr(
-        provider_runtime, "install_provider_keys", lambda keys: applied.append("keys")
-    )
-    settings_override(**settings.model_dump())  # every field it sets is restored after
-    source = settings._llm_provider_source  # a private attribute, put back by hand
-    try:
-        provider_runtime.apply_configuration(_setup("compatible", "https://gateway.example/v1"))
-    finally:
-        settings._llm_provider_source = source
-    assert settings.embedding_base_url == "https://gateway.example/v1" and applied == ["keys"]
-    assert provider_runtime.refused_configuration() == ""
 
 
 def test_a_dashboard_save_off_the_gateway_answers_422(required: None, roots: None) -> None:
@@ -783,7 +737,7 @@ def test_a_namespace_that_stored_builtin_cohere_reranks_with_nothing(
             return {"rerank_endpoint": "builtin:cohere", "rerank_prompt_template": "p"}
 
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
-    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", set())
+    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", LogOnce())
     for _ in range(2):
         assert asyncio.run(rerank.get_namespace_rerank_config("acme", "ns")) == ("", "")
     warned = [r for r in caplog.records if "builtin:cohere" in r.getMessage()]
@@ -803,11 +757,12 @@ def test_past_its_log_cap_a_stored_builtin_cohere_still_gets_no_reranker(
         async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
             return {"rerank_endpoint": "builtin:cohere", "rerank_prompt_template": ""}
 
-    full = {("acme", f"ns-{i}") for i in range(1000)}
+    full = LogOnce()
+    full.keys = {("acme", f"ns-{i}") for i in range(1000)}
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
-    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", set(full))
+    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", full)
     assert asyncio.run(rerank.get_namespace_rerank_config("acme", "new")) == ("", "")
-    assert rerank._COHERE_UNSET_LOGGED == full
+    assert ("acme", "new") not in full.keys
     assert not [r for r in caplog.records if "builtin:cohere" in r.getMessage()]
 
 

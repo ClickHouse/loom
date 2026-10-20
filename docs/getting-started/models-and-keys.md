@@ -228,9 +228,9 @@ matches only if it is listed.
   retried, and `/v1/health` reports the provider as failing.
 - **Namespaces**: `namespace.register` refuses a `classify_endpoint` that is not
   https at the default port of a listed host (422), and one stored before is
-  never called: memory.set keeps the caller's type, with a warning in the log. `builtin:cohere` is refused as a
-  rerank choice (422), and a namespace that stored it reranks with nothing,
-  with a warning in the log.
+  never called: memory.set keeps the caller's type, with a warning in the log.
+  `builtin:cohere` is refused as a rerank choice (422), and a namespace that
+  stored it reranks with nothing, with a warning in the log.
 - **Dashboard**: saving a model configuration with an endpoint at another host
   (or the Gemini embedder) answers 422, and the model check answers
   `gateway_required`. A stored one that the check refuses is not applied, its

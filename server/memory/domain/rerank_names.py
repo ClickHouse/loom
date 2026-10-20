@@ -12,8 +12,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator
 
-from server.settings import settings
-from server.settings._providers import is_builtin_cohere
+from server.settings import is_builtin_cohere, settings
 
 BUILTIN_OPENAI = "builtin:openai"
 

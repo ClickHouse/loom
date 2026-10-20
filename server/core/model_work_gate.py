@@ -63,6 +63,13 @@ class ModelWorkGate:
         self._token = None
         self._open.set()
 
+    def transfer(self, old: str, new: str) -> None:
+        """Hand admission, closed by `old`, to the transition `new` without opening it."""
+        self._require_owner(old)
+        if not new:
+            raise ValueError("Model transition token does not own admission")
+        self._token = new
+
     def _require_owner(self, token: str) -> None:
         if not token or self._token != token:
             raise ValueError("Model transition token does not own admission")
