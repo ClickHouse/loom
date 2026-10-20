@@ -11,7 +11,7 @@ loom export-analytics --bucket analytics-landing --prefix loom \
 ```
 
 It needs `LOOM_ANALYTICS_EXPORT_NAME_KEY`, the secret that names are hashed under (see
-[names](#names)).
+[hashed names](#hashed-names)).
 
 `--day YYYY-MM-DD` exports another day; the default is yesterday (UTC). A day that has not
 ended is refused.
@@ -26,10 +26,10 @@ Each upload carries `If-None-Match: *`, so an object is never replaced. A second
 day keeps the first run's files and prints `already there, kept` for each; a failed or
 repeated run can be retried as it is. To export a day again, delete its objects first.
 
-| Entity       | One row per                                                                                                         | Columns                                                                                                                                                                                                                                        |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `usage`      | `org`, `namespace`, `agent`, `operation`, `kind`, `transport`, `traffic_class` of the day, from `loom.agent_events` | `day`, `ops`, `errors`, `server_errors`, `slow` (over its latency budget), `input_tokens`, `output_tokens`, `embedding_tokens`, `llm_calls`, `cost_usd`, `bytes_written`, `latency_p50_ms` / `p95` / `p99`, `users`, `sessions`, `snapshot_at` |
-| `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_on`, `live_memories`, `last_memory_on`, `day`, `snapshot_at`                                                                                                                            |
+| Entity       | One row per                                                                                                         | Columns                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `usage`      | `org`, `namespace`, `agent`, `operation`, `kind`, `transport`, `traffic_class` of the day, from `loom.agent_events` | `day`, `ops`, `errors`, `server_errors`, `slow` (over its latency budget), `input_tokens`, `output_tokens`, `embedding_tokens`, `llm_calls`, `cost_usd`, `bytes_written`, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `users`, `sessions`, `snapshot_at` |
+| `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_on`, `live_memories`, `last_memory_on`, `day`, `snapshot_at`                                                                                                                                                |
 
 `kind` in `usage` is `request` for a request and `worker` for a worker pass. Every
 `/v1/me/*` route is one `operation`, `me`: the ledger names those rows after the request
@@ -51,21 +51,24 @@ content and no stored person identifier: no memory keys or values, no `args`, no
 `session_id`, `subject`, `owner_email` or request id. Users and sessions go out as counts
 only.
 
-### Names
+## Hashed names
 
 Org, namespace and agent names can name a person: a personal namespace is named after its
 owner's email, self-signup builds an agent's namespace and name from the OS username and
 host, and an MCP client names its agent. So `org`, `namespace` and `agent` always leave as
 the lowercase hex of the reference SipHash-2-4-128 of the name under a secret key.
 
+Each name is hashed on its own, so one string has one hash wherever it appears: a
+namespace name hashes the same in every org, and an org, a namespace and an agent with the
+same name share a hash. The warehouse can link those rows without the key, for example the
+same personal namespace in two orgs.
+
 - The key is a random string of 32 or more characters in `LOOM_ANALYTICS_EXPORT_NAME_KEY`;
   the export refuses to run with a shorter or empty one.
 - The 16-byte SipHash key is the first 16 bytes of SHA-256 of that string (UTF-8). The hash
   is ClickHouse's `sipHash128ReferenceKeyed`, which any SipHash-2-4-128 library reproduces
   from those 16 bytes, so a system that holds the key hashes its own ids to join on them.
-  ClickHouse takes the key as two words, each 8-byte half read little-endian. Bind the key
-  as a query parameter (`key`), so it stays out of the query log; a literal is logged with
-  the query, and whoever reads that log can then recompute every hash:
+  ClickHouse takes the key as two words, each 8-byte half read little-endian:
 
   ```sql
   WITH SHA256({key:String}) AS d
@@ -80,8 +83,12 @@ the lowercase hex of the reference SipHash-2-4-128 of the name under a secret ke
   the bucket.
 - A hash is stable while the key is. A new key changes every hash, and a day already
   exported keeps its old files: delete them before exporting it again under the new key.
-- The key's two 64-bit words reach Loom's ClickHouse as query parameters. Whoever can read
-  Loom's ClickHouse already reads the names themselves.
+- A query that uses the key records it, whether the key is bound as a parameter or written
+  as a literal: ClickHouse substitutes bound values into the query text in
+  `system.query_log` and writes them to its debug and trace logs. On the warehouse,
+  restrict who reads those logs on the server that runs the join, or hash the ids outside
+  ClickHouse with any SipHash-2-4-128 library. On Loom's side the export's key words land
+  in the same logs of Loom's ClickHouse, whose readers can already read the names.
 
 ## Credentials
 

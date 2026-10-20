@@ -95,7 +95,7 @@ dev = [
 # lazy-imports them with an actionable error message when missing.
 ingest = [
   "pypdf>=4.0",
-  "boto3>=1.34",
+  "boto3>=1.35.17",   # the `aws` extra's floor: put_object's IfNoneMatch
   "trafilatura>=2.0",
 ]
 # `loom export-analytics` uploads to S3 under an assumed role; ships in the image.

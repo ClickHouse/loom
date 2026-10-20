@@ -745,8 +745,10 @@ identifier: users and sessions leave as distinct counts only, and
 `tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.
 Org, namespace and agent names always leave as a keyed reference SipHash-2-4-128, because a
 personal namespace carries its owner's email and self-signup a username. The hash is a
-pseudonym the key's holder can recompute, and erasure in Loom does not reach rows already
-exported. The key (32 characters or more) is in a Secret only the export's pod reads. The
+pseudonym the key's holder can recompute, one string has one hash in every org and column,
+and erasure in Loom does not reach rows already exported. The key (32 characters or more) is
+in a Secret only the export's pod reads; ClickHouse's query and debug logs record it as a
+bound parameter, on Loom's server and on any warehouse server that joins with it. The
 bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
 pods, and the upload never replaces an object.
 

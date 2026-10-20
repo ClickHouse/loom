@@ -95,6 +95,11 @@ ROW_ORDER = {
 }
 
 
+# The file's column types, pinned rather than read from the server's profile:
+# strings as Parquet STRING (a warehouse joins the hashes as strings), not BINARY.
+PARQUET_SETTINGS = "SETTINGS output_format_parquet_string_as_string = 1"
+
+
 def name_hash_sql(expr: str) -> str:
     """The lowercase hex of `expr`'s SipHash-2-4-128 under the key {k0:UInt64},
     {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces.
@@ -116,4 +121,4 @@ def _hashed(entity: str) -> str:
 async def parquet(entity: str, day: date, *, name_key: tuple[int, int], ch: CHClient) -> bytes:
     """`entity`'s rows for UTC day `day`, as one Parquet file, names hashed under `name_key`."""
     params = {"day": day, "k0": name_key[0], "k1": name_key[1]}
-    return await ch.raw_bytes(f"{_hashed(entity)} FORMAT Parquet", params)
+    return await ch.raw_bytes(f"{_hashed(entity)} {PARQUET_SETTINGS} FORMAT Parquet", params)
