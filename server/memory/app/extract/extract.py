@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from server.llm.cache import cache_key as _cache_key
+from server.llm.cache import scoped_key
 from server.llm.client import LLMResult, get_llm_client
 from server.memory.app.extract.client import (
     _client_cache_counts,
@@ -496,7 +496,7 @@ async def extract_from_messages(
     # JSON mode constrains the model to valid JSON; the try/except below
     # is a single belt-and-suspenders parse-retry on top of it.
     json_format = {"type": "json_object"}
-    prompt_key = _cache_key(system_prompt, user_prompt, max_tokens, json_format)
+    prompt_key = scoped_key(system_prompt, user_prompt, max_tokens, json_format, org=org)
     parse_discards: list[str] = []
 
     def _parse(text: str) -> list[ExtractedFact]:

@@ -11,6 +11,7 @@ the worker's reconcile only embeds a section with none.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -81,6 +82,16 @@ def _gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "mcp_loom_search_profile_min_similarity", 0.38)
     monkeypatch.setattr(settings, "mcp_loom_search_profile_soft_similarity", 0.30)
     monkeypatch.setattr(settings, "mcp_loom_search_profile_margin", 0.08)
+
+
+@pytest.fixture(autouse=True)
+def _one_orgs_request() -> Iterator[None]:
+    """The caches are scoped by the request's org; outside one they are skipped."""
+    from server.observability import genai
+
+    genai.set_identity(org="acme", namespace="ns", operation="memory.search")
+    yield
+    genai._identity.set(None)
 
 
 def _run(

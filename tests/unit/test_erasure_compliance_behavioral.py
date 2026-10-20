@@ -14,8 +14,8 @@ def test_embedding_cache_key_matches_the_servers_shared_cache_key() -> None:
     from server.embedding._cache import _key
 
     for text in ("a  b", "The launch code is zq1.", " leading and trailing "):
-        assert b.embedding_cache_key("text-embedding-3-large", text) == _key(
-            "text-embedding-3-large", text
+        assert b.embedding_cache_key("text-embedding-3-large", text, "acme") == _key(
+            "text-embedding-3-large", text, "acme"
         )
 
 

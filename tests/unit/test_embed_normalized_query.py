@@ -7,6 +7,7 @@ it."""
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator
 
 import pytest
 
@@ -14,6 +15,17 @@ import server.embedding._cache as ec
 from server.embedding.fake import FakeNGramEmbedder
 from server.embedding.normalize import normalize_whitespace, query_text
 from server.settings import settings
+
+
+@pytest.fixture(autouse=True)
+def _one_orgs_request() -> Iterator[None]:
+    """The caches are scoped by the request's org; outside one they are skipped."""
+    from server.observability import genai
+
+    genai.set_identity(org="acme", namespace="ns", operation="memory.search")
+    yield
+    genai._identity.set(None)
+
 
 RAW = "src Storages  MergeTree\n\nClaimed changelog\tcategory:  Bug Fix "
 NORM = "src Storages MergeTree Claimed changelog category: Bug Fix"
@@ -48,15 +60,17 @@ async def test_cached_embed_sends_the_normalised_text(monkeypatch) -> None:
 
 
 def test_key_is_salted_and_shared_across_spellings() -> None:
-    # Byte-identical to the keys loom.embedding_cache already holds: changing
-    # the layout orphans every shared-tier row.
+    # The layout loom.embedding_cache rows are keyed by: changing it orphans
+    # every shared-tier row.
     h = hashlib.sha1()
-    h.update(b"m\0ws1\0")
+    h.update(b"org\0acme\0m\0ws1\0")
     h.update(NORM.encode())
-    assert ec._key("m", RAW) == h.hexdigest()
-    unsalted = hashlib.sha1(b"m\0" + NORM.encode()).hexdigest()
-    assert ec._key("m", RAW) != unsalted
-    assert ec._key("m", RAW) == ec._key("m", NORM) == ec._key("m", "  " + NORM + "\n")
+    assert ec._key("m", RAW, "acme") == h.hexdigest()
+    unsalted = hashlib.sha1(b"org\0acme\0m\0" + NORM.encode()).hexdigest()
+    assert ec._key("m", RAW, "acme") != unsalted
+    assert ec._key("m", RAW, "acme") != ec._key("m", RAW, "beta")  # one org's own
+    spellings = (RAW, NORM, "  " + NORM + "\n")
+    assert len({ec._key("m", t, "acme") for t in spellings}) == 1
 
 
 @pytest.mark.asyncio

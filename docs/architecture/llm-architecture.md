@@ -60,9 +60,13 @@ The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and
   (`LOOM_EMBEDDING_CACHE_SIZE`, `LOOM_EMBEDDING_CACHE_TTL_S`), then an in-flight call for
   the same text, then `loom.embedding_cache` (texts up to
   `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS`, matching `dim` only), then the provider. The
-  key hashes the model and the normalised text. Batch entries use a separate key over the
-  raw text, so the paths never serve each other. A cache failure falls through to the
-  provider.
+  key hashes the request's org, the model and the normalised text, so one org is never
+  served another's vector, nor shares an in-flight call with it: a fast answer would tell
+  it that another org embedded the same text. A call outside a request (a worker, a CLI,
+  the startup probe) has no org to scope by and skips the cache: a worker's identity
+  carries the org of the row it last worked on, which is no scope for the next text.
+  Batch entries use a separate key over the raw text, so the paths never serve each
+  other. A cache failure falls through to the provider.
 - **Batches.** OpenAI and Gemini take up to 100 inputs per request; `memory.set` embeds
   value and key in one request.
 - **Second vector legs.** `prefix:<dim>:<model>` (a Matryoshka prefix,
@@ -239,10 +243,12 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
 ### Response cache
 
 `CachedLLMClient` (`server/llm/cache.py`) caches completions in `loom.llm_response_cache`
-(7-day TTL). The key is per model, over the system prompt, user prompt, `max_tokens`,
-`response_format` and extra arguments. Only a non-empty answer from the requested model
-is stored, so a fallback answer is never cached. Each row records the memory keys whose
-text the prompt carried (`window_keys`), so erasure and redaction can delete it by key.
+(7-day TTL). The key is per model, over the org the client serves, the system prompt, user
+prompt, `max_tokens`, `response_format` and extra arguments, so one org is never served
+another's answer; a client built with no org calls the provider. Only a non-empty answer
+from the requested model is stored, so a fallback answer is never cached. Each row records
+the memory keys whose text the prompt carried (`window_keys`), so erasure and redaction can
+delete it by key.
 
 | User         | Switch                                                                                                    |
 | ------------ | --------------------------------------------------------------------------------------------------------- |
