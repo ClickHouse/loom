@@ -178,10 +178,17 @@ class AuthSettings(BaseModel):
     # one that wrote it).
     grant_cache_ttl_seconds: float = 10.0
 
-    # Sign-ins and sign-ups one process checks at once (each costs ClickHouse
-    # statements and a password hash); past it a caller waits up to a second,
-    # then gets 429, so a burst cannot take the shared connection pool.
+    # Sign-ins, sign-ups and workload-token exchanges one process counts at once
+    # (each costs ClickHouse statements, a sign-in a password hash); past it a
+    # caller waits up to a second, then gets 429 (an exchange 503), so a burst
+    # cannot take the shared connection pool.
     auth_attempts_concurrency: int = Field(default=8, ge=1)
+    # Workload-token exchanges (RFC 8693) one trust may make in 10 minutes,
+    # deployment-wide; past it /oauth/token answers 429 until older ones age out.
+    workload_exchanges_per_trust: int = Field(default=50000, ge=1)
+    # The same for one agent of a trust with an agent claim, so one agent's
+    # loop cannot spend the trust's. A trust without agents has only the per-trust limit.
+    workload_exchanges_per_agent: int = Field(default=300, ge=1)
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).

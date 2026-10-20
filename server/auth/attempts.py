@@ -1,5 +1,6 @@
-"""Attempt limits for the unauthenticated auth routes — sign-up and password
-sign-in — which run before any token exists to rate-limit by.
+"""Attempt limits for the auth routes that run before a token exists to
+rate-limit by: sign-up, sign-in, OIDC sign-in starts and workload-token
+exchanges.
 
 The attempts are rows of `loom.auth_attempts`, so every Loom process of the
 deployment counts the same ones. A key is stored as an HMAC keyed by the root
@@ -8,8 +9,9 @@ is reversed by hashing all of them.
 
 What a refused attempt costs is bounded per process: a key this process saw
 over its limit is refused without a query for `_KNOWN_OVER_S`, and at most
-`auth_attempts_concurrency` checks run at once (`slot`), so a burst waits or
-gets 429 instead of taking the ClickHouse pool every route shares.
+`auth_attempts_concurrency` checks run at once (`slot`), so a burst waits,
+then is refused (429; 503 for an exchange), instead of taking the ClickHouse
+pool every route shares.
 """
 
 from __future__ import annotations
@@ -101,8 +103,9 @@ async def admit(gates: list[tuple[Attempts, str]]) -> Admission | None:
     """Record one attempt that counts as a failure until `release`d (a
     sign-in) under every (limit, key) and say whether it may go on. As in
     `Attempts.allow`, the recount after the record bounds a concurrent
-    burst. One refused at the recount is released, so a burst that raced
-    past the first count does not lock the key longer. Run it in a `slot`."""
+    burst. One refused at the recount is released under every gate, so a
+    burst that raced past the first count does not lock a key longer, nor
+    spend another gate's room. Run it in a `slot`."""
     return await _admit(gates, released=True)
 
 
