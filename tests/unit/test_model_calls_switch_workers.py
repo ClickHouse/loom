@@ -11,14 +11,8 @@ from typing import Any
 import pytest
 
 from server.llm import customer
-
-
-def _off(*orgs: str) -> None:
-    from server.settings import settings
-
-    customer._switch._reset_for_tests(
-        frozenset(orgs), read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
-    )
+from server.settings import settings
+from tests.unit.switch_state import switch_read_now as _off
 
 
 class _CH:
@@ -360,7 +354,6 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
         done.extend(rows)
 
     from server.memory.app import trajectory_notes as tn
-    from server.settings import settings
 
     monkeypatch.setattr(settings, "observe_extract_notes_min_observations", 0)
     _useful = tn.Observation("o1", "command_run", "Bash", "pytest -q", "", (), None, None)
@@ -383,8 +376,6 @@ def test_an_org_switched_off_mid_observe_extract_leaves_its_observations_to_dist
 
 def _stale() -> None:
     """A copy of the switch too old to trust, and not due to be read again."""
-    from server.settings import settings
-
     customer._switch._reset_for_tests(
         frozenset(),
         read_age_s=settings.model_calls_policy_max_stale_seconds + 1,
@@ -423,7 +414,6 @@ def test_a_switch_gone_stale_mid_embedding_pass_writes_nothing_and_spends_no_att
     stops before its write, not with a provider failure on every stub."""
     import server.memory.store as memory_repo
     from server.memory.workers import embedding as w
-    from server.settings import settings
 
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
     stubs = [
@@ -567,7 +557,6 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     import argparse
 
     from server.cli import code_backfill
-    from server.settings import settings
 
     sent: list[str] = []
 

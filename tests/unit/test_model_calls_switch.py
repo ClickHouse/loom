@@ -16,6 +16,7 @@ from server.llm import customer
 from server.observability import genai, provider_health
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.switch_state import switch_read_now as _off
 
 
 @pytest.fixture(autouse=True)
@@ -23,12 +24,6 @@ def _identity_left_clean() -> Any:
     genai._identity.set(None)
     yield
     genai._identity.set(None)
-
-
-def _off(*orgs: str) -> None:
-    customer._switch._reset_for_tests(
-        frozenset(orgs), read_age_s=0.0, due_in_s=settings.model_calls_policy_refresh_seconds
-    )
 
 
 def _request(org: str) -> None:
