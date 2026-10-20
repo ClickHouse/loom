@@ -712,18 +712,19 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
         assert out.reason == "below-min-to-compact" and llm.prompts == []
 
 
-def test_a_summary_that_reads_as_a_credential_compacts_without_a_vector(monkeypatch) -> None:
-    """The summary is stored and the turns it replaces are tombstoned, as for any summary,
-    but it gets no embedding row and its text never reaches the embedder."""
+def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> None:
+    """A summary that repeats a key pasted in one turn would have no vector, so search
+    would lose the window for good: nothing is written and no turn is tombstoned."""
     import server.core.ch
     import server.llm.client
+
+    key = "sk-" + "proj-" + "Ab3" * 12
 
     class _KeyLLM(_FakeLLM):
         async def complete(self, **kw: Any) -> LLMResult:
             self.prompts.append(kw["user"])
-            key = "sk-" + "proj-" + "Ab3" * 12
             return LLMResult(
-                text=f"The user shared {key}",
+                text=f"The user shared {key} and planned the week.",
                 tokens_in=1,
                 tokens_out=2,
                 provider="fake",
@@ -741,7 +742,7 @@ def test_a_summary_that_reads_as_a_credential_compacts_without_a_vector(monkeypa
         {
             "msg_id": f"m{i}",
             "role": "user",
-            "content": f"turn {i}",
+            "content": f"my key is {key}" if i == 2 else f"turn {i}",
             "ts": T0 + timedelta(seconds=i),
             "metadata": "{}",
             "user_id": "alice",
@@ -761,5 +762,5 @@ def test_a_summary_that_reads_as_a_credential_compacts_without_a_vector(monkeypa
             )
         )
     )
-    assert out.compacted is True
-    assert fake.inserted and fake.embedded == []
+    assert (out.compacted, out.reason) == (False, "summary-reads-high")
+    assert fake.inserted == [] and fake.embedded == [] and fake.executed == []

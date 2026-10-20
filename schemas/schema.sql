@@ -2052,8 +2052,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_chunks
     `modality` LowCardinality(String) DEFAULT '',
     `caption` String DEFAULT '',
     `source_url` String DEFAULT '',
-    `source_local_path` String DEFAULT '',
-    `sensitivity` LowCardinality(String) DEFAULT ''
+    `source_local_path` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(created_at)
 PARTITION BY toYYYYMM(created_at)

@@ -991,8 +991,12 @@ async def test_chunks_landing_between_the_sweeps_fence_and_its_relabel_are_retir
     key = f"r36c_{uuid.uuid4().hex[:6]}"
     ident = {"org": ORG, "namespace": ns, "agent": AGENT}
     secret = "sk-proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
-    sentence = f"The {key} root token is {secret} keep it safe. "
-    long_val = sentence * (EXCERPT_LIMIT // len(sentence) + 4)
+    # The secret opens the value: the chunks past the first read plain and are embedded
+    # (a chunk that reads as a credential never is), so the paused embed below runs.
+    filler = f"The {key} notes go on about the release plan. "
+    long_val = f"The {key} root token is {secret} keep it safe. " + filler * (
+        EXCERPT_LIMIT // len(filler) + 4
+    )
 
     c_entered, c_gate = asyncio.Event(), asyncio.Event()
     s_entered, s_gate = asyncio.Event(), asyncio.Event()

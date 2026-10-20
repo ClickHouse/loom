@@ -28,10 +28,9 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
-from server.memory.app.chunk_projection import embed_plain
+from server.memory.app.credential_passages import embed_plain
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
-from server.memory.domain.sensitivity import HIGH, passage_sensitivity
 from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
@@ -308,16 +307,17 @@ async def handle_memory_import_evidence(
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
     if chunks:
-        levels = [passage_sensitivity(c.content) for c in chunks]
+        # A chunk or digest that reads as a credential is written without a vector (None).
         vectors = await embed_plain(
-            [c.content for c in chunks], levels, lambda texts: _embed_all(embedder, texts)
+            [c.content for c in chunks], lambda texts: _embed_all(embedder, texts)
         )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []
-        for c, vec, level in zip(chunks, vectors, levels, strict=True):
-            if not vec and level != HIGH:
+        for c, vec in zip(chunks, vectors, strict=True):
+            if vec is not None and not vec:
                 out.skipped += 1
                 continue
+            vec = vec or []
             sha = hashlib.sha256(c.content.encode("utf-8")).hexdigest()
             if c.content_sha256 and c.content_sha256 != sha:
                 out.edited.append(f"{c.session_id}:{c.chunk_index}")
@@ -336,7 +336,6 @@ async def handle_memory_import_evidence(
                     "embedding": vec,
                     "embedding_model": embedder.model_name,
                     "embedding_dim": len(vec),
-                    "sensitivity": level,
                     "parent_memory_key": c.parent_memory_key
                     or (c.memory_keys[0] if c.memory_keys else ""),
                     "line_start": int(c.line_start or 0),
@@ -383,15 +382,15 @@ async def handle_memory_import_evidence(
     ]
     out.skipped += len(input.digests) - len(digests)
     if digests:
-        levels = [passage_sensitivity(d.summary_text) for d in digests]
-        vectors = await embed_plain(
-            [d.summary_text for d in digests], levels, lambda texts: _embed_all(embedder, texts)
+        dvectors = await embed_plain(
+            [d.summary_text for d in digests], lambda texts: _embed_all(embedder, texts)
         )
         drows: list[dict[str, Any]] = []
-        for d, vec, level in zip(digests, vectors, levels, strict=True):
-            if not vec and level != HIGH:
+        for d, dvec in zip(digests, dvectors, strict=True):
+            if dvec is not None and not dvec:
                 out.skipped += 1
                 continue
+            vec = dvec or []
             if vec:
                 out.embedding_dim = len(vec)
             drows.append(

@@ -11,7 +11,12 @@ from server.insights.app.provider_tracker_text import reconcile_tracker_page
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_cache import invalidate_staged_cache
 from server.insights.store.provider_prefix import derive_staged_prefixes
-from server.insights.store.provider_staging import SourceSchema, StagingNames, snapshot_page
+from server.insights.store.provider_staging import (
+    _ORDINAL,
+    SourceSchema,
+    StagingNames,
+    snapshot_page,
+)
 from server.insights.store.provider_target import write_target_page
 from server.settings import settings
 
@@ -80,8 +85,9 @@ async def rebuild_snapshot_page(
             rows, body_chars=settings.tracker_embed_body_chars
         )
     waiting: list[int] = []
+    held: list[int] = []
     rebuilt = await rebuild_batch(
-        names.table, rows, embedder, source_texts=source_texts, waiting=waiting
+        names.table, rows, embedder, source_texts=source_texts, waiting=waiting, held=held
     )
     await write_target_page(
         names,
@@ -98,4 +104,5 @@ async def rebuild_snapshot_page(
         rows_written=len(rows),
         done=len(rows) < PAGE_SIZE,
         rows_waiting=len(waiting),
+        held=tuple(int(rows[i][_ORDINAL]) for i in held),
     )

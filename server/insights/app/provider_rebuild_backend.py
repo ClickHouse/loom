@@ -95,7 +95,9 @@ class ClickHouseRebuildBackend:
             ch=self.ch,
         )
 
-    async def _verify_table(self, manifest: RebuildManifest, table: RebuildTablePlan) -> int:
+    async def _verify_table(
+        self, manifest: RebuildManifest, table: RebuildTablePlan, held: list[int]
+    ) -> int:
         names = StagingNames(manifest.job_id, table.table)
         args = (names, _schema(table), table.snapshot_uuid, table.target_uuid, self.fingerprint)
         if table.table == "embedding_cache":
@@ -109,14 +111,20 @@ class ClickHouseRebuildBackend:
                 ch=self.ch,
             )
         return await verify_reembedded_target(
-            *args, model=self.target.model_name, dimensions=self.target.dim, ch=self.ch
+            *args,
+            model=self.target.model_name,
+            dimensions=self.target.dim,
+            held=held,
+            ch=self.ch,
         )
 
-    async def verify(self, config_id: UUID, manifest: RebuildManifest) -> RebuildManifest:
+    async def verify(
+        self, config_id: UUID, manifest: RebuildManifest, held: dict[str, list[int]]
+    ) -> RebuildManifest:
         self._require_job(config_id, manifest)
         prepared = []
         for table in manifest.tables:
-            count = await self._verify_table(manifest, table)
+            count = await self._verify_table(manifest, table, held.get(table.table, []))
             identity = await prepare_live_table(
                 StagingNames(config_id, table.table),
                 _schema(table),

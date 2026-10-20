@@ -511,3 +511,89 @@ async def test_a_text_less_summary_card_rebuilds_verifies_and_publishes_as_a_pla
             {"org": org, "ns": namespace},
         )
         await client.disconnect()
+
+
+def _passage_rows(table: str, org: str, namespace: str, texts: list[str]) -> list[dict]:
+    """Rows an earlier build embedded, one per text, under the old model."""
+    vector = [1.0] + [0.0] * (_width() - 1)
+    if table == "memory_chunks":
+        return [
+            {
+                "org": org,
+                "namespace": namespace,
+                "agent": "a",
+                "session_id": "s",
+                "chunk_index": i,
+                "content_sha256": f"{i:064x}",
+                "content": text,
+                "embedding": vector,
+                "embedding_model": "old-model",
+                "embedding_dim": _width(),
+            }
+            for i, text in enumerate(texts)
+        ]
+    return [
+        {
+            "org": org,
+            "namespace": namespace,
+            "agent": "a",
+            "thread_id": "t",
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content_excerpt": text,
+            "embedding": vector,
+            "embedding_model": "old-model",
+            "embedding_dim": _width(),
+        }
+        for i, text in enumerate(texts)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", ["memory_chunks", "conversation_embeddings"])
+async def test_a_credential_passage_is_staged_empty_and_verifies(table):
+    """A passage an earlier build embedded whose text reads as a credential is rebuilt
+    without a vector, as its write path now leaves it; verification accepts that row and
+    no other empty one."""
+    if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
+        pytest.skip(_OPT_IN)
+    client = _default_client()
+    await client.connect()
+    await _require_empty(client, table)
+    org, namespace = "rebuild-held", f"held-{uuid4().hex[:8]}"
+    names = StagingNames(uuid4(), table)
+    embedder = _EightDimEmbedder()
+    identity = target_uuid = None
+    try:
+        key = "sk-" + "proj-" + uuid4().hex + uuid4().hex[:8]
+        await client.insert(
+            f"loom.{table}",
+            _passage_rows(table, org, namespace, ["a plain turn", f"the key is {key}"]),
+            settings={"async_insert": 0},
+        )
+        schema = await source_schema(names, ch=client)
+        identity = await ensure_snapshot(names, schema, ch=client)
+        target_uuid = await ensure_target(names, schema, identity, "a" * 64, ch=client)
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target_uuid, "a" * 64, embedder, after=0, ch=client
+        )
+        assert checkpoint.done and checkpoint.rows_written == 2
+        assert len(checkpoint.held) == 1
+        args = (names, schema, identity, target_uuid, "a" * 64)
+        with pytest.raises(ValueError, match="failed verification"):
+            await verify_reembedded_target(
+                *args, model=embedder.model_name, dimensions=8, ch=client
+            )
+        rows = await verify_reembedded_target(
+            *args, model=embedder.model_name, dimensions=8, held=list(checkpoint.held), ch=client
+        )
+        assert rows == 2
+    finally:
+        for name, uuid in ((names.target, target_uuid), (names.snapshot, identity)):
+            if uuid is not None:
+                await _drop_owned(client, name, uuid)
+        await client.execute(
+            f"DELETE FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
+            {"org": org, "ns": namespace},
+        )
+        await client.disconnect()

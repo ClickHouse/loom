@@ -42,7 +42,7 @@ def _row() -> dict[str, Any]:
         "thread_id": "t-1",
         "msg_id": "m-7",
         "role": "user",
-        "excerpt": "deploy soon?",
+        "embedded_text": "deploy soon? " + "x" * 300,
         "ts": datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
         "distance": 0.18,
     }
@@ -66,9 +66,7 @@ async def test_vector_search_default_filters_and_order() -> None:
     assert params["model"] == "text-embedding-3-small"
     assert len(out) == 1 and isinstance(out[0], ConversationHit)
     # The row stores the embedded text; a hit shows its first 240 characters.
-    assert "substringUTF8(content_excerpt, 1, {excerpt:UInt32}) AS excerpt" in sql
-    assert params["excerpt"] == 240
-    assert out[0].content_excerpt == "deploy soon?"
+    assert out[0].content_excerpt == ("deploy soon? " + "x" * 300)[:240]
 
 
 @pytest.mark.asyncio
@@ -200,18 +198,18 @@ async def test_vector_search_holds_back_a_row_whose_text_reads_as_a_credential()
     ch.query_all_returns.append(
         [
             {**_row(), "msg_id": "m-key", "embedded_text": "deploy soon? " + "x" * 300 + " " + key},
-            {**_row(), "msg_id": "m-plain", "embedded_text": "deploy soon?"},
+            {**_row(), "msg_id": "m-plain"},
         ]
     )
     out = await vector_search(_q(), ch=ch)
     assert [h.msg_id for h in out] == ["m-plain"]
-    assert "content_excerpt AS embedded_text" in ch.query_all_calls[0][0]
 
 
 @pytest.mark.asyncio
 async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credential(
     monkeypatch,
 ) -> None:
+    """Twice the page is read, so a held-back turn does not leave the page short."""
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.app import conversations as h
     from server.knowledge.store import conversations as conversation_repo
@@ -228,14 +226,24 @@ async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credenti
             ts=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
         )
 
-    async def fake_search_substring(*a, **k):
-        return [turn("m-key", "deploy with " + "sk-" + "proj-" + "Ab3" * 12), turn("m2", "deploy")]
+    limits: list[int] = []
+
+    async def fake_search_substring(*a, limit, **k):
+        limits.append(limit)
+        return [
+            turn("m-key", "deploy with " + "sk-" + "proj-" + "Ab3" * 12),
+            turn("m2", "deploy"),
+            turn("m3", "deploy again"),
+        ]
 
     monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
     out = await h._search_substring_fallback(
-        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy", top_k=2),
+        ["ns"],
+        [],
     )
-    assert [hit.msg_id for hit in out.hits] == ["m2"]
+    assert [hit.msg_id for hit in out.hits] == ["m2", "m3"]
+    assert limits == [4]
 
 
 @pytest.mark.asyncio
@@ -255,21 +263,25 @@ async def test_the_thread_list_shows_no_text_of_a_last_turn_that_reads_as_a_cred
             "first_seen": at,
             "last_seen": at,
             "last_role": "user",
-            "last_content_excerpt": excerpt,
+            "last_content": excerpt,
         }
 
+    # The key crosses the excerpt's 240-character cut: the whole turn is checked.
     async def recent(*a, **k):
-        return [thread("t-key", "use " + "AKIA" + "IOSFODNN7EXAMPLE"), thread("t2", "lunch?")]
+        return [
+            thread("t-key", "x " * 118 + "use " + "AKIA" + "IOSFODNN7EXAMPLE"),
+            thread("t2", "lunch? " * 50),
+        ]
 
     async def titles(*a, **k):
-        return {}
+        return {"t2": "Deploy key " + "sk-" + "proj-" + "Ab3" * 12}
 
     monkeypatch.setattr(conversation_repo, "recent_threads", recent)
     monkeypatch.setattr(conversation_repo, "thread_titles", titles)
     out = await h.handle_conversation_threads(
         ConversationThreadsInput(org="o", namespace="ns", agent="a")
     )
-    assert [(t.thread_id, t.last_content_excerpt) for t in out.threads] == [
-        ("t-key", ""),
-        ("t2", "lunch?"),
+    assert [(t.thread_id, t.last_content_excerpt, t.title) for t in out.threads] == [
+        ("t-key", "", ""),
+        ("t2", ("lunch? " * 50)[:240], ""),
     ]

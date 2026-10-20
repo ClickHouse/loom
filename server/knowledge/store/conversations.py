@@ -600,7 +600,7 @@ async def recent_threads(
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window. Most recent first, ties
     by thread_id; `offset` skips that many. Each carries its message count, first/last seen
-    and the latest message's agent (`last_agent`), role and 240-character excerpt.
+    and the latest message's agent (`last_agent`), role and content (`last_content`).
     `count_turns`: the message count is the thread's distinct turns, as an opened thread
     shows; off, the window's raw row count (for a caller that does not read the count)."""
     ch = ch or _default_client()
@@ -626,7 +626,7 @@ async def recent_threads(
             min(ts)                                          AS first_seen,
             max(ts)                                          AS last_seen,
             argMax(toString(role), ts)                       AS last_role,
-            argMax(substring(content, 1, 240), ts)           AS last_content_excerpt
+            argMax(content, ts)                              AS last_content
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}

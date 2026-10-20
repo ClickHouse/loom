@@ -175,3 +175,57 @@ async def test_the_scan_excludes_titled_and_deleted_threads_before_its_limit(
     excl = scan.index("NOT IN (")
     assert excl < scan.index("GROUP BY") < scan.index("LIMIT {lim:UInt32}")
     assert "tombstoned_at IS NOT NULL OR title != ''" in scan
+
+
+_KEY = "sk-" + "proj-" + "Ab3" * 12
+
+
+@pytest.mark.asyncio
+async def test_a_credential_turn_never_reaches_the_title_model(monkeypatch) -> None:
+    turns = [{"role": "user", "content": f"my key is {_KEY}"}, *_TURNS]
+    ch = StubCH([_CAND], turns, None)
+    _patch(monkeypatch, ch)
+    prompts: list[str] = []
+
+    class _Recording:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _LLMOut()
+
+    import server.knowledge.store.conversations as repo
+    import server.llm.client as llmmod
+
+    async def fake_insert(row, **k):
+        return None
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
+    monkeypatch.setattr(repo, "insert_thread", fake_insert)
+    res = await run_pass()
+    assert res.titled == 1
+    assert prompts and _KEY not in prompts[0] and "what engine?" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_title_that_reads_as_a_credential_is_not_stored(monkeypatch) -> None:
+    ch = StubCH([_CAND], _TURNS, None)
+    _patch(monkeypatch, ch)
+
+    class _KeyTitle:
+        text = f"Deploy key {_KEY}"
+
+    class _KeyLLM:
+        async def complete(self, system, user, max_tokens):
+            return _KeyTitle()
+
+    import server.knowledge.store.conversations as repo
+    import server.llm.client as llmmod
+
+    writes = []
+
+    async def fake_insert(row, **k):
+        writes.append(row)
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
+    monkeypatch.setattr(repo, "insert_thread", fake_insert)
+    res = await run_pass()
+    assert (res.titled, writes) == (0, [])

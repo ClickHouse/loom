@@ -177,7 +177,7 @@ def test_threads_aggregate_alias_does_not_shadow_the_agent_filter(
                     "first_seen": ts,
                     "last_seen": ts,
                     "last_role": "user",
-                    "last_content_excerpt": "hi",
+                    "last_content": "hi",
                 }
             ],
             [{"thread_id": "t1", "n": 2}],

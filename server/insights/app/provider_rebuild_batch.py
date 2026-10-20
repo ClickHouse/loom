@@ -13,7 +13,7 @@ from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
-from server.memory.domain.sensitivity import passage_reads_high
+from server.memory.domain.sensitivity import reads_high
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -31,7 +31,7 @@ TEXT_COLUMNS = {
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
 # Raw passages the write path leaves without a vector when they read as a credential
-# (`passage_sensitivity`); a rebuild stages such a row without one too.
+# (`reads_high`); a rebuild stages such a row without one too.
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
@@ -60,7 +60,10 @@ def _source_text(
 
 
 def _inputs(
-    table: str, rows: Sequence[Mapping[str, Any]], source_texts: Mapping[int, str]
+    table: str,
+    rows: Sequence[Mapping[str, Any]],
+    source_texts: Mapping[int, str],
+    held: list[int],
 ) -> tuple[list[str], list[tuple[int, str]]]:
     columns = [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
     if not columns:
@@ -73,7 +76,8 @@ def _inputs(
         if row.get("tombstoned_at") is not None:
             continue
         text = _source_text(table, row, index, source_texts)
-        if table in PASSAGE_TABLES and passage_reads_high(row.get("sensitivity"), text):
+        if table in PASSAGE_TABLES and reads_high(text):
+            held.append(index)
             continue
         for column in columns:
             value = text
@@ -145,6 +149,7 @@ async def rebuild_batch(
     *,
     source_texts: Mapping[int, str] | None = None,
     waiting: list[int] | None = None,
+    held: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return full staged rows; never publish partial or malformed embeddings.
 
@@ -155,6 +160,9 @@ async def rebuild_batch(
     embedded again by their recovery workers; a row of any other table has no
     vector until a write replaces it or a later rebuild covers it.
 
+    A raw passage whose text reads as a credential is staged without a vector, as its
+    write path leaves it, and its index added to `held`, so verification accepts it.
+
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
     Version, creation time, ownership, provenance and content remain unchanged.
@@ -162,7 +170,10 @@ async def rebuild_batch(
     """
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
-    texts, slots = _inputs(table, rows, source_texts or {})
+    left_out: list[int] = []
+    texts, slots = _inputs(table, rows, source_texts or {}, left_out)
+    if held is not None:
+        held.extend(left_out)
     # One call carries one org's texts: a model call names a single customer.
     by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]

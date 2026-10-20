@@ -9,9 +9,9 @@ import logging
 from typing import Any
 
 from server.core.vectors.search_settings import vector_search_settings
+from server.memory.app.credential_passages import without_credentials
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
-from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -50,6 +50,11 @@ def dedup_summary_rows(rows: list[dict[str, Any]], *, n: int) -> list[dict[str, 
         if len(out) >= n:
             break
     return out
+
+
+# Spare shortlist rows, so a digest held back for reading as a credential does not leave
+# the leg short.
+_HELD_MARGIN = 2
 
 
 # Pre-built per-entity summaries, top-N by cosine. Module-constant fallback;
@@ -192,15 +197,15 @@ async def fetch_session_summaries(
     # costs whole granules of vectors: measured 7.2 MiB at 5 rows, 13.3 MiB at
     # 20 on a 1,564-row namespace.
     wildcard = not agent or agent in ("*", "-")
-    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1)
+    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1) + _HELD_MARGIN
     try:
         rows = await ch.query_all(sql, params=params)
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
     # A digest that reads as a credential is written without a vector; this holds back
-    # one written before that rule.
-    rows = [r for r in rows if not reads_high(str(r.get("content_excerpt") or ""))]
+    # one an earlier build embedded (the shortlist carries `_HELD_MARGIN` spare rows).
+    rows = without_credentials(rows, lambda r: str(r.get("content_excerpt") or ""))
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []
     for r in rows:

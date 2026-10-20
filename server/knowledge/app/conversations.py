@@ -47,7 +47,7 @@ from server.knowledge.app.conversation_search import (
     vector_search,
 )
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
-from server.memory.domain.sensitivity import HIGH, passage_sensitivity, reads_high
+from server.memory.domain.sensitivity import reads_high
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
@@ -201,7 +201,7 @@ async def _embed_turn(
     embed returns no vector and the error. None for a turn whose text reads as a
     credential: it is stored as written but gets no embedding row, so its text never
     reaches the embedder and conversation.search never ranks it."""
-    if passage_sensitivity(content) == HIGH:
+    if reads_high(content):
         return None
     embedder = get_embedder()
     excerpt = content[:EMBEDDED_EXCERPT_CHARS]
@@ -607,7 +607,8 @@ async def _search_substring_fallback(
         thread_id=input.thread_id or None,
         role=input.role or None,
         run_id=input.run_id,
-        limit=input.top_k,
+        # Twice the page, so the turns held back below do not leave it short.
+        limit=input.top_k * 2,
     )
     # A turn that reads as a credential is never a search hit, as the vector path holds it.
     hits = [
@@ -621,8 +622,13 @@ async def _search_substring_fallback(
         )
         for r in rows
         if not reads_high(r.content)
-    ]
+    ][: input.top_k]
     return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
+
+
+def _listed(text: str) -> str:
+    """`text`, or '' when it reads as a credential."""
+    return "" if reads_high(text) else text
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:
@@ -658,6 +664,9 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
     titles = await conversation_repo.thread_titles(
         input.org, input.namespace, [str(r["thread_id"]) for r in rows]
     )
+    # Listed across the namespace: a last turn or a title that reads as a credential is
+    # listed without its text, as memory.list lists a 'high' row. The whole turn is read,
+    # so a key that crosses the excerpt's cut is caught too.
     threads = [
         ConversationThreadSummary(
             thread_id=str(r["thread_id"]),
@@ -666,12 +675,8 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
             first_seen=r["first_seen"],
             last_seen=r["last_seen"],
             last_role=str(r["last_role"]),
-            # Listed across the namespace: a turn that reads as a credential is listed
-            # without its text, as memory.list lists a 'high' row.
-            last_content_excerpt=""
-            if reads_high(str(r["last_content_excerpt"]))
-            else str(r["last_content_excerpt"]),
-            title=titles.get(str(r["thread_id"]), ""),
+            last_content_excerpt=_listed(str(r["last_content"]))[:HIT_EXCERPT_CHARS],
+            title=_listed(titles.get(str(r["thread_id"]), "")),
         )
         for r in rows
     ]
@@ -852,7 +857,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     # The summary is what search finds once the turns it replaces are tombstoned, so
     # it is embedded before the summary or any turn's tombstone is written; without a
     # vector there is no summary and no turn is tombstoned. A summary that reads as a
-    # credential is written without one, as an appended turn would be.
+    # credential would have none, so it is refused the same way.
     embedded = await _embed_turn(
         summary_text,
         org=input.org,
@@ -860,11 +865,11 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         thread_id=input.thread_id,
         msg_id=summary_msg_id,
     )
-    if embedded is not None and embedded.error:
+    if embedded is None or embedded.error:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
-            reason="embed-failed",
+            reason="summary-reads-high" if embedded is None else "embed-failed",
             tokens_in=result.tokens_in,
             tokens_out=result.tokens_out,
         )
@@ -905,8 +910,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         ts=earliest_ts,
     )
     await conversation_repo.append(summary)
-    if embedded is not None:
-        await _store_embedding(summary, embedded)
+    await _store_embedding(summary, embedded)
     await conversation_repo.tombstone_messages(
         input.org,
         input.namespace,

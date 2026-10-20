@@ -29,6 +29,9 @@ class BatchCheckpoint:
     done: bool
     # Rows staged without a vector: their org's model calls are switched off.
     rows_waiting: int = 0
+    # Snapshot ordinals of raw passages staged without a vector because their text
+    # reads as a credential, as their write path leaves them; verification accepts them.
+    held: tuple[int, ...] = ()
 
 
 class RebuildBackend(Protocol):
@@ -45,7 +48,9 @@ class RebuildBackend(Protocol):
     async def rebuild(
         self, config_id: UUID, table: str, cursor: int, manifest: RebuildManifest
     ) -> BatchCheckpoint: ...
-    async def verify(self, config_id: UUID, manifest: RebuildManifest) -> RebuildManifest: ...
+    async def verify(
+        self, config_id: UUID, manifest: RebuildManifest, held: dict[str, list[int]]
+    ) -> RebuildManifest: ...
     async def publish(self, config_id: UUID, manifest: RebuildManifest) -> None: ...
     async def cleanup(self, config_id: UUID, manifest: RebuildManifest) -> None: ...
 
@@ -60,6 +65,7 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
     progress.setdefault("cursor", 0)
     progress.setdefault("rows_done", 0)
     progress.setdefault("rows_waiting", 0)
+    progress.setdefault("held", {})
     if (
         type(progress["plan_version"]) is not int
         or progress["plan_version"] != 1
@@ -71,6 +77,12 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
         for name in ("table_index", "cursor", "rows_done", "rows_waiting")
     ):
         raise ValueError("Invalid rebuild cursor")
+    held = progress["held"]
+    if not isinstance(held, dict) or any(
+        not isinstance(ordinals, list) or any(type(o) is not int or o < 0 for o in ordinals)
+        for ordinals in held.values()
+    ):
+        raise ValueError("Invalid rebuild held rows")
     if progress["table_index"] > len(REBUILD_TABLES):
         raise ValueError("Invalid rebuild table index")
     if progress["phase"] in ("verify", "publish", "cleanup", "activate") and (
@@ -119,6 +131,7 @@ async def _rebuild_page(config_id: UUID, progress: dict[str, Any], backend: Rebu
         or result.rows_written < 0
         or type(result.rows_waiting) is not int
         or result.rows_waiting < 0
+        or any(type(o) is not int or o < 0 for o in result.held)
         or (not result.done and result.cursor == progress["cursor"])
     ):
         raise ValueError("Rebuild backend did not advance its cursor")
@@ -126,6 +139,9 @@ async def _rebuild_page(config_id: UUID, progress: dict[str, Any], backend: Rebu
     # Staged without a vector (the org's model calls are off): shown, so an
     # operator sees what the published space is missing.
     progress["rows_waiting"] += result.rows_waiting
+    if result.held:
+        table = REBUILD_TABLES[index]
+        progress["held"][table] = sorted({*progress["held"].get(table, []), *result.held})
     progress["cursor"] = 0 if result.done else result.cursor
     progress["table_index"] += int(result.done)
     progress["table"] = REBUILD_TABLES[index]
@@ -151,7 +167,7 @@ async def _advance(config_id: UUID, progress: dict[str, Any], backend: RebuildBa
         progress["phase"] = "rebuild"
     elif phase == "verify":
         prior = RebuildManifest.from_dict(progress["manifest"])
-        manifest = await backend.verify(config_id, prior)
+        manifest = await backend.verify(config_id, prior, progress["held"])
         manifest.prepared_successor(prior)
         progress["manifest"] = manifest.to_dict()
         progress["phase"] = "publish"

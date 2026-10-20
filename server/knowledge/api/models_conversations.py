@@ -333,7 +333,8 @@ class ConversationCompactInput(BaseModel):
     agent of the thread still holds live with the same text, as a turn search indexes
     (user, assistant or a summary).
     The summary carries metadata.compacted_from=[msg_ids]; when its embed fails,
-    no summary is written and no turn is tombstoned (`reason="embed-failed"`).
+    no summary is written and no turn is tombstoned (`reason="embed-failed"`), and the
+    same holds for a summary that reads as a credential (`reason="summary-reads-high"`).
 
     Idempotent: re-running on an already-summarized window is a no-op.
     """
@@ -364,5 +365,6 @@ class ConversationCompactOutput(BaseModel):
     # Completion tokens of the summary; 0 when no call was made.
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
-    # summarizer-empty, or embed-failed (retry once the embedder answers).
+    # summarizer-empty, embed-failed (retry once the embedder answers), or
+    # summary-reads-high (the summary holds a credential, so it would have no vector).
     reason: str = ""

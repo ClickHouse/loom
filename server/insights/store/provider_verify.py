@@ -28,8 +28,10 @@ def _vector_checks(schema: SourceSchema, columns: list[str]) -> str:
                 f"NOT arrayAll(x -> isFinite(toFloat64(x)), {vector})",
                 f"(notEmpty({vector}) AND ({norm} <= 0 OR NOT isFinite({norm})))",
                 # An all-zero source is a placeholder (vectors/placeholders.py) and
-                # rebuilds empty, as in provider_rebuild_batch._inputs.
-                f"(empty({vector}) AND arrayExists(x -> x != 0, {source}) AND {active})",
+                # rebuilds empty, as in provider_rebuild_batch._inputs, and so does a held
+                # passage, one whose text reads as a credential.
+                f"(empty({vector}) AND arrayExists(x -> x != 0, {source}) AND {active}"
+                f" AND NOT has({{held:Array(UInt64)}}, s.{_ORDINAL}))",
             ]
         )
         if "tombstoned_at" in schema.columns:
@@ -51,9 +53,13 @@ async def verify_reembedded_target(
     *,
     model: str,
     dimensions: int,
+    held: list[int] | None = None,
     ch: _CHClient | None = None,
 ) -> int:
     """Verify exact row coverage, preserved metadata and the new vector space.
+
+    `held` names the snapshot ordinals the rebuild staged without a vector because their
+    text reads as a credential (`provider_rebuild_batch.rebuild_batch`).
 
     Returns the logical row count. Prefix derivation and cache invalidation have
     different completeness rules and must not use this verifier. The coordinator
@@ -97,7 +103,7 @@ async def verify_reembedded_target(
         f"FROM loom.{names.snapshot} AS s FULL OUTER JOIN "
         f"(SELECT * FROM loom.{names.target} FINAL) AS t "
         f"ON s.{_ORDINAL} = t.{_ORDINAL} SETTINGS join_use_nulls = 0",
-        {"model": model, "dim": dimensions},
+        {"model": model, "dim": dimensions, "held": list(held or [])},
     )
     fields = ("source_rows", "target_rows", "missing", "metadata_errors", "vector_errors")
     if result is None or any(

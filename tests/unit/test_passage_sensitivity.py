@@ -1,14 +1,15 @@
-"""A raw passage that reads as a credential is labelled 'high' when written, never sent to
-the embedder, and held back from the reads that serve passages to every reader."""
+"""A raw passage whose text reads as a credential is stored as written with no vector, is
+never sent to the embedder, and is held back from the reads that serve passages to every
+reader."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from server.memory.domain.search_types import SearchHit
-from server.memory.domain.sensitivity import passage_reads_high, passage_sensitivity
 
 # Split so the repository's secret scan does not read the fixtures as keys.
 _OPENAI_KEY = "sk-" + "proj-" + "Ab3" * 12
@@ -16,63 +17,54 @@ _AWS_KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
 _PLAIN = "We moved the standup to Thursday mornings and the deploy plan is unchanged."
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "text",
+    "secret",
     [
-        f"[user] my key is {_OPENAI_KEY}, can you check it?",
-        f"[user] the staging account uses {_AWS_KEY_ID} for uploads",
+        f"my key is {_OPENAI_KEY}, can you check it?",
+        f"the staging account uses {_AWS_KEY_ID} for uploads",
         # A chunk of a JSON value: the token follows an escaped newline.
         '{"note": "rotate it\\npassword=' + "hunter2hunter2" + '"}',
     ],
 )
-def test_a_passage_holding_a_credential_is_labelled_high(text: str) -> None:
-    assert passage_sensitivity(text) == "high"
-
-
-def test_a_plain_passage_and_a_contact_detail_are_unlabelled() -> None:
-    assert passage_sensitivity(_PLAIN) == ""
-    # A passage has no medium tier: only 'high' changes what is embedded and served.
-    assert passage_sensitivity("mail me at someone@example.com") == ""
-
-
-def test_the_label_ignores_the_autodetect_setting(monkeypatch: pytest.MonkeyPatch) -> None:
-    from server.settings import settings
-
-    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False, raising=False)
-    assert passage_sensitivity(f"key {_OPENAI_KEY}") == "high"
-
-
-def test_a_passage_is_held_back_by_its_label_or_by_its_text() -> None:
-    assert passage_reads_high("high", _PLAIN)
-    assert passage_reads_high("", f"key {_AWS_KEY_ID}")  # written before the label existed
-    assert passage_reads_high(None, f"key {_AWS_KEY_ID}")
-    assert not passage_reads_high("", _PLAIN)
-
-
-@pytest.mark.asyncio
-async def test_embed_plain_never_sends_a_high_text_to_the_embedder() -> None:
-    from server.memory.app.chunk_projection import embed_plain
+async def test_embed_plain_never_sends_a_credential_to_the_embedder(secret: str) -> None:
+    from server.memory.app.credential_passages import embed_plain
 
     sent: list[list[str]] = []
 
     async def embed(texts: list[str]) -> list[list[float]]:
         sent.append(list(texts))
-        return [[float(i + 1)] for i in range(len(texts))]
+        return [[float(i + 1)] for i in range(len(texts))] if texts[0] != "fails" else [[]]
 
-    texts = ["plain one", f"key {_OPENAI_KEY}", "plain two"]
-    vectors = await embed_plain(texts, [passage_sensitivity(t) for t in texts], embed)
+    assert await embed_plain(["plain one", secret, "plain two"], embed) == [[1.0], None, [2.0]]
     assert sent == [["plain one", "plain two"]]
-    assert vectors == [[1.0], [], [2.0]]
+    # A failed embed is [], not None: the caller drops it rather than storing it unembedded.
+    assert await embed_plain(["fails"], embed) == [[]]
 
 
 @pytest.mark.asyncio
-async def test_embed_plain_makes_no_call_when_every_text_is_high() -> None:
-    from server.memory.app.chunk_projection import embed_plain
+async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app.credential_passages import embed_plain
+    from server.settings import settings
+
+    # The text decides, whatever the autodetect setting says.
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False, raising=False)
 
     async def embed(texts: list[str]) -> list[list[float]]:
         raise AssertionError("no text may reach the embedder")
 
-    assert await embed_plain([f"key {_OPENAI_KEY}"], ["high"], embed) == [[]]
+    assert await embed_plain([f"key {_OPENAI_KEY}"], embed) == [None]
+
+
+def test_without_credentials_keeps_order_and_fills_the_limit() -> None:
+    from server.memory.app.credential_passages import without_credentials
+
+    items = [f"key {_AWS_KEY_ID}", "one", f"key {_OPENAI_KEY}", "two", "three"]
+    assert without_credentials(items, str) == ["one", "two", "three"]
+    assert without_credentials(items, str, 2) == ["one", "two"]
+    assert without_credentials([], str, 2) == []
 
 
 class _Embedder:
@@ -103,7 +95,7 @@ class _CH:
 
 
 @pytest.mark.asyncio
-async def test_a_conversation_chunk_holding_a_key_is_stored_labelled_and_unembedded(
+async def test_a_conversation_chunk_holding_a_key_is_stored_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import server.core.ch as chmod
@@ -113,40 +105,29 @@ async def test_a_conversation_chunk_holding_a_key_is_stored_labelled_and_unembed
     ch, emb = _CH(), _Embedder()
     monkeypatch.setattr(chmod, "get_client", lambda: ch)
     monkeypatch.setattr(embmod, "get_embedder", lambda: emb)
-
-    class _Input:
-        org = "o"
-        namespace = "n"
-        agent = "a"
-        user_id = "u"
-        session_id = "s"
-        run_id = "-"
-
-    # Two paragraphs over the chunk size, so each lands in its own chunk.
+    write = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="u", session_id="s", run_id="-"
+    )
+    # Two turns over the chunk size, so each lands in its own chunk.
     secret_turn = f"here is the key {_OPENAI_KEY} " + "and some context. " * 40
     plain_turn = _PLAIN + " " + "More notes on the plan. " * 40
     await write_memory_chunks(
-        _Input(),
-        [{"role": "user", "content": plain_turn}, {"role": "user", "content": secret_turn}],
+        write, [{"role": "user", "content": plain_turn}, {"role": "user", "content": secret_turn}]
     )
     rows = ch.inserts["loom.memory_chunks"]
-    high = [r for r in rows if _OPENAI_KEY in r["content"]]
+    held = [r for r in rows if _OPENAI_KEY in r["content"]]
     plain = [r for r in rows if _OPENAI_KEY not in r["content"]]
-    assert high and plain
-    for r in high:
-        assert (r["sensitivity"], r["embedding"], r["embedding_dim"]) == ("high", [], 0)
-        assert r["content"] == r["content"].strip() and "[user]" in r["content"]
-    for r in plain:
-        assert (r["sensitivity"], r["embedding_dim"]) == ("", 2)
+    assert held and plain
+    assert all((r["embedding"], r["embedding_dim"]) == ([], 0) for r in held)
+    assert all(r["embedding_dim"] == 2 for r in plain)
+    assert "sensitivity" not in rows[0]
     assert not any(_OPENAI_KEY in t for t in emb.seen)
 
 
 @pytest.mark.asyncio
-async def test_a_long_value_chunk_holding_a_key_is_stored_labelled_and_unembedded(
+async def test_a_long_value_chunk_holding_a_key_is_stored_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import SimpleNamespace
-
     from server.memory.app import set_chunks
 
     async def head_still_embedded(*_: Any, **__: Any) -> bool:
@@ -163,22 +144,54 @@ async def test_a_long_value_chunk_holding_a_key_is_stored_labelled_and_unembedde
     )
     rows = ch.inserts["loom.memory_chunks"]
     assert written == len(rows)
-    levels = {r["sensitivity"] for r in rows}
-    assert levels == {"", "high"}
+    assert {r["embedding_dim"] == 0 for r in rows} == {True, False}
     for r in rows:
-        assert (r["embedding_dim"] == 0) == (r["sensitivity"] == "high")
+        assert (r["embedding_dim"] == 0) == (_AWS_KEY_ID in r["content"])
     assert not any(_AWS_KEY_ID in t for t in emb.seen)
 
 
-def test_a_tombstone_carries_the_chunk_label_forward() -> None:
-    from server.memory.app.set_chunks import _chunk_state_row
-
-    row = _chunk_state_row(
-        {"chunk_index": 0, "content_sha256": "x" * 64, "sensitivity": "high"},
-        org="o",
-        namespace="n",
+@pytest.mark.asyncio
+async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.embedding as embmod
+    from server.memory.api.models_evidence_transfer import (
+        EvidenceChunk,
+        EvidenceDigest,
+        MemoryImportEvidenceInput,
     )
-    assert row["sensitivity"] == "high"
+    from server.memory.app import evidence_transfer
+
+    async def not_refused(*_: Any, **__: Any) -> bool:
+        return False
+
+    ch, emb = _CH(), _Embedder()
+    monkeypatch.setattr(evidence_transfer, "get_client", lambda: ch)
+    monkeypatch.setattr(embmod, "get_embedder", lambda: emb)
+    monkeypatch.setattr(evidence_transfer, "_refused", not_refused)
+    monkeypatch.setattr(evidence_transfer, "_importer_user", lambda _input: None)
+    out = await evidence_transfer.handle_memory_import_evidence(
+        MemoryImportEvidenceInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            chunks=[
+                EvidenceChunk(session_id="s", chunk_index=0, content=_PLAIN),
+                EvidenceChunk(session_id="s", chunk_index=1, content=f"key {_OPENAI_KEY}"),
+                EvidenceChunk(session_id="s", chunk_index=2, content="   "),
+            ],
+            digests=[EvidenceDigest(session_id="s", summary_text=f"Shared {_AWS_KEY_ID}.")],
+        )
+    )
+    chunks = {r["chunk_index"]: r for r in ch.inserts["loom.memory_chunks"]}
+    assert set(chunks) == {0, 1}
+    assert (chunks[0]["embedding_dim"], chunks[1]["embedding_dim"]) == (2, 0)
+    assert chunks[1]["content"] == f"key {_OPENAI_KEY}"  # stored as written
+    [digest] = ch.inserts["loom.session_summaries"]
+    assert digest["embedding_dim"] == 0 and digest["summary_text"] == f"Shared {_AWS_KEY_ID}."
+    assert (out.chunks_written, out.digests_written, out.skipped) == (2, 1, 1)
+    assert out.embedding_dim == 2
+    assert emb.seen == [_PLAIN]
 
 
 def _hit(key: str, excerpt: str, rank: float) -> SearchHit:
@@ -194,7 +207,7 @@ def _hit(key: str, excerpt: str, rank: float) -> SearchHit:
 
 
 def test_the_chunk_leg_serves_no_chunk_that_reads_as_a_credential() -> None:
-    from server.memory.app.retrieval.chunks import _served_chunks
+    from server.memory.app.retrieval.chunks import _served
 
     hits = [
         _hit("chunk:s:0", "[user] here is the", 0.9),  # the excerpt is trimmed; the text is not
@@ -206,9 +219,9 @@ def test_the_chunk_leg_serves_no_chunk_that_reads_as_a_credential() -> None:
         {"memory_key": "chunk:s:1", "content_full": _PLAIN},
         {"memory_key": "chunk:s:2", "content_full": _PLAIN},
     ]
-    assert [h.memory_key for h in _served_chunks(hits, rows, 5)] == ["chunk:s:1", "chunk:s:2"]
+    assert [h.memory_key for h in _served(hits, rows, 5)] == ["chunk:s:1", "chunk:s:2"]
     # A held-back chunk does not take one of the `n` places.
-    assert [h.memory_key for h in _served_chunks(hits, rows, 1)] == ["chunk:s:1"]
+    assert [h.memory_key for h in _served(hits, rows, 1)] == ["chunk:s:1"]
 
 
 @pytest.mark.asyncio
@@ -240,31 +253,28 @@ async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> 
 
 @pytest.mark.asyncio
 async def test_the_ask_chunk_lookups_serve_no_chunk_that_reads_as_a_credential() -> None:
-    from server.memory.store.lookups import find_chunks_by_identifier, find_chunks_by_session_date
+    from server.memory.app.ask.identifiers import _HELD_MARGIN, _plain_chunks
 
-    class _Rows:
-        async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
-            return [
-                {"memory_key": "chunk:s:0", "content_excerpt": f"deploy key {_OPENAI_KEY}"},
-                {"memory_key": "chunk:s:1", "content_excerpt": f"deploy {_PLAIN}"},
-            ]
+    asked: list[int] = []
 
-    by_id = await find_chunks_by_identifier(
-        org="o", namespace="n", identifiers=["deploy"], ch=_Rows()
-    )
-    by_date = await find_chunks_by_session_date(
-        org="o", namespace="n", start_date="2026-01-01", end_date="2026-01-02", ch=_Rows()
-    )
-    assert [r["memory_key"] for r in by_id] == ["chunk:s:1"]
-    assert [r["memory_key"] for r in by_date] == ["chunk:s:1"]
+    async def find(*, limit: int, **_: Any) -> list[dict[str, Any]]:
+        asked.append(limit)
+        return [
+            {"memory_key": "chunk:s:0", "content_excerpt": f"deploy key {_OPENAI_KEY}"},
+            {"memory_key": "chunk:s:1", "content_excerpt": f"deploy {_PLAIN}"},
+            {"memory_key": "chunk:s:2", "content_excerpt": "deploy notes"},
+        ]
+
+    rows = await _plain_chunks(find, limit=2, org="o")
+    assert [r["memory_key"] for r in rows] == ["chunk:s:1", "chunk:s:2"]
+    assert asked == [2 + _HELD_MARGIN]
+    assert await _plain_chunks(find, limit=0) == [] and asked == [2 + _HELD_MARGIN]
 
 
 @pytest.mark.asyncio
 async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from types import SimpleNamespace
-
     import server.llm.client as llm_client
     from server.memory.app import session_summary
 

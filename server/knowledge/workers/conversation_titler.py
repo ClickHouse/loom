@@ -25,6 +25,7 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
+from server.memory.domain.sensitivity import reads_high
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -80,10 +81,12 @@ async def _make_title(
     turns = await conversation_repo.opening_turns(
         str(row["org"]), str(row["namespace"]), str(row["thread_id"])
     )
+    # A turn that reads as a credential never reaches the model: the title is listed to
+    # every reader of the namespace.
     snippet = "\n".join(
         f"{r['role']}: {str(r['content'])[:500]}"
         for r in turns
-        if str(r.get("content") or "").strip()
+        if str(r.get("content") or "").strip() and not reads_high(str(r["content"]))
     )
     if not snippet:
         return False
@@ -105,7 +108,7 @@ async def _make_title(
             started=row_started,
         )
     title = (getattr(out, "text", "") or "").strip().strip('"').strip()[:80]
-    if not title:
+    if not title or reads_high(title):
         return False
 
     now = naive_utc_now_seconds()

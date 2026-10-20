@@ -54,7 +54,16 @@ async def test_complete_verified_target_returns_logical_count(verification):
     assert "isNotDistinctFrom(s.`verified`, t.`verified`)" in sql
     assert "isNotDistinctFrom(s.`tombstoned_at`, t.`tombstoned_at`)" in sql
     assert "memory_key_embedding" in sql and "isFinite" in sql
-    assert params == {"model": "target", "dim": 3}
+    assert params == {"model": "target", "dim": 3, "held": []}
+
+
+@pytest.mark.asyncio
+async def test_held_ordinals_reach_the_empty_vector_check(verification):
+    args, client, _ = verification
+    await verify_reembedded_target(*args, model="target", dimensions=3, held=[4, 9], ch=client)
+    sql, params = client.query_one.await_args_list[2].args
+    assert params["held"] == [4, 9]
+    assert "NOT has({held:Array(UInt64)}, s._loom_rebuild_ordinal)" in sql
 
 
 @pytest.mark.asyncio

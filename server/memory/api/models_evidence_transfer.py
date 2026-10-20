@@ -81,16 +81,18 @@ class MemoryImportEvidenceInput(BaseModel):
     namespace: str
     agent: str
     user_id: str = "-"
-    # Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped.
+    # Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped,
+    # and one whose text reads as a credential is inserted without a vector.
     chunks: list[EvidenceChunk] = Field(default_factory=list, max_length=256)
-    # Session digests to re-embed and insert (≤256); empty summaries are skipped.
+    # Session digests to re-embed and insert (≤256); empty summaries are skipped, and one
+    # whose text reads as a credential is inserted without a vector.
     digests: list[EvidenceDigest] = Field(default_factory=list, max_length=256)
     # Stamped into memory_chunks.source_url when the chunk carries none.
     source_trace: str = Field(default="okf-import", max_length=512)
 
 
 class MemoryImportEvidenceOutput(BaseModel):
-    # Rows inserted into `loom.memory_chunks`.
+    # Rows inserted into `loom.memory_chunks`, those written without a vector included.
     chunks_written: int = 0
     # Chunk-to-memory-key provenance links inserted from the chunks' `memory_keys`.
     links_written: int = 0
@@ -98,7 +100,8 @@ class MemoryImportEvidenceOutput(BaseModel):
     digests_written: int = 0
     # The server embedder the imported rows were re-embedded with.
     embedding_model: str = ""
-    # Vector length of the written embeddings; 0 when nothing was embedded.
+    # Vector length of the written embeddings; 0 when nothing was embedded (every item
+    # read as a credential, or none was written).
     embedding_dim: int = 0
     # Chunks whose body did not hash to the content_sha256 they arrived with.
     edited: list[str] = Field(default_factory=list)

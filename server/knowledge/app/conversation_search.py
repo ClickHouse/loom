@@ -77,7 +77,6 @@ async def vector_search(
         "model": q.embedding_model,
         "q": q.query_vec,
         "lim": int(q.top_k),
-        "excerpt": HIT_EXCERPT_CHARS,
         "maxd": float(q.max_distance),
     }
     # Relevance gate: drop rows beyond max_distance so a short query doesn't
@@ -105,7 +104,6 @@ async def vector_search(
     rows = await ch.query_all(
         f"""
         SELECT thread_id, msg_id, role,
-               substringUTF8(content_excerpt, 1, {{excerpt:UInt32}}) AS excerpt,
                content_excerpt AS embedded_text, ts,
                cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.conversation_embeddings FINAL
@@ -121,14 +119,14 @@ async def vector_search(
             thread_id=r["thread_id"],
             msg_id=r["msg_id"],
             role=r["role"],
-            content_excerpt=r["excerpt"],
+            content_excerpt=str(r["embedded_text"])[:HIT_EXCERPT_CHARS],
             ts=r["ts"],
             distance=float(r["distance"]),
         )
         for r in rows
         # A turn that reads as a credential gets no embedding row; this holds back a row
         # an earlier build wrote for one.
-        if not reads_high(str(r.get("embedded_text") or r["excerpt"]))
+        if not reads_high(str(r["embedded_text"]))
     ]
     # Recency breaks exact distance ties (newest first).
     hits.sort(key=lambda h: (h.distance, _ts_desc_key(h.ts)))

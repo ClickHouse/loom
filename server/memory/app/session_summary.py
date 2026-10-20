@@ -10,7 +10,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
-from server.memory.domain.sensitivity import HIGH, passage_sensitivity, value_reads_high
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.observability.genai import staged
 
 log = logging.getLogger(__name__)
@@ -155,21 +155,17 @@ async def _draft_session_summary(
     embedder = get_embedder()
     # A digest that reads as a credential is written without a vector: the summary leg
     # reads only digests that have one, and the text never reaches the embedder.
-    if passage_sensitivity(summary_text) == HIGH:
-        return SessionSummaryDraft(
-            summary_text=summary_text,
-            embedding=[],
-            embedding_model=embedder.model_name,
-            tokens_in=int(getattr(result, "tokens_in", 0) or 0),
-            tokens_out=int(getattr(result, "tokens_out", 0) or 0),
-        )
-    embedding = await embedder.embed(summary_text)
-    if not embedding:
-        log.info("session_summaries: empty embedding for session=%r; skipping", input.session_id)
-        return None
+    embedding: list[float] = []
+    if not reads_high(summary_text):
+        embedding = list(await embedder.embed(summary_text) or [])
+        if not embedding:
+            log.info(
+                "session_summaries: empty embedding for session=%r; skipping", input.session_id
+            )
+            return None
     return SessionSummaryDraft(
         summary_text=summary_text,
-        embedding=list(embedding),
+        embedding=embedding,
         embedding_model=embedder.model_name,
         tokens_in=int(getattr(result, "tokens_in", 0) or 0),
         tokens_out=int(getattr(result, "tokens_out", 0) or 0),

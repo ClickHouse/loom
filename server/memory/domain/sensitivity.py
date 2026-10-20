@@ -236,22 +236,6 @@ def reads_high(text: str) -> bool:
     return unescaped != text and _holds_credential(unescaped)
 
 
-def passage_sensitivity(text: str) -> str:
-    """The label a raw passage (a conversation chunk, a chunk of a long value, a session
-    digest) is written with: 'high' when it reads as a credential, else ''. No caller labels
-    a passage, so the detector runs whatever the autodetect setting. A 'high' passage is
-    stored as written and never embedded, so no search leg returns it."""
-    return HIGH if reads_high(text) else ""
-
-
-def passage_reads_high(level: object, text: str) -> bool:
-    """Whether a stored passage is held back from the reads that serve passages to every
-    reader of a namespace (search hits, the passages `memory.ask` injects, the neighbours
-    of a keyed chunk read): labelled 'high', or reading as a credential. The text check
-    covers a passage written before the label existed, or by a build that did not set it."""
-    return str(level or "").strip().lower() == HIGH or reads_high(text)
-
-
 def resolve_sensitivity(requested: str | None, text: str) -> str:
     """The caller's explicit level wins; an unset level is detected from the
     value when `memory_sensitivity_autodetect` is on, else stays ''."""

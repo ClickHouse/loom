@@ -83,3 +83,23 @@ def test_a_bad_token_is_refused() -> None:
         rb.decode_resume("not-a-token")
     with pytest.raises(ValueError):
         rb.decode_resume(rb.encode_resume("memory_embeddings", ["only-one"]))
+
+
+@pytest.mark.asyncio
+async def test_a_row_whose_text_reads_as_a_credential_is_never_re_embedded() -> None:
+    """It stays on the old model, which search does not read, and paging still moves past it."""
+    ch, lines = _CH(3), []
+    ch.rows[1]["content_excerpt"] = "my key is " + "sk-" + "proj-" + "Ab3" * 12
+    sent: list[str] = []
+
+    class _Recording(_Emb):
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            sent.extend(texts)
+            return await super().embed_many(texts)
+
+    n = await rb.reembed_table(
+        ch, _Recording(), "conversation_embeddings", batch=2, log=lines.append
+    )
+    assert n == 2 and ch.inserted == ["000", "002"]
+    assert sent == ["c0", "c2"]
+    assert any("reads as a credential" in line for line in lines)

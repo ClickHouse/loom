@@ -679,47 +679,55 @@ leg returns it. The other reads that could serve its value follow three rules:
   do until the sweep. `memory.bulk_get`, like `memory.list`, serves any other row past
   `expires_at` until the expiry sweep.
 
-Raw evidence has no caller to label it, so the write path labels it. A verbatim chunk in
-`loom.memory_chunks` (a conversation chunk `memory.set_from_messages` writes, a chunk of a
-long `memory.set` value, a chunk `memory.import_evidence` writes) carries a `sensitivity`
-column: `high` when its text reads as a credential (`passage_sensitivity`, which is
-`reads_high` whatever `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says), else empty. A `high` chunk
-is stored as written and never embedded (its text is never sent to the embedder), so no
-search leg returns it. A session digest whose text reads as a credential is likewise
-written without a vector. So is a `conversation.append` turn or a `conversation.compact`
-summary: the message is stored as written in `loom.conversations` and gets no row in
-`loom.conversation_embeddings`, so `conversation.search` never ranks it. The embedding row
-is the only place a turn is labelled, and its absence is the label: no column is needed. A
-provider rebuild stages any of these without a vector. Chunks, digests and turn embeddings
-written before these rules, or by a build that does not follow them, may still hold a
-vector, so the reads that serve passages check their text with `reads_high` too:
+Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A verbatim chunk in `loom.memory_chunks` (a
+conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.set` value,
+a chunk `memory.import_evidence` writes) whose text reads as a credential is stored as
+written with no vector, and its text is never sent to the embedder; every chunk read that
+ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns it. A
+session digest whose text reads as a credential is likewise written without a vector, and
+so is a `conversation.append` turn: the message is stored as written in
+`loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing embedding
+row keeps the turn out of vector search. `conversation.compact` refuses a window whose
+summary reads as a credential (`reason: "summary-reads-high"`) and tombstones nothing, as
+it does when the summary cannot be embedded. A provider rebuild stages a chunk, digest or
+turn embedding that reads as a credential without a vector, and its verification accepts
+those rows. `loom reembed` keeps such a row on its old model, which search does not read,
+until `--delete-old` removes it; `loom reembed --in-database` runs the embedding inside
+ClickHouse, cannot check the text, and re-embeds it. Chunks, digests and turn embeddings
+that an earlier build embedded keep their vector, so the reads that serve passages check
+their text too:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
   its model and the context pack built from search), the chunks `memory.ask` injects for an
   identifier or a session date, the neighbours `memory.get` stitches around a `chunk:`
-  key, and `conversation.search`'s hits (the vector ranking and the substring fallback the
-  search takes when the embedder is down).
+  key, and `conversation.search`'s hits (the vector ranking, checked on the text the vector
+  was built from, and the substring fallback the search takes when the embedder is down).
+  Each read asks for a few spare rows, so a held-back passage does not leave it short.
 - Listed without the text: `conversation.threads` shows an empty `last_content_excerpt`
-  for a thread whose last turn reads as a credential.
-- Read by key and audited: `memory.get` on the `chunk:` key of a chunk labelled `high` or
-  reading as a credential serves it and writes a `memory.sensitive_read` row.
+  for a thread whose last turn reads as a credential (the whole turn is checked, not the
+  excerpt), and an empty `title` for a title that reads as one. The conversation titler
+  never sends a turn that reads as a credential to its model and never stores a title that
+  reads as one.
+- Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
+  credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
   version, and those whose text reads as a credential, unless asked with `include_high`
   (each one it then releases is audited). `bodies: "source"` leaves out a passage whose text
   reads as a credential.
 
-Other raw text is served to readers of the namespace as it is: a caller-labelled `high`
-value that shares a chunk with a plain row (the chunk's own label comes from its text, not
-from the rows it holds), the session digests `memory.digests` lists (their summary text; key
-facts that read as a credential are left out), what the session-summary draft (the
-conversation turns), the period-digest draft and the outcome judge (session digest text)
-send their model, `memory.recall`'s raw turns, and a thread's own turns as
-`conversation.get` and `conversation.list` serve them. Those two read one thread by its id
-under the caller's read scope, as the thread's participants read their transcript, so they
-serve each turn as written. A `loom reembed` after a model change re-embeds an embedding
-row an earlier build wrote for a credential turn; search still holds it back. Raw text is
-stored as written, and erasure removes the chunk, digest, message and embedding rows
-whole.
+Other raw text is served to readers of the namespace, or sent to a model, as it is: a
+caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
+its own text, not by the rows it holds), the session digests `memory.digests` lists (their
+summary text; key facts that read as a credential are left out), what the session-summary
+draft (the conversation turns), the period-digest draft and the outcome judge (session
+digest text) send their model, every turn of the window the `conversation.compact` prompt
+sends its model, `memory.recall`'s raw turns, a title a caller set with
+`conversation.create` or `conversation.update` as `conversation.get` serves it, and a
+thread's own turns as `conversation.get` and `conversation.list` serve them. Those two read
+one thread by its id under the caller's read scope, as the thread's participants read their
+transcript, so they serve each turn as written. Raw text is stored as written, and erasure
+removes the chunk, digest, message and embedding rows whole.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
@@ -738,7 +746,7 @@ undone): `memory.export_evidence` (chunks, and digests with their key facts deco
 extractor's input, the existing memories an extraction prompt shows, the rows
 `memory.consolidate` and the profile fold send their models, a session digest's key
 facts when written, listed by `memory.digests` or read by the outcome judge, and the
-chunks and digests above when written and when served. The
+chunks, digests and turns above when written and when served. The
 `sensitivity_sweep` worker (on, daily) labels memory rows from paths that skip it, every high shape
 counting as `credential` for its default shape filter: a new version per row and, for
 `high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an

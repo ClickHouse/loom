@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.llm import customer
+from server.memory.app.credential_passages import without_credentials
 
 # (text-source column, vector column) per table, plus an optional secondary
 # (key text -> key vector, key dim) embedding.
@@ -299,8 +300,15 @@ async def reembed_table(
         )
         if not rows:
             break
-        left = await _rewrite_page(ch, embedder, table, [_without_key(r) for r in rows], key_only)
-        written += len(rows) - sum(left.values())
+        # A row whose text reads as a credential is never sent to the embedder: it stays on
+        # the old model, which search does not read, until --delete-old removes it.
+        page = without_credentials(
+            [_without_key(r) for r in rows], lambda r: str(r.get(cfg["text"]) or "")
+        )
+        if len(page) < len(rows):
+            log(f"  {table}: {len(rows) - len(page)} rows whose text reads as a credential kept")
+        left = await _rewrite_page(ch, embedder, table, page, key_only)
+        written += len(page) - sum(left.values())
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)

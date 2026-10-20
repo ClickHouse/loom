@@ -1,5 +1,5 @@
-"""A conversation chunk that holds a credential is labelled 'high', stored as written with
-no embedding, never returned by `memory.search` or handed to `memory.ask`, and served by
+"""A conversation chunk that holds a credential is stored as written with no vector,
+never returned by `memory.search` or handed to `memory.ask`, and served by
 `memory.get` on its `chunk:` key only with a `memory.sensitive_read` audit row. A plain
 chunk of the same conversation is still found. A `conversation.append` turn that holds a
 credential is stored as written with no embedding row, so `conversation.search` never
@@ -24,11 +24,11 @@ from tests.integration._resources import unique_org
 ORG = unique_org("raw-evidence")
 _NONCE = os.urandom(3).hex()
 # One namespace per test, so one test's identical passage never ranks in another's search.
-NS_LABELLED, NS_LEGACY, NS_DIGEST, NS_TURNS = (
-    f"raw-{name}-{_NONCE}" for name in ("labelled", "legacy", "digest", "turns")
+NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS = (
+    f"raw-{name}-{_NONCE}" for name in ("chunks", "legacy", "digest", "turns")
 )
 
-# Credential shapes the detector reads as 'high', with nonce bodies. Never real secrets.
+# Credential shapes `reads_high` matches, with nonce bodies. Never real secrets.
 _API_KEY = "sk-" + "proj-" + uuid.uuid4().hex + uuid.uuid4().hex[:8]
 _AWS_KEY_ID = "AKIA" + uuid.uuid4().hex[:16].upper()
 
@@ -53,7 +53,7 @@ def token() -> str:
     return mint_token(
         subject="raw-evidence",
         org=ORG,
-        namespaces=[NS_LABELLED, NS_LEGACY, NS_DIGEST, NS_TURNS],
+        namespaces=[NS_CHUNKS, NS_LEGACY, NS_DIGEST, NS_TURNS],
         roles=["admin", "writer"],  # admin: conversation.set_logging
         ttl_seconds=600,
     )
@@ -76,11 +76,11 @@ def _ingest(base: str, token: str, ns: str, session_id: str, messages: list[dict
     assert r.status_code == 200, r.text
 
 
-def _chunks(ch_client, ns: str, session_id: str) -> list[tuple[int, str, str, int]]:
+def _chunks(ch_client, ns: str, session_id: str) -> list[tuple[int, str, int]]:
     return [
-        (int(i), str(content), str(level), int(dim))
-        for i, content, level, dim in ch_client.query(
-            "SELECT chunk_index, content, sensitivity, embedding_dim FROM loom.memory_chunks FINAL "
+        (int(i), str(content), int(dim))
+        for i, content, dim in ch_client.query(
+            "SELECT chunk_index, content, embedding_dim FROM loom.memory_chunks FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} AND session_id = {s:String} "
             "AND tombstoned_at IS NULL ORDER BY chunk_index",
             parameters={"o": ORG, "n": ns, "s": session_id},
@@ -116,26 +116,24 @@ def test_a_chunk_holding_a_credential_is_stored_unembedded_and_read_only_by_key(
     _ingest(
         control_plane_url,
         token,
-        NS_LABELLED,
+        NS_CHUNKS,
         session,
         [{"role": "user", "content": _PLAIN_TURN}, {"role": "user", "content": _SECRET_TURN}],
     )
-    chunks = _chunks(ch_client, NS_LABELLED, session)
+    chunks = _chunks(ch_client, NS_CHUNKS, session)
     high = [c for c in chunks if _API_KEY in c[1] or _AWS_KEY_ID in c[1]]
     plain = [c for c in chunks if c not in high]
     assert high and plain, chunks
-    # Stored as written, labelled, and without a vector; the plain chunk is embedded.
-    assert all(level == "high" and dim == 0 for _i, _c, level, dim in high), high
-    assert all(level == "" and dim > 0 for _i, _c, level, dim in plain), plain
-    assert any(_API_KEY in content for _i, content, _l, _d in high)
+    # Stored as written and without a vector; the plain chunk is embedded.
+    assert all(dim == 0 for _i, _c, dim in high), high
+    assert all(dim > 0 for _i, _c, dim in plain), plain
+    assert any(_API_KEY in content for _i, content, _d in high)
 
     # memory.search finds the plain chunk and never returns the credential.
-    r = _search(
-        control_plane_url, token, NS_LABELLED, "tomatoes along the south fence in the garden"
-    )
+    r = _search(control_plane_url, token, NS_CHUNKS, "tomatoes along the south fence in the garden")
     assert f"chunk:{session}:{plain[0][0]}" in _keys(r), _keys(r)
     for query in ("nightly export billing job key", "access key id for the billing job"):
-        r = _search(control_plane_url, token, NS_LABELLED, query)
+        r = _search(control_plane_url, token, NS_CHUNKS, query)
         assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text
         assert not {f"chunk:{session}:{i}" for i, *_ in high} & set(_keys(r))
 
@@ -143,7 +141,7 @@ def test_a_chunk_holding_a_credential_is_stored_unembedded_and_read_only_by_key(
     r = _post(
         control_plane_url,
         token,
-        NS_LABELLED,
+        NS_CHUNKS,
         "memory.ask",
         {"query": "Which key does the nightly export of the billing job use?"},
     )
@@ -152,22 +150,22 @@ def test_a_chunk_holding_a_credential_is_stored_unembedded_and_read_only_by_key(
 
     # A keyed read serves it and leaves an audit row; a plain neighbour's read leaves it out.
     high_key = f"chunk:{session}:{high[0][0]}"
-    r = _post(control_plane_url, token, NS_LABELLED, "memory.get", {"memory_key": high_key})
+    r = _post(control_plane_url, token, NS_CHUNKS, "memory.get", {"memory_key": high_key})
     assert r.status_code == 200 and r.json().get("found") is True, r.text
     assert _API_KEY in r.json()["value"]["content"] or _AWS_KEY_ID in r.json()["value"]["content"]
-    _wait(lambda: _sensitive_reads(ch_client, NS_LABELLED, high_key) >= 1)
+    _wait(lambda: _sensitive_reads(ch_client, NS_CHUNKS, high_key) >= 1)
 
     plain_key = f"chunk:{session}:{plain[0][0]}"
-    r = _post(control_plane_url, token, NS_LABELLED, "memory.get", {"memory_key": plain_key})
+    r = _post(control_plane_url, token, NS_CHUNKS, "memory.get", {"memory_key": plain_key})
     assert r.status_code == 200 and r.json().get("found") is True, r.text
     assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text
-    assert _sensitive_reads(ch_client, NS_LABELLED, plain_key) == 0
+    assert _sensitive_reads(ch_client, NS_CHUNKS, plain_key) == 0
 
 
-def test_a_chunk_written_before_the_label_is_held_back_by_its_text(
+def test_a_chunk_an_earlier_build_embedded_is_held_back_by_its_text(
     control_plane_url: str, ch_client, token: str
 ) -> None:
-    """A chunk an earlier build wrote carries no label and has a vector: every read that
+    """A chunk an earlier build wrote has a vector whatever it holds: every read that
     serves chunk text checks it. It is given the plain chunk's own vector, so it would
     rank beside it."""
     session = f"s-{uuid.uuid4().hex[:8]}"
@@ -187,8 +185,8 @@ def test_a_chunk_written_before_the_label_is_held_back_by_its_text(
         "AND chunk_index = 0",
         parameters={"o": ORG, "n": NS_LEGACY, "s": session, "legacy": legacy, "content": content},
     )
-    [(_i, _c, level, dim)] = _chunks(ch_client, NS_LEGACY, legacy)
-    assert (level, dim > 0) == ("", True)
+    [(_i, _c, dim)] = _chunks(ch_client, NS_LEGACY, legacy)
+    assert dim > 0
 
     r = _search(control_plane_url, token, NS_LEGACY, "tomatoes along the south fence in the garden")
     assert f"chunk:{session}:0" in _keys(r), _keys(r)
@@ -217,9 +215,12 @@ def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
         "AND tombstoned_at IS NULL",
         parameters={"o": ORG, "n": NS_DIGEST, "s": session},
     ).result_rows
-    assert digests
-    for text, dim in digests:
-        assert (int(dim) == 0) == reads_high(str(text)), (text, dim)
+    [(text, dim)] = digests
+    if not reads_high(str(text)):
+        # The digest is the model's: a provider whose digest leaves the key out has
+        # nothing to hold back here.
+        pytest.skip("the digest model left the credential out of the digest")
+    assert int(dim) == 0
     r = _search(control_plane_url, token, NS_DIGEST, "nightly export billing job key")
     assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text
 

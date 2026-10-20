@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from server.insights.app.provider_rebuild_batch import (
+    PASSAGE_TABLES,
     SPECIAL_TEXT_TABLES,
     TEXT_COLUMNS,
     RebuildBatchError,
@@ -218,12 +219,21 @@ async def test_non_reembed_actions_cannot_accidentally_send_data(target, table):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("table", ["conversation_embeddings", "memory_chunks", "session_summaries"])
+@pytest.mark.parametrize("table", sorted(PASSAGE_TABLES))
 async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(table, target):
-    labelled = {**row_for(table), "sensitivity": "high"}
-    # Written before the label existed: unlabelled and embedded, its text holds a key.
-    unlabelled = {**row_for(table), TEXT_COLUMNS[table]: "key " + "AKIA" + "IOSFODNN7EXAMPLE"}
-    plain = row_for(table)
-    result = await rebuild_batch(table, [labelled, unlabelled, plain], target)
+    # Embedded by an earlier build; its text holds a key.
+    secret = {**row_for(table), TEXT_COLUMNS[table]: "key " + "AKIA" + "IOSFODNN7EXAMPLE"}
+    held: list[int] = []
+    result = await rebuild_batch(table, [row_for(table), secret], target, held=held)
     target.embed_many.assert_awaited_once_with(["source text"])
-    assert [r["embedding_dim"] for r in result] == [0, 0, 2]
+    assert [r["embedding_dim"] for r in result] == [2, 0]
+    assert held == [1]
+
+
+@pytest.mark.asyncio
+async def test_a_memory_row_is_rebuilt_whatever_its_text(target):
+    # Only raw passages are held; a memory row's vector follows its sensitivity label.
+    row = {**row_for("memory_embeddings"), "content_excerpt": "key " + "AKIA" + "IOSFODNN7EXAMPLE"}
+    held: list[int] = []
+    result = await rebuild_batch("memory_embeddings", [row], target, held=held)
+    assert result[0]["embedding_dim"] == 2 and held == []
