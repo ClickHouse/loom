@@ -239,8 +239,15 @@ async def tombstone_set_chunks_fail_open(
     """`tombstone_set_chunks` for memory.delete: the fact's tombstone is the
     record of the delete; a chunk failure is logged, never raised."""
     try:
+        # Read with sequential consistency: a chunk another call just put back is retired.
         return await tombstone_set_chunks(
-            org=org, namespace=namespace, memory_key=memory_key, user_id=user_id, ch=ch, only=only
+            org=org,
+            namespace=namespace,
+            memory_key=memory_key,
+            user_id=user_id,
+            ch=ch,
+            only=only,
+            strong=True,
         )
     except Exception as e:  # noqa: BLE001 — the delete stands
         log.warning("memory.delete: chunk tombstones failed for %s (non-fatal): %s", memory_key, e)

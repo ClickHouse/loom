@@ -366,17 +366,19 @@ the tombstone and a write back, the key reads as deleted, and a `memory.delete` 
 window answers `found=false`. Before its tombstone the delete records the check it owes in
 `loom.delete_version_checks`, and marks it done once the check has run; if the record
 fails, nothing is deleted. If the tombstone's insert or the read after it fails, the delete
-answers 503 and retires nothing. A check whose tombstone is not in the key's history (an
-insert that timed out can still commit) writes it at its recorded version first, so a late
-commit of the original is the same row, and then runs as after any tombstone: the delete
-finishes. A retry of the same delete runs the owed check and answers as the delete would
-have; otherwise the `delete_version_check` worker runs it under the key lock
+answers 503 and retires nothing. A check whose tombstone is not in the key's history (its
+insert failed) writes one first, at a new version so the namespace's watermark moves, and
+then runs as after any tombstone: the delete finishes. An insert that timed out can still
+commit late; a tombstone aimed at the same version counts as this same delete, never as
+another one. A retry of the same delete runs the owed check and answers as the delete would
+have (when the tombstone's insert is what failed, the retry finds the row live and deletes
+it again); otherwise the `delete_version_check` worker runs it under the key lock
 (`memory/workers/delete_version_check.py`), by default within about six minutes (a
 60-second grace, then a pass at most 300 seconds later). Until the check runs, `memory.get`
-and the list ops read the key as deleted, search can still return the removed value from
-its vectors and chunks, and a write the tombstone hid is not served; it comes back when the
-check runs. A write that lands under such a tombstone, aimed at an older version, writes
-itself again above it.
+and the list ops read the key as deleted (as live, when the tombstone's insert failed),
+search can still return the removed value from its vectors and chunks, and a write the
+tombstone hid is not served; it comes back when the check runs. A write that lands under
+such a tombstone, aimed at an older version, writes itself again above it.
 
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and

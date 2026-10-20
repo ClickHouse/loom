@@ -1307,6 +1307,53 @@ async def test_a_delete_racing_the_chunk_restore_leaves_no_chunk_live(
     assert live == []
 
 
+@pytest.mark.asyncio
+async def test_a_restore_whose_head_read_fails_retires_the_chunks_again(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The read after the restore fails: the restored chunks retire again rather than stay
+    # live on a head nobody checked.
+    ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_chunks")]
+    head = time.time_ns() - 10_000_000_000
+    opening = " ".join(f"old passage {i} about the deploy window." for i in range(60))
+    removed_value = opening + " " + " ".join(f"old tail {i} of the note." for i in range(300))
+    newer_value = opening + " " + " ".join(f"new tail {i} of the note." for i in range(300))
+    await ch.insert("loom.memory", [{**_row(removed_value, head), "memory_type": "semantic"}])
+    removed = _chunk_rows((await _read_back(ch)).value)
+    await ch.insert("loom.memory_chunks", removed)
+    key_moved_on = hm._key_moved_on
+    newer: list[dict[str, Any]] = []
+
+    async def set_lands_after_the_check(existing: Any, **kw: Any) -> Any:
+        answer = await key_moved_on(existing, **kw)
+        row = {**_row(newer_value, kw["tombstone"] + 1_000), "memory_type": "semantic"}
+        await ch.insert("loom.memory", [row])
+        newer.extend(_chunk_rows((await _read_back(ch)).value))
+        await ch.insert("loom.memory_chunks", newer)
+        return answer
+
+    served = hm._served_chunks
+    calls: list[bool] = []
+
+    async def second_read_fails(*a: Any, **k: Any) -> Any:
+        calls.append(True)
+        if len(calls) == 2:
+            raise RuntimeError("timeout")
+        return await served(*a, **k)
+
+    monkeypatch.setattr(hm, "_key_moved_on", set_lands_after_the_check)
+    monkeypatch.setattr(hm, "_served_chunks", second_read_fails)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is True and len(calls) == 2
+    shared = {r["content"] for r in removed} & {r["content"] for r in newer}
+    live = await ch.query_all(
+        "SELECT content FROM loom.memory_chunks FINAL WHERE tombstoned_at IS NULL"
+    )
+    assert shared and not shared & {r["content"] for r in live}
+
+
 async def _owed_after_a_failed_check(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, *, clock_ahead_ns: int = 0
 ) -> int:
@@ -1427,24 +1474,65 @@ async def _tombstone_held_back(ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch)
 async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
     ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The tombstone insert timed out (503). The worker finds no tombstone, writes it at its
-    # recorded version and runs the check: the delete stands, and the original insert
-    # committing later is the same row.
+    # The tombstone insert timed out (503). The worker finds no tombstone, writes one at a
+    # new version (the namespace's watermark moves past the write it draws after) and runs
+    # the check: the delete stands, and the original insert committing later changes
+    # nothing.
     from server.memory.workers import delete_version_check
     from server.settings import settings
 
-    head, commit_late = await _tombstone_held_back(ch, monkeypatch)
+    _head, commit_late = await _tombstone_held_back(ch, monkeypatch)
+    (check,) = await _recorded_checks(ch)
+    await ch.insert("loom.memory", [{**_row("other", time.time_ns()), "memory_key": "other"}])
+    before = await memory_repo.namespace_version("o", "n", ch=ch)
     monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
     assert await delete_version_check.run_pass() == 1
     assert [c["done"] for c in await _recorded_checks(ch)] == [1]
     assert await _read_back(ch) is None
+    assert await memory_repo.namespace_version("o", "n", ch=ch) > before
     await commit_late()
     assert await _read_back(ch) is None
-    (check,) = await _recorded_checks(ch)
     versions = await ch.query_all(
-        "SELECT version FROM loom.memory FINAL WHERE memory_key = {k:String}", {"k": _KEY}
+        "SELECT version FROM loom.memory_versions WHERE memory_key = {k:String} ORDER BY version",
+        {"k": _KEY},
     )
-    assert [int(v["version"]) for v in versions] == [int(check["tombstone"])]
+    assert int(check["tombstone"]) in [int(v["version"]) for v in versions]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_whose_first_tombstone_commits_late_still_retires(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The SDK retries the 503 of a timed-out tombstone insert; the original commits while
+    # the retry runs its check. It is a delete of the same version, not another delete:
+    # the retry and the worker's later run of the first check both stand and retire.
+    from server.memory.workers import delete_version_check
+    from server.settings import settings
+
+    head, commit_late = await _tombstone_held_back(ch, monkeypatch)
+    key_moved_on = hm._key_moved_on
+    retire = hm._retire_derived
+    retired: list[int] = []
+
+    async def original_commits_first(existing: Any, **kw: Any) -> Any:
+        await commit_late()
+        return await key_moved_on(existing, **kw)
+
+    async def count_retire(existing: Any, **kw: Any) -> Any:
+        retired.append(kw["version"])
+        return await retire(existing, **kw)
+
+    monkeypatch.setattr(hm, "_retire_derived", count_retire)
+    with monkeypatch.context() as m:
+        m.setattr(hm, "_key_moved_on", original_commits_first)
+        out = await hm.handle_memory_delete_version(
+            MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+        )
+    assert out.tombstoned is True and retired == [out.version]
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    assert [c["done"] for c in await _recorded_checks(ch)] == [1, 1]
+    assert len(retired) == 2 and await _read_back(ch) is None
 
 
 @pytest.mark.asyncio

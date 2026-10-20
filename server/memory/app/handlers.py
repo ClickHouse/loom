@@ -692,24 +692,29 @@ async def handle_memory_delete_version(
 
 
 def _check_deferred(e: Exception) -> BackendUnavailableError:
-    """The 503 of a delete whose check after its tombstone failed; the check stays owed."""
+    """The 503 of a delete that did not finish (its tombstone or the check after it
+    failed); the recorded check stays owed."""
     degradations.note("memory.delete_version", "check_deferred", e)
-    log.warning("memory.delete_version: the check after the tombstone failed: %s", e)
+    log.warning("memory.delete_version: the delete did not finish: %s", e)
     return BackendUnavailableError(
-        "the delete is recorded but its check did not run; a retry runs it, and it "
-        "finishes in the background otherwise"
+        "the delete did not finish; its check is recorded, and a retry or the background "
+        "worker finishes it"
     )
 
 
-async def finish_delete_check(existing: Any, check: dict[str, Any]) -> MemoryDeleteVersionOutput:
-    """The check memory.delete_version owes after its tombstone, and its answer: when the
-    key moved on (`_key_moved_on`) nothing derived is retired; otherwise the delete
-    stands and what `existing` (the removed version) derived retires. The recorded check
-    is then marked done. Safe to run again: a retry and the delete_version_check worker
-    run it for a delete whose own run failed."""
+async def finish_delete_check(
+    existing: Any, check: dict[str, Any], *, tombstone: int | None = None
+) -> MemoryDeleteVersionOutput:
+    """The check memory.delete_version owes after its tombstone (the recorded one, or
+    `tombstone` when recovery wrote it again), and its answer: when the key moved on
+    (`_key_moved_on`) nothing derived is retired; otherwise the delete stands and what
+    `existing` (the removed version) derived retires. The recorded check is then marked
+    done. Safe to run again: a retry and the delete_version_check worker run it for a
+    delete whose own run failed."""
     import server.memory.store as memory_repo
 
-    checked, tombstone = int(check["checked"]), int(check["tombstone"])
+    checked = int(check["checked"])
+    tombstone = int(check["tombstone"]) if tombstone is None else tombstone
     moved_on = await _key_moved_on(existing, checked=checked, tombstone=tombstone)
     if moved_on is not None:
         answer = moved_on
@@ -733,9 +738,10 @@ async def finish_delete_check(existing: Any, check: dict[str, Any]) -> MemoryDel
 async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput | None:
     """Run an owed check (the caller holds the key lock) and answer as its delete would
     have, or close it and answer None when the removed version was erased since. A
-    tombstone missing from the key's history (its insert failed, though one that timed out
-    can still commit) is written first at its recorded version, so a late commit of the
-    original is the same row, and the check then runs as after any tombstone."""
+    tombstone missing from the key's history (its insert failed) is written first, at a
+    new version above the recorded one so the namespace's watermark moves, and the check
+    then runs as after any tombstone. An insert that timed out can still commit: it lands
+    below, aimed at the same version, and counts as this same delete (`_key_moved_on`)."""
     import server.memory.store as memory_repo
 
     checked, tombstone = int(check["checked"]), int(check["tombstone"])
@@ -752,8 +758,9 @@ async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput
         await memory_repo.record_delete_check(check, done=True)
         return None
     if tombstone not in mine:
+        tombstone = max(next_version(), tombstone + 1)
         await _write_tombstone_row(removed, version=tombstone, trace=delete_version_trace(checked))
-    return await finish_delete_check(removed, check)
+    return await finish_delete_check(removed, check, tombstone=tombstone)
 
 
 async def _key_moved_on(
@@ -771,6 +778,10 @@ async def _key_moved_on(
     if row is None:
         return None
     gone = row.tombstoned_at is not None  # another delete or a sweep removed it
+    if gone and row.source_trace == delete_version_trace(checked):
+        # A delete of this same version: an insert of this one that timed out and committed
+        # late, a retry's, or a copy one of them wrote back. The key did not move on.
+        return None
     if row.version < tombstone:
         # Written again above this tombstone. A tombstone's copy is this delete's own, aimed
         # at `checked`: a write after it lifts over it as over this tombstone (a sweep's
@@ -795,20 +806,24 @@ async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
     removed = _set_chunks.set_chunk_identities(existing.value, existing.memory_type)
     if not removed:
         return  # a value too short to chunk shares nothing
-    where = {
+    ch = get_client()
+    key_chunks = {
         "org": existing.org,
         "namespace": existing.namespace,
         "memory_key": existing.memory_key,
         "user_id": str(existing.user_id or "-"),
-        "ch": get_client(),
     }
     try:
         shared = removed & await _served_chunks(existing, tombstone=tombstone)
-        if not await _set_chunks.restore_set_chunks(identities=shared, **where):
+        if not await _set_chunks.restore_set_chunks(identities=shared, ch=ch, **key_chunks):
             return
-        stale = shared - await _served_chunks(existing, tombstone=tombstone)
+        try:
+            stale = shared - await _served_chunks(existing, tombstone=tombstone)
+        except Exception as e:  # noqa: BLE001 — unread, the restored chunks retire again
+            log.warning("memory.delete_version: head of %s unread: %s", existing.memory_key, e)
+            stale = shared
         if stale:
-            await _set_chunks.tombstone_set_chunks(only=stale, strong=True, **where)
+            await _set_chunks.tombstone_set_chunks(only=stale, strong=True, ch=ch, **key_chunks)
     except Exception as e:  # noqa: BLE001 — the newer row stands; its chunks only aid search
         log.warning(
             "memory.delete_version: shared chunks of %s not restored: %s", existing.memory_key, e
