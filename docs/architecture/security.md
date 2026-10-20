@@ -673,9 +673,9 @@ The `high` shapes:
   length (Visa 4 at 16 or 19; Mastercard 51-55 and 2221-2720 at 16; Amex 34 and 37 at 15;
   Diners 300-305, 3095, 36, 38 and 39 at 14; JCB 3528-3589 and Discover/UnionPay 6011, 62,
   644-649 and 65 at 16 or 19) and passes the Luhn check. A 15-digit IMEI passes Luhn by
-  design, but no network issues a 15-digit number starting with 4 or 35, so it is not a
-  card. Groups joined by two spaces or by dots (`4111  1111  1111  1111`,
-  `4111.1111.1111.1111`) are not read.
+  design; the only 15-digit network is Amex (34, 37), so an IMEI with any other leading
+  digits is not a card. Groups joined by two spaces or by dots
+  (`4111  1111  1111  1111`, `4111.1111.1111.1111`) are not read.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: one of the labels `pin`, `pin code`, `pin number`, `passcode` /
@@ -690,7 +690,9 @@ The `high` shapes:
   3-8 digits; `PIN` and `PIN code` take 3-5, since `PIN: 560001` and `PIN code 560001` are
   Indian postal codes, so a 6-digit PIN counts when stated as a `PIN number`. A connector
   pin written as an assignment or with `number` (`GPIO pin: 115`, `GPIO pin number 115`)
-  reads as a PIN, the price of reading `PIN: 4471` and `PIN number 4471` as one.
+  reads as a PIN, the price of reading `PIN: 4471` and `PIN number 4471` as one. The value
+  must end at its number: a version, a date or a run-on word (`pin is 2024.1`,
+  `pin is 2024/01/15`, `pin is 1234abc`) is not a PIN.
 
 An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN
 or a bank account (number) counts as contact intent, so ranking does not demote the row
@@ -813,11 +815,14 @@ An IBAN-only row is shape `other`, which `loom sensitivity-sweep --apply` labels
 sweep labels it, an unlabelled row that holds a credential is embedded like any other, so
 search serves it, and `memory.ask` and the conflict judge can send it to their models. A
 pass reads its window oldest first, in pages of `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS`
-rows, up to ten pages or until that many rows are labelled: a selected row the detector
-leaves unlabelled, or one outside the shape filter, is selected again on every pass, and
-paging past it keeps a run of them from hiding a later row that is high. The sweep reads
-unlabelled rows only: a row already labelled `medium` that also holds a `high` shape stays
-`medium` until it is set again with `sensitivity: "high"`.
+rows, until that many candidates are found or ten pages are read: a selected row the
+detector leaves unlabelled, or one outside the shape filter, is selected again on every
+pass, and paging past it keeps a run of them from hiding a later row that is high. A row
+behind more than ten pages of such rows waits for the operator's
+`loom sensitivity-sweep --apply`, which pages through its whole scope until `--limit`
+candidates are found. The sweep reads unlabelled rows only: a row already labelled
+`medium` that also holds a `high` shape stays `medium` until it is set again with
+`sensitivity: "high"`.
 
 ## Audit log
 

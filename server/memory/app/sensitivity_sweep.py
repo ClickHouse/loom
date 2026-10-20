@@ -86,7 +86,9 @@ _COARSE_KEYED = (
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
 # the detector would miss too; anything it over-selects the detector drops.
 COARSE_SHAPE_RE = (
-    r"sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|PRIVATE KEY|eyJ|AIza"
+    # the detector reads these prefixes at a word boundary, so `task-` and `disk-` are not
+    rf"{_JSON_BOUNDARY}(?:sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|eyJ|AIza)"
+    r"|PRIVATE KEY"
     r"|(?i:password|passwd|pwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token"
     r"|bearer|client[_-]?secret|private[_-]?key)"
     r"|@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
@@ -189,7 +191,7 @@ async def scan(
     namespace: str | None = None,
     since_days: int | None = None,
     limit: int = 20000,
-    pages: int = 1,
+    pages: int | None = 1,
     only_shapes: Iterable[str] | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:
@@ -199,12 +201,14 @@ async def scan(
     `other`) — the phone shape is a ten-digit run and the noisiest, so an
     operator can apply the others first.
 
-    Reads up to `pages` pages of `limit` rows, oldest first, until `limit` candidates are
-    found or the rows run out. A selected row the detector leaves unlabelled, or one outside
-    `only_shapes`, stays unlabelled and is selected again on the next pass; reading past it
-    keeps a run of them from hiding a later row that is high."""
+    Reads pages of `limit` rows, oldest first, until `limit` candidates are found, the rows
+    run out or `pages` pages are read (`None`: no page cap). A selected row the detector
+    leaves unlabelled, or one outside `only_shapes`, stays unlabelled and is selected again
+    on the next run; reading past it keeps a run of them from hiding a later row that is
+    high."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": int(limit)}
+    limit = int(limit)
+    params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": limit}
     if org:
         params["org"] = org
     if namespace:
@@ -214,7 +218,9 @@ async def scan(
     report = SweepReport()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     last: dict[str, Any] | None = None
-    for _page in range(max(1, int(pages))):
+    read = 0
+    while pages is None or read < max(1, pages):
+        read += 1
         page_params = dict(params)
         if last is not None:
             page_params |= {
@@ -225,13 +231,13 @@ async def scan(
         sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=last is not None)
         rows = await ch.query_all(sql, params=page_params)
         report.scanned += len(rows)
-        report.truncated = len(rows) >= int(limit)
+        report.truncated = len(rows) >= limit
         _add_candidates(report, rows, keep)
-        if not report.truncated or len(report.candidates) >= int(limit) or not rows:
+        if not report.truncated or len(report.candidates) >= limit:
             break
         last = rows[-1]
-    if len(report.candidates) > int(limit):
-        report.candidates = report.candidates[: int(limit)]
+    if len(report.candidates) > limit:
+        report.candidates = report.candidates[:limit]
         report.truncated = True
     return report
 

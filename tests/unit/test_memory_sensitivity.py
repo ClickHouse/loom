@@ -522,6 +522,9 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "pytz pin: 2023.3",
         "base image pin is 2024-01-15",
         "PIN for certifi is 2024.2.2",
+        "tzdata pin: 2024a",
+        "base image pin is 2024/01/15",
+        "the pin is 1234abc",
         "ports 3000 5432 6379 9200 4000 4001 4002 4003 4004",  # nine groups: a table
         "ship to MG Road, Bengaluru, PIN code 560001",  # a postal code
         "PIN code: 560001",
@@ -744,6 +747,7 @@ _PREFILTER_OBJECTS = [
     {"pincode": "4471"},
     {"pin": "560001"},  # a postal code
     {"pin": "\t4471"},  # written `\t4471`
+    {"note": "deploy:\n" + "sk-" + "proj-" + "Ab3" * 12},  # written `\nsk-`
     {"pin": " 4471"},
     {"CVV:": "123"},
     {"pin ": "4471"},
@@ -793,6 +797,10 @@ _PREFILTER_TEXTS = [
     "pin 128 rows",
     "GPIO pin 115",
     "verify SHA256SUMS before the upload",
+    # a key prefix the detector reads only at a word boundary
+    "deploy key " + "sk-" + "proj-" + "Ab3" * 12,
+    "eyJ" + "a1" * 8 + ".eyJ" + "b2" * 8 + "." + "Sf9" * 8,
+    "task-1234 and disk-usage are done",
 ]
 
 
@@ -813,9 +821,9 @@ def test_a_dotted_security_code_key_is_not_selected_by_the_sweep() -> None:
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
     # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
-    # the `json.dumps` text in `value` for any other. The prefilter is a superset: every case the detector
-    # labels is selected, and the only unlabelled cases it selects are keys whose last word
-    # ends in a label (documented in docs/architecture/security.md).
+    # the `json.dumps` text in `value` for any other. The prefilter is a superset: every case
+    # the detector labels is selected, and the only unlabelled cases it selects are keys
+    # whose last word ends in a label (documented in docs/architecture/security.md).
     sql = (
         "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
         " FROM (SELECT arrayJoin({js:Array(String)}) AS j)"

@@ -2,11 +2,12 @@
 labels what the write path skipped, and three row-level invariants read as
 gauges with a repair for the one that hides rows from search.
 
-CH-free: every client is a stub."""
+Most clients are stubs; the sweep's paging runs its real SQL on clickhouse-local."""
 
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -19,6 +20,7 @@ from server.memory.app import sensitivity_sweep as sweep
 from server.memory.app.extraction_queue import ENQUEUED_BY_KEY, enqueued_actor, payload_for
 from server.memory.app.provenance import writer_actor
 from server.memory.domain import provenance as prov
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 # ------------------------------------------------------------- (a) principal
 
@@ -266,33 +268,53 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
     assert inserted[0][0]["tags"] == ["t", "sensitivity:medium"] and inserted[0][0]["version"]
 
 
-@pytest.mark.asyncio
 class _LocalCH:
-    """Runs each query on clickhouse-local after the setup statements."""
+    """Runs each query on clickhouse-local after the setup statements, with their params."""
 
-    def __init__(self, *setup: str) -> None:
-        self.setup = list(setup)
+    def __init__(self, setup: list[str], params: dict[str, Any]) -> None:
+        self.setup = setup
+        self.params = params
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        from tests.unit.clickhouse_local import run
+        return run(self.setup, sql, self.params | (params or {}))
 
-        return run(self.setup, sql, params)
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        rows = await self.query_all(sql, params)
+        return rows[0] if rows else None
 
 
 def _local_memory(rows: list[tuple[str, str, Any, int]]) -> _LocalCH:
     """loom.memory on clickhouse-local holding (memory_id, memory_key, value, age seconds)."""
-    from tests.unit.clickhouse_local import ddl
-
-    values = ", ".join(
-        f"('o', 'n', 'a', '-', '-', '{mid}', '{key}', "
-        f"'{json.dumps(value).replace(chr(39), chr(39) * 2)}', now() - {age})"
-        for mid, key, value, age in rows
-    )
-    return _LocalCH(
-        ddl("memory"),
+    # Each query reruns the insert, so the timestamps are fixed here rather than `now()`.
+    now = int(time.time())
+    values, params = [], {}
+    for i, (mid, key, value, age) in enumerate(rows):
+        values.append(
+            f"('o', 'n', 'a', '-', '-', {{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, "
+            f"toDateTime({{at{i}:UInt32}}))"
+        )
+        params |= {
+            f"id{i}": mid,
+            f"key{i}": key,
+            f"value{i}": json.dumps(value),
+            f"at{i}": now - age,
+        }
+    insert = (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
-        f"memory_key, value, created_at) VALUES {values}",
+        f"memory_key, value, created_at) VALUES {', '.join(values)}"
     )
+    # the CLI's closing invariant reads memory_embeddings, whose vector column is quantized
+    tables = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
+    return _LocalCH([*tables, insert], params)
+
+
+def _spin_rows_then_a_pin(spins: int) -> list[tuple[str, str, Any, int]]:
+    """`spins` selected rows the detector leaves unlabelled, then a row holding a PIN."""
+    rows: list[tuple[str, str, Any, int]] = [
+        (_uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(spins)
+    ]
+    rows.append((_uuid(99), "door", "badge PIN is 4471", 60))
+    return rows
 
 
 def _uuid(i: int) -> str:
@@ -300,18 +322,14 @@ def _uuid(i: int) -> str:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch) -> None:
     # More selected-but-unlabelled rows than one page sit ahead of a PIN row: the pass reads
     # on past them and labels the PIN row, instead of re-reading the same first page.
     from server.memory.workers import sensitivity_sweep as w
     from server.settings import settings
-    from tests.unit.clickhouse_local import CLICKHOUSE
 
-    if CLICKHOUSE is None:
-        pytest.skip("clickhouse binary not installed")
-    rows = [(_uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(5)]
-    rows.append((_uuid(9), "door", "badge PIN is 4471", 60))
-    ch = _local_memory(rows)
+    ch = _local_memory(_spin_rows_then_a_pin(5))
     one_page = await sweep.scan(since_days=2, limit=2, ch=ch)  # type: ignore[arg-type]
     assert one_page.truncated and one_page.candidates == []
     applied: list[Any] = []
@@ -329,6 +347,36 @@ async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch)
     assert out["scanned"] == 6 and not out["truncated"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_reads_at_most_its_page_cap() -> None:
+    # A row behind more than the cap's worth of selected rows waits for the next pass's
+    # window or the operator's run: the scan stops at the cap and says it was truncated.
+    ch = _local_memory(_spin_rows_then_a_pin(5))
+    capped = await sweep.scan(since_days=2, limit=2, pages=2, ch=ch)  # type: ignore[arg-type]
+    assert capped.scanned == 4 and capped.truncated and capped.candidates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_the_cli_sweep_pages_through_its_whole_scope(capsys) -> None:
+    # The operator's run reads past more than a page of selected-but-unlabelled rows and
+    # reaches the PIN row behind them.
+    import argparse
+
+    from server.cli.ops import _sensitivity_sweep_run
+
+    ch = _local_memory(_spin_rows_then_a_pin(5))
+    args = argparse.Namespace(
+        org="", namespace="", since_days=0, limit=2, only_shape=None, show=5, dry_run=True
+    )
+    rc = await _sensitivity_sweep_run(ch, args)
+    out = capsys.readouterr().out
+    assert "6 unlabelled row(s) matched" in out and "detector would label 1: high=1" in out
+    assert rc == 1  # a dry run with candidates
+
+
+@pytest.mark.asyncio
 async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     from server.memory.workers import sensitivity_sweep as w
     from server.settings import settings

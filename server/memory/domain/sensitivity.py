@@ -125,13 +125,13 @@ def pin_grammar(space: str) -> tuple[str, str]:
 
 
 _PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(r"\s")
-# A value ends where its number does, so a version or a date (`pin is 2024.1`,
-# `pin is 2024-01-15`) is not read as one.
+# A value ends where its number does, so a version, a date or a run-on word (`pin is
+# 2024.1`, `2024/01/15`, `1234abc`) is not read as one.
 _STATED_PIN = re.compile(
-    rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?![-.]?\d)"
-    rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}(?![-.]?\d)(?!\s+of\b)"
-    rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?![-.]?\d)"
-    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}(?![-.]?\d)(?!\s+of\b)",
+    rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?![-./]?\d)(?![A-Za-z])"
+    rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}(?![-./]?\d)(?![A-Za-z])(?!\s+of\b)"
+    rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?![-./]?\d)(?![A-Za-z])"
+    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}(?![-./]?\d)(?![A-Za-z])(?!\s+of\b)",
     re.ASCII,
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or

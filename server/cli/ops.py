@@ -210,6 +210,7 @@ async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
         namespace=ns,
         since_days=int(args.since_days or 0) or None,
         limit=int(args.limit),
+        pages=None,  # page through the whole scope, up to `--limit` candidates
         only_shapes=getattr(args, "only_shape", None) or None,
         ch=ch,
     )
@@ -218,7 +219,7 @@ async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
     print(
         f"{report.scanned} unlabelled row(s) matched the coarse shape filter"
         + (f" ({scope})" if scope else "")
-        + ("; LIMIT reached — re-run after applying" if report.truncated else "")
+        + ("; --limit candidates found — re-run after applying" if report.truncated else "")
     )
     print(
         f"detector would label {len(report.candidates)}: high={levels.get('high', 0)} "
