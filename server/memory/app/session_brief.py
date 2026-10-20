@@ -148,7 +148,9 @@ async def _revise_window(
             max_tokens=llm_max_tokens("session_brief_revision"),
             response_format={"type": "json_object"},
         )
-    except Exception as e:  # a failed call costs one window, never the save
+    except (
+        Exception
+    ) as e:  # a failed call costs this window; under a policy a save no window revised is refused
         if operator_policy and isinstance(e, customer.ModelCallsDisabled):
             raise
         log.warning(
@@ -157,7 +159,7 @@ async def _revise_window(
         return fallback(), 0, 0, 0, False
     try:
         parsed = sb.parse_revision(result.text)
-    except Exception as e:  # noqa: BLE001 — a rejected reply costs one window, never the save
+    except Exception as e:  # noqa: BLE001 — a rejected reply costs this window only
         log.warning(
             "session.brief_save: model reply rejected (%s); window revised without the model", e
         )
