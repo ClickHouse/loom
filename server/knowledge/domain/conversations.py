@@ -17,8 +17,8 @@ LISTED_MARGIN_CHARS = 1024  # not a setting: security bound on the credential ch
 THREAD_EXCERPT_CHARS = 240  # not a setting: the thread list's wire excerpt length
 
 
-def thread_metadata(raw: object) -> dict[str, Any]:
-    """A thread's metadata JSON as a dict; `{}` when it is empty or not a JSON object."""
+def metadata_object(raw: object) -> dict[str, Any]:
+    """The metadata JSON object as a dict; `{}` when it is empty or not a JSON object."""
     try:
         meta = json.loads(str(raw or "{}"))
     except ValueError:
@@ -29,4 +29,4 @@ def thread_metadata(raw: object) -> dict[str, Any]:
 def title_refused(raw_metadata: object) -> bool:
     """Whether the titler marked the thread: its title or its opening turns read as a
     credential, so no later pass asks the model again."""
-    return thread_metadata(raw_metadata).get("title_refused") is True
+    return metadata_object(raw_metadata).get("title_refused") is True

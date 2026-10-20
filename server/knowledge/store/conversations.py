@@ -1611,7 +1611,7 @@ async def thread_rows(
 
 
 async def opening_turns(
-    org: str, namespace: str, thread_id: str, *, limit: int = 8, ch: _CHClient | None = None
+    org: str, namespace: str, thread_id: str, *, limit: int, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """The first live user/assistant turns of a thread (any agent), oldest first."""
     ch = ch or _default_client()

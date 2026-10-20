@@ -203,6 +203,43 @@ async def test_create_on_an_existing_thread_keeps_the_titlers_refused_mark(
 
 
 @pytest.mark.asyncio
+async def test_create_from_another_agent_keeps_the_titlers_refused_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The thread row is keyed without agent, so a create from a second agent replaces the
+    first agent's row and must carry its mark over."""
+    from server.knowledge.api.models_conversations import ConversationCreateInput
+    from server.knowledge.app.conversations import handle_conversation_create
+    from server.knowledge.store import conversations as conversation_repo
+
+    stored = {"agent": "writer-a", "metadata": '{"title_refused": true}'}
+    written: list[dict[str, Any]] = []
+
+    async def fake_fetch(org, namespace, agent, thread_id, **kw):
+        if agent is None or agent == stored["agent"]:
+            return stored
+        return None
+
+    async def fake_insert(row, *, ch=None):
+        written.append(row)
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch)
+    monkeypatch.setattr(conversation_repo, "insert_thread", fake_insert)
+
+    await handle_conversation_create(
+        ConversationCreateInput(
+            org="clickhouse",
+            namespace="finance",
+            agent="writer-b",
+            thread_id="t-1",
+            title="",
+        )
+    )
+    assert json.loads(written[0]["metadata"]) == {"title_refused": True}
+    assert written[0]["agent"] == "writer-b"
+
+
+@pytest.mark.asyncio
 async def test_update_thread_missing_returns_updated_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -65,7 +65,7 @@ from server.knowledge.domain.conversations import (
     EMBEDDED_EXCERPT_CHARS,
     LISTED_MARGIN_CHARS,
     THREAD_EXCERPT_CHARS,
-    thread_metadata,
+    metadata_object,
     title_refused,
 )
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
@@ -115,8 +115,10 @@ async def handle_conversation_create(
     (ReplacingMergeTree(updated_at)), keeping the titler's `title_refused` mark."""
     from server.knowledge.store import conversations as conversation_repo
 
+    # The thread row is keyed without agent and the titler marks it under its own agent,
+    # so the mark is read whoever owns the stored row.
     existing = await conversation_repo.fetch_thread(
-        input.org, input.namespace, input.agent, input.thread_id
+        input.org, input.namespace, None, input.thread_id
     )
     stored_metadata = existing.get("metadata") if existing else None
     now = naive_utc_now()
@@ -811,7 +813,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
                 reasoning=r.reasoning,
                 user_id=r.user_id,
                 run_id=r.run_id,
-                metadata=thread_metadata(r.metadata),
+                metadata=metadata_object(r.metadata),
                 tokens=r.tokens,
                 ts=r.ts,
             )
@@ -822,7 +824,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         found=True,
         thread_id=input.thread_id,
         title=thread_row.get("title", "") or "",
-        metadata=thread_metadata(thread_row.get("metadata")),
+        metadata=metadata_object(thread_row.get("metadata")),
         run_id=thread_row.get("run_id", "-") or "-",
         user_id=thread_row.get("user_id", "-") or "-",
         # The owner (the thread row's agent), else the latest writer read.
@@ -863,7 +865,7 @@ async def handle_conversation_list(
             reasoning=r.reasoning,
             user_id=r.user_id,
             run_id=r.run_id,
-            metadata=thread_metadata(r.metadata),
+            metadata=metadata_object(r.metadata),
             tokens=r.tokens,
             ts=r.ts,
         )

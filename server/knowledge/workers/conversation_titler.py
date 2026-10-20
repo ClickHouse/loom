@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import Any, TypedDict, cast
 
 from server.core.datetimes import naive_utc_now_seconds
-from server.knowledge.domain.conversations import thread_metadata, title_refused
+from server.knowledge.domain.conversations import metadata_object, title_refused
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
@@ -154,7 +154,7 @@ async def _store_title(
             "tombstoned_at": None,
         }
     if refused:
-        meta = thread_metadata(new_row["metadata"])
+        meta = metadata_object(new_row["metadata"])
         new_row["metadata"] = json.dumps({**meta, "title_refused": True})
     await conversation_repo.insert_thread(new_row)
 
