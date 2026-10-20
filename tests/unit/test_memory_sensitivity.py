@@ -382,6 +382,7 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
 
     assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
     assert reads_high(human_text({"notes": "line\r" + _TOKEN}))  # a lone carriage return
+    assert reads_high(human_text({"note": "PIN is\v4471"}))  # written as `\u000b`
     # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
     assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
     assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
@@ -565,6 +566,12 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     assert not re.search(COARSE_SHAPE_RE, "pin the base image before the 2025 release")
     assert not re.search(COARSE_SHAPE_RE, "pin 128 rows before the import")
     assert not re.search(COARSE_SHAPE_RE, "GPIO pin 115")
+    # a backspace is not whitespace to the detector, so the filter does not take it as one
+    from server.memory.domain.sensitivity import detector_text
+
+    stored = json.dumps({"note": "PIN:\b4471"})
+    assert detect_sensitivity(detector_text(stored)) == ""
+    assert not re.search(COARSE_SHAPE_RE, stored)
 
 
 @pytest.mark.parametrize(

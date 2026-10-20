@@ -332,9 +332,16 @@ def value_reads_high(value: Any) -> bool:
 
 
 # A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,
-# stays a backslash and an `n`).
-_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt])')
+# stays a backslash and an `n`). `\uXXXX` is how JSON writes other control characters
+# (`\u000b`) even with `ensure_ascii=False`.
+_JSON_ESCAPE = re.compile(r'\\(?:(["\\/bfnrt])|u([0-9a-fA-F]{4}))')
 _JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
+
+
+def _json_unescape(m: re.Match[str]) -> str:
+    if m.group(2):
+        return chr(int(m.group(2), 16))
+    return _JSON_ESCAPES.get(m.group(1), m.group(1))
 
 
 def reads_high(text: str) -> bool:
@@ -345,7 +352,7 @@ def reads_high(text: str) -> bool:
     undone too, where a token after `\\n` or a quoted password keeps its word boundary."""
     if detect_sensitivity(text) == HIGH:
         return True
-    unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
+    unescaped = _JSON_ESCAPE.sub(_json_unescape, text)
     return unescaped != text and detect_sensitivity(unescaped) == HIGH
 
 

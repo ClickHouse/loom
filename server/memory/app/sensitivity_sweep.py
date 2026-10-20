@@ -44,10 +44,11 @@ from server.memory.domain.sensitivity import (
 
 # The column holds JSON text for an object value, where a control character is an escape
 # (`\n`, `\u000b`) and a non-ASCII character is `\uXXXX`. For the PIN and IBAN shapes an
-# escape counts as a word boundary, and a control escape as whitespace; `\v` is listed
-# beside `\s` because the detector's `\s` has it and RE2's does not.
+# escape counts as a word boundary, and `\f`, `\n`, `\r`, `\t` and `\u000b` as whitespace,
+# as the detector's ASCII `\s` reads them decoded; `\v` is listed beside `\s` because the
+# detector's `\s` has it and RE2's does not.
 _JSON_BOUNDARY = r"(?:\b|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
-_JSON_SPACE = r"(?:[\s\v]|\\[bfnrt]|\\u000[bB])"
+_JSON_SPACE = r"(?:[\s\v]|\\[fnrt]|\\u000[bB])"
 # A PIN label and its value in the detector's grammar: every label after `is`, `was`,
 # `:` or `=`, and all but a bare `pin` directly.
 _PIN_VALUE_AFTER = rf"(?:{_JSON_SPACE}+(?:is|was)(?:{_JSON_SPACE}*[:=])?|{_JSON_SPACE}*[:=])"
