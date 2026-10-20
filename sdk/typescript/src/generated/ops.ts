@@ -2254,6 +2254,25 @@ export interface ConversationListOutput {
   next_cursor?: string | null;
 }
 
+export interface ConversationSaveMessageInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  conversation_id: string;
+  message_id: string;
+  role: "user" | "assistant";
+  content: string;
+  user_id: string;
+}
+
+export interface ConversationSaveMessageOutput {
+  conversation_id: string;
+  message_id: string;
+  indexed: boolean;
+  reason?: "" | "duplicate" | "owner_mismatch" | "deleted" | "unsupported_role" | "embed_failed";
+  ts: string; // date-time
+}
+
 export interface ConversationSearchInput {
   org: string;
   namespace: string;
@@ -2262,6 +2281,7 @@ export interface ConversationSearchInput {
   thread_id?: string | null;
   run_id?: string | null;
   role?: "user" | "assistant" | "system" | "tool" | null;
+  user_id?: string | null;
   top_k?: number;
   namespace_scope?: "this" | "all_mine";
 }
@@ -2278,6 +2298,29 @@ export interface ConversationHit {
 export interface ConversationSearchOutput {
   hits: ConversationHit[];
   namespaces_skipped?: string[];
+}
+
+export interface ConversationSearchSavedMessagesInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  query: string;
+  conversation_id?: string | null;
+  role?: "user" | "assistant" | null;
+  top_k?: number;
+}
+
+export interface SavedMessageHit {
+  conversation_id: string;
+  message_id: string;
+  role: "user" | "assistant";
+  content_excerpt: string;
+  ts: string; // date-time
+}
+
+export interface ConversationSearchSavedMessagesOutput {
+  hits: SavedMessageHit[];
 }
 
 export interface ConversationSetLoggingInput {
@@ -2662,35 +2705,6 @@ export interface ErasureStatusOutput {
   residue_count?: number;
   residue?: Record<string, number>;
   verified_at?: string | null;
-}
-
-export interface ExtractionPolicyClearInput {
-  org: string;
-  scope: "org" | "namespace";
-  namespace?: string;
-}
-
-export interface ExtractionPolicyOutput {
-  org: string;
-  scope: "org" | "namespace";
-  namespace?: string;
-  policy?: string;
-  updated_by?: string;
-  updated_at?: string | null;
-  effective?: string;
-}
-
-export interface ExtractionPolicyGetInput {
-  org: string;
-  scope: "org" | "namespace";
-  namespace?: string;
-}
-
-export interface ExtractionPolicySetInput {
-  org: string;
-  scope: "org" | "namespace";
-  namespace?: string;
-  policy: string;
 }
 
 export interface FactsExpireByAdapterInput {
@@ -8625,7 +8639,9 @@ export type OpName =
   | "conversation.delete"
   | "conversation.get"
   | "conversation.list"
+  | "conversation.save_message"
   | "conversation.search"
+  | "conversation.search_saved_messages"
   | "conversation.set_logging"
   | "conversation.threads"
   | "conversation.update"
@@ -8641,9 +8657,6 @@ export type OpName =
   | "erasure.list"
   | "erasure.request"
   | "erasure.status"
-  | "extraction_policy.clear"
-  | "extraction_policy.get"
-  | "extraction_policy.set"
   | "facts.expire_by_adapter"
   | "facts.list"
   | "facts.path"
@@ -8943,7 +8956,9 @@ export interface OpMap {
   "conversation.delete": { input: ConversationDeleteInput; output: ConversationDeleteOutput };
   "conversation.get": { input: ConversationGetInput; output: ConversationGetOutput };
   "conversation.list": { input: ConversationListInput; output: ConversationListOutput };
+  "conversation.save_message": { input: ConversationSaveMessageInput; output: ConversationSaveMessageOutput };
   "conversation.search": { input: ConversationSearchInput; output: ConversationSearchOutput };
+  "conversation.search_saved_messages": { input: ConversationSearchSavedMessagesInput; output: ConversationSearchSavedMessagesOutput };
   "conversation.set_logging": { input: ConversationSetLoggingInput; output: ConversationSetLoggingOutput };
   "conversation.threads": { input: ConversationThreadsInput; output: ConversationThreadsOutput };
   "conversation.update": { input: ConversationUpdateInput; output: ConversationUpdateOutput };
@@ -8959,9 +8974,6 @@ export interface OpMap {
   "erasure.list": { input: ErasureListInput; output: ErasureListOutput };
   "erasure.request": { input: ErasureRequestInput; output: ErasureRequestOutput };
   "erasure.status": { input: ErasureStatusInput; output: ErasureStatusOutput };
-  "extraction_policy.clear": { input: ExtractionPolicyClearInput; output: ExtractionPolicyOutput };
-  "extraction_policy.get": { input: ExtractionPolicyGetInput; output: ExtractionPolicyOutput };
-  "extraction_policy.set": { input: ExtractionPolicySetInput; output: ExtractionPolicyOutput };
   "facts.expire_by_adapter": { input: FactsExpireByAdapterInput; output: FactsExpireByAdapterOutput };
   "facts.list": { input: FactsListInput; output: FactsListOutput };
   "facts.path": { input: FactsPathInput; output: FactsPathOutput };
@@ -9261,7 +9273,9 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.delete", group: "conversation", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 600, audit: true, readOnly: false },
   { name: "conversation.get", group: "conversation", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.list", group: "conversation", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
   { name: "conversation.search", group: "conversation", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "conversation.set_logging", group: "conversation", method: "setLogging", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "conversation.threads", group: "conversation", method: "threads", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conversation.update", group: "conversation", method: "update", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
@@ -9277,9 +9291,6 @@ export const OPS: readonly OpSpec[] = [
   { name: "erasure.list", group: "erasure", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "erasure.request", group: "erasure", method: "request", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "erasure.status", group: "erasure", method: "status", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 25, audit: false, readOnly: true },
-  { name: "extraction_policy.clear", group: "extraction_policy", method: "clear", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
-  { name: "extraction_policy.get", group: "extraction_policy", method: "get", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
-  { name: "extraction_policy.set", group: "extraction_policy", method: "set", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "facts.expire_by_adapter", group: "facts", method: "expireByAdapter", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "facts.list", group: "facts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "facts.path", group: "facts", method: "path", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
@@ -9503,4 +9514,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 315;
+export const GENERATED_OP_COUNT = 314;

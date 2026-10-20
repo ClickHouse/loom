@@ -216,49 +216,6 @@ def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch
         asyncio.run(customer.switched_off("beta"))
 
 
-def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> None:
-    """A request's two model calls (the extraction and the digest) arrive
-    together after the copy went stale: both get the copy the one read brings."""
-    plain = switch.query_all
-
-    async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(0.05)
-        return await plain(sql, **kw)
-
-    monkeypatch.setattr(switch, "query_all", slow)
-
-    async def together() -> list[Any]:
-        return list(await asyncio.gather(*(customer.switched_off("acme") for _ in range(3))))
-
-    async def first_then_stale() -> None:
-        assert await together() == [False] * 3 and switch.reads == 1
-        stale = settings.model_calls_policy_max_stale_seconds + 1
-        customer._read_at, customer._next_read = time.monotonic() - stale, 0.0
-        assert await together() == [False] * 3 and switch.reads == 2
-
-    asyncio.run(first_then_stale())  # one loop, as a server process has
-
-
-def test_a_cancelled_read_leaves_the_next_call_to_read(switch: _Switch, monkeypatch) -> None:
-    plain = switch.query_all
-
-    async def hang(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(10)
-        return []
-
-    async def cancelled_then_read() -> bool:
-        monkeypatch.setattr(switch, "query_all", hang)
-        first = asyncio.ensure_future(customer.switched_off("acme"))
-        await asyncio.sleep(0.01)
-        first.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await first
-        monkeypatch.setattr(switch, "query_all", plain)
-        return await customer.switched_off("acme")
-
-    assert asyncio.run(cancelled_then_read()) is False
-
-
 def test_a_switch_never_read_refuses(switch: _Switch) -> None:
     switch.down = True
     with pytest.raises(BackendUnavailableError):

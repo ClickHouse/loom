@@ -775,6 +775,15 @@ class ConversationOps:
             await self._agent.call("conversation.list", body, **options),
         )
 
+    async def save_message(
+        self, body: _ops.ConversationSaveMessageBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSaveMessageOutput:
+        """`conversation.save_message`."""
+        return cast(
+            "_ops.ConversationSaveMessageOutput",
+            await self._agent.call("conversation.save_message", body, **options),
+        )
+
     async def search(
         self, body: _ops.ConversationSearchBody | None = None, /, **options: Any
     ) -> _ops.ConversationSearchOutput:
@@ -782,6 +791,15 @@ class ConversationOps:
         return cast(
             "_ops.ConversationSearchOutput",
             await self._agent.call("conversation.search", body, **options),
+        )
+
+    async def search_saved_messages(
+        self, body: _ops.ConversationSearchSavedMessagesBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSearchSavedMessagesOutput:
+        """`conversation.search_saved_messages`."""
+        return cast(
+            "_ops.ConversationSearchSavedMessagesOutput",
+            await self._agent.call("conversation.search_saved_messages", body, **options),
         )
 
     async def set_logging(
