@@ -14,7 +14,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from server.auth import agents, machines, oauth, oidc, revocation
+from server.auth import agents, attempts, machines, oauth, oidc, revocation
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
 
 pytestmark = pytest.mark.filterwarnings("default")
@@ -766,8 +766,6 @@ def test_an_agent_refused_at_its_own_limit_spends_none_of_the_trusts(bots, monke
 
 
 def test_an_exchange_this_process_is_too_busy_to_count_is_answered_busy(bots, monkeypatch) -> None:
-    from server.auth import attempts
-
     monkeypatch.setattr(attempts, "_semaphore", lambda: asyncio.Semaphore(0))
     monkeypatch.setattr(attempts, "_SLOT_WAIT_S", 0.01)
     r = _exchange(TestClient(oauth_app()), _ci_token(bots))
