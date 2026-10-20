@@ -134,10 +134,11 @@ async function setup(page: Page): Promise<Probe> {
   return probe;
 }
 
+// Each caller waits for what its pane shows, so no check runs before the preview loads.
 async function openPreview(page: Page, f: Fixture) {
   await page.getByRole("button", { name: `Preview ${f.title}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Loading preview")).toHaveCount(0);
+  await expect(dialog).toBeVisible();
   return dialog;
 }
 
@@ -161,8 +162,8 @@ test("active and mismatched uploads never run script in the preview", async ({ p
   // HTML and SVG: no frame, no image, a download prompt.
   for (const f of FIXTURES.slice(0, 2)) {
     const dialog = await openPreview(page, f);
-    await expectNothingRan(page, probe);
     await expect(dialog.getByText("No preview for this file type")).toBeVisible();
+    await expectNothingRan(page, probe);
     await expect(dialog.locator("iframe")).toHaveCount(0);
     await expect(dialog.locator("img")).toHaveCount(0);
     await closePreview(page);
@@ -171,8 +172,8 @@ test("active and mismatched uploads never run script in the preview", async ({ p
   // HTML bytes labelled text/plain: shown as text, a text node that nothing parses.
   const text = FIXTURES[2];
   let dialog = await openPreview(page, text);
-  await expect(dialog.locator("iframe")).toHaveCount(0);
   await expect(dialog.locator("pre")).toContainText("<script>");
+  await expect(dialog.locator("iframe")).toHaveCount(0);
   await expect(dialog.locator("pre script, pre img")).toHaveCount(0);
   await expectNothingRan(page, probe);
   await closePreview(page);
@@ -180,9 +181,9 @@ test("active and mismatched uploads never run script in the preview", async ({ p
   // HTML bytes labelled image/png: an <img>, which never runs script.
   const png = FIXTURES[3];
   dialog = await openPreview(page, png);
-  await expect(dialog.locator("iframe")).toHaveCount(0);
   const imgUrl = (await dialog.locator("img").getAttribute("src")) ?? "";
   expect(imgUrl.startsWith("blob:")).toBe(true);
+  await expect(dialog.locator("iframe")).toHaveCount(0);
   await expectNothingRan(page, probe);
   const asPage = await page.context().newPage();
   await asPage.goto(imgUrl);
