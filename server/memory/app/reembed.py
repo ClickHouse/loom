@@ -233,7 +233,7 @@ async def reembed_table_in_database(
 
 async def _cols(ch: Any, table: str) -> list[str]:
     rows = await ch.query_all(
-        f"SELECT name FROM system.columns WHERE database='loom' AND table='{table}' "
+        f"SELECT name FROM system.columns WHERE database=currentDatabase() AND table='{table}' "
         f"AND default_kind != '{_MATERIALIZED}' ORDER BY position"
     )
     return [r["name"] for r in rows]

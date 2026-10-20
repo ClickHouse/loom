@@ -57,7 +57,6 @@ knowledge_add = Operation(
     output_model=KnowledgeAddOutput,
     handler=handle_knowledge_add,
     idempotent=True,  # on (org, namespace, source_uri); see handler
-    budget_p99_ms=50,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -69,7 +68,6 @@ knowledge_upsert = Operation(
     output_model=KnowledgeUpsertOutput,
     handler=handle_knowledge_upsert,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -80,7 +78,6 @@ knowledge_search = Operation(
     output_model=KnowledgeSearchOutput,
     handler=handle_knowledge_search,
     idempotent=True,
-    budget_p99_ms=250,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -92,7 +89,6 @@ knowledge_delete = Operation(
     output_model=KnowledgeDeleteOutput,
     handler=handle_knowledge_delete,
     idempotent=True,  # re-deleting an already-deleted doc is a no-op
-    budget_p99_ms=100,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -104,7 +100,6 @@ knowledge_update_metadata = Operation(
     output_model=KnowledgeUpdateMetadataOutput,
     handler=handle_knowledge_update_metadata,
     idempotent=True,  # re-applying the same edit is a no-op
-    budget_p99_ms=60,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -115,7 +110,6 @@ knowledge_list = Operation(
     output_model=KnowledgeListOutput,
     handler=handle_knowledge_list,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -127,7 +121,6 @@ knowledge_bulk_delete = Operation(
     output_model=KnowledgeBulkDeleteOutput,
     handler=handle_knowledge_bulk_delete,
     idempotent=True,
-    budget_p99_ms=500,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -138,7 +131,6 @@ knowledge_bulk_add = Operation(
     output_model=KnowledgeBulkAddOutput,
     handler=handle_knowledge_bulk_add,
     idempotent=True,
-    budget_p99_ms=2000,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -149,7 +141,6 @@ knowledge_get = Operation(
     output_model=KnowledgeGetOutput,
     handler=handle_knowledge_get,
     idempotent=True,
-    budget_p99_ms=30,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -162,7 +153,6 @@ knowledge_reads = Operation(
     output_model=KnowledgeReadsOutput,
     handler=handle_knowledge_reads,
     idempotent=True,
-    budget_p99_ms=500,
     required_role=Role.VIEWER,
     audit=False,
     maturity="experimental",
@@ -176,7 +166,6 @@ knowledge_dedup_list = Operation(
     output_model=KnowledgeDedupListOutput,
     handler=handle_knowledge_dedup_list,
     idempotent=True,
-    budget_p99_ms=400,
     required_role=Role.ADMIN,
     audit=False,
 )
@@ -188,8 +177,6 @@ knowledge_synthesize = Operation(
     output_model=KnowledgeSynthesizeOutput,
     handler=handle_knowledge_synthesize,
     idempotent=True,
-    # One LLM call per window plus the reduce; bounded by max_windows.
-    budget_p99_ms=60000,
     required_role=Role.VIEWER,
     audit=True,
 )
@@ -201,7 +188,6 @@ knowledge_outline = Operation(
     output_model=KnowledgeOutlineOutput,
     handler=handle_knowledge_outline,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -213,7 +199,6 @@ knowledge_dedup_resolve = Operation(
     output_model=KnowledgeDedupResolveOutput,
     handler=handle_knowledge_dedup_resolve,
     idempotent=True,
-    budget_p99_ms=400,
     required_role=Role.ADMIN,
     audit=True,
 )

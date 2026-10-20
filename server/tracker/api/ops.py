@@ -70,7 +70,6 @@ tracker_item = Operation(
     output_model=TrackerItemOutput,
     handler=handle_tracker_item,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -80,7 +79,6 @@ tracker_release = Operation(
     output_model=TrackerReleaseOutput,
     handler=handle_tracker_release,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -90,7 +88,6 @@ tracker_component = Operation(
     output_model=TrackerComponentOutput,
     handler=handle_tracker_component,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -100,7 +97,6 @@ tracker_flaky = Operation(
     output_model=TrackerFlakyOutput,
     handler=handle_tracker_flaky,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -113,7 +109,6 @@ tracker_test_signal = Operation(
     output_model=TrackerTestSignalOutput,
     handler=handle_tracker_test_signal,
     idempotent=True,
-    budget_p99_ms=8000,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -125,7 +120,6 @@ tracker_answer = Operation(
     handler=handle_tracker_answer,
     # up to five templates gathered, each a bounded 300 ms read
     idempotent=True,
-    budget_p99_ms=1200,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -137,7 +131,6 @@ tracker_binding = Operation(
     output_model=TrackerBindingOutput,
     handler=handle_tracker_binding,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -149,7 +142,6 @@ tracker_similar = Operation(
     handler=handle_tracker_similar,
     # the item read, then the legs side by side, each a bounded text read
     idempotent=True,
-    budget_p99_ms=600,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -163,7 +155,6 @@ tracker_duplicate_check = Operation(
     # a `related` verdict (~7% of calls) adds one small-model judge call of
     # ~1.3 s — the budget covers the judged path.
     idempotent=True,
-    budget_p99_ms=2000,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -175,7 +166,6 @@ tracker_links = Operation(
     handler=handle_tracker_links,
     # a point read on loom's own table beside one bounded QA edge read
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     maturity="experimental",
 )
@@ -189,7 +179,6 @@ tracker_source_list = Operation(
     output_model=TrackerSourceListOutput,
     handler=handle_tracker_source_list,
     idempotent=True,
-    budget_p99_ms=4000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     # A scoped (ns_roles) token has no single namespace to
@@ -207,7 +196,6 @@ tracker_source_add = Operation(
     output_model=TrackerSourceAddOutput,
     handler=handle_tracker_source_add,
     idempotent=False,
-    budget_p99_ms=30000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     audit=True,
@@ -220,7 +208,6 @@ tracker_source_inspect = Operation(
     output_model=TrackerSourceInspectOutput,
     handler=handle_tracker_source_inspect,
     idempotent=True,
-    budget_p99_ms=30000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     maturity="experimental",
@@ -232,7 +219,6 @@ tracker_source_set_mapping = Operation(
     output_model=TrackerSourceSetMappingOutput,
     handler=handle_tracker_source_set_mapping,
     idempotent=True,
-    budget_p99_ms=30000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     audit=True,
@@ -245,7 +231,6 @@ tracker_contract = Operation(
     output_model=TrackerContractOutput,
     handler=handle_tracker_contract,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     # The contract is a fact of the deployment — any token
@@ -259,7 +244,6 @@ tracker_source_check = Operation(
     output_model=TrackerSourceCheckOutput,
     handler=handle_tracker_source_check,
     idempotent=True,
-    budget_p99_ms=10000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     # A read; the gate admits a scoped token by its best role.
@@ -276,7 +260,6 @@ tracker_source_rotate = Operation(
     output_model=TrackerSourceRotateOutput,
     handler=handle_tracker_source_rotate,
     idempotent=False,
-    budget_p99_ms=30000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     audit=True,
@@ -288,7 +271,6 @@ tracker_source_remove = Operation(
     output_model=TrackerSourceRemoveOutput,
     handler=handle_tracker_source_remove,
     idempotent=True,
-    budget_p99_ms=30000,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,
     audit=True,

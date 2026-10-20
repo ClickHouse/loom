@@ -57,7 +57,8 @@ it is missing.
 
 **State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
 addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing
-keys (`signing_keys`), admin runtime overrides (`runtime_overrides`), sign-in attempt
+keys (`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
+settings (`runtime_overrides`), sign-in attempt
 counts (`auth_attempts`), graph-walk marks (`graph_projections`: the projections in flight
 and each namespace's last graph write), each namespace's last write (`namespace_write_keys`) and the supervisor lease are in ClickHouse too, so a new
 Loom pointed at this database gets every feature back. On the filesystem: the code plane's git mirrors under `var/code_repos`, a cache of

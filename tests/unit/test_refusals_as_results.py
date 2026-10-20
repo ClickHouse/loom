@@ -230,7 +230,6 @@ def test_http_and_mcp_carry_the_same_detail_for_a_loom_error() -> None:
         output_model=_In,
         handler=_raise,
         idempotent=True,
-        budget_p99_ms=10,
         required_role=Role.VIEWER,
     )
     mp = pytest.MonkeyPatch()

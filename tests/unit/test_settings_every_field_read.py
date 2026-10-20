@@ -1,8 +1,8 @@
 """Every Settings field has a reader.
 
 Retiring a branch deletes the code that read a flag; this gate makes the flag
-go with it. A field counts as read when, outside `server/settings/`, code
-under `server/` or `scripts/` names it as an attribute (`settings.x`,
+go with it. A field counts as read when, outside `server/settings/` (but for
+`budgets.py`, which reads settings at call time), code under `server/` or `scripts/` names it as an attribute (`settings.x`,
 `s.x`) or as a string literal (the worker registry's enable and interval
 columns), or when a plain settings method or property reads `self.x` (a
 validator that only checks the field does not count).
@@ -53,7 +53,7 @@ def _outside_reads() -> set[str]:
     settings_dir = ROOT / "server" / "settings"
     for top in ("server", "scripts"):
         for path in (ROOT / top).rglob("*.py"):
-            if settings_dir in path.parents:
+            if settings_dir in path.parents and path.name != "budgets.py":
                 continue
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if isinstance(node, ast.Attribute) and node.attr in FIELDS:

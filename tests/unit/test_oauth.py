@@ -584,11 +584,13 @@ def test_an_exchange_issues_its_tokens_at_the_time_before_its_revocation_read(
         return False
 
     monkeypatch.setattr(revocation, "subjects_revoked", _slow)
+    monkeypatch.setattr(oauth.settings, "oauth_access_token_ttl_seconds", 1800)
     r = _exchange(c, code, verifier) if grant_type == "authorization_code" else _refresh(c, rt)
     tok = r.json()
     # Unverified: a verify would refuse an iat past the real clock first.
     claims = pyjwt.decode(tok["access_token"], options={"verify_signature": False})
     assert claims["iat"] == before
+    assert claims["exp"] - claims["iat"] == tok["expires_in"] == 1800
     saved = oauth.store.refresh[oauth.token_id(tok["refresh_token"])]
     assert int(saved["exp"]) - oauth._REFRESH_TTL == before
 

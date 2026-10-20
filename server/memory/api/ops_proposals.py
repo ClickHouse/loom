@@ -21,7 +21,6 @@ memory_proposals = Operation(
     output_model=MemoryProposalsOutput,
     handler=handle_memory_proposals,
     idempotent=True,
-    budget_p99_ms=400,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -33,7 +32,6 @@ memory_proposal_decide = Operation(
     output_model=MemoryProposalDecideOutput,
     handler=handle_memory_proposal_decide,
     idempotent=True,
-    budget_p99_ms=800,
     required_role=Role.WRITER,
     audit=True,
 )

@@ -28,7 +28,6 @@ decision_record = Operation(
     handler=handle_decision_record,
     # Same category+scenario → supersedes; the record plane is versioned.
     idempotent=True,
-    budget_p99_ms=1500,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -40,7 +39,6 @@ decision_precedents = Operation(
     output_model=DecisionPrecedentsOutput,
     handler=handle_decision_precedents,
     idempotent=True,
-    budget_p99_ms=800,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -52,7 +50,6 @@ decision_chain = Operation(
     output_model=DecisionChainOutput,
     handler=handle_decision_chain,
     idempotent=True,
-    budget_p99_ms=500,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -64,7 +61,6 @@ decision_outcome = Operation(
     output_model=DecisionOutcomeOutput,
     handler=handle_decision_outcome,
     idempotent=False,
-    budget_p99_ms=1500,
     required_role=Role.WRITER,
     audit=True,
 )

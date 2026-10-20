@@ -127,12 +127,6 @@ async def _resolve_parts(
     return out
 
 
-# The control is one read per namespace, not one per claim. The brief builder makes a claim
-# per touched function, and each would re-run the same `arrayJoin` grep over the tests tree
-# (176 MB a statement on the ClickHouse namespace). Its answer — is the tests corpus
-# measurable from here — holds for a namespace across a brief, so it is kept per
-# (org, namespace) for this long, in this process only.
-_CONTROL_TTL_S = 300.0
 _control_cache: dict[tuple[str, str], tuple[bool, str, float]] = {}
 
 
@@ -147,13 +141,17 @@ async def positive_control(repo: CodeRepo, org: str, ns: str) -> tuple[bool, str
     (`code_coverage_control_symbol`). Empty means the corpus is not measurable from
     here — no control configured, a missing tests tree, a lagging index, a broken
     read — and every claim on this call is `unknown`. The answer is kept per
-    namespace for `_CONTROL_TTL_S`; a failed read is not kept."""
+    namespace for `code_coverage_control_ttl_s`; a failed read is not kept."""
     probe = str(settings.code_coverage_control_symbol)
     if not probe:
         return False, ""
     cached = _control_cache.get((org, ns))
     now = time.monotonic()
-    if cached is not None and cached[1] == probe and now - cached[2] < _CONTROL_TTL_S:
+    if (
+        cached is not None
+        and cached[1] == probe
+        and now - cached[2] < settings.code_coverage_control_ttl_s
+    ):
         return cached[0], probe
     try:
         files, _total = await _grep_tests(repo, org, ns, cc.grep_pattern("symbol", probe), limit=3)

@@ -38,7 +38,6 @@ from server.code.app.answers_entry import (
     _MAX_CONTEXT_UNITS,
     _MAX_EXPANSION_UNITS,
     _MEMORY_NOTE,
-    _SYNTH_MAX_TOKENS,
     _SYNTH_SYSTEM,
     AskResult,
     _AskCtx,
@@ -50,6 +49,7 @@ from server.code.app.search import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.observability.genai import staged
+from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -314,7 +314,7 @@ async def _propose_identifiers(llm: Any, question: str) -> list[str]:
         res = await llm.complete(
             _EXPAND_SYSTEM,
             question,
-            max_tokens=60,
+            max_tokens=llm_max_tokens("code_answer_identifiers"),
         )
         text = str(res.text).strip()
         if text.upper().startswith("NONE"):
@@ -408,7 +408,7 @@ async def _synthesize(
         # never as a substitute for the cited code.
         joined = "\n".join(f"- {m}" for m in memories)
         prompt += _MEMORY_NOTE + joined
-    res = await llm.complete(_SYNTH_SYSTEM, prompt, max_tokens=_SYNTH_MAX_TOKENS)
+    res = await llm.complete(_SYNTH_SYSTEM, prompt, max_tokens=llm_max_tokens("code_answer_synth"))
     return str(res.text).strip()[:8000]
 
 

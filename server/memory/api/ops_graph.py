@@ -42,8 +42,6 @@ memory_related = Operation(
     output_model=MemoryRelatedOutput,
     handler=handle_memory_related,
     idempotent=True,
-    # Two point-lookups + one bounded arrayIntersect scan (entities bloom index).
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -55,8 +53,6 @@ memory_lineage = Operation(
     output_model=MemoryLineageOutput,
     handler=handle_memory_lineage,
     idempotent=True,
-    # Three bounded queries: shared point-lookup, audit by request_id, learnings_queue match.
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -67,8 +63,6 @@ memory_dedup_list = Operation(
     output_model=MemoryDedupListOutput,
     handler=handle_memory_dedup_list,
     idempotent=True,
-    # GROUP BY scan + per-cluster canonical lookup, bounded by `limit`.
-    budget_p99_ms=300,
     required_role=Role.ADMIN,
     audit=False,
 )
@@ -79,8 +73,6 @@ memory_dedup_resolve = Operation(
     output_model=MemoryDedupResolveOutput,
     handler=handle_memory_dedup_resolve,
     idempotent=True,
-    # 1-2 ALTER UPDATEs; mutations_sync=2.
-    budget_p99_ms=400,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -92,9 +84,6 @@ memory_dedup_collapse = Operation(
     output_model=MemoryDedupCollapseOutput,
     handler=handle_memory_dedup_collapse,
     idempotent=True,
-    # Two keyed reads + one wide mirror read over ≤ `limit` keys; the re-emit
-    # is one insert.
-    budget_p99_ms=2000,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -106,7 +95,6 @@ memory_assign_category = Operation(
     output_model=MemoryAssignCategoryOutput,
     handler=handle_memory_assign_category,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -117,7 +105,6 @@ memory_link = Operation(
     output_model=MemoryLinkOutput,
     handler=handle_memory_link,
     idempotent=False,
-    budget_p99_ms=60,
     required_role=Role.WRITER,
     audit=True,
 )

@@ -8,4 +8,4 @@ from typing import Literal
 ConversationRole = Literal["user", "assistant", "system", "tool"]
 
 # Characters of a turn its embedding is built from, which the embedding row keeps.
-EMBEDDED_EXCERPT_CHARS = 2048
+EMBEDDED_EXCERPT_CHARS = 2048  # not a setting: stored rows are matched at this length

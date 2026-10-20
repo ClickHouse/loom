@@ -23,6 +23,8 @@ import logging
 import time
 from typing import Any
 
+from server.settings import settings
+
 log = logging.getLogger(__name__)
 
 # The knobs a namespace may default, in the order the plan reports them.
@@ -39,7 +41,6 @@ FIELDS: tuple[str, ...] = (
     "chunk_max_share",
 )
 
-_TTL_S = 60.0
 _MAX_ENTRIES = 5000
 _cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
@@ -112,7 +113,10 @@ def clear_cache() -> None:
 def _put(org: str, namespace: str, defaults: dict[str, Any]) -> None:
     if len(_cache) >= _MAX_ENTRIES:
         _cache.clear()
-    _cache[(org, namespace)] = (time.monotonic() + _TTL_S, defaults)
+    _cache[(org, namespace)] = (
+        time.monotonic() + settings.memory_namespace_retrieval_defaults_ttl_s,
+        defaults,
+    )
 
 
 async def resolve(org: str, namespace: str, ch: Any | None = None) -> dict[str, Any]:

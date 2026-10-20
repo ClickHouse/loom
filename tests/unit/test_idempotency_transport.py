@@ -37,7 +37,6 @@ def _op(idempotent: bool = True) -> Operation:
         output_model=_Out,
         handler=_handler,
         idempotent=idempotent,
-        budget_p99_ms=1000,
         required_role=Role.WRITER,
     )
 

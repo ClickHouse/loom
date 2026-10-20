@@ -35,13 +35,17 @@ from server.memory.app.log_once import LogOnce
 from server.memory.domain.classify_endpoints import classify_refusal
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
 # Namespaces whose stored classify_endpoint is refused, logged once per process.
 _OFF_GATEWAY_LOGGED = LogOnce()
 
-_TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
+
+def _timeout() -> httpx.Timeout:
+    # not a setting: the connect, write and pool waits; the read is the setting
+    return httpx.Timeout(connect=2.0, read=settings.memory_classify_timeout_s, write=2.0, pool=2.0)
 
 
 async def classify(
@@ -66,7 +70,7 @@ async def classify(
     # Outside the fail-open: a refused call is an error, not a kept type.
     headers = customer.headers(await customer.require())
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_timeout()) as client:
             resp = await client.post(endpoint, json=body, headers=headers)
             resp.raise_for_status()
             payload = resp.json()

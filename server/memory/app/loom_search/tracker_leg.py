@@ -21,7 +21,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-TRACKER_LEG_TIMEOUT_S = 3.0
 TRACKER_LEG_TOP_K = 5
 # How the nearest rows are introduced — never as matches
 NEAREST_NOTE = "nearest reported issues, below the related line (NOT duplicates — check by eye)"
@@ -157,13 +156,15 @@ def lean_tracker_section(out: Any, shape: dict[str, Any]) -> dict[str, Any]:
 
 
 async def tracker_leg(
-    query: str, *, top_k: int = TRACKER_LEG_TOP_K, timeout_s: float = TRACKER_LEG_TIMEOUT_S
+    query: str, *, top_k: int = TRACKER_LEG_TOP_K, timeout_s: float | None = None
 ) -> dict[str, Any] | None:
     """The duplicate check for a defect-shaped `query` under a code scope,
     or None: no scope (not a coding checkout), not the shape, the record
-    unavailable, a timeout or any error — the memory legs then
-    answer alone. One bounded call; never raises."""
+    unavailable, a timeout (`mcp_loom_search_tracker_timeout_s` unless
+    `timeout_s`) or any error — the memory legs then answer alone. One bounded
+    call; never raises."""
     from server.code.domain.scope import current_code_scope
+    from server.settings import settings
 
     scope = current_code_scope()
     shape = defect_report_shape(query)
@@ -186,7 +187,7 @@ async def tracker_leg(
                     related_prs=False,  # No room in the leg's budget
                 )
             ),
-            timeout=timeout_s,
+            timeout=settings.mcp_loom_search_tracker_timeout_s if timeout_s is None else timeout_s,
         )
     except Exception as e:  # noqa: BLE001 — fail open: the memory legs answer
         logger.info("loom_search qa leg skipped on %s/%s: %s", org, namespace, e)

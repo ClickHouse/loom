@@ -109,7 +109,6 @@ WRITE_OP = Operation(
     output_model=_In,
     handler=_noop,
     idempotent=False,
-    budget_p99_ms=100,
     required_role=Role.WRITER,
 )
 IDENTITY = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}

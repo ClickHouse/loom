@@ -18,6 +18,7 @@ from server.identity.domain.read_scope import (
 )
 from server.memory.app import code_plane_reads
 from server.memory.store.code_links import LINK_COLS
+from server.settings import settings
 
 
 class _CH:
@@ -267,7 +268,7 @@ async def test_a_lesson_reads_changed_where_the_definition_differs_from_the_link
 async def test_a_slow_branch_parse_serves_the_lesson_as_trunk_has_it(monkeypatch) -> None:
     links = [_link("m1", body="h0", state="changed", since="c2") | {"suggestion": "s"}]
     branch = [("src/a.py", "src.a::Reader::read", "h0")]
-    slow = code_plane_reads._PARSE_TIMEOUT_S * 2
+    slow = settings.memory_code_plane_parse_timeout_s * 2
     (lesson,) = await _lessons(
         monkeypatch, links, [_excerpt("m1", "k1")], branch, ns="code-a-26-8", parse_s=slow
     )

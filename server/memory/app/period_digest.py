@@ -41,6 +41,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -435,7 +436,9 @@ async def _write_period(
     system, user = build_period_prompt(period)
     try:
         with llm_stage("period_digest"), customer.for_org(period.org):
-            out = await llm.complete(system=system, user=user, max_tokens=420)
+            out = await llm.complete(
+                system=system, user=user, max_tokens=llm_max_tokens("period_digest")
+            )
     except customer.HOLDS:
         raise  # the identity waits for the org, its other periods included
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues

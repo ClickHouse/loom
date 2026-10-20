@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from server.memory.domain.search_types import _CHClient
+from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -20,11 +21,8 @@ log = logging.getLogger("server.memory.app.retrieval")
 # index). Its deterministic cause is the text index's direct-read shortcut,
 # which emits the empty block for some token sets on every run;
 # `query_plan_direct_read_from_text_index = 0` on every hasAnyTokens
-# statement here removes it. The bounded retry covers the transient share
-# that remains on a part that has just been written.
-_EMPTY_BLOCK_RETRY_MAX = 3
-_EMPTY_BLOCK_RETRY_SLEEP_S = 0.2
-
+# statement here removes it. The bounded retry (memory_retrieval_empty_block_retries)
+# covers the transient share that remains on a part that has just been written.
 _empty_block_retries = 0  # process-local counter, surfaced in the warning
 
 
@@ -53,7 +51,7 @@ async def _call_retrying_empty_block[T](
     factory: Callable[[], Awaitable[T]], *, leg: str = "side"
 ) -> T:
     """Run `factory()`, re-running it on the fresh-part empty-block error up
-    to `_EMPTY_BLOCK_RETRY_MAX` times with a linear backoff; any other error,
+    to `memory_retrieval_empty_block_retries` times with a linear backoff; any other error,
     or the last one, propagates. The chunk, lexical and record legs read the
     same parts the vector leg does and hit the same CH code 10 on a part that
     has just been written; they run each statement under this loop inside
@@ -65,7 +63,10 @@ async def _call_retrying_empty_block[T](
         try:
             return await factory()
         except Exception as e:
-            if not _is_empty_block_column_error(e) or attempt >= _EMPTY_BLOCK_RETRY_MAX:
+            if (
+                not _is_empty_block_column_error(e)
+                or attempt >= settings.memory_retrieval_empty_block_retries
+            ):
                 raise
             attempt += 1
             _empty_block_retries += 1
@@ -74,7 +75,7 @@ async def _call_retrying_empty_block[T](
                 "(CH code 10), retry %d/%d (process total %d)",
                 leg,
                 attempt,
-                _EMPTY_BLOCK_RETRY_MAX,
+                settings.memory_retrieval_empty_block_retries,
                 _empty_block_retries,
             )
-            await asyncio.sleep(_EMPTY_BLOCK_RETRY_SLEEP_S * attempt)
+            await asyncio.sleep(settings.memory_retrieval_empty_block_retry_sleep_s * attempt)
