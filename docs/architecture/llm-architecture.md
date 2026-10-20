@@ -246,8 +246,9 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
 (7-day TTL). The key is per model, over the org the client serves, the system prompt, user
 prompt, `max_tokens`, `response_format` and extra arguments, so one org is never served
 another's answer; a client built with no org calls the provider. Only a non-empty answer
-from the requested model is stored, so a fallback answer is never cached. Each row records the memory keys whose
-text the prompt carried (`window_keys`), so erasure and redaction can delete it by key.
+from the requested model is stored, so a fallback answer is never cached. Each row records
+the memory keys whose text the prompt carried (`window_keys`), so erasure and redaction can
+delete it by key.
 
 | User         | Switch                                                                                                    |
 | ------------ | --------------------------------------------------------------------------------------------------------- |
