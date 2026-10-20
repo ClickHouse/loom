@@ -757,7 +757,7 @@ async def _judge_and_act(
         if str(p["memory_id"]) not in settled
         and (
             str(p["memory_id"]) in flagged
-            or str(row.memory_id) in {str(x) for x in p.get("conflict_with") or ()}
+            or str(row.memory_id) in p["conflict_with"]
             or not _cross_session(row, p)
         )
     ]
