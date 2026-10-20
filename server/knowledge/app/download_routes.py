@@ -143,7 +143,7 @@ _BINARY_MAGIC = {
     "image/webp": (b"RIFF",),
 }
 # Opening the URL on its own (not through the dashboard) still runs no script.
-_DOWNLOAD_CSP = "sandbox; default-src 'none'"
+_DOWNLOAD_CSP = "sandbox; default-src 'none'; frame-ancestors 'none'"
 
 
 def _base_type(content_type: str) -> str:
@@ -190,6 +190,8 @@ def _headers(
         # no-store: the row can be repointed at new bytes.
         "Cache-Control": "no-store",
         "X-Loom-Download-Source": source,
+        # Pinned here too: a download is never sniffed into another type, whatever the
+        # middleware sends.
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": _DOWNLOAD_CSP,
     }
