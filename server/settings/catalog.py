@@ -1892,6 +1892,13 @@ class ExtractionSettings(BaseModel):
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
     extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
+    # --- operator extraction policy ---
+    # Most namespaces of one org that may hold their own extraction policy
+    # (`extraction_policy.set` with scope `namespace` refuses one more). Every process
+    # holds every org's policies (each at most 4,096 characters) and reads them all
+    # every `model_calls_policy_refresh_seconds`, so this bounds that read: the
+    # default holds one org to about 4 MiB.
+    extraction_policy_max_namespaces: Annotated[int, LIVE] = Field(default=1000, ge=1)
 
 
 # ===== Knowledge ==============================================================
@@ -3214,7 +3221,7 @@ class NamespaceSettings(BaseModel):
     # rather than into it, the code plane (registers `kind = 'code'` itself),
     # and the operator planes.
     namespace_autoregister_skip_prefixes: str = (
-        "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.,extraction_policy."
+        "namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure."
     )
     # Comma-separated name prefixes of throwaway harness namespaces: stamped
     # `kind = 'bench'` by `namespace.register` (when no kind is given) and

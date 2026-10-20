@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -158,13 +159,18 @@ def test_each_change_is_one_full_row(control_plane_url: str, mint_test_token, ch
         ).result_rows
         return tuple(row)
 
+    def just_now(at: datetime) -> bool:
+        # The column is UTC; compared naive, whichever way the driver returns it.
+        now = datetime.now(UTC).replace(tzinfo=None)
+        return abs((now - at.replace(tzinfo=None)).total_seconds()) < 10
+
     body = {"org": org, "scope": "namespace", "namespace": "chat", "policy": _POLICY}
     _post(control_plane_url, admin, "extraction_policy.set", body)
     org_, ns, policy, by, at, deleted, version = stored()
-    assert (org_, ns, policy, deleted) == (org, "chat", _POLICY, 0)
-    assert by and at and version
+    assert (org_, ns, policy, by, deleted) == (org, "chat", _POLICY, "ops", 0)
+    assert just_now(at) and version
     body = {"org": org, "scope": "namespace", "namespace": "chat"}
     _post(control_plane_url, admin, "extraction_policy.clear", body)
     org_, ns, policy, by, at2, deleted, version2 = stored()
-    assert (org_, ns, policy, deleted) == (org, "chat", "", 1)
-    assert by and at2 >= at and version2 > version
+    assert (org_, ns, policy, by, deleted) == (org, "chat", "", "ops", 1)
+    assert just_now(at2) and at2 >= at and version2 > version

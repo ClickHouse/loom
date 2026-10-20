@@ -23,12 +23,4 @@ class DefaultChange:
 
 
 # Oldest first.
-DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
-    DefaultChange(
-        version="1.0.0",
-        name="namespace_autoregister_skip_prefixes",
-        old="namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.",
-        new="namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.,extraction_policy.",
-        why="extraction_policy ops set an operator policy on a namespace, not data in it.",
-    ),
-)
+DEFAULT_CHANGES: tuple[DefaultChange, ...] = ()

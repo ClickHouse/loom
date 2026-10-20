@@ -424,9 +424,45 @@ def stored(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         last = max(mine, key=lambda r: r["version"]) if mine else None
         return None if last is None or last["deleted"] else last
 
+    async def namespace_count(org: str, **_: Any) -> int:
+        scopes = {r["namespace"] for r in rows if r["org"] == org and r["namespace"]}
+        return sum(1 for ns in scopes if await get(org, ns))
+
     monkeypatch.setattr(extraction_policy.repo, "insert_row", insert_row)
     monkeypatch.setattr(extraction_policy.repo, "get", get)
+    monkeypatch.setattr(extraction_policy.repo, "namespace_count", namespace_count)
     return rows
+
+
+async def test_namespace_policies_stop_at_the_per_org_cap(
+    stored, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_extraction_policy import (
+        ExtractionPolicyClearInput,
+        ExtractionPolicySetInput,
+    )
+
+    monkeypatch.setattr(settings, "extraction_policy_max_namespaces", 2)
+
+    def set_for(namespace: str) -> ExtractionPolicySetInput:
+        return ExtractionPolicySetInput(
+            org="acme", scope="namespace", namespace=namespace, policy="No addresses."
+        )
+
+    await extraction_policy.handle_extraction_policy_set(set_for("a"))
+    await extraction_policy.handle_extraction_policy_set(set_for("b"))
+    with pytest.raises(ValidationError, match="LOOM_EXTRACTION_POLICY_MAX_NAMESPACES"):
+        await extraction_policy.handle_extraction_policy_set(set_for("c"))
+    # Replacing one, or the org's own policy, is not one more namespace.
+    await extraction_policy.handle_extraction_policy_set(set_for("a"))
+    await extraction_policy.handle_extraction_policy_set(
+        ExtractionPolicySetInput(org="acme", scope="org", policy="No card data.")
+    )
+    await extraction_policy.handle_extraction_policy_clear(
+        ExtractionPolicyClearInput(org="acme", scope="namespace", namespace="b")
+    )
+    out = await extraction_policy.handle_extraction_policy_set(set_for("c"))
+    assert out.policy == "No addresses."
 
 
 async def test_an_org_admin_sets_reads_and_clears_the_policy(stored) -> None:

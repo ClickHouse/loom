@@ -55,6 +55,7 @@
  "embedding_retry_attempts",
  "embedding_retry_max_wait_s",
  "extraction_defer_agents",
+ "extraction_policy_max_namespaces",
  "extraction_queue_lease_seconds",
  "extraction_queue_max_attempts",
  "extraction_queue_max_batches_per_pass",

@@ -36,6 +36,17 @@ async def get(org: str, namespace: str, *, ch: _CHClient | None = None) -> dict[
     return row
 
 
+async def namespace_count(org: str, *, ch: _CHClient | None = None) -> int:
+    """How many of the org's namespaces hold a live policy of their own."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.extraction_policies FINAL "
+        "WHERE org = {org:String} AND namespace != '' AND deleted = 0",
+        params={"org": org},
+    )
+    return int((row or {}).get("n") or 0)
+
+
 async def live_rows(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
     """Every live policy of every org, one row per scope. Never cut short: a
     missing row would let an extraction run without its policy. `deleted = 0`

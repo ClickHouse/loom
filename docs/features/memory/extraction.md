@@ -122,6 +122,12 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   `extraction_policy.get` returns a scope's policy and the `effective` text its
   extractions run under; `extraction_policy.clear` removes one scope's policy (clearing a
   namespace's leaves the org's in force). A policy is at most 4,096 characters.
+- **Bound.** An org holds its own policy and at most
+  [`LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`](../../reference/configuration.md#extraction)
+  namespace policies (1,000 by default; one more is refused). Every server holds every
+  org's policies and reads them all at each refresh, so the default holds one org to
+  about 4 MiB. A rule for every end user belongs in the org's policy, not in a policy
+  per personal collection.
 - **Who.** All three ops need `org_admin` of that org; setting and clearing are audited.
   A writer, a namespace admin or an end-user token can neither set, clear nor read a
   policy.

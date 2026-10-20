@@ -1,9 +1,10 @@
 """The operator's extraction policy: extraction_policy.set / get / clear, and
 each process's copy that the extraction paths read.
 
-An org admin sets one policy for the whole org and may add one per namespace;
-an extraction runs under both (`domain.extraction_policy.combine`). Every
-process reads every live policy at most every
+An org admin sets one policy for the whole org and may add one per namespace,
+for at most `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` namespaces; an extraction
+runs under both (`domain.extraction_policy.combine`). Every process reads every
+live policy at most every
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`, as it reads the model-call switch,
 and a change made here is read again at once. A copy older than
 `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` is not trusted: `effective` raises
@@ -107,8 +108,27 @@ async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> Extra
     policy = input.policy.strip()
     if not policy:
         raise ValidationError("policy is empty; extraction_policy.clear removes one")
+    if namespace:
+        await _check_namespace_cap(org, namespace)
     await _write(org, namespace, policy)
     return await _output(org, namespace)
+
+
+async def _check_namespace_cap(org: str, namespace: str) -> None:
+    """Refuse a policy for one more namespace once the org holds
+    `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`; replacing a namespace's policy is
+    always allowed. Two concurrent sets for new namespaces may both pass."""
+    cap = settings.extraction_policy_max_namespaces
+    with own_write_reads():
+        if await repo.get(org, namespace) is not None:
+            return
+        count = await repo.namespace_count(org)
+    if count >= cap:
+        raise ValidationError(
+            f"org {org!r} already has {count} namespace extraction policies, the most "
+            f"LOOM_EXTRACTION_POLICY_MAX_NAMESPACES allows ({cap}); clear one, or set "
+            "the rule in the org's policy"
+        )
 
 
 async def handle_extraction_policy_clear(

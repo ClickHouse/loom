@@ -42,9 +42,8 @@ by `python scripts/codegen/settings_reference.py`; edit the comment, not this fi
 
 Every change to a setting's default, from `server/settings/_history.py`. A deployment that never set the variable changes with each one.
 
-| Release | Variable | Was | Is | Why |
-| --- | --- | --- | --- | --- |
-| 1.0.0 | `LOOM_NAMESPACE_AUTOREGISTER_SKIP_PREFIXES` | `'namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.'` | `'namespace.,code.,admin.,ops.,grants.,policy.,blacklist.,erasure.,extraction_policy.'` | extraction_policy ops set an operator policy on a namespace, not data in it. |
+No default has changed since the history began.
+
 
 ## Auth
 
@@ -781,6 +780,12 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 | `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
+
+### Operator extraction policy
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` | `int` | `1000` | live | Most namespaces of one org that may hold their own extraction policy (`extraction_policy.set` with scope `namespace` refuses one more). Every process holds every org's policies (each at most 4,096 characters) and reads them all every `model_calls_policy_refresh_seconds`, so this bounds that read: the default holds one org to about 4 MiB. |
 
 ## Knowledge
 

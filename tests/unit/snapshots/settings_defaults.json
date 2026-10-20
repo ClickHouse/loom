@@ -435,6 +435,7 @@
  "events_stream_flush_interval_s": 1.0,
  "external_erasure_timeout_s": 30.0,
  "extraction_defer_agents": "",
+ "extraction_policy_max_namespaces": 1000,
  "extraction_queue_enabled": true,
  "extraction_queue_interval_seconds": 15,
  "extraction_queue_lease_seconds": 600,

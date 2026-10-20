@@ -206,8 +206,12 @@ def test_should_autoregister_is_write_shaped_and_skips_the_operator_planes() -> 
     # reads never register
     assert not ar.should_autoregister(ops["memory.search"], "o", "n")
     assert not ar.should_autoregister(ops["memory.get"], "o", "n")
-    # ops ON a namespace, the code plane and the operator planes are skipped
+    # ops ON a namespace, an org admin's ops, the code plane and the operator planes
+    # are skipped
     for name in (
+        "extraction_policy.set",
+        "extraction_policy.clear",
+        "org.set_model_calls",
         "namespace.register",
         "namespace.delete",
         "code.reindex",
