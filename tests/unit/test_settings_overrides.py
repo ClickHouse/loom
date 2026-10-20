@@ -143,7 +143,7 @@ def test_rows_say_where_each_value_came_from(
     )
     yaml_file = tmp_path / "loom.yaml"
     yaml_file.write_text(
-        "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n"
+        "version: 1\nsettings:\n  memory_ask_synth_budget_ratio: 0.4\n  ch_database: x\n  ch_telemetry_database: x_telemetry\n"
         "  web_workers: 3.0\n  runtime_dir: '/run/loom '\n"
     )
     for name in [k for k in os.environ if k.startswith("LOOM_")]:
