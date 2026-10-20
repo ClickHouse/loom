@@ -1375,18 +1375,13 @@ async def reopen_held_edges(
     reopen = [p for p in closed if p in held_pairs]
     if not reopen:
         return held_pairs
-    await ch.execute(
-        f"""
-        ALTER TABLE loom.entity_edges
-        UPDATE valid_to = NULL, closed_by = ''
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND (entity_a, entity_b) IN {{reopen:Array(Tuple(String, String))}}
-          AND closed_by = {{close_id:String}}
-          AND invalid_at IS NULL AND valid_to = {_EDGE_CLOSED_VALID_TO}
-        """,
-        params={**params, "reopen": reopen},
+    await reopen_closed_by(
+        ch,
+        org=params["org"],
+        namespace=params["ns"],
+        close_ids=[params["close_id"]],
+        pairs=reopen,
     )
-    _note_graph_write(params["org"], params["ns"])
     return held_pairs
 
 
@@ -1394,8 +1389,8 @@ async def reopen_closed_by(
     ch: Any, *, org: str, namespace: str, close_ids: list[str], pairs: list[tuple[str, str]]
 ) -> None:
     """Undo the ends the closes `close_ids` (from `end_edges`) stamped on the edges of
-    `pairs`: only those rows open again, so a stated end, a weight or a start another row
-    gave the pair stays as it was."""
+    `pairs`: only those rows open again, and lose the stamp, so a stated end, a weight
+    or a start another row gave the pair stays as it was."""
     if not close_ids or not pairs:
         return
     for part in param_slices(pairs):
@@ -1406,6 +1401,7 @@ async def reopen_closed_by(
             WHERE org = {org:String} AND namespace = {ns:String}
               AND closed_by IN {close_ids:Array(String)}
               AND (entity_a, entity_b) IN {pairs:Array(Tuple(String, String))}
+              AND invalid_at IS NULL
             """,
             params={"org": org, "ns": namespace, "close_ids": close_ids, "pairs": part},
         )

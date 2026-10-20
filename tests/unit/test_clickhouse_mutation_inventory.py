@@ -20,9 +20,9 @@ _MUTATION_RE = re.compile(
 _EXPECTED_MUTATIONS = Counter(
     {
         # The contradiction repair's edge close, end_edges, which ends a dropped fact's
-        # edge with its triples (only when no live row keeps the pair), and the two
-        # undos of a close's own ends (reopen_held_edges, reopen_closed_by).
-        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 4,
+        # edge with its triples (only when no live row keeps the pair), and the undo of
+        # a close's own ends (reopen_closed_by).
+        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 3,
         # One folded UPDATE per table per write (close_triples serves
         # both the deterministic repair and the LLM judgement), and
         # reopen_triples, which undoes a follow's close for a triple a row
