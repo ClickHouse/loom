@@ -71,12 +71,14 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- $dev := .Values.devClickhouse.enabled -}}
 {{- range $k, $_ := .Values.env }}
 {{- if has $k (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
-{{- fail (printf "set %s through embedding.* or secrets.jwtSecret, which the chart guards, not env" $k) }}
+{{- $through := get (dict "LOOM_JWT_SECRET" "secrets.jwtSecret" "LOOM_JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious") $k | default "embedding.*" }}
+{{- fail (printf "set %s through %s, which the chart guards, not env" $k $through) }}
 {{- end }}
 {{- end }}
 {{- range .Values.extraEnv }}
 {{- if has .name (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
-{{- fail (printf "set %s through embedding.* or secrets.jwtSecret, which the chart guards, not extraEnv" .name) }}
+{{- $through := get (dict "LOOM_JWT_SECRET" "secrets.jwtSecret" "LOOM_JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious") .name | default "embedding.*" }}
+{{- fail (printf "set %s through %s, which the chart guards, not extraEnv" .name $through) }}
 {{- end }}
 {{- end }}
 {{- range list "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}

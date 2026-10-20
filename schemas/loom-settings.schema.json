@@ -361,7 +361,7 @@
         "code_backport_gaps_max_pass_seconds": {
           "default": 3600.0,
           "type": "number",
-          "description": "The pass's hard deadline (seconds) under the worker supervisor."
+          "description": "A backport-gaps pass's hard deadline (seconds) under the worker supervisor."
         },
         "code_backport_gaps_pace_s": {
           "default": 1.0,
@@ -668,12 +668,12 @@
         "code_coverage_notify_idle_interval_seconds": {
           "default": 120,
           "type": "integer",
-          "description": "Seconds between passes that found no pending watch."
+          "description": "Seconds between coverage-notify passes that found no pending watch."
         },
         "code_coverage_notify_interval_seconds": {
           "default": 60,
           "type": "integer",
-          "description": "Seconds between passes while watches are pending."
+          "description": "Seconds between coverage-notify passes while watches are pending."
         },
         "code_coverage_run_window_hours": {
           "default": 6,
@@ -691,7 +691,7 @@
         "code_coverage_source_database": {
           "default": "default",
           "type": "string",
-          "description": "Database of the source tables."
+          "description": "Database of the coverage source's tables."
         },
         "code_coverage_source_timeout_s": {
           "default": 300.0,
@@ -778,7 +778,7 @@
         "code_embed_recovery_idle_interval_seconds": {
           "default": 120,
           "type": "integer",
-          "description": "Sleep after a pass that found no pending stub; the normal interval returns once a pass writes a row."
+          "description": "Sleep after a code embed-recovery pass that found no pending stub; the normal interval returns once a pass writes a row."
         },
         "code_embed_recovery_interval_seconds": {
           "default": 30,
@@ -935,7 +935,7 @@
         "code_graph_stats_max_pass_seconds": {
           "default": 3600,
           "type": "integer",
-          "description": "This worker's pass deadline (seconds); a pass past it is cancelled and counted a failure."
+          "description": "A graph-statistics pass's deadline (seconds); a pass past it is cancelled and counted a failure."
         },
         "code_graph_stats_unit_risk_budget_s": {
           "default": 2400,
@@ -1058,7 +1058,7 @@
         "code_ingest_seconds_per_file": {
           "default": 2.5,
           "type": "number",
-          "description": "Prior ingest cost per changed file (seconds), refined by observation. A commit predicted to overrun the pass deadline is not started unless it is the pass's first."
+          "description": "Prior ingest cost per changed file (seconds), refined by observation. A commit predicted to overrun the pass deadline is not started unless it is the first of its pass."
         },
         "code_ingest_sibling_text_ttl_s": {
           "default": 600.0,
@@ -1192,7 +1192,7 @@
         "code_pr_check_closed_days": {
           "default": 180,
           "type": "integer",
-          "description": "closed-without-merge PRs read back this far"
+          "description": "Days back code.pr_check reads PRs closed without a merge."
         },
         "code_pr_check_duplicate_threshold": {
           "default": 0.55,
@@ -1202,12 +1202,12 @@
         "code_pr_check_mass_files": {
           "default": 200,
           "type": "integer",
-          "description": "a candidate touching more files than this is a mass change: files do not vote"
+          "description": "Files above which a code.pr_check candidate is a mass change, whose files do not vote."
         },
         "code_pr_check_merged_days": {
           "default": 365,
           "type": "integer",
-          "description": "merged PRs older than this do not vote as duplicates"
+          "description": "Days back code.pr_check reads merged PRs; older ones do not vote as duplicates."
         },
         "code_pr_check_related_threshold": {
           "default": 0.2,
@@ -1594,7 +1594,7 @@
         "code_search_concept_expand_max_terms": {
           "default": 8,
           "type": "integer",
-          "description": "Identifiers + phrases kept from the model's answer."
+          "description": "Identifiers + phrases code.search's concept expansion keeps from the model's answer."
         },
         "code_search_concept_expand_min_idf": {
           "default": 2.0,
@@ -1645,7 +1645,7 @@
         "code_search_history_max_prs": {
           "default": 3,
           "type": "integer",
-          "description": "PR rows served in the section (no bodies; inside the token budget)."
+          "description": "PR rows served in code.search's `history` section (no bodies; inside the token budget)."
         },
         "code_search_history_route": {
           "default": "number",
@@ -1740,7 +1740,7 @@
         "code_search_pr_leg_max_files": {
           "default": 10,
           "type": "integer",
-          "description": "Files of those PRs that may vote per query in code.search's PR leg."
+          "description": "Files of the PRs code.search's PR leg reads that may vote per query."
         },
         "code_search_pr_leg_min_prs": {
           "default": 500,
@@ -1760,7 +1760,7 @@
         "code_search_pr_leg_units_per_file": {
           "default": 2,
           "type": "integer",
-          "description": "Chunk units a voted file contributes."
+          "description": "Chunk units a file voted by code.search's PR leg contributes."
         },
         "code_search_prose_penalty": {
           "default": 0.25,
@@ -2143,7 +2143,7 @@
         "embedding_worker_idle_interval_seconds": {
           "default": 30,
           "type": "integer",
-          "description": "Sleep after an idle pass (nothing to embed); the 5 s interval resumes once a pass writes a row."
+          "description": "Sleep after an idle embedding recovery pass (nothing to embed); `embedding_worker_interval_seconds` resumes once a pass writes a row."
         },
         "embedding_worker_interval_seconds": {
           "default": 5,
@@ -2178,7 +2178,7 @@
         "entity_communities_hub_drop_max_fraction": {
           "default": 0.032,
           "type": "number",
-          "description": "Four doublings from the default; a graph still fused here is written as is and counted in the pass outcome."
+          "description": "Largest `entity_communities_hub_drop_fraction` the re-partition doubles up to (four doublings from its default); a graph still fused here is written as is and counted in the pass outcome."
         },
         "entity_communities_interval_seconds": {
           "default": 21600,
@@ -2223,7 +2223,7 @@
         "entity_extract_idle_interval_seconds": {
           "default": 300,
           "type": "integer",
-          "description": "Sleep after a pass that found no unentitied row."
+          "description": "Sleep after an entity extraction pass that found no unentitied row."
         },
         "entity_extract_interval_seconds": {
           "default": 60,
@@ -2688,7 +2688,7 @@
         "mcp_loom_search_profile_margin": {
           "default": 0.08,
           "type": "number",
-          "description": "The soft tier's lead over the namespace's runner-up."
+          "description": "Lead a profile section must have over the namespace's runner-up to pass loom_search's soft tier."
         },
         "mcp_loom_search_profile_min_similarity": {
           "default": 0.38,
@@ -2698,7 +2698,7 @@
         "mcp_loom_search_profile_soft_similarity": {
           "default": 0.3,
           "type": "number",
-          "description": "The soft floor (a question about the user only)."
+          "description": "Cosine floor of loom_search's profile leg for a question about the user only (the soft tier)."
         },
         "mcp_loom_search_tracker_timeout_s": {
           "default": 3.0,
@@ -3348,7 +3348,7 @@
         "memory_expiry_demote_factor": {
           "default": 0.5,
           "type": "number",
-          "description": "`demote` multiplies confidence by this factor, never below the floor."
+          "description": "`demote` multiplies confidence by this factor, never below `memory_expiry_demote_floor`."
         },
         "memory_expiry_demote_floor": {
           "default": 0.05,
@@ -3434,7 +3434,7 @@
         "memory_extract_size_segment_chars": {
           "default": 60000,
           "type": "integer",
-          "description": "The same windows past this many characters of message content, whatever the message count; a window closes early once its turns carry this much (an agent transcript with tool results runs ~190K chars a session at the median). 0 disables the character budget (turn budget only)."
+          "description": "Size segment windows also start past this many characters of message content, whatever the message count; a window closes early once its turns carry this much (an agent transcript with tool results runs ~190K chars a session at the median). 0 disables the character budget (turn budget only)."
         },
         "memory_extract_size_segment_max": {
           "default": 16,
@@ -3602,7 +3602,7 @@
         "memory_rrf_code_shape_hi": {
           "default": 0.3,
           "type": "number",
-          "description": "Shape at/above which w_lex == floor (code)."
+          "description": "Shape at/above which w_lex == memory_rrf_lexical_weight_floor (code)."
         },
         "memory_rrf_code_shape_lo": {
           "default": 0.2,
@@ -4327,7 +4327,7 @@
         "ops_procedure_plane_min_pairs": {
           "default": 20,
           "type": "integer",
-          "description": "Pairs the retention is measured over before its warning can fire."
+          "description": "Pairs the `procedure_plane` check measures success retention over before its warning can fire."
         },
         "ops_procedure_plane_retention_warn": {
           "default": 0.5,
@@ -4813,7 +4813,7 @@
           "default": 2.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "A round that failed is retried after this, doubling up to `storage_frontend_assets_retry_max_s`."
+          "description": "Seconds before a failed dashboard-asset publish round is retried, doubling up to `storage_frontend_assets_retry_max_s`."
         },
         "supervisor_lease_ttl_s": {
           "default": 30,
@@ -4829,12 +4829,12 @@
         "task_lease_sweep_idle_interval_seconds": {
           "default": 300,
           "type": "integer",
-          "description": "Seconds between passes that found nothing."
+          "description": "Seconds between task-lease sweep passes that found nothing."
         },
         "task_lease_sweep_interval_seconds": {
           "default": 60,
           "type": "integer",
-          "description": "Seconds between passes while there is work."
+          "description": "Seconds between task-lease sweep passes while there is work."
         },
         "task_webhook_batch_limit": {
           "default": 200,
@@ -4850,12 +4850,12 @@
         "task_webhook_deliver_idle_interval_seconds": {
           "default": 30,
           "type": "integer",
-          "description": "Seconds between passes that found no new event."
+          "description": "Seconds between webhook delivery passes that found no new event."
         },
         "task_webhook_deliver_interval_seconds": {
           "default": 5,
           "type": "integer",
-          "description": "Seconds between passes while notices are going out."
+          "description": "Seconds between webhook delivery passes while notices are going out."
         },
         "tenant_max_concurrent_requests": {
           "default": 256,
@@ -4931,7 +4931,7 @@
         "tracker_checks_repo": {
           "default": "",
           "type": "string",
-          "description": "the repository whose CI `tracker_checks_from` is ('' = the namespace's only repository)"
+          "description": "The repository whose CI `tracker_checks_from` is; '' = the namespace's only repository."
         },
         "tracker_circuit_cooldown_s": {
           "default": 120.0,
@@ -5293,7 +5293,7 @@
         "tracker_similar_catch_up_budget_ms": {
           "default": 300,
           "type": "integer",
-          "description": "Ms the vector leg waits for its query-time catch-up (embedding the items changed since the pass's cursor), run beside the cosine scan. Past it the call answers from the table (`query.fresh_pending = true`) and the embedding finishes in the background for the next call."
+          "description": "Ms the vector leg waits for its query-time catch-up (embedding the items changed since the tracker_embed pass's cursor), run beside the cosine scan. Past it the call answers from the table (`query.fresh_pending = true`) and the embedding finishes in the background for the next call."
         },
         "tracker_similar_idf_ttl_s": {
           "default": 3600.0,

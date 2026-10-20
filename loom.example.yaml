@@ -16,8 +16,8 @@
 #
 # Features switch on and off with the settings ending in `_enabled`: search this file
 # for "_enabled:". Secrets (passwords, keys, tokens) are not here: they go in the
-# environment, .env or a secrets manager (docs/reference/configuration.md lists
-# every one).
+# environment, .env or a secrets manager (docs/reference/configuration.md lists the
+# settings that are secrets, docs/reference/environment.md the provider API keys).
 #
 # A secret, a key given twice, an unsupported version, or a value of the wrong type
 # or outside its bounds stops the server at startup, naming the key. A name no
@@ -421,8 +421,8 @@ settings:
   # Seconds between recovery worker passes while there is work. [restart]
   # embedding_worker_interval_seconds: 5
 
-  # Sleep after an idle pass (nothing to embed); the 5 s interval resumes once a pass
-  # writes a row. [restart]
+  # Sleep after an idle embedding recovery pass (nothing to embed);
+  # `embedding_worker_interval_seconds` resumes once a pass writes a row. [restart]
   # embedding_worker_idle_interval_seconds: 30
 
   # Orphan reconciliation: the full memory × embedding anti-join runs once per
@@ -911,8 +911,8 @@ settings:
   # code_ingest_max_commits_per_pass: 20
 
   # Prior ingest cost per changed file (seconds), refined by observation. A commit
-  # predicted to overrun the pass deadline is not started unless it is the pass's first.
-  # [restart]
+  # predicted to overrun the pass deadline is not started unless it is the first of its
+  # pass. [restart]
   # code_ingest_seconds_per_file: 2.5
 
   # Changed files indexed per commit; past it the rest are skipped with a warning and
@@ -1137,7 +1137,8 @@ settings:
   # Seconds after which a pass stops starting fixes. [restart]
   # code_backport_gaps_budget_s: 1800.0
 
-  # The pass's hard deadline (seconds) under the worker supervisor. [restart]
+  # A backport-gaps pass's hard deadline (seconds) under the worker supervisor.
+  # [restart]
   # code_backport_gaps_max_pass_seconds: 3600.0
 
   # --- coverage watches ---
@@ -1147,10 +1148,10 @@ settings:
   # read of an empty table. [restart]
   # code_coverage_notify_enabled: true
 
-  # Seconds between passes while watches are pending. [restart]
+  # Seconds between coverage-notify passes while watches are pending. [restart]
   # code_coverage_notify_interval_seconds: 60
 
-  # Seconds between passes that found no pending watch. [restart]
+  # Seconds between coverage-notify passes that found no pending watch. [restart]
   # code_coverage_notify_idle_interval_seconds: 120
 
   # --- bisect ---
@@ -1204,14 +1205,15 @@ settings:
   # Score at or above which a candidate is `related`. [restart]
   # code_pr_check_related_threshold: 0.2
 
-  # merged PRs older than this do not vote as duplicates [restart]
+  # Days back code.pr_check reads merged PRs; older ones do not vote as duplicates.
+  # [restart]
   # code_pr_check_merged_days: 365
 
-  # closed-without-merge PRs read back this far [restart]
+  # Days back code.pr_check reads PRs closed without a merge. [restart]
   # code_pr_check_closed_days: 180
 
-  # a candidate touching more files than this is a mass change: files do not vote
-  # [restart]
+  # Files above which a code.pr_check candidate is a mass change, whose files do not
+  # vote. [restart]
   # code_pr_check_mass_files: 200
 
   # --- merged-PR backfill ---
@@ -1228,8 +1230,8 @@ settings:
   # Seconds between recovery passes while stubs are pending. [restart]
   # code_embed_recovery_interval_seconds: 30
 
-  # Sleep after a pass that found no pending stub; the normal interval returns once a
-  # pass writes a row. [restart]
+  # Sleep after a code embed-recovery pass that found no pending stub; the normal
+  # interval returns once a pass writes a row. [restart]
   # code_embed_recovery_idle_interval_seconds: 120
 
   # The pending scan reads above a version watermark; once per this many seconds it
@@ -1338,8 +1340,8 @@ settings:
   # Seconds between graph-statistics passes. [restart]
   # code_graph_stats_interval_seconds: 604800
 
-  # This worker's pass deadline (seconds); a pass past it is cancelled and counted a
-  # failure. [restart]
+  # A graph-statistics pass's deadline (seconds); a pass past it is cancelled and
+  # counted a failure. [restart]
   # code_graph_stats_max_pass_seconds: 3600
 
   # Seconds from the start of a graph-statistics pass during which its unit-risk leg may
@@ -1651,7 +1653,8 @@ settings:
   # Max share of the best two-leg RRF score a concept unit contributes. [restart]
   # code_search_concept_expand_cap: 0.5
 
-  # Identifiers + phrases kept from the model's answer. [restart]
+  # Identifiers + phrases code.search's concept expansion keeps from the model's answer.
+  # [restart]
   # code_search_concept_expand_max_terms: 8
 
   # CSV of prose question kinds the concept leg expands; `any` = all. [restart]
@@ -1668,10 +1671,10 @@ settings:
   # PRs code.search's PR leg reads per query. [restart]
   # code_search_pr_leg_pool: 30
 
-  # Files of those PRs that may vote per query in code.search's PR leg. [restart]
+  # Files of the PRs code.search's PR leg reads that may vote per query. [restart]
   # code_search_pr_leg_max_files: 10
 
-  # Chunk units a voted file contributes. [restart]
+  # Chunk units a file voted by code.search's PR leg contributes. [restart]
   # code_search_pr_leg_units_per_file: 2
 
   # A namespace with fewer live voting PRs than this skips code.search's PR leg.
@@ -1691,7 +1694,8 @@ settings:
   # (also why/when/who-changed phrasings). [restart]
   # code_search_history_route: "number"
 
-  # PR rows served in the section (no bodies; inside the token budget). [restart]
+  # PR rows served in code.search's `history` section (no bodies; inside the token
+  # budget). [restart]
   # code_search_history_max_prs: 3
 
   # Max PR files of a number intent that anchor the ranking (present files stay, absent
@@ -1713,7 +1717,7 @@ settings:
   # User the coverage import signs in to the source endpoint as. [restart]
   # code_coverage_source_user: ""
 
-  # Database of the source tables. [restart]
+  # Database of the coverage source's tables. [restart]
   # code_coverage_source_database: "default"
 
   # Namespaces (CSV) whose repository the source's runs cover; every other namespace is
@@ -2087,10 +2091,10 @@ settings:
   # (windows grow past `memory_extract_size_segment_turns` turns first). [live]
   # memory_extract_size_segment_max: 16
 
-  # The same windows past this many characters of message content, whatever the message
-  # count; a window closes early once its turns carry this much (an agent transcript
-  # with tool results runs ~190K chars a session at the median). 0 disables the
-  # character budget (turn budget only). [live]
+  # Size segment windows also start past this many characters of message content,
+  # whatever the message count; a window closes early once its turns carry this much (an
+  # agent transcript with tool results runs ~190K chars a session at the median). 0
+  # disables the character budget (turn budget only). [live]
   # memory_extract_size_segment_chars: 60000
 
   # --- observed events ---
@@ -2223,10 +2227,12 @@ settings:
   # `label\nvalue` at this hard floor. 0 = lexical only. [restart]
   # mcp_loom_search_profile_min_similarity: 0.38
 
-  # The soft floor (a question about the user only). [restart]
+  # Cosine floor of loom_search's profile leg for a question about the user only (the
+  # soft tier). [restart]
   # mcp_loom_search_profile_soft_similarity: 0.3
 
-  # The soft tier's lead over the namespace's runner-up. [restart]
+  # Lead a profile section must have over the namespace's runner-up to pass
+  # loom_search's soft tier. [restart]
   # mcp_loom_search_profile_margin: 0.08
 
   # Seconds loom_search's tracker leg (similar issues and PRs) may take before the
@@ -2534,7 +2540,7 @@ settings:
   # Seconds between entity extraction passes that found work. [restart]
   # entity_extract_interval_seconds: 60
 
-  # Sleep after a pass that found no unentitied row. [restart]
+  # Sleep after an entity extraction pass that found no unentitied row. [restart]
   # entity_extract_idle_interval_seconds: 300
 
   # Seconds between entity extraction's full candidate scans (without the value column);
@@ -2571,7 +2577,8 @@ settings:
   # Expired rows one sweep pass applies. [restart]
   # memory_expiry_sweep_batch_size: 500
 
-  # `demote` multiplies confidence by this factor, never below the floor. [restart]
+  # `demote` multiplies confidence by this factor, never below
+  # `memory_expiry_demote_floor`. [restart]
   # memory_expiry_demote_factor: 0.5
 
   # Lowest confidence a `demote` (expiry or run.complete) leaves on a row. [restart]
@@ -2610,8 +2617,9 @@ settings:
   # parted at 0.016, 2.9%). 0 = fixed fraction. [restart]
   # entity_communities_giant_share: 0.5
 
-  # Four doublings from the default; a graph still fused here is written as is and
-  # counted in the pass outcome. [restart]
+  # Largest `entity_communities_hub_drop_fraction` the re-partition doubles up to (four
+  # doublings from its default); a graph still fused here is written as is and counted
+  # in the pass outcome. [restart]
   # entity_communities_hub_drop_max_fraction: 0.032
 
   # Co-occurrence count an entity pair needs to count as an edge. [restart]
@@ -3496,7 +3504,7 @@ settings:
   # keeps full weight. Shape at/below which w_lex == 1.0 (prose). [live]
   # memory_rrf_code_shape_lo: 0.2
 
-  # Shape at/above which w_lex == floor (code). [live]
+  # Shape at/above which w_lex == memory_rrf_lexical_weight_floor (code). [live]
   # memory_rrf_code_shape_hi: 0.3
 
   # Least weight the RRF adaptive lexical weight gives the lexical leg on a code-shaped
@@ -3627,7 +3635,8 @@ settings:
   # [restart]
   # ops_procedure_plane_retention_warn: 0.5
 
-  # Pairs the retention is measured over before its warning can fire. [restart]
+  # Pairs the `procedure_plane` check measures success retention over before its warning
+  # can fire. [restart]
   # ops_procedure_plane_min_pairs: 20
 
   # Periodic re-hash of audit rows; a mismatch writes `audit.tamper_detected`. Per-row
@@ -4062,7 +4071,7 @@ settings:
   # wait doubles from storage_frontend_assets_retry_s). [live]
   # storage_frontend_assets_retry_max_s: 60.0
 
-  # A round that failed is retried after this, doubling up to
+  # Seconds before a failed dashboard-asset publish round is retried, doubling up to
   # `storage_frontend_assets_retry_max_s`. [live]
   # storage_frontend_assets_retry_s: 2.0
 
@@ -4074,10 +4083,10 @@ settings:
   # escalate stale triage. One read per pass. [restart]
   # task_lease_sweep_enabled: true
 
-  # Seconds between passes while there is work. [restart]
+  # Seconds between task-lease sweep passes while there is work. [restart]
   # task_lease_sweep_interval_seconds: 60
 
-  # Seconds between passes that found nothing. [restart]
+  # Seconds between task-lease sweep passes that found nothing. [restart]
   # task_lease_sweep_idle_interval_seconds: 300
 
   # Post one Standard Webhooks-signed notice per new event batch to each inbox's
@@ -4085,10 +4094,10 @@ settings:
   # (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, one of the inbox org's own). [restart]
   # task_webhook_deliver_enabled: true
 
-  # Seconds between passes while notices are going out. [restart]
+  # Seconds between webhook delivery passes while notices are going out. [restart]
   # task_webhook_deliver_interval_seconds: 5
 
-  # Seconds between passes that found no new event. [restart]
+  # Seconds between webhook delivery passes that found no new event. [restart]
   # task_webhook_deliver_idle_interval_seconds: 30
 
   # Events one notice carries at most. [live]
@@ -4220,9 +4229,9 @@ settings:
   # tracker_similar_agreement_max_rank: 5
 
   # Ms the vector leg waits for its query-time catch-up (embedding the items changed
-  # since the pass's cursor), run beside the cosine scan. Past it the call answers from
-  # the table (`query.fresh_pending = true`) and the embedding finishes in the
-  # background for the next call. [restart]
+  # since the tracker_embed pass's cursor), run beside the cosine scan. Past it the call
+  # answers from the table (`query.fresh_pending = true`) and the embedding finishes in
+  # the background for the next call. [restart]
   # tracker_similar_catch_up_budget_ms: 300
 
   # --- the tracker_embed pass ---
@@ -4432,8 +4441,8 @@ settings:
   # '')". [restart]
   # tracker_checks_from: ""
 
-  # the repository whose CI `tracker_checks_from` is ('' = the namespace's only
-  # repository) [restart]
+  # The repository whose CI `tracker_checks_from` is; '' = the namespace's only
+  # repository. [restart]
   # tracker_checks_repo: ""
 
   # Budget of the per-test history read, ms: play scans the whole window by its time

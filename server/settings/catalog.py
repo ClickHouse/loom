@@ -705,7 +705,7 @@ class CodeSettings(BaseModel):
     code_ingest_max_commits_per_pass: int = 20
     # Prior ingest cost per changed file (seconds), refined by observation. A
     # commit predicted to overrun the pass deadline is not started unless it
-    # is the pass's first.
+    # is the first of its pass.
     code_ingest_seconds_per_file: float = 2.5
     # Changed files indexed per commit; past it the rest are skipped with a warning
     # and heal on the next backfill.
@@ -867,16 +867,16 @@ class CodeSettings(BaseModel):
     code_backport_gaps_pace_s: float = 1.0
     # Seconds after which a pass stops starting fixes.
     code_backport_gaps_budget_s: float = 1800.0
-    # The pass's hard deadline (seconds) under the worker supervisor.
+    # A backport-gaps pass's hard deadline (seconds) under the worker supervisor.
     code_backport_gaps_max_pass_seconds: float = 3600.0
     # --- coverage watches -----------------------------------------------------
     # Coverage watches: post one code.coverage.ready event on the watcher's task
     # inbox once every index tier covers a watched commit. A pass with no
     # pending watch is one read of an empty table.
     code_coverage_notify_enabled: bool = True
-    # Seconds between passes while watches are pending.
+    # Seconds between coverage-notify passes while watches are pending.
     code_coverage_notify_interval_seconds: int = 60
-    # Seconds between passes that found no pending watch.
+    # Seconds between coverage-notify passes that found no pending watch.
     code_coverage_notify_idle_interval_seconds: int = 120
     # --- bisect ---------------------------------------------------------------
     # Days of the repo's own PR history bisect reads back from the window's
@@ -914,11 +914,12 @@ class CodeSettings(BaseModel):
     code_pr_check_duplicate_threshold: float = 0.55
     # Score at or above which a candidate is `related`.
     code_pr_check_related_threshold: float = 0.2
-    # merged PRs older than this do not vote as duplicates
+    # Days back code.pr_check reads merged PRs; older ones do not vote as duplicates.
     code_pr_check_merged_days: int = 365
-    # closed-without-merge PRs read back this far
+    # Days back code.pr_check reads PRs closed without a merge.
     code_pr_check_closed_days: int = 180
-    # a candidate touching more files than this is a mass change: files do not vote
+    # Files above which a code.pr_check candidate is a mass change, whose files do not
+    # vote.
     code_pr_check_mass_files: int = 200
     # --- merged-PR backfill ---------------------------------------------------
     # Months of merged PRs `loom code backfill-prs` (and a cold worker)
@@ -929,7 +930,7 @@ class CodeSettings(BaseModel):
     code_embed_recovery_enabled: bool = False
     # Seconds between recovery passes while stubs are pending.
     code_embed_recovery_interval_seconds: int = 30
-    # Sleep after a pass that found no pending stub; the normal interval
+    # Sleep after a code embed-recovery pass that found no pending stub; the normal interval
     # returns once a pass writes a row.
     code_embed_recovery_idle_interval_seconds: int = 120
     # The pending scan reads above a version watermark; once per this many
@@ -1007,7 +1008,7 @@ class CodeSettings(BaseModel):
     code_graph_stats_enabled: bool = False
     # Seconds between graph-statistics passes.
     code_graph_stats_interval_seconds: int = 7 * 24 * 3600
-    # This worker's pass deadline (seconds); a pass past it is cancelled and
+    # A graph-statistics pass's deadline (seconds); a pass past it is cancelled and
     # counted a failure.
     code_graph_stats_max_pass_seconds: int = 3600
     # Seconds from the start of a graph-statistics pass during which its unit-risk
@@ -1249,7 +1250,7 @@ class CodeSettings(BaseModel):
     code_search_llm_legs_default: Annotated[Literal["auto", "none"], CaseFolded] = "auto"
     # Max share of the best two-leg RRF score a concept unit contributes.
     code_search_concept_expand_cap: float = 0.5
-    # Identifiers + phrases kept from the model's answer.
+    # Identifiers + phrases code.search's concept expansion keeps from the model's answer.
     code_search_concept_expand_max_terms: int = 8
     # CSV of prose question kinds the concept leg expands; `any` = all.
     code_search_concept_expand_kinds: str = "responsibility"
@@ -1262,9 +1263,9 @@ class CodeSettings(BaseModel):
     code_search_pr_leg: Literal["off", "issue", "always"] = "issue"
     # PRs code.search's PR leg reads per query.
     code_search_pr_leg_pool: int = 30
-    # Files of those PRs that may vote per query in code.search's PR leg.
+    # Files of the PRs code.search's PR leg reads that may vote per query.
     code_search_pr_leg_max_files: int = 10
-    # Chunk units a voted file contributes.
+    # Chunk units a file voted by code.search's PR leg contributes.
     code_search_pr_leg_units_per_file: int = 2
     # A namespace with fewer live voting PRs than this skips code.search's PR leg.
     code_search_pr_leg_min_prs: int = 500
@@ -1278,7 +1279,8 @@ class CodeSettings(BaseModel):
     # as a `history` section. "off" | "number" (explicit issue/PR numbers,
     # point reads) | "on" (also why/when/who-changed phrasings).
     code_search_history_route: Literal["off", "number", "on"] = "number"
-    # PR rows served in the section (no bodies; inside the token budget).
+    # PR rows served in code.search's `history` section (no bodies; inside the token
+    # budget).
     code_search_history_max_prs: int = 3
     # Max PR files of a number intent that anchor the ranking (present files
     # stay, absent ones insert at rank 1); a phrase intent never anchors.
@@ -1297,7 +1299,7 @@ class CodeSettings(BaseModel):
     code_coverage_source_user: str = ""
     # Password of `code_coverage_source_user`.
     code_coverage_source_password: str = ""
-    # Database of the source tables.
+    # Database of the coverage source's tables.
     code_coverage_source_database: str = "default"
     # Namespaces (CSV) whose repository the source's runs cover; every other
     # namespace is skipped.
@@ -1609,7 +1611,7 @@ class ExtractionSettings(BaseModel):
     # Most size segment windows per session; past it the last window takes the remainder
     # (windows grow past `memory_extract_size_segment_turns` turns first).
     memory_extract_size_segment_max: Annotated[int, LIVE] = Field(default=16, ge=1)
-    # The same windows past this many characters of message content,
+    # Size segment windows also start past this many characters of message content,
     # whatever the message count; a window closes early once its turns carry this much
     # (an agent transcript with tool results runs ~190K chars a session at the median).
     # 0 disables the character budget (turn budget only).
@@ -1732,9 +1734,11 @@ class McpSettings(BaseModel):
     # loom_search's profile leg: sections the words missed pass by cosine
     # against `label\nvalue` at this hard floor. 0 = lexical only.
     mcp_loom_search_profile_min_similarity: float = 0.38
-    # The soft floor (a question about the user only).
+    # Cosine floor of loom_search's profile leg for a question about the user only (the
+    # soft tier).
     mcp_loom_search_profile_soft_similarity: float = 0.30
-    # The soft tier's lead over the namespace's runner-up.
+    # Lead a profile section must have over the namespace's runner-up to pass loom_search's
+    # soft tier.
     mcp_loom_search_profile_margin: float = 0.08
     # Seconds loom_search's tracker leg (similar issues and PRs) may take before
     # the answer goes without it.
@@ -2003,7 +2007,7 @@ class MemorySettings(BaseModel):
     entity_extract_enabled: bool = True
     # Seconds between entity extraction passes that found work.
     entity_extract_interval_seconds: int = 60
-    # Sleep after a pass that found no unentitied row.
+    # Sleep after an entity extraction pass that found no unentitied row.
     entity_extract_idle_interval_seconds: int = 300
     # Seconds between entity extraction's full candidate scans (without the value column);
     # other passes scan only `entity_extract_recent_seconds`. 0 = full scan every pass.
@@ -2033,7 +2037,8 @@ class MemorySettings(BaseModel):
     memory_expiry_sweep_interval_seconds: int = 300
     # Expired rows one sweep pass applies.
     memory_expiry_sweep_batch_size: int = 500
-    # `demote` multiplies confidence by this factor, never below the floor.
+    # `demote` multiplies confidence by this factor, never below
+    # `memory_expiry_demote_floor`.
     memory_expiry_demote_factor: float = 0.5
     # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
     memory_expiry_demote_floor: float = 0.05
@@ -2064,8 +2069,9 @@ class MemorySettings(BaseModel):
     # double hub_drop_fraction and re-partition, up to hub_drop_max_fraction
     # (a code corpus parted at 0.016, 2.9%). 0 = fixed fraction.
     entity_communities_giant_share: float = 0.5
-    # Four doublings from the default; a graph still fused here is written as
-    # is and counted in the pass outcome.
+    # Largest `entity_communities_hub_drop_fraction` the re-partition doubles up to (four
+    # doublings from its default); a graph still fused here is written as is and counted
+    # in the pass outcome.
     entity_communities_hub_drop_max_fraction: float = 0.032
     # Co-occurrence count an entity pair needs to count as an edge.
     entity_communities_min_co_occur: int = 1
@@ -2802,7 +2808,7 @@ class MemorySearchSettings(BaseModel):
     # fusion leans semantic; prose keeps full weight.
     # Shape at/below which w_lex == 1.0 (prose).
     memory_rrf_code_shape_lo: Annotated[float, LIVE] = 0.20
-    # Shape at/above which w_lex == floor (code).
+    # Shape at/above which w_lex == memory_rrf_lexical_weight_floor (code).
     memory_rrf_code_shape_hi: Annotated[float, LIVE] = 0.30
     # Least weight the RRF adaptive lexical weight gives the lexical leg on a code-shaped
     # query, so it is never fully zeroed.
@@ -3018,7 +3024,8 @@ class ObservabilitySettings(BaseModel):
     ops_procedure_plane_min_packs: int = 50
     # Success retention (fraction) below which the `procedure_plane` check warns.
     ops_procedure_plane_retention_warn: float = 0.5
-    # Pairs the retention is measured over before its warning can fire.
+    # Pairs the `procedure_plane` check measures success retention over before its
+    # warning can fire.
     ops_procedure_plane_min_pairs: int = 20
     # Periodic re-hash of audit rows; a mismatch writes `audit.tamper_detected`.
     # Per-row detection, not a hash chain (see server/observability/audit.py).
@@ -3448,8 +3455,8 @@ class ProviderSettings(ModelSettings):
     embedding_worker_enabled: bool = True
     # Seconds between recovery worker passes while there is work.
     embedding_worker_interval_seconds: int = 5
-    # Sleep after an idle pass (nothing to embed); the 5 s interval resumes
-    # once a pass writes a row.
+    # Sleep after an idle embedding recovery pass (nothing to embed);
+    # `embedding_worker_interval_seconds` resumes once a pass writes a row.
     embedding_worker_idle_interval_seconds: int = 30
     # Orphan reconciliation: the full memory × embedding anti-join runs once
     # per `full_scan_seconds`; other passes check only memories of the last
@@ -3699,7 +3706,7 @@ class StorageSettings(BaseModel):
     # Longest wait, in seconds, between retries of a failed dashboard-asset publish (the
     # wait doubles from storage_frontend_assets_retry_s).
     storage_frontend_assets_retry_max_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
-    # A round that failed is retried after this, doubling up to
+    # Seconds before a failed dashboard-asset publish round is retried, doubling up to
     # `storage_frontend_assets_retry_max_s`.
     storage_frontend_assets_retry_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
 
@@ -3714,18 +3721,18 @@ class TaskSettings(BaseModel):
     # Lease sweeper: return expired leases to todo, resume deferred tasks at
     # resume_at, escalate stale triage. One read per pass.
     task_lease_sweep_enabled: bool = True
-    # Seconds between passes while there is work.
+    # Seconds between task-lease sweep passes while there is work.
     task_lease_sweep_interval_seconds: int = 60
-    # Seconds between passes that found nothing.
+    # Seconds between task-lease sweep passes that found nothing.
     task_lease_sweep_idle_interval_seconds: int = 300
     # Post one Standard Webhooks-signed notice per new event batch to each
     # inbox's webhook_url; the secret comes from the env var
     # task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`,
     # one of the inbox org's own).
     task_webhook_deliver_enabled: bool = True
-    # Seconds between passes while notices are going out.
+    # Seconds between webhook delivery passes while notices are going out.
     task_webhook_deliver_interval_seconds: int = 5
-    # Seconds between passes that found no new event.
+    # Seconds between webhook delivery passes that found no new event.
     task_webhook_deliver_idle_interval_seconds: int = 30
     # Events one notice carries at most.
     task_webhook_batch_limit: Annotated[int, LIVE] = Field(default=200, ge=1)
@@ -3835,7 +3842,7 @@ class TrackerSettings(BaseModel):
     # The deepest vector-leg rank that may boost a ranked candidate; 0 = any rank.
     tracker_similar_agreement_max_rank: int = 5
     # Ms the vector leg waits for its query-time catch-up (embedding the
-    # items changed since the pass's cursor), run beside the cosine scan. Past it the
+    # items changed since the tracker_embed pass's cursor), run beside the cosine scan. Past it the
     # call answers from the table (`query.fresh_pending = true`) and the embedding
     # finishes in the background for the next call.
     tracker_similar_catch_up_budget_ms: int = 300
@@ -3996,8 +4003,8 @@ class TrackerSettings(BaseModel):
     # ClickHouse's public CI (the `play` user is public) is
     # "remoteSecure('play.clickhouse.com', 'default', 'checks', 'play', '')".
     tracker_checks_from: str = ""
-    # the repository whose CI `tracker_checks_from` is ('' = the namespace's
-    # only repository)
+    # The repository whose CI `tracker_checks_from` is; '' = the namespace's only
+    # repository.
     tracker_checks_repo: str = ""
     # Budget of the per-test history read, ms: play scans the whole window by its time
     # key, far past the 300 ms interactive budget.
