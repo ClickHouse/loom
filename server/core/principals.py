@@ -29,6 +29,19 @@ def principal_id(value: str, prefix: str) -> str:
     return ident if is_principal_id(ident) else ""
 
 
+# Why a Loom token refuses a subject `is_reserved_subject` holds.
+RESERVED_SUBJECT = (
+    "a token subject may not be a grant principal (user:, group:, agent:, everyone), "
+    "nor end in one after a '/'"
+)
+
+
+def has_aliases(subject: str) -> bool:
+    """Whether `subject` may be a person's spelling the directory ties to others:
+    not empty, `*`, a one-spelling principal (`ONE_SPELLING`) or `everyone`."""
+    return subject not in ("", "*", EVERYONE) and not subject.startswith(ONE_SPELLING)
+
+
 def is_reserved_subject(subject: str) -> bool:
     """True for anything spelled like a grant principal, in any case, or ending
     in one after a `/` (an end user's revocation key, `<org>/user:<id>`): only

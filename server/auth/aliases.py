@@ -33,7 +33,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from server.auth.fail_closed import note_unreadable
-from server.core.principals import ONE_SPELLING
+from server.core.principals import has_aliases
 
 log = logging.getLogger("loom.auth.aliases")
 
@@ -41,16 +41,12 @@ _CACHE: dict[tuple[str, str], tuple[float, tuple[str, ...]]] = {}
 _CACHE_MAX = 10_000
 
 
-def _is_human_subject(subject: str) -> bool:
-    return bool(subject) and subject != "*" and not subject.startswith(ONE_SPELLING)
-
-
 async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """`subject` first, then the other spelling(s) the directory ties to it;
     the subject alone when the read fails or nothing is tied to it."""
     from server.settings import settings
 
-    if not _is_human_subject(subject):
+    if not has_aliases(subject):
         return [subject] if subject else []
     key = (org, subject)
     hit = _CACHE.get(key)
@@ -111,7 +107,7 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     a failed read raises rather than guess."""
     from server.core.ch import own_write_reads
 
-    if not _is_human_subject(subject) or "@" not in subject:
+    if not has_aliases(subject) or "@" not in subject:
         return subject
     with own_write_reads():
         spellings = await _read(org, subject, ch)

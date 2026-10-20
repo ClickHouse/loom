@@ -111,7 +111,12 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     from server.auth import keyring
     from server.auth.authz import GRANT_ROLES
     from server.auth.jwt import mint_token, new_jti
+    from server.core.principals import RESERVED_SUBJECT, is_reserved_subject
 
+    if is_reserved_subject(args.subject):
+        # Before the keyring read: no such token can be minted, connected or not.
+        print(f"  ✗ {RESERVED_SUBJECT}: {args.subject!r}", file=sys.stderr)
+        return 2
     try:
         keyring.load_for_offline_mint(run=run_connected)
     except ValueError as e:  # another root: no server would accept the token

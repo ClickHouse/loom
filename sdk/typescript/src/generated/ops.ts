@@ -1815,11 +1815,13 @@ export interface CollectionCreateInput {
   namespace: string;
   /** The collection it sits in and inherits grants from; '' for a top-level one. */
   parent?: string;
+  /** What the collection holds, shown beside its name; '' for none. */
   description?: string;
 }
 
 export interface CollectionCreateOutput {
   namespace: string;
+  /** The collection it sits in; '' for a top-level one. */
   parent: string;
   created: boolean;
 }
@@ -1832,7 +1834,9 @@ export interface CollectionDeleteInput {
 export interface CollectionDeleteOutput {
   namespace: string;
   deleted: boolean;
+  /** The erasure of what the collection held; `erasure.status` follows it. */
   erasure_id?: string;
+  /** That erasure's outcome: `completed`, or `failed` while the recovery worker retries it. */
   erasure_status?: string;
 }
 
@@ -1852,7 +1856,9 @@ export interface CollectionEntry {
 }
 
 export interface CollectionListOutput {
+  /** The collections the caller can read on this page, by name, with its role. */
   collections: CollectionEntry[];
+  /** Pass as `cursor` for the next page; none on the last. */
   next_cursor?: string | null;
 }
 
@@ -1865,6 +1871,7 @@ export interface CollectionMoveInput {
 
 export interface CollectionMoveOutput {
   namespace: string;
+  /** The collection it now sits in; '' once detached. */
   parent: string;
   moved: boolean;
 }

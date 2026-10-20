@@ -18,7 +18,7 @@ from typing import Any
 import jwt
 
 from server.auth.authz import Role, grant_role
-from server.core.principals import is_reserved_subject
+from server.core.principals import RESERVED_SUBJECT, is_reserved_subject
 from server.settings import EndUserIssuer, settings
 
 
@@ -280,8 +280,8 @@ def mint_token(
         # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
         raise ValueError("a token subject may not contain a NUL character")
     if is_reserved_subject(subject):
-        # Those name end users, whom only an end-user issuer signs in.
-        raise ValueError(f"a token subject may not be a grant principal: {subject!r}")
+        # Only an end-user issuer's tokens carry these.
+        raise ValueError(f"{RESERVED_SUBJECT}: {subject!r}")
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {
         "sub": subject,
@@ -415,10 +415,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     if "\x00" in str(decoded["sub"]):
         raise TokenError("claim 'sub' may not contain a NUL character")
     if is_reserved_subject(str(decoded["sub"])):
-        raise TokenError(
-            "claim 'sub' may not be a grant principal (user:, group:, agent:, everyone), "
-            "nor end in one after a '/'"
-        )
+        raise TokenError(f"claim 'sub': {RESERVED_SUBJECT}")
     exp = decoded.get("exp")
 
     return AuthInfo(

@@ -19,12 +19,12 @@ Create a collection: a namespace read and written only through grants.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. |
 | `parent` | `str` | `''` | The collection it sits in and inherits grants from; '' for a top-level one. |
-| `description` | `str` | `''` |  |
+| `description` | `str` | `''` | What the collection holds, shown beside its name; '' for none. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
-| `parent` | `str` |  |
+| `parent` | `str` | The collection it sits in; '' for a top-level one. |
 | `created` | `bool` | False when the caller's collection already existed there |
 
 ## `collection.delete`
@@ -42,8 +42,8 @@ Delete a collection with what it holds: a purging erasure of the namespace (docu
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
 | `deleted` | `bool` | False when it was already deleted |
-| `erasure_id` | `str` | The erasure of what the collection held (`erasure.status` follows it), and its outcome: `completed`, or `failed` while the recovery worker retries it. |
-| `erasure_status` | `str` |  |
+| `erasure_id` | `str` | The erasure of what the collection held; `erasure.status` follows it. |
+| `erasure_status` | `str` | That erasure's outcome: `completed`, or `failed` while the recovery worker retries it. |
 
 ## `collection.list`
 
@@ -59,8 +59,8 @@ List the collections the caller can read, by name.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `collections` | `list[_CollectionEntry]` |  |
-| `next_cursor` | `str \| None` |  |
+| `collections` | `list[_CollectionEntry]` | The collections the caller can read on this page, by name, with its role. |
+| `next_cursor` | `str \| None` | Pass as `cursor` for the next page; none on the last. |
 
 ## `collection.move`
 
@@ -77,7 +77,7 @@ Put a collection under another one, or detach it.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `namespace` | `str` | The namespace the op reads or writes. |
-| `parent` | `str` |  |
+| `parent` | `str` | The collection it now sits in; '' once detached. |
 | `moved` | `bool` | False when it already sat there |
 
 <!-- prettier-ignore-end -->

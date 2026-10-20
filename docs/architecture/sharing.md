@@ -93,10 +93,11 @@ org-level ops (those that name no namespace to gate), an end user may call only
 `collection.create`, `collection.list`, `namespace.list_mine` and `grants.pending_for_me`.
 An end-user token is served by the op endpoint and `knowledge.download`; MCP, `/v1/me/*`,
 the admin routes and the task watch refuse it (403). A trusted caller
-(`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a `user:`, `group:`
-or `agent:` principal. One user is cut off by revoking their tokens (`loom revoke-token
---subject <org>/user:<id>`, the org named: `user:<id>` names one person per org, so a bare
-id revokes no end user's token) and grants, or by erasing them. `/oauth/revoke` revokes
+(`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a subject spelled
+like a grant principal (`user:`, `group:`, `agent:`, `everyone`, in any case, bare or
+after a `/`). One user is cut off by revoking their tokens (`loom revoke-token --subject
+<org>/user:<id>`, the org named: `user:<id>` names one person per org, so a bare id
+revokes no end user's token) and grants, or by erasing them. `/oauth/revoke` revokes
 nothing for an end-user token: its `jti` is its issuer's to choose, and the revocation
 list spans the deployment, so revoking it there could name another org's token or subject.
 

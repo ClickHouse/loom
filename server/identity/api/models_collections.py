@@ -17,12 +17,14 @@ class CollectionCreateInput(BaseModel):
         default="",
         description="The collection it sits in and inherits grants from; '' for a top-level one.",
     )
-    description: str = ""
+    description: str = Field(
+        default="", description="What the collection holds, shown beside its name; '' for none."
+    )
 
 
 class CollectionCreateOutput(BaseModel):
     namespace: str
-    parent: str
+    parent: str = Field(description="The collection it sits in; '' for a top-level one.")
     created: bool  # False when the caller's collection already existed there
 
 
@@ -39,7 +41,7 @@ class CollectionMoveInput(BaseModel):
 
 class CollectionMoveOutput(BaseModel):
     namespace: str
-    parent: str
+    parent: str = Field(description="The collection it now sits in; '' once detached.")
     moved: bool  # False when it already sat there
 
 
@@ -61,8 +63,12 @@ class _CollectionEntry(BaseModel):
 
 
 class CollectionListOutput(BaseModel):
-    collections: list[_CollectionEntry]
-    next_cursor: str | None = None
+    collections: list[_CollectionEntry] = Field(
+        description="The collections the caller can read on this page, by name, with its role."
+    )
+    next_cursor: str | None = Field(
+        default=None, description="Pass as `cursor` for the next page; none on the last."
+    )
 
 
 class CollectionDeleteInput(BaseModel):
@@ -77,7 +83,12 @@ class CollectionDeleteInput(BaseModel):
 class CollectionDeleteOutput(BaseModel):
     namespace: str
     deleted: bool  # False when it was already deleted
-    # The erasure of what the collection held (`erasure.status` follows it), and
-    # its outcome: `completed`, or `failed` while the recovery worker retries it.
-    erasure_id: str = ""
-    erasure_status: str = ""
+    erasure_id: str = Field(
+        default="",
+        description="The erasure of what the collection held; `erasure.status` follows it.",
+    )
+    erasure_status: str = Field(
+        default="",
+        description="That erasure's outcome: `completed`, or `failed` while the recovery "
+        "worker retries it.",
+    )

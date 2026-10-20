@@ -467,7 +467,9 @@ person sign up again, under a new subject.
 
 **An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
 `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records
-the real caller in `impersonated_by`. Empty disables the header.
+the real caller in `impersonated_by`. A subject spelled like a grant principal (`user:`,
+`group:`, `agent:`, `everyone`, in any case, bare or after a `/`) is refused: end users are
+signed in by their own issuer. Empty disables the header.
 
 ## Act for a service's end users
 

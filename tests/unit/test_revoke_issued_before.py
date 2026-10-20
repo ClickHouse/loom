@@ -492,8 +492,9 @@ def test_a_plain_narrowing_says_scim_still_revokes_it(
 
 @pytest.mark.parametrize("subject", ["acme/User:u-1", "acme/user:u-1", "team/everyone"])
 def test_no_loom_token_carries_a_subject_spelled_like_an_end_user_key(subject: str) -> None:
-    """Minting and verification refuse what the revocation CLI refuses, so a
-    Loom token never shares an end user's revocation key or escapes revocation."""
+    """Minting and verification refuse every subject the revocation CLI
+    reserves, an end user's key `<org>/user:<id>` included, so a Loom token
+    never shares one or escapes a subject revocation."""
     with pytest.raises(ValueError, match="grant principal"):
         mint_token(subject, "acme", ["shop"], ["viewer"], secret=_SECRET)
     claims = _claims(mint_token("sa:bot", "acme", ["shop"], ["viewer"], secret=_SECRET))
@@ -508,3 +509,11 @@ def test_no_loom_token_carries_a_subject_spelled_like_an_end_user_key(subject: s
     forged = _signed(subject)
     with pytest.raises(TokenError, match="grant principal"):
         verify_token(forged, secret=_SECRET)
+
+
+@pytest.mark.parametrize("subject", ["user:u-1", "team/everyone"])
+def test_cli_mint_refuses_a_reserved_subject_without_a_traceback(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], subject: str
+) -> None:
+    rc = cli.main(["mint-token", "--subject", subject, "--org", "acme", "--namespaces", "shop"])
+    assert rc == 2 and "grant principal" in capsys.readouterr().err

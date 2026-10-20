@@ -360,7 +360,8 @@ def test_a_trusted_caller_cannot_become_a_grant_principal(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(settings, "trusted_callers", "sa:proxy")
     proxy = _person(subject="sa:proxy", namespaces=("*",), roles=(Role.WRITER,))
-    for header in ("user:u-1", "group:finance", "agent:helper", "acme/user:u-1", "team/everyone"):
+    headers = ("user:u-1", "group:finance", "agent:helper", "everyone")
+    for header in (*headers, "acme/user:u-1", "team/everyone"):
         with pytest.raises(PermissionError):
             gateway.effective_auth(proxy, header)
     assert gateway.effective_auth(proxy, "bob@acme.io").subject == "bob@acme.io"
