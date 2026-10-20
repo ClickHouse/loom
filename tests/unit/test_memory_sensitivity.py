@@ -11,19 +11,23 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
+from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes
+from server.memory.app.set_chunks import human_text
 from server.memory.domain.memory_types import is_embedded, is_searchable_type
 from server.memory.domain.sensitivity import (
+    contact_intent,
     detect_sensitivity,
     detector_text,
     reads_high,
     resolve_sensitivity,
+    value_reads_high,
 )
 from server.memory.store.rows import (
     _NON_NULLABLE_STRING_COLS,
     MEMORY_PERSISTED_COLS,
     MemoryRow,
 )
+from server.memory.workers.observe_extract import _sendable
 from tests.unit.clickhouse_local import CLICKHOUSE, run
 
 # Credential SHAPES are assembled at runtime so no tracked file carries a
@@ -143,7 +147,7 @@ def test_sensitivity_tag_rides_labelled_rows_and_contact_intent_is_recognised() 
     """The tier travels as a `sensitivity:<level>` tag so the
     embeddings table (no sensitivity column) can be ranked on it; a question
     that asks how to reach someone is contact intent and lifts the demotion."""
-    from server.memory.domain.sensitivity import contact_intent, sensitivity_tags
+    from server.memory.domain.sensitivity import sensitivity_tags
 
     assert sensitivity_tags("medium") == ["sensitivity:medium"]
     assert sensitivity_tags("high", ["sensitivity:high"]) == []  # already carried
@@ -378,8 +382,6 @@ def test_one_scalar_still_reads_as_what_it_holds(value: object, level: str) -> N
 
 def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
     # memory.set writes an object's chunks as indented JSON; the raw-text check reads them.
-    from server.memory.app.set_chunks import human_text
-
     assert reads_high(human_text({"notes": "deploy steps:\n" + _TOKEN}))
     assert reads_high(human_text({"notes": "line\r" + _TOKEN}))  # a lone carriage return
     assert reads_high(human_text({"note": "PIN is\v4471"}))  # written as `\u000b`
@@ -392,6 +394,8 @@ def test_a_chunk_of_an_object_value_is_read_with_its_escapes_undone() -> None:
     assert not reads_high(human_text({"pin": "4471abc"}))
     assert not reads_high(human_text({"pin": 4471.5}))
     assert not reads_high(human_text({"pin": "4" * 20}))
+    assert not reads_high(human_text({"pin": "4471 abc"}))  # the quote closes after the digits
+    assert not reads_high(human_text({"p_in": 1013}))
     # an escaped backslash before `n` stays a backslash and an `n`: no line starts there
     assert not reads_high(human_text({"note": "x\\n" + _TOKEN}))
     assert not reads_high(human_text({"label": "Password:", "placeholder": "Enter one"}))
@@ -540,20 +544,14 @@ def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
 def test_a_keyed_value_reads_the_same_on_every_path(value: object) -> None:
     # The stored value, a raw chunk of it and the sweep's prefilter give one answer; the
     # whitespace stripped is the ASCII whitespace the patterns read.
-    from server.memory.app.set_chunks import human_text
-    from server.memory.domain.sensitivity import value_reads_high
-
     answers = {value_reads_high(value), reads_high(human_text(value))}
     assert len(answers) == 1
-    if True in answers:
-        assert re.search(COARSE_SHAPE_RE, json.dumps(value))
+    assert bool(re.search(COARSE_SHAPE_RE, json.dumps(value))) == (True in answers)
 
 
 def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label() -> None:
     # A caller's explicit level sets the stored label, but the readers that send a value to a
     # model check the value too: fail closed.
-    from server.memory.workers.observe_extract import _sendable
-
     assert resolve_sensitivity("low", "badge PIN is 4471") == "low"
     assert not _sendable("low", "badge PIN is 4471")
     assert not _sendable("", {"badge_pin": "4471"})
@@ -602,6 +600,10 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"pin": "12"}, ""),
         ({"pin": True}, ""),
         ({"spin": "4471"}, ""),
+        ({"p_in": 1013}, ""),  # `p` and `in` are not the word `pin`
+        ({"passcode": "4471"}, "high"),
+        ({"cvv2": "123"}, "high"),
+        ({"securitycode": "5512"}, "high"),
         ({"ssn": "000-12-3456"}, ""),
         ({"pan": "4111111111111112"}, ""),
         ({"pan": "4471"}, ""),
@@ -644,8 +646,6 @@ def test_long_runs_are_read_in_linear_time() -> None:
 def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
     # select whatever the detector labels; Python's `re` reads this RE2 subset the same way.
-    from server.memory.app.sensitivity_sweep import _shapes
-
     assert re.search(COARSE_SHAPE_RE, text)
     level = detect_sensitivity(text)
     assert _shapes(text, level) == (("credential",) if level == "high" else ("other",))
@@ -690,8 +690,6 @@ def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
 
 
 def test_a_question_for_a_bank_account_is_contact_intent() -> None:
-    from server.memory.domain.sensitivity import contact_intent
-
     assert contact_intent("which IBAN does my salary go to?")
     assert contact_intent("what is the bank account for rent")
     assert contact_intent("list my IBANs")
@@ -720,6 +718,8 @@ _PREFILTER_OBJECTS = [
     {"pin ": "4471"},
     {"SSN:": "123456789"},
     {"Security Code (CVV)": "123"},
+    {"pin\n": "4471"},  # written `pin\n`
+    {"p_in": 1013},
     {"cvv_code": "123"},
     {"ssn_no": "123456789"},
     {"social_security_number": "123-45-6789"},
@@ -752,6 +752,20 @@ _PREFILTER_TEXTS = [
     "GPIO pin 115",
     "verify SHA256SUMS before the upload",
 ]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_dotted_security_code_key_is_not_selected_by_the_sweep() -> None:
+    # ClickHouse stores `security.code` nested, as `code` under `security`: the sweep does not
+    # label such a row (documented in docs/architecture/security.md); the write path does.
+    rows = run(
+        [],
+        "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
+        " FROM (SELECT {j:String} AS j)",
+        {"r": COARSE_SHAPE_RE, "j": json.dumps({"security.code": "5512"})},
+    )
+    assert rows == [{"t": '{"security":{"code":"5512"}}', "hit": 0}]
+    assert value_reads_high({"security.code": "5512"})
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
