@@ -148,27 +148,25 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   turns; and the action and file paths that an observe event or a hint note copies from
   the raw tool calls. The model may have left those out because of the policy, and these
   passes cannot read it. An extraction under a policy can therefore keep fewer facts
-  than the same extraction without one. `session.brief_save` likewise never runs its
-  deterministic builder under a policy, and takes no client summary from the events: a
-  window whose call failed is skipped while the rest are revised; a save of events alone
-  with no model to call (no real model, `use_llm: false`, or the org's model calls
-  switched off before its first window was revised) writes nothing and answers
-  `changed: false`, `reason: "not-revised"`; an org switched off after some windows were
-  revised keeps those windows and revises no more; and one whose
-  every window's call failed, was held by an unread switch or did not parse is refused
-  with 503, for the client to send again. `memory.set_from_messages` answers
-  `under_operator_policy: true` when it ran under one (a deferred request answers
-  false: its extraction runs later, under the policy then set).
+  than the same extraction without one. `session.brief_save` never runs its
+  deterministic builder under a policy
+  ([session briefs](../conversations-and-sessions.md#session-briefs)).
+  `memory.set_from_messages` answers `under_operator_policy: true` when it ran under one
+  (a deferred request answers false: its extraction runs later, under the policy then
+  set).
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
   never serves an answer cached under the old one.
 - **Propagation.** Every server reads the policies at most every
-  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` (10 s), and the server that took the change
-  reads them at once. A server that cannot read them for
-  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` (60 s) refuses inline extraction and
-  `conversation.compact` with 503 and leaves queued requests and threads to title
-  waiting, rather than call the model without the policy; `session.brief_save` also
-  answers 503 (the client sends the events again), and `bulk_set` writes its entries
-  without context lines.
+  [`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`](../../reference/configuration.md#provider),
+  and the server that took the change reads them at once. A server that cannot read them
+  for [`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`](../../reference/configuration.md#provider)
+  refuses inline extraction and `conversation.compact` with 503 and leaves queued requests
+  and threads to title waiting, rather than call the model without the policy;
+  `session.brief_save` also answers 503 (the client sends the events again), `bulk_set`
+  writes its entries without context lines, and the `observe_extract` worker leaves its
+  sessions to distill later. A replica of a build that predates the policy table extracts
+  without it; set a policy once every replica runs a build that reads it
+  ([rolling upgrades](../../architecture/rolling-upgrades.md)).
 
 The policy is an instruction to the model, not a filter: Loom does not check a written
 row against it. It does not change what is stored verbatim: evidence rows, verbatim

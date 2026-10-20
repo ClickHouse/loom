@@ -656,7 +656,9 @@ that org only; an end-user token holds `viewer` and cannot set, clear or read on
 rows live in `loom.extraction_policies`; every server keeps a copy, read at most every
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted for no longer than
 `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`. Past that it fails closed: inline
-extraction answers 503 and queued requests wait.
+extraction answers 503, and queued requests and worker passes wait. A replica of a build
+that predates the policy table extracts without it; set a policy once every replica runs
+a build that reads it ([rolling upgrades](rolling-upgrades.md)).
 
 The handler reads the policy for the request's `(org, namespace)` itself; no request
 field carries it. Each model call of the memory, knowledge and observe planes that

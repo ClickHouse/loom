@@ -61,9 +61,8 @@ async def effective(org: str, namespace: str) -> str:
     return combine(policies.get((org, ""), ""), policies.get((org, namespace), ""))
 
 
-def forget() -> None:
-    """Make the next extraction read the policies again, for a change just made
-    here. The copy in hand keeps its age, so a failed read serves it as before."""
+def note_policy_change() -> None:
+    """Make the next extraction read the policies again, for a change just made here."""
     _policies.note_change()
 
 
@@ -94,7 +93,7 @@ async def _write(org: str, namespace: str, policy: str) -> None:
             "version": time.time_ns(),
         }
     )
-    forget()
+    note_policy_change()
 
 
 async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> ExtractionPolicyOutput:

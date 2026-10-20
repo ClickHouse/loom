@@ -327,7 +327,7 @@ async def test_an_extraction_runs_under_its_orgs_and_its_namespaces_policy(table
     assert await extraction_policy.effective("", "chat") == ""
     assert table.reads == 1, "one read serves the interval"
     table.rows = []
-    extraction_policy.forget()  # a change written on this server
+    extraction_policy.note_policy_change()  # a change written on this server
     assert await extraction_policy.effective("acme", "chat") == "" and table.reads == 2
 
 
@@ -376,7 +376,7 @@ async def test_a_change_made_during_a_read_is_read_again(table, monkeypatch) -> 
     async def write_meanwhile(sql: str, **kw: Any) -> list[dict[str, Any]]:
         rows = await plain(sql, **kw)
         table.rows = [{"org": "acme", "namespace": "", "policy": "new rule"}]
-        extraction_policy.forget()  # the write lands after this read took its rows
+        extraction_policy.note_policy_change()  # the write lands after this read took its rows
         await asyncio.sleep(0)
         return rows
 
