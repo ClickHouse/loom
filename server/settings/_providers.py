@@ -307,21 +307,26 @@ class ProviderSettings(ModelSettings):
             return ""
         if not self.gateway_hosts():
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
-        v = self.model_dump(include=set(_GATEWAY_CHECKED)) | dict(changes or {})
-        for field in (
-            "openai_base_url",
-            "anthropic_base_url",
-            "embedding_base_url",
-            "inference_token_url",
+        saved = dict(changes or {})
+        v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
+        # Both API roots count, a provider unused included: a model named per
+        # request may be either provider's.
+        for field, what in (
+            ("openai_base_url", "LOOM_OPENAI_BASE_URL"),
+            ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
+            ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
         ):
             host = self.off_gateway(v[field]) if v[field] else ""
             if host:
-                # Both API roots count, a provider unused included: a model
-                # named per request may be either provider's.
-                return (
-                    f"{why} needs LOOM_{field.upper()} at a host in "
-                    f"LOOM_INFERENCE_GATEWAY_HOSTS, not {host}"
-                )
+                if field in saved:
+                    what = "the saved embedding base URL"
+                return f"{why} needs {what} at a host in LOOM_INFERENCE_GATEWAY_HOSTS, not {host}"
+        host = self.off_gateway(v["inference_token_url"]) if v["inference_token_url"] else ""
+        if host:
+            return (
+                f"LOOM_INFERENCE_GATEWAY_HOSTS does not list {host}, the host of "
+                "LOOM_INFERENCE_TOKEN_URL: the token exchange goes to the gateway too"
+            )
         for name, url in self.rerank_endpoint_map().items():
             if self.off_gateway(url):
                 # The entry, never its URL: it can carry a credential.
@@ -336,7 +341,12 @@ class ProviderSettings(ModelSettings):
                 provider = ""  # an unknown model is refused where the embedder is built
         if provider == "gemini":
             # The Gemini embedder calls Google's own API, never a gateway.
-            return f"{why} refuses the Gemini embedder: embed through the gateway"
+            which = (
+                "the saved Gemini embedder"
+                if "embedding_provider" in saved
+                else "the Gemini embedder"
+            )
+            return f"{why} refuses {which}: embed through the gateway"
         return ""
 
     def gateway_required_by(self) -> str:

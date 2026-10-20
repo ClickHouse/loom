@@ -868,7 +868,9 @@ def test_an_exchange_needs_its_token_endpoint_at_the_gateways_hosts(
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
-    with pytest.raises(ValueError, match="LOOM_INFERENCE_TOKEN_URL needs LOOM_INFERENCE_TOKEN_URL"):
+    with pytest.raises(
+        ValueError, match="does not list idp.example, the host of LOOM_INFERENCE_TOKEN_URL"
+    ):
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 

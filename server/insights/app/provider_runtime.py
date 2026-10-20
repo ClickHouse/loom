@@ -25,12 +25,12 @@ from server.insights.store.provider_configuration import configurations
 from server.llm import client as llm_client
 from server.settings import settings
 
+log = logging.getLogger(__name__)
+
 _applied_version = ""
 _environment_settings: dict[str, Any] | None = None
 # Why the stored configuration was not applied ('' when it was): /v1/health says so.
 _refused = ""
-
-log = logging.getLogger(__name__)
 _maintenance_config_id: str | None = None
 
 
@@ -162,6 +162,7 @@ def _hold_admission(config_id: str) -> None:
         gate.transfer(_maintenance_config_id, config_id)
     else:
         gate.close(config_id)
+    gate.refusal = ""  # a transition's hold, until _refuse says otherwise
     _maintenance_config_id = config_id
 
 
@@ -289,26 +290,24 @@ def _refuse(setup: ProviderSetupInput, changed: bool, config_id: str) -> bool:
     _refused = refusal
     if refusal and changed and _maintenance_config_id is None:
         # An ordinary transition hold: what replaces it takes it over, and the
-        # replacement's commit resumes it.
+        # replacement's commit resumes it. Until then requests are refused,
+        # not asked to retry.
         _hold_admission(config_id)
+        get_model_work_gate().refusal = refusal
     return bool(refusal)
-
-
-# The pause between refreshes; a seam for tests.
-_sleep = asyncio.sleep
 
 
 async def refresh_loop() -> None:
     """Every web/worker process sees committed key and model rotations."""
     set_query_tag("boot.provider_configuration_refresh")
     while True:
-        await _sleep(3)
+        await asyncio.sleep(3)
         try:
             await load_active_configuration()
             from server.insights.app.provider_coordinator import coordinate_once
 
             await coordinate_once()
         except Exception:  # noqa: BLE001 — retain last good settings on transient DB/decryption failures
-            logging.getLogger(__name__).warning(
+            log.warning(
                 "Model configuration refresh failed; retaining last successfully loaded settings"
             )

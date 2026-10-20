@@ -21,6 +21,9 @@ class ModelWorkGate:
 
     def __init__(self) -> None:
         self._token: str | None = None
+        # Why admission is held for a refused configuration ('' for a model
+        # transition): nothing ends it but an operator, so it is not retried.
+        self.refusal = ""
         self._active = 0
         self._open = asyncio.Event()
         self._open.set()
@@ -61,6 +64,7 @@ class ModelWorkGate:
         if self._active:
             raise RuntimeError("Model work has not drained")
         self._token = None
+        self.refusal = ""
         self._open.set()
 
     def transfer(self, old: str, new: str) -> None:
@@ -99,4 +103,5 @@ def get_model_work_gate() -> ModelWorkGate:
 
 
 def readiness_check() -> readiness.CheckResult:
-    return readiness.result(not _gate.closed, "model change in progress")
+    reason = "model configuration refused" if _gate.refusal else "model change in progress"
+    return readiness.result(not _gate.closed, reason)

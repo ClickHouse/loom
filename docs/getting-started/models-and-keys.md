@@ -236,9 +236,12 @@ matches only if it is listed.
   `gateway_required`. A stored one that the check refuses is not applied, its
   serving vector settings included, and `/v1/health` reports
   `model_configuration_refused`. With the same embedding as the settings in force,
-  those serve on; with another, the vector tables may hold that other space, so
-  model work stays held until a configuration the check accepts replaces it, or
-  the configuration is reset to the environment's.
+  those serve on. With another, the vector tables may hold that other space, so
+  every data-plane request on that server is refused (503 `GATEWAY_REQUIRED`,
+  which neither SDK retries, with no `Retry-After`) and the server is not ready,
+  until a configuration the check accepts replaces it or it is reset to the
+  environment's. A rolling restart then stops at that server: replace the
+  configuration before rolling.
 - **Rolling it out:** a previous build ignores both settings, so turn them on
   once every replica runs this one. A deployment that already exchanges a token
   refuses to start on this build until `LOOM_INFERENCE_GATEWAY_HOSTS` lists its

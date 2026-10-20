@@ -116,7 +116,7 @@ async def get_namespace_classify_config(
     if not row:
         return "", ""
     endpoint = row.get("classify_endpoint") or ""
-    refusal = classify_refusal(endpoint) if endpoint else ""
+    refusal = classify_refusal(endpoint)
     if refusal:
         # Stored before the gateway was required: memory content never goes
         # there, and the namespace has no classifier until it is changed.

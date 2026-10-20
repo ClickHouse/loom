@@ -140,6 +140,11 @@ async def test_a_configuration_off_the_gateway_applies_nothing_and_holds_model_w
     await runtime.load_active_configuration()
     assert s.model_dump(include={"embedding_provider", "embedding_base_url", "llm_model"}) == before
     assert store["gate"].closed and runtime._maintenance_config_id == config_id
+    assert store["gate"].refusal == runtime.refused_configuration()  # answered, not retried
+    if refused.embedding.provider == "compatible":
+        assert "the saved embedding base URL" in runtime.refused_configuration()
+    else:
+        assert "the saved Gemini embedder" in runtime.refused_configuration()
     state = HealthState(env={}, refused_configuration=runtime.refused_configuration())
     assert "model_configuration_refused" in {p.code for p in collect_problems(s, state)}
 
@@ -175,13 +180,9 @@ async def test_a_reset_needing_a_rebuild_takes_over_a_refusals_hold(
 
     async def coordinate_once() -> None:
         reached.append(True)
-
-    async def one_refresh(seconds: float) -> None:
-        if reached:
-            raise asyncio.CancelledError
+        raise asyncio.CancelledError  # one refresh is enough
 
     monkeypatch.setattr(provider_coordinator, "coordinate_once", coordinate_once)
-    monkeypatch.setattr(runtime, "_sleep", one_refresh)
     with pytest.raises(asyncio.CancelledError):
         await runtime.refresh_loop()
     assert reached == [True]  # the rebuild can start
@@ -276,3 +277,42 @@ async def test_a_second_refusal_after_the_first_hold_ended_holds_again(
     second = _commit(store, _setup("compatible", "https://10.0.0.5/v1"), version=10**20)
     await runtime.load_active_configuration()
     assert store["gate"].closed and runtime._maintenance_config_id == second
+
+
+@pytest.mark.asyncio
+async def test_a_restart_with_a_refusal_committed_and_its_replacement_queued(
+    store: dict[str, Any],
+) -> None:
+    refused = _commit(store, _setup("gemini"))
+    queued = str(uuid4())
+    store["rows"].insert(
+        0, {"config_id": queued, "parent_id": refused, "state": "queued", "version": 101}
+    )
+    await runtime.load_active_configuration()  # a fresh process: nothing held yet
+    assert runtime._maintenance_config_id == queued and store["gate"].closed
+    assert store["gate"].refusal == ""  # a rebuild in progress, retried as one
+
+
+@pytest.mark.asyncio
+async def test_a_drain_for_a_row_the_load_missed_raises_once_then_the_next_refresh_hands_over(
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uuid import UUID
+
+    from server.insights.app import provider_barrier
+
+    monkeypatch.setattr(provider_barrier, "get_model_work_gate", lambda: store["gate"])
+    for name in ("flush_registered_buffers", "_server_side_settled"):
+        monkeypatch.setattr(provider_barrier, name, AsyncMock(return_value=True))
+    monkeypatch.setattr(provider_barrier, "drain_task_sets", AsyncMock(return_value=True))
+    monkeypatch.setattr(provider_barrier, "record_participant", AsyncMock())
+    _commit(store, _setup("gemini"))
+    await runtime.load_active_configuration()
+    result = await reset.reset_configuration(ProviderResetInput(expected_version="100"))
+    queued = UUID(result.config_id)
+    # The same tick's coordinate_once sees the queued row before any load has.
+    with pytest.raises(ValueError, match="does not own admission"):
+        await provider_barrier.acknowledge_drain(queued)
+    await runtime.load_active_configuration()  # the next tick hands the gate over
+    assert runtime._maintenance_config_id == str(queued)
+    assert await provider_barrier.acknowledge_drain(queued)

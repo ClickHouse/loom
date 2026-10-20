@@ -263,8 +263,10 @@ def _runtime_problems(state: HealthState) -> list[Problem]:
                 "model_configuration_refused",
                 "error",
                 "The model configuration saved in the dashboard is not applied: "
-                f"{state.refused_configuration}. If it changes the embedding, model work "
-                "stays held; otherwise the settings in force serve.",
+                f"{state.refused_configuration}. If it changes the embedding, every "
+                "data-plane request on this server is refused (503 GATEWAY_REQUIRED) and "
+                "it is not ready until the configuration is replaced; otherwise the "
+                "settings in force serve.",
                 "Save one whose endpoints are in LOOM_INFERENCE_GATEWAY_HOSTS (Settings, "
                 "Models & keys), or reset it to the environment's.",
                 source="runtime",
