@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.auth import login, revocation
+from server.auth import attempts, login, revocation
 from server.auth.passwords import hash_password
 
 _HASH = hash_password("correct horse battery staple")
@@ -49,13 +49,13 @@ def _resolve(ident: str, password: str, address: str = "10.0.0.1") -> Any:
     return asyncio.run(login.resolve_user_credentials(ident, password, address=address))
 
 
-def _median_ms(ident: str, attempts: Any) -> float:
+def _median_ms(ident: str, fake: Any) -> float:
     samples = []
     for _ in range(5):
         start = time.perf_counter()
         _resolve(ident, "wrong-password", address="")
         samples.append(time.perf_counter() - start)
-        attempts.rows.clear()
+        fake.rows.clear()
     return sorted(samples)[2] * 1000
 
 
@@ -241,7 +241,7 @@ def test_a_concurrent_burst_reaches_the_password_check_at_most_limit_times(
     # identifier takes the rest of its 10 failures, then locks.
     burst_checked = checked
     # A key refused during the burst is refused here without a query for a few seconds.
-    auth_attempts.now += login.attempts._KNOWN_OVER_S
+    auth_attempts.now += attempts._KNOWN_OVER_S
     for i in range(10 - burst_checked):
         assert _resolve("alice@acme.io", f"late-{i}") is None
     with pytest.raises(login.LoginThrottled):
@@ -299,9 +299,7 @@ def test_a_success_from_an_address_does_not_buy_more_guesses() -> None:
 def test_a_refused_signup_is_not_recorded_so_a_retrying_caller_gets_back_in(
     auth_attempts: Any,
 ) -> None:
-    from server.auth.attempts import Attempts
-
-    signups = Attempts("signup.agent", 3, 3600)
+    signups = attempts.Attempts("signup.agent", 3, 3600)
     assert [asyncio.run(signups.allow("10.0.0.9")) for _ in range(5)] == [True] * 3 + [False] * 2
     assert len(auth_attempts.rows) == 3
     auth_attempts.now += 3601
@@ -311,8 +309,6 @@ def test_a_refused_signup_is_not_recorded_so_a_retrying_caller_gets_back_in(
 def test_a_key_known_over_its_limit_is_refused_without_a_query(auth_attempts: Any) -> None:
     """A refused sign-in used to cost a count query each; a spray at a locked
     key now costs none until the remembered refusal lapses."""
-    from server.auth import attempts
-
     for i in range(10):
         _resolve("alice@acme.io", f"guess-{i}")
     with pytest.raises(login.LoginThrottled):
@@ -348,7 +344,6 @@ def test_every_count_reads_with_sequential_consistency(
 ) -> None:
     """A plain read on another replica misses attempts it acknowledged
     seconds ago: the count and the recount must both be sequential."""
-    from server.auth import attempts
     from server.core.ch import sequential_reads_active
 
     seen: list[bool] = []
@@ -370,8 +365,6 @@ def test_a_full_process_answers_busy_and_records_nothing(
     """Past `auth_attempts_concurrency` checks in flight, a sign-in waits a
     moment and is refused 429 with a short Retry-After, before it costs
     ClickHouse anything; the slots it waited on still finish."""
-    from server.auth import attempts
-
     monkeypatch.setattr(attempts, "_SLOT_WAIT_S", 0.05)
     from server.settings import settings
 
@@ -448,8 +441,6 @@ def test_a_release_leaves_the_window_with_its_attempt(
 def test_the_keys_known_over_their_limit_stay_bounded(
     auth_attempts: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from server.auth import attempts
-
     monkeypatch.setattr(attempts, "_KNOWN_OVER_MAX", 3)
     for i in range(5):
         attempts._remember_over(("login.address", f"k{i}"))
@@ -458,3 +449,12 @@ def test_the_keys_known_over_their_limit_stay_bounded(
     attempts._remember_over(("login.address", "k2"))
     attempts._remember_over(("login.address", "k5"))
     assert list(attempts._known_over) == [("login.address", f"k{i}") for i in (4, 2, 5)]
+
+
+def test_a_limit_this_process_is_too_busy_to_check_still_refuses(
+    auth_attempts: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(attempts, "_semaphore", lambda: asyncio.Semaphore(0))
+    monkeypatch.setattr(attempts, "_SLOT_WAIT_S", 0.01)
+    assert asyncio.run(attempts.Attempts("k", 1, 60).allow("x")) is False
+    assert auth_attempts.rows == []
