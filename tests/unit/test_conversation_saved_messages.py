@@ -11,6 +11,7 @@ import pytest
 from server.knowledge.api.models_conversations import (
     ConversationAppendInput,
     ConversationListSavedMessagesInput,
+    ConversationSavedStatusInput,
     ConversationSaveMessageInput,
     ConversationSearchInput,
     ConversationSearchOutput,
@@ -570,3 +571,27 @@ async def test_the_saved_list_serializes_only_the_fields_asked_for(
     assert out.model_dump()["rows"] == [
         {"conversation_id": "c-1", "message_id": "m-1", "role": "user"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_saved_status_answers_in_the_order_asked_without_repeats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+
+    async def fake_ids(*_a: object, **_kw: object) -> set[str]:
+        return {"m-1", "m-3"}
+
+    monkeypatch.setattr(conversation_repo, "saved_message_ids", fake_ids)
+    out = await conversations.handle_conversation_saved_status(
+        ConversationSavedStatusInput(
+            org="o",
+            namespace="n",
+            agent="librechat",
+            user_id="u-1",
+            conversation_id="c-1",
+            message_ids=["m-3", "m-2", "m-1", "m-3"],
+        )
+    )
+    assert out.saved == ["m-3", "m-1"]

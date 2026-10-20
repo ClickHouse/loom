@@ -120,6 +120,7 @@ OpName = Literal[
     "conversation.list",
     "conversation.list_saved_messages",
     "conversation.save_message",
+    "conversation.saved_status",
     "conversation.search",
     "conversation.search_saved_messages",
     "conversation.set_logging",
@@ -439,6 +440,7 @@ OP_NAMES: tuple[str, ...] = (
     "conversation.list",
     "conversation.list_saved_messages",
     "conversation.save_message",
+    "conversation.saved_status",
     "conversation.search",
     "conversation.search_saved_messages",
     "conversation.set_logging",
@@ -1648,6 +1650,18 @@ OPS: dict[str, OpSpec] = {
         250,
         False,
         False,
+    ),
+    "conversation.saved_status": OpSpec(
+        "conversation.saved_status",
+        "ConversationSavedStatusInput",
+        "ConversationSavedStatusBody",
+        "ConversationSavedStatusOutput",
+        True,
+        "viewer",
+        "experimental",
+        100,
+        False,
+        True,
     ),
     "conversation.search": OpSpec(
         "conversation.search",
@@ -7966,6 +7980,32 @@ class ConversationSaveMessageOutput(TypedDict, total=False):
         Literal["", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"]
     ]
     ts: Required[str]  # date-time as ISO-8601 text
+
+
+class ConversationSavedStatusInput(TypedDict, total=False):
+    "Which of a conversation's messages a user has saved, in one call: a chat"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    conversation_id: Required[str]
+    message_ids: Required[list[str]]
+
+
+class ConversationSavedStatusBody(TypedDict, total=False):
+    "Which of a conversation's messages a user has saved, in one call: a chat"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    conversation_id: Required[str]
+    message_ids: Required[list[str]]
+
+
+class ConversationSavedStatusOutput(TypedDict, total=False):
+    saved: Required[list[str]]
 
 
 class ConversationSearchInput(TypedDict, total=False):

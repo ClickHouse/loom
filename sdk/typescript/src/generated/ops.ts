@@ -2297,6 +2297,19 @@ export interface ConversationSaveMessageOutput {
   ts: string; // date-time
 }
 
+export interface ConversationSavedStatusInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  conversation_id: string;
+  message_ids: string[];
+}
+
+export interface ConversationSavedStatusOutput {
+  saved: string[];
+}
+
 export interface ConversationSearchInput {
   org: string;
   namespace: string;
@@ -8674,6 +8687,7 @@ export type OpName =
   | "conversation.list"
   | "conversation.list_saved_messages"
   | "conversation.save_message"
+  | "conversation.saved_status"
   | "conversation.search"
   | "conversation.search_saved_messages"
   | "conversation.set_logging"
@@ -8993,6 +9007,7 @@ export interface OpMap {
   "conversation.list": { input: ConversationListInput; output: ConversationListOutput };
   "conversation.list_saved_messages": { input: ConversationListSavedMessagesInput; output: ConversationListSavedMessagesOutput };
   "conversation.save_message": { input: ConversationSaveMessageInput; output: ConversationSaveMessageOutput };
+  "conversation.saved_status": { input: ConversationSavedStatusInput; output: ConversationSavedStatusOutput };
   "conversation.search": { input: ConversationSearchInput; output: ConversationSearchOutput };
   "conversation.search_saved_messages": { input: ConversationSearchSavedMessagesInput; output: ConversationSearchSavedMessagesOutput };
   "conversation.set_logging": { input: ConversationSetLoggingInput; output: ConversationSetLoggingOutput };
@@ -9312,6 +9327,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.list", group: "conversation", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conversation.list_saved_messages", group: "conversation", method: "listSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
+  { name: "conversation.saved_status", group: "conversation", method: "savedStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.search", group: "conversation", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "conversation.set_logging", group: "conversation", method: "setLogging", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
@@ -9553,4 +9569,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 316;
+export const GENERATED_OP_COUNT = 317;

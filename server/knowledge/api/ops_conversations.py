@@ -17,6 +17,8 @@ from server.knowledge.api.models_conversations import (
     ConversationListOutput,
     ConversationListSavedMessagesInput,
     ConversationListSavedMessagesOutput,
+    ConversationSavedStatusInput,
+    ConversationSavedStatusOutput,
     ConversationSaveMessageInput,
     ConversationSaveMessageOutput,
     ConversationSearchInput,
@@ -41,6 +43,7 @@ from server.knowledge.app.conversations import (
     handle_conversation_list,
     handle_conversation_list_saved_messages,
     handle_conversation_save_message,
+    handle_conversation_saved_status,
     handle_conversation_search,
     handle_conversation_search_saved_messages,
     handle_conversation_set_logging,
@@ -193,6 +196,18 @@ conversation_list_saved_messages = Operation(
     audit=False,
 )
 
+conversation_saved_status = Operation(
+    name="conversation.saved_status",
+    maturity="experimental",
+    input_model=ConversationSavedStatusInput,
+    output_model=ConversationSavedStatusOutput,
+    handler=handle_conversation_saved_status,
+    idempotent=True,
+    budget_p99_ms=100,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
 conversation_threads = Operation(
     name="conversation.threads",
     input_model=ConversationThreadsInput,
@@ -231,6 +246,7 @@ OPERATIONS: list[Operation] = [
     conversation_search,
     conversation_search_saved_messages,
     conversation_list_saved_messages,
+    conversation_saved_status,
     conversation_threads,
     conversation_compact,
 ]

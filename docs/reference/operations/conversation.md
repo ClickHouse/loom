@@ -203,6 +203,25 @@ Save one chat message a user picked for search, whether or not the namespace rec
 | `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
 | `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
 
+## `conversation.saved_status`
+
+Which of a conversation's messages a user has saved, in one call: a chat client draws every message's saved state when it opens the conversation.
+
+`POST /v1/conversation.saved_status` · MCP `loom_conversation_saved_status` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | required | The end user the row belongs to; `'-'` for none. |
+| `conversation_id` | `str` | required | The conversation the messages belong to; message ids are unique within it. |
+| `message_ids` | `list[str]` | required | The messages to check (1-500). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `saved` | `list[str]` | The subset of `message_ids` this user has saved, in the order asked. |
+
 ## `conversation.search`
 
 Rank conversation messages by embedding similarity to `query`.

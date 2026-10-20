@@ -503,6 +503,49 @@ async def list_saved_messages(
     )
 
 
+async def saved_message_ids(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_ids: list[str],
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `msg_ids` of one thread that `user_id` has live saved rows for."""
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "thread_id = {tid:String}",
+        "msg_id IN {mids:Array(String)}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "tid": thread_id,
+        "mids": list(msg_ids),
+        "uid": user_id,
+    }
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    where.extend(scope_where(scope, params))
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT msg_id FROM loom.conversations
+        WHERE {" AND ".join(where)}
+        """,
+        params=params,
+    )
+    return {str(r["msg_id"]) for r in rows}
+
+
 async def namespace_logging_enabled(
     org: str,
     namespace: str,

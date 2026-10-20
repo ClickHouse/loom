@@ -91,7 +91,9 @@ row.
 `conversation.list_saved_messages` (viewer) pages through one user's saved messages with
 no query, most recently saved first (`limit` up to 200, an opaque `cursor`, and an
 optional `conversation_id`). It is the first view of a "Saved" panel; the search narrows
-it once the user types.
+it once the user types. `conversation.saved_status` (viewer) takes one `conversation_id`
+and up to 500 `message_ids` and answers which of them this user has saved, so a client
+draws every message's saved state when it opens a conversation in one call.
 
 `conversation.unsave_message` (writer) withdraws a saved message from its owner's
 search. Where the namespace records transcripts, the turn stays in the transcript with
