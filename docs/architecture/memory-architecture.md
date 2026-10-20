@@ -349,16 +349,19 @@ return it as `version` and, exact for a JavaScript caller, as the decimal string
 `if_match_sha256` writes. A plain `memory.set` or `memory.bulk_set` takes no lock, so both
 sides check again after their insert, and a write after the named version stays whichever
 lands first. The delete stamps the version it removed in its tombstone's `source_trace`
-and reads the key's newest version other than its own tombstone after writing it. A live
-row means the key moved on (`version_changed`); one below the tombstone, a plain write
-between the check and the tombstone, is written back above it, at a version above the
-tombstone whatever the writing host's clock reads. Another remover's tombstone (a delete,
-a sweep, a dedup or a conflict resolution) means it removed the key (`found=false`); one
-below this tombstone is written back above it, stamped as this delete's own tombstone,
-unless this delete's tombstone already carries every column of that row a copy would
-carry, the remover's own stamps aside (that remover took the very row it checked), so a
-restore brings back the row it removed and a write after it lifts over the copy as over
-this tombstone.
+(`memory.delete_version:<v>`). Only that tombstone carries the marker; every other version
+drops it (restore, move, the cross-namespace copies), a `namespace.rollback` keeps it only
+on a tombstone, and no caller may write it (`memory.set`, `memory.bulk_set` and
+`profile.set` answer 422). The delete then reads the key's newest version other than its
+own tombstone after writing it. A live row means the key moved on (`version_changed`); one
+below the tombstone, a plain write between the check and the tombstone, is written back
+above it, at a version above the tombstone whatever the writing host's clock reads.
+Another remover's tombstone (a delete, a sweep, a dedup or a conflict resolution) means it
+removed the key (`found=false`); one below this tombstone is written back above it,
+stamped as this delete's own tombstone, unless this delete's tombstone already carries
+every column of that row a copy would carry, the remover's own stamps aside (that remover
+took the very row it checked), so a restore brings back the row it removed and a write
+after it lifts over the copy as over this tombstone.
 
 Only when the key did not move on does the delete stand and retire the removed version's
 vectors and chunks: the chunks whose index and content hash its own value writes, so a
