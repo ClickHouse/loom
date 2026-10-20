@@ -924,9 +924,11 @@ async def test_a_value_less_close_reads_every_page_of_values_once(monkeypatch) -
     assert out.resolved and asked == shas
 
 
-async def test_a_value_less_close_reads_at_most_twenty_pages_and_stays_active(monkeypatch) -> None:
-    """A row with more values than one repair reads (20 pages of 100): the failure stays
-    active for the next pass instead of resolving with values unread."""
+async def test_a_value_less_close_reads_past_two_thousand_values_in_one_pass(
+    monkeypatch,
+) -> None:
+    """2,500 values whose edges stay open: one repair pages through all of them by hash
+    and resolves; a second pass, had it run, would have nothing left to read again."""
     from server.memory.app import edge_repair
 
     shas = [f"{i:064x}" for i in range(2500)]
@@ -947,4 +949,4 @@ async def test_a_value_less_close_reads_at_most_twenty_pages_and_stays_active(mo
         _graph_failure("entity_edges_close"), payload={"memory_id": _ROW_ID}
     )
     (out,) = await retry_failures([failure], ch=_ValuesCH())
-    assert not out.resolved and not out.abandoned and asked == shas[:2000]
+    assert out.resolved and asked == shas

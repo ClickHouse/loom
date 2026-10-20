@@ -24,11 +24,8 @@ from server.memory.domain.temporal_sql import (
 log = logging.getLogger(__name__)
 
 
-# Values of one row a value-less close repair reads a page at a time, and the pages one
-# repair reads at most: a row revised that many times with every close lost takes more
-# than one pass.
+# Values of one row a value-less close repair reads a page at a time.
 _VALUES_PAGE = 100
-_VALUES_PAGES = 20
 
 
 async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
@@ -38,8 +35,8 @@ async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch
     value is asked with the entities its own edges pair and dated by its own end. The
     pairs of the entities the row names now stay, whichever value linked them: a 'high'
     row keeps the edges of the entities on it. The values are read in pages by hash,
-    so the ones whose edges stay open are not read again; past `_VALUES_PAGES` pages it
-    raises, and the failure stays for the next pass."""
+    so the ones whose edges stay open are not read again; the hash only rises, so the
+    paging ends, and the repair pass's deadline bounds its time."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id}
     named = await ch.query_all(
         f"""
@@ -52,7 +49,7 @@ async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch
     )
     keep = {str(e) for row in named for e in row["entities"]}
     after = ""
-    for _ in range(_VALUES_PAGES):
+    while True:
         values = await ch.query_all(
             """
             SELECT toString(content_sha256) AS sha,
@@ -88,7 +85,6 @@ async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch
         if len(values) < _VALUES_PAGE:
             return
         after = str(values[-1]["sha"])
-    raise RuntimeError(f"more than {_VALUES_PAGE * _VALUES_PAGES} values of row {memory_id}")
 
 
 async def close_late_edges(
