@@ -216,7 +216,7 @@ def request_org() -> str:
     ident = _identity.get() or {}
     op = str(ident.get("operation") or "")
     org = str(ident.get("org") or "")
-    if not op or op.startswith("worker.") or org in ("-", "*"):
+    if not op or op.startswith("worker.") or org == "*":
         return ""
     return org
 

@@ -195,6 +195,7 @@ LIGHTWEIGHT_PURGE_TABLES: frozenset[str] = frozenset(
         "loom.session_summaries",
         "loom.memory_evidence",
         "loom.conversation_embeddings",
+        "loom.embedding_cache",
     }
 )
 

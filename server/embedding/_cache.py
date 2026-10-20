@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 
 from server.core.background import TaskSet
 from server.embedding.normalize import normalize_whitespace, query_text
+from server.observability.genai import request_org
 from server.settings import settings
 
 # The key hashes the whitespace-normalised text, and the provider sees the
@@ -28,13 +29,6 @@ _normalize = normalize_whitespace
 # Key-space version for normalised-text vectors. Changing it orphans every
 # loom.embedding_cache row (one cold miss per text).
 _KEY_VERSION = b"ws1\0"
-
-
-def scope() -> str:
-    """The org a cache entry belongs to: the request's; "" outside one."""
-    from server.observability.genai import request_org
-
-    return request_org()
 
 
 def _key(model: str, text: str, org: str) -> str:
@@ -108,7 +102,7 @@ async def cached_embed(
     served-from-cache embedding (no upstream tokens, no cost) from a billed one
     on its telemetry span.
     """
-    org = scope()
+    org = request_org()
     if not org:
         _last_tier.set("miss")
         return await fetch(query_text(text)), False
@@ -129,14 +123,14 @@ async def cached_embed(
         try:
             vec = await asyncio.shield(pending)
         except _OwnerGone:
-            return await _embed_uncached(model, k, text, fetch, dim)
+            return await _embed_uncached(model, k, text, fetch, dim, org)
         _last_tier.set("inflight")
         return vec, True
     fut: asyncio.Future[list[float]] = loop.create_future()
     fut.add_done_callback(_consume_exception)
     _INFLIGHT[k] = fut
     try:
-        vec, was_hit = await _embed_uncached(model, k, text, fetch, dim)
+        vec, was_hit = await _embed_uncached(model, k, text, fetch, dim, org)
     except BaseException as e:
         fut.set_exception(e if isinstance(e, Exception) else _OwnerGone(repr(e)))
         raise
@@ -163,6 +157,7 @@ async def _embed_uncached(
     text: str,
     fetch: Callable[[str], Awaitable[list[float]]],
     dim: int,
+    org: str,
 ) -> tuple[list[float], bool]:
     shared = await _shared_get(model, k, text, dim)
     if shared is not None:
@@ -173,7 +168,7 @@ async def _embed_uncached(
     vec = await fetch(query_text(text))
     _cache.put(k, vec)
     _last_tier.set("miss")
-    _shared_put(model, k, text, vec)
+    _shared_put(model, k, text, vec, org)
     return vec, False
 
 
@@ -228,7 +223,7 @@ async def _shared_get(model: str, key: str, text: str, dim: int) -> list[float] 
     return [float(x) for x in row["embedding"]]
 
 
-def _shared_put(model: str, key: str, text: str, vec: list[float]) -> None:
+def _shared_put(model: str, key: str, text: str, vec: list[float], org: str) -> None:
     """Fire-and-forget insert of a provider result; never awaited by the read."""
     if not _shared_enabled(text) or not vec:
         return
@@ -242,7 +237,7 @@ def _shared_put(model: str, key: str, text: str, vec: list[float]) -> None:
         "model": model,
         "key": key,
         # The org the key hashes, so its rows can be deleted without their texts.
-        "org": scope(),
+        "org": org,
         "dim": len(vec),
         "embedding": [float(x) for x in vec],
         "created_at": naive_utc_now(),

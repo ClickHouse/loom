@@ -169,7 +169,7 @@ def _instrument(stmts: list[tuple[str, float, float]], embeds: list[float]) -> N
     chmod.note_result_summary = note  # type: ignore[assignment]
     orig_embed = _cache._embed_uncached
 
-    async def timed(model: str, k: str, text: str, fetch: Any, dim: int) -> Any:
+    async def timed(model: str, k: str, text: str, fetch: Any, dim: int, org: str) -> Any:
         async def f(t: str) -> list[float]:
             t0 = time.perf_counter()
             try:
@@ -177,7 +177,7 @@ def _instrument(stmts: list[tuple[str, float, float]], embeds: list[float]) -> N
             finally:
                 embeds.append((time.perf_counter() - t0) * 1000)
 
-        return await orig_embed(model, k, text, f, dim)
+        return await orig_embed(model, k, text, f, dim, org)
 
     _cache._embed_uncached = timed  # type: ignore[assignment]
     _cache._shared_put = lambda *a, **kw: None  # type: ignore[assignment]

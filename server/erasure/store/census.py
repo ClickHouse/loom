@@ -266,6 +266,19 @@ _CENSUS: tuple[Substrate, ...] = (
         "idempotency.delete",
         ns_pred="1",
     ),
+    # Cached query vectors, keyed by sha1(org, model, normalised text) with the
+    # org in its own column and the text never stored. No namespace or user
+    # axis, so both scopes clear and count the org's rows, as for the search
+    # trace's query text (a cache: the cost is misses). Rows with org '' come
+    # from a build before the column and leave by the 30-day TTL.
+    Substrate(
+        "loom.embedding_cache",
+        "1",
+        "1",
+        "embedding_cache.delete",
+        "embedding_cache.delete",
+        ns_pred="1",
+    ),
     Substrate(
         "loom.code_search_trace",
         "1",
@@ -443,14 +456,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "A repository entry a person added (GitHub owner/name, branch, "
         "join rule, an encrypted fetch token) — deployment configuration keyed by "
         "(org, namespace), holding no memory or source content; retired by active=false."
-    ),
-    # -- org-scoped: no namespace or user axis ----------------------------------
-    "loom.embedding_cache": (
-        "cached query vectors, never text: keyed by sha1(org, model, normalised text), "
-        "with the org in its own column; no namespace or user axis, so a namespace or "
-        "user erasure cannot scope it. A customer's rows are deleted by org "
-        "(steps_ledgers.delete_embedding_cache_for_org); 30-day TTL. The compliance "
-        "bench counts the canary's key."
     ),
     # -- no tenant axis: cannot be scoped by namespace or user -----------------
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",

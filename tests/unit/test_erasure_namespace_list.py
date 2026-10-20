@@ -92,8 +92,9 @@ async def test_residue_census_counts_the_whole_list() -> None:
     ch = _CensusCH()
     out = await erasure_census.residue_census("o", "namespace", ["a", "b"], ch=ch)
     assert out and all(v == 0 for v in out.values())
-    # loom.idempotency has no namespace column and is counted org-wide.
-    scoped = [q for q, _ in ch.queries if "FROM loom.idempotency" not in q]
+    # loom.idempotency and loom.embedding_cache have no namespace column: counted org-wide.
+    org_wide = ("FROM loom.idempotency", "FROM loom.embedding_cache")
+    scoped = [q for q, _ in ch.queries if not any(t in q for t in org_wide)]
     assert all("namespace IN {ns:Array(String)}" in q for q in scoped)
     assert all(p["ns"] == ["a", "b"] for _, p in ch.queries)
 

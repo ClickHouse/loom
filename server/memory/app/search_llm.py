@@ -124,9 +124,9 @@ async def extract_derived_intent_llm(
 
 
 def _org_key(key: str) -> str:
-    """`key` within the request's org, as the embedding cache scopes it; ""
-    outside a request, where nothing is cached: an org never learns from a
-    fast reply what another asked."""
+    """`key` within the request's org (`genai.request_org`, as the embedding
+    cache scopes its keys); "" outside a request, where nothing is cached: an
+    org never learns from a fast reply what another asked."""
     from server.observability.genai import request_org
 
     org = request_org()

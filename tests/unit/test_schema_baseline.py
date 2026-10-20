@@ -28,6 +28,7 @@ TRANSIENT_TABLES = {
     "context_blobs": "offloaded context whose writer sets expires_at",
     "idempotency": "replay records of idempotency keys, gone at expires_at",
     "llm_response_cache": "a cache of model responses, refilled on a miss",
+    "embedding_cache": "a cache of query vectors, refilled on a miss",
     "memory_ask_precedents": "cached answers reused as precedents, recomputed on a miss",
     "memory_drops": "a review log of writes that were dropped",
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",

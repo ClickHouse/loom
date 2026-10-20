@@ -308,10 +308,25 @@ async def delete_projection_failures_by_namespace(
 
 
 async def delete_embedding_cache_for_org(org: str, *, ch: _CHClient | None = None) -> int:
-    """Every cached query vector an org's requests left, for the erasure of a
-    whole customer: the table has no namespace or user axis, and its rows hold
-    vectors, never text. Rows a build before `org` wrote carry '' and are no
-    one's; the 30-day TTL takes them."""
+    """Every cached query vector the org's requests left. The rows hold
+    vectors of query text, never the text, and have no namespace or user axis,
+    so any erasure in the org clears them all, as it clears the search trace's
+    query text (a cache: the cost is misses). Rows a build before `org` wrote
+    carry '', which this build's reads never find; the 30-day TTL takes them."""
     return await delete_scoped(
         "loom.embedding_cache", org=org, scope_where="1", params={}, ch=ch, lightweight=True
     )
+
+
+async def delete_embedding_cache_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    del namespace  # the rows carry no namespace; the scope is the org
+    return await delete_embedding_cache_for_org(org, ch=ch)
+
+
+async def delete_embedding_cache_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    del user_id  # nothing on the row names the end user; the scope is the org
+    return await delete_embedding_cache_for_org(org, ch=ch)

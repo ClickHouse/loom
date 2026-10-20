@@ -125,6 +125,10 @@ flowchart TD
 - **Uploaded originals** of knowledge documents: the namespace's rows of
   `loom.document_blobs` are deleted first, and `blob_erased_at` is stamped. The census
   counts that table.
+- **Org-wide caches.** `loom.idempotency` (replayed responses) and `loom.embedding_cache`
+  (query vectors, never their text) carry the org but no namespace or end user, so an
+  erasure at either scope deletes all of the org's rows there and the census counts them
+  org-wide. The cost is cache misses.
 
 ### The federated cascade
 

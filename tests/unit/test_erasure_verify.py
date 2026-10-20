@@ -117,7 +117,7 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
     out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
     assert set(out) == set(erasure_census.census_tables("namespace"))
     # every namespace-scoped substrate, entity, cache, chunk-link and code table
-    assert len(out) == 55 and sum(out.values()) == 0
+    assert len(out) == 56 and sum(out.values()) == 0
     by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.query_one_calls}
     assert (
         " FINAL" in by_table["loom.memory"] and "tombstoned_at IS NULL" in by_table["loom.memory"]
@@ -140,7 +140,8 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
     assert " FINAL" in by_table["loom.documents"]
     assert "blob_erased_at IS NULL" in by_table["loom.documents"]
     for sql, params in ch.query_one_calls:
-        if "FROM loom.idempotency" in sql:  # no namespace column: counted org-wide
+        if "FROM loom.idempotency" in sql or "FROM loom.embedding_cache" in sql:
+            # no namespace column: counted org-wide
             assert "namespace" not in sql
             continue
         assert "namespace = {ns:String}" in sql and params["ns"] == "ns"
@@ -159,7 +160,7 @@ def test_census_user_scope_skips_namespace_only_tables() -> None:
         "loom.llm_response_cache",
     } <= set(out)
     assert "loom.memory_answers" not in out
-    assert len(out) == 37
+    assert len(out) == 38
     assert all(params["uid"] == "alice" for _, params in ch.query_one_calls)
 
 

@@ -72,10 +72,10 @@ class ProviderSettings(ModelSettings):
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
-    # Shared query-embedding cache in loom.embedding_cache behind the
-    # per-process LRU, keyed (org, model, sha1 of normalised text). Only single-text
-    # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
-    # it. Off = process cache only.
+    # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
+    # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
+    # a request skips both tiers. Only single-text (query) embeds up to
+    # `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only.
     embedding_cache_shared: bool = True
     # Longest query text, characters, that uses the shared cache; 0 = no cap.
     embedding_cache_shared_max_chars: int = 2000
