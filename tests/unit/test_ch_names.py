@@ -198,7 +198,7 @@ def test_a_new_database_beside_an_existing_schema_is_refused(
             preflight._refuse_moved_schema(ch)  # type: ignore[arg-type]
     else:
         preflight._refuse_moved_schema(ch)  # type: ignore[arg-type]
-    assert ch.params == [{"schema": "loom", "db": "acme"}]
+    assert ch.params == [{"schema": "loom", "db": "acme", "own": ["_migration_lock"]}]
 
 
 def test_the_default_database_never_reads_for_a_moved_schema() -> None:

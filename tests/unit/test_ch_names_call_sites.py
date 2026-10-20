@@ -215,7 +215,10 @@ def test_the_configured_names_are_not_schema_qualifiers() -> None:
     assert not {"loom", "loom_telemetry"} & qualifiers
 
 
-@pytest.mark.parametrize("env", [{"ch_database": "0"}, {"ch_telemetry_database": "1x"}])
+@pytest.mark.parametrize(
+    "env",
+    [{"ch_database": "0", "ch_telemetry_database": "t0"}, {"ch_telemetry_database": "1x"}],
+)
 def test_a_database_name_starts_with_a_letter(env: dict[str, str]) -> None:
     with pytest.raises(ValidationError):
         Settings(**env)
@@ -237,21 +240,25 @@ def test_every_preflight_reaches_the_name_and_schema_checks(
     assert seen == ["names"]
 
 
-def test_the_runners_lock_table_does_not_make_a_schema_foreign(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_runners_lock_table_does_not_make_a_schema_foreign() -> None:
     from server.core.schema import preflight
 
     class FirstBootStopped:
-        params: dict[str, Any] = {}
+        """`system.tables` after a first boot made the lock table and stopped."""
+
+        tables = [("loom", "_migrations"), ("acme-loom", "_migration_lock")]
 
         def query(self, sql: str, parameters: dict[str, Any]) -> SimpleNamespace:
-            self.params = parameters
-            return SimpleNamespace(result_rows=[(1, 0, 0)])  # only `_migration_lock` there
+            own, schema, db = parameters["own"], parameters["schema"], parameters["db"]
+            other = sum(1 for d, n in self.tables if d == schema and n == "_migrations")
+            tables = sum(1 for d, n in self.tables if d == db and n not in own)
+            ledger = sum(1 for d, n in self.tables if d == db and n == "_migrations")
+            return SimpleNamespace(result_rows=[(other, tables, ledger)])
 
         def command(self, sql: str, parameters: dict[str, Any] | None = None) -> int:
-            return 1
+            return 1  # the database exists
 
-    ch = FirstBootStopped()
-    preflight._refuse_moved_schema(ch)  # type: ignore[arg-type]
-    assert "_migration_lock" in ch.params["own"]
+    preflight._refuse_moved_schema(FirstBootStopped())  # type: ignore[arg-type]
+    FirstBootStopped.tables.append(("acme-loom", "orders"))
+    with pytest.raises(preflight.PreflightError, match="holds 1 tables"):
+        preflight._refuse_moved_schema(FirstBootStopped())  # type: ignore[arg-type]

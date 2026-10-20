@@ -309,8 +309,7 @@ _QUALIFIER = re.compile(r"(?<![\w.`])`?(\w[\w-]*)`?\.(?=[`\w*])")
 @functools.cache
 def _qualifiers() -> frozenset[str]:
     """Every name the migrations write before a dot: databases, but also table names
-    and aliases (`memory.org`), which DDL read back from ClickHouse holds
-    too."""
+    and aliases (`memory.org`), which DDL read back from ClickHouse holds too."""
     from server.core.schema.journal import sorted_migrations
 
     names: set[str] = set()
@@ -333,11 +332,6 @@ def _refuse_ambiguous_names() -> None:
             )
 
 
-# What the migration runner makes before the ledger: a first boot stopped between the
-# two leaves a schema that is still Loom's own.
-_RUNNER_TABLES = ("_migration_lock", "_migration_lease")
-
-
 def _refuse_moved_schema(ch: Client) -> None:
     """Refuse to serve or migrate a LOOM_CH_DATABASE other than `loom` that holds no Loom
     ledger while Loom's schema is in `loom`: the setting would start an empty schema
@@ -345,12 +339,16 @@ def _refuse_moved_schema(ch: Client) -> None:
     operator who means a new schema there creates the database, empty, first."""
     if database_name() == SCHEMA:
         return
+    # The runner makes its own tables before the ledger: a first boot stopped between
+    # the two leaves a schema that is still Loom's.
+    from server.core.schema.migrate_lease import RUNNER_TABLES
+
     rows = ch.query(
         "SELECT countIf(database = {schema:String} AND name = '_migrations') AS other, "
         "countIf(database = {db:String} AND name NOT IN {own:Array(String)}) AS tables, "
         "countIf(database = {db:String} AND name = '_migrations') AS ledger "
         "FROM system.tables WHERE database IN ({schema:String}, {db:String})",
-        parameters={"schema": SCHEMA, "db": database_name(), "own": list(_RUNNER_TABLES)},
+        parameters={"schema": SCHEMA, "db": database_name(), "own": sorted(RUNNER_TABLES)},
     ).result_rows
     other, tables, ledger = rows[0] if rows else (0, 0, 0)
     if not other or ledger:
