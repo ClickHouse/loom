@@ -121,7 +121,8 @@ async def test_the_fake_provider_files_rules_under_the_block(
 
 def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPatch) -> None:
     def on(**state: Any) -> bool:
-        return pipeline._agent_learnings_on(WorkflowState(**{"rule_agent": "bot", **state}))
+        base = {"rule_agent": "bot", "messages": list(_MESSAGES)}
+        return pipeline._agent_learnings_on(WorkflowState(**{**base, **state}))
 
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", True)
     assert on() is True
@@ -132,6 +133,10 @@ def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPat
     assert on(rule_agent="") is False
     # A coding session's assistant narrates its work: never.
     assert on(extra_tags=["source:claude-code"]) is False
+    # No assistant turn to read a rule from: a user-only call, an observation replay.
+    assert on(messages=[{"role": "user", "content": "I moved to Lisbon."}]) is False
+    observations = [{"role": "tool", "content": "ran tests"}, {"role": "user", "content": "ok"}]
+    assert on(messages=observations) is False
     # The request cannot turn it on.
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", False)
     assert on() is False

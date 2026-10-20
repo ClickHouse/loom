@@ -673,7 +673,7 @@ function LearningsPanel({
               </div>
               <div className="text-xs text-text-muted mb-2">
                 {sourceLabel(r)}
-                {isAgentRule(r) && <> · {agentLabel(r)}</>}
+                {isAgentRule(r) && r.agent !== undefined && <> · {agentLabel(r)}</>}
               </div>
               {isAgentRule(r) && (r.proposed_value === null || r.proposed_value === "") ? (
                 // A user erasure took the rule's last supporter: only the decision is kept.
@@ -687,7 +687,7 @@ function LearningsPanel({
               )}
               {status === "pending" && (
                 <>
-                  {isAgentRule(r) && (
+                  {isAgentRule(r) && r.agent !== undefined && (
                     <div className="text-sm text-text-muted mb-2">
                       Promote makes this rule apply to every user of {agentLabel(r)}.
                     </div>

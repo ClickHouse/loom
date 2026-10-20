@@ -656,7 +656,9 @@ describe("ReviewQueue", () => {
           supporter_count: 2,
           supporter_sessions: 3,
         },
-        // A server a release behind sends no agent and no user count.
+        // Filed with no agent ("-"): it applies namespace-wide, and says so.
+        { ...learning("assistant_rule_any"), source_kind: "assistant_turn", agent: "-", supporter_count: 1 },
+        // A server a release behind sends no agent and no user count: no agent line.
         { ...learning("assistant_rule_old"), source_kind: "assistant_turn", supporter_count: 1 },
       ],
     });
@@ -665,11 +667,12 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
     await screen.findByText("assistant_rule_refunds", {}, WAIT);
     expect(screen.getByText(/2 users, 3 sessions/)).toBeTruthy();
-    expect(screen.getAllByText(/A bot's rule about itself/)).toHaveLength(2);
+    expect(screen.getAllByText(/A bot's rule about itself/)).toHaveLength(3);
     expect(screen.getByText(/apply to every user of agent support-bot/)).toBeTruthy();
-    expect(screen.getByText(/1 supporter ·/)).toBeTruthy();
-    // A rule filed with no agent applies namespace-wide, and says so.
-    expect(screen.getByText(/apply to every user of every agent in this namespace/)).toBeTruthy();
+    expect(screen.getAllByText(/1 supporter ·/)).toHaveLength(2);
+    expect(screen.getAllByText(/apply to every user of every agent in this namespace/)).toHaveLength(1);
+    expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(2); // its line and its warning
+    expect(screen.getAllByText(/Promote makes this rule apply/)).toHaveLength(2);
   });
 
   it("says a bot rule's text went with a user erasure and its decision stands", async () => {

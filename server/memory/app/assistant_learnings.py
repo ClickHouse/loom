@@ -114,6 +114,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "seeded_from_thread_id": None,
                 "seeded_from_msg_id": None,
                 "status": "pending",
+                # The first proposal time keeps every version in one partition
+                # (toYYYYMM(proposed_at)); two first filings across a month boundary
+                # land in two, which FINAL still collapses.
                 "proposed_at": row["proposed_at"] if row else naive_utc_now(),
                 "version": _FILED_VERSION,
             }

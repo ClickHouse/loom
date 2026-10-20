@@ -295,7 +295,7 @@ async def _do_promote(
 ) -> None:
     """Promote a candidate to a live memory.
 
-    Two source flavors:
+    Three source flavors:
     - `memory_supporters`: an underlying loom.memory row already exists
       (multiple writers supported the same key) — route through
       `handle_memory_promote` so the institutional loom.shared row gets

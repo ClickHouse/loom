@@ -31,13 +31,8 @@ class ExtractionSettings(BaseModel):
     # a structured-answer block and assistant-answer facts get a higher content_excerpt
     # ceiling. The value column is untouched; takes effect only on (re-)ingest.
     memory_capture_structured_answers: bool = True
-    # Rules the assistant states about its own behaviour ("I escalate any refund over
-    # $500") are filed as `assistant_turn` candidates in the learnings queue for an
-    # admin to promote, never written as memories. On, the extraction prompt gains a
-    # block; a request's `agent_learnings=false` turns it off for that call, and nothing
-    # else turns it on. Turn it on only once every replica runs a build that has it.
-    # Coding captures never use it.
-    # Experimental: extraction quality is not benchmarked with the block on.
+    # On: rules the assistant states about itself are filed as assistant_turn learnings
+    # candidates, never memories; a request can only turn it off. Experimental.
     memory_extract_agent_learnings: bool = False
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short

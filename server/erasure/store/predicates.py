@@ -98,16 +98,11 @@ USER_COMMUNITY_ROWS = (
 LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
 
-# A bot-rule candidate (`assistant_turn`) holds no user's words: each user's quotes
-# live on their own loom.learnings_supporters rows, deleted by `UID`. A candidate left
-# with no supporter still holding its rule text is the residue a user erasure leaves:
-# the step deletes it when pending and blanks its rule when decided.
 # Candidates any supporter row in the org names.
 SUPPORTED_LEARNINGS = (
     "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String})"
 )
-# Counted org-wide (the erased user's supporter rows are gone by then): a saga can fail
-# on residue another erasure left mid-step, and its reopened step cleans it.
+# Bot-rule candidates nobody supports that still hold their rule, counted org-wide.
 ORPHAN_LEARNINGS = (
     "source_kind = 'assistant_turn' AND proposed_value != '' AND candidate_id NOT IN "
     + SUPPORTED_LEARNINGS

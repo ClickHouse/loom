@@ -191,7 +191,8 @@ with `memory.search(memory_type="reflection")`.
 
 A learning is a candidate fact with its supporters (`supporter_count`, `supporters`,
 `confidence_avg`, `rationale`, `source_kind`), waiting for a person to decide. Loom
-records the reviewer's choice and never makes it.
+records the reviewer's choice and never makes it. Any candidate other than a bot's rule
+(below) is written by your own process to `loom.learnings_queue`.
 
 Extraction files one kind of candidate itself. With assistant-turn learnings on
 (experimental), a rule a bot states about its own behaviour in a conversation becomes an
@@ -205,8 +206,7 @@ promotes it; promoting it writes the rule as the agent's memory for every user.
 
 A user erasure deletes that user's supporter rows, and their quotes with them. A
 candidate left with no supporter is deleted when pending. When decided, it keeps its
-status row with the rule blanked, so a rejected rule never comes back as pending. Any
-other candidate is written by your own process to `loom.learnings_queue`.
+status row with the rule blanked, so a rejected rule never comes back as pending.
 
 `learnings.quality` counts the conversation seeder by default, since it reports
 extraction quality; pass `source_kind="assistant_turn"` for the bot rules.

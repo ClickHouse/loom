@@ -180,9 +180,15 @@ def attach(result: Any, block: dict[str, Any]) -> Any:
     is returned as is."""
     if not block or not isinstance(result, dict):
         return result
-    # An op may name a field it did not apply itself; keep both lists.
-    own = [k for k in result.get("ignored_args") or [] if k not in block["ignored_args"]]
-    return {**result, **block, "ignored_args": [*own, *block["ignored_args"]]}
+    merged = _merged(result.get("ignored_args") or [], block["ignored_args"])
+    return {**result, **block, "ignored_args": merged}
+
+
+def _merged(own: list[Any], unknown: list[str]) -> list[str]:
+    """The fields an op did not apply itself, then the unknown keys it has no field
+    for, each named once."""
+    names = [str(k) for k in own]
+    return [*names, *(k for k in unknown if k not in names)]
 
 
 class ArgumentRefused:
@@ -236,10 +242,9 @@ def response_body(op: Any, args: Any, result: Any) -> Any:
 def header_value(op: Any, args: Any, result: Any) -> str:
     """`X-Loom-Ignored-Args` for an HTTP answer ("" when none): the fields the op
     itself did not apply (its result's `ignored_args`), then the unknown keys."""
-    found = (
+    own = (
         result.get("ignored_args")
         if isinstance(result, dict)
         else getattr(result, "ignored_args", None)
     )
-    own = [str(k) for k in found or []]
-    return ",".join([*own, *(k for k in unknown_args(op.input_model, args) if k not in own)])
+    return ",".join(_merged(own or [], unknown_args(op.input_model, args)))

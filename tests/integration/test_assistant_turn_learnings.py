@@ -474,3 +474,54 @@ async def test_a_session_backing_the_rule_while_its_last_supporter_is_erased_kee
     assert kept["rationale"] == _rationale("bob")
     after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
     assert after["loom.learnings_supporters"] == 0 and after["loom.learnings_queue"] == 0
+
+
+def test_the_coverage_sweep_does_not_write_the_rule_back_as_a_user_fact(
+    base_url: str, token: tuple[str, str]
+) -> None:
+    """A second reading of the turns the first pass cited nowhere (coverage_sweep)
+    reads them with the same rules: the assistant's rule is still not a memory."""
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    out = _call(
+        base_url,
+        tok,
+        "memory.set_from_messages",
+        {
+            "org": org,
+            "namespace": ns,
+            "agent": _AGENT,
+            "user_id": "alice",
+            "session_id": "s1",
+            "coverage_sweep": True,
+            "messages": [
+                {"role": "user", "content": _asked("alice")},
+                {"role": "assistant", "content": f"{_RULE} A colleague will reply soon."},
+                {"role": "user", "content": "My order number is 4417 and it shipped Monday."},
+                {"role": "user", "content": "The parcel came damaged and the box was wet."},
+                {"role": "user", "content": "I live in Porto and work from home on Fridays."},
+                {"role": "user", "content": "My sister also ordered the same blender last week."},
+            ],
+        },
+    )
+    assert out["learning_candidates"] == 1
+    written = [w["memory_key"] for w in out["written"]]
+    assert written, out
+    for key in written:
+        got = _call(
+            base_url,
+            tok,
+            "memory.get",
+            {
+                "org": org,
+                "namespace": ns,
+                "agent": _AGENT,
+                "user_id": "alice",
+                "session_id": "s1",
+                "memory_key": key,
+            },
+        )
+        assert got["found"] is True, key
+        assert "escalate any refund" not in str(got["value"]), (key, got)
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert cand["proposed_value"] == f"Assistant rule: {_RULE}"
