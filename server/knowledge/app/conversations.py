@@ -202,6 +202,15 @@ async def handle_conversation_append(
     async with conversation_repo.saved_message_write_lock(
         input.org, input.namespace, input.thread_id
     ):
+        with traced("ch.query.conversation_message_exists"):
+            live = await conversation_repo.message_exists(
+                input.org, input.namespace, input.agent, input.thread_id, msg_id, live_only=True
+            )
+        if not live:
+            await conversation_repo.tombstone_embedding_if_message_gone(
+                input.org, input.namespace, input.agent, input.thread_id, msg_id
+            )
+            return ConversationAppendOutput(msg_id=msg_id, ts=now, stored=False, reason="deleted")
         await _store_embedding(msg_row, embedded)
         # A save can finish while embedding runs. Copy its saved state onto
         # this embedding, which may replace the save's version under FINAL.

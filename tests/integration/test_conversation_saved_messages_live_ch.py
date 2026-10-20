@@ -607,8 +607,9 @@ async def test_save_waits_for_an_unsave_to_finish_both_tables(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("peer", [False, True])
+@pytest.mark.parametrize("content_chars", [239, 240, 241])
 async def test_a_late_append_does_not_revive_an_unsaved_copy(
-    ch: Any, namespace: str, monkeypatch: pytest.MonkeyPatch, peer: bool
+    ch: Any, namespace: str, monkeypatch: pytest.MonkeyPatch, peer: bool, content_chars: int
 ) -> None:
     import asyncio
 
@@ -616,6 +617,9 @@ async def test_a_late_append_does_not_revive_an_unsaved_copy(
     from server.knowledge.store import conversations as repo
 
     recording = True
+    content = "x" * content_chars
+    request = _save(namespace).model_copy(update={"content": content})
+    turn = _transcript_turn(namespace).model_copy(update={"content": content})
 
     async def logging_enabled(*args: Any, **kwargs: Any) -> bool:
         return recording
@@ -630,7 +634,7 @@ async def test_a_late_append_does_not_revive_an_unsaved_copy(
                 thread_id="c-1",
                 msg_id="m-1",
                 role="assistant",
-                content=_CONTENT,
+                content=content,
                 user_id="peer-user",
                 run_id="peer-run",
                 is_saved=True,
@@ -654,12 +658,10 @@ async def test_a_late_append_does_not_revive_an_unsaved_copy(
 
     monkeypatch.setattr(repo, "append", observed_append)
     monkeypatch.setattr(conversations, "_embed_turn", paused_embed)
-    append = asyncio.create_task(
-        conversations.handle_conversation_append(_transcript_turn(namespace))
-    )
+    append = asyncio.create_task(conversations.handle_conversation_append(turn))
     try:
         await asyncio.wait_for(asyncio.gather(written.wait(), embedding.wait()), 10)
-        assert (await conversations.handle_conversation_save_message(_save(namespace))).indexed
+        assert (await conversations.handle_conversation_save_message(request)).indexed
         recording = False
         assert (
             await conversations.handle_conversation_unsave_message(_unsave_request(namespace))
@@ -677,7 +679,8 @@ async def test_a_late_append_does_not_revive_an_unsaved_copy(
             else []
         )
         release.set()
-        await asyncio.wait_for(append, 10)
+        result = await asyncio.wait_for(append, 10)
+        assert not result.stored and result.reason == "deleted"
         rows = await ch.query_all(
             "SELECT agent, user_id, run_id, is_saved FROM loom.conversation_embeddings FINAL "
             "WHERE org = 'itest-org' AND namespace = {ns:String} AND tombstoned_at IS NULL",

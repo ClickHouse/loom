@@ -470,7 +470,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.search_substring(
         ORG, NS, AGENT, "deploy", scope=pinned, user_id="u1", saved_only=f, ch=ch
     )
-    await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.message_exists(ORG, NS, AGENT, "t1", "m1", live_only=f, ch=ch)
     await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
     await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)
     await R.saved_message_owner(ORG, NS, AGENT, "t1", "m1", ch=ch)

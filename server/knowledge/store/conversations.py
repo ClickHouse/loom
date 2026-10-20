@@ -196,15 +196,13 @@ async def message_exists(
     thread_id: str,
     msg_id: str,
     *,
+    live_only: bool = False,
     ch: _CHClient | None = None,
 ) -> bool:
-    """Whether a (thread_id, msg_id) row already exists. Makes
-    `conversation.append` idempotent: loom.conversations is a plain MergeTree
-    (append-only, no engine dedup), so a caller re-logging the same turn — a
-    chat client self-logging via the MCP primer, a gateway retry — would
-    otherwise double-write. Known limit: read-before-write, so two *concurrent*
-    identical appends can still both land; fine for the sequential per-turn
-    logging path, and explicit unique msg_ids avoid it entirely."""
+    """Whether a turn exists, including tombstones unless `live_only` is set.
+
+    Append deduplication includes tombstones so a retry cannot recreate a deleted turn.
+    """
     ch = ch or _default_client()
     row = await ch.query_one(
         """
@@ -212,6 +210,7 @@ async def message_exists(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String} AND thread_id = {tid:String}
           AND msg_id = {mid:String}
+          AND (tombstoned_at IS NULL OR NOT {live_only:Bool})
         LIMIT 1
         """,
         params={
@@ -220,6 +219,7 @@ async def message_exists(
             "agent": agent,
             "tid": thread_id,
             "mid": msg_id,
+            "live_only": live_only,
         },
     )
     return bool(row and row.get("ok"))

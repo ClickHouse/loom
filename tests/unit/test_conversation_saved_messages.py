@@ -345,8 +345,14 @@ async def test_a_transcript_embedding_landing_after_a_save_is_flagged(
     async def logging_on(*_a: object, **_kw: object) -> bool:
         return True
 
-    async def not_there(*_a: object, **_kw: object) -> bool:
-        return False
+    written = False
+
+    async def exists(*_a: object, **_kw: object) -> bool:
+        return written
+
+    async def record(*_a: object, **_kw: object) -> None:
+        nonlocal written
+        written = True
 
     async def noop(*_a: object, **_kw: object) -> None:
         return None
@@ -364,8 +370,8 @@ async def test_a_transcript_embedding_landing_after_a_save_is_flagged(
         return conversations.EmbeddedTurn(content, [0.1, 0.2, 0.3], 3, "fake", "")
 
     monkeypatch.setattr(conversation_repo, "namespace_logging_enabled", logging_on)
-    monkeypatch.setattr(conversation_repo, "message_exists", not_there)
-    monkeypatch.setattr(conversation_repo, "append", noop)
+    monkeypatch.setattr(conversation_repo, "message_exists", exists)
+    monkeypatch.setattr(conversation_repo, "append", record)
     monkeypatch.setattr(conversation_repo, "insert_embedding", insert_embedding)
     monkeypatch.setattr(conversation_repo, "saved_message_owner", saved_owner)
     monkeypatch.setattr(conversation_repo, "mark_message_saved", mark)

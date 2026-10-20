@@ -24,6 +24,8 @@ the Recording toggle on the dashboard's Conversations page.
 
 When logging is off the append is accepted and nothing is kept: the response says
 `stored: false, reason: "logging_disabled"`. A client cannot override the owner's choice.
+If the turn is removed while its embedding runs, append skips the late vector and
+answers `stored: false, reason: "deleted"`.
 
 ### Writing turns
 
