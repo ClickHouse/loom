@@ -286,7 +286,8 @@ def test_the_server_headers_leave_the_sign_in_page_its_own_policies() -> None:
     attach_browser_middleware(app)
     page = TestClient(app, base_url="http://localhost").get("/oauth/device")
     assert page.status_code == 200
-    for name in ("Referrer-Policy", "Content-Security-Policy"):
+    # Only the page's values that differ from the middleware's own can show which one won.
+    for name in ("Content-Security-Policy", "Cache-Control"):
         assert page.headers.get_list(name) == [oauth._PAGE_HEADERS[name]]
     assert page.headers["strict-transport-security"] == f"max-age={settings.hsts_max_age_seconds}"
 
