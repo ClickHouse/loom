@@ -182,7 +182,10 @@ async def statuses_by_ids(
     org: str, namespace: str, ids: list[str], *, scope: ReadFilters, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """[{memory_id, status, superseded_by}] for the ids among `ids` the namespace holds
-    inside `scope`, read strongly; a tombstoned row's status is `deleted`."""
+    inside `scope`, read strongly; a tombstoned row's status is `deleted`. An id whose
+    row a write of the same key replaced under another id (two first writes of a key
+    racing each mint one) drops out once the table's parts merge, as a read by id
+    answers found=false."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "ids": ids}
     sql = _STATUSES_SQL % scope_and(scope, params)

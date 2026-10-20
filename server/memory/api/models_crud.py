@@ -509,8 +509,11 @@ class MemoryStatusesInput(BaseModel):
 
     org: str
     namespace: str
-    # Memory ids in this namespace; an id the namespace does not hold is left out. An id
-    # too long (past 64 characters) refuses the request; a malformed one is left out.
+    # Memory ids in this namespace; an id the namespace does not hold is left out, as is
+    # one whose row a write of the same key replaced under another id (two first writes
+    # of a key racing) once the table's parts merge, as a read by id answers
+    # found=false. An id too long (past 64 characters) refuses the request; a malformed
+    # one is left out.
     memory_ids: list[Annotated[str, Field(max_length=64)]] = Field(
         ..., min_length=1, max_length=5000
     )
