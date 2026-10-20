@@ -281,7 +281,8 @@ consolidation worker, observations and their distillation, period digests,
 `memory.verify`, `memory.apply`, a proposal's decision, the undo of an automatic
 supersession through `memory.restore`, copies into another namespace
 (`memory.copy_to`, `memory.cross_promote`), `namespace.restore` from a snapshot, entity
-backfills, and typed records (`memory.record.*`, which are not memory rows).
+backfills, typed records (`memory.record.*`) and saved chat messages
+(`conversation.save_message`), neither of which is a memory row.
 
 ```json
 {

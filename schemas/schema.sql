@@ -1272,7 +1272,8 @@ CREATE TABLE IF NOT EXISTS loom.conversation_embeddings
     `embed_failed_at` Nullable(DateTime),
     `ts` DateTime64(3, 'UTC') DEFAULT now64(3),
     `run_id` String DEFAULT '-',
-    `tombstoned_at` Nullable(DateTime) DEFAULT NULL
+    `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
+    `is_saved` Bool DEFAULT false
 )
 ENGINE = ReplacingMergeTree(ts)
 PARTITION BY toYYYYMM(ts)
@@ -1315,7 +1316,8 @@ CREATE TABLE IF NOT EXISTS loom.conversations
     `ts` DateTime64(3, 'UTC') DEFAULT now64(3),
     `run_id` String DEFAULT '-',
     `reasoning` String DEFAULT '',
-    `tombstoned_at` Nullable(DateTime) DEFAULT NULL
+    `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
+    `is_saved` Bool DEFAULT false
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
