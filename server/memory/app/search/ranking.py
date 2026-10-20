@@ -200,23 +200,9 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
         # and no score changes.
         ctx.actual_work.update(_record_rerank_trail(before, before, "external"))
         return
-    # The block sorts by rank_score: the pool's own scores, handed out in this order, make
-    # that sort keep it without changing the scores' spread. A chunk-parent lift can put a
-    # chunk above every fact (up to +0.40); handed to a fact the reranker promotes, it would
-    # leave the pool's scale, so the scores handed out are capped at the best plain one: a
-    # row neither lifted by its parent nor pinned (a pin sits just above the best other row,
-    # which may be such a chunk). The rows keep their own lifts for the block's bound, which
-    # also counts the digests; the slots keep the pins in place.
-    plain = [
-        o.rank_score
-        for o in ordered
-        if not o.score_components.get("chunk_parent_boost")
-        and not o.score_components.get("identifier_match")
-    ]
-    cap = max(plain) if plain and input.search_mode != "rrf" else None
-    handed = sorted(
-        (o.rank_score if cap is None else min(o.rank_score, cap) for o in ordered), reverse=True
-    )
+    # The block sorts by rank_score: the pool's own scores, handed out in this order, keep
+    # it, and every later stage (digest band, lift bound, retry merge) sees the same values.
+    handed = sorted((o.rank_score for o in ordered), reverse=True)
     for h, score in zip(ordered, handed, strict=True):
         h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
         h.score_components["rank_score"] = score

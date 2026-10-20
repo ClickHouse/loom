@@ -14,13 +14,8 @@ if TYPE_CHECKING:
 
 
 def gate_order(hits: list[Any]) -> list[Any]:
-    """The served rows in the order the confidence gates read them: as served, except that
-    the rows an external reranker moved go back to their fused positions (`rerank_from`,
-    stamped by `scoring._record_rerank_trail`). The gates measure how well the first stage
-    matched, and a reranker's pick may answer in vocabulary the query does not share: read
-    as rank 1, its cosine would abstain on the answer it serves. Only the reranker's own
-    effect is undone: a reranker that moved nothing changes nothing here, and a row the
-    similarity floor kept under it stays where the floor put it."""
+    """The served rows as the confidence gates read them: the rows an external reranker moved
+    back at their fused positions (`rerank_from`); rows under the similarity floor stay put."""
     comps = [getattr(h, "score_components", None) or {} for h in hits]
     slots = [i for i, c in enumerate(comps) if "rerank_from" in c and not c.get("below_floor")]
     if not any(comps[i].get("rerank_delta") for i in slots):

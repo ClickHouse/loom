@@ -395,38 +395,25 @@ async def test_an_identifier_match_keeps_the_head(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
-async def test_a_promoted_fact_never_inherits_a_boosted_chunks_score(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A chunk's parent boost can put it above 1.0; it is bounded before the scores are
-    handed out, so the fact the reranker puts first stays on the pool's scale."""
-    chunk, fact, other = _hit("chunk", 1.2), _hit("fact", 0.6), _hit("other", 0.5)
-    chunk.score_components["chunk_parent_boost"] = 0.4
-    order = ["other in s1", "fact in s1", "chunk in s1"]
-    ctx = _ctx([chunk, fact, other])
-    monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
-    await ranking._run_external_rerank(ctx)
-    assert [h.memory_key for h in ctx.all_hits] == ["other", "fact", "chunk"]
-    assert max(h.rank_score for h in ctx.all_hits) < 0.61
-
-
-@pytest.mark.asyncio
-async def test_a_pin_above_a_lifted_chunk_does_not_raise_the_cap(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A pin sits just above the best other row, which may be a parent-boosted chunk: the cap
-    on handed-out scores is the best plain row's, so a promoted fact stays on scale."""
+async def test_a_pin_stays_above_a_digest_after_a_rerank(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The handed-out scores are the pool's own, so a digest the block maps into the facts'
+    band lands where it would without a reranker: under the identifier match."""
     pinned, chunk = _hit("finding_pr116016", 1.2 + 1e-6), _hit("chunk", 1.2)
     fact, other = _hit("fact", 0.6), _hit("other", 0.5)
+    pinned.distance = 0.45  # cosine 0.55: the pin is what lifts it
     pinned.score_components["identifier_match"] = 1.0
-    chunk.score_components["chunk_parent_boost"] = 0.4
+    chunk.score_components.update({"chunk_parent_boost": 0.4, "rank_score_raw": 1.2})
+    digest = _hit("summary:s1", 0.5)
+    digest.source = "summary"
     ctx = _ctx([pinned, chunk, fact, other])
     monkeypatch.setattr(
         "server.memory.app.rerank.rerank", _reranker(["other in s1", "fact in s1", "chunk in s1"])
     )
     await ranking._run_external_rerank(ctx)
-    assert [h.memory_key for h in ctx.all_hits] == ["finding_pr116016", "other", "fact", "chunk"]
-    assert other.rank_score <= 0.6
+    block = assemble_context_block([*ctx.all_hits, digest], top_k=10, bound_component_lifts=True)
+    keys = [h.memory_key for h in block]
+    assert keys[0] == "finding_pr116016"
+    assert keys.index("other") < keys.index("fact") < keys.index("chunk")
 
 
 @pytest.mark.asyncio
