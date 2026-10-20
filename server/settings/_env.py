@@ -11,6 +11,8 @@ from collections.abc import Iterable
 
 from pydantic import AfterValidator, BeforeValidator
 
+from server.core.webhook_secrets import WEBHOOK_SECRET_PREFIX
+
 
 def decode_json_or_b64(raw: str, field: str) -> object:
     """Parse either raw JSON or base64-encoded JSON. base64 sidesteps shell
@@ -101,15 +103,16 @@ NON_SETTINGS_ENV = frozenset(
 
 def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
     """LOOM_* names in the environment or the dotenv file that match no
-    settings field and no known non-settings variable: a typo or a name this
-    build does not read, which `extra="ignore"` would drop silently. Names only."""
+    settings field, no known non-settings variable and no webhook secret: a typo or
+    a name this build does not read, which `extra="ignore"` would drop silently. Names only."""
     names = {k for k in os.environ if k.startswith("LOOM_")}
     if env_file and os.path.isfile(env_file):
         from dotenv import dotenv_values
 
         names |= {k for k in dotenv_values(env_file) if k.startswith("LOOM_")}
     known = {f"LOOM_{f.upper()}" for f in fields} | NON_SETTINGS_ENV
-    return sorted(names - known)
+    # Webhook signing secrets: a family of names, each one a registration names.
+    return sorted(n for n in names - known if not n.startswith(WEBHOOK_SECRET_PREFIX))
 
 
 # A field whose name matches is a secret: `repr(settings)` shows only its length

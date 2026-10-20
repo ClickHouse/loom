@@ -34,10 +34,6 @@ from server.core.webhook_secrets import webhook_secret_ref_ok
 
 log = logging.getLogger(__name__)
 
-# How long a receiver has to answer before the delivery counts as failed.
-# not a setting: with each worker's MAX_POSTS_PER_PASS, fills its pass deadline
-ACK_TIMEOUT_SECONDS = 10.0
-
 
 @functools.cache
 def _tls() -> ssl.SSLContext:
@@ -156,22 +152,23 @@ async def post(
     *,
     schemes: Collection[str] = ("http", "https"),
     private_hosts: Collection[str] = (),
+    ack_timeout_seconds: float,
 ) -> Delivery:
     """POST `body` to `url` with `headers`, on `transport` (None = the network).
 
-    One deadline, ACK_TIMEOUT_SECONDS, covers the whole delivery: the DNS lookup,
-    the connection and the response's status line. The body of the answer is
-    never read. A lookup cut by the deadline leaves its resolver thread to finish
-    on its own (Python cannot stop it); the delivery does not wait for it. Each
-    delivery has its own client: a pooled connection is keyed by the pinned
-    address, so a second registration on the same address would reuse a TLS
-    session verified for another name."""
+    One deadline, `ack_timeout_seconds` (each caller's own), covers the whole
+    delivery: the DNS lookup, the connection and the response's status line.
+    The body of the answer is never read. A lookup cut by the deadline leaves
+    its resolver thread to finish on its own (Python cannot stop it); the
+    delivery does not wait for it. Each delivery has its own client: a pooled
+    connection is keyed by the pinned address, so a second registration on the
+    same address would reuse a TLS session verified for another name."""
     try:
         host = urlsplit(url).hostname or ""
     except ValueError:
         host = ""
     try:
-        async with asyncio.timeout(ACK_TIMEOUT_SECONDS):
+        async with asyncio.timeout(ack_timeout_seconds):
             refusal, pinned, host_header, server_name = await pinned_target(
                 url, schemes=schemes, private_hosts=private_hosts
             )
@@ -189,14 +186,14 @@ async def post(
                     pinned,
                     content=body,
                     headers={**headers, **extra_headers},
-                    timeout=ACK_TIMEOUT_SECONDS,
+                    timeout=ack_timeout_seconds,
                     follow_redirects=False,
                     extensions=extensions,
                 ) as response,
             ):
                 return Delivery(int(response.status_code))
     except TimeoutError:
-        log.info("webhook: no answer from %s within %ss", host, ACK_TIMEOUT_SECONDS)
+        log.info("webhook: no answer from %s within %ss", host, ack_timeout_seconds)
         return Delivery(0, "no answer: timeout")
     except httpx.HTTPError as e:
         log.info("webhook: no answer from %s: %s", host, type(e).__name__)

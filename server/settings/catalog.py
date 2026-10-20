@@ -3099,6 +3099,64 @@ class MemorySearchSettings(BaseModel):
     memory_search_spelling_lookup_timeout_s: Annotated[float, LIVE] = Field(default=0.4, gt=0)
 
 
+# ===== MemoryWebhook ==========================================================
+
+
+class MemoryWebhookSettings(BaseModel):
+    """Memory webhooks: their delivery worker and the URLs they may reach."""
+
+    # Deliver the signed memory-change events of loom.memory_webhook_outbox to
+    # each namespace's registered webhooks (the memory_webhook_deliver worker).
+    memory_webhook_deliver_enabled: bool = True
+    # Seconds between memory webhook delivery passes while events are going out.
+    memory_webhook_deliver_interval_seconds: int = Field(default=5, ge=1)
+    # Seconds between memory webhook delivery passes that found nothing due.
+    memory_webhook_deliver_idle_interval_seconds: int = Field(default=30, ge=1)
+    # Seconds a delivery pass may run before the supervisor abandons it; it stops starting
+    # POSTs 20 s before, which leaves the reads before them and the insert after them their
+    # time. At least 30.
+    memory_webhook_deliver_max_pass_seconds: float = Field(default=120.0, ge=30)
+    # Due events one delivery pass POSTs at most; the rest go next pass.
+    memory_webhook_max_posts_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Events of one memory webhook a delivery pass POSTs at most, so every webhook with
+    # work gets its turn.
+    memory_webhook_posts_per_webhook: Annotated[int, LIVE] = Field(default=10, ge=1)
+    # Memory webhook POSTs one delivery pass has in flight at once (one per webhook at most).
+    memory_webhook_deliver_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
+    # Seconds a memory webhook receiver has to answer a POST (the name lookup, the connection
+    # and the status line) before it counts as failed; also the registration's lookup limit.
+    memory_webhook_ack_timeout_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
+    # Seconds a failed memory webhook event waits at most before its next try: the retries
+    # back off 5 s, 30 s, 2 min, 10 min and 30 min, then wait this long, never longer.
+    memory_webhook_max_backoff_seconds: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+    # POSTs per event before it is marked dead (listed by webhook.deliveries). With the
+    # default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline marks
+    # any event still undelivered dead whatever this is, so a lower value only gives up sooner.
+    memory_webhook_max_attempts: Annotated[int, LIVE] = Field(default=60, ge=1)
+    # Failed POSTs in a row after which the delivery worker passes a memory webhook over
+    # for a cooldown (kept per process; a 2xx resets it).
+    memory_webhook_failures_before_cooldown: Annotated[int, LIVE] = Field(default=5, ge=1)
+    # Seconds of a memory webhook's first cooldown; each one after it doubles, up to
+    # memory_webhook_max_cooldown_seconds.
+    memory_webhook_cooldown_seconds: Annotated[int, LIVE] = Field(default=60, ge=1)
+    # Seconds a memory webhook's cooldown grows to at most.
+    memory_webhook_max_cooldown_seconds: Annotated[int, LIVE] = Field(default=3600, ge=1)
+    # Seconds between each process's reads of the registered webhooks; a webhook
+    # registered or removed on another process applies to writes here within it.
+    memory_webhook_refresh_seconds: float = Field(default=10.0, gt=0)
+    # True lets a memory webhook use plain http (a local receiver in development);
+    # false: https only.
+    memory_webhook_allow_http: bool = False
+    # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
+    # reach although they resolve to a private, loopback or link-local address; "" = none.
+    memory_webhook_private_hosts: str = ""
+
+    def memory_webhook_private_host_set(self) -> frozenset[str]:
+        return frozenset(
+            h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()
+        )
+
+
 # ===== Model ==================================================================
 
 # `local:<alias>` embedding models: alias -> (Hugging Face id, the width it emits).
@@ -4665,47 +4723,6 @@ class TrackerSettings(BaseModel):
     tracker_freshness_budget_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
     # Seconds the test-signal candidate read may take; it never holds up the answer.
     tracker_test_candidates_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
-
-
-# ===== Memory webhooks ========================================================
-
-
-class WebhookSettings(BaseModel):
-    """Memory webhooks: their delivery worker and the URLs they may reach."""
-
-    # Deliver the signed memory-change events of loom.memory_webhook_outbox to
-    # each namespace's registered webhooks (the memory_webhook_deliver worker).
-    memory_webhook_deliver_enabled: bool = True
-    # Seconds between memory webhook delivery passes while events are going out.
-    memory_webhook_deliver_interval_seconds: int = Field(default=5, ge=1)
-    # Seconds between memory webhook delivery passes that found nothing due.
-    memory_webhook_deliver_idle_interval_seconds: int = Field(default=30, ge=1)
-    # POSTs per event before it is marked dead (listed by webhook.deliveries). Retries back
-    # off to one an hour, so 60 span about 2.3 days. The 2.75-day deadline marks any event
-    # still undelivered dead whatever this is, so a lower value only gives up sooner.
-    memory_webhook_max_attempts: Annotated[int, LIVE] = Field(default=60, ge=1)
-    # Failed POSTs in a row after which the delivery worker passes a memory webhook over
-    # for a cooldown (kept per process; a 2xx resets it).
-    memory_webhook_failures_before_cooldown: Annotated[int, LIVE] = Field(default=5, ge=1)
-    # Seconds of a memory webhook's first cooldown; each one after it doubles, up to
-    # memory_webhook_max_cooldown_seconds.
-    memory_webhook_cooldown_seconds: Annotated[int, LIVE] = Field(default=60, ge=1)
-    # Seconds a memory webhook's cooldown grows to at most.
-    memory_webhook_max_cooldown_seconds: Annotated[int, LIVE] = Field(default=3600, ge=1)
-    # Seconds between each process's reads of the registered webhooks; a webhook
-    # registered or removed on another process applies to writes here within it.
-    memory_webhook_refresh_seconds: float = Field(default=10.0, gt=0)
-    # True lets a memory webhook use plain http (a local receiver in development);
-    # false: https only.
-    memory_webhook_allow_http: bool = False
-    # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
-    # reach although they resolve to a private, loopback or link-local address; "" = none.
-    memory_webhook_private_hosts: str = ""
-
-    def memory_webhook_private_host_set(self) -> frozenset[str]:
-        return frozenset(
-            h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()
-        )
 
 
 # ===== Operation latency budgets ===============================================

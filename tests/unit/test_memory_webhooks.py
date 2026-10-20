@@ -32,7 +32,12 @@ from server.core.ch import sequential_reads_var
 from server.core.errors import ValidationError
 from server.memory.api.models_webhook import WebhookRegisterInput
 from server.memory.app import webhooks as app
-from server.memory.domain.webhook_events import BODY_FIELDS, EVENT_TYPES, event_body
+from server.memory.domain.webhook_events import (
+    BODY_FIELDS,
+    EVENT_TYPES,
+    backoff_seconds,
+    event_body,
+)
 from server.memory.store import MemoryRow
 from server.memory.store import webhooks as store
 from server.memory.workers import webhook_deliver as worker
@@ -969,7 +974,7 @@ async def test_turns_go_round_every_webhook_and_a_slow_one_holds_one_slot(
     env = {REF: SECRET, "LOOM_WEBHOOK_SECRET_GLOBEX__CHAT": SECRET}
     result = await _pass(handler, env=env)
     assert fake.last("fresh-1")["status"] == "delivered"
-    assert result.delivered == worker.MAX_POSTS_PER_PASS
+    assert result.delivered == settings.memory_webhook_max_posts_per_pass
     assert in_flight["most"] == 1
 
 
@@ -1018,6 +1023,11 @@ async def test_a_receiver_that_is_always_down_has_every_event_dead_before_the_tt
     assert when < NOW + timedelta(days=store.KEEP_DAYS)
     reasons = {fake.last(o["event_id"])["last_error"] for o in fake.outbox}
     assert "not delivered in time" in reasons
+
+
+def test_the_backoff_levels_off_at_its_ceiling() -> None:
+    assert [backoff_seconds(n, 3600) for n in (0, 1, 5, 6, 60)] == [5, 5, 1800, 3600, 3600]
+    assert [backoff_seconds(n, 60) for n in (1, 3, 9)] == [5, 60, 60]
 
 
 @pytest.mark.asyncio
@@ -1119,7 +1129,7 @@ async def test_a_pass_cancelled_from_outside_still_records_what_it_sent(
 async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
     fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "POST_BUDGET_SECONDS", 0.3)
+    monkeypatch.setattr(worker, "_post_budget_seconds", lambda: 0.3)
     fake.hooks = [
         _registration("wh-fast", namespace="fast"),
         _registration("wh-slow", namespace="slow"),
@@ -1146,7 +1156,7 @@ async def test_a_pass_cut_at_its_budget_still_records_what_it_sent(
 async def test_an_erasure_while_an_event_waits_for_a_slot_stops_its_post(
     fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(worker, "CONCURRENCY", 1)
+    monkeypatch.setattr(settings, "memory_webhook_deliver_concurrency", 1)
     fake.hooks = [_registration("wh-a", namespace="a"), _registration("wh-b", namespace="b")]
     fake.outbox = [
         _outbox_row(webhook_id="wh-a", namespace="a", event_id="a-1"),
@@ -1242,11 +1252,7 @@ async def _local_server(respond: Any) -> tuple[asyncio.Server, str]:
 
 
 @pytest.mark.asyncio
-async def test_a_receiver_that_drips_its_answer_is_cut_at_the_deadline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(signed, "ACK_TIMEOUT_SECONDS", 0.5)
-
+async def test_a_receiver_that_drips_its_answer_is_cut_at_the_deadline() -> None:
     async def drip(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.read(1024)
         for byte in b"HTTP/1.1 200 OK\r\n":
@@ -1258,7 +1264,9 @@ async def test_a_receiver_that_drips_its_answer_is_cut_at_the_deadline(
     server, url = await _local_server(drip)
     async with server:
         started = asyncio.get_running_loop().time()
-        out = await signed.post(None, url, {}, b"{}", private_hosts={"127.0.0.1"})
+        out = await signed.post(
+            None, url, {}, b"{}", private_hosts={"127.0.0.1"}, ack_timeout_seconds=0.5
+        )
         assert asyncio.get_running_loop().time() - started < 2
     assert out == signed.Delivery(0, "no answer: timeout")
 
@@ -1278,21 +1286,23 @@ async def test_an_endless_answer_body_is_never_read() -> None:
     server, url = await _local_server(endless)
     async with server:
         out = await asyncio.wait_for(
-            signed.post(None, url, {}, b"{}", private_hosts={"127.0.0.1"}), timeout=5
+            signed.post(
+                None, url, {}, b"{}", private_hosts={"127.0.0.1"}, ack_timeout_seconds=10.0
+            ),
+            timeout=5,
         )
     assert out.ok and out.status == 200
 
 
 @pytest.mark.asyncio
 async def test_a_slow_name_lookup_is_inside_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(signed, "ACK_TIMEOUT_SECONDS", 0.2)
-
     async def slow(host: str, **_: Any) -> tuple[str, str]:
         await asyncio.sleep(5)
         return "", PUBLIC
 
     monkeypatch.setattr(signed, "vet_host", slow)
-    out = await asyncio.wait_for(signed.post(None, "https://hook.example/x", {}, b"{}"), 2)
+    post = signed.post(None, "https://hook.example/x", {}, b"{}", ack_timeout_seconds=0.2)
+    out = await asyncio.wait_for(post, 2)
     assert out.error == "no answer: timeout"
 
 
@@ -1455,10 +1465,15 @@ def test_the_worker_is_registered_on_its_settings() -> None:
         "memory_webhook_cooldown_seconds",
         "memory_webhook_max_cooldown_seconds",
         "memory_webhook_refresh_seconds",
+        "memory_webhook_max_posts_per_pass",
+        "memory_webhook_posts_per_webhook",
+        "memory_webhook_deliver_concurrency",
+        "memory_webhook_ack_timeout_seconds",
+        "memory_webhook_max_backoff_seconds",
     ],
 )
 def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str) -> None:
-    from server.settings.catalog import WebhookSettings
+    from server.settings.catalog import MemoryWebhookSettings
 
     with pytest.raises(PydanticValidationError):
-        WebhookSettings(**{field: 0})
+        MemoryWebhookSettings(**{field: 0})

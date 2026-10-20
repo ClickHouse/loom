@@ -308,7 +308,7 @@ async def handle_webhook_register(input: WebhookRegisterInput) -> WebhookRegiste
             "the name of an environment variable this org owns"
         )
     try:
-        async with asyncio.timeout(signed.ACK_TIMEOUT_SECONDS):
+        async with asyncio.timeout(settings.memory_webhook_ack_timeout_seconds):
             refusal = await url_refusal(input.url)
     except TimeoutError:
         refusal = "the host did not resolve in time"

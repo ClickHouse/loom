@@ -2,7 +2,9 @@
 
 `NON_SETTINGS_ENV` (server/settings/_env.py) is the list of LOOM_* variables that are
 not settings fields, which the unknown-variable warning skips; the reference page
-documents each. A name added to one and not the other fails here.
+documents each. A name added to one and not the other fails here. The webhook
+signing secrets are a family the warning skips by prefix; the page documents it
+as one row.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from server.core.webhook_secrets import WEBHOOK_SECRET_PREFIX
 from server.settings import Settings
 from server.settings._env import NON_SETTINGS_ENV
 
@@ -36,3 +39,8 @@ def test_every_documented_variable_is_known() -> None:
     assert not unknown, (
         f"{PAGE.name} names variables that are neither settings nor in NON_SETTINGS_ENV: {unknown}"
     )
+
+
+def test_the_webhook_secret_family_is_documented() -> None:
+    row = f"| `{WEBHOOK_SECRET_PREFIX}<ORG>__<NAME>`"
+    assert any(line.startswith(row) for line in PAGE.read_text(encoding="utf-8").splitlines())

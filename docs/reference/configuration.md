@@ -1258,6 +1258,29 @@ memory.search: legs, fusion, ranking and gates.
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SEARCH_SPELLING_LOOKUP_TIMEOUT_S` | `float` | `0.4` | live | Seconds the query-spelling lookup may take; it reads every row of the namespace it may read (100-300 ms server-side for 40k rows) and overlaps the embed on a cache miss. |
 
+## MemoryWebhook
+
+Memory webhooks: their delivery worker and the URLs they may reach.
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` |  | Deliver the signed memory-change events of loom.memory_webhook_outbox to each namespace's registered webhooks (the memory_webhook_deliver worker). |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between memory webhook delivery passes while events are going out. |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` |  | Seconds between memory webhook delivery passes that found nothing due. |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a delivery pass may run before the supervisor abandons it; it stops starting POSTs 20 s before, which leaves the reads before them and the insert after them their time. At least 30. |
+| `LOOM_MEMORY_WEBHOOK_MAX_POSTS_PER_PASS` | `int` | `40` | live | Due events one delivery pass POSTs at most; the rest go next pass. |
+| `LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK` | `int` | `10` | live | Events of one memory webhook a delivery pass POSTs at most, so every webhook with work gets its turn. |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_CONCURRENCY` | `int` | `4` | live | Memory webhook POSTs one delivery pass has in flight at once (one per webhook at most). |
+| `LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` | `float` | `10.0` | live | Seconds a memory webhook receiver has to answer a POST (the name lookup, the connection and the status line) before it counts as failed; also the registration's lookup limit. |
+| `LOOM_MEMORY_WEBHOOK_MAX_BACKOFF_SECONDS` | `float` | `3600.0` | live | Seconds a failed memory webhook event waits at most before its next try: the retries back off 5 s, 30 s, 2 min, 10 min and 30 min, then wait this long, never longer. |
+| `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` | `int` | `60` | live | POSTs per event before it is marked dead (listed by webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner. |
+| `LOOM_MEMORY_WEBHOOK_FAILURES_BEFORE_COOLDOWN` | `int` | `5` | live | Failed POSTs in a row after which the delivery worker passes a memory webhook over for a cooldown (kept per process; a 2xx resets it). |
+| `LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS` | `int` | `60` | live | Seconds of a memory webhook's first cooldown; each one after it doubles, up to memory_webhook_max_cooldown_seconds. |
+| `LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS` | `int` | `3600` | live | Seconds a memory webhook's cooldown grows to at most. |
+| `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the registered webhooks; a webhook registered or removed on another process applies to writes here within it. |
+| `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` | `bool` | `False` |  | True lets a memory webhook use plain http (a local receiver in development); false: https only. |
+| `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |
+
 ## Model
 
 Models: which model does each job.
@@ -1763,20 +1786,3 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_ERROR_NAMES_TTL_S` | `float` | `21600.0` | live | Seconds a namespace's error-name to code map is cached. |
 | `LOOM_TRACKER_FRESHNESS_BUDGET_S` | `float` | `2.0` | live | Seconds the item-count read behind a tracker source's freshness may take. |
 | `LOOM_TRACKER_TEST_CANDIDATES_TIMEOUT_S` | `float` | `3.0` | live | Seconds the test-signal candidate read may take; it never holds up the answer. |
-
-## Webhook
-
-Memory webhooks: their delivery worker and the URLs they may reach.
-
-| Variable | Type | Default | Live | Meaning |
-| --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` |  | Deliver the signed memory-change events of loom.memory_webhook_outbox to each namespace's registered webhooks (the memory_webhook_deliver worker). |
-| `LOOM_MEMORY_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between memory webhook delivery passes while events are going out. |
-| `LOOM_MEMORY_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` |  | Seconds between memory webhook delivery passes that found nothing due. |
-| `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` | `int` | `60` | live | POSTs per event before it is marked dead (listed by webhook.deliveries). Retries back off to one an hour, so 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner. |
-| `LOOM_MEMORY_WEBHOOK_FAILURES_BEFORE_COOLDOWN` | `int` | `5` | live | Failed POSTs in a row after which the delivery worker passes a memory webhook over for a cooldown (kept per process; a 2xx resets it). |
-| `LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS` | `int` | `60` | live | Seconds of a memory webhook's first cooldown; each one after it doubles, up to memory_webhook_max_cooldown_seconds. |
-| `LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS` | `int` | `3600` | live | Seconds a memory webhook's cooldown grows to at most. |
-| `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the registered webhooks; a webhook registered or removed on another process applies to writes here within it. |
-| `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` | `bool` | `False` |  | True lets a memory webhook use plain http (a local receiver in development); false: https only. |
-| `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |

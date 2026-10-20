@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -40,13 +39,14 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
+ACK_TIMEOUT_SECONDS = 10.0  # not a setting: with MAX_POSTS_PER_PASS, fills the pass deadline
 # Notices POSTed per pass. The pass runs under a 120 s deadline and each POST
-# ends within the 10 s ack deadline, DNS lookup included, so ten fit; inboxes
+# ends within ACK_TIMEOUT_SECONDS, DNS lookup included, so ten fit; inboxes
 # past the cap go first next pass (they are ordered by their cursor's
 # next_try_at, and a delivered inbox's moves to now).
-MAX_POSTS_PER_PASS = 10  # not a setting: with the ack deadline, fills the pass deadline
+MAX_POSTS_PER_PASS = 10  # not a setting: with ACK_TIMEOUT_SECONDS, fills the pass deadline
 # The pass deadline: every POST waiting its whole ack window, plus room for the reads.
-MAX_PASS_SECONDS = 120.0  # not a setting: the ack deadline x MAX_POSTS_PER_PASS + headroom
+MAX_PASS_SECONDS = 120.0  # not a setting: ACK_TIMEOUT_SECONDS x MAX_POSTS_PER_PASS + headroom
 # The wait before the next try after the n-th consecutive failure: the next
 # pass, then 5 s, 5 min, and 30 min for every failure after that.
 BACKOFF_SECONDS: tuple[int, ...] = (0, 5, 300, 1800)
@@ -128,7 +128,7 @@ def _cursor_row(
     }
 
 
-def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | None:
+def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str] | None) -> bytes | None:
     ref = str(inbox_row.get("webhook_secret_ref") or "")
     key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
     # A row written before the org rule may name any variable: never read it.
@@ -154,7 +154,7 @@ async def _deliver_inbox(
     cursor: WebhookCursorRow | None,
     *,
     now: datetime,
-    env: Mapping[str, str],
+    env: Mapping[str, str] | None,
 ) -> str:
     """One inbox: ``"delivered"``, ``"failed"`` or ``"skipped"`` (nothing new,
     a retry not yet due, or no secret)."""
@@ -179,7 +179,13 @@ async def _deliver_inbox(
     headers = webhooks.signed_headers(
         secret, msg_id=msg_id, timestamp=int(time.time()), body=body, user_agent=USER_AGENT
     )
-    delivery = await webhooks.post(transport, str(inbox_row["webhook_url"]), headers, body)
+    delivery = await webhooks.post(
+        transport,
+        str(inbox_row["webhook_url"]),
+        headers,
+        body,
+        ack_timeout_seconds=ACK_TIMEOUT_SECONDS,
+    )
     if delivery.ok:
         await repo.insert_webhook_cursor(
             _cursor_row(
@@ -231,7 +237,6 @@ async def deliver_once(
     """One pass over every inbox with a webhook_url. `transport` replaces the
     network (tests); each delivery gets a fresh client on it."""
     now = now or datetime.now(UTC)
-    env = os.environ if env is None else env
     inboxes = await repo.list_webhook_inboxes()
     if not inboxes:
         return DeliverResult()

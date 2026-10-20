@@ -37,6 +37,7 @@ from server.settings.catalog import (
     MemoryAskSettings,
     MemorySearchSettings,
     MemorySettings,
+    MemoryWebhookSettings,
     ModelSettings,
     NamespaceSettings,
     ObservabilitySettings,
@@ -46,7 +47,6 @@ from server.settings.catalog import (
     StorageSettings,
     TaskSettings,
     TrackerSettings,
-    WebhookSettings,
     is_builtin_cohere,
 )
 
@@ -80,7 +80,7 @@ class Settings(
     NamespaceSettings,
     ErasureSettings,
     StorageSettings,
-    WebhookSettings,
+    MemoryWebhookSettings,
     BaseSettings,
 ):
     # hide_input_in_errors: a load error names the field and the rule it broke,

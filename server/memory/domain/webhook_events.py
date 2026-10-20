@@ -42,14 +42,18 @@ BODY_FIELDS: tuple[str, ...] = (
 )
 
 # The wait before the next try after the n-th failed attempt: 5 s, 30 s, 2 min,
-# 10 min, 30 min, then an hour for every failure after that.
-# not a setting: the schedule the attempts cap and the delivery deadline are sized against
-BACKOFF_SECONDS: tuple[int, ...] = (5, 30, 120, 600, 1800, 3600)
+# 10 min, 30 min, then the ceiling (memory_webhook_max_backoff_seconds) for every
+# failure after that.
+# not a setting: the retry curve's shape; the ceiling it levels off at is a setting
+BACKOFF_SECONDS: tuple[int, ...] = (5, 30, 120, 600, 1800)
 
 
-def backoff_seconds(attempts: int) -> int:
-    """Seconds until the next try after `attempts` failed attempts (at least 1)."""
-    return BACKOFF_SECONDS[min(max(attempts, 1), len(BACKOFF_SECONDS)) - 1]
+def backoff_seconds(attempts: int, ceiling: float) -> float:
+    """Seconds until the next try after `attempts` failed attempts (at least 1):
+    the schedule's step, never more than `ceiling`, and `ceiling` once past it."""
+    n = max(attempts, 1)
+    step = BACKOFF_SECONDS[n - 1] if n <= len(BACKOFF_SECONDS) else ceiling
+    return min(step, ceiling)
 
 
 def _iso(ts: datetime) -> str:

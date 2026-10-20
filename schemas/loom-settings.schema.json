@@ -4278,6 +4278,12 @@
           "type": "integer",
           "description": "A searchable memory.set value serializing longer than this many chars gets one advisory line (the write still lands): only the first EXCERPT_LIMIT chars are embedded, and past the embedder's 8,191-token cap nothing is. 30,000 chars ≈ 8k tokens. 0 disables."
         },
+        "memory_webhook_ack_timeout_seconds": {
+          "default": 10.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a memory webhook receiver has to answer a POST (the name lookup, the connection and the status line) before it counts as failed; also the registration's lookup limit."
+        },
         "memory_webhook_allow_http": {
           "default": false,
           "type": "boolean",
@@ -4288,6 +4294,12 @@
           "minimum": 1,
           "type": "integer",
           "description": "Seconds of a memory webhook's first cooldown; each one after it doubles, up to memory_webhook_max_cooldown_seconds."
+        },
+        "memory_webhook_deliver_concurrency": {
+          "default": 4,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Memory webhook POSTs one delivery pass has in flight at once (one per webhook at most)."
         },
         "memory_webhook_deliver_enabled": {
           "default": true,
@@ -4306,6 +4318,12 @@
           "type": "integer",
           "description": "Seconds between memory webhook delivery passes while events are going out."
         },
+        "memory_webhook_deliver_max_pass_seconds": {
+          "default": 120.0,
+          "minimum": 30,
+          "type": "number",
+          "description": "Seconds a delivery pass may run before the supervisor abandons it; it stops starting POSTs 20 s before, which leaves the reads before them and the insert after them their time. At least 30."
+        },
         "memory_webhook_failures_before_cooldown": {
           "default": 5,
           "minimum": 1,
@@ -4316,13 +4334,31 @@
           "default": 60,
           "minimum": 1,
           "type": "integer",
-          "description": "POSTs per event before it is marked dead (listed by webhook.deliveries). Retries back off to one an hour, so 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner."
+          "description": "POSTs per event before it is marked dead (listed by webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner."
+        },
+        "memory_webhook_max_backoff_seconds": {
+          "default": 3600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a failed memory webhook event waits at most before its next try: the retries back off 5 s, 30 s, 2 min, 10 min and 30 min, then wait this long, never longer."
         },
         "memory_webhook_max_cooldown_seconds": {
           "default": 3600,
           "minimum": 1,
           "type": "integer",
           "description": "Seconds a memory webhook's cooldown grows to at most."
+        },
+        "memory_webhook_max_posts_per_pass": {
+          "default": 40,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Due events one delivery pass POSTs at most; the rest go next pass."
+        },
+        "memory_webhook_posts_per_webhook": {
+          "default": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Events of one memory webhook a delivery pass POSTs at most, so every webhook with work gets its turn."
         },
         "memory_webhook_private_hosts": {
           "default": "",

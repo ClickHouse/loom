@@ -338,9 +338,11 @@ it checked and follows no redirect.
 
 **Delivery.** The write leaves one row per event and webhook in
 `loom.memory_webhook_outbox` and makes no network call; the `memory_webhook_deliver`
-worker sends it. Any 2xx within 10 s acknowledges it; the 10 s cover the name lookup, the
-connection and the status line, and the answer's body is never read. Anything else is
-retried after 5 s, 30 s, 2 min, 10 min, 30 min and then hourly, until
+worker sends it. Any 2xx within 10 s (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS`)
+acknowledges it; the 10 s cover the name lookup, the connection and the status line, and
+the answer's body is never read. Anything else is retried after 5 s, 30 s, 2 min, 10 min,
+30 min and then hourly (`LOOM_MEMORY_WEBHOOK_MAX_BACKOFF_SECONDS`, which also caps the
+earlier waits), until
 `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts (60 by default, about 2.3 days of retries)
 mark it `dead`, and any event a receiver has not taken 2.75 days after it happened is
 marked `dead` with "not delivered in time". `actor` is the principal that
@@ -348,19 +350,26 @@ made the change, or `worker:<name>` for a change a background pass made (the exp
 sweep, the `delete_version` check).
 
 - **Fairness.** A pass takes events in turns: every webhook's oldest due event, then
-  every webhook's second, at most 10 of one webhook and 40 in all. It sends 4 at a time
-  and one at a time per webhook, so a slow receiver holds at most one of the 4. A webhook
+  every webhook's second, at most 10 of one webhook
+  (`LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK`) and 40 in all
+  (`LOOM_MEMORY_WEBHOOK_MAX_POSTS_PER_PASS`). It sends 4 at a time
+  (`LOOM_MEMORY_WEBHOOK_DELIVER_CONCURRENCY`) and one at a time per webhook, so a slow
+  receiver holds at most one of the 4. A webhook
   whose last 5 POSTs failed (`LOOM_MEMORY_WEBHOOK_FAILURES_BEFORE_COOLDOWN`) is passed
   over for a cooldown that starts at a minute (`LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS`) and
   doubles up to an hour (`LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS`), checked before each
   POST; a 2xx ends it. The cooldown is kept per server process, so a restart or a new
   worker leader starts it afresh. Every
   webhook with work therefore gets its first POST of a pass before any webhook gets a
-  second, while fewer than 40 webhooks have work; a pass stops starting POSTs after
-  100 s, and what it did not send goes next pass. One webhook gets at most 10 POSTs per
+  second, while fewer than 40 webhooks have work. A pass stops starting POSTs once every
+  POST could have waited its whole ack deadline (40 / 4 × 10 s = 100 s), and at the latest
+  20 s before its deadline (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); what it
+  did not send goes next pass. One webhook gets at most 10 POSTs per
   pass, one after another, so a receiver that answers in 1 s takes about 10 events per
   pass. With fast receivers the ceiling is about 40 events per pass, a pass every 5 s
-  while there is work: some 8 events a second per deployment.
+  while there is work: some 8 events a second per deployment with the defaults. A
+  deployment that needs more raises the per-pass and concurrency settings, and the pass
+  deadline with them.
 - **Waiting and dead events.** While the variable `secret_ref` names is unset or not
   usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
   counts as no attempt; after 2.5 days they are marked `dead` with "no usable secret".

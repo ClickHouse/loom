@@ -8,13 +8,14 @@ The write paths leave one loom.memory_webhook_outbox row per (event, webhook)
   receiver did not take within `DELIVERY_DEADLINE`;
 - takes the due events of the webhooks it can send to (registered, with a
   usable secret, not cooling down) in turns: every webhook's oldest first, then
-  every webhook's second, at most `PER_WEBHOOK` of each and
-  `MAX_POSTS_PER_PASS` in all;
+  every webhook's second, at most `memory_webhook_posts_per_webhook` of each
+  and `memory_webhook_max_posts_per_pass` in all;
 - leases them (an attempt row whose `next_attempt_at` is the lease's end, so an
-  overlapping copy of the pass passes over them), then POSTs them, `CONCURRENCY`
-  at a time and one at a time per webhook, so a slow receiver holds one slot.
-  Before each POST it checks the webhook's cooldown and the key's history.
-  Each body is signed as the task webhooks' are (`server.core.webhooks`);
+  overlapping copy of the pass passes over them), then POSTs them,
+  `memory_webhook_deliver_concurrency` at a time and one at a time per
+  webhook, so a slow receiver holds one slot. Before each POST it checks the
+  webhook's cooldown and the key's history. Each body is signed as the task
+  webhooks' are (`server.core.webhooks`);
 - appends every outcome to loom.memory_webhook_attempts in one insert:
   `delivered` on a 2xx, else `pending` with backoff until
   `memory_webhook_max_attempts` marks it `dead`.
@@ -52,27 +53,36 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# POSTs per pass, CONCURRENCY at a time, each ended by the ack deadline: together they
-# fill POST_BUDGET_SECONDS, inside MAX_PASS_SECONDS, and the pass records what it sent;
-# the rest go next pass.
-MAX_POSTS_PER_PASS = 40  # not a setting: with CONCURRENCY and the ack deadline, fills the budget
-CONCURRENCY = 4  # not a setting: with MAX_POSTS_PER_PASS and the ack deadline, fills the budget
-# not a setting: derived from the three values it is made of
-POST_BUDGET_SECONDS = MAX_POSTS_PER_PASS / CONCURRENCY * signed.ACK_TIMEOUT_SECONDS
-# The pass deadline: the POST budget plus room for the reads before and the insert after.
-MAX_PASS_SECONDS = POST_BUDGET_SECONDS + 20  # not a setting: derived from POST_BUDGET_SECONDS
-# Events of one webhook per pass, so every webhook with work gets its turn.
-PER_WEBHOOK = 10  # not a setting: a webhook's share of MAX_POSTS_PER_PASS
-# How long a leased event is passed over by another copy of the pass: past the
-# pass deadline, so a crashed pass's events come back.
-LEASE_SECONDS = MAX_PASS_SECONDS + 60  # not a setting: derived from MAX_PASS_SECONDS
-# Events still waiting this long are marked dead before the outbox's 3-day TTL drops
-# them, so webhook.deliveries says why: for a usable secret, and for a receiver to take
-# them (a receiver that is down, or one whose backlog never reached its turn).
+# Seconds of the pass deadline (memory_webhook_deliver_max_pass_seconds) kept for the
+# reads before the POSTs and the one insert after them.
+# not a setting: a few statements' time, and the max-pass setting's floor is above it
+READS_AND_INSERT_SECONDS = 20.0
+# Events still waiting this long are marked dead before the outbox's TTL drops them, so
+# webhook.deliveries says why: for a usable secret, and for a receiver to take them (a
+# receiver that is down, or one whose backlog never reached its turn).
 # memory_webhook_max_attempts lets an operator give up sooner.
-SECRET_DEADLINE = timedelta(days=2, hours=12)  # not a setting: ends before store.KEEP_DAYS
-DELIVERY_DEADLINE = timedelta(days=2, hours=18)  # not a setting: ends before store.KEEP_DAYS
+SECRET_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=12)
+DELIVERY_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=6)
 USER_AGENT = "loom-memory-webhook/1"
+
+
+def _post_budget_seconds() -> float:
+    """How long a pass may spend POSTing: every POST waiting its whole ack deadline,
+    memory_webhook_deliver_concurrency at a time, cut short of the pass deadline so the
+    pass records what it sent; the rest go next pass."""
+    every_post_waits = (
+        settings.memory_webhook_max_posts_per_pass
+        / settings.memory_webhook_deliver_concurrency
+        * settings.memory_webhook_ack_timeout_seconds
+    )
+    max_pass = settings.memory_webhook_deliver_max_pass_seconds
+    return min(every_post_waits, max_pass - READS_AND_INSERT_SECONDS)
+
+
+def _lease_seconds() -> float:
+    """How long a leased event is passed over by another copy of the pass: past the
+    pass deadline, so a crashed pass's events come back."""
+    return settings.memory_webhook_deliver_max_pass_seconds + 60
 
 
 @dataclass
@@ -155,7 +165,8 @@ def _outcome(row: Mapping[str, Any], delivery: signed.Delivery) -> dict[str, Any
         status = "dead"
     else:
         status = "pending"
-        next_at = naive_utc_now() + timedelta(seconds=backoff_seconds(attempts))
+        wait = backoff_seconds(attempts, settings.memory_webhook_max_backoff_seconds)
+        next_at = naive_utc_now() + timedelta(seconds=wait)
     return _attempt_row(
         str(row["event_id"]),
         status=status,
@@ -188,6 +199,7 @@ async def _post(
             body,
             schemes=url_schemes(),
             private_hosts=settings.memory_webhook_private_host_set(),
+            ack_timeout_seconds=settings.memory_webhook_ack_timeout_seconds,
         )
     except Exception as e:  # noqa: BLE001 — one event's bad URL must not stop the rest
         return signed.Delivery(0, type(e).__name__)
@@ -238,11 +250,12 @@ async def _send(
     urls: Mapping[store.Hook, str],
     secrets: Mapping[store.Hook, bytes],
 ) -> tuple[list[dict[str, Any]], int]:
-    """POST the leased `due` events: CONCURRENCY at a time, one at a time per
-    webhook, within POST_BUDGET_SECONDS. Returns the attempt rows of the events
-    that finished (recorded even when the budget or an error cut the pass) and
-    the number of POSTs that failed and will be retried."""
-    slots = asyncio.Semaphore(CONCURRENCY)
+    """POST the leased `due` events: memory_webhook_deliver_concurrency at a time,
+    one at a time per webhook, within `_post_budget_seconds()`. Returns the
+    attempt rows of the events that finished (recorded even when the budget or
+    an error cut the pass) and the number of POSTs that failed and will be
+    retried."""
+    slots = asyncio.Semaphore(settings.memory_webhook_deliver_concurrency)
     finished: list[dict[str, Any]] = []
     failed = 0
 
@@ -256,6 +269,7 @@ async def _send(
             except Exception as e:  # noqa: BLE001 — one event's check must not stop the pass
                 # It keeps its lease and goes again once the lease ends.
                 log.warning("memory_webhook_deliver: %s not checked: %s", row["event_id"], e)
+                pass_context.note_failure(e, "history check")
                 return
             if skipped is not None:
                 finished.append(skipped)
@@ -278,7 +292,7 @@ async def _send(
     try:
         # A task group: an error in one webhook's turn cancels the others' before
         # the pass returns, so no POST outlives the pass.
-        async with asyncio.timeout(POST_BUDGET_SECONDS), asyncio.TaskGroup() as group:
+        async with asyncio.timeout(_post_budget_seconds()), asyncio.TaskGroup() as group:
             for rows in by_hook.values():
                 group.create_task(in_turn(rows))
     except TimeoutError:
@@ -335,12 +349,16 @@ async def deliver_once(
         version=next_version(),
     )
     due = await store.due_events(
-        now, since=since, hooks=sendable, per_webhook=PER_WEBHOOK, limit=MAX_POSTS_PER_PASS
+        now,
+        since=since,
+        hooks=sendable,
+        per_webhook=settings.memory_webhook_posts_per_webhook,
+        limit=settings.memory_webhook_max_posts_per_pass,
     )
     waiting = len(live) - len(sendable)
     if not due:
         return DeliverResult(waiting=waiting)
-    lease_end = naive_utc_now() + timedelta(seconds=LEASE_SECONDS)
+    lease_end = naive_utc_now() + timedelta(seconds=_lease_seconds())
     await store.insert_attempts(
         [
             # A lease keeps the last attempt's status and error for webhook.deliveries.
