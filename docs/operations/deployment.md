@@ -204,7 +204,7 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
 - `.env` in the working directory is read by default. `LOOM_ENV_FILE` names another
   file; an empty value reads none. `.env.example` is the commented template.
 - Settings that are not secrets can also go in a YAML settings file, the path
-  `LOOM_SETTINGS_FILE` names (`loom.example.yaml` is the template,
+  `LOOM_SETTINGS_FILE` names (`loom.example.yaml`, generated, lists every setting at its default,
   `schemas/loom-settings.schema.json` its schema). The environment and `.env` win over
   it. A secret, a key given twice, an unsupported `version` or a value of the wrong
   type or outside its bounds (also one the environment overrides) stops the server

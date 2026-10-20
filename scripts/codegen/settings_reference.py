@@ -53,7 +53,7 @@ outside its bounds (also one the environment or the dotenv file overrides) stops
 server at startup; a name no setting has is logged and ignored, since builds N-1 and N
 share the file during a rolling upgrade. `schemas/loom-settings.schema.json` is the
 file's JSON Schema (`python scripts/codegen/settings_schema.py`), and
-`loom.example.yaml` a template.
+`loom.example.yaml` the template with every setting at its default.
 
 A setting marked **live** also takes a deployment-wide override while Loom runs, which
 wins over all of these: `loom settings set <field> <value>` or

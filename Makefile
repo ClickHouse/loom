@@ -289,6 +289,7 @@ lint:
 	$(PYTHON) scripts/codegen/agent_plugin_sync.py --check
 	$(PYTHON) scripts/codegen/settings_reference.py --check
 	$(PYTHON) scripts/codegen/settings_schema.py --check
+	$(PYTHON) scripts/codegen/settings_example.py --check
 	$(PYTHON) scripts/codegen/docs_reference.py --check
 	$(PYTHON) scripts/codegen/op_reach_census.py --check
 	$(BIOME) lint frontend/src

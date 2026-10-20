@@ -6,11 +6,12 @@ ignored (N-1 and N share the file in a rollout)."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from scripts.codegen import settings_schema
+from scripts.codegen import settings_example, settings_schema
 from server.settings import Settings
 from server.settings._env import is_secret_field
 from server.settings._file import SettingsFileError
@@ -159,6 +160,33 @@ def test_a_name_no_setting_has_is_logged_and_the_rest_apply(
 def test_the_example_file_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOOM_SETTINGS_FILE", str(ROOT / "loom.example.yaml"))
     Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_the_example_file_is_current_and_names_every_setting_but_the_secrets_once() -> None:
+    assert settings_example.TARGET.is_current(settings_example.render()), (
+        f"stale: run {settings_example.COMMAND}"
+    )
+    text = (ROOT / "loom.example.yaml").read_text()
+    want = {n for n in Settings.model_fields if not is_secret_field(n)}
+    for name in want:
+        assert text.count(f"\n  # {name}: ") == 1, name
+    assert not any(f"\n  # {n}: " in text for n in Settings.model_fields if is_secret_field(n))
+
+
+def test_uncommenting_every_line_of_the_example_loads_every_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A user may uncomment any line and change only what they mean to."""
+    text = (ROOT / "loom.example.yaml").read_text()
+    names = [n for n in Settings.model_fields if not is_secret_field(n)]
+    for name in names:
+        text = text.replace(f"\n  # {name}: ", f"\n  {name}: ", 1)
+    for var in [k for k in os.environ if k.startswith("LOOM_")]:
+        monkeypatch.delenv(var)
+    defaults = Settings(_env_file=None)  # type: ignore[call-arg]
+    loaded = _load(monkeypatch, tmp_path, text)
+    assert loaded.loaded_from("settings_file") == frozenset(names)
+    assert {n: getattr(loaded, n) for n in names} == {n: getattr(defaults, n) for n in names}
 
 
 def test_the_schema_is_current() -> None:
