@@ -77,8 +77,7 @@ def test_cors_star_is_refused() -> None:
     ]
 
 
-# Through attach_browser_middleware, as server.main builds it; auth off, so the gate
-# checks the preflight's Origin too.
+# Auth off, so the gate checks the preflight's Origin too.
 @pytest.mark.usefixtures("auth_off")
 def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "cors_origins", "https://app.example")
@@ -89,14 +88,6 @@ def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.Monke
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == "https://app.example"
     assert_security_headers(r)
-
-
-def test_server_main_wraps_the_web_gate_in_the_header_middleware() -> None:
-    from server.main import _cache_and_security_headers, _web_gate, app
-
-    # user_middleware[0] is the outermost layer.
-    dispatches = [m.kwargs.get("dispatch") for m in app.user_middleware]
-    assert dispatches.index(_cache_and_security_headers) < dispatches.index(_web_gate)
 
 
 # ---- Host allowlist while auth is off ----
@@ -238,6 +229,7 @@ def test_auth_on_refuses_a_cross_site_post_that_carries_a_bearer(path: str) -> N
     r = client.post(path, content=b'{"org":"o","namespace":"n","agent":"a"}', headers=headers)
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
+    assert_security_headers(r)
 
 
 @pytest.mark.usefixtures("auth_on")
