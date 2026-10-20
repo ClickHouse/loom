@@ -43,7 +43,9 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 3
-      # Over every attempt together: four attempts of two 20-minute statements.
+      # Over every attempt together. An attempt is two statements of up to 20
+      # minutes each, more when the client retries one; a slow day may get
+      # fewer than four attempts.
       activeDeadlineSeconds: 10800
       # Exit 2 is a refusal (a day not ended, a missing or short key): a retry
       # would refuse the same way.

@@ -168,7 +168,6 @@ class ObservabilitySettings(BaseModel):
     # shares no state with retrieval). 0.0 = off: it costs money per search;
     # a few percent (e.g. 0.05) suits production.
     retrieval_judge_sample_rate: float = 0.0
-    # Key of `loom export-analytics`: org, namespace and agent leave as a keyed
-    # hash of the name. A random string of at least 32 characters, kept secret
-    # and stable (a new key changes every hash); shorter or empty refuses the export.
+    # Secret that `loom export-analytics` hashes org, namespace and agent names
+    # under: a random string of 32 or more characters; a new key changes every hash.
     analytics_export_name_key: str = ""

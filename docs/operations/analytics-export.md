@@ -29,7 +29,7 @@ repeated run can be retried as it is. To export a day again, delete its objects 
 | Entity       | One row per                                                                                                         | Columns                                                                                                                                                                                                                                        |
 | ------------ | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `usage`      | `org`, `namespace`, `agent`, `operation`, `kind`, `transport`, `traffic_class` of the day, from `loom.agent_events` | `day`, `ops`, `errors`, `server_errors`, `slow` (over its latency budget), `input_tokens`, `output_tokens`, `embedding_tokens`, `llm_calls`, `cost_usd`, `bytes_written`, `latency_p50_ms` / `p95` / `p99`, `users`, `sessions`, `snapshot_at` |
-| `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_at`, `live_memories`, `last_memory_at`, `day`, `snapshot_at`                                                                                                                            |
+| `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_on`, `live_memories`, `last_memory_on`, `day`, `snapshot_at`                                                                                                                            |
 
 `kind` in `usage` is `request` for a request and `worker` for a worker pass. Every
 `/v1/me/*` route is one `operation`, `me`: the ledger names those rows after the request
@@ -37,8 +37,10 @@ path, which can carry any string a caller sent. `users` and `sessions` are disti
 within the row that leave out the `-` of a call that named none; a sum over rows counts a
 user once per row. The `namespaces` file is the state at `snapshot_at`, whatever `--day`
 says: a backfill of an old day gets that day's usage and today's namespaces. An
-unregistered namespace has `registered = false` and NULL registry columns. Rows are sorted
-by the hashed names, never by the names themselves.
+unregistered namespace has `registered = false` and NULL registry columns. `created_on` and
+`last_memory_on` are days, not times: an exact time beside a hashed personal namespace
+could be matched to the person who signed up or wrote then. Rows are sorted by the hashed
+names, never by the names themselves.
 
 ## What never leaves Loom
 
@@ -67,7 +69,8 @@ the lowercase hex of the reference SipHash-2-4-128 of the name under a secret ke
   WITH SHA256('<the key>') AS d
   SELECT lower(hex(sipHash128ReferenceKeyed(
       (reinterpretAsUInt64(substring(d, 1, 8)), reinterpretAsUInt64(substring(d, 9, 8))),
-      tenant_id)))
+      tenant_id))) AS hashed_tenant_id
+  FROM tenants
   ```
 
 - A hash is a pseudonym, not an anonymous value: whoever holds the key can recompute it
@@ -115,7 +118,8 @@ The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob o
 name, where `<fullname>` is the chart's full name: the release name when it contains
 `loom`, else `<release>-loom`, cut to keep the name within 52 characters (`kubectl get sa`
 shows it). The job runs at 00:30 UTC (`schedule`), one run at a time, with up to 3 retries
-and a three-hour deadline over all attempts; each statement may run 20 minutes. A refusal
+and a three-hour deadline over all attempts; each statement may run 20 minutes, and the
+ClickHouse client may retry one, so a slow day can get fewer than four attempts. A refusal
 (exit 2) fails the Job at once instead of retrying. The web and workers pods keep their own
 ServiceAccount, so the role that may assume the writer role is bound to the export's pod
 only. With IRSA, that role's trust names

@@ -14,7 +14,13 @@ from botocore.stub import Stubber
 
 from server.cli import analytics_export as cli
 from server.insights.app.analytics_export import export_day, name_hash_key, object_key, s3_put
-from server.insights.store.analytics_export import ENTITIES, NAME_COLUMNS, ROW_ORDER, _hashed
+from server.insights.store.analytics_export import (
+    ENTITIES,
+    NAME_COLUMNS,
+    ROW_ORDER,
+    _hashed,
+    name_hash_sql,
+)
 from server.settings import settings
 
 
@@ -50,7 +56,7 @@ async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
         assert sql == f"{_hashed(entity)} FORMAT Parquet"
         assert params == {"day": day, "k0": name_key[0], "k1": name_key[1]}
         for column in NAME_COLUMNS[entity]:
-            assert f"{{k1:UInt64}}), {column}))) AS {column}" in sql
+            assert f"{name_hash_sql(column)} AS {column}" in sql
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
@@ -85,6 +91,46 @@ def test_upload_is_conditional_and_names_the_bucket_owner() -> None:
     with stub:
         assert s3_put(lambda: s3, "b", expected_owner="123456789012")("k", b"data") is True
     stub.assert_no_pending_responses()
+
+
+class _Session:
+    """boto3.Session: records each session's arguments and the STS call."""
+
+    assumed: list[dict[str, Any]] = []
+
+    def __init__(self, **kw: Any) -> None:
+        self.kw = kw
+
+    def client(self, service: str) -> Any:
+        if service == "sts":
+            return self
+        return (service, self.kw)
+
+    def assume_role(self, **kw: Any) -> dict[str, Any]:
+        _Session.assumed.append(kw)
+        creds = {"AccessKeyId": "ak", "SecretAccessKey": "sk", "SessionToken": "st"}
+        return {"Credentials": creds}
+
+
+def test_the_s3_client_writes_under_the_assumed_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.insights.app.analytics_export import s3_client
+
+    monkeypatch.setattr(boto3, "Session", _Session)
+    monkeypatch.setattr(_Session, "assumed", [])
+    service, kw = s3_client(role_arn="arn:aws:iam::123456789012:role/w", region="us-east-2")
+    assert _Session.assumed == [
+        {"RoleArn": "arn:aws:iam::123456789012:role/w", "RoleSessionName": "loom-analytics-export"}
+    ]
+    assert (service, kw) == (
+        "s3",
+        {
+            "aws_access_key_id": "ak",
+            "aws_secret_access_key": "sk",
+            "aws_session_token": "st",
+            "region_name": "us-east-2",
+        },
+    )
+    assert s3_client() == ("s3", {"region_name": None}) and len(_Session.assumed) == 1
 
 
 def test_each_upload_gets_a_fresh_client() -> None:

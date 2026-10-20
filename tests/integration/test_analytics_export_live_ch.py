@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -48,8 +50,8 @@ COLUMNS = {
         "latency_p95_ms", "latency_p99_ms", "users", "sessions", "snapshot_at",
     ],
     "namespaces": [
-        "org", "namespace", "registered", "kind", "visibility", "active", "created_at",
-        "live_memories", "last_memory_at", "day", "snapshot_at",
+        "org", "namespace", "registered", "kind", "visibility", "active", "created_on",
+        "live_memories", "last_memory_on", "day", "snapshot_at",
     ],
 }  # fmt: skip
 
@@ -183,11 +185,17 @@ async def test_the_file_is_in_hash_order_never_name_order(ch: CHClient, entity: 
             for n in names
         ],
     )
-    order = [
-        tuple(str(r[c]) for c in ROW_ORDER[entity].split(", "))
-        for r in await _file_rows(ch, entity)
-    ]
+    columns = ROW_ORDER[entity].split(", ")
+    order = [tuple(str(r[c]) for c in columns) for r in await _file_rows(ch, entity)]
     assert order == sorted(order)
+    # A profile that resolves names to columns before aliases sorts the same.
+    for prefer_column in (0, 1):
+        rows = await ch.query_all(
+            f"{_hashed(entity)} SETTINGS prefer_column_name_to_alias = {prefer_column}",
+            {"day": DAY, "k0": KEY[0], "k1": KEY[1]},
+        )
+        order = [tuple(str(r[c]) for c in columns) for r in rows]
+        assert order == sorted(order), prefer_column
 
 
 _M = (1 << 64) - 1
@@ -241,15 +249,18 @@ def test_the_reference_implementation_matches_the_published_vectors() -> None:
     assert _siphash_2_4_128(key, bytes(range(15))).hex() == "5493e99933b0a8117e08ec0f97cfc3d9"
 
 
-async def test_the_operator_guides_key_words_are_the_exports(ch: CHClient) -> None:
-    # The SQL in docs/operations/analytics-export.md that a warehouse runs.
+async def test_the_operator_guides_join_sql_computes_the_exported_hash(ch: CHClient) -> None:
+    # The ```sql block of the operator guide, run as a warehouse would run it.
+    guide = (Path(__file__).parents[2] / "docs/operations/analytics-export.md").read_text()
+    (sql,) = re.findall(r"```sql\n(.*?)```", guide, re.S)
     secret = "s" * 32
-    row = await ch.query_one(
-        "WITH SHA256({secret:String}) AS d SELECT reinterpretAsUInt64(substring(d, 1, 8)) AS k0, "
-        "reinterpretAsUInt64(substring(d, 9, 8)) AS k1",
-        {"secret": secret},
+    sql = sql.replace("'<the key>'", "{secret:String}").replace(
+        "FROM tenants", "FROM (SELECT 'tenant-1' AS tenant_id)"
     )
-    assert (row["k0"], row["k1"]) == name_hash_key(secret)
+    row = await ch.query_one(sql, {"secret": secret})
+    k0, k1 = name_hash_key(secret)
+    want = await ch.query_one(f"SELECT {name_hash_sql("'tenant-1'")} AS h", {"k0": k0, "k1": k1})
+    assert row["hashed_tenant_id"] == want["h"]
 
 
 @pytest.mark.parametrize("name", ["", "ns", "agent-alice-laptop", "x" * 8, "tenant-" * 9])
@@ -282,7 +293,7 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
 ) -> None:
     org = unique_org("analytics")
     old, new = datetime(2026, 1, 1), datetime(2026, 1, 2)
-    reg = {"org": org, "owner_email": "x@example.com"}
+    reg = {"org": org, "owner_email": "x@example.com", "created_at": new}
     await ch.insert(
         "loom.namespaces",
         [
@@ -327,10 +338,11 @@ def _assert_namespaces(got: dict[str, dict[str, Any]]) -> None:
         "knowledge",
         0,
     )
-    assert got["kb"]["last_memory_at"] is None
+    assert got["kb"]["last_memory_on"] is None
+    assert got["kb"]["created_on"] == date(2026, 1, 2)
     assert (got["mem"]["live_memories"], got["mem"]["kind"]) == (2, "memory")
     loose = got["loose"]
-    assert (loose["registered"], loose["kind"], loose["created_at"]) == (False, None, None)
+    assert (loose["registered"], loose["kind"], loose["created_on"]) == (False, None, None)
     assert loose["live_memories"] == 1
 
 

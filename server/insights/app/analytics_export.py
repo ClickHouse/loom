@@ -38,9 +38,9 @@ class Exported:
 
 
 def object_key(prefix: str, entity: str, day: date) -> str:
-    stamp = day.isoformat()
-    path = f"{entity}/{day:%Y}/{day:%m}/{day:%d}/{entity}-{stamp}.parquet"
-    return f"{prefix.strip('/')}/{path}" if prefix.strip("/") else path
+    path = f"{entity}/{day:%Y/%m/%d}/{entity}-{day}.parquet"
+    prefix = prefix.strip("/")
+    return f"{prefix}/{path}" if prefix else path
 
 
 def name_hash_key(secret: str) -> tuple[int, int]:
@@ -82,9 +82,9 @@ def s3_client(*, role_arn: str = "", region: str = "") -> Any:
     return session.client("s3")
 
 
-def s3_put(client: Callable[[], Any], bucket: str, *, expected_owner: str = "") -> Put:
+def s3_put(new_client: Callable[[], Any], bucket: str, *, expected_owner: str = "") -> Put:
     """A conditional upload to `bucket`: an existing key is kept, not replaced.
-    Each upload gets a fresh `client()`, so an assumed role's credentials,
+    Each upload gets a fresh `new_client()`, so an assumed role's credentials,
     which last an hour, never expire between two long reads."""
     from botocore.exceptions import ClientError
 
@@ -92,7 +92,7 @@ def s3_put(client: Callable[[], Any], bucket: str, *, expected_owner: str = "") 
 
     def put(key: str, body: bytes) -> bool:
         try:
-            client().put_object(Bucket=bucket, Key=key, Body=body, IfNoneMatch="*", **extra)
+            new_client().put_object(Bucket=bucket, Key=key, Body=body, IfNoneMatch="*", **extra)
         except ClientError as e:
             if e.response.get("Error", {}).get("Code") == "PreconditionFailed":
                 return False

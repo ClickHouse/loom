@@ -53,7 +53,9 @@ GROUP BY org, namespace, agent, operation, kind, transport, traffic_class
 # One row per (org, namespace) that is registered or holds a live memory row:
 # the registry's description of it and its live memory count, as of
 # `snapshot_at` whatever {day:Date} is. An unregistered namespace has
-# `registered = false` and NULL registry columns. The `ifNull`s give the same
+# `registered = false` and NULL registry columns. Times leave as days: a
+# millisecond beside a hashed personal namespace could be matched to the
+# person who signed up or wrote then. The `ifNull`s give the same
 # answer whether the FULL JOIN fills a missing side with defaults or with NULLs
 # (`join_use_nulls`).
 NAMESPACES_SQL = """
@@ -63,9 +65,9 @@ SELECT
     if(registered, n.kind, NULL) AS kind,
     if(registered, toString(n.visibility), NULL) AS visibility,
     if(registered, n.active, NULL) AS active,
-    if(registered, n.created_at, NULL) AS created_at,
+    if(registered, toDate(n.created_at), NULL) AS created_on,
     ifNull(m.live_memories, 0) AS live_memories,
-    if(live_memories > 0, m.last_memory_at, NULL) AS last_memory_at,
+    if(live_memories > 0, toDate(m.last_memory_at), NULL) AS last_memory_on,
     {day:Date} AS day,
     now64(3, 'UTC') AS snapshot_at
 FROM (SELECT org, namespace, true AS registered, kind, visibility, active, created_at
@@ -94,15 +96,20 @@ ROW_ORDER = {
 
 def name_hash_sql(expr: str) -> str:
     """The lowercase hex of `expr`'s SipHash-2-4-128 under the key {k0:UInt64},
-    {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces."""
-    return f"lower(hex(sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), {expr})))"
+    {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces.
+    A plain String: a `LowCardinality` hash would ship its dictionary, built in
+    the order of the names, beside the rows."""
+    sip = f"sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), {expr})"
+    return f"CAST(lower(hex({sip})) AS String)"
 
 
 def _hashed(entity: str) -> str:
     """`entity`'s statement with each name column replaced by its hash, sorted
-    by the hashes (`ORDER BY` reads the `REPLACE` aliases, not the names)."""
+    by the hashes. The sort is outside the subquery that hashes, so its names
+    can only mean the hashes, whatever `prefer_column_name_to_alias` says."""
     replace = ", ".join(f"{name_hash_sql(c)} AS {c}" for c in NAME_COLUMNS[entity])
-    return f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]}) ORDER BY {ROW_ORDER[entity]}"
+    hashed = f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]})"
+    return f"SELECT * FROM ({hashed}) ORDER BY {ROW_ORDER[entity]}"
 
 
 async def parquet(entity: str, day: date, *, name_key: tuple[int, int], ch: CHClient) -> bytes:
