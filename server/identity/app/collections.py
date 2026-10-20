@@ -4,6 +4,9 @@ they keep)."""
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from typing import Any
+
 from server.auth import sharing
 from server.auth.authz import check_authorized
 from server.auth.context import current_auth
@@ -147,18 +150,25 @@ async def handle_collection_move(input: CollectionMoveInput) -> CollectionMoveOu
             return CollectionMoveOutput(namespace=namespace, parent=parent, moved=False)
         if parent:
             check_placement(await sharing.load_tree(org), namespace, parent)
-        await collections_repo.write(
-            collections_repo.collection_row(
-                org,
-                namespace,
-                parent=parent,
-                owner=current["owner"],
-                created_at=current["created_at"],
-                after=current["version"],
-            )
+        row = collections_repo.collection_row(
+            org,
+            namespace,
+            parent=parent,
+            owner=current["owner"],
+            created_at=current["created_at"],
+            after=current["version"],
         )
-    await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
+        await _announced(org, collections_repo.write(row))
     return CollectionMoveOutput(namespace=namespace, parent=parent, moved=True)
+
+
+async def _announced(org: str, write: Awaitable[None]) -> None:
+    """Run a tree write, then move the org's watermark, even when the write's
+    reply is lost: the row may have landed, and a retry finds nothing to do."""
+    try:
+        await write
+    finally:
+        await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
 
 
 async def handle_collection_list(input: CollectionListInput) -> CollectionListOutput:
@@ -215,26 +225,30 @@ async def retire(org: str, namespace: str) -> bool:
         current = await collections_repo.fetch(org, namespace)
         if current is None:
             return False
-        for child in await collections_repo.children(org, namespace):
-            await collections_repo.write(
-                collections_repo.collection_row(
-                    org,
-                    child["namespace"],
-                    owner=child["owner"],
-                    created_at=child["created_at"],
-                    after=child["version"],
-                )
-            )
+        await _announced(org, _retire_rows(org, namespace, current))
+    return True
+
+
+async def _retire_rows(org: str, namespace: str, current: dict[str, Any]) -> None:
+    """The children become top-level, then the collection's own row is deleted."""
+    for child in await collections_repo.children(org, namespace):
         await collections_repo.write(
             collections_repo.collection_row(
                 org,
-                namespace,
-                parent=current["parent"],
-                owner=current["owner"],
-                created_at=current["created_at"],
-                deleted=True,
-                after=current["version"],
+                child["namespace"],
+                owner=child["owner"],
+                created_at=child["created_at"],
+                after=child["version"],
             )
         )
-    await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
-    return True
+    await collections_repo.write(
+        collections_repo.collection_row(
+            org,
+            namespace,
+            parent=current["parent"],
+            owner=current["owner"],
+            created_at=current["created_at"],
+            deleted=True,
+            after=current["version"],
+        )
+    )

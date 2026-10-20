@@ -1528,3 +1528,49 @@ def test_a_token_with_ns_write_creates_no_collection_outside_it() -> None:
             asyncio.run(handle_collection_create(CollectionCreateInput(org=ORG, namespace="col-x")))
     finally:
         context.set_current_auth(None)
+
+
+@pytest.mark.parametrize("call", ["move", "retire"])
+def test_a_tree_write_whose_reply_is_lost_still_moves_the_watermark(
+    monkeypatch: pytest.MonkeyPatch, call: str
+) -> None:
+    """A detach or a retire narrows access: the row may have landed, and the
+    retry finds nothing to do, so the failed call moves the watermark."""
+    from contextlib import asynccontextmanager
+
+    from server.identity.api.models_collections import CollectionMoveInput
+    from server.identity.app import collections
+
+    row = {"namespace": "col-q3-docs", "parent": "col-q3", "owner": "user:alice"}
+    row.update({"created_at": 0, "version": 1})
+    moved: list[str] = []
+
+    @asynccontextmanager
+    async def _claim(*_a: Any) -> Any:
+        yield
+
+    async def _fetch(org: str, ns: str) -> dict[str, Any]:
+        return dict(row)
+
+    async def _children(org: str, ns: str) -> list[dict[str, Any]]:
+        return []
+
+    async def _lost(*_a: Any, **_k: Any) -> None:
+        raise TimeoutError("reply lost")
+
+    async def _changed(org: str, *_a: Any, kind: str = "", **_k: Any) -> None:
+        moved.append(kind)
+
+    monkeypatch.setattr(collections, "collections_change", _claim)
+    monkeypatch.setattr(collections, "resolve_subject", lambda: "user:alice")
+    monkeypatch.setattr(collections.collections_repo, "fetch", _fetch)
+    monkeypatch.setattr(collections.collections_repo, "children", _children)
+    monkeypatch.setattr(collections.collections_repo, "write", _lost)
+    monkeypatch.setattr(collections.grant_cache, "changed", _changed)
+    with pytest.raises(TimeoutError):
+        if call == "move":
+            detach = CollectionMoveInput(org=ORG, namespace="col-q3-docs", parent="")
+            asyncio.run(collections.handle_collection_move(detach))
+        else:
+            asyncio.run(collections.retire(ORG, "col-q3-docs"))
+    assert moved == [grant_cache.COLLECTIONS]
