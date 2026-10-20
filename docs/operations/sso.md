@@ -236,6 +236,11 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   (a ten-minute window can hold up to nine), and a token never replaced
   renews ever sooner in its last five minutes.
 
+  A burst of new agents is the sign of a leaked issuer key or a runaway control
+  plane, and a trust at its cap refuses every new agent: alert on
+  `loom.auth.agents_provisioned` and `loom.auth.trust_agents_used_ratio`
+  ([what to alert on](./monitoring.md#what-to-alert-on)).
+
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
   (a new key, fewer roles) revokes them too. A platform admin does the same
