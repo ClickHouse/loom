@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 def gate_order(hits: list[Any]) -> list[Any]:
     """The served rows as the confidence gates read them: the rows an external reranker moved
     back at their fused positions (`rerank_from`); rows under the similarity floor stay put."""
-    comps = [getattr(h, "score_components", None) or {} for h in hits]
+    comps = [h.score_components for h in hits]
     slots = [i for i, c in enumerate(comps) if "rerank_from" in c and not c.get("below_floor")]
     if not any(comps[i].get("rerank_delta") for i in slots):
         return hits

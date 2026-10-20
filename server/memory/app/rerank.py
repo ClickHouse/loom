@@ -2,8 +2,10 @@
 
 When a namespace sets `rerank_endpoint` (or a request sets `rerank`),
 `memory.search` POSTs its candidate pool to the endpoint of that NAME and
-orders results by the response. Names map to URLs only in the operator's
-LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies the URL, and a value that
+orders results by the response. Rows an exact identifier match pins keep their
+place and are not sent; with fewer than two rows left, no call is made. Names map
+to URLs only in the operator's LOOM_RERANK_ENDPOINTS_JSON; a caller never
+supplies the URL, and a value that
 is not a configured name (a URL included) reranks nothing. Loom owns the data
 plane, not the model.
 
@@ -32,7 +34,8 @@ Contract — response body:
 
 Order of `ranked` is the new order; entries omitted from `ranked` get
 appended after in their original order so a flaky reranker can't
-silently drop hits.
+silently drop hits. A key can name several candidates (one per session): each
+entry naming it takes that key's next candidate in input order.
 
 If the endpoint times out / errors / returns malformed JSON, the
 candidate pool is returned in its original order — fail-open. Rerank

@@ -192,17 +192,14 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     ordered = list(before)
     for i, c in zip(slots, reranked, strict=True):
         ordered[i] = hit_of[id(c)]
-    if all(a is b for a, b in zip(ordered, before, strict=True)):
-        # Kept order (a timeout, an unreadable reply, a ranking that agrees): nothing moves
-        # and no score changes.
-        ctx.actual_work.update(_record_rerank_trail(before, before, "external"))
-        return
-    # The pool's own scores, handed out in the new order, keep the block's sort; `before` is
-    # sorted best-first, so a pinned slot keeps its own score.
-    handed = sorted((o.rank_score for o in ordered), reverse=True)
-    for h, score in zip(ordered, handed, strict=True):
-        h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
-        h.score_components["rank_score"] = score
-        h.rank_score = score
-    ctx.all_hits = ordered
+    # A kept order (a timeout, an unreadable reply, a ranking that agrees) changes no score.
+    if any(a is not b for a, b in zip(ordered, before, strict=True)):
+        # The pool's own scores, handed out in the new order, keep the block's sort; `before`
+        # is sorted best-first, so a pinned slot keeps its own score.
+        handed = sorted((o.rank_score for o in ordered), reverse=True)
+        for h, score in zip(ordered, handed, strict=True):
+            h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
+            h.score_components["rank_score"] = score
+            h.rank_score = score
+        ctx.all_hits = ordered
     ctx.actual_work.update(_record_rerank_trail(before, ctx.all_hits, "external"))
