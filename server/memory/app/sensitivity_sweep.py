@@ -192,7 +192,7 @@ def scan_sql(
           AND (expires_at IS NULL OR expires_at > now())
           AND match(value, {{shape:String}})
           {scope}
-        ORDER BY {', '.join(_SORT_KEY)}
+        ORDER BY {", ".join(_SORT_KEY)}
         LIMIT {{lim:UInt32}}
         SETTINGS max_threads = 1  -- one stream in key order stops at the LIMIT; more read ahead
     """
@@ -215,10 +215,10 @@ async def scan(
     operator can apply the others first.
 
     Reads pages of `limit` rows in the table's sort key order until `limit` candidates are
-    found, the rows run out or `pages` pages are read (`None`: no page cap). A selected row the detector
-    leaves unlabelled, or one outside `only_shapes`, stays unlabelled and is selected again
-    on the next run; reading past it keeps a run of them from hiding a later row that is
-    high."""
+    found, the rows run out or `pages` pages are read (`None`: no page cap). A selected row
+    the detector leaves unlabelled, or one outside `only_shapes`, stays unlabelled and is
+    selected again on the next run; reading past it keeps a run of them from hiding a later
+    row that is high."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": limit}
     if org:

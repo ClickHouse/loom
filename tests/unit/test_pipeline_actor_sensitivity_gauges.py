@@ -402,7 +402,9 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     assert out["scanned"] == 3 and out["relabelled"] == 0
 
 
-@pytest.mark.parametrize("field", ["sensitivity_sweep_max_rows_per_pass", "sensitivity_sweep_pages_per_pass"])
+@pytest.mark.parametrize(
+    "field", ["sensitivity_sweep_max_rows_per_pass", "sensitivity_sweep_pages_per_pass"]
+)
 def test_a_sweep_pass_bound_below_one_is_refused(field: str) -> None:
     from pydantic import ValidationError
 
