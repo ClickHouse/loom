@@ -118,7 +118,13 @@ async def authorize(
 ) -> None:
     """The role + namespace gate for an authenticated call, fail closed, then
     what an admitted call leaves (restricted-access audit, first-write
-    registration). No-op without a principal (auth off)."""
+    registration). No-op without a principal (auth off), but for `@me`."""
+    from server.auth.sharing import PERSONAL_ALIAS
+
+    # HTTP maps `@me` to the end user's personal collection before this gate;
+    # anywhere else it names nothing, and is never a namespace of its own.
+    if target.named_namespace == PERSONAL_ALIAS:
+        raise PermissionError(f"{PERSONAL_ALIAS!r} names a gateway end user's personal collection")
     if auth is None:
         _note_admitted(target)
         return

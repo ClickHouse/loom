@@ -150,8 +150,11 @@ not by subject, and a skip index on the subject prunes nothing at this granule s
 
 Every document carries who wrote it (`agent`, `user_id`, `actor`, `source_class`), for
 provenance and for erasure; access never reads these columns. A user erasure (`scope_type
-= user_id`) supersedes the documents and chunks that user wrote in any collection of the
-org, deletes their uploaded originals that no other writer's document shares, revokes
+= user_id`) supersedes the documents and chunks that user wrote in any namespace of the
+org (a gateway's end user, or a token minted with `--read-user-id`, stamps its `user_id`;
+a purge first supersedes the versions those writes replaced, so another writer's older
+version never reads as live again), deletes their uploaded originals that no other
+writer's document shares, revokes
 every grant naming `user:<id>`, removes them from every group, and retires their personal
 collection's directory row. Deleting a SCIM group revokes the grants that named it, so a
 group made later under the same id starts with none. Collections that hold other writers'

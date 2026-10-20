@@ -24,6 +24,7 @@ since superseded is never served so, whoever that write was for.
 from __future__ import annotations
 
 import asyncio
+import functools
 import itertools
 import logging
 import time
@@ -61,16 +62,22 @@ class GrantMap:
 
 
 _Key = tuple[str, str]
-# (when stored, monotonic; the org's mark when its read began; the grants)
-_Entry = tuple[float, int | None, GrantMap]
+# (when stored, monotonic; the mark when its read began; the value)
+_Entry = tuple[float, int | None, Any]
+# Each subject's grants, keyed (org, lowered subject).
 _entries: OrderedDict[_Key, _Entry] = OrderedDict()
-# The read in flight per key, and the org's mark when it began.
-_loading: dict[_Key, tuple[asyncio.Task[GrantMap], int | None]] = {}
-# Every read until it ends: an invalidation drops it from `_loading`, not from here.
-_running: set[asyncio.Task[GrantMap]] = set()
+# The org values the watermark tracks (`org_value`): the collection tree
+# (COLLECTIONS) and the group members (GROUPS), keyed (org, kind) as the marks are.
+_org_values: OrderedDict[_Key, _Entry] = OrderedDict()
+# The read in flight per key of each, and the mark when it began.
+_Loading = dict[_Key, tuple[asyncio.Task[Any], int | None]]
+_loading: _Loading = {}
+_org_loading: _Loading = {}
+# Every read until it ends: an invalidation drops it from its `_loading`, not from here.
+_running: set[asyncio.Task[Any]] = set()
 # Bumped by every invalidation of (org, kind), so a read that began before it
 # is not stored.
-_generation: defaultdict[tuple[str, str], int] = defaultdict(int)
+_generation: defaultdict[_Key, int] = defaultdict(int)
 
 
 async def grant_map(org: str, subject: str) -> GrantMap:
@@ -78,46 +85,18 @@ async def grant_map(org: str, subject: str) -> GrantMap:
     key: _Key = (org, subject.lower())
     writes = _writes(org, GRANTS)
     hit = _entries.get(key)
-    if (
-        hit is not None
-        and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds
-        and hit[1] == writes
-    ):
+    if hit is not None and _served(hit, writes):
         _entries.move_to_end(key)
-        return hit[2]
-    loading = _loading.get(key)
-    # A stale watermark (a negative mark) serves nothing cached, but still joins a
-    # read begun on one: never one begun on a mark a watermark move has since moved.
-    if loading is not None and (loading[1] == writes or (_unread(writes) and _unread(loading[1]))):
-        task = loading[0]
-    else:
-        # Only an entry the TTL aged may stand in for a failed read, not one a
-        # watermark move superseded; while the watermark is stale, one read at the
-        # last mark seen still may (no move since was seen). A task of its own, so a
-        # cancelled request does not fail the others.
-        current = hit if hit is not None and _may_stand_in(hit, (org, GRANTS), writes) else None
-        task = asyncio.ensure_future(_load(key, current, writes))
-        _loading[key] = (task, writes)
-        _running.add(task)
-        task.add_done_callback(lambda t: _loaded(key, t))
-    return await asyncio.shield(task)
-
-
-def _may_stand_in(hit: _Entry, mark: tuple[str, str], writes: int | None) -> bool:
-    """Whether a cached entry may answer for a failed re-read: it was read at
-    the current `mark`, or, while the watermark is stale, at the last one seen
-    (no move since was seen)."""
-    if hit[1] == writes:
-        return True
-    return _watching and _unread(writes) and hit[1] == _marks.get(mark, 0)
-
-
-# Per-org values the watermark tracks (`org_value`): its collection tree
-# (COLLECTIONS) and its group members (GROUPS). (org, kind) -> (when stored,
-# mark, value), keyed as the marks are.
-_org_values: OrderedDict[tuple[str, str], tuple[float, int | None, Any]] = OrderedDict()
-# The load in flight per (org, kind), and the mark when it began.
-_org_loading: dict[tuple[str, str], tuple[asyncio.Task[Any], int | None]] = {}
+        served: GrantMap = hit[2]
+        return served
+    # Only an entry the TTL aged may stand in for a failed read, not one a
+    # watermark move superseded; while the watermark is stale, one read at the
+    # last mark seen still may (no move since was seen).
+    current = hit if hit is not None and _may_stand_in(hit, (org, GRANTS), writes) else None
+    loaded: GrantMap = await _shared_load(
+        _loading, key, writes, lambda: _load(key, current, writes)
+    )
+    return loaded
 
 
 async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]]) -> T:
@@ -127,39 +106,71 @@ async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]])
     key = (org, kind)
     writes = _writes(org, kind)
     hit = _org_values.get(key)
-    if (
-        hit is not None
-        and hit[1] == writes
-        and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds
-    ):
+    if hit is not None and _served(hit, writes):
         _org_values.move_to_end(key)
-        return hit[2]  # type: ignore[no-any-return]
-    # Concurrent misses share one load, as grant maps do.
-    loading = _org_loading.get(key)
-    if loading is not None and (loading[1] == writes or (_unread(writes) and _unread(loading[1]))):
-        task = loading[0]
+        served: T = hit[2]
+        return served
+    loaded: T = await _shared_load(
+        _org_loading, key, writes, lambda: _load_org_value(key, load, writes)
+    )
+    return loaded
+
+
+def _served(hit: _Entry, writes: int | None) -> bool:
+    """Whether a cached entry answers: read at the current mark, within the TTL."""
+    return hit[1] == writes and time.monotonic() - hit[0] < settings.grant_cache_ttl_seconds
+
+
+async def _shared_load(
+    loading: _Loading, key: _Key, writes: int | None, start: Callable[[], Awaitable[Any]]
+) -> Any:
+    """One read per key at a time. A request joins the read in flight when it
+    began at the mark the request reads at; a stale watermark (a negative mark)
+    serves nothing cached but still joins a read begun on one, never one begun
+    on a mark a watermark move has since moved. Else it starts its own: a task
+    of its own, so a cancelled request does not fail the others."""
+    pending = loading.get(key)
+    if pending is not None and (pending[1] == writes or (_unread(writes) and _unread(pending[1]))):
+        task = pending[0]
     else:
-        task = asyncio.ensure_future(_load_org_value(key, load, writes))
-        _org_loading[key] = (task, writes)
-
-        def _done(t: asyncio.Task[Any]) -> None:
-            if _org_loading.get(key, (None, None))[0] is t:
-                del _org_loading[key]
-
-        task.add_done_callback(_done)
+        task = asyncio.ensure_future(start())
+        loading[key] = (task, writes)
+        _running.add(task)
+        task.add_done_callback(functools.partial(_loaded, loading, key))
     return await asyncio.shield(task)
 
 
+def _loaded(loading: _Loading, key: _Key, task: asyncio.Task[Any]) -> None:
+    _running.discard(task)
+    if loading.get(key, (None, None))[0] is task:
+        del loading[key]
+    if not task.cancelled():
+        task.exception()  # read here, so a failure nobody awaited is not logged as lost
+
+
+def _keep(entries: OrderedDict[_Key, _Entry], key: _Key, writes: int | None, value: Any) -> None:
+    entries[key] = (time.monotonic(), writes, value)
+    entries.move_to_end(key)
+    while len(entries) > _MAX_ENTRIES:
+        entries.popitem(last=False)
+
+
+def _may_stand_in(hit: _Entry, mark: _Key, writes: int | None) -> bool:
+    """Whether a cached entry may answer for a failed re-read: it was read at
+    the current `mark`, or, while the watermark is stale, at the last one seen
+    (no move since was seen)."""
+    if hit[1] == writes:
+        return True
+    return _watching and _unread(writes) and hit[1] == _marks.get(mark, 0)
+
+
 async def _load_org_value(
-    key: tuple[str, str], load: Callable[[str], Awaitable[Any]], writes: int | None
+    key: _Key, load: Callable[[str], Awaitable[Any]], writes: int | None
 ) -> Any:
     generation = _generation[key]
     value = await load(key[0])
     if _generation[key] == generation and not _unread(writes):
-        _org_values[key] = (time.monotonic(), writes, value)
-        _org_values.move_to_end(key)
-        while len(_org_values) > _MAX_ENTRIES:
-            _org_values.popitem(last=False)
+        _keep(_org_values, key, writes, value)
     return value
 
 
@@ -322,25 +333,14 @@ async def _load(key: _Key, hit: _Entry | None, writes: int | None) -> GrantMap:
             hit is not None
             and time.monotonic() - hit[0] < settings.jwt_revocation_max_stale_seconds
         ):
-            return hit[2]
+            stale: GrantMap = hit[2]
+            return stale
         raise BackendUnavailableError(
             "grants could not be read; retry shortly", operation="grant_map"
         ) from e
     if _generation[(org, GRANTS)] == generation:
-        _entries[key] = (time.monotonic(), writes, fresh)
-        _entries.move_to_end(key)
-        while len(_entries) > _MAX_ENTRIES:
-            _entries.popitem(last=False)
+        _keep(_entries, key, writes, fresh)
     return fresh
-
-
-def _loaded(key: _Key, task: asyncio.Task[GrantMap]) -> None:
-    _running.discard(task)
-    loading = _loading.get(key)
-    if loading is not None and loading[0] is task:
-        del _loading[key]
-    if not task.cancelled():
-        task.exception()  # read here, so a failure nobody awaited is not logged as lost
 
 
 async def _read(org: str, subject: str) -> GrantMap:

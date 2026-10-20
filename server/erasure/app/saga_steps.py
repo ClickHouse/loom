@@ -231,7 +231,8 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("summaries.tombstone", graph_steps.tombstone_summaries_by_user),
     ("records.tombstone", graph_steps.tombstone_records_by_user),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_user),
-    # The knowledge the user wrote, in any collection; chunks first, as for a namespace.
+    # The knowledge the user wrote, in any namespace of the org; chunks first, as for a
+    # namespace.
     ("chunks.supersede", memory_steps.supersede_chunks_by_user),
     ("documents.tombstone", _step_tombstone_documents_by_user),
     # The user as a principal (`user:<user_id>`): what a grant, a group or the

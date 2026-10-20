@@ -645,3 +645,19 @@ def test_mcp_refuses_a_gateway_token_as_not_allowed_not_as_invalid(
     response = Response()
     answer = mcp_auth._not_on_mcp(response, {"id": 7}, refused.value)
     assert response.status_code == 403 and answer["id"] == 7
+
+
+@pytest.mark.parametrize("auth", [None, "writer"])
+def test_the_gate_never_takes_me_as_a_namespace_name(auth: str | None) -> None:
+    """HTTP resolves `@me` first; a call that reaches the gate with it (MCP)
+    is refused, so nothing addresses or registers a namespace called `@me`."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    op = OPERATIONS_BY_NAME["knowledge.add"]
+    who = (
+        None if auth is None else _person(subject="a@x.io", namespaces=("*",), roles=(Role.WRITER,))
+    )
+    target = gates.authz_target(op, org=ORG, namespace="@me", auth=who)
+    with pytest.raises(PermissionError, match="personal collection"):
+        asyncio.run(gates.authorize(op, who, target, transport="mcp"))

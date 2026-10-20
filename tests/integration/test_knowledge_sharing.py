@@ -449,3 +449,79 @@ def test_a_deleted_group_takes_no_grant_and_keeps_none(gw: Gateway) -> None:
     gw.scim("POST", "Groups", {"externalId": "temps", "members": [{"value": "bob"}]})
     search = {"namespace": col, "query": "x"}
     assert gw.call("bob", "knowledge.search", search).status_code == 403, "inherits nothing"
+
+
+def _erase_user(base: str, admin: str, org: str, user_id: str, *, purge: bool = False) -> None:
+    r = httpx.post(
+        f"{base}/v1/erasure.request",
+        json={
+            "org": org,
+            "scope_type": "user_id",
+            "scope_value": user_id,
+            "requester": "ops@x.io",
+            "purge": purge,
+        },
+        headers={"Authorization": f"Bearer {admin}"},
+        timeout=180,
+    )
+    assert r.status_code == 200 and r.json()["status"] == "completed", r.text
+
+
+def _live_documents(ch_client: Any, org: str, namespace: str, uri: str) -> int:
+    return ch_client.query(
+        "SELECT count() FROM loom.documents FINAL WHERE org = {o:String} AND namespace = {n:String}"
+        " AND source_uri = {u:String} AND superseded_at IS NULL",
+        parameters={"o": org, "n": namespace, "u": uri},
+    ).result_rows[0][0]
+
+
+def test_a_users_purge_never_brings_back_the_version_they_replaced(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    col = _collection(gw, "alice", f"col-purge-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
+    _add(gw, "alice", col, f"alice's first draft {_nonce()}", uri="doc/plan")
+    gw.ok("bob", "knowledge.upsert", {"namespace": col, "source_uri": "doc/plan", "content": "b"})
+    admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
+    _erase_user(control_plane_url, admin, gw.org, "bob", purge=True)
+    # Bob's rewrite is gone; alice's draft it replaced does not read as live again.
+    assert _live_documents(ch_client, gw.org, col, "doc/plan") == 0
+
+
+def test_a_users_erasure_deletes_the_originals_no_one_else_shares(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    import base64
+    import hashlib
+
+    col = _collection(gw, "alice", f"col-files-{uuid.uuid4().hex[:6]}")
+    gw.ok("alice", "grants.create", {"namespace": col, "subject": "user:bob", "role": "writer"})
+    own, shared = f"bob's own {_nonce()}".encode(), f"both {_nonce()}".encode()
+    for user, uri, data in (
+        ("bob", "f/own", own),
+        ("bob", "f/b", shared),
+        ("alice", "f/a", shared),
+    ):
+        gw.ok(
+            user,
+            "knowledge.add",
+            {
+                "namespace": col,
+                "source_uri": uri,
+                "content": data.decode(),
+                "original_bytes_b64": base64.b64encode(data).decode(),
+                "original_filename": "f.txt",
+                "blob_content_type": "text/plain",
+            },
+        )
+    admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
+    _erase_user(control_plane_url, admin, gw.org, "bob")
+
+    def _stored(data: bytes) -> int:
+        return ch_client.query(
+            "SELECT count() FROM loom.document_blobs FINAL WHERE org = {o:String}"
+            " AND namespace = {n:String} AND sha256 = {s:String}",
+            parameters={"o": gw.org, "n": col, "s": hashlib.sha256(data).hexdigest()},
+        ).result_rows[0][0]
+
+    assert (_stored(own), _stored(shared)) == (0, 1), "bob's own file goes; the shared one stays"

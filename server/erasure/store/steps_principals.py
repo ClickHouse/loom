@@ -21,16 +21,26 @@ _NEW_VERSION = "greatest(version + 1, toUInt64(toUnixTimestamp64Nano(now64(9))))
 async def _rewrite(
     table: str, where: str, replace: str, params: dict[str, str], ch: _CHClient
 ) -> int:
-    """Rewrite the live rows of `table` matching `where` with `replace`;
-    returns how many there were."""
-    row = await ch.query_one(f"SELECT count() AS n FROM {table} FINAL WHERE {where}", params=params)
-    n = int((row or {}).get("n") or 0)
-    if n:
-        await ch.execute(
-            f"INSERT INTO {table} SELECT * REPLACE ({replace}) "
-            f"FROM (SELECT * FROM {table} FINAL WHERE {where})",
-            params=params,
-        )
+    """Rewrite the live rows of `table` matching `where` with `replace`, which
+    makes them stop matching; returns how many there were. A rewrite whose
+    rows still match afterwards did not land: the step fails, and the saga
+    runs it again."""
+    from server.core.ch import own_write_reads
+
+    count = f"SELECT count() AS n FROM {table} FINAL WHERE {where}"
+    with own_write_reads():
+        n = int(((await ch.query_one(count, params=params)) or {}).get("n") or 0)
+    if not n:
+        return 0
+    await ch.execute(
+        f"INSERT INTO {table} SELECT * REPLACE ({replace}) "
+        f"FROM (SELECT * FROM {table} FINAL WHERE {where})",
+        params=params,
+    )
+    with own_write_reads():
+        left = int(((await ch.query_one(count, params=params)) or {}).get("n") or 0)
+    if left:
+        raise RuntimeError(f"{table}: {left} of {n} rows still match after their rewrite")
     return n
 
 

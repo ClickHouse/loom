@@ -754,6 +754,16 @@ async def tombstone_documents_by_namespace(
     )
 
 
+# Another writer's live versions of a document whose newest version is the user's:
+# what deleting the user's rows would otherwise bring back.
+_REPLACED_BY_USER = (
+    "org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL"
+    " AND (namespace, source_uri) IN ("
+    " SELECT namespace, source_uri FROM loom.documents FINAL"
+    " WHERE org = {org:String} AND user_id = {uid:String})"
+)
+
+
 async def tombstone_documents_by_user(
     org: str,
     user_id: str,
@@ -761,8 +771,18 @@ async def tombstone_documents_by_user(
     ch: _CHClient | None = None,
 ) -> int:
     """Supersede the documents the user wrote, in any namespace of the org; a
-    purge deletes them instead."""
+    purge deletes them instead, after superseding the versions their rewrite
+    replaced, so another writer's older version never reads as live again."""
     if purge_mode():
+        await count_then_mutate(
+            "loom.documents",
+            count_where=_REPLACED_BY_USER,
+            mutation="UPDATE superseded_at = {now:DateTime}",
+            mutation_where=_REPLACED_BY_USER,
+            params={"org": org, "uid": user_id},
+            final=False,  # those versions are hidden under FINAL until the delete
+            ch=ch,
+        )
         return await count_then_mutate(
             "loom.documents",
             count_where=ORG_UID,
@@ -785,10 +805,10 @@ async def tombstone_documents_by_user(
 # The originals the user's documents point at that no other writer's live
 # document shares (two documents with the same bytes share one row).
 _USERS_OWN_BLOBS = (
-    "org = {org:String} AND (namespace, sha256) IN ("
+    "org = {org:String} AND (namespace, toString(sha256)) IN ("
     " SELECT namespace, blob_path FROM loom.documents FINAL"
     " WHERE org = {org:String} AND user_id = {uid:String} AND blob_path != '')"
-    " AND (namespace, sha256) NOT IN ("
+    " AND (namespace, toString(sha256)) NOT IN ("
     " SELECT namespace, blob_path FROM loom.documents FINAL"
     " WHERE org = {org:String} AND user_id != {uid:String} AND blob_path != ''"
     " AND superseded_at IS NULL)"

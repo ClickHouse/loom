@@ -34,11 +34,16 @@ class _TraceCH:
 
     def __init__(self, trace: dict[str, list[tuple[str, str]]]) -> None:
         self.trace = trace
+        # (step, table): a step's INSERT ... SELECT rewrite makes its rows stop matching.
+        self.rewritten: set[tuple[str, str]] = set()
 
     async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
         if "system.tables" in sql:
             return {"engine": "KeeperMap"}
-        return {"n": 1} if "count()" in sql else None
+        if "count()" not in sql:
+            return None
+        done = any(f"FROM {t} " in sql for step, t in self.rewritten if step == _STEP.get())
+        return {"n": 0 if done else 1}
 
     async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:
         if "system.mutations" in sql:
@@ -58,6 +63,8 @@ class _TraceCH:
             entry = ("LIGHTWEIGHT", m.group(1))
         else:  # pragma: no cover - a new statement shape shows up as a failure
             entry = ("OTHER", sql.split()[0])
+            if sql.startswith("INSERT INTO "):
+                self.rewritten.add((_STEP.get(), sql.split()[2]))
         self.trace.setdefault(_STEP.get(), []).append(entry)
 
 
