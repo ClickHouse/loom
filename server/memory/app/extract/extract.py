@@ -417,7 +417,7 @@ def _settle_facts(
     # Deterministic code-native facets: populates files[] + concepts[]
     # without touching the atomic fact value.
     if facts:
-        facts = _apply_code_facets(facts, messages)
+        facts = _apply_code_facets(facts, messages, from_turns=recover_rows)
 
     if facts and existing_memories:
         facts = _resolve_index_links(facts, existing_memories)
@@ -439,12 +439,12 @@ def _settle_facts(
 async def extract_from_messages(
     messages: list[dict[str, object]],
     *,
+    operator_policy: str,
     max_tokens: int = 1024,
     observation_date: str | None = None,
     existing_memories: list[dict[str, str]] | None = None,
     last_messages: list[dict[str, object]] | None = None,
     custom_instructions: str = "",
-    operator_policy: str,
     judge: bool = True,
     namespace_categories: list[dict[str, str]] | None = None,
     coverage_sweep: bool | None = None,

@@ -996,3 +996,68 @@ async def test_unreadable_policy_leaves_an_observe_session_undistilled(
         await ox._distill_session(session, observations)
     assert llm.systems == []
     assert done == []
+
+
+async def test_under_a_policy_code_facets_come_from_the_fact_alone(provider) -> None:
+    """The model wrote a fact without the file path its cited turn names: under a
+    policy the fact gets no file from that turn."""
+    from server.memory.app.extract import extract_from_messages
+
+    provider.text = (
+        '{"facts": [{"key": "fixed_login", "value": "User fixed the login bug.",'
+        ' "source_message_indices": [0]}]}'
+    )
+    msgs = [
+        {"role": "user", "content": "I fixed the login bug; the crash was in src/auth/login.py."}
+    ]
+    common: dict[str, Any] = {"judge": False, "org": "o", "namespace": "n", "llm_cache": False}
+    plain = await extract_from_messages(msgs, operator_policy="", **common)
+    ruled = await extract_from_messages(msgs, operator_policy=_POLICY, **common)
+    assert [f.files for f in plain.facts if f.memory_key.endswith("login")] == [
+        ["src/auth/login.py"]
+    ]
+    assert all(f.files == [] for f in ruled.facts)
+
+
+async def test_under_a_policy_an_event_keeps_only_what_the_model_wrote(
+    monkeypatch, settings_override
+) -> None:
+    """The event's action prefix and file-path entities come from the raw tool
+    call, not the model: under a policy neither is written."""
+    from datetime import UTC, datetime, timedelta
+
+    import server.memory.app.write as write
+    from server.memory.app import trajectory_notes as tn
+
+    written: list[Any] = []
+
+    async def memory_set(input: Any) -> None:
+        written.append(input)
+
+    monkeypatch.setattr(write, "handle_memory_set", memory_set)
+    now = datetime.now(UTC).replace(tzinfo=None)
+    observations = [
+        tn.Observation("k0", "command_run", "Bash", "output: line 0", "", ("a.py",), now, now),
+        tn.Observation(
+            "k1",
+            "command_run",
+            "Bash",
+            "input: cat secrets.env\noutput: done",
+            "",
+            ("secrets.env",),
+            now + timedelta(seconds=1),
+            None,
+        ),
+    ]
+    llm = _System('{"title": "Read a file", "transition": "The file was shown."}')
+    session = {"org": "acme", "namespace": "n", "session_id": "s"}
+    extraction_policy._reset_for_tests({})
+    await tn.distill_events(session, observations, llm=llm, max_events=2)
+    extraction_policy._reset_for_tests({("acme", ""): _POLICY})
+    await tn.distill_events(session, observations, llm=llm, max_events=2)
+    plain, ruled = written
+    assert plain.entities == ["secrets.env"]
+    assert "`" in plain.value  # the action from the raw call
+    assert ruled.entities == []
+    assert "`" not in ruled.value
+    assert ruled.value.endswith("Read a file. The file was shown.")

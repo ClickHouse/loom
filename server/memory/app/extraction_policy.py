@@ -17,6 +17,7 @@ import logging
 import time
 
 from server.auth.sharing import PERSONAL_ALIAS
+from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import ValidationError
 from server.core.polled_copy import PolledCopy
@@ -34,8 +35,6 @@ from server.settings import settings
 
 
 async def _read() -> dict[tuple[str, str], str]:
-    from server.core.ch import own_write_reads
-
     # Sequentially consistent: the read after a change made here must see it.
     with own_write_reads():
         rows = await repo.live_rows()
@@ -142,8 +141,6 @@ async def handle_extraction_policy_get(input: ExtractionPolicyGetInput) -> Extra
 
 
 async def _output(org: str, namespace: str) -> ExtractionPolicyOutput:
-    from server.core.ch import own_write_reads
-
     with own_write_reads():  # an admin reads right after setting it, on any replica
         row = await repo.get(org, namespace)
         org_row = await repo.get(org, "") if namespace else row

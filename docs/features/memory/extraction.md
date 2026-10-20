@@ -140,9 +140,12 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   retry addendum. The code plane's model-written file cards and chunk descriptions
   describe indexed source, not a conversation, and do not follow it.
 - **The trade-off.** While a policy is in force, the deterministic passes that add rows
-  the model left out do not run: recovered preferences, costs and ages, facts an
-  assistant turn states as the user's premise, and a forget request's correction kept in
-  the user's own words. The model may have left those out because of the policy, and
+  the model left out, or copy from the raw turns what the model did not write, do not
+  run: recovered preferences, costs and ages; facts an assistant turn states as the
+  user's premise; a forget request's correction kept in the user's own words; code file
+  paths and concepts taken from the cited turns rather than the fact (a fact keeps those
+  in its own text); and the action and file paths an observe event copies from the raw
+  tool call. The model may have left those out because of the policy, and
   these passes cannot read it. An extraction under a policy can therefore keep fewer
   facts than the same extraction without one. `memory.set_from_messages` answers
   `under_operator_policy: true` when it ran under one (a deferred request answers

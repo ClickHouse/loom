@@ -281,12 +281,15 @@ def render_event(
     *,
     step: int = 0,
     total: int = 0,
+    with_action: bool = True,
 ) -> str:
     """`Step k/n · After <tool> `<action>`: <title>. <transition>` — the step
     index orders the session's events for a reader that sees several, the
-    action names which call this was."""
+    action names which call this was. Without `with_action` (an operator's
+    extraction policy is in force) the action, taken from the raw call rather
+    than the model's reply, is left out."""
     head = f"After {after.tool_name}" if after.tool_name else "After the action"
-    action = action_summary(after)
+    action = action_summary(after) if with_action else ""
     if action:
         head = f"{head} `{action}`"
     prefix = f"Step {step}/{total} · " if step and total else ""
@@ -434,9 +437,8 @@ async def distill_events(
     pairs = transition_pairs(observations, max_pairs=max_events, only_after=only_after)
     if not pairs:
         return res
-    system = with_policy(
-        _EVENT_SYSTEM, await extraction_policy.effective(session["org"], session["namespace"])
-    )
+    policy = await extraction_policy.effective(session["org"], session["namespace"])
+    system = with_policy(_EVENT_SYSTEM, policy)
     ordered = sorted(
         observations, key=lambda o: (o.created_at is None, o.created_at or datetime.min)
     )
@@ -479,9 +481,11 @@ async def distill_events(
                         after,
                         step=position.get(after.memory_key, 0),
                         total=total,
+                        with_action=not policy,
                     ),
                     tags=tags,
-                    entities=list(after.file_paths[:12]),
+                    # Under a policy the row carries only what the model wrote.
+                    entities=[] if policy else list(after.file_paths[:12]),
                     confidence=0.9,
                     source_trace=f"{EVENT_SOURCE_TRACE}:{before.memory_key}>{after.memory_key}",
                     valid_at=after.valid_at or after.created_at,

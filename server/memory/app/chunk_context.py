@@ -81,7 +81,6 @@ async def contextualize_chunks(
     that chunk is embedded as it is). One `llm_stage` for the whole batch. The
     context is written from the caller's text and stored with it, so each call
     ends with the operator's extraction policy."""
-
     if not chunks:
         return []
     sem = asyncio.Semaphore(max(1, concurrency))
