@@ -14,6 +14,7 @@ from server.identity.api.models_model_calls import OrgModelCallsInput, OrgSetMod
 from server.identity.app import model_calls
 from server.llm import customer
 from tests.integration._resources import unique_org
+from tests.unit.switch_state import switch_unread
 
 pytestmark = pytest.mark.asyncio
 
@@ -22,9 +23,9 @@ pytestmark = pytest.mark.asyncio
 async def ch() -> Any:
     client = get_client()
     await client.connect()
-    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    switch_unread()
     yield client
-    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    switch_unread()
     await client.disconnect()
 
 

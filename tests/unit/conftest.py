@@ -784,12 +784,12 @@ def _revocation_snapshot_loaded() -> Iterator[None]:
     import server.auth.keyring as keyring
     import server.auth.revocation as rev
     import server.auth.service_accounts as service_accounts
-    from tests.unit.switch_state import switch_read_now, switch_unread
+    from tests.unit.switch_state import switch_off, switch_unread
 
     saved = rev._loaded, rev._loaded_at, keyring._view
     rev._loaded, rev._loaded_at = True, rev.time.monotonic()
     keyring._view = keyring._View(read_at=keyring.time.monotonic(), loaded=True)
-    switch_read_now()
+    switch_off()
     delegation._account_active.clear()
     service_accounts._creators.clear()
     yield

@@ -24,9 +24,9 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
 async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
     clock: ManualClock,
 ) -> None:
-    """A change here asked for a read, three calls arrive for it, two queue
-    behind the one that reads, and the read fails after longer than `refresh_s`: the next read is counted from its end,
-    so the waiters behind it are served the last copy instead of each reading."""
+    """A change here asked for a read, three calls arrive for it, two queue behind the one that
+    reads, and the read fails after longer than `refresh_s`: the next read is counted from its
+    end, so the waiters behind it are served the last copy instead of each reading."""
     reads = 0
 
     async def failing() -> str:
@@ -71,9 +71,9 @@ async def test_a_change_made_here_is_waited_for_even_with_a_young_copy(
     copy: PolledCopy[str] = PolledCopy("t", read, _LOG)
     copy._reset_for_tests("old", read_age_s=0.0, due_in_s=10)
     copy.note_change()
-    first = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
+    first = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
     await reading.wait()
-    second = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
+    second = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
     await asyncio.sleep(0)
     assert not second.done()
     release.set()
@@ -108,9 +108,9 @@ async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: Manua
         return "fresh"
 
     copy: PolledCopy[str] = PolledCopy("t", read, _LOG)
-    first = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
+    first = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
     await reading.wait()
-    queued = [asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60)) for _ in range(2)]
+    queued = [asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60)) for _ in range(2)]
     await asyncio.sleep(0)
     first.cancel()
     assert await asyncio.gather(*queued) == ["fresh", "fresh"]
