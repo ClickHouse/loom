@@ -129,7 +129,7 @@ Revise (or start) one brief.
 | `revision` | `int` | The brief's revision after this call (the stored one when unchanged; 0 when none is live). |
 | `changed` | `bool` | True when a new revision was written; False when `reason` says why not. |
 | `author` | `str` | "llm" (revised by the model), "deterministic" (no model configured, or it failed), "model" (the calling agent wrote the sections). |
-| `reason` | `str` | Why nothing was written: `nothing-to-save`, `recording_off` or `already-saved`; empty when `changed`. |
+| `reason` | `str` | Why nothing was written: `nothing-to-save`, `recording_off`, `already-saved` or `not-revised` (an operator's extraction policy is in force and the model could not revise the brief); empty when `changed`. |
 | `rendered` | `str` | The brief as text, ready to show; the stored one when nothing changed. |
 | `stats` | `SessionBriefStats` | Counts for this save: events, windows, sizes, tokens and the model used. |
 

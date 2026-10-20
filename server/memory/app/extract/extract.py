@@ -372,7 +372,8 @@ def _settle_facts(
     stable and relation keys, citation repair, temporal anchors and
     timestamps, suffix and attribute normalisation, relative-date grounding,
     speakers, code facets, index links, the grounding grade and speaker
-    attribution. Pure."""
+    attribution. Without `from_turns` (an operator policy) nothing is taken
+    from the turns past what the model wrote. Pure."""
     # Entity-stable key rewrite: turn a concept-level key
     # (`user_task_status`) into an entity-prefixed one (`pr107585_status`)
     # when the fact carries a salient identifier. Applied here so every

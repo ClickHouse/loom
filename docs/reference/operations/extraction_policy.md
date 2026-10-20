@@ -54,7 +54,7 @@ The scope's policy and the one its extractions run under.
 
 ## `extraction_policy.set`
 
-Set the scope's policy, replacing the one it held; under it, an extraction can keep fewer facts, since the passes that add what the model left out do not run.
+Set the scope's policy, replacing the one it held.
 
 `POST /v1/extraction_policy.set` · MCP `loom_extraction_policy_set` · role `org_admin` · idempotent · audited · not listed under the MCP `all` toolset
 

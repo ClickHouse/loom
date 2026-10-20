@@ -10,7 +10,8 @@ class ContextSettings(BaseModel):
     context_offload_max_bytes: int = 8_000_000
     # session.brief_save. `session_brief_llm` off = every brief comes from the
     # deterministic builder (goal, status, files, errors, rules, pointers; no
-    # decisions or dead ends). The model is the
+    # decisions or dead ends), except under an operator's extraction policy,
+    # where a save the model cannot revise writes nothing. The model is the
     # deployment's LLM when `session_brief_llm_model` has no key. A save
     # condenses its events into windows of `session_brief_window_chars`
     # (≈6k tokens each) and revises the brief once per window, at most

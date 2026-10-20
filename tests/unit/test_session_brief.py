@@ -1039,3 +1039,88 @@ def test_a_rule_must_come_from_the_persons_words() -> None:
         "Always run the tests before pushing",
     ]
     assert dropped == 1
+
+
+# -- under an operator's extraction policy -----------------------------------
+
+_CARD = "My card number is 4111 1111 1111 1111."
+
+
+def _policy(text: str) -> None:
+    """This process's copy of the extraction policies: `text` for IDENT's org."""
+    from server.memory.app import extraction_policy
+
+    extraction_policy._policies._reset_for_tests(
+        {(IDENT["org"], ""): text} if text else {},
+        read_age_s=0.0,
+        due_in_s=h.settings.model_calls_policy_refresh_seconds,
+    )
+
+
+def _saved_once(monkeypatch) -> Any:
+    """A brief saved before any policy, by the model."""
+    _llm(monkeypatch, [json.dumps({"goal": "Ship the login fix", "status": "in review"})])
+    out = _save(
+        brief_key="k", events=[E(kind="user", text="Ship the login fix.")], event_cursor="c1"
+    )
+    assert out.changed is True
+    return out
+
+
+@pytest.mark.parametrize("reply", ["RAISE", "not json"])
+def test_under_a_policy_a_save_the_model_cannot_revise_writes_nothing(
+    mem, monkeypatch, reply: str
+) -> None:
+    """The deterministic builder copies the raw events, so under a policy a
+    failed or unparseable model call leaves the brief as it was: no insert, the
+    revision, cursor and event count unchanged, the summary not copied."""
+    first = _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    llm = _llm(monkeypatch, [reply])
+    out = _save(
+        brief_key="k",
+        events=[E(kind="user", text=_CARD), E(kind="summary", text=_CARD)],
+        event_cursor="c2",
+    )
+    assert (out.changed, out.reason, out.revision) == (False, "not-revised", first.revision)
+    assert len(mem.rows) == rows
+    stored = mem._newest()["k"]
+    assert (stored["event_cursor"], stored["events_total"]) == ("c1", 1)
+    assert "4111" not in json.dumps(stored, default=str)
+    assert llm.calls and "OPERATOR EXTRACTION POLICY" in llm.calls[0][0]
+
+
+def test_under_a_policy_a_save_with_no_model_writes_nothing(mem, monkeypatch) -> None:
+    first = _saved_once(monkeypatch)
+    rows = len(mem.rows)
+    _policy("Never store payment card data.")
+    out = _save(brief_key="k", events=[E(kind="user", text=_CARD)], use_llm=False)
+    assert (out.changed, out.reason, out.revision) == (False, "not-revised", first.revision)
+    assert len(mem.rows) == rows
+
+
+def test_under_a_policy_a_revised_brief_takes_no_summary_from_the_events(mem, monkeypatch) -> None:
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    _llm(monkeypatch, [json.dumps({"goal": "Ship the login fix", "status": "merged"})])
+    out = _save(brief_key="k", events=[E(kind="summary", text=_CARD)], event_cursor="c2")
+    assert out.changed is True
+    stored = mem._newest()["k"]
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "4111" not in out.rendered
+
+
+def test_an_unreadable_policy_refuses_the_save(mem, monkeypatch) -> None:
+    from server.llm import customer
+    from server.memory.app import extraction_policy
+
+    async def down(**_: Any) -> list[dict[str, Any]]:
+        raise ConnectionError("clickhouse away")
+
+    monkeypatch.setattr(extraction_policy.repo, "live_rows", down)
+    extraction_policy._policies._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+    _llm(monkeypatch, [json.dumps({"goal": "g"})])
+    with pytest.raises(customer.SwitchUnread):  # a 503: the client sends the events again
+        _save(brief_key="k", events=[E(kind="user", text=_CARD)])
+    assert mem.rows == []

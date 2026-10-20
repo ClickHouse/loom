@@ -100,13 +100,12 @@ async def _write(org: str, namespace: str, policy: str) -> None:
 
 
 async def handle_extraction_policy_set(input: ExtractionPolicySetInput) -> ExtractionPolicyOutput:
-    """Set the scope's policy, replacing the one it held; under it, an
-    extraction can keep fewer facts, since the passes that add what the model
-    left out do not run. Every process extracts under it within
-    `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. The passes it turns off are
-    listed in the extraction guide (docs/features/memory/extraction.md, "The
-    trade-off"); `memory.set_from_messages` answers `under_operator_policy:
-    true` while one is in force."""
+    """Set the scope's policy, replacing the one it held. Every process
+    extracts under it within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`. The
+    passes it turns off are listed in the extraction guide
+    (docs/features/memory/extraction.md, "The trade-off");
+    `memory.set_from_messages` answers `under_operator_policy: true` while one
+    is in force."""
     org, namespace = _scope(input)
     policy = input.policy.strip()
     if not policy:

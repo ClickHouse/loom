@@ -230,7 +230,10 @@ server-side. With `LOOM_SESSION_BRIEF_LLM` on (default) the model named by
 windows per save; without that model's key the deployment's LLM writes it, and with no
 LLM the deterministic builder writes goal, status, files, errors and pointers (no
 decisions or dead ends). `author` in the response says `llm`, `deterministic` or
-`model` (the calling agent wrote the sections). State sections are replaced on each
+`model` (the calling agent wrote the sections). Under an operator's
+[extraction policy](memory/extraction.md#operator-extraction-policy) the builder never
+runs: a save the model cannot revise answers `changed: false`, `reason: "not-revised"`.
+State sections are replaced on each
 revision; decisions, dead ends and done items accumulate. Every revision is kept in
 `loom.session_brief_revisions`; `revision=N` on `brief_get` reads one. A save that
 repeats the previous save's session and `event_cursor` is a retry and writes nothing;

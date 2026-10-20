@@ -145,12 +145,14 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   user's premise; a forget request's correction kept in the user's own words; code file
   paths and concepts taken from the cited turns rather than the fact (a fact keeps those
   in its own text); a fact's `speaker:<name>` tag and name entity taken from the cited
-  turns; the action and file paths that an observe event or a hint note copies from
-  the raw tool calls; and the `session.brief_save` builder, which turns raw events into
-  a brief when the model cannot (a failed, held or unparseable call, or no real model):
-  the brief is saved as it was instead. The model may have left those out because of the policy, and
-  these passes cannot read it. An extraction under a policy can therefore keep fewer
-  facts than the same extraction without one. `memory.set_from_messages` answers
+  turns; and the action and file paths that an observe event or a hint note copies from
+  the raw tool calls. The model may have left those out because of the policy, and these
+  passes cannot read it. An extraction under a policy can therefore keep fewer facts
+  than the same extraction without one. `session.brief_save` likewise never runs its
+  deterministic builder under a policy, and takes no client summary from the events: a
+  save the model cannot revise (no real model, `use_llm: false`, or a failed, held or
+  unparseable call for every window) writes nothing and answers `changed: false`,
+  `reason: "not-revised"`. `memory.set_from_messages` answers
   `under_operator_policy: true` when it ran under one (a deferred request answers
   false: its extraction runs later, under the policy then set).
 - **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
@@ -160,9 +162,9 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   reads them at once. A server that cannot read them for
   `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` (60 s) refuses inline extraction and
   `conversation.compact` with 503 and leaves queued requests and threads to title
-  waiting, rather than call the model without the policy; `session.brief_save` saves
-  the brief as it was (`author: "unchanged"`) and `bulk_set` writes its entries without
-  context lines.
+  waiting, rather than call the model without the policy; `session.brief_save` also
+  answers 503 (the client sends the events again), and `bulk_set` writes its entries
+  without context lines.
 
 The policy is an instruction to the model, not a filter: Loom does not check a written
 row against it. It does not change what is stored verbatim: evidence rows, verbatim

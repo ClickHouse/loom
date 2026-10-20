@@ -146,7 +146,7 @@ async def _revise_window(
             max_tokens=_REVISION_MAX_TOKENS,
             response_format={"type": "json_object"},
         )
-    except Exception as e:  # noqa: BLE001 — a brief without the model beats no brief
+    except Exception as e:  # noqa: BLE001 — a failed call degrades one window, never the save
         log.warning("session.brief_save: model call failed (%s); window not revised", e)
         return fallback(), 0, 0, 0, False
     try:
@@ -173,26 +173,20 @@ async def _revise_window(
     return merged, dropped, int(result.tokens_in), int(result.tokens_out), True
 
 
-async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revision:
+async def _revise_from_events(
+    inp: Any, prev: sb.BriefSections | None, policy: str
+) -> _Revision | None:
+    """The brief revised with `inp.events`; None under an operator's `policy`
+    when the model could not revise any window (no real model, `use_llm`
+    false, or every call failed, was held or did not parse): the deterministic
+    builder copies the raw events, so nothing is written."""
     budget = int(settings.session_brief_window_chars)
     windows = sb.split_windows(
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
     )
     use, client = _use_llm(inp)
-    # The brief is written from the session's own events, so the model is given
-    # the operator's extraction policy. Under one, or when it cannot be read, no
-    # window is built from the raw events without the model: the brief stays.
-    from server.llm import customer
-    from server.memory.app import extraction_policy
-
-    unchanged = _Revision(sections=prev or sb.BriefSections(), author="unchanged")
-    try:
-        policy = await extraction_policy.effective(inp.org, inp.namespace)
-    except customer.SwitchUnread as e:
-        log.warning("session.brief_save: %s; brief left as it was", e)
-        return unchanged
     if not use and policy:
-        return unchanged
+        return None
     if not use:
         cur = prev
         for w in windows:
@@ -225,9 +219,11 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
         rev.tokens_in += t_in
         rev.tokens_out += t_out
         any_model = any_model or used
+    if not any_model and policy:
+        return None
     rev.sections = cur or sb.BriefSections()
     if not any_model:
-        rev.author = "unchanged" if policy else "deterministic"
+        rev.author = "deterministic"
     return rev
 
 
@@ -333,14 +329,27 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     ):
         return unchanged("already-saved")
 
+    # The brief is written from the session's own events, so the model is given
+    # the operator's extraction policy; one this process cannot read refuses
+    # the save (503), and the client sends the events again.
+    from server.memory.app import extraction_policy
+
+    policy = await extraction_policy.effective(inp.org, inp.namespace)
     if inp.sections is not None:
         base = prev
         if inp.events:
-            base = (await _revise_from_events(inp, prev)).sections
+            revised = await _revise_from_events(inp, prev, policy)
+            base = revised.sections if revised is not None else prev
         rev = _Revision(sections=sb.overlay_sections(base, inp.sections), author="model")
     else:
-        rev = await _revise_from_events(inp, prev)
-    rev.sections = sb_render.keep_client_summary(prev, rev.sections, inp.events)
+        revised = await _revise_from_events(inp, prev, policy)
+        if revised is None:
+            return unchanged("not-revised")
+        rev = revised
+    # A client's compaction summary is raw text: under a policy none is taken from
+    # this save's events, and the brief keeps the one it held.
+    summaries = [] if policy else inp.events
+    rev.sections = sb_render.keep_client_summary(prev, rev.sections, summaries)
 
     events_in = len(inp.events)
     events_total = int(live.get("events_total") or 0) + events_in if live else events_in
