@@ -1121,20 +1121,22 @@ async def test_an_anonymous_point_write_is_owed_nothing_for_a_key_another_sessio
     from server.memory.domain.conflicts import ConflictResult
     from server.settings import settings
 
-    class NoRead:
-        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            raise AssertionError("no read for the anonymous user")
+    reads: list[str] = []
 
-    async def policy(org: str, namespace: str, ch: Any = None) -> str:
-        return "auto_reinforce"
+    class Recorded:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            reads.append(sql)
+            return [{"memory_key": "user_city"}]  # held, were it read
 
     monkeypatch.setattr(settings, "memory_conflict_resolver_enabled", True)
-    monkeypatch.setattr(conflicts, "get_client", lambda: NoRead())
-    mark = await conflicts.same_key_mark(
-        ConflictResult(verdict="clear", peers=[]),
-        org="o",
-        namespace="ns",
-        memory_row={**_live("n1"), "user_id": "-"},
-        policy="auto_reinforce",
-    )
-    assert mark is None
+    monkeypatch.setattr(conflicts, "get_client", lambda: Recorded())
+    for user in ("-", ""):
+        mark = await conflicts.same_key_mark(
+            ConflictResult(verdict="clear", peers=[]),
+            org="o",
+            namespace="ns",
+            memory_row={**_live("n1"), "user_id": user},
+            policy="auto_reinforce",
+        )
+        assert mark is None, user
+    assert reads == []
