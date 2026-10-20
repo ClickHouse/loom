@@ -584,7 +584,15 @@
               "body",
               "options"
             ],
+            "list_saved_messages": [
+              "body",
+              "options"
+            ],
             "save_message": [
+              "body",
+              "options"
+            ],
+            "saved_status": [
               "body",
               "options"
             ],
@@ -601,6 +609,10 @@
               "options"
             ],
             "threads": [
+              "body",
+              "options"
+            ],
+            "unsave_message": [
               "body",
               "options"
             ],

@@ -775,6 +775,15 @@ class ConversationOps:
             await self._agent.call("conversation.list", body, **options),
         )
 
+    async def list_saved_messages(
+        self, body: _ops.ConversationListSavedMessagesBody | None = None, /, **options: Any
+    ) -> _ops.ConversationListSavedMessagesOutput:
+        """`conversation.list_saved_messages`."""
+        return cast(
+            "_ops.ConversationListSavedMessagesOutput",
+            await self._agent.call("conversation.list_saved_messages", body, **options),
+        )
+
     async def save_message(
         self, body: _ops.ConversationSaveMessageBody | None = None, /, **options: Any
     ) -> _ops.ConversationSaveMessageOutput:
@@ -782,6 +791,15 @@ class ConversationOps:
         return cast(
             "_ops.ConversationSaveMessageOutput",
             await self._agent.call("conversation.save_message", body, **options),
+        )
+
+    async def saved_status(
+        self, body: _ops.ConversationSavedStatusBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSavedStatusOutput:
+        """`conversation.saved_status`."""
+        return cast(
+            "_ops.ConversationSavedStatusOutput",
+            await self._agent.call("conversation.saved_status", body, **options),
         )
 
     async def search(
@@ -818,6 +836,15 @@ class ConversationOps:
         return cast(
             "_ops.ConversationThreadsOutput",
             await self._agent.call("conversation.threads", body, **options),
+        )
+
+    async def unsave_message(
+        self, body: _ops.ConversationUnsaveMessageBody | None = None, /, **options: Any
+    ) -> _ops.ConversationUnsaveMessageOutput:
+        """`conversation.unsave_message`."""
+        return cast(
+            "_ops.ConversationUnsaveMessageOutput",
+            await self._agent.call("conversation.unsave_message", body, **options),
         )
 
     async def update(

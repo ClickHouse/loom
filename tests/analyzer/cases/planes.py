@@ -445,6 +445,7 @@ def _memory_ops_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.knowledge.store import conversations as R
 
     f = c["filters"]
@@ -457,17 +458,50 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
         [NS],
         AGENT,
         "deploy",
+        scope=WHOLE_NAMESPACE,
         thread_id="t1" if f else None,
         role="user" if f else None,
         run_id="r1" if f else None,
         ch=ch,
     )
     await R.count_thread_msgs(ORG, NS, AGENT, "t1", ch=ch)
-    await R.search_substring(ORG, NS, AGENT, "deploy", user_id="u1", saved_only=f, ch=ch)
+    # Saved-message search under a token pinned to one user.
+    pinned = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    await R.search_substring(
+        ORG, NS, AGENT, "deploy", scope=pinned, user_id="u1", saved_only=f, ch=ch
+    )
     await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
     await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
     await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)
     await R.saved_message_owner(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.lexical_saved_messages(
+        ORG,
+        NS,
+        AGENT if f else "*",
+        ["deploy", "window"],
+        scope=pinned,
+        user_id="u1",
+        conversation_id="t1" if f else None,
+        role="user" if f else None,
+        ch=ch,
+    )
+    await R.saved_message_ids(
+        ORG, NS, AGENT if f else "*", "t1", ["m1", "m2"], scope=pinned, user_id="u1", ch=ch
+    )
+    await R.list_saved_messages(
+        ORG,
+        NS,
+        AGENT,
+        scope=pinned,
+        user_id="u1",
+        conversation_id="t1" if f else None,
+        before=(_DT, "t1", "m1") if f else None,
+        ch=ch,
+    )
+    for table in R.SAVED_MESSAGE_TABLES:
+        await R.unsave_message(
+            table, ORG, NS, AGENT, "t1", "m1", user_id="u1", remove=f, when=_DT, ch=ch
+        )
     await R.namespace_logging_enabled(ORG, NS, ch=ch)
     await R.tombstone_thread(ORG, NS, AGENT, "t1", when=_DT, ch=ch)
     await R.tombstone_messages(ORG, NS, AGENT, "t1", ["m1"], when=_DT, ch=ch)

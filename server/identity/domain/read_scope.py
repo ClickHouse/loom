@@ -230,6 +230,10 @@ SCOPED_OPS = frozenset(
     {
         "context.pack",
         "conflicts.list",
+        # Saved messages are one user's opt-ins; both legs filter the user's rows.
+        "conversation.list_saved_messages",
+        "conversation.saved_status",
+        "conversation.search_saved_messages",
         "memory.aggregate",
         "memory.ask",
         "memory.bulk_get",
@@ -382,6 +386,10 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not here: writes to tables keyed without a user (records, decisions,
     # procedure_runs, conversation threads, context blobs), which would fold
     # into or overwrite another user's row.
+    "conversation.save_message": "a write: the turn is saved as the pinned user, and a "
+    "stored turn another user owns is refused, not claimed",
+    "conversation.unsave_message": "a write: only the pinned user's saved row changes; "
+    "another user's reads as not found",
     "memory.set": "a write",
     "memory.pin": "a write",
     "memory.bulk_set": "a write",

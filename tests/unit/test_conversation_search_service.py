@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.knowledge.app.conversation_search import (
     ConversationHit,
     ConversationVectorQuery,
@@ -32,6 +33,7 @@ def _q(**overrides) -> ConversationVectorQuery:
         "embedding_model": "text-embedding-3-small",
         "query_vec": [0.1] * 1536,
         "top_k": 10,
+        "scope": WHOLE_NAMESPACE,
     }
     base.update(overrides)
     return ConversationVectorQuery(**base)
@@ -192,7 +194,21 @@ async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeyp
         ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"),
         ["ns"],
         [],
+        scope=WHOLE_NAMESPACE,
         saved_only=False,
     )
     [hit] = out.hits
     assert hit.content_excerpt == content[:240]
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_scope_rides_the_vector_statement() -> None:
+    from server.identity.domain.read_scope import ReadFilters
+
+    ch = StubCH()
+    await vector_search(
+        _q(scope=ReadFilters(scope="own_user", user_id="u-1", session_id=None)), ch=ch
+    )
+    sql, params = ch.query_all_calls[0]
+    assert "user_id = {scope_uid:String}" in sql
+    assert params["scope_uid"] == "u-1"
