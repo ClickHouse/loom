@@ -14,8 +14,8 @@ from server.memory.domain.sensitivity import reads_high
 SOURCE_KIND = "assistant_turn"
 
 # A supporter row quotes this much of the rule as said and of the user turn before it.
-_RULE_CHARS = 400
-_USER_CHARS = 200
+_RULE_CHARS = 400  # not a setting: a privacy bound on a user's words kept for review
+_USER_CHARS = 200  # not a setting: a privacy bound on a user's words kept for review
 
 
 def normalized_value(value: str) -> str:

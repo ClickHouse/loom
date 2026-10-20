@@ -98,6 +98,9 @@ async def insert_row(
     )
 
 
+# The supporter entries learnings.list returns per `assistant_turn` candidate.
+_SUPPORTER_PAIRS = 50  # not a setting: a bound on one wire field's length
+
 # loom.learnings_supporters' columns, in table order (tests/unit/test_assistant_learnings.py).
 SUPPORTER_COLUMNS = (
     "org",
@@ -164,21 +167,21 @@ async def supporter_stats(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Per candidate: distinct users, distinct sessions, the mean confidence, the
-    first 50 (user_id, session_id) pairs by time and the earliest remaining
-    supporter's quotes."""
+    first `_SUPPORTER_PAIRS` (user_id, session_id) pairs by time and the earliest
+    remaining supporter's quotes."""
     ch = ch or _default_client()
     return await ch.query_all(
-        """
+        f"""
         SELECT candidate_id,
                uniqExact(user_id) AS users,
                uniqExact(user_id, session_id) AS sessions,
                avg(confidence) AS confidence,
-               groupArraySorted(50)((created_at, user_id, session_id)) AS pairs,
+               groupArraySorted({_SUPPORTER_PAIRS})((created_at, user_id, session_id)) AS pairs,
                argMin(asked, created_at) AS asked,
                argMin(said, created_at) AS said
         FROM loom.learnings_supporters
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND candidate_id IN {ids:Array(UUID)}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND candidate_id IN {{ids:Array(UUID)}}
         GROUP BY candidate_id
         """,
         params={"org": org, "ns": namespace, "ids": candidate_ids},
