@@ -4,9 +4,9 @@ With `LOOM_INFERENCE_CUSTOMER_HEADER` set, every chat, embedding, rerank and
 classify request names its customer, the org whose data it carries, and
 (with `LOOM_INFERENCE_FEATURE_HEADER`) the feature that made it. A request
 names the org it addresses, as authorized for its token, through the identity
-the transports record for every op (`observability.genai`); a background job or a CLI names
-the org of the rows it works on with `for_org`, never inheriting a worker's
-identity; a call for the deployment itself (its startup probe, the
+the transports record for every op (`observability.genai`); a background job
+or a CLI names the org of the rows it works on with `for_org`, never
+inheriting a worker's identity; a call for the deployment itself (its startup probe, the
 recalibration worker's fixed pairs, a provider check) runs under `system()`
 and names `LOOM_INFERENCE_SYSTEM_CUSTOMER`. A call that names none is refused
 (`Unattributed`), never sent to be billed to no one: one call never carries two

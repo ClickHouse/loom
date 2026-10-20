@@ -19,10 +19,10 @@ Constraints, all of which shape the design:
   by a deployment that upgraded.
 * **Never on the request path.** Judging happens on a background task after the
   response has been sent, on a bounded queue.
-* **Its own cost is attributed.** The judge is itself an LLM call; it binds a cost
-  accumulator and emits a worker cost event under `worker.retrieval_judge`, so
-  the observability spend is visible as spend rather than quietly inflating the
-  namespace whose search triggered it.
+* **Its own cost is attributed.** The judge is itself an LLM call on the judged
+  org's content, so it is that org's call, metered to it at the gateway. It binds
+  a cost accumulator and emits a worker cost event under `worker.retrieval_judge`,
+  so its spend is not mistaken for the spend of the search that was judged.
 * **Never judges its own judging.** The judge call is not sampled, so there is no
   recursion.
 """
@@ -338,9 +338,7 @@ async def _judge_one(item: dict[str, Any]) -> None:
     model = settings.retrieval_judge_model.strip()
     client = get_llm_client_for_model(model) if model else get_llm_client()
 
-    # The judge's own spend is attributed to a worker op rather than left on the
-    # namespace whose search triggered it — observability cost is an operating
-    # cost, not the tenant's.
+    # The judge's spend is recorded under a worker op, apart from the search it judged.
     # The judge prompt IS the namespace's query and memory text, so it rides the
     # judged namespace's consent. With no explicit level `set_identity` falls back
     # to the operator default, which would override a namespace's opt-out. Fails
