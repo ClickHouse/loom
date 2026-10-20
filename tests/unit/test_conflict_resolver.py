@@ -109,6 +109,15 @@ def test_cross_session_is_another_session_of_a_subject_with_no_user() -> None:
     assert not resolver._cross_session(blank, {"agent": "a", "session_id": "s2"})
 
 
+def test_the_anonymous_user_is_the_set_the_cluster_sql_names() -> None:
+    """The cluster reads name the anonymous user inline; Python must mean the same set."""
+    from server.core.naming import SENTINEL, is_anonymous_user
+
+    for sql in (queue._LIVE_VECTORS, queue._PEER_ROWS_SQL):
+        assert f"user_id NOT IN ('{SENTINEL}', '')" in sql
+    assert {u for u in (SENTINEL, "", " ", "u1") if is_anonymous_user(u)} == {SENTINEL, ""}
+
+
 def test_each_note_shows_when_it_holds_and_its_session() -> None:
     row = _mem("m1", agent="a", session_id="s1", valid_at=None, value_text='"Office in Rome"')
     peers = [
@@ -333,7 +342,6 @@ async def test_the_cluster_keeps_the_floor_the_cap_and_the_rows_flags() -> None:
     # m8 (cosine 0.60) is the row's flag: it takes a place first; below 0.60 never.
     assert [p["memory_id"] for p in peers] == ["m1", "m2", "m8"]
     sql, params = ch.calls[0]
-    sql = " ".join(sql.split())
     assert "NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})" in sql
     assert "user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})" in sql
     assert params["org"] == "o" and params["ns"] == "ns" and params["lim"] == 12

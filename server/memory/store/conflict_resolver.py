@@ -42,10 +42,6 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
           AND status IN ('active', 'conflicted')
           AND embedding_dim > 0"""
 
-# A row of a named user; the anonymous user is '-' or a user_id sent empty (stored as
-# given), as `naming.is_anonymous_user`.
-_NAMED_USER_SQL = "user_id NOT IN ('-', '')"
-
 # The failure_reason of an abandoned erasure saga, which never runs again
 # (erasure.store.ledger.ABANDONED_REASON_PREFIX; this store may not import it).
 ERASURE_ABANDONED_PREFIX = "max_attempts ("
@@ -225,20 +221,19 @@ async def stamp_judged(
 # later is applied here, before a LIMIT, so closer rows of another type, expired or
 # superseded ones cannot take every place. Sensitivity needs no predicate: a
 # write labelled 'high' retires the vectors of the version it replaces.
-_LIVE_VECTORS = f"""
+_LIVE_VECTORS = """
         SELECT agent, user_id, session_id, memory_key,
-               cosineDistance(embedding, {{emb:Array(Float32)}}) AS dist
+               cosineDistance(embedding, {emb:Array(Float32)}) AS dist
         FROM loom.memory_embeddings FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND user_id = {{u:String}} AND ({_NAMED_USER_SQL} OR agent = {{a:String}})
-          AND NOT (agent = {{a:String}} AND session_id = {{s:String}}
-                   AND memory_key = {{k:String}})
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})
+          AND NOT (agent = {a:String} AND session_id = {s:String} AND memory_key = {k:String})
           AND scope = 'private' AND tombstoned_at IS NULL
-          AND status IN ('active', 'conflicted') AND memory_type = {{mt:String}}
+          AND status IN ('active', 'conflicted') AND memory_type = {mt:String}
           AND (expires_at IS NULL OR expires_at > now())
           AND (valid_to IS NULL OR valid_to > now())
-          AND embedding_model = {{model:String}}
-          AND embedding_dim = {{dim:UInt16}} AND embedding.size0 = {{dim:UInt16}}"""
+          AND embedding_model = {model:String}
+          AND embedding_dim = {dim:UInt16} AND embedding.size0 = {dim:UInt16}"""
 
 
 def _nearest_sql() -> str:
@@ -260,17 +255,17 @@ def _nearest_sql() -> str:
 # The candidates' rows, joined by the full identity (a key alone repeats across sessions),
 # within the row's subject like every read of the cluster. A pinned row is no peer: no
 # verdict may change it, so judging it is a paid call for nothing.
-_PEER_ROWS_SQL = f"""
+_PEER_ROWS_SQL = """
         SELECT toString(memory_id) AS memory_id, agent, user_id, session_id, memory_key,
                toString(value) AS value, pinned, valid_at, created_at, updated_at, version,
                toString(content_sha256) AS content_sha256, status,
                arrayMap(x -> toString(x), conflict_with) AS conflict_with
         FROM loom.memory FINAL
-        PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+        PREWHERE org = {org:String} AND namespace = {ns:String}
           AND (agent, user_id, session_id, memory_key)
-              IN {{ids:Array(Tuple(String, String, String, String))}}
-        WHERE user_id = {{u:String}} AND ({_NAMED_USER_SQL} OR agent = {{a:String}})
-          AND memory_type = {{mt:String}}
+              IN {ids:Array(Tuple(String, String, String, String))}
+        WHERE user_id = {u:String} AND (user_id NOT IN ('-', '') OR agent = {a:String})
+          AND memory_type = {mt:String}
           AND tombstoned_at IS NULL
           AND NOT pinned
           AND status IN ('active', 'conflicted')
