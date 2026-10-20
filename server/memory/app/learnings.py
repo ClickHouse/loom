@@ -309,7 +309,8 @@ async def _do_promote(
       AND check_on_commit fires (enforces pinned-conflict reject + the
       semantic-conflict / canonical-merge / duplicate verdicts).
     - `assistant_turn` takes the same `handle_memory_set` path, written as the
-      candidate's agent's memory for every user of it (`user_id` '-').
+      candidate's agent's namespace-wide row (`user_id` '-'), which reads bounded
+      to one user do not serve.
     """
     source_kind = candidate_row.get("source_kind") or "memory_supporters"
 
@@ -374,8 +375,8 @@ async def _promote_via_memory_set(
     as a new memory via handle_memory_set so check_on_commit enforces the same
     pinned-reject / dedup / canonical-merge verdicts a regular write would get. A
     seeder candidate lands at namespace scope under the approver; a bot rule
-    (`assistant_turn`) as its agent's memory for every user, with the supporters'
-    mean confidence."""
+    (`assistant_turn`) as its agent's namespace-wide row (`user_id` '-'), which
+    reads bounded to one user do not serve, with the supporters' mean confidence."""
     from server.memory.app.write import handle_memory_set
 
     raw_value = candidate_row["proposed_value"]
@@ -386,7 +387,8 @@ async def _promote_via_memory_set(
 
     # In both cases the approver is the row's `actor`, stamped from the review's token.
     if candidate_row.get("source_kind") == assistant_rules.SOURCE_KIND:
-        # A bot's rule about itself: its agent's memory, for every user of the bot.
+        # A bot's rule about itself: its agent's namespace-wide row (`user_id` '-'),
+        # which reads bounded to one user do not serve.
         agent, user_id = str(candidate_row.get("agent") or "-"), "-"
         # The candidate, not one supporter's session, is where it came from.
         source_trace = f"learning:{candidate_row['candidate_id']}"

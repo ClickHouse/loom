@@ -1,7 +1,7 @@
 """A rule a bot states about itself in a conversation lands in the learnings
 queue as a pending `assistant_turn` candidate, never in memory; each session
-adds a supporter row with its own user's quotes; an admin's promotion makes it
-the agent's memory for every user; a user erasure takes that user's quotes and
+adds a supporter row with its own user's quotes; an admin's promotion publishes
+it to the namespace's knowledge; a user erasure takes that user's quotes and
 leaves a candidate nobody backs only its decision.
 
 Runs on the fake LLM, which reads an assistant's "I always ..." sentence as a

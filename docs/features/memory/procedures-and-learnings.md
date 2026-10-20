@@ -212,14 +212,14 @@ status row with the rule blanked, so a rejected rule never comes back as pending
 `learnings.quality` counts the conversation seeder by default, since it reports
 extraction quality; pass `source_kind="assistant_turn"` for the bot rules.
 
-| Op                  | Role   | Does                                                                                                                                                                           |
-| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                                                                                       |
-| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone), `knowledge` or `both`; unset, `knowledge` for a bot's rule and `memory` otherwise. |
-| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                                                                                      |
+| Op                  | Role   | Does                                                                                                                                                                                                                                                      |
+| ------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                                                                                                                                                                  |
+| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone for a supporters candidate, the agent's `user_id` '-' row for a bot's rule), `knowledge` or `both`; unset, `knowledge` for a bot's rule and `memory` otherwise. |
+| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                                                                                                                                                                 |
 
 `learnings.list` and `learnings.review` are HTTP and SDK only (`bot.learnings`). A
-promotion to `memory` goes through the `memory.promote` path, so
+promotion to `memory` carries the candidate id, so
 [`memory.lineage`](./history-and-provenance.md#lineage) traces it back to the candidate.
 Reviewing a decided candidate again is a no-op. Field lists:
 [operations reference](../../reference/operations.md#learnings).

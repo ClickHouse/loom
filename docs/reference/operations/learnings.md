@@ -55,14 +55,14 @@ Approve or reject a pending learning.
 | `candidate_id` | `str` | required | The queued candidate to decide; one unknown in `namespace` answers 404. |
 | `decision` | `Literal['promote', 'reject']` | required | `promote` writes it to `destination` and marks it promoted; `reject` only marks it rejected. |
 | `reason` | `str` | `''` | Why; stored as `decision_reason` and carried into the promoted row's provenance. |
-| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | On 'promote': 'memory' → loom.shared (a supporters candidate) or a namespace memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence. |
+| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | Where a promotion lands; unset, 'knowledge' for an `assistant_turn` rule and 'memory' otherwise: 'memory' → loom.shared (a supporters candidate) or a memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence. |
 | `approver` | `str` | `'learnings-reviewer'` | Captured into the audit subject + shared.promoted_by. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `candidate_id` | `str` | The candidate, echoed. |
 | `new_status` | `Literal['pending', 'promoted', 'rejected']` | The status the candidate holds after this call. |
-| `promoted_to_shared` | `bool` | True when this call wrote the memory destination: `loom.shared` for a supporters candidate, a namespace memory row for a seeder one, the agent's memory for every user (`user_id` '-') for an `assistant_turn` one. |
+| `promoted_to_shared` | `bool` | True when this call wrote memory: `loom.shared` for a supporters candidate, a namespace row for a seeder, the agent's `user_id` '-' row for a bot's rule, which reads bounded to one user do not serve. |
 | `promoted_to_knowledge` | `bool` | True when this call upserted the candidate as a knowledge document. |
 | `knowledge_source_uri` | `str` | source_uri the knowledge doc was upserted under (for later knowledge.delete). |
 | `decided_at` | `datetime` | When this call ran (UTC), also on a repeat that changed nothing. |

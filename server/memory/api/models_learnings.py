@@ -62,10 +62,9 @@ class LearningsReviewInput(BaseModel):
     decision: ReviewDecision
     # Why; stored as `decision_reason` and carried into the promoted row's provenance.
     reason: str = ""
-    # On 'promote': 'memory' → loom.shared (a supporters candidate) or a namespace
-    # memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence. Unset:
-    # 'knowledge' for an `assistant_turn` rule (knowledge is what every user's reads
-    # of the namespace serve), 'memory' otherwise.
+    # Where a promotion lands; unset, 'knowledge' for an `assistant_turn` rule and
+    # 'memory' otherwise: 'memory' → loom.shared (a supporters candidate) or a
+    # memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence.
     destination: PromotionDestination | None = None
     # Captured into the audit subject + shared.promoted_by.
     approver: str = "learnings-reviewer"
@@ -76,9 +75,9 @@ class LearningsReviewOutput(BaseModel):
     candidate_id: str
     # The status the candidate holds after this call.
     new_status: LearningStatus
-    # True when this call wrote the memory destination: `loom.shared` for a
-    # supporters candidate, a namespace memory row for a seeder one, the agent's
-    # memory for every user (`user_id` '-') for an `assistant_turn` one.
+    # True when this call wrote memory: `loom.shared` for a supporters candidate, a
+    # namespace row for a seeder, the agent's `user_id` '-' row for a bot's rule,
+    # which reads bounded to one user do not serve.
     promoted_to_shared: bool = False
     # True when this call upserted the candidate as a knowledge document.
     promoted_to_knowledge: bool = False
