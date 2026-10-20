@@ -271,11 +271,10 @@ async def delete_learnings_queue_by_user(
     comes back as pending; its rows that still hold the rule are deleted after the
     blank row is written, so a retry finds whatever a failed step left.
 
-    Only `pending` rows of a pending candidate are deleted: a review landing between
-    the read and the delete survives, holding the rule, and the census's residue
-    reopens this step to blank it. A review that flips a decided candidate between
-    the read and the blank write (rejected to promoted) is newer than the blank row
-    and wins the same way, until the reopened step blanks it."""
+    Each delete is bounded to what was read, so a review landing after the read
+    survives (holding the rule) and the census's residue reopens this step to blank
+    it: a pending candidate loses only its `pending` rows, a decided one only its
+    rows that hold the rule at a version no newer than the newest it read."""
     ch = ch or _default_client()
     n = await delete_scoped(
         "loom.learnings_supporters", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
@@ -316,8 +315,14 @@ async def delete_learnings_queue_by_user(
         n += await delete_scoped(
             "loom.learnings_queue",
             org=org,
-            scope_where="candidate_id IN {cids:Array(UUID)} AND proposed_value != ''",
-            params={"cids": [str(r["candidate_id"]) for r in decided]},
+            scope_where=(
+                "candidate_id IN {cids:Array(UUID)} AND proposed_value != '' "
+                "AND version <= {read_max:UInt64}"
+            ),
+            params={
+                "cids": [str(r["candidate_id"]) for r in decided],
+                "read_max": max(int(r["version"]) for r in decided),
+            },
             ch=ch,
         )
     return n

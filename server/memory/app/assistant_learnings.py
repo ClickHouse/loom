@@ -69,9 +69,10 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
     if row is not None and row["status"] != "pending":
         return False  # decided: support no longer changes anything
-    if not await learnings_repo.supporter_exists(
+    wrote_supporter = not await learnings_repo.supporter_exists(
         state.org, state.namespace, cid, state.user_id, state.session_id
-    ):
+    )
+    if wrote_supporter:
         asked, said = assistant_rules.quotes(fact, state.messages)
         await learnings_repo.insert_supporter(
             {
@@ -86,15 +87,12 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "created_at": naive_utc_now(),
             }
         )
-    # A user erasure may have deleted the candidate (pending, no supporter left)
-    # between the read above and this session's supporter row: write it again.
-    if (
-        row is not None
-        and await learnings_repo.find_candidate(state.org, state.namespace, cid) is None
-    ):
-        row = None
-    if row is None:
-        # The candidate holds the rule and nothing of any user's conversation.
+    if row is None or wrote_supporter:
+        # Written again with every new supporter, at version 1: an erasure that
+        # deleted the candidate after the read above (no supporter left yet) cannot
+        # leave this supporter without it, and any review's newer version outranks
+        # it, so a decision is never undone. It holds the rule and nothing of any
+        # user's conversation.
         await learnings_repo.insert_row(
             {
                 "candidate_id": cid,
@@ -112,7 +110,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "seeded_from_thread_id": None,
                 "seeded_from_msg_id": None,
                 "status": "pending",
-                "proposed_at": naive_utc_now(),
+                "proposed_at": row["proposed_at"] if row else naive_utc_now(),
                 "version": _FILED_VERSION,
             }
         )

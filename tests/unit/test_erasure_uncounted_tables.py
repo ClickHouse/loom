@@ -150,27 +150,61 @@ def test_an_orphaned_candidate_goes_when_pending_and_keeps_its_decision_when_dec
     # Only its pending rows: a review landing in between survives.
     assert "status = 'pending'" in pending[0]
     assert decided[1]["cids"] == ["r"] and "proposed_value != ''" in decided[0]
+    # ...no newer than the newest version read.
+    assert "version <= {read_max:UInt64}" in decided[0] and decided[1]["read_max"] == 7
     # The blank row is written before the rows holding the rule are deleted.
     sqls = [sql for sql, _ in ch.commands]
     assert sqls.index("INSERT INTO loom.learnings_queue") < sqls.index(decided[0])
 
 
-def test_a_review_between_the_read_and_the_delete_is_blanked_when_the_step_reopens() -> None:
-    """The first run read a pending candidate; a review rejected it before the
-    delete, whose `status = 'pending'` spares the review row. That row still holds
-    the rule, so the census counts it and the reopened step blanks it."""
-    first = _LearningsCH(
-        ["c"], [{"candidate_id": "c", "status": "pending", "proposed_value": '"r"', "version": 1}]
-    )
+def _deleted(row: dict[str, Any], sql: str, params: dict[str, Any]) -> bool:
+    """Whether one recorded delete of loom.learnings_queue takes `row`: a pending
+    delete only `pending` rows, a decided one only rows holding the rule at a
+    version no newer than it read."""
+    if row["candidate_id"] not in params["cids"]:
+        return False
+    if "status = 'pending'" in sql:
+        return row["status"] == "pending"
+    return bool(row["proposed_value"]) and row["version"] <= params["read_max"]
+
+
+def _survivors(rows: list[dict[str, Any]], ch: _LearningsCH) -> list[dict[str, Any]]:
+    """`rows` and the step's inserts, after the deletes it sent."""
+    left = [*rows, *ch.inserted]
+    for sql, params in ch.commands:
+        if "ALTER TABLE loom.learnings_queue" in sql:
+            left = [r for r in left if not _deleted(r, sql, params)]
+    return left
+
+
+def test_a_review_between_the_read_and_the_delete_survives_and_the_reopened_step_blanks_it() -> (
+    None
+):
+    """The step read a pending candidate; a review rejected it before the delete.
+    The delete spares the review row, which still holds the rule, so the census
+    counts it and the reopened step blanks it."""
+    filed = {"candidate_id": "c", "status": "pending", "proposed_value": '"r"', "version": 1}
+    review = {"candidate_id": "c", "status": "rejected", "proposed_value": '"r"', "version": 9}
+    first = _LearningsCH(["c"], [filed])
     asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=first))
-    assert first.inserted == []
-    reopened = _LearningsCH(
-        ["c"], [{"candidate_id": "c", "status": "rejected", "proposed_value": '"r"', "version": 9}]
-    )
+    assert _survivors([filed, review], first) == [review]
+    reopened = _LearningsCH(["c"], [review])
     asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=reopened))
-    assert reopened.inserted == [
-        {"candidate_id": "c", "status": "rejected", "proposed_value": "", "version": 10}
-    ]
+    blank = {"candidate_id": "c", "status": "rejected", "proposed_value": "", "version": 10}
+    assert reopened.inserted == [blank]
+    assert _survivors([review], reopened) == [blank]
+
+
+def test_a_review_landing_after_the_blank_write_survives_the_decided_delete() -> None:
+    """The step read a rejected candidate and wrote its blank row; a review then
+    promoted it before the delete. The delete takes only what was read, so the newer
+    review row stays (holding the rule) for the reopened step to blank."""
+    rejected = {"candidate_id": "c", "status": "rejected", "proposed_value": '"r"', "version": 7}
+    promoted = {"candidate_id": "c", "status": "promoted", "proposed_value": '"r"', "version": 20}
+    ch = _LearningsCH(["c"], [rejected])
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
+    blank = {"candidate_id": "c", "status": "rejected", "proposed_value": "", "version": 8}
+    assert _survivors([rejected, promoted], ch) == [promoted, blank]
 
 
 def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:

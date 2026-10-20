@@ -185,8 +185,12 @@ async def handle_learnings_review(
     )
     # A bot rule whose last supporter was erased keeps only its decision: there is
     # no rule left to review, so it answers as a missing candidate does.
-    blanked = row is not None and row.get("source_kind") == ASSISTANT_TURN
-    if row is None or (blanked and not row.get("proposed_value")):
+    blanked = (
+        row is not None
+        and row.get("source_kind") == ASSISTANT_TURN
+        and not row.get("proposed_value")
+    )
+    if row is None or blanked:
         raise HTTPException(
             status_code=404,
             detail={

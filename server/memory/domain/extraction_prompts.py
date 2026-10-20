@@ -1944,8 +1944,8 @@ question_topic "the font for the slide deck".)
 """
 
 
-# Appended to the extraction system prompt only when assistant-turn learnings
-# are on (`memory_extract_agent_learnings` or the request's `agent_learnings`).
+# Appended to the extraction system prompt only when memory_extract_agent_learnings
+# is on and the request did not turn it off (`agent_learnings=false`).
 # An "about": "agent" entry is filed to loom.learnings_queue for review, never
 # written as a memory: an end user can talk a bot into saying anything.
 AGENT_LEARNINGS_ANCHOR = "THE ASSISTANT'S OWN STANDING RULES"

@@ -75,7 +75,7 @@ READ_SCOPE_KEY = "read_filters"
 # The agent a filed assistant rule is for, resolved from the enqueuing token
 # (`assistant_learnings.request_rule_agent`), so the replay files as the inline
 # call would; '' (or a payload without it) files nothing.
-RULE_AGENT_KEY = "learning_agent"
+RULE_AGENT_KEY = "rule_agent"
 
 
 def payload_for(
@@ -432,8 +432,8 @@ async def list_status(
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
-    "RULE_AGENT_KEY",
     "READ_SCOPE_KEY",
+    "RULE_AGENT_KEY",
     "STATUS_DONE",
     "STATUS_FAILED",
     "STATUS_PENDING",

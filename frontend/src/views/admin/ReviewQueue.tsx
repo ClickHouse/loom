@@ -675,7 +675,12 @@ function LearningsPanel({
                 {sourceLabel(r)}
                 {isAgentRule(r) && <> · {agentLabel(r)}</>}
               </div>
-              <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
+              {isAgentRule(r) && (r.proposed_value === null || r.proposed_value === "") ? (
+                // A user erasure took the rule's last supporter: only the decision is kept.
+                <div className="text-sm text-text-muted mb-2">Rule removed by a user erasure; the decision stands.</div>
+              ) : (
+                <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
+              )}
               {/* A bot rule's rationale quotes the user turn, then the rule, one per line. */}
               {r.rationale && (
                 <div className="text-sm text-text-muted mb-2 italic whitespace-pre-line">{r.rationale}</div>

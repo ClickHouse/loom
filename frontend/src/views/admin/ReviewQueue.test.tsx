@@ -672,6 +672,27 @@ describe("ReviewQueue", () => {
     expect(screen.getByText(/apply to every user of every agent in this namespace/)).toBeTruthy();
   });
 
+  it("says a bot rule's text went with a user erasure and its decision stands", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValueOnce({ rows: [learning("k/pending")] });
+    vi.mocked(listLearnings).mockResolvedValue({
+      rows: [
+        {
+          ...learning("assistant_rule_refunds"),
+          source_kind: "assistant_turn",
+          agent: "support-bot",
+          status: "rejected",
+          proposed_value: null,
+        },
+      ],
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Rejected" }, WAIT));
+    expect(await screen.findByText("Rule removed by a user erasure; the decision stands.", {}, WAIT)).toBeTruthy();
+  });
+
   it("says what a learning is when the queue is empty", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listLearnings).mockResolvedValueOnce({ rows: [learning("k/pending")] });

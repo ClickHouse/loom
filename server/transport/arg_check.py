@@ -236,8 +236,10 @@ def response_body(op: Any, args: Any, result: Any) -> Any:
 def header_value(op: Any, args: Any, result: Any = None) -> str:
     """`X-Loom-Ignored-Args` for an HTTP answer ("" when none): the fields the op
     itself did not apply (its result's `ignored_args`), then the unknown keys."""
-    own = result.get("ignored_args") if isinstance(result, dict) else None
-    if own is None:
-        own = getattr(result, "ignored_args", None)
-    own = [str(k) for k in own or []]
+    found = (
+        result.get("ignored_args")
+        if isinstance(result, dict)
+        else getattr(result, "ignored_args", None)
+    )
+    own = [str(k) for k in found or []]
     return ",".join([*own, *(k for k in unknown_args(op.input_model, args) if k not in own)])

@@ -378,8 +378,8 @@ async def test_a_user_erasure_saga_runs_the_learnings_step_and_reopens_it_from_r
     assert cand["rationale"] == _rationale("bob")
     assert await _raw(ch, "loom.learnings_supporters", org, "user_id = 'alice'") == []
 
-    # Residue the checkpointed step left (a candidate nobody backs still holding
-    # its rule): the resumed saga reopens exactly the steps that own it.
+    # Residue the checkpointed step left: a candidate nobody backs still holding its
+    # rule.
     stray = str(uuid.uuid4())
     await ch.insert(
         "loom.learnings_queue",
@@ -403,13 +403,25 @@ async def test_a_user_erasure_saga_runs_the_learnings_step_and_reopens_it_from_r
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    # A resumed run with every step checkpointed but the census: verify.residue
+    # finds the residue and fails the saga with it on the ledger.
+    checked = await run_saga(
+        input=request,
+        row=row,
+        erasure_id=erasure_id,
+        requested_at=now,
+        previously_completed=set(out.steps_completed) - {"verify.residue"},
+    )
+    assert checked.status == "failed"
+    assert checked.residue == {"loom.learnings_queue": 1}
+    # The recovery run hands that census back: the step owning it reruns.
     again = await run_saga(
         input=request,
         row=row,
         erasure_id=erasure_id,
         requested_at=now,
-        previously_completed=set(out.steps_completed),
-        residue={"loom.learnings_queue": 1},
+        previously_completed=set(checked.steps_completed),
+        residue=checked.residue,
     )
     assert again.status == "completed" and again.residue_count == 0, again.residue
     by_step = {s.step: s for s in again.steps}

@@ -269,8 +269,10 @@ async def test_a_rule_is_filed_once_and_each_session_adds_one_supporter_row(queu
     assert queue.supporters[(_cid(), "alice", "s1")] == first
     await _file(_state("alice", "s2"))
     await _file(_state("bob", "s3"), _rule_fact(judge_verdict="UNCERTAIN"))
-    # The candidate row was written once; support lives in its own rows.
-    assert len(queue.inserts) == 1
+    # The candidate row is written with each new supporter (not for the repeat),
+    # always at version 1 and with its first proposal time; support lives in its own rows.
+    assert len(queue.inserts) == 3
+    assert {(r["version"], r["proposed_at"]) for r in queue.inserts} == {(1, row["proposed_at"])}
     assert queue.support(_cid()) == [("alice", "s1"), ("alice", "s2"), ("bob", "s3")]
     assert queue.supporters[(_cid(), "bob", "s3")]["confidence"] == 0.75
 
@@ -296,8 +298,9 @@ async def test_a_supporter_racing_a_review_keeps_the_decision(
 
     monkeypatch.setattr(learnings_repo, "find_candidate", stale_find)
     await _file(_state("bob", "s2"))
+    # bob's filing writes the candidate at version 1; the review's version outranks it.
+    assert queue.inserts[-1]["version"] == 1
     assert queue.rows[_cid()]["status"] == "rejected"
-    assert len(queue.inserts) == 1  # support never writes a candidate row
 
 
 @pytest.mark.asyncio
@@ -346,13 +349,12 @@ async def test_a_candidate_an_erasure_removed_meanwhile_is_written_again(
 ) -> None:
     await _file(_state("alice", "s1"))
     pending = dict(queue.rows[_cid()])
-    reads = iter([pending, None])
 
-    async def find_then_gone(*_a: Any) -> dict[str, Any] | None:
-        # Pending when read, then deleted by an erasure before bob's supporter row.
-        return next(reads)
+    async def stale_find(*_a: Any) -> dict[str, Any]:
+        # Pending when read; an erasure deletes it before bob's supporter row.
+        return pending
 
-    monkeypatch.setattr(learnings_repo, "find_candidate", find_then_gone)
+    monkeypatch.setattr(learnings_repo, "find_candidate", stale_find)
     del queue.rows[_cid()]
     assert await _file(_state("bob", "s2")) == 1
     assert queue.rows[_cid()]["status"] == "pending"
