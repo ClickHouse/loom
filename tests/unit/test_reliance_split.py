@@ -406,6 +406,19 @@ def test_why_note_names_the_terms_by_magnitude_and_skips_the_base() -> None:
     }
     assert mcp_tools.why_note(h) == "key_match, entity-0.30, date+0.12"
     assert mcp_tools.why_note({"memory_key": "k"}) == ""
+    # A reranked row: its own fused score is a base and the trail is positions.
+    reranked = {
+        "memory_key": "k",
+        "score_components": {
+            "rank_score_pre_rerank": 0.37,
+            "rerank_from": 4.0,
+            "rerank_pos": 1.0,
+            "rerank_delta": 3.0,
+            "rerank_external": 1.0,
+            "date_proximity_boost": 0.12,
+        },
+    }
+    assert mcp_tools.why_note(reranked) == "date+0.12"
 
 
 def test_loom_search_text_appends_why_only_under_explain() -> None:

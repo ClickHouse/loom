@@ -19,10 +19,17 @@ describe("signed / whyTerms", () => {
     expect(terms[1].value).toBe(-0.3);
   });
 
-  it("skips a reranked row's own fused score: a base, not a lift", () => {
-    expect(whyTerms({ rank_score: 0.6, rank_score_pre_rerank: 0.37, semantic: 0.25 })).toEqual([
-      { label: "semantic", value: 0.25 },
-    ]);
+  it("skips a reranked row's own fused score and the rerank trail", () => {
+    const terms = whyTerms({
+      rank_score: 0.6,
+      rank_score_pre_rerank: 0.37,
+      rerank_from: 4,
+      rerank_pos: 1,
+      rerank_delta: 3,
+      rerank_external: 1,
+      semantic: 0.25,
+    });
+    expect(terms).toEqual([{ label: "semantic", value: 0.25 }]);
   });
 
   it("shows an unknown component under its own spelling rather than hiding it", () => {

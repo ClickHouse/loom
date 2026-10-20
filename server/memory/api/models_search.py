@@ -142,9 +142,9 @@ class MemorySearchInput(BaseModel):
     include_proposed: bool = False
     # Carry per-hit `explanation` and `score_components`.
     # None = the server default: on at top_k <= memory_search_excerpt_bodies_k
-    # (15), off above it; memory.search_trace scores the vector leg alone. True / False
-    # pin it for this call. Above the same k an unpinned `bodies` serves the
-    # excerpt tier (memory_search_excerpt_chars) instead of the full clip.
+    # (15), off above it. True / False pin it for this call. Above the same k an
+    # unpinned `bodies` serves the excerpt tier (memory_search_excerpt_chars)
+    # instead of the full clip.
     explain: bool | None = None
     # The legs the caller can show. None = every leg
     # (memory.ask, the MCP tools, the SDKs). The dashboard's

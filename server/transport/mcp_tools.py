@@ -460,7 +460,9 @@ _WHY_LABELS: dict[str, str] = {
     "set_expansion": "set_expansion",
     "foreign": "foreign",
 }
-_WHY_SKIP = {"rank_score_raw", "rank_score"}
+# Base scores, not reasons (a reranked row's own fused score among them); a rerank's
+# trail (`rerank_*`) is positions, not lifts.
+_WHY_SKIP = {"rank_score_raw", "rank_score", "rank_score_pre_rerank"}
 
 
 def why_note(hit: dict[str, Any]) -> str:
@@ -477,7 +479,7 @@ def why_note(hit: dict[str, Any]) -> str:
             key=lambda kv: -abs(kv[1]),
         )
         for name, v in ranked:
-            if name in _WHY_SKIP or abs(v) < 0.005:
+            if name in _WHY_SKIP or name.startswith("rerank_") or abs(v) < 0.005:
                 continue
             parts.append(f"{_WHY_LABELS.get(name, name)}{v:+.2f}")
     return ", ".join(parts)

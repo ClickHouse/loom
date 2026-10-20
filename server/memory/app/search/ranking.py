@@ -185,10 +185,8 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
         query=input.query,
         candidates=candidates,
     )
-    # Order-only reranker (cohere / openai / operator HTTP endpoint): no per-candidate
-    # score to blend, so honor its ordering directly. Candidates map back to their hits
-    # by identity: extraction writes a key once per session, so a key names several hits.
-    # Every reranker returns a permutation of its candidates.
+    # Candidates map back to their hits by identity: extraction writes a key once per
+    # session, so a key names several hits.
     hit_of = {id(c): h for c, h in zip(candidates, rest, strict=True)}
     ordered = list(before)
     for i, c in zip(slots, reranked, strict=True):
