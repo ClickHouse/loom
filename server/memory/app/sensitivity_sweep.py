@@ -53,7 +53,8 @@ COARSE_SHAPE_RE = (
     r"|[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}"
     r"|[0-9](?:[ -]?[0-9]){12}"  # card number
     r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
-    r"|(?i:\bpin\b|passcode|\bcv[vc]|security code)"
+    # a PIN label followed, after letters, spaces or `:=`, by 3 digits
+    r"|(?i:\b(?:pin|passcode|cv[vc]2?|security code)[\s:=a-z]*[0-9]{3})"
     r"|[A-Z]{2}[0-9]{2} ?[A-Z0-9]{4}"  # IBAN
 )
 

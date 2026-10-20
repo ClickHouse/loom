@@ -632,15 +632,17 @@ The `high` shapes:
 
 - Credential: a prefixed API key, an access key id, a private-key block, a JWT, or a
   `password=` / `api_key:` assignment of an 8+ character token.
-- Card number: 13-19 digits of a run of digit groups joined by single spaces or dashes, on
-  group boundaries (so a card pasted with its expiry or CVV still counts), starting with a
-  card network's leading digits (3, 4, 5, 6, 22-27) and passing the Luhn check.
+- Card number: in a run of digit groups joined by single spaces or dashes, one group of
+  13-19 digits or consecutive groups in a card's grouping (4-4-4-4, 4-4-4-4-3, 4-6-5,
+  4-6-4), so a card pasted with its expiry or CVV still counts and two phone numbers side
+  by side do not; it starts with a card network's leading digits (3, 4, 5, 6, 22-27) and
+  passes the Luhn check.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value
-  after `is`, `was`, `:`, `=` or `#` (`PIN is 4471`, `cvv: 123`). Every label but a bare
-  `pin`, which is also a verb, also takes the value directly (`CVV 123`), unless `of`
-  follows it (`passcode 100 of the batch`).
+  after `is`, `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`). Every label but a bare `pin`,
+  which is also a verb and a connector pin (`pin 115`, `pin #115`), also takes the value
+  directly (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`).
 
 An IBAN counts when it passes the ISO 13616 mod-97 check. A JSON value is read scalar by
 scalar (`detector_text`): a key is not a label for the scalar after it, so

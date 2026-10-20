@@ -434,6 +434,9 @@ def test_payment_and_identity_numbers_are_high(text: str) -> None:
         "iban GB82 WEST 1234 5698 7654 32",
         "pay to DE89370400440532013000 by Friday",
         "ES91 2100 0418 4502 0005 1332 EUR",
+        "ref XY12 GB82 WEST 1234 5698 7654 32",
+        # two phone numbers side by side are not read as one card number
+        "phones: 415-555-0123 415-555-0199",
         # a phone number keeps its own tier: 13 digits after `+`, Luhn-valid or not
         "call +49 1512 3456789",
         "+1 415 555 0123",
@@ -461,6 +464,7 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "pinned 4471 rows",
         "pin 128 rows before the import",
         "GPIO pin 115",
+        "wire it to pin #115",
         "passcode 100 of the batch",
         "the spinner took 1500 ms",
         "a pin is 2 mm wide",
@@ -512,6 +516,7 @@ def test_a_long_digit_run_is_read_in_one_pass() -> None:
         "SSN 123-45-6789",
         "PIN is 4471",
         "cvv: 123",
+        "cvv2 123",
         "passcode = 908712",
         "Security code: 55512",
         "iban GB82 WEST 1234 5698 7654 32",
@@ -527,3 +532,14 @@ def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     assert re.search(COARSE_SHAPE_RE, text)
     level = detect_sensitivity(text)
     assert _shapes(text, level) == (("credential",) if level == "high" else ("other",))
+
+
+def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
+    # A selected row the detector rejects stays unlabelled and is selected again on every
+    # pass, so a bare word must not take a place under the pass's row limit.
+    import re
+
+    from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE
+
+    assert not re.search(COARSE_SHAPE_RE, "pin numpy to 1.26 in the lockfile")
+    assert not re.search(COARSE_SHAPE_RE, "the passcode screen and the CVV field")
