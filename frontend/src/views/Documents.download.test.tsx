@@ -165,7 +165,7 @@ describe("Library preview", () => {
 
   it("says when the text shown is only the start of the file", async () => {
     const d = await open({ kind: "text", url: null, text: "start", contentType: "text/plain", size: 3 << 20 });
-    expect(d).toHaveTextContent("The first 1.0 MB of 3.0 MB; Download has the whole file.");
+    expect(d).toHaveTextContent("The first 1.0 MB; Download has the whole file.");
     cleanup();
     const whole = await open({ kind: "text", url: null, text: "all", contentType: "text/plain", size: 3 });
     expect(whole).not.toHaveTextContent("Download has the whole file");

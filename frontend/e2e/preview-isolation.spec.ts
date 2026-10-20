@@ -46,7 +46,7 @@ const DASHBOARD_CSP =
   "style-src 'self' 'unsafe-inline'; " +
   "font-src 'self' data:; " +
   "img-src 'self' data: blob:; " +
-  "frame-src 'self' blob:; " +
+  "frame-src 'none'; " +
   "connect-src 'self'; " +
   "object-src 'none'; " +
   "base-uri 'none'; " +

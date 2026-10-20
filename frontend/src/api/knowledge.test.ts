@@ -135,7 +135,7 @@ describe("previewKind", () => {
   });
 });
 
-describe("fetchKnowledgePreview re-types the blob", () => {
+describe("fetchKnowledgePreview keeps the bytes passive", () => {
   function captureBlobs() {
     const blobs: Blob[] = [];
     vi.stubGlobal(
@@ -164,6 +164,14 @@ describe("fetchKnowledgePreview re-types the blob", () => {
     const p = await fetchKnowledgePreview(id, "doc://a");
     expect(p?.text).toHaveLength(PREVIEW_TEXT_BYTES);
     expect(p?.size).toBe(PREVIEW_TEXT_BYTES + 10);
+  });
+
+  it("drops a character the cap cuts in two rather than showing a replacement mark", async () => {
+    // "é" is two bytes; the cap falls between them.
+    stubFetch(200, `${"a".repeat(PREVIEW_TEXT_BYTES - 1)}é`, { "Content-Type": "text/plain" });
+    const p = await fetchKnowledgePreview(id, "doc://a");
+    expect(p?.text).toHaveLength(PREVIEW_TEXT_BYTES - 1);
+    expect(p?.text?.endsWith("\uFFFD")).toBe(false);
   });
 
   it("gives an image its own allowlisted type", async () => {

@@ -102,7 +102,7 @@ export function Documents() {
   const [previewEntry, setPreviewEntry] = useState<KnowledgeEntry | null>(null);
   const [previewDoc, setPreviewDoc] = useState<KnowledgeDocument | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [inlineBlob, setInlineBlob] = useState<InlinePreview | null>(null);
+  const [previewFile, setPreviewFile] = useState<InlinePreview | null>(null);
   const [showText, setShowText] = useState(false);
   const [replaceEntry, setReplaceEntry] = useState<KnowledgeEntry | null>(null);
   const [editEntry, setEditEntry] = useState<KnowledgeEntry | null>(null);
@@ -304,14 +304,14 @@ export function Documents() {
     setPreviewEntry(r);
     setPreviewDoc(null);
     setShowText(false);
-    if (inlineBlob?.url) {
+    if (previewFile?.url) {
       try {
-        URL.revokeObjectURL(inlineBlob.url);
+        URL.revokeObjectURL(previewFile.url);
       } catch {
         /* */
       }
     }
-    setInlineBlob(null);
+    setPreviewFile(null);
     setPreviewLoading(true);
     try {
       const docPromise = getKnowledge({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch((e) => {
@@ -323,7 +323,7 @@ export function Documents() {
         : Promise.resolve(null);
       const [d, blob] = await Promise.all([docPromise, blobPromise]);
       setPreviewDoc(d);
-      setInlineBlob(blob);
+      setPreviewFile(blob);
     } finally {
       setPreviewLoading(false);
     }
@@ -335,14 +335,14 @@ export function Documents() {
 
   const closePreview = () => {
     linkRead.current?.abort();
-    if (inlineBlob?.url) {
+    if (previewFile?.url) {
       try {
-        URL.revokeObjectURL(inlineBlob.url);
+        URL.revokeObjectURL(previewFile.url);
       } catch {
         /* */
       }
     }
-    setInlineBlob(null);
+    setPreviewFile(null);
     setPreviewEntry(null);
     setPreviewDoc(null);
     setShowText(false);
@@ -772,35 +772,34 @@ export function Documents() {
         <div className="h-[max(12rem,calc(75vh-14rem))] overflow-hidden rounded-lg bg-surface-2 relative">
           {previewLoading && <Loading label="Loading preview" className="absolute inset-0" />}
           {/* Only passive types reach here (previewKind): text as a text node, which nothing
-                  parses, and images as <img>. Nothing else is ever shown. */}
-          {!previewLoading && inlineBlob?.url && previewEntry?.has_blob && inlineBlob.kind === "image" && (
+                  parses, and images as <img>. Nothing else is drawn from the file's bytes. */}
+          {!previewLoading && previewFile?.url && previewEntry?.has_blob && previewFile.kind === "image" && (
             <div className="absolute inset-0 grid place-items-center p-6 overflow-auto">
               <img
-                src={inlineBlob.url}
+                src={previewFile.url}
                 alt={previewEntry.original_filename || "document"}
                 className="max-w-full max-h-full object-contain shadow"
               />
             </div>
           )}
-          {!previewLoading && inlineBlob?.text != null && previewEntry?.has_blob && inlineBlob.kind === "text" && (
+          {!previewLoading && previewFile?.text != null && previewEntry?.has_blob && previewFile.kind === "text" && (
             <section
               aria-label={previewEntry.original_filename || "document preview"}
               // biome-ignore lint/a11y/noNoninteractiveTabindex: the file scrolls in this box, and the keyboard scrolls it only once it has focus
               tabIndex={0}
               className="doc-preview-text absolute inset-0 overflow-auto bg-bg"
             >
-              {inlineBlob.size > PREVIEW_TEXT_BYTES && (
+              {previewFile.size > PREVIEW_TEXT_BYTES && (
                 <p className="m-0 px-3 pt-3 text-xs text-text-muted">
-                  The first {formatBytesShort(PREVIEW_TEXT_BYTES)} of {formatBytesShort(inlineBlob.size)}; Download has
-                  the whole file.
+                  The first {formatBytesShort(PREVIEW_TEXT_BYTES)}; Download has the whole file.
                 </p>
               )}
               <pre className="m-0 p-3 font-mono text-xs text-text whitespace-pre-wrap break-words">
-                {inlineBlob.text}
+                {previewFile.text}
               </pre>
             </section>
           )}
-          {!previewLoading && inlineBlob?.kind === "download" && previewEntry?.has_blob && (
+          {!previewLoading && previewFile?.kind === "download" && previewEntry?.has_blob && (
             <div className="absolute inset-0 grid place-items-center px-8 text-center">
               <div className="max-w-md">
                 <Icon name="document" size="xl" aria-hidden="true" className="mx-auto mb-3" />
@@ -811,7 +810,7 @@ export function Documents() {
               </div>
             </div>
           )}
-          {!previewLoading && !inlineBlob && previewEntry && !previewEntry.has_blob && (
+          {!previewLoading && !previewFile && previewEntry && !previewEntry.has_blob && (
             <div className="absolute inset-0 grid place-items-center px-8 text-center">
               <div className="max-w-md">
                 <Icon name="document" size="xl" aria-hidden="true" className="mx-auto mb-3" />
@@ -839,7 +838,7 @@ export function Documents() {
               </div>
             </div>
           )}
-          {!previewLoading && previewEntry?.has_blob && !inlineBlob && (
+          {!previewLoading && previewEntry?.has_blob && !previewFile && (
             <div className="absolute inset-0 grid place-items-center px-8 text-center">
               <div className="max-w-md">
                 <Icon name="document" size="xl" aria-hidden="true" className="mx-auto mb-3" />

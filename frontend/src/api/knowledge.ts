@@ -235,20 +235,20 @@ export interface InlinePreview {
   /** A `blob:` URL of an image's bytes re-typed to its allowlisted type; null for
    *  `text` and `download`, which never get a URL. */
   url: string | null;
-  /** A `text` file's first PREVIEW_TEXT_BYTES read as UTF-8; null for the other kinds. */
+  /** A `text` file's first PREVIEW_TEXT_BYTES decoded as UTF-8; null for the other kinds. */
   text: string | null;
   contentType: string;
   size: number;
 }
 
-/** The most of a text file the preview reads: the rest is the Download's. */
+/** The most of a text file the preview decodes and shows: the rest is the Download's. */
 export const PREVIEW_TEXT_BYTES = 1 << 20;
 
 /** Fetch the original uploaded bytes for the preview pane. An img tag can't
  *  carry custom headers, so the auth'd fetch happens here; the caller revokes
  *  `url` when done. The kind comes from `previewKind`, and an image's blob
- *  type from its allowlist, never from the response. A text file is read up to
- *  PREVIEW_TEXT_BYTES. Returns null when the document has no preserved blob;
+ *  type from its allowlist, never from the response. A text file's first
+ *  PREVIEW_TEXT_BYTES are decoded. Returns null when the document has no preserved blob;
  *  throws on auth / 403 / unexpected errors. */
 export async function fetchKnowledgePreview(
   id: Pick<Identity, "org" | "namespace">,
@@ -270,7 +270,11 @@ export async function fetchKnowledgePreview(
   const blob = await r.blob();
   const contentType = r.headers.get("Content-Type") || "application/octet-stream";
   const kind = previewKind(contentType);
-  const text = kind === "text" ? await blob.slice(0, PREVIEW_TEXT_BYTES).text() : null;
+  // `stream` holds back a character the cap cut in two instead of decoding it as U+FFFD.
+  const text =
+    kind === "text"
+      ? new TextDecoder().decode(await blob.slice(0, PREVIEW_TEXT_BYTES).arrayBuffer(), { stream: true })
+      : null;
   const url =
     kind === "image" ? URL.createObjectURL(new Blob([blob], { type: contentType.split(";")[0].trim() })) : null;
   return { kind, url, text, contentType, size: blob.size };
