@@ -107,6 +107,10 @@ schema. These rules keep that safe. The operator procedure is in
     `conversation.save_message` only once every serving replica runs the build that
     preserves saved messages. A rollback pauses saved-message writes and compaction
     until every replica supports that state again.
+13. **An extraction policy** (`extraction_policy.set`): N-1 does not read
+    `loom.extraction_policies` and extracts without it. Set a policy only once no N-1
+    replica serves. A rollback leaves the rows in place but no replica applies them
+    until the build that reads them is back.
 
 ## What checks them
 
