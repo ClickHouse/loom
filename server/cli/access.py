@@ -368,7 +368,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         return 2
     subject = args.subject or ""
     end_user_org = org_of_end_user_revocation(subject)
-    if is_reserved_subject(subject.rpartition("/")[2]) and not end_user_org:
+    if is_reserved_subject(subject) and not end_user_org:
         # No token's sub is a bare principal, and an end user's key is built from
         # a lowercase id under a named org: any other spelling cuts off no one.
         print(

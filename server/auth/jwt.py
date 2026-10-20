@@ -415,7 +415,10 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     if "\x00" in str(decoded["sub"]):
         raise TokenError("claim 'sub' may not contain a NUL character")
     if is_reserved_subject(str(decoded["sub"])):
-        raise TokenError("claim 'sub' may not be a grant principal (user:, group:, agent:)")
+        raise TokenError(
+            "claim 'sub' may not be a grant principal (user:, group:, agent:), "
+            "nor end in one after a '/'"
+        )
     exp = decoded.get("exp")
 
     return AuthInfo(

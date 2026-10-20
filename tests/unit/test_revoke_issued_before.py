@@ -187,11 +187,12 @@ def test_cli_issued_before_rejects_a_bad_instant(
     "subject",
     ["user:u-1", "Group:finance", "everyone", "acme/User:u-1", "acme/user:U-1", "/user:u-1"],
 )
-def test_cli_refuses_a_bare_principal_that_no_token_carries(
+def test_cli_refuses_a_subject_no_token_check_builds(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], subject: str
 ) -> None:
-    """No token's sub is a bare principal: an end user is revoked under its org,
-    so a bare one would cut off no one while saying it had."""
+    """No token's sub is spelled like a principal, bare or after a `/`, and an
+    end user's key is `<org>/user:<id>` with a lowercase id: any other such
+    spelling would cut off no one while saying it had."""
     rc = cli.main(["revoke-token", "--subject", subject])
     assert rc == 2 and "<org>/user:<id>" in capsys.readouterr().err, subject
     assert fake_ch.inserts == []
@@ -487,3 +488,23 @@ def test_a_plain_narrowing_says_scim_still_revokes_it(
     when = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when]) == 0
     assert "SCIM also revokes 'alice' outright" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("subject", ["acme/User:u-1", "acme/user:u-1", "team/everyone"])
+def test_no_loom_token_carries_a_subject_spelled_like_an_end_user_key(subject: str) -> None:
+    """Minting and verification refuse what the revocation CLI refuses, so a
+    Loom token never shares an end user's revocation key or escapes revocation."""
+    with pytest.raises(ValueError, match="grant principal"):
+        mint_token(subject, "acme", ["shop"], ["viewer"], secret=_SECRET)
+    from server.settings import settings
+
+    claims = _claims(mint_token("sa:bot", "acme", ["shop"], ["viewer"], secret=_SECRET))
+    forged = pyjwt.encode(
+        {**claims, "sub": subject},
+        _SECRET,
+        algorithm="HS256",
+        headers={"kid": "default"},
+    )
+    assert claims["aud"] == settings.jwt_audience
+    with pytest.raises(TokenError, match="grant principal"):
+        verify_token(forged, secret=_SECRET)

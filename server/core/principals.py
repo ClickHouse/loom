@@ -30,10 +30,11 @@ def principal_id(value: str, prefix: str) -> str:
 
 
 def is_reserved_subject(subject: str) -> bool:
-    """True for anything spelled like a grant principal, in any case: only an
-    end-user issuer's token may produce one (not a Loom token, not a trusted
+    """True for anything spelled like a grant principal, in any case, or ending
+    in one after a `/` (an end user's revocation key, `<org>/user:<id>`): only
+    an end-user issuer's token may produce one (not a Loom token, not a trusted
     caller), and `everyone` none at all."""
-    lowered = subject.lower()
+    lowered = subject.lower().rpartition("/")[2]
     return lowered.startswith(PRINCIPAL_PREFIXES) or lowered == EVERYONE
 
 
