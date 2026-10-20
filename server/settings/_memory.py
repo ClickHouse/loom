@@ -240,9 +240,10 @@ class MemorySettings(BaseModel):
     # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
     memory_expiry_demote_floor: float = 0.05
 
-    # Finish the deletes memory.delete_version could not (its tombstone's insert or the
-    # read after it failed), so a write that landed between its version check and its
-    # tombstone is written back above it rather than left deleted.
+    # Finish the deletes memory.delete_version recorded but could not finish (its
+    # tombstone's insert, the read after it or a retry's run failed), so a write that
+    # landed between its version check and its tombstone is written back above it rather
+    # than left deleted.
     delete_version_check_enabled: bool = True
     # Seconds between passes while checks are owed.
     delete_version_check_interval_seconds: int = 60

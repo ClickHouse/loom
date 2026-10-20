@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -52,12 +52,9 @@ from server.memory.domain import trust as _trust
 from server.memory.domain.delete_marks import delete_version_trace
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.rows import Identity, next_version
 from server.observability import degradations
 from server.settings import settings
-
-if TYPE_CHECKING:
-    from server.memory.store.rows import Identity
 
 log = logging.getLogger(__name__)
 
