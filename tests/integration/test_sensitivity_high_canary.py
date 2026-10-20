@@ -170,28 +170,39 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
     ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
     r = _post(control_plane_url, token, "memory.set", {**ident, "memory_key": key, "value": value})
     assert r.status_code == 200, r.text
+    # a plain row written after it: once it is embedded, the labelled row's embedding has
+    # had its turn
+    fence = f"{key}_fence"
+    plain = f"the {key} rota changes on mondays"
+    r = _post(
+        control_plane_url, token, "memory.set", {**ident, "memory_key": fence, "value": plain}
+    )
+    assert r.status_code == 200, r.text
     r = _post(control_plane_url, token, "memory.get", {**ident, "memory_key": key})
     assert r.status_code == 200 and r.json().get("found") is True, r.text
-    assert r.json().get("sensitivity") == level, r.text[:300]
+    got = r.json()
+    assert (got.get("value"), got.get("sensitivity")) == (value, level), r.text[:300]
+    assert f"sensitivity:{level}" in got.get("tags", []), r.text[:300]
 
-    def _embedding_rows() -> int:
+    def _embedding_rows(k: str) -> int:
         return int(
             ch_client.query(
                 "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
                 "AND namespace = {n:String} AND memory_key = {k:String} AND tombstoned_at IS NULL",
-                parameters={"o": ORG, "n": NAMESPACE, "k": key},
+                parameters={"o": ORG, "n": NAMESPACE, "k": k},
             ).result_rows[0][0]
         )
 
+    _wait(lambda: _embedding_rows(fence) == 1)
     if level == "high":
-        assert _embedding_rows() == 0
+        assert _embedding_rows(key) == 0
         r = _post(
             control_plane_url, token, "memory.search", {**ident, "query": value, "fresh": True}
         )
         assert r.status_code == 200, r.text
         assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
     else:
-        _wait(lambda: _embedding_rows() == 1)
+        _wait(lambda: _embedding_rows(key) == 1)
 
 
 @pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])

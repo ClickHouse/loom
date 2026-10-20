@@ -622,15 +622,30 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 `server/memory/domain/sensitivity.py` classifies a value with deterministic regexes:
 
-| Level    | Matches                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `high`   | A credential shape: prefixed API key, access key id, private-key block, JWT, or a `password=` / `api_key:` assignment of an 8+ character token. A payment card number: 13-19 digits, grouped by spaces or dashes or not, with a card network's leading digits and a passing Luhn check. A US Social Security number `ddd-dd-dddd` outside the never-issued ranges (area 000, 666, 9xx; group 00; serial 0000). A PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value (`PIN is 4471`, `cvv: 123`), unless an `of` follows (`pin 100 of the header`) |
-| `medium` | An email or phone number, or an IBAN that passes the ISO 13616 mod-97 check                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `low`    | Set only by a caller                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Level    | Matches                                                                    |
+| -------- | -------------------------------------------------------------------------- |
+| `high`   | A credential, payment card number, US Social Security number or stated PIN |
+| `medium` | An email address, a phone number or an IBAN                                |
+| `low`    | Set only by a caller                                                       |
 
-A JSON value is read scalar by scalar (`detector_text`): a key is not a label for the
-scalar after it, so `{"pin": "4471"}` stays unlabelled where `{"note": "PIN is 4471"}` is
-`high`, as `{"password": ...}` does for credentials.
+The `high` shapes:
+
+- Credential: a prefixed API key, an access key id, a private-key block, a JWT, or a
+  `password=` / `api_key:` assignment of an 8+ character token.
+- Card number: 13-19 digits of a run of digit groups joined by single spaces or dashes, on
+  group boundaries (so a card pasted with its expiry or CVV still counts), starting with a
+  card network's leading digits (3, 4, 5, 6, 22-27) and passing the Luhn check.
+- Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
+  9xx; group 00; serial 0000).
+- Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value
+  after `is`, `was`, `:`, `=` or `#` (`PIN is 4471`, `cvv: 123`). Every label but a bare
+  `pin`, which is also a verb, also takes the value directly (`CVV 123`), unless `of`
+  follows it (`passcode 100 of the batch`).
+
+An IBAN counts when it passes the ISO 13616 mod-97 check. A JSON value is read scalar by
+scalar (`detector_text`): a key is not a label for the scalar after it, so
+`{"pin": "4471"}` stays unlabelled where `{"note": "PIN is 4471"}` is `high`, as
+`{"password": ...}` does for credentials.
 
 A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
 row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
@@ -714,10 +729,12 @@ extractor's input, the existing memories an extraction prompt shows, the rows
 facts when written, listed by `memory.digests` or read by the outcome judge. The
 `sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
 (a card number, SSN or stated PIN included) counting as `credential` for its default shape
-filter, and an IBAN-only row as `other`, which the operator's `loom sensitivity-sweep` applies: a new version per row and, for
-`high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
-unlabelled row that holds a credential is embedded like any other, so search serves it, and
-`memory.ask` and the conflict judge can send it to their models.
+filter: a new version per row and, for `high`, tombstoned embedding rows and entity vectors.
+An IBAN-only row is shape `other`, which `loom sensitivity-sweep --apply` labels. Until the
+sweep labels it, an unlabelled row that holds a credential is embedded like any other, so
+search serves it, and `memory.ask` and the conflict judge can send it to their models. The
+sweep reads unlabelled rows only: a row already labelled `medium` that also holds a `high`
+shape stays `medium` until it is set again with `sensitivity: "high"`.
 
 ## Audit log
 

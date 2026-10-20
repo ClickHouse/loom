@@ -408,12 +408,18 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "charge it to 4111-1111-1111-1111",
         "mastercard 5500000000000004",
         "amex 3782 822463 10005",
+        # pasted with its expiry or CVV, or after another number
+        "card 4242 4242 4242 4242 08/27",
+        "4111 1111 1111 1111 12/29",
+        "4111 1111 1111 1111 123",
+        "x2 4111 1111 1111 1111",
         "SSN 123-45-6789 on the form",
         "My employee badge PIN is 4471",
         "pin: 4471",
         "PIN code 0042",
         "CVV 123",
         "the cvc was 987",
+        "my PIN is 4471 of course",
         "passcode = 908712",
         "Security code: 55512",
     ],
@@ -427,6 +433,7 @@ def test_payment_and_identity_numbers_are_high(text: str) -> None:
     [
         "iban GB82 WEST 1234 5698 7654 32",
         "pay to DE89370400440532013000 by Friday",
+        "ES91 2100 0418 4502 0005 1332 EUR",
         # a phone number keeps its own tier: 13 digits after `+`, Luhn-valid or not
         "call +49 1512 3456789",
         "+1 415 555 0123",
@@ -452,6 +459,9 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "PIN 3 of the header",
         "pin 100 of the connector",
         "pinned 4471 rows",
+        "pin 128 rows before the import",
+        "GPIO pin 115",
+        "passcode 100 of the batch",
         "the spinner took 1500 ms",
         "a pin is 2 mm wide",
         "iban GB82 WEST 1234 5698 7654 33",  # fails mod-97
@@ -488,6 +498,10 @@ def test_a_long_digit_run_is_read_in_one_pass() -> None:
     assert detect_sensitivity("7" * 200_000) == ""
     assert not reads_high("1 " * 100_000)
     assert reads_high("x " * 100_000 + "CVV 123")
+    # whitespace after a label is read once, not once per split between two runs
+    assert detect_sensitivity("pin" + " " * 200_000) == ""
+    assert detect_sensitivity("PIN is" + "\n" * 200_000) == ""
+    assert detect_sensitivity("cvv" + " " * 200_000 + "x") == ""
 
 
 @pytest.mark.parametrize(

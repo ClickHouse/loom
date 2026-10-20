@@ -21,8 +21,9 @@ The key and token patterns are the same family `scripts/gates/check_no_secrets.p
 uses to keep credentials out of the repo; the card, SSN and PIN patterns are not
 repo secrets and live here only. A memory row holding a live key or a card number
 must never be pulled into a prompt by similarity, which is what embedding it would
-do. Every pattern is a single linear regex pass, and the Luhn and mod-97 checks
-run only on what a pattern matched, so the work stays linear in the text.
+do. Every pattern is a linear regex pass, and the Luhn and mod-97 checks run on a
+bounded number of windows of what a pattern matched, so the work stays linear in the
+text.
 """
 
 from __future__ import annotations
@@ -62,24 +63,28 @@ _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])"),
 )
 
-# A card number: 13-19 digits, optionally grouped by single spaces or dashes, not part of a
-# longer digit run and not after `+` (an international phone number). `_is_card` then
-# requires an issuer's leading digits and the Luhn check, which a timestamp, an order
-# number or a phone number passes only by chance.
-_CARD = re.compile(r"(?<![\d+])(?<!\d[ -])\d(?:[ -]?\d){12,18}(?![ -]?\d)")
+# A run of digit groups joined by single spaces or dashes, not after `+` (an international
+# phone number). A card number is 13-19 digits of such a run, on group boundaries, so a
+# card pasted with its expiry or CVV ("4111 1111 1111 1111 12/29") or after another
+# number is still found; `_has_card` tries each window of up to six groups.
+_DIGIT_GROUPS = re.compile(r"(?<![\d+])\d+(?:[ -]\d+)*")
+_CARD_MAX_GROUPS = 6
 # Leading digits of the card networks: Amex/Diners 3, Visa 4, Mastercard 51-55 and 22-27,
-# Discover/UnionPay 6. A run starting 0, 1, 7, 8, 9, 20 or 21 (epoch milliseconds,
-# yyyymmdd dates) is never a card.
+# Discover/UnionPay 6. A number starting any other way (0, 1, 7, 8, 9, 20, 21, 28, 29:
+# epoch milliseconds, yyyymmdd dates) is never a card.
 _CARD_PREFIXES = ("3", "4", "5", "6", "22", "23", "24", "25", "26", "27")
 # A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
 # area 000, 666 or 9xx, group 00, serial 0000.
 _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])")
-# A PIN, passcode, CVV/CVC or security code followed by its 3-8 digit value, directly or
-# after `is`, `was`, `:`, `=` or `#`: "PIN is 4471", "cvv: 123". A value followed by `of`
-# names a position ("pin 100 of the header"), not a secret.
+# A PIN, passcode, CVV/CVC or security code stated with its 3-8 digit value. Every label
+# takes the value after `is`, `was`, `:`, `=` or `#` ("PIN is 4471", "cvv: 123"). All but a
+# bare `pin`, which is also a verb and a connector pin, take it directly too ("CVV 123",
+# "pin code 0042"), unless an `of` follows ("passcode 100 of the batch" names a position).
+# Each whitespace run has its own anchor, so a long run of spaces is read once.
 _STATED_PIN = re.compile(
-    r"(?i)\b(?:pin(?: code| number)?|passcode|cvv2?|cvc2?|security code)\b"
-    r"(?:\s+(?:is|was))?\s*[:=#]?\s*\d{3,8}(?!\d)(?!\s+of\b)"
+    r"(?i)\b(?:pin(?: code| number)?|passcode|cvv2?|cvc2?|security code)"
+    r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=#])\s*\d{3,8}(?!\d)"
+    r"|\b(?:pin code|pin number|passcode|cvv2?|cvc2?|security code)\s+\d{3,8}(?!\d)(?!\s+of\b)"
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
 # not) with a short last group; 15-34 characters once the spaces are gone.
@@ -96,30 +101,44 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-def _is_card(match: str) -> bool:
-    digits = match.replace(" ", "").replace("-", "")
-    return digits.startswith(_CARD_PREFIXES) and _luhn_ok(digits)
+def _has_card(text: str) -> bool:
+    """Whether a window of 13-19 digits on group boundaries of a digit run has a card
+    network's leading digits and passes the Luhn check."""
+    for m in _DIGIT_GROUPS.finditer(text):
+        groups = re.split(r"[ -]", m.group())
+        for i in range(len(groups)):
+            digits = ""
+            for group in groups[i : i + _CARD_MAX_GROUPS]:
+                digits += group
+                if len(digits) > 19:
+                    break
+                if len(digits) >= 13 and digits.startswith(_CARD_PREFIXES) and _luhn_ok(digits):
+                    return True
+    return False
 
 
-def _is_iban(match: str) -> bool:
+def _is_iban(candidate: str) -> bool:
     """ISO 13616: move the first four characters to the end, letters become 10-35, and the
     number is 1 mod 97."""
-    iban = match.replace(" ", "")
-    if not 15 <= len(iban) <= 34:
+    if not 15 <= len(candidate) <= 34:
         return False
-    moved = iban[4:] + iban[:4]
+    moved = candidate[4:] + candidate[:4]
     return int("".join(str(int(ch, 36)) for ch in moved)) % 97 == 1
+
+
+def _has_iban(text: str) -> bool:
+    """An IBAN in `text`. A spaced match can take in an uppercase word after it
+    ("... 1332 EUR"), so its trailing groups are dropped one at a time."""
+    for m in _IBAN.finditer(text):
+        groups = m.group().split(" ")
+        if any(_is_iban("".join(groups[:end])) for end in range(len(groups), 0, -1)):
+            return True
+    return False
 
 
 def _has_high_number(text: str) -> bool:
     """A card number, an SSN or a stated PIN in `text`."""
-    if _SSN.search(text) or _STATED_PIN.search(text):
-        return True
-    return any(_is_card(m.group()) for m in _CARD.finditer(text))
-
-
-def _has_iban(text: str) -> bool:
-    return any(_is_iban(m.group()) for m in _IBAN.finditer(text))
+    return bool(_SSN.search(text) or _STATED_PIN.search(text)) or _has_card(text)
 
 
 # --- Protected-attribute classes --------------------------------------------
@@ -271,9 +290,10 @@ def detector_text(value: Any) -> str:
 
 
 def value_reads_high(value: Any) -> bool:
-    """Whether a stored value holds a credential shape, read decoded (`detector_text`), whatever
-    the autodetect setting. For a value; raw stored text (a chunk, a passage) goes through
-    `reads_high`, which also undoes JSON escapes."""
+    """Whether a stored value holds a high shape (a credential, card number, SSN or stated
+    PIN), read decoded (`detector_text`), whatever the autodetect setting. For a value; raw
+    stored text (a chunk, a passage) goes through `reads_high`, which also undoes JSON
+    escapes."""
     return detect_sensitivity(detector_text(value)) == HIGH
 
 
@@ -284,7 +304,7 @@ _JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
 
 
 def reads_high(text: str) -> bool:
-    """Whether `text` holds a credential shape, whatever the autodetect setting: the rule for
+    """Whether `text` holds a high shape, whatever the autodetect setting: the rule for
     text copied from a row (a digest's key facts, an observation sent to a model, a raw
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
