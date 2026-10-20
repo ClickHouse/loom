@@ -21,7 +21,6 @@ import pytest
 import server.core.hosts as hosts
 from server.code.app.index import compiler_tier, egress, sandbox
 from server.code.app.index.gitrepo import auth_env
-from server.settings import settings
 
 _HAS_SANDBOX = sandbox.sandbox_available()
 
@@ -352,7 +351,7 @@ async def test_the_checkout_stays_writable_under_a_read_only_parent(tmp_path: Pa
 
 async def test_output_past_its_bounds_ends_bounded(monkeypatch) -> None:
     """A parsed stdout past its limit kills the job; diagnostic output keeps a tail."""
-    monkeypatch.setattr(settings, "code_sandbox_stdout_limit_bytes", 4096)
+    monkeypatch.setattr(sandbox, "_STDOUT_LIMIT", 4096)
     monkeypatch.setattr(sandbox, "_TAIL_BYTES", 100)
     flood = "head -c 1000000 /dev/zero"
     killed = await sandbox.run_sandboxed(

@@ -179,7 +179,7 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_MIRROR_WARMUP_CONCURRENCY` | `int` | `2` |  | Clones the warm-up runs at once on one host (each after a random wait), so N replicas starting together do not all clone from the remote at once. |
 | `LOOM_CODE_MIRROR_FETCH_INTERVAL_S` | `float` | `300.0` |  | Seconds between this host's fetches of its mirrors and sweeps of the mirrors, checkouts and lock files no active entry names. A round fetches only the branch tips, open PR heads and ledger merges the leader's pass recorded in ClickHouse that the mirror lacks: nothing when it is current. 0 = no fetch loop and no sweep. |
 | `LOOM_CODE_GIT_TIMEOUT_S` | `float` | `120.0` | live | Seconds one git command on a mirror may run (log, show, rev-parse). |
-| `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
+| `LOOM_CODE_GIT_FETCH_TIMEOUT_S` | `float` | `3600.0` | live | Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run; the first fetch after a shallow clone of a large repository can exceed ten minutes. |
 | `LOOM_CODE_MIRROR_GC_INTERVAL_H` | `float` | `168.0` |  | Hours between `git gc` runs of each mirror on this host (low CPU and IO priority, only with room for a second copy plus the margin below). 0 = never. |
 | `LOOM_CODE_MIRROR_GC_MARGIN_GB` | `float` | `5.0` |  | Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without it the gc waits another interval. |
 | `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` |  | rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup. CPU seconds a process may use. |
@@ -539,7 +539,7 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_STATUS_BUILDING_COUNTS_TTL_S` | `float` | `60.0` | live | Seconds an entry's chunk counts are cached while it is still building: they move then without a watermark moving. |
 | `LOOM_CODE_STATUS_STEADY_COUNTS_TTL_S` | `float` | `600.0` | live | Seconds an indexed entry's chunk counts are cached once it is no longer building. |
 | `LOOM_CODE_BACKPORT_HISTORY_BUDGET_MS` | `int` | `8000` | live | Milliseconds the history stage of the backport-gap check may run: one grep per path and a few `-S` reads per undecided branch. |
-| `LOOM_CODE_BACKPORT_PATCH_BUDGET_MS` | `int` | `1000` | live | The hunk-level stage's wall — one chunk read per branch, all at once. |
+| `LOOM_CODE_BACKPORT_PATCH_BUDGET_MS` | `int` | `1000` | live | Milliseconds the hunk-level stage of the backport-gap check may run: one chunk read per branch, all at once. |
 | `LOOM_CODE_BACKPORT_PRESENCE_BUDGET_MS` | `int` | `1200` | live | Milliseconds the presence stage of the backport-gap check may run. |
 | `LOOM_CODE_BLAME_INTRODUCED_MAX_DIFF_CALLS` | `int` | `10` | live | Most candidates the introduced-by diff test checks per request, blamed ones first, then ledger-only ones by recency. |
 | `LOOM_CODE_BOOTSTRAP_EMBED_BREAKER_HOLD_S` | `float` | `600.0` |  | After a slice in which the provider answered nothing, the next slices store stubs (the recovery worker fills them) rather than pay a timeout per file; the breaker closes by itself after the hold. |
@@ -550,12 +550,9 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_EGRESS_IDLE_TIMEOUT_S` | `float` | `300.0` | live | Seconds a repository job's egress tunnel may move no byte before it is closed. |
 | `LOOM_CODE_EGRESS_SLOT_WAIT_S` | `float` | `5.0` | live | Seconds a repository job's connection waits for a free egress tunnel slot. |
 | `LOOM_CODE_EMBED_RECOVERY_CHAIN_BUDGET_S` | `float` | `20.0` | live | Seconds one embed-recovery pass may spend chaining scans before it stops for the next pass. |
-| `LOOM_CODE_ENTRY_LOCK_LEASE_TTL_S` | `int` | `120` | live | A dead holder's lease is taken over after this long. |
 | `LOOM_CODE_FORK_UPSTREAM_BUDGET_S` | `float` | `1.5` | live | Seconds the lookup of a repository's fork upstream may take. |
-| `LOOM_CODE_INGEST_LEASE_TTL_S` | `int` | `120` | live | A refresh holds the namespace's lease while it runs, so CI calls that land on different replicas run one pass, not one each; a dead holder's lease expires. |
 | `LOOM_CODE_MIRROR_WARMUP_RETRY_S` | `float` | `60.0` | live | Seconds before a failed warm-up clone of a mirror is tried again. |
-| `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | A miss is re-tried after this long (the mirror fetches; a hit never changes). |
-| `LOOM_CODE_SANDBOX_STDOUT_LIMIT_BYTES` | `int` | `67108864` | live | Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent. |
+| `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept. |
 
 ## Context
 
@@ -873,6 +870,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_BM25_CACHE_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached. |
 | `LOOM_MEMORY_BLACKLIST_SWEEP_LIMIT` | `int` | `5000` | live | Most memories one blacklist sweep checks against the patterns. |
 | `LOOM_MEMORY_USAGE_FOLD_MAX_MEMORIES_PER_PASS` | `int` | `1000` |  | Most memories one usage-fold pass folds. |
 | `LOOM_MEMORY_USAGE_FOLD_PASS_TIME_BUDGET_S` | `float` | `120.0` |  | Seconds one usage-fold pass may run before it stops and leaves the rest to the next. |
@@ -890,11 +888,11 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CALIBRATION_NAMESPACE_MISS_TTL_S` | `float` | `60.0` | live | Seconds a namespace with no calibration row (or a failed read) is remembered as having none. |
 | `LOOM_MEMORY_CALIBRATION_NAMESPACE_TTL_S` | `float` | `60.0` | live | Seconds a namespace's calibration row is cached, so a row written on another replica serves here within it. |
 | `LOOM_MEMORY_CODE_LINKS_SWEEP_INTERVAL_S` | `int` | `3600` | live | Seconds between the starts of two cycles of the code-links sweep through the link table. |
-| `LOOM_MEMORY_CODE_PLANE_PARSE_TIMEOUT_S` | `float` | `0.2` | live | The branch's own read and parse, a share of the code plane's enrichment bound: past it the lesson is served as trunk last checked it. |
+| `LOOM_MEMORY_CODE_PLANE_PARSE_TIMEOUT_S` | `float` | `0.2` | live | Seconds a branch's own read and parse of a code lesson may take, a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it. |
 | `LOOM_MEMORY_DURABILITY_VERIFIER_MAX_FACTS_PER_CALL` | `int` | `60` | live | One call judges at most this many facts; a longer capture is judged in slices (groups never span slices — a missed fold only keeps a paraphrase). |
 | `LOOM_MEMORY_ENTITY_EXTRACT_PARSE_FAIL_MAX` | `int` | `3` | live | Consecutive unparseable model replies for one memory before the entity extractor stamps it failed and moves on. |
-| `LOOM_MEMORY_FACTS_PROJECTION_WAIT_S` | `float` | `3.0` | live | How long a walk waits for the graph projections of its namespace in flight when it starts, its own process's and the server's other processes' together. |
-| `LOOM_MEMORY_NAMESPACE_HEALTH_FAILURE_TTL_S` | `int` | `300` | live | A failed lookup is remembered this long (bounded by the TTL) so the pack does not re-run six failing reads on every call while the store is down. |
+| `LOOM_MEMORY_FACTS_PROJECTION_WAIT_S` | `float` | `3.0` | live | Seconds facts.traverse waits, when it starts, for the graph projections of its namespace still in flight in this process and the others. |
+| `LOOM_MEMORY_NAMESPACE_HEALTH_FAILURE_TTL_S` | `int` | `300` | live | Seconds a failed namespace-health lookup is remembered (never longer than namespace_health_ttl_seconds), so the context pack does not re-run failing reads on every call. |
 | `LOOM_MEMORY_PROFILE_SEARCH_EMBED_CAP` | `int` | `8` | live | The most sections one search embeds on the fly. |
 | `LOOM_MEMORY_RETRIEVAL_EMPTY_BLOCK_RETRIES` | `int` | `3` |  | Retries of a vector read that ClickHouse answers with an empty-block error (code 10 on a part still being written) before the search fails. |
 | `LOOM_MEMORY_RETRIEVAL_EMPTY_BLOCK_RETRY_SLEEP_S` | `float` | `0.2` |  | Seconds before the first such retry; each later one waits one more step of it. |
@@ -1065,9 +1063,7 @@ memory.search: legs, fusion, ranking and gates.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_SEARCH_PAGES_TTL_S` | `int` | `1800` | live | Seconds a stored page of search results stays readable by its cursor. |
-| `LOOM_MEMORY_SEARCH_BM25_CACHE_TTL_S` | `float` | `300.0` | live | Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached. |
-| `LOOM_MEMORY_SEARCH_SPELLING_LOOKUP_TIMEOUT_S` | `float` | `0.4` | live | The lookup reads every row of the namespace it may read: 100-300 ms server-side for 40k rows. On a cache miss it overlaps the embed. |
+| `LOOM_MEMORY_SEARCH_SPELLING_LOOKUP_TIMEOUT_S` | `float` | `0.4` | live | Seconds the query-spelling lookup may take; it reads every row of the namespace it may read (100-300 ms server-side for 40k rows) and overlaps the embed on a cache miss. |
 
 ## Model
 
@@ -1148,7 +1144,7 @@ Namespace registration, write marks and bench-namespace GC.
 | --- | --- | --- | --- | --- |
 | `LOOM_NAMESPACE_AUDIT_INDEX_ROW_SCAN_CAP` | `int` | `20000` | live | Most live rows the namespace audit's value scan reads (it is O(total value bytes)); above it that check is skipped and says so. |
 | `LOOM_NAMESPACE_ONTOLOGY_CARDINALITY_TTL_S` | `float` | `60.0` | live | Seconds a namespace's relation cardinalities (one or many) are cached for the triple writer. |
-| `LOOM_NAMESPACE_TAXONOMY_TTL_S` | `float` | `300.0` | live | A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large namespace) and changes only when the namespace does. It is remembered per (org, namespace, namespace version, top-N arguments) for up to five minutes — the version watermark is `max(version)` over the namespace, one 90 kB read; the five minutes bound the communities, which come from their own table. |
+| `LOOM_NAMESPACE_TAXONOMY_TTL_S` | `float` | `300.0` | live | Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace (about 20 MB per open on a large namespace) and changes only when the namespace does. |
 
 ## Observability
 
@@ -1207,7 +1203,7 @@ Telemetry, audit, tracing and the ops surface.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_INSIGHTS_AGENTS_CONNECTED_TTL_S` | `float` | `60.0` | live | The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h scan of agent_events. One answer per (org, namespace, window, caller scope) serves every asker for 60 s — "a new agent in the last day" does not change faster than that. |
+| `LOOM_INSIGHTS_AGENTS_CONNECTED_TTL_S` | `float` | `60.0` | live | Seconds one agents.connected answer per (org, namespace, window, caller) is reused: the sidebar badge asks every 30 s per tab and the answer is a 24 h scan of agent_events. |
 | `LOOM_AUDIT_VERIFY_MAX_ROWS_PER_PASS` | `int` | `500000` | live | Most audit rows one verifier pass checks; past it the newest go unchecked and the pass says so. |
 
 ## Provider
@@ -1546,4 +1542,3 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_ERROR_NAMES_TTL_S` | `float` | `21600.0` | live | Seconds a namespace's error-name to code map is cached. |
 | `LOOM_TRACKER_FRESHNESS_BUDGET_S` | `float` | `2.0` | live | Seconds the item-count read behind a tracker source's freshness may take. |
 | `LOOM_TRACKER_TEST_CANDIDATES_TIMEOUT_S` | `float` | `3.0` | live | Seconds the test-signal candidate read may take; it never holds up the answer. |
-| `LOOM_TRACKER_EMBED_WINDOW_KEYS_LIMIT` | `int` | `200000` | live | The window-keys read's cap; a read that returns this many is incomplete. |

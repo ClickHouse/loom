@@ -15,7 +15,7 @@ Two locks, taken in this order:
   it when the holder exits.
 - The deployment's: the lease `scip_entry:<org>/<namespace>` (`server.core.leases`),
   so two hosts never run one entry at once. It is renewed while held and expires
-  `code_entry_lock_lease_ttl_s` after its holder dies. When it cannot be taken (ClickHouse or
+  `ENTRY_LEASE_TTL_S` after its holder dies. When it cannot be taken (ClickHouse or
   Keeper unreachable) the pass fails: the host's file alone excludes nothing on
   another host.
 
@@ -50,6 +50,9 @@ from server.settings import settings
 
 # The environment variable the `entry-lock` wrapper hands its command the holder in.
 HOLDER_ENV = "LOOM_ENTRY_LEASE_HOLDER"
+
+# A dead holder's lease is taken over after this long.
+ENTRY_LEASE_TTL_S = 120  # not a setting: the lease takeover protocol between replicas
 # How often a waiting pass retries the host's lock file.
 _POLL_S = 1.0
 
@@ -141,7 +144,7 @@ async def _take_lease(org: str, namespace: str, *, wait: bool) -> leases.Lease:
     try:
         lease = await leases.take(
             name,
-            ttl_s=settings.code_entry_lock_lease_ttl_s,
+            ttl_s=ENTRY_LEASE_TTL_S,
             wait_s=settings.code_entry_lock_wait_s if wait else 0.0,
             poll_s=2.0,
             poll_max_s=30.0,

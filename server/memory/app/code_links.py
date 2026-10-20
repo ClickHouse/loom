@@ -344,7 +344,7 @@ async def sweep_erased(
     cursor: dict[str, Any], limit: int, result: link_pass.PassResult
 ) -> dict[str, Any]:
     """Drop the links of gone memories in the next page of the link table, a page a pass,
-    a new cycle an hour after the last; the cursor to store."""
+    a new cycle `memory_code_links_sweep_interval_s` after the last; the cursor to store."""
     if time.time() - float(cursor.get("done_at", 0)) < settings.memory_code_links_sweep_interval_s:
         return cursor
     try:

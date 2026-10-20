@@ -218,7 +218,7 @@ async def _bm25_df_and_corpus(
     cache_key = (org, namespace)
     cached = _BM25_CORPUS_CACHE.get(cache_key)
     use_cached_corpus = (
-        cached is not None and _time.time() - cached[0] < settings.memory_search_bm25_cache_ttl_s
+        cached is not None and _time.time() - cached[0] < settings.memory_bm25_cache_ttl_s
     )
     df_params = {"org": org, "ns": namespace, "tokens": tokens}
     corpus_params = {"org": org, "ns": namespace}

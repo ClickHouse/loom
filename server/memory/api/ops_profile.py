@@ -45,7 +45,6 @@ profile_append = Operation(
     handler=handle_profile_append,
     # Not idempotent: a retry appends the addition twice.
     idempotent=False,
-    # 2-3 round-trips under contention
     required_role=Role.WRITER,
     audit=False,
 )

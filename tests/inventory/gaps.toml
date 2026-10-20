@@ -60,9 +60,7 @@
 "setting:code_blame_cache_ttl_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_blame_graph_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_blame_introduced_diff_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_blame_max_graph_commits" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_blame_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_bootstrap_backoff_max_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_bootstrap_clone_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_bootstrap_files_per_pass" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_citations_git_budget_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -93,7 +91,6 @@
 "setting:code_ingest_sibling_text_ttl_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_ingest_slice_share" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_merge_shas_log_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_merge_shas_max_log_commits" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_message_grep_error_codes_ttl_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_mirror_clone_wait_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_mirror_gc_timeout_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -108,7 +105,6 @@
 "setting:code_scip_delta_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_delta_max_tus" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_delta_timeout_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
-"setting:code_scip_full_retry_s" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_go_jobs" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_max_parts" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
 "setting:code_scip_py_delta_interval_seconds" = { owner = "code", reason = "No test names this setting or its LOOM_ env var." }
@@ -187,10 +183,10 @@
 "setting:memory_ask_synthesize_route_max_docs" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_ask_when_evidence_top_k" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_blacklist_sweep_limit" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
+"setting:memory_bm25_cache_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_concurrency" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_bulk_contextualize_max_entries" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_conflict_judge_max_peers" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_conflict_sweep_max_rows_per_pass" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_conflicts_count_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_coverage_sweep_gate_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_expiry_demote_factor" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
@@ -205,16 +201,12 @@
 "setting:memory_extract_verify_timeout_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_facts_traverse_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_namespace_retrieval_defaults_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_observe_extract_session_context_limit" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_pending_disclosure_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_profile_cas_max_retries" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_proposals_policy_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_proposals_scan_cap" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_rrf_code_shape_hi" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_rrf_code_shape_lo" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_run_complete_expire_days" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_asserted_boost_scale" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_search_bm25_cache_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_digest_descent_k" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_digest_descent_top_m" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_entity_summaries_top_n" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
@@ -227,7 +219,6 @@
 "setting:memory_search_key_match_boost_scale" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_key_match_min_strength" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_page_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:memory_search_pages_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_per_key_cap" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_pool_multiplier_deep" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_search_pool_multiplier_rerank" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
@@ -245,7 +236,6 @@
 "setting:memory_summary_entity_ttl_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_usage_fold_max_memories_per_pass" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:memory_usage_fold_pass_time_budget_s" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:namespace_audit_index_row_scan_cap" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:namespace_autoregister_skip_prefixes" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:namespace_gc_sagas_per_pass" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:namespace_ontology_cardinality_ttl_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
@@ -279,7 +269,6 @@
 "setting:schema_status_ttl_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:sensitivity_sweep_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:sensitivity_sweep_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:storage_frontend_assets_retry_max_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_idle_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
 "setting:task_lease_sweep_interval_seconds" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
@@ -314,6 +303,3 @@
 "setting:tracker_test_signal_flip_rate" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:tracker_test_signal_min_runs" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
 "setting:usage_fold_enabled" = { owner = "memory", reason = "No test names this setting or its LOOM_ env var." }
-"setting:worker_backoff_base_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
-"setting:worker_backoff_cap_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }
-"setting:worker_partial_retry_s" = { owner = "platform", reason = "No test names this setting or its LOOM_ env var." }

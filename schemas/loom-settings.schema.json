@@ -67,7 +67,7 @@
         },
         "audit_verify_max_rows_per_pass": {
           "default": 500000,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most audit rows one verifier pass checks; past it the newest go unchecked and the pass says so."
         },
@@ -383,7 +383,7 @@
           "default": 1000,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "The hunk-level stage's wall — one chunk read per branch, all at once."
+          "description": "Milliseconds the hunk-level stage of the backport-gap check may run: one chunk read per branch, all at once."
         },
         "code_backport_presence_budget_ms": {
           "default": 1200,
@@ -464,13 +464,13 @@
         },
         "code_blame_introduced_max_diff_calls": {
           "default": 10,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most candidates the introduced-by diff test checks per request, blamed ones first, then ledger-only ones by recency."
         },
         "code_blame_max_graph_commits": {
           "default": 200000,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most commits code.blame_range's window graph reads; a longer history is a caller asking for everything, which blame cannot rank."
         },
@@ -482,7 +482,7 @@
         },
         "code_bootstrap_backoff_max_s": {
           "default": 3600.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "Longest wait, in seconds, before a mirror fetches again for a commit no fetch has brought."
         },
@@ -493,7 +493,7 @@
         },
         "code_bootstrap_embed_breaker_hold_s": {
           "default": 600.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "After a slice in which the provider answered nothing, the next slices store stubs (the recovery worker fills them) rather than pay a timeout per file; the breaker closes by itself after the hold."
         },
@@ -504,13 +504,13 @@
         },
         "code_bootstrap_mirror_refresh_s": {
           "default": 5.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds after a successful mirror fetch before another read may start one."
         },
         "code_bootstrap_mirror_retry_s": {
           "default": 60.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds after a failed mirror clone or fetch before it is tried again; a commit no fetch has brought waits this, doubled per fetch."
         },
@@ -542,7 +542,7 @@
         },
         "code_citations_git_call_cap": {
           "default": 20,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most git subprocesses code.verify_citations may start per request."
         },
@@ -790,12 +790,6 @@
           "type": "number",
           "description": "Seconds one enrichment of a code result may take before it is left empty."
         },
-        "code_entry_lock_lease_ttl_s": {
-          "default": 120,
-          "exclusiveMinimum": 0,
-          "type": "integer",
-          "description": "A dead holder's lease is taken over after this long."
-        },
         "code_entry_lock_wait_s": {
           "default": 14400.0,
           "exclusiveMinimum": 0,
@@ -899,7 +893,7 @@
           "default": 3600.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch after a shallow clone of a large repository can exceed ten minutes."
+          "description": "Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run; the first fetch after a shallow clone of a large repository can exceed ten minutes."
         },
         "code_git_ledger_merge_batch": {
           "default": 40,
@@ -1011,12 +1005,6 @@
           "type": "integer",
           "description": "Entries whose commits ingest side by side in the commit phase. Each entry's own commits stay one at a time, oldest first (the watermark contract); a lane waits on ClickHouse round trips, not on its capacity, so lanes add throughput. 1 = one commit at a time across all entries."
         },
-        "code_ingest_lease_ttl_s": {
-          "default": 120,
-          "exclusiveMinimum": 0,
-          "type": "integer",
-          "description": "A refresh holds the namespace's lease while it runs, so CI calls that land on different replicas run one pass, not one each; a dead holder's lease expires."
-        },
         "code_ingest_live_paths_ttl_s": {
           "default": 60.0,
           "type": "number",
@@ -1122,7 +1110,7 @@
         },
         "code_merge_shas_max_log_commits": {
           "default": 5000,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most commits the mirror's git log prints when it searches for merge commits."
         },
@@ -1171,7 +1159,7 @@
         },
         "code_mirror_warmup_retry_s": {
           "default": 60.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds before a failed warm-up clone of a mirror is tried again."
         },
@@ -1306,7 +1294,7 @@
           "default": 600.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "A miss is re-tried after this long (the mirror fetches; a hit never changes)."
+          "description": "Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept."
         },
         "code_risk_annotations": {
           "default": true,
@@ -1337,12 +1325,6 @@
           "default": false,
           "type": "boolean",
           "description": "Set by deployments that ship the sandbox profiles: a repository job refuses to run rather than run unsandboxed, and /v1/health reports the missing sandbox as an error. False: without the sandbox, jobs fall back to plain processes as \"Without the sandbox\" in code-index-operations.md says."
-        },
-        "code_sandbox_stdout_limit_bytes": {
-          "default": 67108864,
-          "minimum": 0,
-          "type": "integer",
-          "description": "Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent."
         },
         "code_scip_apply_enabled": {
           "default": false,
@@ -1406,7 +1388,7 @@
         },
         "code_scip_full_retry_s": {
           "default": 21600,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "integer",
           "description": "Seconds before a failed compiler-tier full re-index of an entry is tried again."
         },
@@ -2420,7 +2402,7 @@
           "default": 60.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h scan of agent_events. One answer per (org, namespace, window, caller scope) serves every asker for 60 s — \"a new agent in the last day\" does not change faster than that."
+          "description": "Seconds one agents.connected answer per (org, namespace, window, caller) is reused: the sidebar badge asks every 30 s per tab and the answer is a 24 h scan of agent_events."
         },
         "instance_heartbeat_seconds": {
           "default": 10.0,
@@ -3199,6 +3181,12 @@
           "type": "integer",
           "description": "Most memories one blacklist sweep checks against the patterns."
         },
+        "memory_bm25_cache_ttl_s": {
+          "default": 300.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached."
+        },
         "memory_bulk_contextualize_allowed": {
           "default": true,
           "type": "boolean",
@@ -3289,7 +3277,7 @@
         },
         "memory_code_links_sweep_interval_s": {
           "default": 3600,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "integer",
           "description": "Seconds between the starts of two cycles of the code-links sweep through the link table."
         },
@@ -3297,7 +3285,7 @@
           "default": 0.2,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "The branch's own read and parse, a share of the code plane's enrichment bound: past it the lesson is served as trunk last checked it."
+          "description": "Seconds a branch's own read and parse of a code lesson may take, a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it."
         },
         "memory_conflict_judge": {
           "default": false,
@@ -3319,7 +3307,7 @@
         },
         "memory_conflict_sweep_max_rows_per_pass": {
           "default": 50,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most unresolved conflicts one conflict-sweep pass re-judges."
         },
@@ -3337,7 +3325,7 @@
         },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "One call judges at most this many facts; a longer capture is judged in slices (groups never span slices — a missed fold only keeps a paraphrase)."
         },
@@ -3353,7 +3341,7 @@
         },
         "memory_entity_extract_parse_fail_max": {
           "default": 3,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Consecutive unparseable model replies for one memory before the entity extractor stamps it failed and moves on."
         },
@@ -3491,7 +3479,7 @@
           "default": 3.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "How long a walk waits for the graph projections of its namespace in flight when it starts, its own process's and the server's other processes' together."
+          "description": "Seconds facts.traverse waits, when it starts, for the graph projections of its namespace still in flight in this process and the others."
         },
         "memory_facts_traverse_ttl_s": {
           "default": 60.0,
@@ -3520,7 +3508,7 @@
           "default": 300,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "A failed lookup is remembered this long (bounded by the TTL) so the pack does not re-run six failing reads on every call while the store is down."
+          "description": "Seconds a failed namespace-health lookup is remembered (never longer than namespace_health_ttl_seconds), so the context pack does not re-run failing reads on every call."
         },
         "memory_namespace_retrieval_defaults_ttl_s": {
           "default": 60.0,
@@ -3535,7 +3523,7 @@
         },
         "memory_observe_extract_session_context_limit": {
           "default": 400,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "The most observations a session's notes read: the notes prompt is bounded by characters anyway; this bounds the read."
         },
@@ -3552,13 +3540,13 @@
         },
         "memory_profile_cas_max_retries": {
           "default": 3,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Attempts a profile write makes when a concurrent write moved the profile under it."
         },
         "memory_profile_search_embed_cap": {
           "default": 8,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "The most sections one search embeds on the fly."
         },
@@ -3570,7 +3558,7 @@
         },
         "memory_proposals_scan_cap": {
           "default": 2000,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "A listing reads at most this many proposals before `only` / `limit` — the graded counts are one statement over them; a namespace holding more on trial than this is a queue nobody is deciding, not a page."
         },
@@ -3661,12 +3649,6 @@
           "default": 0.03,
           "type": "number",
           "description": "Tie-break boost (cosine units) for a hand-asserted fact row (source_class 'asserted', not a hint:/procedure/summary:/obs: row) against derived rows; never a lever over a stronger match. 0 disables."
-        },
-        "memory_search_bm25_cache_ttl_s": {
-          "default": 300.0,
-          "exclusiveMinimum": 0,
-          "type": "number",
-          "description": "Seconds the BM25 corpus statistics (document count, mean length) of a namespace are cached."
         },
         "memory_search_bm25_live_tail": {
           "default": true,
@@ -3924,12 +3906,6 @@
           "type": "integer",
           "description": "Seconds a parked page (a `paging=true` search's tail) stays fetchable before the TTL merge reclaims it."
         },
-        "memory_search_pages_ttl_s": {
-          "default": 1800,
-          "exclusiveMinimum": 0,
-          "type": "integer",
-          "description": "Seconds a stored page of search results stays readable by its cursor."
-        },
         "memory_search_per_key_cap": {
           "default": 3,
           "type": "integer",
@@ -4020,7 +3996,7 @@
           "default": 0.4,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "The lookup reads every row of the namespace it may read: 100-300 ms server-side for 40k rows. On a cache miss it overlaps the embed."
+          "description": "Seconds the query-spelling lookup may take; it reads every row of the namespace it may read (100-300 ms server-side for 40k rows) and overlaps the embed on a cache miss."
         },
         "memory_search_tier_stop_similarity": {
           "default": 0.4,
@@ -4085,7 +4061,7 @@
         },
         "memory_usage_fold_acted_max_rows_per_pass": {
           "default": 5000,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most exposure rows one usage-fold pass reads to credit acted-on memories; the watermark holds until a pass drains below it."
         },
@@ -4097,7 +4073,7 @@
         },
         "memory_usage_fold_max_pending_mutations": {
           "default": 20,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Backpressure: a pass is skipped — watermark untouched — while the destination table already carries this many unfinished mutations on the connected replica. Every lightweight UPDATE is a patch part plus a Keeper log entry; enough of them pending on a large table can expire replicas' Keeper sessions and leave them read-only."
         },
@@ -4151,7 +4127,7 @@
         },
         "namespace_audit_index_row_scan_cap": {
           "default": 20000,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer",
           "description": "Most live rows the namespace audit's value scan reads (it is O(total value bytes)); above it that check is skipped and says so."
         },
@@ -4212,7 +4188,7 @@
           "default": 300.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large namespace) and changes only when the namespace does. It is remembered per (org, namespace, namespace version, top-N arguments) for up to five minutes — the version watermark is `max(version)` over the namespace, one 90 kB read; the five minutes bound the communities, which come from their own table."
+          "description": "Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace (about 20 MB per open on a large namespace) and changes only when the namespace does."
         },
         "namespace_write_marks_flush_interval_s": {
           "default": 5.0,
@@ -4829,13 +4805,13 @@
         },
         "storage_frontend_assets_retry_max_s": {
           "default": 60.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "Longest wait, in seconds, between retries of a failed dashboard-asset publish (the wait doubles from storage_frontend_assets_retry_s)."
         },
         "storage_frontend_assets_retry_s": {
           "default": 2.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "A round that failed is retried after this, doubling up to `storage_frontend_assets_retry_max_s`."
         },
@@ -5185,12 +5161,6 @@
           "type": "number",
           "description": "Seconds a tracker-embed pass may run before the supervisor abandons it."
         },
-        "tracker_embed_window_keys_limit": {
-          "default": 200000,
-          "minimum": 0,
-          "type": "integer",
-          "description": "The window-keys read's cap; a read that returns this many is incomplete."
-        },
         "tracker_error_names_ttl_s": {
           "default": 21600.0,
           "exclusiveMinimum": 0,
@@ -5509,13 +5479,13 @@
         },
         "worker_backoff_base_s": {
           "default": 1.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "First wait, in seconds, after a worker's pass fails; it doubles per failure up to worker_backoff_cap_s."
         },
         "worker_backoff_cap_s": {
           "default": 60.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "Longest wait, in seconds, between a failing worker's passes (the wait doubles from worker_backoff_base_s)."
         },
@@ -5526,7 +5496,7 @@
         },
         "worker_partial_retry_s": {
           "default": 3600.0,
-          "minimum": 0,
+          "exclusiveMinimum": 0,
           "type": "number",
           "description": "A pass with a failed leg on a worker whose interval is longer than this retries after this long, doubling with each further such pass, up to the interval: a weekly pass must not leave one namespace's transient failure standing for a week."
         },

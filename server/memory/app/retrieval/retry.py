@@ -16,6 +16,13 @@ from server.settings import settings
 log = logging.getLogger("server.memory.app.retrieval")
 
 
+# Code 10 "Not found column org: in block memory_key … (size = 0)" from the
+# vector leg (memory_embeddings FINAL + identity PREWHERE + hasAnyTokens text
+# index). Its deterministic cause is the text index's direct-read shortcut,
+# which emits the empty block for some token sets on every run;
+# `query_plan_direct_read_from_text_index = 0` on every hasAnyTokens
+# statement here removes it. The bounded retry (memory_retrieval_empty_block_retries)
+# covers the transient share that remains on a part that has just been written.
 _empty_block_retries = 0  # process-local counter, surfaced in the warning
 
 

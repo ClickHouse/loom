@@ -8,8 +8,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from server.settings import settings
+from server.settings import Settings, settings
+from server.settings._live import coerce
 
 
 class _Stop(Exception):
@@ -169,3 +171,47 @@ async def test_a_hyde_call_slower_than_its_setting_falls_back_to_the_query(
     with caplog.at_level(logging.WARNING):
         vec = await embed._embed_search_query(inp, _Embedder(), "where", "", budget, work, clock)  # type: ignore[arg-type]
     assert vec and "HyDE generation failed" in caplog.text
+
+
+_NEVER_ZERO = [
+    # a work cap of 0 would starve or break its path
+    "memory_durability_verifier_max_facts_per_call",
+    "memory_profile_cas_max_retries",
+    "memory_profile_search_embed_cap",
+    "memory_proposals_scan_cap",
+    "memory_conflict_sweep_max_rows_per_pass",
+    "memory_entity_extract_parse_fail_max",
+    "memory_observe_extract_session_context_limit",
+    "memory_usage_fold_acted_max_rows_per_pass",
+    "memory_usage_fold_max_pending_mutations",
+    "code_citations_git_call_cap",
+    "code_merge_shas_max_log_commits",
+    "code_blame_introduced_max_diff_calls",
+    "code_blame_max_graph_commits",
+    "namespace_audit_index_row_scan_cap",
+    "audit_verify_max_rows_per_pass",
+    # an interval or backoff of 0 would spin
+    "memory_code_links_sweep_interval_s",
+    "code_bootstrap_backoff_max_s",
+    "code_bootstrap_embed_breaker_hold_s",
+    "code_bootstrap_mirror_refresh_s",
+    "code_bootstrap_mirror_retry_s",
+    "code_mirror_warmup_retry_s",
+    "code_scip_full_retry_s",
+    "storage_frontend_assets_retry_s",
+    "storage_frontend_assets_retry_max_s",
+    "worker_backoff_base_s",
+    "worker_backoff_cap_s",
+    "worker_partial_retry_s",
+]
+
+
+@pytest.mark.parametrize("name", _NEVER_ZERO)
+def test_a_cap_or_interval_of_zero_is_refused(name: str) -> None:
+    with pytest.raises(ValidationError):
+        coerce(Settings, name, 0)
+
+
+def test_zero_retries_of_an_empty_block_read_still_means_none() -> None:
+    assert coerce(Settings, "memory_retrieval_empty_block_retries", 0) == 0
+    assert coerce(Settings, "memory_retrieval_empty_block_retry_sleep_s", 0) == 0

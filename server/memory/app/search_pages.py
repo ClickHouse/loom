@@ -145,7 +145,7 @@ async def store_page(
     lost with a ClickHouse node answers `page_expired` and the caller re-runs
     the search."""
     if ttl_s is None:
-        ttl_s = settings.memory_search_pages_ttl_s
+        ttl_s = settings.memory_search_page_ttl_s
     key = page_blob_key(content)
     now = naive_utc_now()
     await ch.insert(

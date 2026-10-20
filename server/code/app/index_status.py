@@ -42,6 +42,10 @@ from server.settings import settings
 logger = logging.getLogger(__name__)
 
 
+# The status is caller-independent and costly per repository (a state read plus four git
+# subprocesses; a serial listing of ~20 repositories took over a second), so one answer per
+# (org, namespace) serves every caller for `code_status_ttl_s`, and a cold listing computes
+# the misses concurrently under a small semaphore instead of in series.
 _status_cache: dict[tuple[str, str], tuple[float, CodeIndexStatusOutput]] = {}
 _status_sem = asyncio.Semaphore(8)
 

@@ -33,7 +33,6 @@ memory_bulk_set = Operation(
     output_model=MemoryBulkSetOutput,
     handler=handle_memory_bulk_set,
     idempotent=True,
-    # one CH insert + N embeds
     required_role=Role.WRITER,
     audit=False,
 )

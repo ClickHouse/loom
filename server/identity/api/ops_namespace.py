@@ -229,7 +229,6 @@ namespace_snapshot = Operation(
     output_model=NamespaceSnapshotOutput,
     handler=handle_namespace_snapshot,
     idempotent=True,
-    # bounded by namespace size
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -258,7 +257,6 @@ namespace_rollback = Operation(
     handler=handle_namespace_rollback,
     # A dry run is idempotent; an apply re-inserts heads and is not.
     idempotent=False,
-    # bounded by max_keys; one FULL OUTER JOIN + batched inserts
     required_role=Role.ADMIN,
     audit=True,
 )

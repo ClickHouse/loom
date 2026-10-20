@@ -31,7 +31,6 @@ erasure_request = Operation(
     output_model=ErasureRequestOutput,
     handler=handle_erasure_request,
     idempotent=True,  # saga steps are individually idempotent
-    # multiple ALTER UPDATEs are slow; tolerated for compliance
     # Input encodes the target via scope_type/scope_value, not a literal
     # `namespace` field, so the transport can't bind the authz grant — the
     # handler does the scope-specific check itself. WRITER (not ADMIN) lets a
@@ -60,7 +59,6 @@ erasure_export = Operation(
     output_model=ErasureExportOutput,
     handler=handle_erasure_export,
     idempotent=True,
-    # multi-table scan; not on hot path
     required_role=Role.ADMIN,
     audit=True,
 )

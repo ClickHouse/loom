@@ -482,8 +482,9 @@ settings:
   # Seconds one git command on a mirror may run (log, show, rev-parse). [live]
   # code_git_timeout_s: 120.0
 
-  # Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch
-  # after a shallow clone of a large repository can exceed ten minutes. [live]
+  # Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may run;
+  # the first fetch after a shallow clone of a large repository can exceed ten minutes.
+  # [live]
   # code_git_fetch_timeout_s: 3600.0
 
   # Hours between `git gc` runs of each mirror on this host (low CPU and IO priority,
@@ -1540,7 +1541,8 @@ settings:
   # and a few `-S` reads per undecided branch. [live]
   # code_backport_history_budget_ms: 8000
 
-  # The hunk-level stage's wall — one chunk read per branch, all at once. [live]
+  # Milliseconds the hunk-level stage of the backport-gap check may run: one chunk read
+  # per branch, all at once. [live]
   # code_backport_patch_budget_ms: 1000
 
   # Milliseconds the presence stage of the backport-gap check may run. [live]
@@ -1583,27 +1585,15 @@ settings:
   # next pass. [live]
   # code_embed_recovery_chain_budget_s: 20.0
 
-  # A dead holder's lease is taken over after this long. [live]
-  # code_entry_lock_lease_ttl_s: 120
-
   # Seconds the lookup of a repository's fork upstream may take. [live]
   # code_fork_upstream_budget_s: 1.5
-
-  # A refresh holds the namespace's lease while it runs, so CI calls that land on
-  # different replicas run one pass, not one each; a dead holder's lease expires. [live]
-  # code_ingest_lease_ttl_s: 120
 
   # Seconds before a failed warm-up clone of a mirror is tried again. [live]
   # code_mirror_warmup_retry_s: 60.0
 
-  # A miss is re-tried after this long (the mirror fetches; a hit never changes). [live]
+  # Seconds before the review brief reads a mirror again for an object it did not have
+  # (the mirror may have fetched it); a hit is kept. [live]
   # code_review_brief_mirror_miss_ttl_s: 600.0
-
-  # Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
-  # repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
-  # stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
-  # [live]
-  # code_sandbox_stdout_limit_bytes: 67108864
 
   # ===== Context: context.pack, context offload, session briefs and the mentor's hints. ==========
 
@@ -2410,6 +2400,10 @@ settings:
 
   # --- timeouts, budgets and caches ---
 
+  # Seconds the BM25 corpus statistics (document count, mean length) of a namespace are
+  # cached. [live]
+  # memory_bm25_cache_ttl_s: 300.0
+
   # Most memories one blacklist sweep checks against the patterns. [live]
   # memory_blacklist_sweep_limit: 5000
 
@@ -2471,8 +2465,9 @@ settings:
   # table. [live]
   # memory_code_links_sweep_interval_s: 3600
 
-  # The branch's own read and parse, a share of the code plane's enrichment bound: past
-  # it the lesson is served as trunk last checked it. [live]
+  # Seconds a branch's own read and parse of a code lesson may take, a share of the code
+  # plane's enrichment bound; past it the lesson is served as trunk last checked it.
+  # [live]
   # memory_code_plane_parse_timeout_s: 0.2
 
   # One call judges at most this many facts; a longer capture is judged in slices
@@ -2483,12 +2478,13 @@ settings:
   # stamps it failed and moves on. [live]
   # memory_entity_extract_parse_fail_max: 3
 
-  # How long a walk waits for the graph projections of its namespace in flight when it
-  # starts, its own process's and the server's other processes' together. [live]
+  # Seconds facts.traverse waits, when it starts, for the graph projections of its
+  # namespace still in flight in this process and the others. [live]
   # memory_facts_projection_wait_s: 3.0
 
-  # A failed lookup is remembered this long (bounded by the TTL) so the pack does not
-  # re-run six failing reads on every call while the store is down. [live]
+  # Seconds a failed namespace-health lookup is remembered (never longer than
+  # namespace_health_ttl_seconds), so the context pack does not re-run failing reads on
+  # every call. [live]
   # memory_namespace_health_failure_ttl_s: 300
 
   # The most sections one search embeds on the fly. [live]
@@ -3195,15 +3191,9 @@ settings:
 
   # --- timeouts, budgets and caches ---
 
-  # Seconds a stored page of search results stays readable by its cursor. [live]
-  # memory_search_pages_ttl_s: 1800
-
-  # Seconds the BM25 corpus statistics (document count, mean length) of a namespace are
-  # cached. [live]
-  # memory_search_bm25_cache_ttl_s: 300.0
-
-  # The lookup reads every row of the namespace it may read: 100-300 ms server-side for
-  # 40k rows. On a cache miss it overlaps the embed. [live]
+  # Seconds the query-spelling lookup may take; it reads every row of the namespace it
+  # may read (100-300 ms server-side for 40k rows) and overlaps the embed on a cache
+  # miss. [live]
   # memory_search_spelling_lookup_timeout_s: 0.4
 
   # ===== Model: Models: which model does each job. ==========
@@ -3350,11 +3340,9 @@ settings:
   # writer. [live]
   # namespace_ontology_cardinality_ttl_s: 60.0
 
-  # A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large
-  # namespace) and changes only when the namespace does. It is remembered per (org,
-  # namespace, namespace version, top-N arguments) for up to five minutes — the version
-  # watermark is `max(version)` over the namespace, one 90 kB read; the five minutes
-  # bound the communities, which come from their own table. [live]
+  # Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace
+  # (about 20 MB per open on a large namespace) and changes only when the namespace
+  # does. [live]
   # namespace_taxonomy_ttl_s: 300.0
 
   # ===== Observability: Telemetry, audit, tracing and the ops surface. ==========
@@ -3556,10 +3544,9 @@ settings:
 
   # --- timeouts, budgets and caches ---
 
-  # The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h
-  # scan of agent_events. One answer per (org, namespace, window, caller scope) serves
-  # every asker for 60 s — "a new agent in the last day" does not change faster than
-  # that. [live]
+  # Seconds one agents.connected answer per (org, namespace, window, caller) is reused:
+  # the sidebar badge asks every 30 s per tab and the answer is a 24 h scan of
+  # agent_events. [live]
   # insights_agents_connected_ttl_s: 60.0
 
   # Most audit rows one verifier pass checks; past it the newest go unchecked and the
@@ -4479,6 +4466,3 @@ settings:
   # Seconds the test-signal candidate read may take; it never holds up the answer.
   # [live]
   # tracker_test_candidates_timeout_s: 3.0
-
-  # The window-keys read's cap; a read that returns this many is incomplete. [live]
-  # tracker_embed_window_keys_limit: 200000

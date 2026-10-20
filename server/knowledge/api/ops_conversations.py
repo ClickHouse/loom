@@ -66,7 +66,6 @@ conversation_set_logging = Operation(
     output_model=ConversationSetLoggingOutput,
     handler=handle_conversation_set_logging,
     idempotent=True,
-    # ALTER UPDATE mutation
     required_role=Role.ADMIN,  # changing a namespace setting
     audit=True,
 )
@@ -111,7 +110,6 @@ conversation_delete = Operation(
     output_model=ConversationDeleteOutput,
     handler=handle_conversation_delete,
     idempotent=True,
-    # three bulk ALTER UPDATEs, mutations_sync=2
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -145,7 +143,6 @@ conversation_compact = Operation(
     output_model=ConversationCompactOutput,
     handler=handle_conversation_compact,
     idempotent=True,
-    # dominated by the LLM round-trip
     required_role=Role.WRITER,
     audit=True,
 )

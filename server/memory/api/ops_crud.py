@@ -128,7 +128,6 @@ memory_clear = Operation(
     output_model=MemoryClearOutput,
     handler=handle_memory_clear,
     idempotent=True,  # second clear on already-tombstoned is a no-op
-    # 6 ALTER UPDATEs against bounded scopes
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -218,7 +217,6 @@ memory_redact = Operation(
     output_model=MemoryRedactOutput,
     handler=handle_memory_redact,
     idempotent=True,
-    # ALTER UPDATE mutation; not on hot path
     required_role=Role.ADMIN,
     audit=True,
     row_scoped=True,  # The handler authorizes the row's namespace

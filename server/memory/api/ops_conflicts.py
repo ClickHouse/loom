@@ -39,7 +39,6 @@ conflicts_resolve = Operation(
     output_model=ConflictsResolveOutput,
     handler=handle_conflicts_resolve,
     idempotent=True,
-    # fans ALTER UPDATE across all peers
     required_role=Role.ADMIN,
     audit=True,
 )

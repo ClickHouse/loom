@@ -581,8 +581,9 @@ class CodeSettings(BaseModel):
     code_mirror_fetch_interval_s: float = 300.0
     # Seconds one git command on a mirror may run (log, show, rev-parse).
     code_git_timeout_s: Annotated[float, LIVE] = Field(default=120.0, gt=0)
-    # Seconds one fetch, or one full-tree `ls-tree` of a commit, may run; the first fetch
-    # after a shallow clone of a large repository can exceed ten minutes.
+    # Seconds one fetch, full-tree `ls-tree`, forced checkout or whole-range diff may
+    # run; the first fetch after a shallow clone of a large repository can exceed ten
+    # minutes.
     code_git_fetch_timeout_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Hours between `git gc` runs of each mirror on this host (low CPU and IO
     # priority, only with room for a second copy plus the margin below). 0 = never.
@@ -1329,12 +1330,12 @@ class CodeSettings(BaseModel):
     code_blame_introduced_diff_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
     # Most commits code.blame_range's window graph reads; a longer history is a caller
     # asking for everything, which blame cannot rank.
-    code_blame_max_graph_commits: Annotated[int, LIVE] = Field(default=200000, ge=0)
+    code_blame_max_graph_commits: Annotated[int, LIVE] = Field(default=200000, ge=1)
     # Seconds one `git blame` of code.blame_range may run.
     code_blame_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
     # Longest wait, in seconds, before a mirror fetches again for a commit no fetch has
     # brought.
-    code_bootstrap_backoff_max_s: Annotated[float, LIVE] = Field(default=3600.0, ge=0)
+    code_bootstrap_backoff_max_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Seconds of git time code.verify_citations may spend per request.
     code_citations_git_budget_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
     # Seconds one git call of code.verify_citations may run, within its request budget.
@@ -1353,42 +1354,41 @@ class CodeSettings(BaseModel):
     # Seconds the mirror's git log may run when it searches for merge commits.
     code_merge_shas_log_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # Most commits the mirror's git log prints when it searches for merge commits.
-    code_merge_shas_max_log_commits: Annotated[int, LIVE] = Field(default=5000, ge=0)
+    code_merge_shas_max_log_commits: Annotated[int, LIVE] = Field(default=5000, ge=1)
     # The longest a history read waits for a clone it started; less when its op's budget
     # is.
     code_mirror_clone_wait_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds one `git gc` of a mirror may run.
     code_mirror_gc_timeout_s: Annotated[float, LIVE] = Field(default=4 * 3600.0, gt=0)
     # Seconds before a failed compiler-tier full re-index of an entry is tried again.
-    code_scip_full_retry_s: Annotated[int, LIVE] = Field(default=6 * 3600, ge=0)
+    code_scip_full_retry_s: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
     # Seconds an entry's chunk counts are cached while it is still building: they move
     # then without a watermark moving.
     code_status_building_counts_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds an indexed entry's chunk counts are cached once it is no longer building.
     code_status_steady_counts_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
-
-    # ---- timeouts, budgets and caches ----
     # Milliseconds the history stage of the backport-gap check may run: one grep per
     # path and a few `-S` reads per undecided branch.
     code_backport_history_budget_ms: Annotated[int, LIVE] = Field(default=8000, gt=0)
-    # The hunk-level stage's wall — one chunk read per branch, all at once.
+    # Milliseconds the hunk-level stage of the backport-gap check may run: one chunk
+    # read per branch, all at once.
     code_backport_patch_budget_ms: Annotated[int, LIVE] = Field(default=1000, gt=0)
     # Milliseconds the presence stage of the backport-gap check may run.
     code_backport_presence_budget_ms: Annotated[int, LIVE] = Field(default=1200, gt=0)
     # Most candidates the introduced-by diff test checks per request, blamed ones first,
     # then ledger-only ones by recency.
-    code_blame_introduced_max_diff_calls: Annotated[int, LIVE] = Field(default=10, ge=0)
+    code_blame_introduced_max_diff_calls: Annotated[int, LIVE] = Field(default=10, ge=1)
     # After a slice in which the provider answered nothing, the next slices store stubs
     # (the recovery worker fills them) rather than pay a timeout per file; the breaker
     # closes by itself after the hold.
-    code_bootstrap_embed_breaker_hold_s: float = Field(default=600.0, ge=0)
+    code_bootstrap_embed_breaker_hold_s: float = Field(default=600.0, gt=0)
     # Seconds after a successful mirror fetch before another read may start one.
-    code_bootstrap_mirror_refresh_s: Annotated[float, LIVE] = Field(default=5.0, ge=0)
+    code_bootstrap_mirror_refresh_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
     # Seconds after a failed mirror clone or fetch before it is tried again; a commit no
     # fetch has brought waits this, doubled per fetch.
-    code_bootstrap_mirror_retry_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
+    code_bootstrap_mirror_retry_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Most git subprocesses code.verify_citations may start per request.
-    code_citations_git_call_cap: Annotated[int, LIVE] = Field(default=20, ge=0)
+    code_citations_git_call_cap: Annotated[int, LIVE] = Field(default=20, ge=1)
     # The control is one read per namespace, not one per claim. The brief builder makes a
     # claim per touched function, and each would re-run the same `arrayJoin` grep over the
     # tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the
@@ -1402,21 +1402,13 @@ class CodeSettings(BaseModel):
     # Seconds one embed-recovery pass may spend chaining scans before it stops for the
     # next pass.
     code_embed_recovery_chain_budget_s: Annotated[float, LIVE] = Field(default=20.0, gt=0)
-    # A dead holder's lease is taken over after this long.
-    code_entry_lock_lease_ttl_s: Annotated[int, LIVE] = Field(default=120, gt=0)
     # Seconds the lookup of a repository's fork upstream may take.
     code_fork_upstream_budget_s: Annotated[float, LIVE] = Field(default=1.5, gt=0)
-    # A refresh holds the namespace's lease while it runs, so CI calls that land on
-    # different replicas run one pass, not one each; a dead holder's lease expires.
-    code_ingest_lease_ttl_s: Annotated[int, LIVE] = Field(default=120, gt=0)
     # Seconds before a failed warm-up clone of a mirror is tried again.
-    code_mirror_warmup_retry_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
-    # A miss is re-tried after this long (the mirror fetches; a hit never changes).
+    code_mirror_warmup_retry_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Seconds before the review brief reads a mirror again for an object it did not have
+    # (the mirror may have fetched it); a hit is kept.
     code_review_brief_mirror_miss_ttl_s: Annotated[float, LIVE] = Field(default=600.0, gt=0)
-    # Output the parent holds: a `keep_stdout` job's stdout whole up to this (a big
-    # repository's `ls-remote` of PR heads is ~6 MB), past it the job is killed; any other
-    # stream keeps only its last _TAIL_BYTES. The child's rlimits do not bound the parent.
-    code_sandbox_stdout_limit_bytes: Annotated[int, LIVE] = Field(default=64 * 1024 * 1024, ge=0)
 
 
 # ===== Context ================================================================
@@ -2125,6 +2117,9 @@ class MemorySettings(BaseModel):
     memory_embeddings_patch_parts_probe_seconds: int = 60
 
     # ---- timeouts, budgets and caches ----
+    # Seconds the BM25 corpus statistics (document count, mean length) of a namespace
+    # are cached.
+    memory_bm25_cache_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
     # Most memories one blacklist sweep checks against the patterns.
     memory_blacklist_sweep_limit: Annotated[int, LIVE] = Field(default=5000, ge=1)
     # Most memories one usage-fold pass folds.
@@ -2133,7 +2128,7 @@ class MemorySettings(BaseModel):
     # next.
     memory_usage_fold_pass_time_budget_s: float = Field(default=120.0, gt=0)
     # Most unresolved conflicts one conflict-sweep pass re-judges.
-    memory_conflict_sweep_max_rows_per_pass: Annotated[int, LIVE] = Field(default=50, ge=0)
+    memory_conflict_sweep_max_rows_per_pass: Annotated[int, LIVE] = Field(default=50, ge=1)
     # Seconds a namespace's open-conflict count is cached between reads.
     memory_conflicts_count_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds a namespace's coverage-sweep override is cached.
@@ -2145,22 +2140,20 @@ class MemorySettings(BaseModel):
     memory_namespace_retrieval_defaults_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # The most observations a session's notes read: the notes prompt is bounded by
     # characters anyway; this bounds the read.
-    memory_observe_extract_session_context_limit: Annotated[int, LIVE] = Field(default=400, ge=0)
+    memory_observe_extract_session_context_limit: Annotated[int, LIVE] = Field(default=400, ge=1)
     # Seconds the pending-extraction count a read discloses is cached.
     memory_pending_disclosure_ttl_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
     # Attempts a profile write makes when a concurrent write moved the profile under it.
-    memory_profile_cas_max_retries: Annotated[int, LIVE] = Field(default=3, ge=0)
+    memory_profile_cas_max_retries: Annotated[int, LIVE] = Field(default=3, ge=1)
     # Seconds a namespace's proposal policy is cached; a change applies within it.
     memory_proposals_policy_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # A listing reads at most this many proposals before `only` / `limit` — the graded
     # counts are one statement over them; a namespace holding more on trial than this is a
     # queue nobody is deciding, not a page.
-    memory_proposals_scan_cap: Annotated[int, LIVE] = Field(default=2000, ge=0)
+    memory_proposals_scan_cap: Annotated[int, LIVE] = Field(default=2000, ge=1)
     # Seconds the entity vocabulary of a namespace's summaries is cached for the summary
     # read leg.
     memory_summary_entity_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
-
-    # ---- timeouts, budgets and caches ----
     # Seconds a namespace with no calibration row (or a failed read) is remembered as
     # having none.
     memory_calibration_namespace_miss_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
@@ -2169,24 +2162,26 @@ class MemorySettings(BaseModel):
     memory_calibration_namespace_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds between the starts of two cycles of the code-links sweep through the link
     # table.
-    memory_code_links_sweep_interval_s: Annotated[int, LIVE] = Field(default=3600, ge=0)
-    # The branch's own read and parse, a share of the code plane's enrichment bound: past
-    # it the lesson is served as trunk last checked it.
+    memory_code_links_sweep_interval_s: Annotated[int, LIVE] = Field(default=3600, gt=0)
+    # Seconds a branch's own read and parse of a code lesson may take, a share of the
+    # code plane's enrichment bound; past it the lesson is served as trunk last checked
+    # it.
     memory_code_plane_parse_timeout_s: Annotated[float, LIVE] = Field(default=0.2, gt=0)
     # One call judges at most this many facts; a longer capture is judged in slices
     # (groups never span slices — a missed fold only keeps a paraphrase).
-    memory_durability_verifier_max_facts_per_call: Annotated[int, LIVE] = Field(default=60, ge=0)
+    memory_durability_verifier_max_facts_per_call: Annotated[int, LIVE] = Field(default=60, ge=1)
     # Consecutive unparseable model replies for one memory before the entity extractor
     # stamps it failed and moves on.
-    memory_entity_extract_parse_fail_max: Annotated[int, LIVE] = Field(default=3, ge=0)
-    # How long a walk waits for the graph projections of its namespace in flight when it
-    # starts, its own process's and the server's other processes' together.
+    memory_entity_extract_parse_fail_max: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # Seconds facts.traverse waits, when it starts, for the graph projections of its
+    # namespace still in flight in this process and the others.
     memory_facts_projection_wait_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
-    # A failed lookup is remembered this long (bounded by the TTL) so the pack does not
-    # re-run six failing reads on every call while the store is down.
+    # Seconds a failed namespace-health lookup is remembered (never longer than
+    # namespace_health_ttl_seconds), so the context pack does not re-run failing reads
+    # on every call.
     memory_namespace_health_failure_ttl_s: Annotated[int, LIVE] = Field(default=300, gt=0)
     # The most sections one search embeds on the fly.
-    memory_profile_search_embed_cap: Annotated[int, LIVE] = Field(default=8, ge=0)
+    memory_profile_search_embed_cap: Annotated[int, LIVE] = Field(default=8, ge=1)
     # Retries of a vector read that ClickHouse answers with an empty-block error (code
     # 10 on a part still being written) before the search fails.
     memory_retrieval_empty_block_retries: int = Field(default=3, ge=0)
@@ -2194,12 +2189,12 @@ class MemorySettings(BaseModel):
     memory_retrieval_empty_block_retry_sleep_s: float = Field(default=0.2, ge=0)
     # Most exposure rows one usage-fold pass reads to credit acted-on memories; the
     # watermark holds until a pass drains below it.
-    memory_usage_fold_acted_max_rows_per_pass: int = Field(default=5000, ge=0)
+    memory_usage_fold_acted_max_rows_per_pass: int = Field(default=5000, ge=1)
     # Backpressure: a pass is skipped — watermark untouched — while the destination table
     # already carries this many unfinished mutations on the connected replica. Every
     # lightweight UPDATE is a patch part plus a Keeper log entry; enough of them pending
     # on a large table can expire replicas' Keeper sessions and leave them read-only.
-    memory_usage_fold_max_pending_mutations: int = Field(default=20, ge=0)
+    memory_usage_fold_max_pending_mutations: int = Field(default=20, ge=1)
 
 
 # ===== MemoryAsk ==============================================================
@@ -2789,15 +2784,9 @@ class MemorySearchSettings(BaseModel):
     memory_search_fact_leg_max_threads: Annotated[int, LIVE] = 0
 
     # ---- timeouts, budgets and caches ----
-    # Seconds a stored page of search results stays readable by its cursor.
-    memory_search_pages_ttl_s: Annotated[int, LIVE] = Field(default=1800, gt=0)
-    # Seconds the BM25 corpus statistics (document count, mean length) of a namespace
-    # are cached.
-    memory_search_bm25_cache_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
-
-    # ---- timeouts, budgets and caches ----
-    # The lookup reads every row of the namespace it may read: 100-300 ms server-side for
-    # 40k rows. On a cache miss it overlaps the embed.
+    # Seconds the query-spelling lookup may take; it reads every row of the namespace it
+    # may read (100-300 ms server-side for 40k rows) and overlaps the embed on a cache
+    # miss.
     memory_search_spelling_lookup_timeout_s: Annotated[float, LIVE] = Field(default=0.4, gt=0)
 
 
@@ -2938,15 +2927,13 @@ class NamespaceSettings(BaseModel):
     # ---- timeouts, budgets and caches ----
     # Most live rows the namespace audit's value scan reads (it is O(total value
     # bytes)); above it that check is skipped and says so.
-    namespace_audit_index_row_scan_cap: Annotated[int, LIVE] = Field(default=20000, ge=0)
+    namespace_audit_index_row_scan_cap: Annotated[int, LIVE] = Field(default=20000, ge=1)
     # Seconds a namespace's relation cardinalities (one or many) are cached for the
     # triple writer.
     namespace_ontology_cardinality_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
-    # A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large
-    # namespace) and changes only when the namespace does. It is remembered per (org,
-    # namespace, namespace version, top-N arguments) for up to five minutes — the version
-    # watermark is `max(version)` over the namespace, one 90 kB read; the five minutes
-    # bound the communities, which come from their own table.
+    # Seconds a namespace's taxonomy is reused: one is four FINAL scans of the namespace
+    # (about 20 MB per open on a large namespace) and changes only when the namespace
+    # does.
     namespace_taxonomy_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
 
 
@@ -3124,16 +3111,13 @@ class ObservabilitySettings(BaseModel):
     retrieval_judge_sample_rate: float = 0.0
 
     # ---- timeouts, budgets and caches ----
-    # The sidebar badge asks agents.connected every 30 s per tab, and the answer is a 24 h
-    # scan of agent_events. One answer per (org, namespace, window, caller scope) serves
-    # every asker for 60 s — "a new agent in the last day" does not change faster than
-    # that.
+    # Seconds one agents.connected answer per (org, namespace, window, caller) is
+    # reused: the sidebar badge asks every 30 s per tab and the answer is a 24 h scan of
+    # agent_events.
     insights_agents_connected_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
-
-    # ---- timeouts, budgets and caches ----
     # Most audit rows one verifier pass checks; past it the newest go unchecked and the
     # pass says so.
-    audit_verify_max_rows_per_pass: Annotated[int, LIVE] = Field(default=500000, ge=0)
+    audit_verify_max_rows_per_pass: Annotated[int, LIVE] = Field(default=500000, ge=1)
 
 
 # ===== Provider ===============================================================
@@ -3580,16 +3564,14 @@ class RuntimeSettings(BaseModel):
     # ---- timeouts, budgets and caches ----
     # First wait, in seconds, after a worker's pass fails; it doubles per failure up to
     # worker_backoff_cap_s.
-    worker_backoff_base_s: Annotated[float, LIVE] = Field(default=1.0, ge=0)
+    worker_backoff_base_s: Annotated[float, LIVE] = Field(default=1.0, gt=0)
     # Longest wait, in seconds, between a failing worker's passes (the wait doubles from
     # worker_backoff_base_s).
-    worker_backoff_cap_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
+    worker_backoff_cap_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # A pass with a failed leg on a worker whose interval is longer than this retries
     # after this long, doubling with each further such pass, up to the interval: a weekly
     # pass must not leave one namespace's transient failure standing for a week.
-    worker_partial_retry_s: Annotated[float, LIVE] = Field(default=3600.0, ge=0)
-
-    # ---- timeouts, budgets and caches ----
+    worker_partial_retry_s: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # Seconds one readiness check may take; a slower check fails.
     readiness_check_timeout_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
 
@@ -3666,12 +3648,10 @@ class StorageSettings(BaseModel):
     # ---- timeouts, budgets and caches ----
     # Longest wait, in seconds, between retries of a failed dashboard-asset publish (the
     # wait doubles from storage_frontend_assets_retry_s).
-    storage_frontend_assets_retry_max_s: Annotated[float, LIVE] = Field(default=60.0, ge=0)
-
-    # ---- timeouts, budgets and caches ----
+    storage_frontend_assets_retry_max_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # A round that failed is retried after this, doubling up to
     # `storage_frontend_assets_retry_max_s`.
-    storage_frontend_assets_retry_s: Annotated[float, LIVE] = Field(default=2.0, ge=0)
+    storage_frontend_assets_retry_s: Annotated[float, LIVE] = Field(default=2.0, gt=0)
 
 
 # ===== Task ===================================================================
@@ -4051,10 +4031,6 @@ class TrackerSettings(BaseModel):
     # Seconds the test-signal candidate read may take; it never holds up the answer.
     tracker_test_candidates_timeout_s: Annotated[float, LIVE] = Field(default=3.0, gt=0)
 
-    # ---- timeouts, budgets and caches ----
-    # The window-keys read's cap; a read that returns this many is incomplete.
-    tracker_embed_window_keys_limit: Annotated[int, LIVE] = Field(default=200000, ge=0)
-
 
 # ===== Operation latency budgets ===============================================
 #
@@ -4180,18 +4156,22 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "conflicts.allowlist_remove": 80,
     "conflicts.list": 80,
     "conflicts.propose_revision": 120,
+    # Fans ALTER UPDATE across all peers.
     "conflicts.resolve": 500,
     "consolidations.list": 200,
     "context.fetch": 150,
     "context.offload": 300,
     "context.pack": 600,
     "conversation.append": 30,
+    # Dominated by the LLM round-trip.
     "conversation.compact": 3500,
     "conversation.create": 30,
+    # Three bulk ALTER UPDATEs, mutations_sync=2.
     "conversation.delete": 600,
     "conversation.get": 100,
     "conversation.list": 80,
     "conversation.search": 120,
+    # ALTER UPDATE mutation.
     "conversation.set_logging": 200,
     "conversation.threads": 120,
     "conversation.update": 50,
@@ -4203,8 +4183,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "decision.outcome": 1500,
     "decision.precedents": 800,
     "decision.record": 1500,
+    # Multi-table scan; not on hot path.
     "erasure.export": 2000,
     "erasure.list": 150,
+    # Multiple ALTER UPDATEs are slow; tolerated for compliance.
     "erasure.request": 2000,
     "erasure.status": 25,
     "facts.expire_by_adapter": 500,
@@ -4254,7 +4236,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.backlinks": 200,
     "memory.brief": 4000,
     "memory.bulk_get": 80,
+    # One CH insert + N embeds.
     "memory.bulk_set": 300,
+    # 6 ALTER UPDATEs against bounded scopes.
     "memory.clear": 600,
     "memory.consolidate": 15000,
     "memory.copy_to": 400,
@@ -4309,6 +4293,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.record.history": 150,
     "memory.record.query": 150,
     "memory.record.write": 150,
+    # ALTER UPDATE mutation; not on hot path.
     "memory.redact": 500,
     "memory.reindex": 5000,
     "memory.reject": 150,
@@ -4369,8 +4354,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "namespace.register_category": 400,
     "namespace.register_ontology": 80,
     "namespace.restore": 3000,
+    # Bounded by max_keys; one FULL OUTER JOIN + batched inserts.
     "namespace.rollback": 10000,
     "namespace.search_categories": 150,
+    # Bounded by namespace size.
     "namespace.snapshot": 2000,
     "namespace.summary": 300,
     "namespace.taxonomy": 120,
@@ -4378,6 +4365,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # not cluster-sized.
     "namespace.validate": 1500,
     "observe.crystallize": 2000,
+    # Hot path: single insert, no LLM/embedding.
     "observe.record": 150,
     "ops.capabilities": 100,
     "ops.health": 500,
@@ -4398,6 +4386,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "procedure.record_run": 150,
     "procedure.revise": 300,
     "profile.activity": 80,
+    # 2-3 round-trips under contention.
     "profile.append": 80,
     "profile.render": 60,
     "profile.replace": 80,
@@ -4497,9 +4486,13 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
 #
 # The most tokens each LLM call may write, keyed by what the call does (its
 # `llm_stage` where it has one, the series the cost ledger reports spend under).
-# Every call reads its cap through `server.settings.budgets.llm_max_tokens`;
-# `llm_max_tokens_overrides` changes one while Loom runs. A test fails on a
-# literal `max_tokens` at a call site and on a key no call uses.
+# A call with a fixed cap reads it through `server.settings.budgets.llm_max_tokens`;
+# `llm_max_tokens_overrides` changes one while Loom runs. A test fails on a literal
+# `max_tokens` at a call site and on a key no call uses. Caps that are settings of
+# their own keep their names (`memory_ask_synth_max_tokens` and its ceiling,
+# `code_search_query_max_tokens`, `code_search_hyde_max_tokens`,
+# `memory_search_identifier_grounding_max_tokens`), and a cap that scales with its
+# input stays a formula at its call.
 
 LLM_MAX_TOKENS: dict[str, int] = {
     # code.ask: the synthesized answer; part of its cached answers' version, so a change

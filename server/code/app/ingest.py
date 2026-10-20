@@ -31,6 +31,10 @@ from server.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# A refresh holds the namespace's lease while it runs, so CI calls that land on
+# different replicas run one pass, not one each; a dead holder's lease expires.
+_LEASE_TTL_S = 120  # not a setting: the lease takeover protocol between replicas
+
 
 _REFRESH_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 _REFRESH_TASKS = TaskSet()
@@ -41,7 +45,7 @@ async def _take_lease(org: str, ns: str) -> leases.Lease | None:
     asked (the process lock alone). LeaseBusy when another process holds it."""
     name = f"code_refresh:{quote(org, safe='')}/{quote(ns, safe='')}"
     try:
-        lease = await leases.take(name, ttl_s=settings.code_ingest_lease_ttl_s)
+        lease = await leases.take(name, ttl_s=_LEASE_TTL_S)
     except leases.LeaseUnavailable as e:
         logger.warning("code.refresh lease %s: %s", name, e.__cause__ or e)
         return None

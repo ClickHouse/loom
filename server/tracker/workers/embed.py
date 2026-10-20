@@ -246,8 +246,9 @@ async def embed_namespace(
             batch=batch,
             stamp=stamp,
         )
+        from server.tracker.store.source.embed import WINDOW_KEYS_LIMIT
 
-        if len(keys) >= settings.tracker_embed_window_keys_limit:
+        if len(keys) >= WINDOW_KEYS_LIMIT:
             # the read may have stopped short: an item past the cap would read
             # as gone and its live row be tombstoned. Skip; the next pass retries.
             result.tombstones_skipped.append(f"{ns}:{kind}")
@@ -256,7 +257,7 @@ async def embed_namespace(
                 org,
                 ns,
                 kind,
-                settings.tracker_embed_window_keys_limit,
+                WINDOW_KEYS_LIMIT,
             )
             continue
         await _tombstone_left(repo, org, ns, kind, stored, window, result=result, now=now)

@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from server.code.app.index import sandbox
-from server.settings import settings
 
 EPERM = sandbox.SECCOMP_RET_ERRNO_EPERM
 KILL = sandbox.SECCOMP_RET_KILL_PROCESS
@@ -394,7 +393,7 @@ async def test_a_refused_clone_records_an_error_stage(tmp_path: Path, monkeypatc
 
 async def test_a_parsed_stdout_past_its_limit_kills_the_job(monkeypatch) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
-    monkeypatch.setattr(settings, "code_sandbox_stdout_limit_bytes", 4096)
+    monkeypatch.setattr(sandbox, "_STDOUT_LIMIT", 4096)
     done = await sandbox.run_job(
         ["sh", "-c", "head -c 1000000 /dev/zero; sleep 30"],
         env={"PATH": "/usr/bin:/bin"},
