@@ -162,13 +162,15 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     input = ctx.input
     if not (ctx.endpoint and ctx.all_hits and not ctx.chronological_intent):
         return
-    ctx.actual_work["external_rerank_used"] = True
     before = list(ctx.all_hits)
     # An exact identifier match is the answer (`pin_identifier_hits`) and the reranker never
     # reads the key it may have matched on: pinned rows keep their slots, the reranker
     # orders the rows in the others.
     slots = [i for i, h in enumerate(before) if not h.score_components.get("identifier_match")]
     rest = [before[i] for i in slots]
+    if not rest:
+        return  # every row is pinned: nothing for the reranker to order
+    ctx.actual_work["external_rerank_used"] = True
     candidates = [
         RerankCandidate(
             memory_key=h.memory_key,
@@ -201,10 +203,17 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     # The block sorts by rank_score: the pool's own scores, handed out in this order, make
     # that sort keep it without changing the scores' spread. A chunk-parent lift can put a
     # chunk above every fact (up to +0.40); handed to a fact the reranker promotes, it would
-    # leave the pool's scale, so the scores handed out are capped at the best unlifted one.
-    # The rows keep their own lifts for the block's bound, which also counts the digests.
-    unlifted = [o.rank_score for o in ordered if not o.score_components.get("chunk_parent_boost")]
-    cap = max(unlifted) if unlifted and input.search_mode != "rrf" else None
+    # leave the pool's scale, so the scores handed out are capped at the best plain one: a
+    # row neither lifted by its parent nor pinned (a pin sits just above the best other row,
+    # which may be such a chunk). The rows keep their own lifts for the block's bound, which
+    # also counts the digests; the slots keep the pins in place.
+    plain = [
+        o.rank_score
+        for o in ordered
+        if not o.score_components.get("chunk_parent_boost")
+        and not o.score_components.get("identifier_match")
+    ]
+    cap = max(plain) if plain and input.search_mode != "rrf" else None
     handed = sorted(
         (o.rank_score if cap is None else min(o.rank_score, cap) for o in ordered), reverse=True
     )

@@ -408,3 +408,39 @@ async def test_a_promoted_fact_never_inherits_a_boosted_chunks_score(
     await ranking._run_external_rerank(ctx)
     assert [h.memory_key for h in ctx.all_hits] == ["other", "fact", "chunk"]
     assert max(h.rank_score for h in ctx.all_hits) < 0.61
+
+
+@pytest.mark.asyncio
+async def test_a_pin_above_a_lifted_chunk_does_not_raise_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pin sits just above the best other row, which may be a parent-boosted chunk: the cap
+    on handed-out scores is the best plain row's, so a promoted fact stays on scale."""
+    pinned, chunk = _hit("finding_pr116016", 1.2 + 1e-6), _hit("chunk", 1.2)
+    fact, other = _hit("fact", 0.6), _hit("other", 0.5)
+    pinned.score_components["identifier_match"] = 1.0
+    chunk.score_components["chunk_parent_boost"] = 0.4
+    ctx = _ctx([pinned, chunk, fact, other])
+    monkeypatch.setattr(
+        "server.memory.app.rerank.rerank", _reranker(["other in s1", "fact in s1", "chunk in s1"])
+    )
+    await ranking._run_external_rerank(ctx)
+    assert [h.memory_key for h in ctx.all_hits] == ["finding_pr116016", "other", "fact", "chunk"]
+    assert other.rank_score <= 0.6
+
+
+@pytest.mark.asyncio
+async def test_a_pool_of_pinned_rows_is_not_reranked(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[int] = []
+
+    async def _never(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        called.append(len(candidates))
+        return candidates
+
+    a, b = _hit("a", 0.6), _hit("b", 0.5)
+    a.score_components["identifier_match"] = b.score_components["identifier_match"] = 1.0
+    ctx = _ctx([a, b])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _never)
+    await ranking._run_external_rerank(ctx)
+    assert called == [] and "external_rerank_used" not in ctx.actual_work
+    assert not any(k.startswith("rerank_") for h in (a, b) for k in h.score_components)
