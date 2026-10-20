@@ -84,8 +84,11 @@ def require() -> str:
     """The customer the current model call is for, checked before anything is
     sent, cached or recorded: "" with no customer header configured. Raises
     Unattributed, and logs it, when the call names none."""
-    # Load refuses a required cell without the header; never treat one as unmetered.
-    if not (settings.inference_customer_header or settings.inference_customer_required):
+    if not settings.inference_customer_header:
+        if settings.inference_customer_required:  # load refuses this; never send unmetered
+            raise Unattributed(
+                "LOOM_INFERENCE_CUSTOMER_REQUIRED is set without LOOM_INFERENCE_CUSTOMER_HEADER"
+            )
         return ""
     org = current()
     if org:

@@ -33,7 +33,8 @@ RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 # What a customer or feature header value carries unencoded (`customer.headers`).
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
-_HEADER_NAME_TEXT = re.compile(r"[A-Za-z0-9._~:@-]+")
+# A customer or feature name sent as a header value: the same characters, at least one.
+_HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
 
 
 class ProviderSettings(ModelSettings):
@@ -159,7 +160,7 @@ class ProviderSettings(ModelSettings):
         raw = self.inference_feature_map_json.strip()
         if not raw:
             return {}
-        return dict(json_map_items(raw, "inference_feature_map_json"))
+        return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON"))
 
     @model_validator(mode="after")
     def _check_customer_headers(self) -> ProviderSettings:
@@ -187,12 +188,12 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_CUSTOMER_FORMAT must contain {org}, and around it only "
                 "letters, digits and . _ ~ : @ -, which a header carries as they are"
             )
-        if not all(_HEADER_NAME_TEXT.fullmatch(v) for v in self.feature_map().values()):
+        if not all(_HEADER_VALUE.fullmatch(v) for v in self.feature_map().values()):
             raise ValueError(
                 "LOOM_INFERENCE_FEATURE_MAP_JSON: each gateway feature name is letters, digits "
                 "and . _ ~ : @ -, which a header carries as they are"
             )
-        if self.inference_customer_header and not _HEADER_NAME_TEXT.fullmatch(
+        if self.inference_customer_header and not _HEADER_VALUE.fullmatch(
             self.inference_system_customer
         ):
             raise ValueError(

@@ -38,7 +38,7 @@ def json_map_items(raw: str, field: str) -> tuple[tuple[str, str], ...]:
         raise ValueError(f"{field} must be a JSON object")
     if not all(isinstance(v, str) for v in parsed.values()):
         raise ValueError(f"{field} must map names to strings")
-    return tuple((str(k), v) for k, v in parsed.items())
+    return tuple(parsed.items())
 
 
 # The checked-in HS256 default. Fine for a single-user dev box (auth is off);
