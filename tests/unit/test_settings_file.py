@@ -251,7 +251,7 @@ def test_no_description_names_a_sibling_setting_by_its_suffix() -> None:
     lines = source.splitlines()
     described = descriptions(Settings)
     token = re.compile(r"(?<![\w.:/<-])([a-z][a-z0-9]*(?:_[a-z0-9]+)+)(?![\w(/.-])")
-    found = []
+    found, wire_hits = [], set()
     for cls in (n for n in ast.parse(source).body if isinstance(n, ast.ClassDef)):
         names = {
             st.target.id
@@ -263,13 +263,17 @@ def test_no_description_names_a_sibling_setting_by_its_suffix() -> None:
                 continue
             for text in (described.get(st.target.id, ""), heading_note(lines, st.lineno)):
                 for word in token.findall(text):
-                    if word in Settings.model_fields or word in _WIRE_NAMES:
+                    if word in Settings.model_fields:
+                        continue
+                    if word in _WIRE_NAMES:
+                        wire_hits.add(word)
                         continue
                     if st.target.id.endswith("_" + word):  # the field naming itself
                         continue
                     if any(n.endswith("_" + word) for n in names):
                         found.append(f"{st.target.id}: {word}")
     assert not found, f"spell the full setting name: {sorted(set(found))}"
+    assert wire_hits == _WIRE_NAMES, f"no longer needed: {sorted(_WIRE_NAMES - wire_hits)}"
 
 
 def test_no_description_points_at_a_neighbouring_field() -> None:

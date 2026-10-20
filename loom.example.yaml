@@ -37,7 +37,9 @@ settings:
   # User name the server connects to ClickHouse as. [restart]
   # ch_user: "loom"
 
-  # Database that holds every Loom table and that migrations run against. [restart]
+  # Default database of the ClickHouse connection. Loom's schema is always in `loom`,
+  # whatever this says (queries and migrations address `loom.<table>`): leave it.
+  # [restart]
   # ch_database: "loom"
 
   # The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on
@@ -3002,8 +3004,8 @@ settings:
 
   # Bridge completion: the other attributes of the entities the top hits name
   # (key-prefix siblings) join the pool, so a question that names an entity by one
-  # attribute can answer with another. This is how many top hits it reads the entities
-  # of. [live]
+  # attribute can answer with another. This is the number of top hits whose entities it
+  # reads. [live]
   # memory_ask_bridge_completion_top_hits: 12
 
   # Most rows bridge completion adds to the pool. [live]
@@ -3485,7 +3487,7 @@ settings:
   # Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py).
   # loom.entity_vectors holds one row per (entity, memory_key) edge, so the lookup ranks
   # distinct entities first, then expands to edges (a flat LIMIT surfaced as few as 1
-  # distinct entity). This is the distinct entities kept;
+  # distinct entity). Distinct entities the lookup keeps;
   # `memory_search_entity_boost_max_pairs` bounds the edge expansion (a hub can carry
   # hundreds), which bounds work rather than results. [live]
   # memory_search_entity_boost_top_entities: 20

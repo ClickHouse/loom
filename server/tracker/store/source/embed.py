@@ -16,11 +16,11 @@ from server.tracker.store.source.rows import split_source, upstream_dt
 
 # Error name → code, per (org, namespace)
 _ERROR_NAMES: dict[tuple[str, str], tuple[float, dict[str, int]]] = {}
-# The window-keys read's cap; a read that returns this many is incomplete. It is checked
-# before tombstoning what left the window, so it must be the cap that read used.
-WINDOW_KEYS_LIMIT = 200_000  # not a setting: the completeness check reads it again
 # a ClickHouse server error line: `Code: 9. DB::Exception: … (SIZES_OF_COLUMNS_DOESNT_MATCH)`
 _ERROR_LINE_PAT = r"Code: (\d{1,4})\. DB::Exception:[^\n]{0,400}?\(([A-Z][A-Z0-9_]{3,})\)"
+
+# The window-keys read's cap; a read that returns this many is incomplete.
+WINDOW_KEYS_LIMIT = 200_000  # not a setting: the tombstone check must use the read's cap
 
 
 class EmbedReads(SourceBase):

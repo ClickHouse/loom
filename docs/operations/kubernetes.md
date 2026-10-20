@@ -46,8 +46,8 @@ so the first install takes a few minutes. The startup probe allows 15 minutes
 (`probes.startup`), which also covers cloning the git mirrors.
 
 The embedding settings and the root secret go through `embedding.*` and `secrets.jwtSecret`,
-which the chart guards (below); it refuses them in `env`, `extraEnv`, `settingsFile` and
-`secrets.extra`, and an `envFrom` source must not carry them either. Every other
+which the chart guards (below), or the `secrets.existingSecret` Secret, which it cannot
+check; it refuses them in `env`, `extraEnv`, `settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
 setting goes in `env` (plain values) or `secrets.extra` (keys), named as in
 the [configuration reference](../reference/configuration.md). `settingsFile` takes the same
 settings as the YAML settings file holds them, lowercase and typed:

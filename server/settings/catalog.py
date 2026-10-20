@@ -341,7 +341,8 @@ class ClickHouseSettings(BaseModel):
     ch_user: str = "loom"
     # Password for `ch_user`; the default only suits a local development server.
     ch_password: str = "loomdev"
-    # Database that holds every Loom table and that migrations run against.
+    # Default database of the ClickHouse connection. Loom's schema is always in `loom`,
+    # whatever this says (queries and migrations address `loom.<table>`): leave it.
     ch_database: str = "loom"
     # The cluster `clusterAllReplicas` reads to find a stopped Loom process's
     # queries on every node (`default` on ClickHouse Cloud). A server without
@@ -2154,9 +2155,9 @@ class MemorySettings(BaseModel):
     memory_code_links_batch: int = Field(default=500, ge=1)
     # Seconds the memory code-link pass stays behind the newest queued memory write, so
     # inserts running at the same moment are visible before the cursor passes them (at
-    # least 10). A write
-    # visible later than this is passed and stays unlinked until a backfill reads it; a
-    # longer wait makes that rarer and links every write that much later.
+    # least 10). A write visible later than this is passed and stays unlinked until a
+    # backfill reads it; a longer wait makes that rarer and links every write that much
+    # later.
     memory_code_links_settle_seconds: int = Field(default=60, ge=10)
     # Days a code-shaped name that names nothing on trunk yet (unmerged code) is
     # retried before it is dropped.
@@ -2373,7 +2374,7 @@ class MemoryAskSettings(BaseModel):
     memory_ask_facet_completion_max: Annotated[int, LIVE] = 60
     # Bridge completion: the other attributes of the entities the top hits name (key-prefix
     # siblings) join the pool, so a question that names an entity by one attribute can
-    # answer with another. This is how many top hits it reads the entities of.
+    # answer with another. This is the number of top hits whose entities it reads.
     memory_ask_bridge_completion_top_hits: Annotated[int, LIVE] = 12
     # Most rows bridge completion adds to the pool.
     memory_ask_bridge_completion_max: Annotated[int, LIVE] = 48
@@ -2788,7 +2789,7 @@ class MemorySearchSettings(BaseModel):
     # Entity-boost candidate shape (server/memory/app/search/ann_entity_boosts.py).
     # loom.entity_vectors holds one row per (entity, memory_key) edge, so the
     # lookup ranks distinct entities first, then expands to edges (a flat
-    # LIMIT surfaced as few as 1 distinct entity). This is the distinct entities kept;
+    # LIMIT surfaced as few as 1 distinct entity). Distinct entities the lookup keeps;
     # `memory_search_entity_boost_max_pairs` bounds the edge expansion (a hub can carry
     # hundreds), which bounds work rather than results.
     memory_search_entity_boost_top_entities: Annotated[int, LIVE] = 20
