@@ -267,11 +267,11 @@ def test_with_auth_off_there_is_no_agent_to_share(calls) -> None:
     assert calls == []
 
 
-@pytest.mark.parametrize("agent", ["a", "B", "b:c", "-b", "b" * 64, ""])
-def test_the_grantee_is_another_agent_named_as_loom_takes_it(calls, agent: str) -> None:
+@pytest.mark.parametrize("grantee", ["a", "B", "b:c", "-b", "b" * 64, ""])
+def test_the_grantee_is_another_agent_named_as_loom_takes_it(calls, grantee: str) -> None:
     _as("sa:fleet:a")
     with pytest.raises(ValidationError):
-        _share(grantee=agent)
+        _share(grantee=grantee)
     assert calls == []
 
 
