@@ -538,3 +538,26 @@ def test_a_resave_of_the_same_text_keeps_the_document_its_writers(
     admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
     _erase_user(control_plane_url, admin, gw.org, "bob")
     assert _live_documents(ch_client, gw.org, col, "doc/notes") == 0
+
+
+def test_an_erased_users_id_leaves_the_collections_and_grants_they_made(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    col = _collection(gw, "bob", f"col-bobs-{uuid.uuid4().hex[:6]}")
+    gw.ok("bob", "grants.create", {"namespace": col, "subject": "user:carol", "role": "viewer"})
+    admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
+    _erase_user(control_plane_url, admin, gw.org, "bob")
+    left = {
+        table: ch_client.query(
+            f"SELECT count() FROM {table} FINAL WHERE org = {{o:String}} AND {where}",
+            parameters={"o": gw.org},
+        ).result_rows[0][0]
+        for table, where in (
+            ("loom.namespace_grants", "granted_by = 'user:bob'"),
+            ("loom.collections", "owner = 'user:bob'"),
+            ("loom.namespaces", "owner_email = 'user:bob'"),
+        )
+    }
+    assert left == dict.fromkeys(left, 0), left
+    carol = gw.ok("carol", "collection.list", {})["collections"]
+    assert [c["namespace"] for c in carol if not c["personal"]] == [col], "carol's grant stays"

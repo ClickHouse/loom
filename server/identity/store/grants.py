@@ -177,6 +177,23 @@ async def live_rows_of(
         )
 
 
+async def rows_granted_by(
+    org: str, granter: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """Every newest row `granter` issued in `org`, whole, for a rewrite."""
+    from server.core.ch import own_write_reads
+
+    ch = ch or _default_client()
+    with own_write_reads():
+        return await ch.query_all(
+            """
+            SELECT * FROM loom.namespace_grants FINAL
+            WHERE org = {org:String} AND granted_by = {by:String}
+            """,
+            params={"org": org, "by": granter},
+        )
+
+
 async def find_any_grant(
     org: str,
     namespace: str,

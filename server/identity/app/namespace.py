@@ -594,6 +594,11 @@ async def handle_namespace_delete(
     `deleted=False`. Deleting a namespace that was never registered
     is a no-op (returns deleted=False).
     """
+    from server.auth.sharing import is_personal
+
+    if is_personal(input.namespace):
+        # It goes with its user's erasure, which also takes the user's id off its row.
+        raise ValidationError("a personal collection goes only with its user's erasure")
     ch = get_client()
     # SELECT * so the soft-delete row mirrors EVERY column forward; a
     # partial RMT insert would reset omitted columns to schema defaults.
@@ -608,7 +613,7 @@ async def handle_namespace_delete(
             row["active"] = False
             row["updated_at"] = now
             await ch.insert("loom.namespaces", [row])
-        if existing.get("kind") in ("collection", "personal"):
+        if existing.get("kind") == "collection":
             # The tree last, and on every delete: only it decides access, so a
             # delete cut short before it is retried (the gate still admits it)
             # and closes the collection then. Retiring twice changes nothing.

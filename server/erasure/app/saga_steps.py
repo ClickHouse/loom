@@ -108,11 +108,15 @@ async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
 
 
 async def _step_revoke_grants_by_user(org: str, user_id: str) -> int:
-    """Every grant naming the user as a principal, `user:<user_id>`."""
-    from server.identity.app.grants import revoke_subject
+    """Every grant naming the user as a principal, `user:<user_id>`, then the
+    user's id off the grants they gave others. Returns the grants revoked."""
+    from server.identity.app.grants import forget_granter, revoke_subject
     from server.memory.app.provenance import writer_actor
 
-    return await revoke_subject(org, "user:" + user_id, actor=writer_actor("-"))
+    principal = "user:" + user_id
+    revoked = await revoke_subject(org, principal, actor=writer_actor("-"))
+    await forget_granter(org, principal)
+    return revoked
 
 
 async def _step_remove_from_groups_by_user(org: str, user_id: str) -> int:

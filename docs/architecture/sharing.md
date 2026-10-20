@@ -156,9 +156,11 @@ provenance and for erasure; access never reads these columns. A user erasure (`s
 org (a gateway's end user, or a token minted with `--read-user-id`, stamps its `user_id`;
 it supersedes and never purges, so no version another writer replaced reads as live
 again), deletes their uploaded originals that no other writer's document shares, revokes
-every grant naming `user:<id>`, removes them from every group, and retires their personal
-collection's directory row. Deleting a SCIM group revokes the grants that named it, so a
-group made later under the same id starts with none. Collections that hold other writers'
+every grant naming `user:<id>`, blanks their id as the issuer of the grants they gave
+others (those grants stay), removes them from every group, and retires their personal
+collection's directory row (`namespace.delete` and `collection.delete` refuse a personal
+collection: it goes only with its user's erasure). Deleting a SCIM group revokes the
+grants that named it, so a group made later under the same id starts with none. Collections that hold other writers'
 documents stay: Loom deletes only what its writer asked to delete. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
 read: an org admin may erase a collection's rows without reading them, and a platform

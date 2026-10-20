@@ -565,18 +565,48 @@ async def _decide_request(input: GrantsApproveInput) -> GrantsApproveOutput:
 
 async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
     """Revoke every live grant naming `subject` in `org` (a deleted group, an
-    erased user), each under its grant's claim and audited as `grants.revoke`.
+    erased user), each under its grant's claim and audited as `grants.revoke`,
+    versioned above the row it replaces whatever this host's clock says.
+    Reads again until none is live: a grant written meanwhile is revoked too,
+    and one that still stands fails the call (503) for its caller to retry.
     Returns how many."""
+    from server.core.errors import BackendUnavailableError
     from server.observability import audit
 
     revoked = 0
-    for row in await grants_repo.live_rows_of(org, subject):
-        namespace = str(row["namespace"])
+    for _ in range(3):
+        rows = await grants_repo.live_rows_of(org, subject)
+        if not rows:
+            return revoked
+        for row in rows:
+            namespace = str(row["namespace"])
+            async with grant_change(org, namespace, subject):
+                now = datetime.now(UTC).replace(tzinfo=None)
+                version = max(_version(), int(row["version"]) + 1)
+                await grants_repo.insert_row({**row, "revoked_at": now, "version": version})
+            await audit.emit(
+                "grants.revoke",
+                org=org,
+                namespace=namespace,
+                actor=actor,
+                subject={"subject": subject},
+            )
+            revoked += 1
+    raise BackendUnavailableError(
+        f"grants of {subject!r} are still live after their revoke; retry", operation="grants.revoke"
+    )
+
+
+async def forget_granter(org: str, granter: str) -> int:
+    """Blank `granter` as the issuer of the grants it gave others (an erased
+    user), each under its grant's claim and versioned above the row it
+    replaces. The grants themselves stay: they are the grantees'. Returns how
+    many rows it rewrote."""
+    rewritten = 0
+    for row in await grants_repo.rows_granted_by(org, granter):
+        namespace, subject = str(row["namespace"]), str(row["subject"])
         async with grant_change(org, namespace, subject):
-            now = datetime.now(UTC).replace(tzinfo=None)
-            await grants_repo.insert_row({**row, "revoked_at": now, "version": _version()})
-        await audit.emit(
-            "grants.revoke", org=org, namespace=namespace, actor=actor, subject={"subject": subject}
-        )
-        revoked += 1
-    return revoked
+            version = max(_version(), int(row["version"]) + 1)
+            await grants_repo.insert_row({**row, "granted_by": "", "version": version})
+        rewritten += 1
+    return rewritten

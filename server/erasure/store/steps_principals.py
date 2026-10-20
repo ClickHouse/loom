@@ -92,11 +92,16 @@ async def retire_personal_collection_by_user(
 async def collections_created_by(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> list[str]:
-    """The collections whose directory row names the user as their creator."""
+    """The collections whose tree row or directory row names the user as their
+    creator (a create cut short has the first without the second)."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT namespace FROM loom.namespaces FINAL WHERE org = {org:String}"
-        " AND kind = 'collection' AND owner_email = {p:String} ORDER BY namespace",
+        "SELECT namespace FROM ("
+        " SELECT namespace FROM loom.namespaces FINAL WHERE org = {org:String}"
+        " AND kind = 'collection' AND owner_email = {p:String}"
+        " UNION DISTINCT"
+        " SELECT namespace FROM loom.collections FINAL WHERE org = {org:String}"
+        " AND owner = {p:String}) ORDER BY namespace",
         params={"org": org, "p": "user:" + user_id},
     )
     return [str(r["namespace"]) for r in rows]
@@ -106,21 +111,22 @@ async def forget_collection_owner_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
     """Blank the user as the creator of the collections they made: in the tree
-    and in the directory. The collections and other writers' documents stay."""
+    and in the directory. The collections and other writers' documents stay.
+    Returns the rows rewritten in both."""
     ch = ch or _default_client()
     params = {"org": org, "p": "user:" + user_id}
-    n = await _rewrite(
+    tree = await _rewrite(
         "loom.collections",
         "org = {org:String} AND owner = {p:String}",
         f"'' AS owner, {_NEW_VERSION} AS version",
         params,
         ch,
     )
-    await _rewrite(
+    directory = await _rewrite(
         "loom.namespaces",
         "org = {org:String} AND kind = 'collection' AND owner_email = {p:String}",
         "'' AS owner_email, greatest(updated_at + 1, toDateTime(now())) AS updated_at",
         params,
         ch,
     )
-    return n
+    return tree + directory

@@ -704,3 +704,82 @@ def test_a_scoped_token_may_list_and_create_collections(op_name: str) -> None:
             scoped, op.required_role, org=ORG, namespace=None, **authz.scope_flags(op)
         )
     )
+
+
+def _grants_store(monkeypatch: pytest.MonkeyPatch, live: list[list[dict[str, Any]]]) -> list[dict]:
+    """grants.revoke_subject's store: `live` answers each read in turn."""
+    from contextlib import asynccontextmanager
+
+    from server.identity.app import grants
+
+    written: list[dict[str, Any]] = []
+
+    async def _live(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return live.pop(0) if live else []
+
+    async def _insert(row: dict[str, Any], **_k: Any) -> None:
+        written.append(row)
+
+    async def _emit(*_a: Any, **_k: Any) -> str:
+        return "h"
+
+    @asynccontextmanager
+    async def _claim(*_a: Any) -> Any:
+        yield
+
+    monkeypatch.setattr(grants.grants_repo, "live_rows_of", _live)
+    monkeypatch.setattr(grants.grants_repo, "insert_row", _insert)
+    monkeypatch.setattr(grants, "grant_change", _claim)
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    return written
+
+
+def test_a_revoke_outranks_a_grant_versioned_by_a_faster_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.identity.app.grants import revoke_subject
+
+    ahead = {"org": ORG, "namespace": "col-hr", "subject": "user:bob", "version": 2**62}
+    written = _grants_store(monkeypatch, [[ahead]])
+    assert asyncio.run(revoke_subject(ORG, "user:bob", actor="ops")) == 1
+    assert written[0]["version"] > 2**62 and written[0]["revoked_at"] is not None
+
+
+def test_a_grant_that_stays_live_after_its_revoke_fails_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.errors import BackendUnavailableError
+    from server.identity.app.grants import revoke_subject
+
+    row = {"org": ORG, "namespace": "col-hr", "subject": "user:bob", "version": 1}
+    _grants_store(monkeypatch, [[row], [row], [row]])  # every read finds it live again
+    with pytest.raises(BackendUnavailableError, match="still live"):
+        asyncio.run(revoke_subject(ORG, "user:bob", actor="ops"))
+
+
+def test_an_erased_user_is_blanked_as_the_issuer_of_grants_others_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.identity.app import grants
+
+    issued = {"org": ORG, "namespace": "col-hr", "subject": "user:carol", "version": 5}
+    issued["granted_by"] = "user:bob"
+    written = _grants_store(monkeypatch, [])
+
+    async def _issued(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return [issued]
+
+    monkeypatch.setattr(grants.grants_repo, "rows_granted_by", _issued)
+    assert asyncio.run(grants.forget_granter(ORG, "user:bob")) == 1
+    assert written[0]["granted_by"] == "" and written[0]["subject"] == "user:carol"
+    assert written[0]["version"] > 5 and "revoked_at" not in written[0]
+
+
+def test_a_personal_collection_is_not_deleted_as_a_namespace() -> None:
+    from server.core.errors import ValidationError
+    from server.identity.api.models import NamespaceDeleteInput
+    from server.identity.app.namespace import handle_namespace_delete
+
+    mine = NamespaceDeleteInput(org=ORG, namespace=personal_name(ORG, "user:bob"))
+    with pytest.raises(ValidationError, match="erasure"):
+        asyncio.run(handle_namespace_delete(mine))
