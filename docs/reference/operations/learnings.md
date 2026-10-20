@@ -55,7 +55,7 @@ Approve or reject a pending learning.
 | `candidate_id` | `str` | required | The queued candidate to decide; one unknown in `namespace` answers 404. |
 | `decision` | `Literal['promote', 'reject']` | required | `promote` writes it to `destination` and marks it promoted; `reject` only marks it rejected. |
 | `reason` | `str` | `''` | Why; stored as `decision_reason` and carried into the promoted row's provenance. |
-| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | Where a promotion lands: 'memory' (loom.shared for a supporters candidate, the agent's row for a bot rule), 'knowledge' (knowledge.upsert) or 'both'; unset is 'knowledge' for an `assistant_turn` rule and 'memory' otherwise. |
+| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | Where a promotion lands: 'memory' (loom.shared for a supporters candidate, a namespace row under the approver's user_id for a conversation-seeded fact, the agent's row for a bot rule), 'knowledge' (knowledge.upsert) or 'both'; unset is… |
 | `approver` | `str` | `'learnings-reviewer'` | Captured into the audit subject + shared.promoted_by. |
 
 | Output field | Type | Meaning |

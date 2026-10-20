@@ -62,7 +62,8 @@ class LearningsReviewInput(BaseModel):
     decision: ReviewDecision
     # Why; stored as `decision_reason` and carried into the promoted row's provenance.
     reason: str = ""
-    # Where a promotion lands: 'memory' (loom.shared for a supporters candidate, the
+    # Where a promotion lands: 'memory' (loom.shared for a supporters candidate, a
+    # namespace row under the approver's user_id for a conversation-seeded fact, the
     # agent's row for a bot rule), 'knowledge' (knowledge.upsert) or 'both'; unset is
     # 'knowledge' for an `assistant_turn` rule and 'memory' otherwise.
     destination: PromotionDestination | None = None

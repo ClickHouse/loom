@@ -71,9 +71,12 @@ only way on: a request's `agent_learnings=false` turns it off for that call, and
 (and the `X-Loom-Ignored-Args` header). It is off by default: it adds a block to the
 extraction prompt, and extraction quality has not been benchmarked with it on. Turn it
 on only once every replica runs a build that has it. Before rolling back to a build
-without it, turn it off and delete the rows of `loom.learnings_supporters`, where users'
-quotes live: an older build's erasure does not cover that table. Coding captures never
-use it.
+without it, turn it off, then delete the rows of `loom.learnings_supporters`, where
+users' quotes live (an older build's erasure does not cover that table), and the
+`assistant_turn` candidates
+(`ALTER TABLE loom.learnings_queue DELETE WHERE source_kind = 'assistant_turn'`). An
+older build lists a pending one and, on promote, writes the bot's rule as the
+approver's own memory. Coding captures never use it.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule
@@ -104,12 +107,15 @@ request's `(org, namespace, agent)`:
 - Support never promotes a candidate. An admin's `learnings.review` does. By default
   the rule is published to the namespace's knowledge (`learning://<candidate_id>`,
   tagged `agent:<agent>`; the tag names the bot, and the document's author is the
-  reviewer), which every user's reads serve: `context.pack` with
-  `include_knowledge`, `knowledge.search` and `loom_search`, a user bounded to their own
-  rows included. Knowledge is not filtered by agent; a bot reads only its own rules
-  with `knowledge.search(tags=["agent:<agent>"])`. `destination="memory"` writes the
-  agent's memory row instead (`user_id` `-`, `source_trace` `learning:<candidate_id>`),
-  which namespace-wide reads find and a read bounded to one user does not.
+  reviewer). The agent reads that serve knowledge serve it to that bot only, for
+  every user, a user bounded to their own rows included: `context.pack` with
+  `include_knowledge`, `memory.stack` and `loom_search`. Another agent in the
+  namespace is not served it, and a rule filed for every agent (`-`) carries no agent
+  tag and is served to every agent. `knowledge.search` is not filtered by agent; a bot
+  finds its own rules with `knowledge.search(tags=["agent:<agent>"])`.
+  `destination="memory"` writes the agent's memory row instead (`user_id` `-`,
+  `source_trace` `learning:<candidate_id>`), which namespace-wide reads find and a read
+  bounded to one user does not.
 - A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
   files for the agent its issuer signed, never the body's `agent`, and files nothing
   when it names no agent.

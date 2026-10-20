@@ -887,6 +887,18 @@ async def test_a_rule_for_every_agent_is_promoted_with_no_agent_tag(
     assert not [tag for tag in doc.tags if tag.startswith("agent:")]
 
 
+def test_a_bots_promoted_rule_serves_only_that_bot() -> None:
+    from server.memory.domain.assistant_rules import serves_agent
+
+    rule = ["promoted-from-learning", "source-kind:assistant_turn", "agent:support-bot"]
+    assert serves_agent(rule, "support-bot")
+    assert not serves_agent(rule, "sales-bot")
+    assert not serves_agent(rule, "-")
+    # A rule for every agent carries no agent tag; any other document is not a rule.
+    assert serves_agent(["promoted-from-learning", "source-kind:assistant_turn"], "sales-bot")
+    assert serves_agent(["agent:support-bot", "runbook"], "sales-bot")
+
+
 def test_a_supporter_row_carries_every_column_of_loom_learnings_supporters() -> None:
     from tests.unit.schema_ddl import column_names
 

@@ -554,6 +554,12 @@ const sourceLabel = (r: LearningEntry) => SOURCE_LABEL[r.source_kind || "memory_
 const agentLabel = (r: LearningEntry) =>
   r.agent && r.agent !== "-" ? `agent ${r.agent}` : "every agent in this namespace";
 
+// Which agents a promoted rule reaches: a named bot's rule serves that bot only.
+const promoteNote = (r: LearningEntry) =>
+  r.agent && r.agent !== "-"
+    ? `Promote publishes this rule to this namespace's knowledge for ${r.agent} only: ${r.agent}'s reads find it for every user, and other agents' reads do not.`
+    : "Promote publishes this rule to this namespace's knowledge for every agent: every agent's reads find it for every user.";
+
 // A bot's rule is backed by distinct users, its sessions beside them; every other
 // candidate by its supporters. A server a release behind sends no user count.
 function supportLabel(r: LearningEntry): string {
@@ -688,9 +694,7 @@ function LearningsPanel({
               {status === "pending" && (
                 <>
                   {isAgentRule(r) && r.agent !== undefined && (
-                    <div className="text-sm text-text-muted mb-2">
-                      Promote publishes this rule to this namespace's knowledge, where every user's reads find it.
-                    </div>
+                    <div className="text-sm text-text-muted mb-2">{promoteNote(r)}</div>
                   )}
                   <TextAreaField
                     label="Reason for the decision"

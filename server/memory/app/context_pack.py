@@ -21,6 +21,7 @@ from server.memory.api.models_procedure import ProcedureMatchInput
 from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
+from server.memory.domain import assistant_rules
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
@@ -696,7 +697,9 @@ async def _pack_knowledge(st: _PackState) -> None:
             namespace_scope="all_mine",
         )
     )
-    if out.results:
+    # Another bot's promoted rule is not a rule about this agent.
+    results = [h for h in out.results if assistant_rules.serves_agent(h.tags, input.agent)]
+    if results:
         evidence = [
             EvidenceItem(
                 # Cite the section, not just the document, when the chunk
@@ -710,7 +713,7 @@ async def _pack_knowledge(st: _PackState) -> None:
                 group=h.source_uri,
                 score=float(getattr(h, "score", 0.0) or 0.0),
             )
-            for h in out.results
+            for h in results
         ]
         packed = pack_evidence(
             evidence,

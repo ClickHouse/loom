@@ -1168,9 +1168,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "wants to review the promotion queue."
     ),
     "learnings.review": (
-        "Approve or reject a pending learning. Approving promotes a memory "
-        "candidate to scope=shared, and a bot's rule to the namespace's "
-        "knowledge, where every user's reads find it; rejecting keeps the "
+        "Approve or reject a pending learning. Approving promotes a candidate "
+        "several writers back to scope=shared, a conversation-seeded fact to a "
+        "namespace memory row, and a bot's rule to the namespace's knowledge, "
+        "where that bot's reads find it for every user; rejecting keeps the "
         "candidate as rejected."
     ),
     # ---- Conflicts (contradicting memories) ----

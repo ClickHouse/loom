@@ -1,8 +1,9 @@
 """A rule a bot states about itself in a conversation lands in the learnings
 queue as a pending `assistant_turn` candidate, never in memory; each session
 adds a supporter row with its own user's quotes; an admin's promotion publishes
-it to the namespace's knowledge; a user erasure takes that user's quotes and
-leaves a candidate nobody backs only its decision.
+it to the namespace's knowledge, which serves it to that bot alone; a user
+erasure takes that user's quotes and leaves a candidate nobody backs only its
+decision.
 
 Runs on the fake LLM, which reads an assistant's "I always ..." sentence as a
 rule when the extraction prompt carries the assistant-rules block. The module
@@ -239,9 +240,9 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     _converse(base_url, tok, org, ns, "carol", "s3")
     assert _listed(base_url, tok, org, ns) == []
 
-    # Published to the namespace's knowledge: every user's reads find it, a user
-    # bounded to their own rows (read_scope=own_user) included, and a bot reads its
-    # own rules by the agent tag.
+    # Published to the namespace's knowledge: every user's reads of this bot find it,
+    # a user bounded to their own rows (read_scope=own_user) included, and a bot reads
+    # its own rules by the agent tag.
     rule = f"Assistant rule: {_RULE}"
     query = "escalate any refund over $500 to a human"
     for user_id, read_scope in (("alice", "own_user"), ("dave", "namespace")):
@@ -260,6 +261,22 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
             },
         )
         assert rule in pack["sections"].get("knowledge", ""), (user_id, pack["sections"])
+
+    # Another bot in the namespace is not served the rule as one about itself.
+    other = _call(
+        base_url,
+        tok,
+        "context.pack",
+        {
+            "org": org,
+            "namespace": ns,
+            "agent": "other-bot",
+            "user_id": "dave",
+            "query": query,
+            "include_knowledge": True,
+        },
+    )
+    assert not [name for name, text in other["sections"].items() if _RULE in str(text)]
 
     def by_tag(agent: str) -> list[str]:
         out = _call(

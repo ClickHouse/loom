@@ -671,8 +671,10 @@ describe("ReviewQueue", () => {
     expect(screen.getByText(/agent support-bot/)).toBeTruthy();
     expect(screen.getAllByText(/1 supporter ·/)).toHaveLength(2);
     expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(1);
-    // The rows that name an agent ("-" included) say what Promote does; the old one does not.
+    // The rows that name an agent ("-" included) say which agents Promote reaches; the old one does not.
     expect(screen.getAllByText(/Promote publishes this rule to this namespace's knowledge/)).toHaveLength(2);
+    expect(screen.getByText(/for support-bot only: .*other agents' reads do not/)).toBeTruthy();
+    expect(screen.getByText(/knowledge for every agent: every agent's reads find it/)).toBeTruthy();
   });
 
   it("says a bot rule's text went with a user erasure and its decision stands", async () => {

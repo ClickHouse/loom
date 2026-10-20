@@ -12,6 +12,7 @@ from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
+from server.memory.domain import assistant_rules
 
 log = logging.getLogger(__name__)
 
@@ -281,7 +282,8 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
         khits = await hybrid_search(ksq)
         for h in khits:
             val = str(getattr(h, "content", "") or "")
-            if not val:
+            # Another bot's promoted rule is not a rule about this agent.
+            if not val or not assistant_rules.serves_agent(h.tags, input.agent):
                 continue
             cost = _est_tokens(val)
             if not fill.fits(cost):

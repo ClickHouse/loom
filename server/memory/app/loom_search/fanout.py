@@ -22,6 +22,7 @@ from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
+from server.memory.domain import assistant_rules
 
 # Query words that name nothing in a profile section — otherwise "where does
 # the user live" matches every persona that says "user".
@@ -190,6 +191,7 @@ async def search_sections(
     *,
     org: str,
     namespace: str,
+    agent: str,
     query: str,
     top_k: int,
     tags: list[str],
@@ -201,7 +203,8 @@ async def search_sections(
 ) -> dict[str, Any]:
     """The assembled loom_search payload for `query` addressed to
     (`org`, `namespace`); every leg reads the namespaces `namespaces_to_search`
-    gives for `namespace_scope`. The caller has already authorized
+    gives for `namespace_scope`, and the knowledge leg leaves out the rules
+    promoted for a bot other than `agent`. The caller has already authorized
     `namespace`."""
     from server.auth.fanout import namespaces_to_search
     from server.knowledge.api.models_conversations import ConversationSearchInput
@@ -269,7 +272,11 @@ async def search_sections(
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
-        payload["knowledge"] = knowledge_above_floor(know_result.model_dump())
+        know = know_result.model_dump()
+        know["results"] = [
+            h for h in know["results"] if assistant_rules.serves_agent(h["tags"], agent)
+        ]
+        payload["knowledge"] = knowledge_above_floor(know)
     payload["profile"] = {
         "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)
     }

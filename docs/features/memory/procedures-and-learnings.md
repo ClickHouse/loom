@@ -203,7 +203,8 @@ row holds the rule and no user's words. Each session that states the rule adds a
 `supporter_count` is the distinct end users, `supporter_sessions` the distinct
 sessions, and the `rationale` the earliest remaining supporter's quotes. Support never
 promotes it; promoting it publishes the rule to the namespace's knowledge, tagged
-`agent:<agent>`, where every user's reads find it.
+`agent:<agent>`, where every user's reads of that agent find it and other agents' reads
+do not.
 
 A user erasure deletes that user's supporter rows, and their quotes with them. A
 candidate left with no supporter is deleted when pending. When decided, it keeps its
@@ -212,16 +213,17 @@ status row with the rule blanked, so a rejected rule never comes back as pending
 `learnings.quality` counts the conversation seeder by default, since it reports
 extraction quality; pass `source_kind="assistant_turn"` for the bot rules.
 
-| Op                  | Role   | Does                                                                                                                                                                                                                                                      |
-| ------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                                                                                                                                                                  |
-| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone for a supporters candidate, the agent's `user_id` '-' row for a bot's rule), `knowledge` or `both`; unset, `knowledge` for a bot's rule and `memory` otherwise. |
-| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                                                                                                                                                                 |
+| Op                  | Role   | Does                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                                                                                                                                                                                                                                                 |
+| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone for a supporters candidate, a namespace row under the approver's `user_id` for a conversation-seeded fact, the agent's `user_id` '-' row for a bot's rule), `knowledge` or `both`; unset, `knowledge` for a bot's rule and `memory` otherwise. |
+| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                                                                                                                                                                                                                                                |
 
 `learnings.list` and `learnings.review` are HTTP and SDK only (`bot.learnings`). A
 promotion to `memory` carries the candidate id, so
 [`memory.lineage`](./history-and-provenance.md#lineage) traces it back to the candidate.
-Reviewing a decided candidate again is a no-op. Field lists:
+Reviewing a decided candidate again is a no-op. A bot's rule whose last supporter was
+erased answers 404, as a missing candidate does. Field lists:
 [operations reference](../../reference/operations.md#learnings).
 
 ## Settings

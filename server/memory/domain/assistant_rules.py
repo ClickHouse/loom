@@ -18,6 +18,16 @@ _RULE_CHARS = 400  # not a setting: a privacy bound on a user's words kept for r
 _USER_CHARS = 200  # not a setting: a privacy bound on a user's words kept for review
 
 
+def serves_agent(tags: list[str], agent: str) -> bool:
+    """Whether a knowledge document reaches `agent`'s reads: a bot's promoted rule,
+    tagged `agent:<bot>`, serves only that bot; every other document, a rule for
+    every agent included, serves every agent."""
+    if f"source-kind:{SOURCE_KIND}" not in tags:
+        return True
+    bots = [tag.removeprefix("agent:") for tag in tags if tag.startswith("agent:")]
+    return not bots or agent in bots
+
+
 def normalized_value(value: str) -> str:
     """The rule as its candidate is keyed: case and spacing folded, a trailing
     period dropped."""
