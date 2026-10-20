@@ -658,7 +658,7 @@ that answers it.
 
 A JSON value is read scalar by scalar (`detector_text`). A key whose last word names a
 PIN-like secret states its digits under that word's label, so the free-text rules above
-decide: `pin` and `pin_code` read as `pin is <value>` (3-5 digits), `pin_number` as
+decide: `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits), `pin_number` as
 `pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code` (`pass_code`,
 `cvv_2` and `cvc2` too) as `<label> is <value>` (3-8 digits). An `ssn` key states an SSN with
 its dashes optional. A card number is found under any key. So `{"pin": "4471"}`,
@@ -678,9 +678,9 @@ The readers that send a value to a model still check the value itself
 (`value_reads_high`): consolidation, the profile fold, the existing memories an extraction
 prompt shows, `observe_extract` and the entity extractor leave out a value that reads as
 `high` even when its writer labelled it `low` or left it unset. This fails closed by design.
-A `high`
-row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
-leg returns it. The other reads that could serve its value follow three rules:
+
+A `high` row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so
+no search leg returns it. The other reads that could serve its value follow three rules:
 
 - Left out: the `anchor_first` and `recent_first` tiers, `memory.related`'s excerpts,
   `memory.aggregate` (no group key or filter match on a `high` value), `profile.render` and

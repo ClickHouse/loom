@@ -112,6 +112,8 @@ _STATED_PIN = re.compile(
 # not) with a short last group; 15-34 characters once the spaces are gone. One group more
 # than the longest IBAN needs leaves room for an IBAN-shaped token before it.
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,8}(?: ?[A-Z0-9]{1,3})?\b", re.ASCII)
+# Every regex shape that reads as high; a card number is checked apart (`_has_card`).
+_HIGH_SHAPES = (*_HIGH_PATTERNS, _SSN, _STATED_PIN)
 
 
 def _luhn_ok(digits: str) -> bool:
@@ -278,9 +280,6 @@ def attribute_tags(text: str, existing: Iterable[str] = ()) -> list[str]:
     ]
 
 
-_HIGH_SHAPES = (*_HIGH_PATTERNS, _SSN, _STATED_PIN)
-
-
 def _reads_high_text(text: str) -> bool:
     """Whether `text` holds a high shape: a credential, a card number, an SSN or a stated PIN."""
     return any(pat.search(text) for pat in _HIGH_SHAPES) or _has_card(text)
@@ -302,10 +301,12 @@ def detect_sensitivity(text: str) -> str:
 # phone shape allows only one space, dot or dash between its groups.
 _SCALAR_SEP = "\n;\n"
 
-# The key words that name a PIN-like secret, split where a key may put a separator
-# (`pass_code`, `cvv_2`), and the label each is stated under: `{"pin_code": "4471"}` reads
-# as `pin is 4471`, so the free-text grammar decides the value's length ("pin is 560001", a
-# postal code, stays unlabelled). The sweep's prefilter is built from the same list.
+# The key words that name a PIN-like secret, split where a key may put separators
+# (`pass_code`, `pin__code`, `pin/code`, `cvv_2`, `pinCode`: any run of characters that are
+# neither letters nor digits, or a change of case), and the label each is stated under:
+# `{"pin_code": "4471"}` reads as `pin is 4471`, so the free-text grammar decides the
+# value's length ("pin is 560001", a postal code, stays unlabelled). The sweep's prefilter
+# is built from the same list.
 KEYED_SECRET_WORDS: dict[tuple[str, ...], str] = {
     ("pin",): "pin",
     ("pin", "code"): "pin",
@@ -318,6 +319,8 @@ KEYED_SECRET_WORDS: dict[tuple[str, ...], str] = {
     ("security", "code"): "security code",
 }
 _KEYED_LABELS = {"".join(words): label for words, label in KEYED_SECRET_WORDS.items()}
+# A key whose last word is this states an SSN.
+SSN_KEY = "ssn"
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
 
 
@@ -328,7 +331,7 @@ def _keyed_secret(key: str, value: Any) -> str:
     words = [w.lower() for w in _KEY_WORDS.findall(key)]
     tail_words = words[-1:] + ["".join(words[-2:])]  # `pin` and `badgepin` for `badge_pin`
     label = next((_KEYED_LABELS[w] for w in tail_words if w in _KEYED_LABELS), "")
-    if not (label or "ssn" in tail_words):
+    if not (label or SSN_KEY in tail_words):
         return ""
     if not isinstance(value, str | int) or isinstance(value, bool):
         return ""
@@ -343,9 +346,10 @@ def _keyed_secret(key: str, value: Any) -> str:
 
 # A `"key": value` pair in raw JSON text (a chunk of an object value) whose value is
 # digits and dashes, for `reads_high`. The value must end there, so `4471abc`, `4471.5` and
-# a 20-digit run are not read as a shorter number.
+# a 20-digit run are not read as a shorter number; the spaces inside a quoted value follow
+# its quote, so a long run of spaces is read once.
 _KEYED_PAIR = re.compile(
-    r'"([A-Za-z0-9_ .-]{1,64})"\s*:\s*"?\s*([0-9][0-9-]{0,15})"?(?![\w.-])', re.ASCII
+    r'"([^"\\]{1,64})"\s*:\s*(?:"\s*)?([0-9][0-9-]{0,15})"?(?![\w.-])', re.ASCII
 )
 
 
@@ -410,10 +414,12 @@ def reads_high(text: str) -> bool:
     undone too, where a token after `\\n` or a quoted password keeps its word boundary, and
     its `"key": value` pairs with a digits-and-dashes value are read as `detector_text`
     reads them (`{"badge_pin": "4471"}`)."""
-    unescaped = _JSON_ESCAPE.sub(_json_unescape, text)
-    for t in {text, unescaped}:
+    texts = {text, _JSON_ESCAPE.sub(_json_unescape, text)}
+    if any(_reads_high_text(t) for t in texts):
+        return True
+    for t in texts:
         stated = [s for s in (_keyed_secret(k, v) for k, v in _KEYED_PAIR.findall(t)) if s]
-        if _reads_high_text(t) or any(_reads_high_text(s) for s in stated):
+        if any(_reads_high_text(s) for s in stated):
             return True
     return False
 

@@ -38,6 +38,7 @@ from server.memory.domain.sensitivity import (
     HIGH,
     KEYED_SECRET_WORDS,
     MEDIUM,
+    SSN_KEY,
     detect_sensitivity,
     detector_text,
     sensitivity_tags,
@@ -59,11 +60,26 @@ _COARSE_PIN = (
     rf"|{_JSON_BOUNDARY}(?:pin number|pin code|passcode|cv[vc]2?|security code)"
     rf"{_JSON_SPACE}+[0-9]{{3}})"
 )
-# A JSON key naming a PIN-like secret (from the detector's own list, any separator between
-# its words) or an SSN, then a value starting with 3 digits. A dotted key is read as
-# ClickHouse stores it, nested: `security.code` is `code`, and is not selected.
-_KEYED_WORDS = "|".join("[_ -]?".join(words) for words in KEYED_SECRET_WORDS)
-_COARSE_KEYED = rf'(?i:(?:{_KEYED_WORDS}|ssn)"\s*:\s*"?\s*[0-9]{{3}})'
+
+
+# A JSON key naming a PIN-like secret (from the detector's own list, with any run of
+# characters that are neither letters nor digits between its words, as the detector splits
+# a key) or an SSN, then its value: 3-5 digits for a word stated as `pin`, so a 6-digit
+# postal code is not selected, else a value starting with 3 digits. A dotted key is read
+# as ClickHouse stores it, nested: `security.code` is `code`, and is not selected.
+def _key_words(label_is_pin: bool) -> str:
+    return "|".join(
+        '[^A-Za-z0-9"]*'.join(words)
+        for words, label in KEYED_SECRET_WORDS.items()
+        if (label == "pin") == label_is_pin
+    )
+
+
+_KEY_VALUE = r'"\s*:\s*"?\s*'
+_COARSE_KEYED = (
+    rf"(?i:(?:{_key_words(True)}){_KEY_VALUE}[0-9]{{3,5}}(?:[^0-9]|$)"
+    rf"|(?:{_key_words(False)}|{SSN_KEY}){_KEY_VALUE}[0-9]{{3}})"
+)
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses

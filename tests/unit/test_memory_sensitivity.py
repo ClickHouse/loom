@@ -551,6 +551,9 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"pin": "560001"}, ""),  # a 6-digit pin is a postal code, as in free text
         ({"zip_pin": "560001"}, ""),
         ({"pin_code": "4471"}, "high"),
+        ({"pin__code": "4471"}, "high"),
+        ({"pin/code": "4471"}, "high"),
+        ({"pincode": "4471"}, "high"),
         ({"pass_code": "4471"}, "high"),
         ({"cvv_2": "123"}, "high"),
         ({"address": {"pincode": "560001"}}, ""),  # a 6-digit pin code is a postal code
@@ -575,6 +578,8 @@ def test_a_long_digit_run_is_read_in_one_pass() -> None:
     assert detect_sensitivity("pin" + " " * 200_000) == ""
     assert detect_sensitivity("PIN is" + "\n" * 200_000) == ""
     assert detect_sensitivity("cvv" + " " * 200_000 + "x") == ""
+    assert not reads_high('"pin":' + " " * 200_000 + "x")
+    assert not reads_high('"pin": "' + " " * 200_000 + "x")
 
 
 @pytest.mark.parametrize(
@@ -660,6 +665,11 @@ _PREFILTER_OBJECTS = [
     {"pass_code": "4471"},
     {"cvv_2": "123"},
     {"pin_code": "4471"},
+    {"pin__code": "4471"},
+    {"pin/code": "4471"},  # written `pin\/code`
+    {"pincode": "4471"},
+    {"pin": "560001"},  # a postal code
+    {"address": {"pincode": "560001"}},
     {"door": {"security-code": "5512"}},
     {"badge.pin": "4471"},  # ClickHouse nests it: `{"badge":{"pin":...}}`
     {"ssn": 123456789},
