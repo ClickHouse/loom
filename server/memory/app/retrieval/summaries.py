@@ -20,7 +20,7 @@ log = logging.getLogger("server.memory.app.retrieval")
 # assembler re-balances planes via RRF so a larger N never floods the block.
 _SESSION_SUMMARY_TOP_N = 5
 # Characters of a digest a hit shows; the whole text is read, so it can be checked first.
-_SUMMARY_EXCERPT_CHARS = 1200
+_SUMMARY_EXCERPT_CHARS = 1200  # not a setting: wire bound on a hit's excerpt
 
 # Under agent='*' the digest leg fetches this many times its N and dedups per
 # session in Python: a session can carry one row per agent,

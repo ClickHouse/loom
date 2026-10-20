@@ -238,7 +238,7 @@ def reads_high(text: str) -> bool:
 
 # Spare rows a read asks for, so a passage it holds back for reading as a credential does
 # not leave the page short.
-HELD_MARGIN = 2
+HELD_MARGIN = 2  # not a setting: algorithm shape, sized to how rarely a row is held
 
 
 def without_credentials[T](

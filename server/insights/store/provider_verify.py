@@ -51,7 +51,7 @@ def _emptied(schema: SourceSchema, columns: list[str]) -> str:
 
 
 # Target ordinals a page of the emptied read covers.
-_EMPTIED_PAGE = 1000
+_EMPTIED_PAGE = 1000  # not a setting: read buffer size; any page gives the same verdict
 
 
 async def _holds_plain_emptied(
