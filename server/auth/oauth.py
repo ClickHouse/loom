@@ -1510,11 +1510,8 @@ _EXCHANGE_WINDOW_S = 600
 
 
 async def _admit_exchange(trust: str, agent: str) -> None:
-    """Count one exchange against its trust, and an agent's also against the
-    agent, or refuse it: 429 over a limit, 503 when this process is too busy
-    to count. Only a token the trust's issuer signed gets here, so a caller
-    without one cannot spend a trust's budget. A trust without agents is one
-    workload: its jobs (every pull request of a repository) share one `sub`."""
+    """Count a verified exchange against its trust and, if any, its agent;
+    refuse it with 429 over a limit, 503 when this process is saturated."""
     per_trust = Attempts(
         "oauth.exchange", settings.workload_exchanges_per_trust, _EXCHANGE_WINDOW_S
     )

@@ -222,8 +222,10 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   30 s later. Only a token the issuer signed counts, so nobody without the
   issuer's key can use up a trust's budget, and an agent refused at its own
   limit spends none of the trust's. Raise the trust's limit for a fleet whose
-  agents renew often: an agent renews halfway through its workload token's
-  life, in each process.
+  agents renew often. The SDKs and the plugins renew five minutes before the
+  token runs out, or halfway through its life when that comes sooner, in each
+  process: a one-hour workload token renews after 55 minutes, a five-minute
+  one every 2.5 minutes (four exchanges per 10 minutes per process).
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
