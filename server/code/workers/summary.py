@@ -383,10 +383,8 @@ async def _run_cards(
         if pending:
             await asyncio.gather(*pending)
     finally:
-        # `asyncio.wait` does not cancel its tasks when the pass is cancelled
-        # (deadline, shutdown) or a file raises: without this they keep calling
-        # the model and writing cards after the pass, and the next pass starts
-        # the same files. They are awaited, so none outlives the pass.
+        # `asyncio.wait` leaves its tasks running on a cancel or a raise:
+        # cancel and await them so none outlives the pass.
         for task in pending:
             task.cancel()
         await asyncio.gather(*pending, return_exceptions=True)

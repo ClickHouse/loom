@@ -187,8 +187,10 @@ def test_no_card_task_outlives_a_held_file(error) -> None:
 
     async def run() -> None:
         with pytest.raises(type(error)):
-            await w._run_cards(["slow.py", "held.py", "later.py"], one, 1 + 1, lambda: False)
-        assert started and all(t.done() for t in started)  # each stopped before the raise
+            # Two workers queue four files, so the hold is raised from the wait.
+            paths = ["a.py", "b.py", "c.py", "held.py", "later.py"]
+            await w._run_cards(paths, one, 2, lambda: False)
+        assert len(started) == 4 and all(t.done() for t in started)  # stopped before the raise
 
     asyncio.run(run())
 

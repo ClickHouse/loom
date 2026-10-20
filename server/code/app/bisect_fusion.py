@@ -104,7 +104,9 @@ async def _read_window(
     wall, floor = bounds
 
     read = await _read_and_embed(
-        lambda: source.window_prs(org, tracker_ns, versions, before=wall, after=floor), text
+        "window",
+        lambda: source.window_prs(org, tracker_ns, versions, before=wall, after=floor),
+        text,
     )
     if read is None:  # the scan's candidates stand
         return {}, [], "window_unavailable"
@@ -116,10 +118,11 @@ async def _read_window(
 
 
 async def _read_and_embed(
-    read: Callable[[], Awaitable[Any]], text: str
+    window: str, read: Callable[[], Awaitable[Any]], text: str
 ) -> tuple[list[dict[str, Any]], list[float]] | None:
     """A window read and the report's embedding, both run to their end: a held
-    embed is raised even when the read failed first. None when either failed."""
+    embed is raised even when the read failed first. None when either failed.
+    `read` is a callable because a source without `window_prs` fails on the call."""
 
     async def rows_of() -> list[dict[str, Any]]:
         return list(await read())
@@ -131,9 +134,9 @@ async def _read_and_embed(
     )
     if isinstance(vector, customer.HOLDS):
         raise vector  # the org's model calls are held: the request answers that
-    for failed in (rows, vector):
+    for leg, failed in (("read", rows), ("embed", vector)):
         if isinstance(failed, BaseException):
-            logger.info("bisect fusion: window read failed: %s", failed)
+            logger.info("bisect fusion: %s %s failed: %s", window, leg, failed)
             return None
     return rows, vector
 
@@ -389,7 +392,9 @@ async def wide_extras(
     if not wide and floor is None:
         return [], {}
     read = await _read_and_embed(
-        lambda: source.window_prs(org, tracker_ns, wide, before=report_at, after=floor), text
+        "wide window",
+        lambda: source.window_prs(org, tracker_ns, wide, before=report_at, after=floor),
+        text,
     )
     if read is None:  # the first window stands
         return [], {}

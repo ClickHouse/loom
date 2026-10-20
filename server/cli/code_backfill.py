@@ -90,6 +90,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         print(f"twin label: rows written under embedding_model={model_name!r}")
     denylist = await load_denylist(cfg, head, gitrepo.show_file)
     cursor_key = f"backfill_cursor:index{suffix}"
+    mode = "repair" if paths_file else "twin" if suffix else "backfill"
     done_upto = "" if paths_file else await repo.get_state(org, ns, cursor_key)
     start_idx = int(done_upto) if done_upto.isdigit() else 0
     started = time.monotonic()
@@ -144,15 +145,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         if held:
             print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
             # The batches written before the hold are compacted and recorded.
-            await _close_index(
-                counters,
-                org,
-                ns,
-                model_name,
-                started,
-                head,
-                "repair" if paths_file else "twin" if suffix else "backfill",
-            )
+            await _close_index(counters, org, ns, model_name, started, head, mode)
             return 1
         if not paths_file:
             await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
@@ -188,15 +181,7 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    await _close_index(
-        counters,
-        org,
-        ns,
-        model_name,
-        started,
-        head,
-        "repair" if paths_file else "twin" if suffix else "backfill",
-    )
+    await _close_index(counters, org, ns, model_name, started, head, mode)
     if paths_file:
         # a targeted repair proves nothing about the rest of the tree: the
         # per-merge watermark must keep walking every commit it has not seen

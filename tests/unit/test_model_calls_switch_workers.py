@@ -160,7 +160,13 @@ def test_code_embed_recovery_scans_no_repository_of_a_switched_off_org(monkeypat
     ]
     monkeypatch.setattr("server.code.domain.index.repos.configured_repos", lambda: repos)
     monkeypatch.setattr(w, "_recover_table", recover)
-    monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: object())
+    from server.code.store import index as code_index
+
+    class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers
+        def __new__(cls) -> Any:
+            return object()
+
+    monkeypatch.setattr(code_index, "CodeRepo", _CodeRepo)
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: object())
     _off("acme")
     asyncio.run(w._run(w.CodeEmbedRecoveryResult()))
@@ -628,7 +634,13 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
         embed_reuse_from="",
     )
     monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(connect=connect))
-    monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: repo)
+    from server.code.store import index as code_index
+
+    class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers
+        def __new__(cls) -> Any:
+            return repo
+
+    monkeypatch.setattr(code_index, "CodeRepo", _CodeRepo)
     monkeypatch.setattr(code_backfill, "_repo_cfg", lambda args: cfg)
     monkeypatch.setattr(code_backfill.os.path, "isdir", lambda p: True)
     monkeypatch.setattr(code_backfill, "_backfill_head", head)
