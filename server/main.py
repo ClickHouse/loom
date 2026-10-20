@@ -435,13 +435,14 @@ async def _cache_and_security_headers(request: Request, call_next: Any) -> Respo
 
 
 def attach_web_gate(target: FastAPI) -> None:
+    """The web gate, then the header middleware, which Starlette's insert-at-front
+    order puts outside it: the gate's refusals carry the headers too."""
     target.middleware("http")(_web_gate)
+    target.middleware("http")(_cache_and_security_headers)
 
 
+# Outside the web gate and CORS, so their refusals and preflights carry these headers too.
 attach_web_gate(app)
-# Registered last, so it is the outermost middleware (Starlette inserts each at
-# the front): the web gate's refusals and CORS preflights carry its headers too.
-app.middleware("http")(_cache_and_security_headers)
 
 http_transport.attach(app)
 mcp_transport.attach(app)
