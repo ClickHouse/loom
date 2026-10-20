@@ -625,7 +625,9 @@ are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
 ## Sensitivity
 
-`server/memory/domain/sensitivity.py` classifies a value with deterministic regexes:
+`server/memory/domain/sensitivity.py` classifies a value with deterministic regexes. It is
+a lower bound: it recognises the label forms and shapes listed here, not every way a person
+can phrase a secret. The catch-all for extraction is an operator's extraction policy.
 
 | Level    | Matches                                                                    |
 | -------- | -------------------------------------------------------------------------- |
@@ -646,16 +648,22 @@ The `high` shapes:
   length (Visa 4 at 16 or 19; Mastercard 51-55 and 2221-2720 at 16; Amex 34 and 37 at 15;
   Diners 300-305, 3095, 36, 38 and 39 at 14; JCB 3528-3589 and Discover/UnionPay 6011, 62,
   644-649 and 65 at 16 or 19) and passes the Luhn check, so a 15-digit IMEI is not a card.
+  Groups joined by two spaces or by dots (`4111  1111  1111  1111`, `4111.1111.1111.1111`)
+  are not read.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
-- Stated PIN: a PIN, passcode, CVV/CVC or security code followed by its value after `is`,
-  `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`). Every label but a bare `pin`, which is
-  also a verb and a connector pin (`pin 115`, `pin #115`), also takes the value directly
-  (`CVV 123`), unless `of` follows it (`passcode 100 of the batch`). `PIN number`,
-  passcode, CVV/CVC and security code take 3-8 digits; `PIN` and `PIN code` take 3-5, since
-  `PIN: 560001` and `PIN code 560001` are Indian postal codes, so a 6-digit PIN counts
-  when stated as a `PIN number`. A connector pin written as an assignment
-  (`GPIO pin: 115`) reads as a PIN.
+- Stated PIN: one of the labels `pin`, `pin code`, `pin number`, `passcode` /
+  `pass code`, `cvv`, `cvc`, `cvv2`, `cvc2`, `cvv code`, `cvv number`, `cvc code`,
+  `cvc number` and `security code` (`_` or a space inside a two-word label, after any
+  prefix that ends in something other than a letter or digit: `BADGE_PIN`, `CARD_CVV`),
+  followed by its value after `is`, `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`), with an
+  optional `for` and up to three words before it (`PIN for the front door is 4471`). Every
+  label but a bare `pin`, which is also a verb and a connector pin (`pin 115`, `pin #115`),
+  also takes the value directly (`CVV 123`), unless `of` follows it
+  (`passcode 100 of the batch`). `PIN number`, passcode, CVV/CVC and security code take
+  3-8 digits; `PIN` and `PIN code` take 3-5, since `PIN: 560001` and `PIN code 560001` are
+  Indian postal codes, so a 6-digit PIN counts when stated as a `PIN number`. A connector
+  pin written as an assignment (`GPIO pin: 115`) reads as a PIN.
 
 An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN
 or a bank account (number) counts as contact intent, so ranking does not demote the row
@@ -665,8 +673,9 @@ A JSON value is read scalar by scalar (`detector_text`). A key whose last word n
 PIN-like secret states its digits under that word's label, so the free-text rules above
 decide: `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits), `pin_number` as
 `pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code` (`pass_code`,
-`cvv_2` and `cvc2` too) as `<label> is <value>` (3-8 digits). An `ssn` key states an SSN with
-its dashes optional. A card number is found under any key. So `{"pin": "4471"}`,
+`cvv_2`, `cvc2`, `cvv_code` and `cvc_number` too) as `<label> is <value>` (3-8 digits). An
+`ssn`, `ssn_number`, `ssn_no` or `social_security_number` key states an SSN with its dashes
+optional. A card number is found under any key. So `{"pin": "4471"}`,
 `{"pin_code": "4471"}`, `{"badge_pin": "4471"}` and `{"ssn": "123456789"}` are `high`, and
 `{"pin": "560001"}`, `{"pincode": "560001"}` (a postal code), `{"pin_count": 4}` and
 `{"pin": "A1"}` are not. A connector pin in a config (`{"pin": 115}`) reads as a PIN, as

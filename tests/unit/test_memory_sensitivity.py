@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any
 
 import pytest
@@ -437,6 +438,20 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "the cvc was 987",
         "PIN number 123456",
         "my PIN is 4471 of course",
+        # a label after a prefix, and two-word labels joined by `_`
+        "BADGE_PIN=4471",
+        "atm_pin: 4471",
+        "PIN_CODE=4471",
+        "CARD_CVV=123",
+        "security_code: 5512",
+        # compound labels
+        "cvv code: 123",
+        "CVV number is 123",
+        "cvc code 123",
+        "pass code: 4471",
+        # a bounded qualifier
+        "PIN for the front door is 4471",
+        "passcode for the garage: 908712",
         "passcode = 908712",
         "Security code: 55512",
     ],
@@ -490,6 +505,9 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "pin 128 rows before the import",
         "GPIO pin 115",
         "wire it to pin #115",
+        "spin: 4471",  # a word that ends in a label
+        "PIN for the front door 4471",  # a bare pin takes no direct value
+        "PIN for one two three four is 4471",  # more than three words
         "ports 3000 5432 6379 9200 4000 4001 4002 4003 4004",  # nine groups: a table
         "ship to MG Road, Bengaluru, PIN code 560001",  # a postal code
         "PIN code: 560001",
@@ -556,6 +574,11 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"pincode": "4471"}, "high"),
         ({"pass_code": "4471"}, "high"),
         ({"cvv_2": "123"}, "high"),
+        ({"cvv_code": "123"}, "high"),
+        ({"cvcNumber": "987"}, "high"),
+        ({"ssn_number": "123456789"}, "high"),
+        ({"ssn_no": "123-45-6789"}, "high"),
+        ({"social_security_number": "123-45-6789"}, "high"),
         ({"address": {"pincode": "560001"}}, ""),  # a 6-digit pin code is a postal code
         ({"pin": "A1"}, ""),
         ({"pin": "12"}, ""),
@@ -571,6 +594,7 @@ def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
 
 
 def test_a_long_digit_run_is_read_in_one_pass() -> None:
+    started = time.perf_counter()
     assert detect_sensitivity("7" * 200_000) == ""
     assert not reads_high("1 " * 100_000)
     assert reads_high("x " * 100_000 + "CVV 123")
@@ -580,6 +604,9 @@ def test_a_long_digit_run_is_read_in_one_pass() -> None:
     assert detect_sensitivity("cvv" + " " * 200_000 + "x") == ""
     assert not reads_high('"pin":' + " " * 200_000 + "x")
     assert not reads_high('"pin": "' + " " * 200_000 + "x")
+    assert detect_sensitivity("PIN for" + " " * 200_000 + "x") == ""
+    assert detect_sensitivity("PIN for the" + " " * 200_000 + "door") == ""
+    assert time.perf_counter() - started < 2.0
 
 
 @pytest.mark.parametrize(
@@ -669,6 +696,12 @@ _PREFILTER_OBJECTS = [
     {"pin/code": "4471"},  # written `pin\/code`
     {"pincode": "4471"},
     {"pin": "560001"},  # a postal code
+    {"pin": "\t4471"},  # written `\t4471`
+    {"cvv_code": "123"},
+    {"ssn_no": "123456789"},
+    {"social_security_number": "123-45-6789"},
+    {"note": "BADGE_PIN=4471"},
+    {"note": "PIN for the front door is 4471"},
     {"address": {"pincode": "560001"}},
     {"door": {"security-code": "5512"}},
     {"badge.pin": "4471"},  # ClickHouse nests it: `{"badge":{"pin":...}}`
@@ -685,6 +718,9 @@ _PREFILTER_OBJECTS = [
 ]
 _PREFILTER_TEXTS = [
     "PIN is 4471",
+    "CARD_CVV=123",
+    "atm_pin: 4471",
+    "cvv number is 123",
     "cvv2 123",
     "card 4111 1111 1111 1111",
     "SSN 123-45-6789",

@@ -24,6 +24,15 @@ must never be pulled into a prompt by similarity, which is what embedding it wou
 do. Every pattern is a linear regex pass; the Luhn check runs on each 15- or 16-digit
 group and on at most sixteen grouped windows per run, and the mod-97 check on at most 55
 runs per match, so the work stays linear in the text.
+
+The detector is a deterministic lower bound: it reads the label forms and shapes listed
+here, not every way a person can phrase a secret. A PIN-like secret is read under these
+labels, alone or after a prefix (`badge_pin`, `CARD_CVV`): `pin`, `pin code`, `pin number`,
+`passcode` / `pass code`, `cvv`, `cvc`, `cvv2`, `cvc2`, `cvv code`, `cvv number`, `cvc code`,
+`cvc number` and `security code`, with `_` or a space inside a two-word label, followed
+by `is`, `was`, `:` or `=` (after an optional `for` and up to three words: "PIN for the
+front door is 4471") or, for every label but a bare `pin`, directly. The catch-all for
+extraction is an operator's extraction policy, not this module.
 """
 
 from __future__ import annotations
@@ -97,15 +106,25 @@ _CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
 # area 000, 666 or 9xx, group 00, serial 0000.
 _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
 # A PIN, passcode, CVV/CVC or security code stated with its value ("PIN is 4471",
-# "CVV 123"). Two trade-offs: `pin` and `pin code` take 3-5 digits, since "PIN: 560001" is
-# an Indian postal code; and a connector pin written as an assignment ("GPIO pin: 115")
-# reads as a PIN, the price of reading "PIN: 4471" as one.
+# "CVV 123", "BADGE_PIN=4471"). Two trade-offs: `pin` and `pin code` take 3-5 digits, since
+# "PIN: 560001" is an Indian postal code; and a connector pin written as an assignment
+# ("GPIO pin: 115") reads as a PIN, the price of reading "PIN: 4471" as one. The label
+# strings are plain regex that RE2 reads too: the sweep's prefilter is built from them.
+SHORT_PIN_LABEL = r"pin(?:[_ ]code)?"
+LONG_PIN_LABEL = (
+    r"(?:pin[_ ]number|pass[_ ]?code|cv[vc]2?(?:[_ ](?:code|number))?|security[_ ]code)"
+)
+# A label starts after anything but a letter or digit, so a prefix (`atm_pin`) counts and
+# a word that ends in one (`spin`) does not.
+_LABEL_START = r"(?<![A-Za-z0-9])"
+# "PIN for the front door is 4471": `for` and up to three words, before `is`, `:` or `=`.
+_PIN_FOR = r"(?:\s+for(?:\s+[A-Za-z]+){1,3})?"
 _PIN_VALUE_AFTER = r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*"
-_LONG_PIN_LABEL = r"(?:pin number|passcode|cvv2?|cvc2?|security code)"
 _STATED_PIN = re.compile(
-    rf"(?i)\b{_LONG_PIN_LABEL}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
-    rf"|\b{_LONG_PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
-    rf"|\bpin(?:{_PIN_VALUE_AFTER}| code(?:{_PIN_VALUE_AFTER}|\s+))\d{{3,5}}(?!\d)",
+    rf"(?i){_LABEL_START}{LONG_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
+    rf"|{_LABEL_START}{LONG_PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
+    rf"|{_LABEL_START}{SHORT_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?!\d)"
+    rf"|{_LABEL_START}pin[_ ]code\s+\d{{3,5}}(?!\d)",
     re.ASCII,
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
@@ -314,13 +333,24 @@ KEYED_SECRET_WORDS: dict[tuple[str, ...], str] = {
     ("pass", "code"): "passcode",
     ("cvv",): "cvv",
     ("cvv", "2"): "cvv",
+    ("cvv", "code"): "cvv",
+    ("cvv", "number"): "cvv",
     ("cvc",): "cvc",
     ("cvc", "2"): "cvc",
+    ("cvc", "code"): "cvc",
+    ("cvc", "number"): "cvc",
     ("security", "code"): "security code",
 }
 _KEYED_LABELS = {"".join(words): label for words, label in KEYED_SECRET_WORDS.items()}
-# A key whose last word is this states an SSN.
-SSN_KEY = "ssn"
+# The key words that state an SSN. The spelled-out `social_security_number` is read as its
+# last three words.
+SSN_KEYS: tuple[tuple[str, ...], ...] = (
+    ("ssn",),
+    ("ssn", "number"),
+    ("ssn", "no"),
+    ("social", "security", "number"),
+)
+_SSN_KEY_WORDS = {"".join(words) for words in SSN_KEYS}
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
 
 
@@ -328,12 +358,13 @@ def _keyed_secret(key: str, value: Any) -> str:
     """The stated form of a secret held under a key that names it ("pin is 4471" for
     `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`), for the detector to read;
     '' when the key names none."""
-    words = [w.lower() for w in _KEY_WORDS.findall(key)]
-    tail_words = words[-1:] + ["".join(words[-2:])]  # `pin` and `badgepin` for `badge_pin`
-    label = next((_KEYED_LABELS[w] for w in tail_words if w in _KEYED_LABELS), "")
-    if not (label or SSN_KEY in tail_words):
-        return ""
     if not isinstance(value, str | int) or isinstance(value, bool):
+        return ""
+    words = [w.lower() for w in _KEY_WORDS.findall(key)]
+    # the last one, two and three words, joined: `pin`, `badgepin` for `badge_pin`
+    tail_words = ["".join(words[-n:]) for n in (1, 2, 3) if len(words) >= n]
+    label = next((_KEYED_LABELS[w] for w in tail_words if w in _KEYED_LABELS), "")
+    if not (label or _SSN_KEY_WORDS.intersection(tail_words)):
         return ""
     v = str(value).strip()
     if label:
@@ -417,11 +448,9 @@ def reads_high(text: str) -> bool:
     texts = {text, _JSON_ESCAPE.sub(_json_unescape, text)}
     if any(_reads_high_text(t) for t in texts):
         return True
-    for t in texts:
-        stated = [s for s in (_keyed_secret(k, v) for k, v in _KEYED_PAIR.findall(t)) if s]
-        if any(_reads_high_text(s) for s in stated):
-            return True
-    return False
+    return any(
+        _reads_high_text(_keyed_secret(k, v)) for t in texts for k, v in _KEYED_PAIR.findall(t)
+    )
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

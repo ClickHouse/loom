@@ -37,48 +37,53 @@ from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import (
     HIGH,
     KEYED_SECRET_WORDS,
+    LONG_PIN_LABEL,
     MEDIUM,
-    SSN_KEY,
+    SHORT_PIN_LABEL,
+    SSN_KEYS,
     detect_sensitivity,
     detector_text,
     sensitivity_tags,
 )
 
-# The column holds JSON text for an object value, where a control character is an escape
-# (`\n`, `\u000b`) and a non-ASCII character is `\uXXXX`. For the PIN and IBAN shapes an
-# escape counts as a word boundary, and `\f`, `\n`, `\r`, `\t` and `\u000b` as whitespace,
-# as the detector's ASCII `\s` reads them decoded; `\v` is listed beside `\s` because the
-# detector's `\s` has it and RE2's does not.
-_JSON_BOUNDARY = r"(?:\b|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
+# The scan matches `toString(value_json)` for an object value: ClickHouse's JSON text,
+# where a control character is an escape (`\n`, `\u000B`), `/` is `\/` and a non-ASCII
+# character is kept raw. A string value is matched as written; a non-string value with no
+# `value_json` is matched on `value`, `json.dumps` text, where a non-ASCII character is
+# `\uXXXX`. For the PIN and IBAN shapes an escape or `_` counts as the start of a label
+# (the detector starts one after anything but a letter or digit), and `\f`, `\n`, `\r`,
+# `\t` and `\u000b` count as whitespace, as the detector's ASCII `\s` reads them decoded;
+# `\v` is listed beside `\s` because the detector's `\s` has it and RE2's does not.
+_JSON_BOUNDARY = r"(?:\b|_|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
 _JSON_SPACE = r"(?:[\s\v]|\\[fnrt]|\\u000[bB])"
-# A PIN label and its value in the detector's grammar: every label after `is`, `was`,
-# `:` or `=`, and all but a bare `pin` directly.
+# A PIN label and its value in the detector's grammar, from the detector's own label
+# strings: every label after an optional `for` and up to three words, then `is`, `was`,
+# `:` or `=`; all but a bare `pin` directly.
+_PIN_FOR = rf"(?:{_JSON_SPACE}+for(?:{_JSON_SPACE}+[a-z]+){{1,3}})?"
 _PIN_VALUE_AFTER = rf"(?:{_JSON_SPACE}+(?:is|was)(?:{_JSON_SPACE}*[:=])?|{_JSON_SPACE}*[:=])"
 _COARSE_PIN = (
-    rf"(?i:{_JSON_BOUNDARY}(?:pin(?: number| code)?|passcode|cv[vc]2?|security code)"
-    rf"{_PIN_VALUE_AFTER}{_JSON_SPACE}*[0-9]{{3}}"
-    rf"|{_JSON_BOUNDARY}(?:pin number|pin code|passcode|cv[vc]2?|security code)"
+    rf"(?i:{_JSON_BOUNDARY}(?:{SHORT_PIN_LABEL}|{LONG_PIN_LABEL})"
+    rf"{_PIN_FOR}{_PIN_VALUE_AFTER}{_JSON_SPACE}*[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}(?:pin[_ ]code|{LONG_PIN_LABEL})"
     rf"{_JSON_SPACE}+[0-9]{{3}})"
 )
 
-
-# A JSON key naming a PIN-like secret (from the detector's own list, with any run of
-# characters that are neither letters nor digits between its words, as the detector splits
-# a key) or an SSN, then its value: 3-5 digits for a word stated as `pin`, so a 6-digit
-# postal code is not selected, else a value starting with 3 digits. A dotted key is read
-# as ClickHouse stores it, nested: `security.code` is `code`, and is not selected.
-def _key_words(label_is_pin: bool) -> str:
-    return "|".join(
-        '[^A-Za-z0-9"]*'.join(words)
-        for words, label in KEYED_SECRET_WORDS.items()
-        if (label == "pin") == label_is_pin
-    )
+_KEY_VALUE = rf'"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'
 
 
-_KEY_VALUE = r'"\s*:\s*"?\s*'
+def _key_words(keys: Iterable[tuple[str, ...]]) -> str:
+    """Key words as RE2, with any run of characters that are neither letters, digits nor a
+    quote between them, as the detector splits a key."""
+    return "|".join('[^A-Za-z0-9"]*'.join(words) for words in keys)
+
+
+_PIN_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label == "pin")
+_OTHER_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label != "pin")
+# A key naming a PIN-like secret or an SSN, then its value: 3-5 digits under a `pin` key, so
+# a 6-digit postal code is not selected. A dotted key is nested (`security.code` is `code`).
 _COARSE_KEYED = (
-    rf"(?i:(?:{_key_words(True)}){_KEY_VALUE}[0-9]{{3,5}}(?:[^0-9]|$)"
-    rf"|(?:{_key_words(False)}|{SSN_KEY}){_KEY_VALUE}[0-9]{{3}})"
+    rf"(?i:(?:{_PIN_KEYS}){_KEY_VALUE}[0-9]{{3,5}}(?:[^0-9]|$)"
+    rf"|(?:{_OTHER_KEYS}|{_key_words(SSN_KEYS)}){_KEY_VALUE}[0-9]{{3}})"
 )
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
