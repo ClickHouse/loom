@@ -127,7 +127,13 @@ async def drop_undeclared_links(input: Any, versions: Mapping[str, int], *, ch: 
     no longer 'high' is skipped: a later plain write's links are its own. One still
     'high' is read as it is now, so a later write that kept it high (a pin, a lock, a
     relabel) neither skips the drop nor brings back what it dropped."""
-    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(versions)}
+    keep = await _rows_still_high(input, sorted(versions), ch=ch)
+    if keep:
+        await _drop_links_of(input, keep, versions, ch=ch)
+
+
+async def _rows_still_high(input: Any, ids: list[str], *, ch: Any) -> dict[str, set[str]]:
+    """Of the rows `ids`, those 'high' now, each with the entities whose edges it keeps."""
     current = await query_all_sliced(
         ch,
         """
@@ -136,12 +142,10 @@ async def drop_undeclared_links(input: Any, versions: Mapping[str, int], *, ch: 
           AND memory_id IN {ids:Array(UUID)} AND sensitivity = 'high'
         SETTINGS select_sequential_consistency = 1
         """,
-        params,
+        {"org": input.org, "ns": input.namespace, "ids": ids},
         "ids",
     )
-    keep = {str(r["id"]): set(set_entities.declared_entities(r["entities"])) for r in current}
-    if keep:
-        await _drop_links_of(input, keep, versions, ch=ch)
+    return {str(r["id"]): set(set_entities.declared_entities(r["entities"])) for r in current}
 
 
 async def _drop_links_of(
@@ -189,6 +193,11 @@ async def _drop_links_of(
         open_only=True,
         skip_versions=sorted({(memory_id, sha) for memory_id, sha, _, _ in drop}),
     )
+    # Read again right before the DELETE: a row re-set plain since the first read (its
+    # value maybe the same) keeps its links. Parameters only: a mutation with a
+    # subquery is refused on a replicated table.
+    high = await _rows_still_high(input, sorted({memory_id for memory_id, *_ in drop}), ch=ch)
+    drop = [link for link in drop if link[0] in high]
     for part in param_slices(drop):
         await ch.execute(
             """
@@ -197,11 +206,6 @@ async def _drop_links_of(
               AND memory_id IN {ids:Array(UUID)}
               AND (toString(memory_id), toString(content_sha256), entity_a, entity_b)
                   IN {links:Array(Tuple(String, String, String, String))}
-              -- A row re-set plain since the read (its value maybe the same) keeps them.
-              AND memory_id IN (
-                  SELECT memory_id FROM loom.memory FINAL
-                  WHERE org = {org:String} AND namespace = {ns:String}
-                    AND memory_id IN {ids:Array(UUID)} AND sensitivity = 'high')
             """,
             params={
                 **params,

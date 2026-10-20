@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from server.core.repo_base import _CHClient, _default_client
+from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.erasure.store.mutations import (
     count_then_mutate,
     delete_scoped,
@@ -112,9 +112,10 @@ ROW_LINK_TABLES = ("loom.entity_triple_rows", "loom.entity_edge_rows")
 
 def _orphan_row_links(
     table: str, scope_type: str, scope_value: str | Sequence[str], verified_at: datetime
-) -> tuple[str, dict[str, Any]]:
-    """The scope predicate of an orphan row link in `table`, and its params.
-    `verified_at` is when the saga's census ran."""
+) -> tuple[str, str, dict[str, Any]]:
+    """The scope predicate of a row link in `table`, that of an orphan one (for reads:
+    it holds subqueries), and their params. `verified_at` is when the saga's census
+    ran."""
     if scope_type == "namespace":
         scope = NS_IN
         memories = f"org = {{org:String}} AND {NS_IN}"
@@ -137,7 +138,7 @@ def _orphan_row_links(
         "AND updated_at >= {verified_at:DateTime}"
     )
     where = f"{scope} AND memory_id NOT IN ({live_ids}) AND memory_id NOT IN ({later_ids})"
-    return where, {**params, "verified_at": verified_at}
+    return scope, where, {**params, "verified_at": verified_at}
 
 
 async def count_orphan_row_links(
@@ -152,7 +153,7 @@ async def count_orphan_row_links(
     ch = ch or _default_client()
     out: dict[str, int] = {}
     for table in ROW_LINK_TABLES:
-        where, params = _orphan_row_links(table, scope_type, scope_value, verified_at)
+        _, where, params = _orphan_row_links(table, scope_type, scope_value, verified_at)
         # A memory written a moment ago on another replica must count as live.
         row = await ch.query_one(
             f"SELECT count() AS n FROM {table} WHERE org = {{org:String}} AND {where} "
@@ -171,12 +172,28 @@ async def delete_orphan_row_links(
     verified_at: datetime,
     ch: _CHClient | None = None,
 ) -> int:
-    """Delete the orphan row links in scope. The mutation reads the memory ids
-    again when it runs, so a memory written since the count keeps its link."""
+    """Delete the orphan row links in scope. Their memory ids are read right before the
+    DELETE, which names them as parameters: a mutation with a subquery is refused on a
+    replicated table. A memory written since the read keeps its link, as its id is no
+    orphan's."""
+    ch = ch or _default_client()
     total = 0
     for table in ROW_LINK_TABLES:
-        where, params = _orphan_row_links(table, scope_type, scope_value, verified_at)
-        total += await delete_scoped(table, org=org, scope_where=where, params=params, ch=ch)
+        scope, where, params = _orphan_row_links(table, scope_type, scope_value, verified_at)
+        found = await ch.query_all(
+            f"SELECT DISTINCT toString(memory_id) AS id FROM {table} "
+            "WHERE org = {org:String} AND " + where + " "
+            "SETTINGS select_sequential_consistency = 1",
+            params={"org": org, **params},
+        )
+        for ids in param_slices(sorted(str(r["id"]) for r in found)):
+            total += await delete_scoped(
+                table,
+                org=org,
+                scope_where=f"{scope} AND memory_id IN {{ids:Array(UUID)}}",
+                params={**params, "ids": ids},
+                ch=ch,
+            )
     return total
 
 
