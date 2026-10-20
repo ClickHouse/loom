@@ -1288,30 +1288,30 @@ async def tombstone_embedding_if_message_gone(
     *,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone a just-stored embedding whose message a delete or compaction tombstoned
-    meanwhile.
+    """Retire a late embedding if its source was removed while embedding ran.
 
-    A turn written during a delete or compaction lands its message, then its embedding.
-    Those tombstone the messages, then run their last embeddings pass; the writer
-    stores the embedding, then calls this. So for a message the messages mutation
-    covered, either that last pass sees the embedding or this read sees the tombstone.
-    A message that lands after the mutation began is not covered and stays live. After
-    a compaction its embedding stays live too; a delete's last pass covers every
-    embedding of this agent's turns in the thread, so it takes one that landed before
-    that pass and leaves one that lands after it."""
+    Unsave deletes unrecorded transcripts; delete and compaction leave tombstones.
+    Reconciliation keeps a live peer's vector and identity in either case.
+    """
     ch = ch or _default_client()
     with sequential_reads():
         row = await ch.query_one(
             """
-            SELECT max(tombstoned_at) AS gone FROM loom.conversations
+            SELECT count() AS n, max(tombstoned_at) AS gone FROM loom.conversations
             WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
               AND thread_id = {tid:String} AND msg_id = {mid:String}
             """,
             params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "mid": msg_id},
         )
-    if row and row["gone"] is not None:
+    if row and (not row["n"] or row["gone"] is not None):
         await tombstone_embeddings(
-            org, namespace, agent, thread_id, msg_ids=[msg_id], when=row["gone"], ch=ch
+            org,
+            namespace,
+            agent,
+            thread_id,
+            msg_ids=[msg_id],
+            when=row["gone"] or datetime.now(UTC),
+            ch=ch,
         )
 
 

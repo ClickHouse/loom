@@ -603,3 +603,93 @@ async def test_save_waits_for_an_unsave_to_finish_both_tables(
         rows = await _rows(ch, table, namespace)
         assert rows and all(row["is_saved"] for row in rows)
     assert [hit.message_id for hit in await _saved_hits(namespace)] == [request.message_id]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("peer", [False, True])
+async def test_a_late_append_does_not_revive_an_unsaved_copy(
+    ch: Any, namespace: str, monkeypatch: pytest.MonkeyPatch, peer: bool
+) -> None:
+    import asyncio
+
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as repo
+
+    recording = True
+
+    async def logging_enabled(*args: Any, **kwargs: Any) -> bool:
+        return recording
+
+    monkeypatch.setattr(repo, "namespace_logging_enabled", logging_enabled)
+    if peer:
+        await repo.append(
+            repo.MessageInsert(
+                org="itest-org",
+                namespace=namespace,
+                agent="peer",
+                thread_id="c-1",
+                msg_id="m-1",
+                role="assistant",
+                content=_CONTENT,
+                user_id="peer-user",
+                run_id="peer-run",
+                is_saved=True,
+            )
+        )
+    written, embedding, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    real_append, real_embed = repo.append, conversations._embed_turn
+    calls = 0
+
+    async def observed_append(*args: Any, **kwargs: Any) -> None:
+        await real_append(*args, **kwargs)
+        written.set()
+
+    async def paused_embed(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            embedding.set()
+            await release.wait()
+        return await real_embed(*args, **kwargs)
+
+    monkeypatch.setattr(repo, "append", observed_append)
+    monkeypatch.setattr(conversations, "_embed_turn", paused_embed)
+    append = asyncio.create_task(
+        conversations.handle_conversation_append(_transcript_turn(namespace))
+    )
+    try:
+        await asyncio.wait_for(asyncio.gather(written.wait(), embedding.wait()), 10)
+        assert (await conversations.handle_conversation_save_message(_save(namespace))).indexed
+        recording = False
+        assert (
+            await conversations.handle_conversation_unsave_message(_unsave_request(namespace))
+        ).removed
+        assert await _rows(ch, "loom.conversations", namespace) == (
+            [
+                {
+                    "run_id": "peer-run",
+                    "user_id": "peer-user",
+                    "is_saved": True,
+                    "tombstoned_at": None,
+                }
+            ]
+            if peer
+            else []
+        )
+        release.set()
+        await asyncio.wait_for(append, 10)
+        rows = await ch.query_all(
+            "SELECT agent, user_id, run_id, is_saved FROM loom.conversation_embeddings FINAL "
+            "WHERE org = 'itest-org' AND namespace = {ns:String} AND tombstoned_at IS NULL",
+            params={"ns": namespace},
+        )
+        assert rows == (
+            [{"agent": "peer", "user_id": "peer-user", "run_id": "peer-run", "is_saved": True}]
+            if peer
+            else []
+        )
+    finally:
+        release.set()
+        if not append.done():
+            append.cancel()
+        await asyncio.gather(append, return_exceptions=True)

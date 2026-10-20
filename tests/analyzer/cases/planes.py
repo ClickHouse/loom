@@ -512,7 +512,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
 # key for the delete's embeddings pass to reconcile.
 _CONVERSATION_ROWS = rows_by_substring(
     {
-        "max(tombstoned_at) AS gone": [{"gone": _DT}],
+        "max(tombstoned_at) AS gone": [{"n": 1, "gone": _DT}],
         "SELECT DISTINCT embedding_model, msg_id": [{"embedding_model": "m", "msg_id": "m1"}],
     }
 )
