@@ -666,7 +666,7 @@ def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatc
     "header, required, scope, org",
     [
         ("", False, None, ""),
-        ("", True, None, "acme"),
+        ("", True, "org", "acme"),
         ("X-Customer", False, "org", "acme"),
         ("X-Customer", False, "request", "acme"),
         ("X-Customer", False, "worker", "acme"),
@@ -674,12 +674,9 @@ def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatc
         ("X-Customer", False, None, ""),
     ],
 )
-def test_names_one_agrees_with_require(monkeypatch, header, required, scope, org) -> None:
+def test_names_one_agrees_with_require(metered, monkeypatch, header, required, scope, org) -> None:
     monkeypatch.setattr(settings, "inference_customer_header", header)
     monkeypatch.setattr(settings, "inference_customer_required", required)
-    monkeypatch.setattr(settings, "inference_system_customer", "loom")
-    monkeypatch.setattr(customer, "_logged_at", {})
-    genai._identity.set(None)
     with contextlib.ExitStack() as stack:
         if scope == "org":
             stack.enter_context(customer.for_org(org))
@@ -695,7 +692,6 @@ def test_names_one_agrees_with_require(monkeypatch, header, required, scope, org
         except customer.Unattributed:
             accepted = False
         assert customer.names_one() is accepted
-    genai._identity.set(None)
 
 
 # --- each job names the org of its rows ---------------------------------------
