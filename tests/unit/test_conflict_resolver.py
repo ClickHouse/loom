@@ -1983,6 +1983,12 @@ async def test_a_bulk_row_whose_key_another_session_holds_is_owed(monkeypatch) -
     current["policy"], ch.sql = "newest_wins", []
     await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns"), state)
     assert ch.sql == []
+    # The anonymous user's other sessions are other tasks: nothing is read or owed.
+    current["policy"] = "auto_reinforce"
+    for row in state.embedding_rows:
+        row["conflict_checked_at"] = None
+    await bulk_set._bulk_mark_same_key(ch, NS(org="o", namespace="ns", user_id="-"), state)
+    assert ch.sql == [] and [e["conflict_checked_at"] for e in state.embedding_rows] == [None, None]
 
 
 def test_a_later_close_sibling_of_its_type_is_marked() -> None:
