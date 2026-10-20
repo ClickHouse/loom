@@ -71,6 +71,35 @@ the workers leader or a keyring command (never a replica's first boot, which wou
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
 
+**Model calls behind the gateway.** While the gateway is required
+(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), model calls and the memory
+content posted to classifiers and rerankers go only to the hosts
+`LOOM_INFERENCE_GATEWAY_HOSTS` lists, matched exactly (`Settings.off_gateway`); an
+allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a
+provider's API is. The settings refuse to load with no hosts, or with an API root, the
+token endpoint or a rerank endpoint elsewhere, or the Gemini embedder (`gateway_refusal`),
+and with a `builtin:cohere` code-search default (`_check_code_rerank_behind_the_gateway`).
+Model calls go through their own client, `server/clients/_http.py::get_model_client`,
+whose request hook (`_on_request`) refuses every other host on every hop, redirects
+included; GitHub and an issuer's discovery document use the other client, which has no
+such hook. The rerank and classify senders, on their own clients, check each URL. Every
+check reads the host as httpx sends it (`url_host`: httpx's parser, an IDN as punycode),
+so a URL with several `@` or a backslash cannot pass the check for one host and be sent to
+another. `namespace.register` refuses a `classify_endpoint` that is not https at the
+default port of a listed host (422), and one stored before is never called: a namespace
+admin can neither send memory content off the gateway nor reach another port or service
+with it. A dashboard configuration goes through the same check: refused at save (422), and
+a stored one that fails is not applied, its serving vector settings included
+(`provider_runtime.load_active_configuration`), and `/v1/health` reports
+`model_configuration_refused`. The check reads only the embedding, so a refused one always
+differs from the one in force and the vector tables may hold that other space; it fails
+closed: every data-plane request on that server answers 503 `GATEWAY_REQUIRED` with no
+`Retry-After` (the gate's `refusal`, which the maintenance middleware reads) and readiness
+fails, until a configuration the check accepts, or a reset to the environment, replaces
+it; the transition that replaces it takes the hold over. A rolling restart stops at such a
+server until then. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and neither SDK
+retries it.
+
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
 writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse
 server's clock; it must exceed two of the slowest process's refresh intervals (each

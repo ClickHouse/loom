@@ -11,7 +11,7 @@ from server.core.ch import get_client, set_query_tag
 from server.core.model_work_gate import get_model_work_gate
 from server.core.provider_keys import install_provider_keys
 from server.embedding import embedder
-from server.insights.api.models_provider_setup import ProviderSetupInput
+from server.insights.api.models_provider_setup import EmbeddingSetup, ProviderSetupInput
 from server.insights.app.provider_credentials import open_configuration
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.domain.provider_serving_policy import serving_vector_settings
@@ -25,8 +25,12 @@ from server.insights.store.provider_configuration import configurations
 from server.llm import client as llm_client
 from server.settings import settings
 
+log = logging.getLogger(__name__)
+
 _applied_version = ""
 _environment_settings: dict[str, Any] | None = None
+# Why the stored configuration was not applied ('' when it was): /v1/health says so.
+_refused = ""
 _maintenance_config_id: str | None = None
 
 
@@ -67,6 +71,8 @@ deployment_config.set_environment_source(_environment_embedding)
 
 def apply_environment_configuration() -> None:
     """Clear dashboard overrides; embedding transitions must already be rebuilt."""
+    global _refused
+    _refused = ""  # the environment's settings passed the gateway check at load
     for name, value in environment_settings().items():
         setattr(settings, name, value)
     install_provider_keys({})
@@ -82,11 +88,29 @@ def current_embedding() -> embedding_space.Identity:
     return embedding_space.identity(settings.model_dump())
 
 
+def gateway_refusal(embedding: EmbeddingSetup) -> str:
+    """Why a configuration with this embedding would send model calls off the
+    gateway, as the settings check it at load; "" when it would not."""
+    return settings.gateway_refusal(
+        {
+            "embedding_provider": embedding.provider,
+            "embedding_model": embedding.model,
+            "embedding_base_url": embedding.base_url,
+        }
+    )
+
+
+def refused_configuration() -> str:
+    """Why the stored configuration is not applied; "" when it is."""
+    return _refused
+
+
 def apply_configuration(setup: ProviderSetupInput) -> None:
     """Apply a validated snapshot with no await points or environment mutation.
 
     Call at startup, or only after admission and workers have drained for a model
     transition. Embedding changes must not be applied to a live old-model index.
+    Its callers have run the gateway check (`_refuse`, `_save_locked`).
     """
     environment_settings()
     values = llm_setup_settings(
@@ -129,9 +153,16 @@ def _active_setup(active: dict[str, Any]) -> ProviderSetupInput | None:
         ) from None
 
 
-def _hold_admission(config_id: str) -> None:
+def _hold_admission(config_id: str, refusal: str = "") -> None:
+    """Close admission for `config_id`; a transition already holding it (a
+    refused configuration's hold, an earlier change) hands it over. `refusal`
+    is set for a refused configuration's hold and empty for a transition's."""
     global _maintenance_config_id
-    get_model_work_gate().close(config_id)
+    gate = get_model_work_gate()
+    if _maintenance_config_id is not None and _maintenance_config_id != config_id:
+        gate.transfer(_maintenance_config_id, config_id, refusal=refusal)
+    else:
+        gate.close(config_id, refusal=refusal)
     _maintenance_config_id = config_id
 
 
@@ -215,6 +246,8 @@ async def load_active_configuration() -> None:
         )
     )
     changed = target != current_embedding()
+    if setup is not None and _refuse(setup, pending is None, str(active["config_id"])):
+        return  # held or kept, retried at the next refresh
     if changed and pending is None and _maintenance_config_id is None:
         _hold_admission(str(active["config_id"]))
     serving = _serving_settings(rows, active, target)
@@ -244,6 +277,26 @@ async def load_active_configuration() -> None:
     _applied_version = str(active["version"])
 
 
+def _refuse(setup: ProviderSetupInput, hold: bool, config_id: str) -> bool:
+    """Whether the gateway check refuses the committed `setup`, as it refuses
+    it at load. Then nothing of it applies, its serving vector settings
+    included. The check reads only the embedding, so a refused one is never
+    the one in force: the index may be built for that other space, and
+    unless a queued row holds requests already (`hold` false), model work
+    stays held until a configuration the check accepts replaces it."""
+    global _refused
+    refusal = gateway_refusal(setup.embedding)
+    if refusal and refusal != _refused:
+        log.error("saved model configuration not applied: %s", refusal)
+    _refused = refusal
+    if refusal and hold:
+        # An ordinary transition hold (taken over from any change still holding
+        # it): what replaces it takes it over, and its commit resumes it. Until
+        # then requests are refused, not asked to retry.
+        _hold_admission(config_id, refusal)
+    return bool(refusal)
+
+
 async def refresh_loop() -> None:
     """Every web/worker process sees committed key and model rotations."""
     set_query_tag("boot.provider_configuration_refresh")
@@ -255,6 +308,6 @@ async def refresh_loop() -> None:
 
             await coordinate_once()
         except Exception:  # noqa: BLE001 — retain last good settings on transient DB/decryption failures
-            logging.getLogger(__name__).warning(
+            log.warning(
                 "Model configuration refresh failed; retaining last successfully loaded settings"
             )

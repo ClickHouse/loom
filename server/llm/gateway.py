@@ -10,7 +10,9 @@ service-account token on Kubernetes), or one Loom signs itself
 which `/v1/.well-known/jwks.json` publishes. Either way the gateway must trust
 the issuer. Loom's own verifier never accepts that audience, so the token opens
 nothing here. Unset, the provider's key is the bearer, as always;
-`LOOM_OPENAI_BASE_URL` / `LOOM_ANTHROPIC_BASE_URL` point either at a gateway.
+`LOOM_OPENAI_BASE_URL` / `LOOM_ANTHROPIC_BASE_URL` point either at a gateway,
+and `LOOM_INFERENCE_GATEWAY_REQUIRED` (as the exchange does) refuses every call
+to a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list.
 """
 
 from __future__ import annotations
@@ -20,13 +22,12 @@ import logging
 import math
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 
+from server.clients._http import refuse_off_gateway
 from server.core.errors import LoomServerError
 from server.settings import settings
-from server.settings._providers import is_provider_api
 
 log = logging.getLogger(__name__)
 
@@ -59,14 +60,12 @@ def exchanging() -> bool:
 
 async def bearer(provider_key: str, url: str) -> str:
     """What a model call to `url` presents: the gateway's token when Loom
-    exchanges an identity token there, else the provider key. A call any path (a model
-    named per request, the dashboard's check) sends to a provider's own API
-    gets no gateway token."""
+    exchanges an identity token there, else the provider key. A host off the
+    gateway is refused here, before a token is fetched for it, and on every hop
+    by the model client (`server.clients._http._on_request`)."""
+    refuse_off_gateway(url)
     if not exchanging():
         return provider_key
-    if is_provider_api(url):
-        host = urlsplit(url).hostname
-        raise GatewayUnavailable(f"{host} is not the gateway: point its base URL at the gateway")
     now = time.time()
     if now < _renew_at and _token and now < _expires_at:  # a retry pause never outlasts it
         return _token
@@ -80,7 +79,7 @@ async def bearer(provider_key: str, url: str) -> str:
 
 async def _renew() -> None:
     global _token, _expires_at, _renew_at
-    from server.clients._http import get_client as http
+    from server.clients._http import get_model_client as http
 
     try:
         form = {
