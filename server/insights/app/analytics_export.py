@@ -22,7 +22,8 @@ from server.insights.store.analytics_export import ENTITIES, parquet
 Put = Callable[[str, bytes], bool]
 
 # A month partition of the ledger or every live memory row: far past the read
-# deadline. Build the client inside the `statement_timeout` scope it sets.
+# deadline. The CLI connects inside `statement_timeout(STATEMENT_TIMEOUT_S)`,
+# so the driver's read timeout covers it too.
 STATEMENT_TIMEOUT_S = 1200
 
 # A shorter key can be searched offline from one known name and its hash.

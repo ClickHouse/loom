@@ -16,8 +16,9 @@ from datetime import date
 from server.core.ch import CHClient
 
 # One row per (org, namespace, agent, operation, kind, transport, traffic
-# class) of UTC day {day:Date}. `kind` is 'request' or 'worker' (a worker
-# pass); `users` and `sessions` leave out the '-' of a call that named none.
+# class) of UTC day {day:Date}. `kind` is 'request', 'worker' (a worker pass),
+# 'verdict' or 'settle' (deferred ask and conflict judgements); `users` and
+# `sessions` leave out the '-' of a call that named none.
 # A `/v1/me/*` row's operation is built from the request path, so it can hold
 # any string a caller sent: every `me.*` operation leaves as `me`. That happens
 # in the inner query, so the GROUP BY can only mean the collapsed operation,

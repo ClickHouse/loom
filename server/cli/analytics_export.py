@@ -24,6 +24,8 @@ def _day(value: str) -> date:
 
 def _refusal(day: date, today: date) -> str:
     """Why the export of `day` must not run, or ''."""
+    from importlib.metadata import PackageNotFoundError, version
+
     from server.insights.app.analytics_export import MIN_NAME_KEY_CHARS
     from server.settings import settings
 
@@ -34,8 +36,6 @@ def _refusal(day: date, today: date) -> str:
             f"export-analytics needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
             f"least {MIN_NAME_KEY_CHARS} characters"
         )
-    from importlib.metadata import PackageNotFoundError, version
-
     # put_object's IfNoneMatch: an older botocore fails at the first upload,
     # after the month's read.
     try:
@@ -92,8 +92,9 @@ def _cmd_export(args: argparse.Namespace) -> int:
                 await ch.disconnect()
 
     for e in asyncio.run(_go()):
-        state = "wrote" if e.written else "already there, kept"
-        print(f"  ✓ {e.entity}: s3://{args.bucket}/{e.key} ({e.size} bytes, {state})")
+        # A kept object's size is the earlier run's, which this run never read.
+        state = f"wrote {e.size} bytes" if e.written else "already there, kept"
+        print(f"  ✓ {e.entity}: s3://{args.bucket}/{e.key} ({state})")
     return 0
 
 

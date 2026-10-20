@@ -333,7 +333,8 @@ jobs:
             if out=$(helm template loom "$chart" -f "$chart/values-kind.yaml" --set secrets.jwtSecret="$secret" --set "$v" 2>&1); then
               echo "the chart accepted $v"; exit 1
             fi
-            grep -q "set LOOM_ANALYTICS_EXPORT_NAME_KEY through analyticsExport.nameKeySecret" <<<"$out"
+            grep -q "set LOOM_ANALYTICS_EXPORT_NAME_KEY through analyticsExport.nameKeySecret" <<<"$out" \
+              || { echo "unexpected refusal for $v: $out"; exit 1; }
             echo "refused as expected: $v"
           done
 

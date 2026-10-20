@@ -331,9 +331,13 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
         [
             {**live, "org": org, "namespace": "mem", "memory_key": "k1", "value": "v"},
             {**live, "org": org, "namespace": "mem", "memory_key": "k2", "value": "v"},
-            # A deleted memory is not live.
+            # Deleted the way memory.delete deletes: a live version 1, then a
+            # tombstoned version 2 over it. FINAL must pick version 2 before the
+            # live filter, or version 1 would still count.
+            {**live, "org": org, "namespace": "mem", "memory_key": "k3", "value": "v"},
             {
                 **base,
+                "version": 2,
                 "tombstoned_at": new,
                 "org": org,
                 "namespace": "mem",

@@ -252,7 +252,7 @@ def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_th
         for _, p in fake.calls
     )
     out = capsys.readouterr().out
-    assert "s3://b/usage/2026/10/09/usage-2026-10-09.parquet (4 bytes, wrote)" in out
+    assert "s3://b/usage/2026/10/09/usage-2026-10-09.parquet (wrote 4 bytes)" in out
 
 
 def test_day_must_be_iso() -> None:
