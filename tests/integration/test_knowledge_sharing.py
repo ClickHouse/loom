@@ -1,6 +1,6 @@
 """Knowledge sharing end to end (docs/architecture/sharing.md), against a live
 server: a gateway's end users, collections and their inheritance, SCIM groups,
-saved items in `@me`, revocation, and a user's erasure.
+saved items and memories in `@me`, revocation, and a user's erasure.
 
 Skips without LOOM_BASE_URL."""
 
@@ -249,6 +249,92 @@ def test_a_long_saved_message_is_chunked_whole_and_its_tail_is_found(gw: Gateway
             {"namespace": "@me", "query": tail, "search_mode": mode, "namespace_scope": "this"},
         )["results"]
         assert hits and hits[0]["source_uri"] == "chat/c9/m9" and tail in hits[0]["content"], mode
+
+
+def _alices_memories(gw: Gateway) -> tuple[str, list[str]]:
+    """Alice's chat writes a fact and a conversation's extractions to her `@me`
+    inside the agent `chat`: the nonce they hold, and the extracted keys."""
+    nonce = _nonce()
+    gw.ok(
+        "alice",
+        "memory.set",
+        {"namespace": "@me", "agent": "chat", "memory_key": "pref/drink", "value": nonce},
+        agent="chat",
+    )
+    extracted = gw.ok(
+        "alice",
+        "memory.set_from_messages",
+        {
+            "namespace": "@me",
+            "agent": "chat",
+            "session_id": "c1",
+            "messages": [
+                {"role": "user", "content": f"I live in Lisbon, note {nonce}."},
+                {"role": "assistant", "content": "Noted."},
+            ],
+        },
+        agent="chat",
+    )
+    assert extracted["evidence_ids"], extracted
+    keys = [w["memory_key"] for w in extracted["written"]]
+    assert keys, extracted
+    return nonce, keys
+
+
+def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> None:
+    from server.core.principals import personal_name as name_for
+
+    alices = name_for(gw.org, "user:alice")
+    nonce, keys = _alices_memories(gw)
+    ident = {"namespace": "@me", "agent": "chat"}
+    row = gw.ok("alice", "memory.get", {**ident, "memory_key": "pref/drink"}, agent="chat")
+    assert row["found"] and row["value"] == nonce, row
+    assert (row["agent"], row["actor"], row["source_class"]) == (
+        "chat",
+        "human:user:alice",
+        "asserted",
+    )
+    by_id = gw.ok("alice", "memory.get_by_id", {"memory_id": row["memory_id"]}, agent="chat")
+    assert (by_id["namespace"], by_id["user_id"], by_id["session_id"]) == (alices, "alice", "-")
+    for key in keys:
+        got = gw.ok(
+            "alice", "memory.get", {**ident, "session_id": "c1", "memory_key": key}, agent="chat"
+        )
+        assert got["found"], key
+        assert (got["actor"], got["source_class"]) == ("human:user:alice", "extracted"), got
+        evidence = gw.ok(
+            "alice", "memory.evidence", {**ident, "session_id": "c1", "memory_key": key}
+        )
+        assert evidence["found"] and evidence["items"], evidence
+    hits = gw.ok("alice", "memory.search", {**ident, "query": nonce}, agent="chat")["results"]
+    assert any(h["memory_key"] == "pref/drink" and h["namespace"] == alices for h in hits), hits
+    packed = gw.ok("alice", "context.pack", {**ident, "query": nonce}, agent="chat")
+    assert nonce in packed["rendered"], packed
+
+
+def test_another_end_user_reads_none_of_my_memories(gw: Gateway) -> None:
+    from server.core.principals import personal_name as name_for
+
+    alices = name_for(gw.org, "user:alice")
+    nonce, _ = _alices_memories(gw)
+    mine = gw.ok(
+        "alice", "memory.get", {"namespace": "@me", "agent": "chat", "memory_key": "pref/drink"}
+    )
+    # Bob's `@me` is his own collection.
+    ident = {"namespace": "@me", "agent": "chat"}
+    got = gw.ok("bob", "memory.get", {**ident, "memory_key": "pref/drink"}, agent="chat")
+    assert not got["found"], got
+    assert not gw.ok("bob", "memory.get_by_id", {"memory_id": mine["memory_id"]})["found"]
+    search = {**ident, "query": nonce, "namespace_scope": "all_mine"}
+    assert nonce not in gw.call("bob", "memory.search", search, agent="chat").text
+    assert nonce not in gw.ok("bob", "context.pack", {**ident, "query": nonce})["rendered"]
+    # Naming Alice's collection, or Alice in the body, is refused.
+    r = gw.call("bob", "memory.search", {"namespace": alices, "agent": "chat", "query": nonce})
+    assert r.status_code == 403, r.text
+    r = gw.call("bob", "memory.get", {**ident, "memory_key": "pref/drink", "user_id": "alice"})
+    assert r.status_code == 403, r.text
+    r = gw.call("bob", "memory.set", {**ident, "memory_key": "k", "value": "v", "user_id": "alice"})
+    assert r.status_code == 403, r.text
 
 
 def test_an_agent_grant_reaches_whoever_runs_the_agent(gw: Gateway) -> None:
