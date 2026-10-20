@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import boto3
@@ -189,8 +189,19 @@ def _args(**kw: Any) -> argparse.Namespace:
     return argparse.Namespace(**{**base, **kw})
 
 
-def test_a_day_that_has_not_ended_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli._cmd_export(_args(day=date(2999, 1, 1))) == 2
+@pytest.fixture
+def now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """The CLI's clock, pinned: 2026-10-10 00:30 UTC, when the CronJob runs."""
+    at = datetime(2026, 10, 10, 0, 30, tzinfo=UTC)
+    monkeypatch.setattr(cli, "_now", lambda: at)
+    return at
+
+
+@pytest.mark.parametrize("day", [date(2026, 10, 10), date(2026, 10, 11)])
+def test_a_day_that_has_not_ended_is_refused(
+    now: datetime, day: date, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli._cmd_export(_args(day=day)) == 2
     assert "has not ended" in capsys.readouterr().err
 
 
@@ -225,8 +236,8 @@ class _ConnectingCh(_Ch):
         self.disconnected = True
 
 
-def test_an_export_connects_inside_its_deadline_and_hashes_under_the_key(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_the_key(
+    now: datetime, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     from server.core import ch as ch_module
     from server.insights.app import analytics_export as app
@@ -236,11 +247,19 @@ def test_an_export_connects_inside_its_deadline_and_hashes_under_the_key(
     fake = _ConnectingCh()
     monkeypatch.setattr(ch_module, "get_client", lambda: fake)
     monkeypatch.setattr(app, "s3_put", lambda client, bucket, **kw: lambda key, body: True)
-    assert cli._cmd_export(_args(day=date(2000, 1, 1))) == 0
+    assert cli._cmd_export(_args()) == 0
     assert fake.read_timeout_at_connect >= app.STATEMENT_TIMEOUT_S and fake.disconnected
-    assert all((p["k0"], p["k1"]) == name_hash_key(secret) for _, p in fake.calls)
+    assert all(
+        p
+        == {
+            "day": date(2026, 10, 9),
+            "k0": name_hash_key(secret)[0],
+            "k1": name_hash_key(secret)[1],
+        }
+        for _, p in fake.calls
+    )
     out = capsys.readouterr().out
-    assert "s3://b/usage/2000/01/01/usage-2000-01-01.parquet (4 bytes, wrote)" in out
+    assert "s3://b/usage/2026/10/09/usage-2026-10-09.parquet (4 bytes, wrote)" in out
 
 
 def test_day_must_be_iso() -> None:

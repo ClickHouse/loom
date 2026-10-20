@@ -19,14 +19,14 @@ from server.core.ch import CHClient
 # class) of UTC day {day:Date}. `kind` is 'request' or 'worker' (a worker
 # pass); `users` and `sessions` leave out the '-' of a call that named none.
 # A `/v1/me/*` row's operation is built from the request path, so it can hold
-# any string a caller sent: every `me.*` operation leaves as `me`.
-# The `ts` bounds prune to the day's monthly partition, which a daily batch
-# reads once (the ledger is a plain MergeTree: no FINAL).
+# any string a caller sent: every `me.*` operation leaves as `me`. That happens
+# in the inner query, so the GROUP BY can only mean the collapsed operation,
+# whatever `prefer_column_name_to_alias` says. The `ts` bounds prune to the
+# day's monthly partition, which a daily batch reads once (the ledger is a plain
+# MergeTree: no FINAL).
 USAGE_SQL = """
 SELECT
-    org, namespace, agent,
-    if(startsWith(operation, 'me.'), 'me', operation) AS operation,
-    kind, transport, traffic_class,
+    org, namespace, agent, operation, kind, transport, traffic_class,
     {day:Date} AS day,
     count() AS ops,
     countIf(NOT success) AS errors,
@@ -44,9 +44,10 @@ SELECT
     uniqExactIf(user_id, user_id != '-') AS users,
     uniqExactIf(session_id, session_id != '-') AS sessions,
     now64(3, 'UTC') AS snapshot_at
-FROM loom.agent_events
-WHERE ts >= toDateTime64({day:Date}, 3, 'UTC')
-  AND ts < toDateTime64({day:Date} + 1, 3, 'UTC')
+FROM (SELECT * REPLACE (if(startsWith(operation, 'me.'), 'me', operation) AS operation)
+      FROM loom.agent_events
+      WHERE ts >= toDateTime64({day:Date}, 3, 'UTC')
+        AND ts < toDateTime64({day:Date} + 1, 3, 'UTC'))
 GROUP BY org, namespace, agent, operation, kind, transport, traffic_class
 """
 
@@ -97,8 +98,8 @@ ROW_ORDER = {
 def name_hash_sql(expr: str) -> str:
     """The lowercase hex of `expr`'s SipHash-2-4-128 under the key {k0:UInt64},
     {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces.
-    A plain String: a `LowCardinality` hash would ship its dictionary, built in
-    the order of the names, beside the rows."""
+    A plain String, so the file's dictionary pages are built from the hashes in
+    row order and never depend on how ClickHouse keeps a `LowCardinality` one."""
     sip = f"sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), {expr})"
     return f"CAST(lower(hex({sip})) AS String)"
 

@@ -49,8 +49,13 @@ spec:
       activeDeadlineSeconds: 10800
       # Exit 2 is a refusal (a day not ended, a missing or short key): a retry
       # would refuse the same way.
+      # A pod evicted by a drain or preemption is retried without using up an attempt.
       podFailurePolicy:
         rules:
+          - action: Ignore
+            onPodConditions:
+              - type: DisruptionTarget
+                status: "True"
           - action: FailJob
             onExitCodes:
               containerName: analytics-export

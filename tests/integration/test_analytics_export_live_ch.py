@@ -8,6 +8,7 @@ Skips cleanly when LOOM_CH_HOST is unset.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import os
 import re
 import uuid
@@ -128,19 +129,23 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
             _event(org, "2026-01-02 09:30:00", operation="me.sharing-summary"),
         ],
     )
-    rows = await ch.query_all(
-        f"SELECT * FROM ({USAGE_SQL}) WHERE org = {{org:String}}", {"day": DAY, "org": org}
-    )
-    by_op = {r["operation"]: r for r in rows}
-    assert sorted(by_op) == ["me", "memory.get", "memory.set"]
-    assert by_op["me"]["ops"] == 2
-    s = by_op["memory.set"]
-    assert (s["ops"], s["errors"], s["server_errors"], s["slow"]) == (3, 1, 1, 1)
-    assert (s["users"], s["sessions"]) == (2, 1)
-    assert (s["input_tokens"], s["cost_usd"]) == (7, Decimal("0.25"))
-    assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
-    assert s["kind"] == "request"
-    assert by_op["memory.get"]["ops"] == 1
+    # A profile that resolves names to columns before aliases gives the same rows.
+    for prefer_column in (0, 1):
+        rows = await ch.query_all(
+            f"SELECT * FROM ({USAGE_SQL}) WHERE org = {{org:String}} "
+            f"SETTINGS prefer_column_name_to_alias = {prefer_column}",
+            {"day": DAY, "org": org},
+        )
+        assert sorted(r["operation"] for r in rows) == ["me", "memory.get", "memory.set"]
+        by_op = {r["operation"]: r for r in rows}
+        assert by_op["me"]["ops"] == 2
+        s = by_op["memory.set"]
+        assert (s["ops"], s["errors"], s["server_errors"], s["slow"]) == (3, 1, 1, 1)
+        assert (s["users"], s["sessions"]) == (2, 1)
+        assert (s["input_tokens"], s["cost_usd"]) == (7, Decimal("0.25"))
+        assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
+        assert s["kind"] == "request"
+        assert by_op["memory.get"]["ops"] == 1
     shipped = {r["operation"] for r in await _file_rows(ch, "usage")}
     assert "me" in shipped and not [op for op in shipped if op.startswith("me.")]
 
@@ -254,10 +259,8 @@ async def test_the_operator_guides_join_sql_computes_the_exported_hash(ch: CHCli
     guide = (Path(__file__).parents[2] / "docs/operations/analytics-export.md").read_text()
     (sql,) = re.findall(r"```sql\n(.*?)```", guide, re.S)
     secret = "s" * 32
-    sql = sql.replace("'<the key>'", "{secret:String}").replace(
-        "FROM tenants", "FROM (SELECT 'tenant-1' AS tenant_id)"
-    )
-    row = await ch.query_one(sql, {"secret": secret})
+    sql = sql.replace("FROM tenants", "FROM (SELECT 'tenant-1' AS tenant_id)")
+    row = await ch.query_one(sql, {"key": secret})
     k0, k1 = name_hash_key(secret)
     want = await ch.query_one(f"SELECT {name_hash_sql("'tenant-1'")} AS h", {"k0": k0, "k1": k1})
     assert row["hashed_tenant_id"] == want["h"]
@@ -322,10 +325,11 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
             {**live, "org": org, "namespace": "loose", "memory_key": "k1", "value": "v"},
         ],
     )
-    for join_use_nulls in (0, 1):
+    for join_use_nulls, prefer_column in itertools.product((0, 1), (0, 1)):
         rows = await ch.query_all(
             f"SELECT * FROM ({NAMESPACES_SQL}) WHERE org = {{org:String}} "
-            f"SETTINGS join_use_nulls = {join_use_nulls}",
+            f"SETTINGS join_use_nulls = {join_use_nulls}, "
+            f"prefer_column_name_to_alias = {prefer_column}",
             {"day": DAY, "org": org},
         )
         _assert_namespaces({r["namespace"]: r for r in rows})

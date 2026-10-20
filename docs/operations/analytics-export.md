@@ -63,10 +63,12 @@ the lowercase hex of the reference SipHash-2-4-128 of the name under a secret ke
 - The 16-byte SipHash key is the first 16 bytes of SHA-256 of that string (UTF-8). The hash
   is ClickHouse's `sipHash128ReferenceKeyed`, which any SipHash-2-4-128 library reproduces
   from those 16 bytes, so a system that holds the key hashes its own ids to join on them.
-  ClickHouse takes the key as two words, each 8-byte half read little-endian:
+  ClickHouse takes the key as two words, each 8-byte half read little-endian. Bind the key
+  as a query parameter (`key`), so it stays out of the query log; a literal is logged with
+  the query, and whoever reads that log can then recompute every hash:
 
   ```sql
-  WITH SHA256('<the key>') AS d
+  WITH SHA256({key:String}) AS d
   SELECT lower(hex(sipHash128ReferenceKeyed(
       (reinterpretAsUInt64(substring(d, 1, 8)), reinterpretAsUInt64(substring(d, 9, 8))),
       tenant_id))) AS hashed_tenant_id

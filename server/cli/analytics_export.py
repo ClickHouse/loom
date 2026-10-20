@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
+
+from server.core.datetimes import utc_now as _now
 
 
 def _day(value: str) -> date:
@@ -48,7 +50,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     )
     from server.settings import settings
 
-    today = datetime.now(UTC).date()
+    today = _now().date()
     args.day = args.day or today - timedelta(days=1)
     if refusal := _refusal(args, today):
         print(f"  ✗ {refusal}", file=sys.stderr)
