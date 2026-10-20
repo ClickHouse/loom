@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, NamedTuple
 
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.repo_base import query_all_sliced
 from server.memory.domain import triples_follow_rows as tfr
 from server.memory.domain.temporal_sql import (
     EDGE_HOLDS_VALUE_SQL,
@@ -218,7 +219,9 @@ async def live_holders(
     if not triples:
         return {}
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
-    found = await ch.query_all(
+    # A parameter's worth of triples at a time: long names make a long list.
+    found = await query_all_sliced(
+        ch,
         f"""
         WITH links AS (
             SELECT memory_id, content_sha256, subject, relation, object
@@ -241,7 +244,8 @@ async def live_holders(
         ) AS m ON l.memory_id = m.memory_id
         SETTINGS select_sequential_consistency = 1
         """,
-        params={"org": org, "ns": namespace, "triples": triples, "rows": rows or []},
+        {"org": org, "ns": namespace, "triples": triples, "rows": rows or []},
+        "triples",
     )
     # A link to the row's current value holds; one to a value the row was revised
     # from is judged against the value it has now.
@@ -319,8 +323,7 @@ async def _unlinked_holders(
     else:
         wanted = "(subject, relation, object) IN {triples:Array(Tuple(String, String, String))}"
     only_rows = "AND memory_id IN {rows:Array(UUID)}" if rows is not None else ""
-    found = await ch.query_all(
-        f"""
+    sql = f"""
         WITH keyed AS (
             SELECT memory_key, subject, relation, object, max(seen_at) AS seen_at
             FROM loom.entity_triple_memories
@@ -389,15 +392,18 @@ async def _unlinked_holders(
               )
           )
         SETTINGS select_sequential_consistency = 1
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "triples": triples or [],
-            "rows": rows or [],
-            "row_links": _ROW_LINKS_MIGRATION,
-        },
-    )
+        """
+    params = {
+        "org": org,
+        "ns": namespace,
+        "triples": triples or [],
+        "rows": rows or [],
+        "row_links": _ROW_LINKS_MIGRATION,
+    }
+    if triples is None:
+        found = await ch.query_all(sql, params=params)
+    else:  # a parameter's worth of triples at a time: long names make a long list
+        found = await query_all_sliced(ch, sql, params, "triples")
     held: dict[tfr.Triple, set[Holder]] = {}
     for f in found:
         triple = (str(f["subject"]), str(f["relation"]), str(f["object"]))

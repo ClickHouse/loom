@@ -24,6 +24,7 @@ from server.core.hashing import sha256_value
 from server.core.repo_base import param_slices
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app import conflicts as _conflicts
+from server.memory.app import graph_write_marks
 from server.memory.app.projection_errors import TriplesInsertFailed, TriplesRepairFailed
 from server.memory.domain.graph_quality import (
     MAX_TRIPLES_PER_ROW,
@@ -904,10 +905,16 @@ async def finish_interval_repair(
 # ---------------------------------------------------------------------------
 # One mutation per table per write. One `ALTER TABLE … UPDATE` per supersession
 # would rewrite the table over and over, in a mutation queue shared with erasure.
-# The closes of one write are folded into one UPDATE per table: the row's key is
-# matched by `IN` and its own valid_to is looked up positionally with
-# arrayElement/indexOf.
+# The closes of one write are folded into one UPDATE per table (per parameter's worth
+# of keys when the names are long): the row's key is matched by `IN` and its own
+# valid_to is looked up positionally with arrayElement/indexOf.
 # ---------------------------------------------------------------------------
+def _note_graph_write(org: str, namespace: str) -> None:
+    """A graph mutation landed: a mutation is no INSERT, so the client's graph-write mark
+    does not see it."""
+    graph_write_marks.note_write(org, namespace)
+
+
 _GRAPH_KEY_SEP = "\x1f"
 _EDGE_KEY_EXPR = (
     "concat(entity_a, char(31), entity_b, char(31), "
@@ -938,41 +945,41 @@ async def close_triples(
 ) -> int:
     """Close open (subject, relation, object) intervals at each one's own
     valid_to — one UPDATE per table, two when only some closes carry an
-    invalid_at (transaction time). Returns the number of mutations issued."""
+    invalid_at (transaction time), each a parameter's worth of triples at a time
+    (`param_slices`: long names make a long list). Returns the number of mutations
+    issued."""
     issued = 0
     for with_invalid_at in (True, False):
         group = [c for c in closes if (c[4] is not None) is with_invalid_at]
-        if not group:
-            continue
-        set_cols = f"valid_to = {_CLOSED_VALID_TO}"
-        params: dict[str, Any] = {
-            "org": org,
-            "ns": namespace,
-            "triples": [(s, r, o) for s, r, o, _, _ in group],
-            "valid_tos": [c[3] for c in group],
-        }
-        if with_invalid_at:
-            set_cols += (
-                f", invalid_at = arrayElement({{invalid_ats:Array(DateTime)}}, {_TRIPLE_AT})"
+        for part in param_slices(group):
+            set_cols = f"valid_to = {_CLOSED_VALID_TO}"
+            # Built per slice: indexOf finds each row's own entry in the same slice.
+            params: dict[str, Any] = {
+                "org": org,
+                "ns": namespace,
+                "triples": [(s, r, o) for s, r, o, _, _ in part],
+                "valid_tos": [c[3] for c in part],
+            }
+            if with_invalid_at:
+                set_cols += (
+                    f", invalid_at = arrayElement({{invalid_ats:Array(DateTime)}}, {_TRIPLE_AT})"
+                )
+                params["invalid_ats"] = [c[4] for c in part]
+            await ch.execute(
+                f"""
+                ALTER TABLE loom.entity_triples
+                UPDATE {set_cols}
+                WHERE org = {{org:String}}
+                  AND namespace = {{ns:String}}
+                  AND (subject, relation, object)
+                      IN {{triples:Array(Tuple(String, String, String))}}
+                  AND valid_to IS NULL
+                """,
+                params=params,
             )
-            params["invalid_ats"] = [c[4] for c in group]
-        await ch.execute(
-            f"""
-            ALTER TABLE loom.entity_triples
-            UPDATE {set_cols}
-            WHERE org = {{org:String}}
-              AND namespace = {{ns:String}}
-              AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
-              AND valid_to IS NULL
-            """,
-            params=params,
-        )
-        issued += 1
+            issued += 1
     if issued:
-        # A mutation is no INSERT, so the client's graph-write mark does not see it.
-        from server.memory.app import graph_write_marks as _graph_marks
-
-        _graph_marks.note_write(org, namespace)
+        _note_graph_write(org, namespace)
     return issued
 
 
@@ -992,27 +999,26 @@ async def reopen_triples(
     at the same valid_to is undone with it."""
     if not closes:
         return
-    await ch.execute(
-        f"""
-        ALTER TABLE loom.entity_triples
-        UPDATE valid_to = NULL, invalid_at = NULL
-        WHERE org = {{org:String}}
-          AND namespace = {{ns:String}}
-          AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
-          AND invalid_at = {{closed_at:DateTime}}
-          AND valid_to = {_CLOSED_VALID_TO}
-        """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "triples": [(s, r, o) for s, r, o, _ in closes],
-            "valid_tos": [c[3] for c in closes],
-            "closed_at": closed_at,
-        },
-    )
-    from server.memory.app import graph_write_marks as _graph_marks
-
-    _graph_marks.note_write(org, namespace)
+    for part in param_slices(closes):
+        await ch.execute(
+            f"""
+            ALTER TABLE loom.entity_triples
+            UPDATE valid_to = NULL, invalid_at = NULL
+            WHERE org = {{org:String}}
+              AND namespace = {{ns:String}}
+              AND (subject, relation, object) IN {{triples:Array(Tuple(String, String, String))}}
+              AND invalid_at = {{closed_at:DateTime}}
+              AND valid_to = {_CLOSED_VALID_TO}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "triples": [(s, r, o) for s, r, o, _ in part],
+                "valid_tos": [c[3] for c in part],
+                "closed_at": closed_at,
+            },
+        )
+    _note_graph_write(org, namespace)
 
 
 async def end_triples_now(
@@ -1028,11 +1034,33 @@ async def end_triples_now(
     does: no row states them any longer. One with a later date in `ends` (a retired
     row's winner dated ahead) ends then instead, unless it ended sooner. With
     `stated_ends_only`, a later end a close gave (it stamps `invalid_at`) is kept. One
-    read, and an UPDATE only when one does."""
-    if not triples:
-        return
+    read, and an UPDATE only when one does, a parameter's worth of triples at a time."""
     now = naive_utc_now().replace(microsecond=0)  # as the DateTime columns store it
-    dates = [(ends or {}).get(t) for t in triples]
+    for part in param_slices(triples):
+        await _end_triples_slice(
+            ch,
+            org=org,
+            namespace=namespace,
+            triples=part,
+            now=now,
+            stated_ends_only=stated_ends_only,
+            ends=ends or {},
+        )
+
+
+async def _end_triples_slice(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    triples: list[tuple[str, str, str]],
+    now: datetime,
+    stated_ends_only: bool,
+    ends: Mapping[tuple[str, str, str], datetime | None],
+) -> None:
+    """`end_triples_now` for triples that bind as one parameter; `triples` and `ends`
+    are built from the slice, so indexOf finds each row's own end."""
+    dates = [ends.get(t) for t in triples]
     params = {
         "org": org,
         "ns": namespace,
@@ -1067,9 +1095,7 @@ async def end_triples_now(
         """,
         params=params,
     )
-    from server.memory.app import graph_write_marks as _graph_marks
-
-    _graph_marks.note_write(org, namespace)
+    _note_graph_write(org, namespace)
 
 
 # Each edge's own end in the parallel arrays `end_edges` passes, and the valid_to it
@@ -1320,9 +1346,7 @@ async def _end_edge_rows(
         """,
         params={**params, "ending": ending},
     )
-    from server.memory.app import graph_write_marks as _graph_marks
-
-    _graph_marks.note_write(params["org"], params["ns"])
+    _note_graph_write(params["org"], params["ns"])
 
 
 async def reopen_held_edges(
@@ -1362,9 +1386,7 @@ async def reopen_held_edges(
         """,
         params={**params, "reopen": reopen},
     )
-    from server.memory.app import graph_write_marks as _graph_marks
-
-    _graph_marks.note_write(params["org"], params["ns"])
+    _note_graph_write(params["org"], params["ns"])
     return held_pairs
 
 
@@ -1387,9 +1409,7 @@ async def reopen_closed_by(
             """,
             params={"org": org, "ns": namespace, "close_ids": close_ids, "pairs": part},
         )
-    from server.memory.app import graph_write_marks as _graph_marks
-
-    _graph_marks.note_write(org, namespace)
+    _note_graph_write(org, namespace)
 
 
 async def open_triples_among(

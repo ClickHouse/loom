@@ -3343,3 +3343,55 @@ async def test_names_that_look_like_grammar_are_reachable_from_a_point_write(ch,
     walk = FactsTraverseInput(org=org, namespace=NS, seed_entity="우간다", max_hops=1)
     nodes = {n.entity for n in (await handle_facts_traverse(walk)).nodes}
     assert {"さいたま", "르완다", "캐나다"} <= nodes, nodes
+
+
+async def test_triple_closes_of_long_names_go_a_parameter_at_a_time(ch, org) -> None:
+    """200 open triples of ~470-character names: one bound list is past the server's
+    field cap, so the closes, their undo, the later-end check and the holder read go a
+    slice at a time, and each row still gets its own end."""
+    from server.memory.app import graph_holders, projections
+
+    name = "Committee for the Coordination of Freight " * 11
+    seen = naive_utc_now().replace(microsecond=0)
+    triples = [(f"{name}{i}", "member_of", f"{name}x{i}") for i in range(200)]
+    rows = [
+        projections.entity_triple_row(
+            org,
+            NS,
+            s,
+            r,
+            o,
+            provenance="stated",
+            confidence=1.0,
+            adapter_name="test",
+            last_seen=seen,
+            seen_at=seen,
+        )
+        for s, r, o in triples
+    ]
+    await ch.insert("loom.entity_triples", rows, settings={"async_insert": 0})
+    closed_at = datetime(2026, 1, 2)
+    closes = [
+        (s, r, o, datetime(2026, 1, 1) + timedelta(minutes=i), closed_at)
+        for i, (s, r, o) in enumerate(triples)
+    ]
+    assert await projections.close_triples(ch, org=org, namespace=NS, closes=closes) > 1
+    await _mutations_done(ch, org)
+    ended = await ch.query_all(
+        "SELECT subject, valid_to FROM loom.entity_triples WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert {r["subject"]: r["valid_to"] for r in ended} == {s: vt for s, _, _, vt, _ in closes}
+    await projections.reopen_triples(
+        ch, org=org, namespace=NS, closes=[c[:4] for c in closes], closed_at=closed_at
+    )
+    await projections.end_triples_now(ch, org=org, namespace=NS, triples=triples)
+    assert await graph_holders.live_holders(org, NS, triples, ch=ch) == {}
+    await _mutations_done(ch, org)
+    reopened = await ch.query_all(
+        "SELECT count() AS n FROM loom.entity_triples WHERE org = {org:String}"
+        " AND valid_to IS NULL SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert int(reopened[0]["n"]) == 200
