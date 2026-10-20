@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { signed, whyTerms } from "./whyNote";
+import { signed, termText, whyTerms } from "./whyNote";
 
 // Non-zero components by magnitude, signed; `rank_score` / `rank_score_raw` are the base,
 // not a reason; sub-0.005 terms are noise.
@@ -17,6 +17,26 @@ describe("signed / whyTerms", () => {
     });
     expect(terms.map((t) => t.label)).toEqual(["other namespace", "date proximity", "semantic", "key match"]);
     expect(terms[1].value).toBe(-0.3);
+  });
+
+  it("names the reranker's move and skips the rest of its trail", () => {
+    const terms = whyTerms({
+      rank_score: 0.6,
+      rank_score_pre_rerank: 0.37,
+      rerank_from: 4,
+      rerank_pos: 1,
+      rerank_delta: 3,
+      rerank_external: 1,
+      semantic: 0.25,
+    });
+    expect(terms).toEqual([
+      { label: "reranked", value: 3, places: true },
+      { label: "semantic", value: 0.25 },
+    ]);
+    expect(terms.map(termText)).toEqual(["+3", "+0.25"]);
+    // The move leads even when a score term is larger than it.
+    const big = whyTerms({ rerank_delta: 1, rank_score_before_defer: 1.2 });
+    expect(big.map((t) => t.label)).toEqual(["reranked", "rank score before defer"]);
   });
 
   it("shows an unknown component under its own spelling rather than hiding it", () => {

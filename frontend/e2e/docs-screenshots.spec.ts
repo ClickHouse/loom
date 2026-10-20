@@ -666,7 +666,7 @@ async function capture(page: Page, name: string): Promise<void> {
 
 test.describe("docs screenshots", () => {
   test.skip(!ENABLED, "set LOOM_DOCS_SCREENSHOTS=1 to regenerate docs/images");
-  test.use({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2, colorScheme: "light" });
+  test.use({ viewport: { width: 1400, height: 900 }, deviceScaleFactor: 2, colorScheme: "dark" });
 
   test.afterEach(() => {
     if (process.env.LOOM_DOCS_DEBUG) console.log(debugCalls.join("\n"));

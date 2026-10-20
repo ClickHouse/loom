@@ -12975,7 +12975,7 @@ class MemorySearchOutput(TypedDict, total=False):
 
 
 class MemorySearchTraceInput(TypedDict, total=False):
-    "Same shape as memory.search; returns the per-candidate scoring"
+    "Same shape as memory.search; returns the vector leg's per-candidate scoring"
 
     org: Required[str]
     namespace: Required[str]
@@ -13063,7 +13063,7 @@ class MemorySearchTraceInput(TypedDict, total=False):
 
 
 class MemorySearchTraceBody(TypedDict, total=False):
-    "Same shape as memory.search; returns the per-candidate scoring"
+    "Same shape as memory.search; returns the vector leg's per-candidate scoring"
 
     org: NotRequired[str]
     namespace: NotRequired[str]

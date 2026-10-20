@@ -1822,7 +1822,7 @@ Semantic search over the agent's own memory.
 
 ## `memory.search_trace`
 
-Same shape as memory.search; returns the per-candidate scoring breakdown instead of just the top-k.
+Same shape as memory.search; returns the vector leg's per-candidate scoring breakdown (no fusion, assembly or reranker).
 
 `POST /v1/memory.search_trace` · MCP `loom_memory_search_trace` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1906,7 +1906,7 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored, in final rank order, with its breakdown. |
+| `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored, in the leg's rank order, with its breakdown. |
 | `embedding_model` | `str` | The embedding model the query was embedded with. |
 | `entity_filter` | `list[str]` | The request's `entity_filter`, lowercased as it was matched. |
 | `query_spellings` | `dict[str, str]` | Query words embedded in the corpus's spelling instead of as typed (`memory_search_query_spelling_max_words`); {} when none was. |

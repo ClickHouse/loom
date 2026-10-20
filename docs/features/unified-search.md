@@ -134,7 +134,7 @@ out = await bot.call("search.query", {"query": "when can we deploy?", "top_k": 5
 | ----------------------------------------------- | ----------------------------------------------------------------------------- |
 | An agent answering a user's question            | `loom_search`                                                                 |
 | One namespace, one plane, explicit filters      | `memory.search` (`namespace_scope` defaults to `this`), `knowledge.search`, … |
-| Ranking knobs (`search_mode`, weights, `as_of`) | `memory.search`, or `memory.search_trace` for the breakdown                   |
+| Ranking knobs (`search_mode`, weights, `as_of`) | `memory.search`, with `explain=true` for each hit's breakdown                 |
 | An answer written from memory, with citations   | `memory.ask`                                                                  |
 | Code                                            | `code.search` and the other [code tools](./code-index/overview.md)            |
 | The all-plane search from HTTP or an SDK        | `search.query`                                                                |

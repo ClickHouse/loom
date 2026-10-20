@@ -14,7 +14,7 @@ const api = vi.hoisted(() => ({
   downloadKnowledge: vi.fn(),
   deleteKnowledge: vi.fn(),
   getKnowledge: vi.fn(),
-  fetchKnowledgeInlineUrl: vi.fn(),
+  fetchKnowledgePreview: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
@@ -147,7 +147,7 @@ describe("Library preview", () => {
   });
 
   async function open(preview: unknown) {
-    api.fetchKnowledgeInlineUrl.mockResolvedValue(preview);
+    api.fetchKnowledgePreview.mockResolvedValue(preview);
     render(<Documents />);
     await settle();
     fireEvent.click(screen.getByRole("button", { name: "Preview Handbook" }));
@@ -155,12 +155,20 @@ describe("Library preview", () => {
     return screen.getByRole("dialog");
   }
 
-  it("frames text only in an iframe with an empty sandbox", async () => {
-    const d = await open({ kind: "text", url: "blob:t", contentType: "text/plain", size: 4 });
-    const frames = d.querySelectorAll("iframe");
-    expect(frames).toHaveLength(1);
-    expect(frames[0].getAttribute("sandbox")).toBe("");
-    expect(frames[0].getAttribute("src")).toBe("blob:t");
+  it("shows text as a text node, never parsed or framed", async () => {
+    const d = await open({ kind: "text", url: null, text: "<b>bold</b>", contentType: "text/plain", size: 11 });
+    expect(d.querySelector("iframe")).toBeNull();
+    const pre = d.querySelector("pre");
+    expect(pre?.textContent).toBe("<b>bold</b>");
+    expect(pre?.querySelector("b")).toBeNull();
+  });
+
+  it("says when the text shown is only the start of the file", async () => {
+    const d = await open({ kind: "text", url: null, text: "start", contentType: "text/plain", size: 3 << 20 });
+    expect(d).toHaveTextContent("The first 1.0 MB; Download has the whole file.");
+    cleanup();
+    const whole = await open({ kind: "text", url: null, text: "all", contentType: "text/plain", size: 3 });
+    expect(whole).not.toHaveTextContent("Download has the whole file");
   });
 
   it("shows an image as <img>, never in a frame", async () => {
