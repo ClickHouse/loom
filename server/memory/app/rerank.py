@@ -99,6 +99,7 @@ class RerankCandidate:
 # Names already logged as not configured, so a namespace holding one logs once per
 # process, not once per search.
 _UNCONFIGURED_LOGGED: set[str] = set()
+_LOGGED_CAP = 1000  # log-once sets stop growing here
 # Namespaces whose stored builtin:cohere was unset, logged once per process.
 _COHERE_UNSET_LOGGED: set[tuple[str, str]] = set()
 
@@ -106,7 +107,7 @@ _COHERE_UNSET_LOGGED: set[tuple[str, str]] = set()
 def _note_unconfigured(endpoint: str) -> None:
     """Log once that `endpoint` is not a configured name; nothing is posted to it."""
     shown = f"a URL on host {_host_of(endpoint)!r}" if "://" in endpoint else repr(endpoint[:64])
-    if shown in _UNCONFIGURED_LOGGED or len(_UNCONFIGURED_LOGGED) > 1000:
+    if shown in _UNCONFIGURED_LOGGED or len(_UNCONFIGURED_LOGGED) >= _LOGGED_CAP:
         return
     _UNCONFIGURED_LOGGED.add(shown)
     log.warning(
@@ -419,7 +420,8 @@ async def get_namespace_rerank_config(
         # Stored before the gateway was required: Cohere's own API would be
         # refused at each search, unseen behind the fail-open, so it is unset.
         # Past the cap the namespace still gets no reranker; it is just not logged.
-        if (org, namespace) not in _COHERE_UNSET_LOGGED and len(_COHERE_UNSET_LOGGED) < 1000:
+        full = len(_COHERE_UNSET_LOGGED) >= _LOGGED_CAP
+        if (org, namespace) not in _COHERE_UNSET_LOGGED and not full:
             _COHERE_UNSET_LOGGED.add((org, namespace))
             log.warning(
                 "%s/%s reranks with builtin:cohere, refused while %s is set: not reranked",
