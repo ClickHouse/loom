@@ -41,10 +41,11 @@ user once per row. `slow` and the latency quantiles are the SLI rollup's: they c
 latency budget (a budget of 0 makes every one slow), and a row with none has latencies of 0.
 A `/v1/me/*` route, a deferred judgement or a worker pass counts in neither. The
 `namespaces` file is the state at `snapshot_at`, whatever `--day` says: a backfill of an
-old day gets that day's usage and today's namespaces. An unregistered namespace has `registered = false` and NULL registry columns. `created_on` and
-`last_memory_on` are days, not times: an exact time beside a hashed personal namespace
-could be matched to the person who signed up or wrote then. Rows are sorted by the hashed
-names, never by the names themselves.
+old day gets that day's usage and today's namespaces. An unregistered namespace has
+`registered = false` and NULL registry columns. `created_on` and `last_memory_on` are days,
+not times: an exact time beside a hashed personal namespace could be matched to the person
+who signed up or wrote then. Rows are sorted by the hashed names, never by the names
+themselves.
 
 ## What never leaves Loom
 
