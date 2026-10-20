@@ -169,7 +169,7 @@ def _instrument(stmts: list[tuple[str, float, float]], embeds: list[float]) -> N
     chmod.note_result_summary = note  # type: ignore[assignment]
     orig_embed = _cache._embed_uncached
 
-    async def timed(model: str, k: str, text: str, fetch: Any) -> Any:
+    async def timed(model: str, k: str, text: str, fetch: Any, dim: int) -> Any:
         async def f(t: str) -> list[float]:
             t0 = time.perf_counter()
             try:
@@ -177,7 +177,7 @@ def _instrument(stmts: list[tuple[str, float, float]], embeds: list[float]) -> N
             finally:
                 embeds.append((time.perf_counter() - t0) * 1000)
 
-        return await orig_embed(model, k, text, f)
+        return await orig_embed(model, k, text, f, dim)
 
     _cache._embed_uncached = timed  # type: ignore[assignment]
     _cache._shared_put = lambda *a, **kw: None  # type: ignore[assignment]
@@ -189,6 +189,7 @@ async def _live(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
     from server.embedding.embedder import get_embedder
+    from server.observability import genai
     from server.transport._common import begin_request
 
     stmts: list[tuple[str, float, float]] = []
@@ -248,6 +249,8 @@ async def _live(args: argparse.Namespace) -> int:
 
     for i, q in enumerate(queries):
         begin_request()
+        # The embedding cache is scoped by the request's org, as a transport records it.
+        genai.set_identity(org=args.org, namespace=args.namespace, operation="code.search")
         if args.traffic_class:
             # the class a real caller's token carries: its
             # per-statement `priority` / `max_threads` ride every read

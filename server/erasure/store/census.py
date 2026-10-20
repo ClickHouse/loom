@@ -446,8 +446,9 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     # -- no tenant axis: cannot be scoped by namespace or user -----------------
     "loom.embedding_cache": (
-        "no org/namespace column; a vector keyed by sha1(model, text) — the text is "
-        "not stored; 30-day TTL. The compliance bench counts the canary's key."
+        "no org/namespace column; a vector keyed by sha1(org, model, normalised text) — "
+        "the text is not stored, so an org's rows are found only by recomputing the key; "
+        "30-day TTL. The compliance bench counts the canary's key."
     ),
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",
     "loom.blacklist_version": "singleton version counter for the blacklist cache.",

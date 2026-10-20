@@ -176,3 +176,82 @@ def test_a_batch_vector_is_kept_per_org() -> None:
         assert len(ec._cache._store) == 1  # nothing kept without an org
     finally:
         genai._identity.set(None)
+
+
+# ---- through the transports -------------------------------------------------
+#
+# Isolation rests on the transport recording the authorized org before the
+# handler runs. The op's handler is replaced by one that embeds its query
+# through the cache, with a provider that counts its calls.
+
+
+def _embedding_op(name: str, provider_calls: list[str], **output: Any) -> Any:
+    import dataclasses
+
+    from server.operations.registry import ALL_OPERATIONS
+
+    op = next(o for o in ALL_OPERATIONS if o.name == name)
+
+    async def handler(inp: Any) -> Any:
+        async def fetch(text: str) -> list[float]:
+            provider_calls.append(genai.request_org())
+            return [1.0, 0.0]
+
+        await ec.cached_embed("m", inp.query, fetch, dim=2)
+        return op.output_model(**output)
+
+    return dataclasses.replace(op, handler=handler)
+
+
+def test_the_http_transport_scopes_the_cache_by_the_requests_org(ch: _CH, monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.settings import settings
+    from server.transport import http as http_mod
+
+    monkeypatch.setattr(settings, "auth_required", False)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    calls: list[str] = []
+    op = _embedding_op("memory.search", calls, results=[], embedding_model="m")
+    ops = [op if o.name == op.name else o for o in http_mod.ALL_OPERATIONS]
+    monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
+    app = FastAPI()
+    app.include_router(http_mod.build_router())
+    client = TestClient(app)
+    for org in ("acme", "beta", "acme"):
+        body = {"org": org, "namespace": "ns", "query": "the same question"}
+        r = client.post("/v1/memory.search", json=body)
+        assert r.status_code == 200, r.text
+    assert calls == ["acme", "beta"]  # beta paid its own call; acme's repeat hit
+
+
+def test_the_mcp_transport_scopes_the_cache_by_the_calls_org(ch: _CH, monkeypatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import server.transport.mcp as mcp
+    import server.transport.mcp_call as mcp_call
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    calls: list[str] = []
+    # memory.search is not on MCP; memory.ask is, and embeds its question the same way.
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME, "loom_memory_ask", _embedding_op("memory.ask", calls)
+    )
+
+    async def defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
+        return {"org": "acme", "namespace": "ns", "agent": "a"}
+
+    monkeypatch.setattr(mcp_call, "_caller_defaults", defaults)
+    app = FastAPI()
+    mcp.attach(app)
+    client = TestClient(app)
+    for org in ("acme", "beta", "acme"):
+        args = {"org": org, "namespace": "ns", "query": "the same question"}
+        call = {"name": "loom_memory_ask", "arguments": args}
+        rpc = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": call}
+        result = client.post("/mcp", json=rpc).json()["result"]
+        assert not result.get("isError"), result
+    assert calls == ["acme", "beta"]

@@ -7,9 +7,9 @@ user prompt, `max_tokens`, the response format and any extra keyword the
 caller passed (a temperature, a tool schema), and the org the client serves:
 one org is never served another's answer, nor learns from a fast reply that
 another asked the same, and a client built with no org calls the provider.
-After a provider call it writes the row fire-and-forget. The evidence a synthesis read is inside the
-user prompt, so a memory that changes, arrives or leaves the window changes
-the key — staleness is impossible by construction, not by TTL (a
+After a provider call it writes the row fire-and-forget. The evidence a
+synthesis read is inside the user prompt, so a memory that changes, arrives or
+leaves the window changes the key — staleness is impossible by construction, not by TTL (a
 question-keyed cache could serve an answer its evidence no longer supports).
 
 Same shape as the shared embedding cache: a primary-key point read
