@@ -35,6 +35,7 @@ def _patch_append(monkeypatch, *, append, embed):
     monkeypatch.setattr(conversation_repo, "append", append)
     monkeypatch.setattr(conversation_repo, "insert_embedding", fake_insert_embedding)
     monkeypatch.setattr(conversation_repo, "tombstone_embedding_if_message_gone", recheck)
+    monkeypatch.setattr(conversation_repo, "saved_message_owner", recheck)
     monkeypatch.setattr(h, "get_embedder", lambda: _Embedder())
     return h, rows
 

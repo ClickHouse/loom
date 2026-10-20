@@ -54,6 +54,43 @@ up front.
   `conversation.get` and `conversation.list` still serve the turn in its thread
   ([sensitivity](../architecture/security.md#sensitivity)).
 
+### Saving single messages
+
+A chat client can let a user save one message for later search without recording the
+namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
+`conversation.search_saved_messages` (viewer) is its search. They differ from
+`conversation.append` and `conversation.search` in four ways:
+
+- **The logging switch does not apply.** The save is stored even when
+  `conversation.set_logging` is off, and it does not turn logging on.
+- **The message is flagged, not re-labelled.** The transcript row and its embedding row
+  carry `is_saved`. A message the transcript already holds is flagged in place: its
+  `run_id` and content stay as recorded.
+- **The search is per user.** `conversation.search_saved_messages` returns only flagged
+  messages owned by `user_id`, in the one namespace named. `conversation.search` ranks
+  every recorded turn and fans out over the caller's namespaces by default.
+- **Ownership, deletion and role are checked on every save.** Saving a message stored
+  under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A
+  tombstoned message answers `reason: "deleted"`, and a stored system or tool turn,
+  which is never embedded, answers `reason: "unsupported_role"`. A message whose text
+  reads as a credential is never embedded either: it answers
+  `reason: "reads_as_credential"`, and a new one is not stored. The checks also apply to
+  a message that is already saved.
+
+The transcript row decides who owns a saved message. A save claims only rows that no
+user owns or that the caller owns, in the mutation itself, so of two users saving one
+unowned message the first claims it and the second is answered `owner_mismatch`. The
+embedding row is flagged only after the transcript row reads back as the caller's.
+
+A save can be retried safely. Two concurrent saves of a new message store one transcript
+row: its insert carries a deduplication token derived from the message identity. Each
+call re-reads the message and repairs what an interrupted or concurrent write left
+behind: it writes a missing embedding row, embeds again when the last embed failed, and
+flags any row still unflagged. A save whose embed fails stores the message saved and
+answers `indexed: false, reason: "embed_failed"`; saving it again retries the embed. A
+transcript append whose embedding lands after a concurrent save flags its own embedding
+row.
+
 ### Reading and searching
 
 | Operation              | Role   | Does                                                                                                                       |
@@ -90,9 +127,10 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   failed run left (its turns all still live and in the window, at the first one's `ts`)
   is replaced unread. A summary further into the window takes prompt budget like any
   turn and is replaced with it.
-  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`), and
-  neither does one that reads as a credential (`reason: "summary-reads-high"`), since it
-  would have no vector.
+  A turn that reads as a credential is left out of the window: it stays live and is
+  never sent to the summarizer. A summary that cannot be embedded compacts nothing
+  (`reason: "embed-failed"`), and neither does one that reads as a credential anyway
+  (`reason: "summary-reads-high"`), since it would have no vector.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the

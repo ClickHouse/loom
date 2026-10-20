@@ -17,7 +17,6 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from server.memory.domain.sensitivity import reads_high
 from tests.integration._eventually import wait_until
 from tests.integration._resources import unique_org
 
@@ -201,28 +200,35 @@ def test_a_chunk_an_earlier_build_embedded_is_held_back_by_its_text(
 def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
     control_plane_url: str, ch_client, token: str
 ) -> None:
-    session = f"s-{uuid.uuid4().hex[:8]}"
-    _ingest(
+    """Imported so the digest's text is known: a plain digest is embedded and found, one
+    that reads as a credential is stored as written with no vector and never a hit."""
+    plain, secret = f"s-{uuid.uuid4().hex[:8]}", f"s-{uuid.uuid4().hex[:8]}"
+    r = _post(
         control_plane_url,
         token,
         NS_DIGEST,
-        session,
-        [{"role": "user", "content": _SECRET_TURN}, {"role": "user", "content": _PLAIN_TURN}],
+        "memory.import_evidence",
+        {
+            "digests": [
+                {"session_id": plain, "summary_text": _PLAIN_TURN[:300]},
+                {"session_id": secret, "summary_text": _SECRET_TURN[:300]},
+            ]
+        },
     )
-    digests = ch_client.query(
-        "SELECT summary_text, embedding_dim FROM loom.session_summaries FINAL "
-        "WHERE org = {o:String} AND namespace = {n:String} AND session_id = {s:String} "
-        "AND tombstoned_at IS NULL",
-        parameters={"o": ORG, "n": NS_DIGEST, "s": session},
-    ).result_rows
-    [(text, dim)] = digests
-    if not reads_high(str(text)):
-        # The digest is the model's: a provider whose digest leaves the key out has
-        # nothing to hold back here.
-        pytest.skip("the digest model left the credential out of the digest")
-    assert int(dim) == 0
+    assert r.status_code == 200 and r.json()["digests_written"] == 2, r.text
+    dims = dict(
+        ch_client.query(
+            "SELECT session_id, embedding_dim FROM loom.session_summaries FINAL "
+            "WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL",
+            parameters={"o": ORG, "n": NS_DIGEST},
+        ).result_rows
+    )
+    assert int(dims[secret]) == 0 and int(dims[plain]) > 0, dims
     r = _search(control_plane_url, token, NS_DIGEST, "nightly export billing job key")
+    assert f"summary:{secret}" not in _keys(r)
     assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text
+    r = _search(control_plane_url, token, NS_DIGEST, "tomatoes along the south fence")
+    assert f"summary:{plain}" in _keys(r), _keys(r)
 
 
 def test_a_conversation_turn_holding_a_credential_is_never_a_search_hit(

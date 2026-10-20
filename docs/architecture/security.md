@@ -688,11 +688,14 @@ ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg re
 session digest whose text reads as a credential is likewise written without a vector, and
 so is a `conversation.append` turn: the message is stored as written in
 `loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing embedding
-row keeps the turn out of vector search. `conversation.compact` refuses a window whose
-summary reads as a credential (`reason: "summary-reads-high"`) and tombstones nothing, as
-it does when the summary cannot be embedded. A provider rebuild stages a chunk, digest or
-turn embedding that reads as a credential without a vector, and its verification accepts
-those rows. `loom reembed` keeps such a row on its old model, which search does not read,
+row keeps the turn out of vector search. `conversation.save_message` answers
+`reason: "reads_as_credential"` for such a turn, so the saved search never holds it.
+`conversation.compact` leaves such a turn out of its window: it stays live and is never
+sent to the summarizer. A summary that reads as a credential anyway is refused
+(`reason: "summary-reads-high"`) and tombstones nothing, as when the summary cannot be
+embedded. A provider rebuild stages a chunk, digest or
+turn embedding that reads as a credential without a vector, and its verification reads
+the text of every row left empty and accepts those that read as a credential. `loom reembed` keeps such a row on its old model, which search does not read,
 until `--delete-old` removes it; `loom reembed --in-database` runs the embedding inside
 ClickHouse, cannot check the text, and re-embeds it. Chunks, digests and turn embeddings
 that an earlier build embedded keep their vector, so the reads that serve passages check
@@ -721,8 +724,7 @@ caller-labelled `high` value that shares a chunk with a plain row (a chunk is he
 its own text, not by the rows it holds), the session digests `memory.digests` lists (their
 summary text; key facts that read as a credential are left out), what the session-summary
 draft (the conversation turns), the period-digest draft and the outcome judge (session
-digest text) send their model, every turn of the window the `conversation.compact` prompt
-sends its model, `memory.recall`'s raw turns, a title a caller set with
+digest text) send their model, `memory.recall`'s raw turns, a title a caller set with
 `conversation.create` or `conversation.update` as `conversation.get` serves it, and a
 thread's own turns as `conversation.get` and `conversation.list` serve them. Those two read
 one thread by its id under the caller's read scope, as the thread's participants read their

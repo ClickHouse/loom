@@ -262,7 +262,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
     monkeypatch.setattr(
         batch,
         "_inputs",
-        lambda table, rows, source, held: (
+        lambda table, rows, source: (
             [r["text"] for r in rows],
             [(i, "embedding") for i in range(len(rows))],
         ),

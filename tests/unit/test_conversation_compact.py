@@ -764,3 +764,52 @@ def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> N
     )
     assert (out.compacted, out.reason) == (False, "summary-reads-high")
     assert fake.inserted == [] and fake.embedded == [] and fake.executed == []
+
+
+def test_a_credential_turn_is_left_out_of_the_window_and_stays_live(monkeypatch) -> None:
+    """The summarizer never sees a turn that reads as a credential, even one that echoes
+    its input; the turn stays live, and the rest of the window compacts."""
+    import server.core.ch
+    import server.llm.client
+
+    key = "sk-" + "proj-" + "Ab3" * 12
+
+    class _EchoLLM(_FakeLLM):
+        async def complete(self, **kw: Any) -> LLMResult:
+            self.prompts.append(kw["user"])
+            return LLMResult(
+                text=kw["user"][:200], tokens_in=1, tokens_out=2, provider="fake", model="fake"
+            )
+
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"my key is {key}" if i == 1 else f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "run-1",
+        }
+        for i in range(6)
+    ]
+    fake = _FakeCH(rows)
+    llm = _EchoLLM()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 4
+    assert all(key not in prompt for prompt in llm.prompts)
+    [summary] = fake.inserted
+    assert '"compacted_from": ["m0", "m2", "m3", "m4"]' in summary["metadata"]
+    tombstoned = [
+        params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
+    ]
+    assert tombstoned == [["m0", "m2", "m3", "m4"]]
