@@ -529,6 +529,24 @@ def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
     # The price of reading "PIN: 4471" as a PIN; documented in docs/architecture/security.md.
     assert detect_sensitivity("GPIO pin: 115") == "high"
     assert detect_sensitivity(detector_text({"led": {"pin": 115}})) == "high"
+    # and so does one written with `number`: the price of reading "PIN number 4471"
+    assert detect_sensitivity("GPIO pin number 115") == "high"
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"pin": " 4471"}, {"pin": "\t4471"}, {"pin": "4471 "}, {"pin": "\u00a04471"}],
+)
+def test_a_keyed_value_reads_the_same_on_every_path(value: object) -> None:
+    # The stored value, a raw chunk of it and the sweep's prefilter give one answer; the
+    # whitespace stripped is the ASCII whitespace the patterns read.
+    from server.memory.app.set_chunks import human_text
+    from server.memory.domain.sensitivity import value_reads_high
+
+    answers = {value_reads_high(value), reads_high(human_text(value))}
+    assert len(answers) == 1
+    if True in answers:
+        assert re.search(COARSE_SHAPE_RE, json.dumps(value))
 
 
 def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label() -> None:
@@ -593,7 +611,7 @@ def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
     assert detect_sensitivity(detector_text(value)) == level
 
 
-def test_a_long_digit_run_is_read_in_one_pass() -> None:
+def test_long_runs_are_read_in_linear_time() -> None:
     started = time.perf_counter()
     assert detect_sensitivity("7" * 200_000) == ""
     assert not reads_high("1 " * 100_000)
@@ -697,6 +715,11 @@ _PREFILTER_OBJECTS = [
     {"pincode": "4471"},
     {"pin": "560001"},  # a postal code
     {"pin": "\t4471"},  # written `\t4471`
+    {"pin": " 4471"},
+    {"CVV:": "123"},
+    {"pin ": "4471"},
+    {"SSN:": "123456789"},
+    {"Security Code (CVV)": "123"},
     {"cvv_code": "123"},
     {"ssn_no": "123456789"},
     {"social_security_number": "123-45-6789"},

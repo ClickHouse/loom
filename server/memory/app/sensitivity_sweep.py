@@ -37,12 +37,13 @@ from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import (
     HIGH,
     KEYED_SECRET_WORDS,
-    LONG_PIN_LABEL,
     MEDIUM,
-    SHORT_PIN_LABEL,
+    PIN_LABEL,
+    POSTCODE_LIKE_PIN_LABEL,
     SSN_KEYS,
     detect_sensitivity,
     detector_text,
+    pin_grammar,
     sensitivity_tags,
 )
 
@@ -59,16 +60,17 @@ _JSON_SPACE = r"(?:[\s\v]|\\[fnrt]|\\u000[bB])"
 # A PIN label and its value in the detector's grammar, from the detector's own label
 # strings: every label after an optional `for` and up to three words, then `is`, `was`,
 # `:` or `=`; all but a bare `pin` directly.
-_PIN_FOR = rf"(?:{_JSON_SPACE}+for(?:{_JSON_SPACE}+[a-z]+){{1,3}})?"
-_PIN_VALUE_AFTER = rf"(?:{_JSON_SPACE}+(?:is|was)(?:{_JSON_SPACE}*[:=])?|{_JSON_SPACE}*[:=])"
+_PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(_JSON_SPACE)
 _COARSE_PIN = (
-    rf"(?i:{_JSON_BOUNDARY}(?:{SHORT_PIN_LABEL}|{LONG_PIN_LABEL})"
-    rf"{_PIN_FOR}{_PIN_VALUE_AFTER}{_JSON_SPACE}*[0-9]{{3}}"
-    rf"|{_JSON_BOUNDARY}(?:pin[_ ]code|{LONG_PIN_LABEL})"
+    rf"(?i:{_JSON_BOUNDARY}(?:{POSTCODE_LIKE_PIN_LABEL}|{PIN_LABEL})"
+    rf"{_PIN_FOR}{_PIN_VALUE_AFTER}[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}(?:pin[_ ]code|{PIN_LABEL})"
     rf"{_JSON_SPACE}+[0-9]{{3}})"
 )
 
-_KEY_VALUE = rf'"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'
+# After a key's last word: any run of characters that are neither letters, digits nor a
+# quote (`"CVV:"`, `"pin "`, `"Security Code (CVV)"`), the closing quote, then the value.
+_KEY_VALUE = rf'[^A-Za-z0-9"]*"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'
 
 
 def _key_words(keys: Iterable[tuple[str, ...]]) -> str:

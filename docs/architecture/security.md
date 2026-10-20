@@ -663,14 +663,15 @@ The `high` shapes:
   (`passcode 100 of the batch`). `PIN number`, passcode, CVV/CVC and security code take
   3-8 digits; `PIN` and `PIN code` take 3-5, since `PIN: 560001` and `PIN code 560001` are
   Indian postal codes, so a 6-digit PIN counts when stated as a `PIN number`. A connector
-  pin written as an assignment (`GPIO pin: 115`) reads as a PIN.
+  pin written as an assignment or with `number` (`GPIO pin: 115`, `GPIO pin number 115`)
+  reads as a PIN, the price of reading `PIN: 4471` and `PIN number 4471` as one.
 
 An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming an IBAN
 or a bank account (number) counts as contact intent, so ranking does not demote the row
 that answers it.
 
-A JSON value is read scalar by scalar (`detector_text`). A key whose last word names a
-PIN-like secret states its digits under that word's label, so the free-text rules above
+A JSON value is read scalar by scalar (`detector_text`). A key whose last one, two or three
+words name a PIN-like secret states its digits under that label, so the free-text rules above
 decide: `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits), `pin_number` as
 `pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code` (`pass_code`,
 `cvv_2`, `cvc2`, `cvv_code` and `cvc_number` too) as `<label> is <value>` (3-8 digits). An

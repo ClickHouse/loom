@@ -107,23 +107,36 @@ _CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
 _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
 # A PIN, passcode, CVV/CVC or security code stated with its value ("PIN is 4471",
 # "CVV 123", "BADGE_PIN=4471"). Two trade-offs: `pin` and `pin code` take 3-5 digits, since
-# "PIN: 560001" is an Indian postal code; and a connector pin written as an assignment
-# ("GPIO pin: 115") reads as a PIN, the price of reading "PIN: 4471" as one. The label
-# strings are plain regex that RE2 reads too: the sweep's prefilter is built from them.
-SHORT_PIN_LABEL = r"pin(?:[_ ]code)?"
-LONG_PIN_LABEL = (
-    r"(?:pin[_ ]number|pass[_ ]?code|cv[vc]2?(?:[_ ](?:code|number))?|security[_ ]code)"
-)
+# "PIN: 560001" is an Indian postal code; and a connector pin written as an assignment or
+# with `number` ("GPIO pin: 115", "GPIO pin number 115") reads as a PIN, the price of
+# reading "PIN: 4471" and "PIN number 4471" as one. The label strings are plain regex that
+# RE2 reads too: the sweep's prefilter is built from them.
+#
+# `pin` and `pin code`, whose 6-digit values are postal codes: they take 3-5 digits.
+POSTCODE_LIKE_PIN_LABEL = r"pin(?:[_ ]code)?"
+# Every other label: 3-8 digits.
+PIN_LABEL = r"(?:pin[_ ]number|pass[_ ]?code|cv[vc]2?(?:[_ ](?:code|number))?|security[_ ]code)"
 # A label starts after anything but a letter or digit, so a prefix (`atm_pin`) counts and
 # a word that ends in one (`spin`) does not.
 _LABEL_START = r"(?<![A-Za-z0-9])"
-# "PIN for the front door is 4471": `for` and up to three words, before `is`, `:` or `=`.
-_PIN_FOR = r"(?:\s+for(?:\s+[A-Za-z]+){1,3})?"
-_PIN_VALUE_AFTER = r"(?:\s+(?:is|was)(?:\s*[:=])?|\s*[:=])\s*"
+
+
+def pin_grammar(space: str) -> tuple[str, str]:
+    """The qualifier and the separator before a stated PIN's value, over the whitespace
+    class `space`: `\\s` here, an escape-aware class in the sweep's RE2 prefilter. The
+    qualifier is `for` and up to three words ("PIN for the front door is 4471"); the
+    separator is `is`, `was`, `:` or `=` with the whitespace around it. Each whitespace run
+    has its own anchor, so a long run of spaces is read once."""
+    qualifier = rf"(?:{space}+for(?:{space}+[A-Za-z]+){{1,3}})?"
+    separator = rf"(?:{space}+(?:is|was)(?:{space}*[:=])?|{space}*[:=]){space}*"
+    return qualifier, separator
+
+
+_PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(r"\s")
 _STATED_PIN = re.compile(
-    rf"(?i){_LABEL_START}{LONG_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
-    rf"|{_LABEL_START}{LONG_PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
-    rf"|{_LABEL_START}{SHORT_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?!\d)"
+    rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
+    rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
+    rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?!\d)"
     rf"|{_LABEL_START}pin[_ ]code\s+\d{{3,5}}(?!\d)",
     re.ASCII,
 )
@@ -366,7 +379,7 @@ def _keyed_secret(key: str, value: Any) -> str:
     label = next((_KEYED_LABELS[w] for w in tail_words if w in _KEYED_LABELS), "")
     if not (label or _SSN_KEY_WORDS.intersection(tail_words)):
         return ""
-    v = str(value).strip()
+    v = str(value).strip(" \t\n\r\f\v")  # the whitespace the patterns read, ASCII only
     if label:
         return f"{label} is {v}" if v.isdigit() else ""
     if re.fullmatch(r"[0-9]{3}-?[0-9]{2}-?[0-9]{4}", v):
