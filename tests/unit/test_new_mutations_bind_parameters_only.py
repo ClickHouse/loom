@@ -92,7 +92,7 @@ async def test_an_orphan_written_again_before_the_delete_keeps_its_links(monkeyp
     assert deleted == [[_ROW], [_ROW]]  # one DELETE per row-link table
 
 
-async def test_the_drops_edge_undo_names_its_closes_and_pairs() -> None:
+async def test_the_edge_undo_binds_parameters_only() -> None:
     from server.memory.app import projections
 
     ch = _CH([])
@@ -100,4 +100,3 @@ async def test_the_drops_edge_undo_names_its_closes_and_pairs() -> None:
         ch, org="o", namespace="ns", close_ids=["c1"], pairs=[("alice", "carol")]
     )
     assert len(ch.executed) == 1 and "SELECT" not in ch.executed[0]
-    assert "closed_by IN {close_ids:Array(String)}" in ch.executed[0]

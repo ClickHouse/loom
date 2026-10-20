@@ -1093,11 +1093,14 @@ async def test_a_flagged_peer_of_another_user_is_never_judged_or_retired(
     assert after["office_city"]["status"] == "conflicted", "u2's row is not retired"
 
 
-async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(ch, wired) -> None:
+async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(
+    ch, wired, monkeypatch
+) -> None:
     """A conditional revision of the peer holds its key from its read to its insert.
     The resolver does not retire the peer meanwhile; it then sees the revision and
     leaves the pair alone, so the revision is what FINAL serves."""
     from server.memory.api.models_crud import MemoryUpdateByIdInput
+    from server.memory.app import conflict_resolver as resolver
     from server.memory.app.update import handle_memory_update_by_id
     from server.memory.store.key_write_lock import key_write_locks
     from server.memory.workers.conflict_resolver import run_pass
@@ -1105,9 +1108,17 @@ async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(ch, wir
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 72)
     peer = (await _rows(ch, org))["office_city"]
+    real_locks = resolver._pair_locks
+    waiting = asyncio.Event()
+
+    def pair_locks(*a: Any, **kw: Any) -> Any:
+        waiting.set()  # the resolver asks for the pair's locks the test holds
+        return real_locks(*a, **kw)
+
+    monkeypatch.setattr(resolver, "_pair_locks", pair_locks)
     async with key_write_locks.hold(org, NS, "bot", USER, "s1", "office_city"):
         resolving = asyncio.create_task(run_pass())
-        await asyncio.sleep(2)
+        await asyncio.wait_for(waiting.wait(), timeout=30)
         assert (await _rows(ch, org))["office_city"]["status"] == "active"
         # The revision's insert, inside the lock (the lock itself is held by the test).
         await handle_memory_update_by_id(
@@ -1835,18 +1846,28 @@ async def test_a_pin_racing_a_retirement_waits_for_the_key_and_ends_served(
     from server.memory.app import conflict_resolver as resolver
     from server.memory.app.handlers import handle_memory_pin
     from server.memory.store.embeddings import live_embedding_rows_for_key
+    from server.memory.store.key_write_lock import key_write_locks
     from server.memory.workers.conflict_resolver import run_pass
 
     org, _ = wired
     await _pair(ch, org, "office_city", "office_location", 204)
     ident = {"agent": "bot", "user_id": USER, "session_id": "s1", "memory_key": "office_city"}
     real = resolver._retire
+    real_hold = key_write_locks.hold
     pins: list[asyncio.Task[Any]] = []
+    pin_waits = asyncio.Event()
+
+    def hold(*a: Any, **kw: Any) -> Any:
+        pin_waits.set()  # only the pin asks for a lock once the retirement holds both
+        return real_hold(*a, **kw)
 
     async def retire_beside_a_pin(*a: Any, **kw: Any) -> Any:
         pin = MemorySetInput(org=org, namespace=NS, **ident, value="The office is in Paris")
-        pins.append(asyncio.create_task(handle_memory_pin(pin)))
-        await asyncio.sleep(0.5)
+        with monkeypatch.context() as m:
+            m.setattr(key_write_locks, "hold", hold)
+            pins.append(asyncio.create_task(handle_memory_pin(pin)))
+            await asyncio.wait_for(pin_waits.wait(), timeout=30)
+        await asyncio.sleep(0)
         assert not pins[0].done(), "the pin waits for the key's lock"
         return await real(*a, **kw)
 

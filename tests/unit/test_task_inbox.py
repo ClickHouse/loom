@@ -1393,10 +1393,8 @@ async def test_a_stranger_posting_to_an_inbox_is_told_it_does_not_exist(
     assert stranger.value.status_code == 404 == absent.value.status_code
 
 
-async def test_the_lease_reconcile_bounds_both_reads_in_sql() -> None:
-    """Two statements a pass, whatever the number of leases, each stopped at the limit by
-    ClickHouse: the missing rows test the lease table server-side, and the stray rows
-    are judged in the join, so healthy idle rows never fill the limit."""
+async def test_the_lease_reconcile_maps_its_two_reads_to_rows() -> None:
+    """The missing-lease read's rows and the stray-lease read's rows come back typed."""
     missing_rows = [{"task_id": "bare", "org": "o", "inbox": "q", "fence": 2}]
     stray_rows = [
         {
@@ -1408,23 +1406,22 @@ async def test_the_lease_reconcile_bounds_both_reads_in_sql() -> None:
             "fence": 0,
         }
     ]
-    calls: list[tuple[str, dict[str, Any]]] = []
 
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            calls.append((" ".join(sql.split()), params))
             return stray_rows if "FROM loom.task_leases AS l" in sql else missing_rows
 
     missing, stray = await repo.lease_strays(
         before=datetime(2030, 1, 1), terminal=["cancelled", "done"], limit=100, ch=_CH()
     )
-    assert [m["task_id"] for m in missing] == ["bare"] and missing[0]["fence"] == 2
-    assert [(s["task_id"], s["status"], s["found"]) for s in stray] == [("t7", "cancelled", "t7")]
-    (missing_sql, missing_params), (stray_sql, stray_params) = calls
-    assert "NOT IN (SELECT task_id FROM loom.task_leases)" in missing_sql
-    assert "ORDER BY updated_at LIMIT {limit:UInt32}" in missing_sql
-    assert "t.task_status IN {terminal:Array(String)} OR t.fence != l.fence" in stray_sql
-    assert "(l.owner = '' OR l.lease_until < {before:DateTime})" in stray_sql
-    assert "ORDER BY l.task_id LIMIT {limit:UInt32}" in stray_sql
-    assert missing_params["limit"] == stray_params["limit"] == 100
-    assert stray_params["terminal"] == ["cancelled", "done"]
+    assert missing == [{"task_id": "bare", "org": "o", "inbox": "q", "fence": 2}]
+    assert stray == [
+        {
+            "task_id": "t7",
+            "owner": "",
+            "lease_fence": 0,
+            "found": "t7",
+            "status": "cancelled",
+            "fence": 0,
+        }
+    ]

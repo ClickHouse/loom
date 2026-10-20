@@ -3395,3 +3395,37 @@ async def test_triple_closes_of_long_names_go_a_parameter_at_a_time(ch, org) -> 
         params={"org": org},
     )
     assert int(reopened[0]["n"]) == 200
+
+
+async def test_an_edge_undo_opens_only_what_its_own_close_ended(ch, org) -> None:
+    """Two open edges ended by two closes: undoing the first close opens its edge with
+    its weight and start as they were, and leaves the other close's edge ended."""
+    from server.memory.app import projections
+
+    seen = naive_utc_now().replace(microsecond=0)
+    start = datetime(2026, 1, 1)
+    rows = [
+        projections.entity_edge_row(org, NS, a, b, last_seen=seen, valid_from=start, co_occur=3)
+        for a, b in (("alice", "bob"), ("alice", "carol"))
+    ]
+    await ch.insert("loom.entity_edges", rows, settings={"async_insert": 0})
+    first = await projections.end_edges(
+        ch, org=org, namespace=NS, ends=[("alice", "bob", seen)], open_only=True
+    )
+    second = await projections.end_edges(
+        ch, org=org, namespace=NS, ends=[("alice", "carol", seen)], open_only=True
+    )
+    assert len(first) == len(second) == 1 and first != second
+    await projections.reopen_closed_by(
+        ch, org=org, namespace=NS, close_ids=first, pairs=[("alice", "bob"), ("alice", "carol")]
+    )
+    await _mutations_done(ch, org)
+    edges = await ch.query_all(
+        "SELECT entity_b, valid_from, valid_to, co_occur, closed_by FROM loom.entity_edges"
+        " WHERE org = {org:String} SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    by_b = {r["entity_b"]: r for r in edges}
+    assert by_b["bob"]["valid_to"] is None and by_b["bob"]["closed_by"] == ""
+    assert (by_b["bob"]["valid_from"], by_b["bob"]["co_occur"]) == (start, 3)
+    assert by_b["carol"]["valid_to"] is not None and by_b["carol"]["closed_by"] == second[0]
