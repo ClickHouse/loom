@@ -1390,9 +1390,8 @@ async def test_values_whose_edges_stay_open_do_not_block_a_value_less_close(
 async def test_values_another_row_holds_open_do_not_block_a_value_less_close(
     ch, org, monkeypatch
 ) -> None:
-    """Older values linking a pair another live row holds open stay open on every pass;
-    each pass starts after the ones read before, so the closable value behind them is
-    reached with one value a pass."""
+    """Older values linking only a pair another live row holds open are not read, so the
+    closable value behind them by hash is reached with one value a pass."""
     from server.memory.app import edge_links, edge_repair, projections, triple_projections
     from server.memory.app.projection_errors import ProjectionScope
     from server.memory.app.projection_failures import retry_projection_failures
@@ -1425,7 +1424,110 @@ async def test_values_another_row_holds_open_do_not_block_a_value_less_close(
     scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
     close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", [], high=True)
     await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
-    for _ in range(4):  # the three held values, then the closable one
+    # The first pass reads the closable value and runs out of pages; the second resolves.
+    for _ in range(2):
         await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
     assert ("alice smith", "carol king") not in await _open_edge_pairs(ch, org)
     assert ("alice smith", "dave ray") in await _open_edge_pairs(ch, org)
+
+
+async def test_a_value_less_close_counts_its_own_queued_closes_as_applied(
+    ch, org, monkeypatch
+) -> None:
+    """Eight older values, each linking a pair the high row no longer names; two pages
+    of two a pass, with the edge closes queued behind stopped merges: each pass reads
+    its own closes as applied, so later passes reach every value."""
+    from server.memory.app import edge_links, edge_repair, projections, triple_projections
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    names = ["Carol King", "Dave Ray", "Erin Holt", "Frank Moss"]
+    names += ["Gina Park", "Hank Bell", "Ivy Chen", "Jack Ford"]
+    with monkeypatch.context() as m:  # every close and drop lost: all edges stay open
+        m.setattr(edge_links, "drop_undeclared_links", nothing)
+        m.setattr(projections, "end_edges", nothing)
+        m.setattr(triple_projections, "end_edges", nothing)
+        for name in names:
+            await _high_set(org, "s1", "vault", f"Alice met {name}", entities=["Alice Smith", name])
+        out = await _high_set(
+            org, "s1", "vault", "Orchid", sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGE", 2)
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGES", 2)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", [], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    # A busy mutation pool: the first pass's closes queue but do not apply.
+    await ch.execute("SYSTEM STOP MERGES loom.entity_edges")
+    try:
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    finally:
+        await ch.execute("SYSTEM START MERGES loom.entity_edges")
+    await _mutations_done(ch, org)
+    for _ in range(4):
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert await _open_edge_pairs(ch, org) == {("alice smith", "bob lane")}
+
+
+async def test_a_value_less_close_reaches_a_value_after_a_held_pair_lets_go(
+    ch, org, monkeypatch
+) -> None:
+    """Values linking a pair another row holds, and one that can close; after a first
+    pass the other row lets go of its pair: the closable value is still reached."""
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app import (
+        after_write,
+        edge_links,
+        edge_repair,
+        projections,
+        triple_projections,
+    )
+    from server.memory.app.handlers import handle_memory_delete
+    from server.memory.app.projection_errors import ProjectionScope
+    from server.memory.app.projection_failures import retry_projection_failures
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    await _high_set(org, "s9", "other", "Alice and Dave met", entities=["Alice Smith", "Dave Ray"])
+    with monkeypatch.context() as m:  # every close and drop lost: all edges stay open
+        m.setattr(edge_links, "drop_undeclared_links", nothing)
+        m.setattr(projections, "end_edges", nothing)
+        m.setattr(triple_projections, "end_edges", nothing)
+        for value in ("Alice and Dave note 6", "Alice and Dave note 22", "Alice and Dave note 37"):
+            await _high_set(org, "s1", "vault", value, entities=["Alice Smith", "Dave Ray"])
+        await _high_set(
+            org,
+            "s1",
+            "vault",
+            "Alice met Carol about the plan",
+            entities=["Alice Smith", "Carol King"],
+        )
+        out = await _high_set(
+            org, "s1", "vault", "Orchid", sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGE", 1)
+    monkeypatch.setattr(edge_repair, "_VALUES_PAGES", 1)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    close = edge_repair.EdgeClose(str(out.memory_id), "vault", "-", [], high=True)
+    await edge_repair.record_edges_closes(scope, [close], RuntimeError("x"), op="memory.set", ch=ch)
+    await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    # The other row lets go of Alice-Dave, and the edge ends: the values that linked it
+    # leave the read set.
+    await handle_memory_delete(
+        MemoryDeleteInput(
+            org=org, namespace=NS, agent="bot", user_id=USER, session_id="s9", memory_key="other"
+        )
+    )
+    await after_write.drain()
+    await ch.execute(
+        "ALTER TABLE loom.entity_edges UPDATE valid_to = now() WHERE org = {org:String}"
+        " AND entity_a = 'alice smith' AND entity_b = 'dave ray' SETTINGS mutations_sync = 2",
+        params={"org": org},
+    )
+    for _ in range(3):
+        await retry_projection_failures(org=org, projection="entity_edges_close", ch=ch)
+    assert ("alice smith", "carol king") not in await _open_edge_pairs(ch, org)

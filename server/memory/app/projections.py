@@ -1091,7 +1091,8 @@ _STILL_OPEN_EDGES_WHERE = """org = {org:String} AND namespace = {ns:String}
 
 # The migration that started linking rows to edges: a value first written before it
 # was applied has no edge links of its own.
-_EDGE_ROW_LINKS_MIGRATION = "050_entity_edge_rows.sql"
+EDGE_ROW_LINKS_MIGRATION = "050_entity_edge_rows.sql"
+
 
 # The pairs of {pairs} a live row still names: its current value has a link to the
 # pair, or it has no edge link of its own and its key's link to the pair counts, as for
@@ -1099,11 +1100,14 @@ _EDGE_ROW_LINKS_MIGRATION = "050_entity_edge_rows.sql"
 # to edges, or since by a build that links only keys (the key link is no older than the
 # value, and no row of the key links the pair). Such a row's text is not read: it
 # keeps the edge, as its key link did.
-_HELD_PAIRS_CTES = f"""
+def held_pairs_ctes(pairs: str = "{pairs:Array(Tuple(String, String))}") -> str:
+    """The CTEs whose `held` lists the pairs of `pairs` (the SQL of the pairs asked
+    about: a parameter, or a subquery) that a live row still names."""
+    return f"""
     rowed AS (
         SELECT memory_id, content_sha256, entity_a, entity_b FROM loom.entity_edge_rows
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+          AND (entity_a, entity_b) IN {pairs}
           -- The values a drop is about to delete hold nothing, while their row is 'high'.
           AND (memory_id, content_sha256) NOT IN (
               SELECT memory_id, content_sha256 FROM loom.memory FINAL
@@ -1115,7 +1119,7 @@ _HELD_PAIRS_CTES = f"""
         SELECT memory_key, entity_a, entity_b, max(seen_at) AS seen_at
         FROM loom.entity_edge_memories
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND (entity_a, entity_b) IN {{pairs:Array(Tuple(String, String))}}
+          AND (entity_a, entity_b) IN {pairs}
         GROUP BY memory_key, entity_a, entity_b
     ),
     keyed_rows AS (
@@ -1167,6 +1171,9 @@ _HELD_PAIRS_CTES = f"""
                AND (k.memory_key, k.entity_a, k.entity_b) NOT IN (
                    SELECT memory_key, entity_a, entity_b FROM linked))
     )"""
+
+
+_HELD_PAIRS_CTES = held_pairs_ctes()
 
 
 def as_bulk_write(
@@ -1247,7 +1254,7 @@ async def _end_edges_slice(
         "skip_versions": sorted(skip_versions),
         "pairs": [(a, b) for a, b, _end in ends],
         "ends": [end.replace(microsecond=0) for _a, _b, end in ends],
-        "edge_links": _EDGE_ROW_LINKS_MIGRATION,
+        "edge_links": EDGE_ROW_LINKS_MIGRATION,
         "close_id": uuid.uuid4().hex,
     }
     where = _STILL_OPEN_EDGES_WHERE if open_only else _OPEN_EDGES_WHERE

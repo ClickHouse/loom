@@ -749,10 +749,10 @@ def test_the_row_links_migrations_the_legacy_checks_name_exist() -> None:
     # Renumbered and missed, a check would find no applied time and drop legacy rows.
     from server.core.paths import MIGRATIONS_DIR
     from server.memory.app.graph_holders import _ROW_LINKS_MIGRATION
-    from server.memory.app.projections import _EDGE_ROW_LINKS_MIGRATION
+    from server.memory.app.projections import EDGE_ROW_LINKS_MIGRATION
 
     assert (MIGRATIONS_DIR / _ROW_LINKS_MIGRATION).exists()
-    assert (MIGRATIONS_DIR / _EDGE_ROW_LINKS_MIGRATION).exists()
+    assert (MIGRATIONS_DIR / EDGE_ROW_LINKS_MIGRATION).exists()
 
 
 def _as_set(stub: Any) -> Any:

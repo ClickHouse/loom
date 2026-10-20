@@ -101,7 +101,7 @@ async def delete_graph_links_by_namespace(
 
 # The row-link tables a build older than their migrations did not know, so its
 # erasures left them (`graph_holders._ROW_LINKS_MIGRATION` and
-# `projections._EDGE_ROW_LINKS_MIGRATION`).
+# `projections.EDGE_ROW_LINKS_MIGRATION`).
 # `loom erasure-re-verify --completed-since` checks a completed saga's scope for
 # links whose memory has no live row (rolling-upgrades rule 14). A link of a live
 # memory is not an orphan, and neither is one of a memory written after the

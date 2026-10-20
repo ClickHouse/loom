@@ -619,9 +619,10 @@ later plain write's links are its own), and one still `high` keeps only the edge
 the entities on it, whatever later write (a pin, a lock, a relabel) kept it high. A
 close recorded for a high row names no value: its repair ends each of the row's values
 with an open edge that the row no longer holds, and keeps the edges between entities
-the row names. It reads those values in hash order, 20 pages of 100 a pass; a pass that
-runs out keeps only the count of values it read that stay open (another row holds them),
-and the next pass starts after them. Its triples close as for a row that holds none.
+the row names. It reads only values with a pair that can close (no other live row holds
+it), 20 pages of 100 a pass, its own queued closes read as applied; each value it reads
+closes, so a pass that runs out leaves the failure active and the next pass reads what is
+left. Its triples close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and

@@ -25,82 +25,74 @@ log = logging.getLogger(__name__)
 
 
 # Values of one row a value-less close repair reads a page at a time, and the pages one
-# repair reads at most; past them it raises `ValuesLeftOpen`, and the failure stays for
-# the next pass.
+# repair reads at most; past them it raises, and the failure stays for the next pass.
 _VALUES_PAGE = 100
 _VALUES_PAGES = 20
 
-# The values of row {id} linked to an open edge that could close: neither the value the
-# row still holds (its 'high' links are the drop's) nor one linking only a pair the row
-# names (it keeps that edge).
-_CLOSABLE_VALUES = f"""
-    FROM loom.entity_edge_rows
-    WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
-      AND content_sha256 != (
-          SELECT any(content_sha256) FROM loom.memory FINAL
-          WHERE org = {{org:String}} AND namespace = {{ns:String}}
-            AND memory_id = {{id:UUID}} AND {EDGE_HOLDS_VALUE_SQL})
-      AND NOT (has({{keep:Array(String)}}, entity_a) AND has({{keep:Array(String)}}, entity_b))
-      AND (entity_a, entity_b) IN (
-          SELECT entity_a, entity_b FROM loom.entity_edges
-          WHERE org = {{org:String}} AND namespace = {{ns:String}} AND valid_to IS NULL
-            AND (entity_a, entity_b) IN (
-                SELECT entity_a, entity_b FROM loom.entity_edge_rows
-                WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                  AND memory_id = {{id:UUID}}))
-"""
+# The repair's reads follow its own closes (async ALTER UPDATEs): one still queued must
+# read as applied, or a value it just closed reads as open.
+_REPAIR_READ_SETTINGS = "SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1"
 
 
-class ValuesLeftOpen(RuntimeError):
-    """A value-less close read its page budget: `skip` values, in hash order, were read
-    and stay open (another row holds them), so the next pass starts after them."""
-
-    def __init__(self, memory_id: str, skip: int) -> None:
-        super().__init__(f"more than {_VALUES_PAGE * _VALUES_PAGES} values of row {memory_id}")
-        self.skip = skip
-
-
-async def close_overtaken_values(
-    org: str, namespace: str, memory_id: str, *, skip: int = 0, ch: Any
-) -> None:
+async def close_overtaken_values(org: str, namespace: str, memory_id: str, *, ch: Any) -> None:
     """`close_late_edges` for a close recorded without its value (a 'high' row's): each
-    value of the row linked to an open edge, its current one included (a retired or
-    deleted row keeps its hash); close_late_edges keeps those the row still holds. Each
-    value is asked with the entities its own edges pair and dated by its own end. The
-    pairs of the entities the row names now stay, whichever value linked them: a 'high'
-    row keeps the edges of the entities on it. Read in pages by hash, and only what can
-    close, so a value read again is one another row holds open. The first `skip` such
-    values were read by an earlier pass: a value that closed since left the read set, so
-    the offset still points past the ones left open. Past `_VALUES_PAGES` pages it raises
-    `ValuesLeftOpen` with the count to skip next time."""
+    value of the row linked to an edge that can close, dated by its own end. A pair can
+    close when its edge is open, no live row holds it (`held_pairs_ctes`, as `end_edges`
+    reads it) and the row does not name both its entities now: a 'high' row keeps the
+    edges of the entities on it. The value the row still holds is the drop's. So every
+    value read closes and leaves the read set, and a pass that runs out of pages raises:
+    the failure stays active, and the next pass, from the start, reads what is left."""
     params: dict[str, Any] = {"org": org, "ns": namespace, "id": memory_id}
     named = await ch.query_all(
         f"""
         SELECT entities FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
           AND {EDGE_HOLDS_VALUE_SQL} AND sensitivity = 'high'
-        SETTINGS select_sequential_consistency = 1
+        {_REPAIR_READ_SETTINGS}
         """,
         params=params,
     )
     keep = {str(e) for row in named for e in row["entities"]}
-    params["keep"] = sorted(keep)
+    params.update(
+        keep=sorted(keep),
+        page=_VALUES_PAGE,
+        skip_versions=[],
+        edge_links=projections.EDGE_ROW_LINKS_MIGRATION,
+    )
+    held = projections.held_pairs_ctes("(SELECT entity_a, entity_b FROM row_pairs)")
     after = ""
-    offset = skip
     for _ in range(_VALUES_PAGES):
         values = await ch.query_all(
             f"""
+            WITH row_pairs AS (
+                SELECT DISTINCT entity_a, entity_b FROM loom.entity_edge_rows
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND memory_id = {{id:UUID}}
+            ),
+            {held}
             SELECT toString(content_sha256) AS sha,
                    arrayDistinct(arrayConcat(groupArray(entity_a), groupArray(entity_b)))
                        AS entities
-            {_CLOSABLE_VALUES}
+            FROM loom.entity_edge_rows
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND memory_id = {{id:UUID}}
               AND content_sha256 > {{after:String}}
+              AND content_sha256 != (
+                  SELECT any(content_sha256) FROM loom.memory FINAL
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                    AND memory_id = {{id:UUID}} AND {EDGE_HOLDS_VALUE_SQL})
+              AND NOT (has({{keep:Array(String)}}, entity_a)
+                       AND has({{keep:Array(String)}}, entity_b))
+              AND (entity_a, entity_b) NOT IN (SELECT entity_a, entity_b FROM held)
+              AND (entity_a, entity_b) IN (
+                  SELECT entity_a, entity_b FROM loom.entity_edges
+                  WHERE org = {{org:String}} AND namespace = {{ns:String}} AND valid_to IS NULL
+                    AND (entity_a, entity_b) IN (SELECT entity_a, entity_b FROM row_pairs))
             GROUP BY content_sha256
             ORDER BY sha
-            LIMIT {{page:UInt32}} OFFSET {{skip:UInt32}}
-            SETTINGS select_sequential_consistency = 1
+            LIMIT {{page:UInt32}}
+            {_REPAIR_READ_SETTINGS}
             """,
-            params={**params, "after": after, "page": _VALUES_PAGE, "skip": offset},
+            params={**params, "after": after},
         )
         for value in values:
             await close_late_edges(
@@ -114,20 +106,10 @@ async def close_overtaken_values(
             )
         if len(values) < _VALUES_PAGE:
             return
+        # The cursor keeps a pass from reading again a value whose close a row written
+        # meanwhile undid.
         after = str(values[-1]["sha"])
-        offset = 0  # the hash cursor carries the rest of this pass
-    # The values up to the cursor that are still in the read set stayed open: only their
-    # count is kept for the next pass, never a hash.
-    left = await ch.query_all(
-        f"""
-        SELECT uniqExact(content_sha256) AS n
-        {_CLOSABLE_VALUES}
-          AND content_sha256 <= {{after:String}}
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={**params, "after": after},
-    )
-    raise ValuesLeftOpen(memory_id, int(left[0]["n"]) if left else 0)
+    raise RuntimeError(f"more than {_VALUES_PAGE * _VALUES_PAGES} values of row {memory_id}")
 
 
 async def close_late_edges(
