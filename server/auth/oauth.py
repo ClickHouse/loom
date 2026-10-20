@@ -165,7 +165,9 @@ def authorization_server_metadata(issuer: str) -> dict[str, Any]:
 
 
 # The sign-in pages run no script and may not be framed: a page that cannot be
-# put under another site's overlay cannot be clickjacked into approving.
+# put under another site's overlay cannot be clickjacked into approving. Pinned
+# here too, so the sign-in pages keep frame denial and their referrer policy
+# whatever the middleware sends.
 _PAGE_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
