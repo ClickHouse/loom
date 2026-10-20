@@ -749,13 +749,17 @@ async def _judge_and_act(
     settled = {str(p["memory_id"]) for p in peers if _undone(row, p, found.when, found.undos)}
     counts.skipped_no_action += len(settled)
     # Another session of the anonymous user can only be cleared (`_cross_session`): a
-    # pair with no flag between them has nothing a call could change.
+    # pair with no flag between them, on either side, has nothing a call could change.
     flagged = {str(x) for x in row.conflict_with}
     peers = [
         p
         for p in peers
         if str(p["memory_id"]) not in settled
-        and (str(p["memory_id"]) in flagged or not _cross_session(row, p))
+        and (
+            str(p["memory_id"]) in flagged
+            or str(row.memory_id) in {str(x) for x in p.get("conflict_with") or ()}
+            or not _cross_session(row, p)
+        )
     ]
     if not peers:
         return set()

@@ -2236,3 +2236,17 @@ async def test_the_audit_row_names_the_prompt_version(monkeypatch) -> None:
     monkeypatch.setattr(audit, "emit", emit)
     await resolver._audit("o", "ns", _mem(), [{"action": cr.FLAG}], "gpt-6.1")
     assert emitted[0]["prompt_version"] == cr.PROMPT_VERSION == "v3"
+
+
+async def test_another_anonymous_session_still_flagging_the_row_is_judged(row_env: NS) -> None:
+    """The row's own flags went with a revision, but the peer still flags it: the pair
+    is judged and the peer's stale flag cleared."""
+    row_env.mem = _mem(user_id="-", conflict_with=[])
+    row_env.heads["m1"] = row_env.mem
+    row_env.heads["m2"].conflict_with = ["m1"]
+    row_env.heads["m2"].status = "conflicted"
+    peer = {**row_env.peers[0], "user_id": "-", "conflict_with": ["m1"], "status": "conflicted"}
+    row_env.peers = [peer]
+    row_env.answer = _answer(_entry("p1", "related", 0.99))
+    counts = await _resolve(policy="auto_reinforce")
+    assert row_env.llm_calls == 1 and counts.cleared == 1
