@@ -72,8 +72,8 @@ lemma = [
   "lemmagen3>=3.3",
 ]
 dev = [
-  "lemmagen3>=3.3",             # the server's own lexical leg; tests exercise it
-  "boto3>=1.35.17",             # the `aws` extra; the export-analytics tests exercise it
+  "lemmagen3>=3.3",              # the server's own lexical leg; tests exercise it
+  "clickhouse-loom-server[aws]", # the export-analytics tests exercise boto3
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
   "pytest-httpx>=0.32",
@@ -95,14 +95,12 @@ dev = [
 # lazy-imports them with an actionable error message when missing.
 ingest = [
   "pypdf>=4.0",
-  # The `aws` extra's floor too: export-analytics accepts any installed boto3,
-  # and its put_object needs IfNoneMatch (1.35.17).
-  "boto3>=1.35.17",
+  "clickhouse-loom-server[aws]", # boto3, at the floor export-analytics needs
   "trafilatura>=2.0",
 ]
 # `loom export-analytics` uploads to S3 under an assumed role; ships in the image.
 aws = [
-  "boto3>=1.35.17",
+  "boto3>=1.35.17", # put_object's IfNoneMatch
 ]
 # Code intelligence plane: tree-sitter parses C++ for
 # the fast tier, numpy runs the weekly PageRank. Needed only when the code

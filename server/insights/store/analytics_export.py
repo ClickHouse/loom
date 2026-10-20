@@ -66,9 +66,9 @@ SELECT
     if(registered, n.kind, NULL) AS kind,
     if(registered, toString(n.visibility), NULL) AS visibility,
     if(registered, n.active, NULL) AS active,
-    if(registered, toDate(n.created_at), NULL) AS created_on,
+    if(registered, toDate(n.created_at, 'UTC'), NULL) AS created_on,
     ifNull(m.live_memories, 0) AS live_memories,
-    if(live_memories > 0, toDate(m.last_memory_at), NULL) AS last_memory_on,
+    if(live_memories > 0, toDate(m.last_memory_at, 'UTC'), NULL) AS last_memory_on,
     {day:Date} AS day,
     now64(3, 'UTC') AS snapshot_at
 FROM (SELECT org, namespace, true AS registered, kind, visibility, active, created_at
@@ -95,8 +95,8 @@ ROW_ORDER = {
 }
 
 
-# The file's column types, pinned rather than read from the server's profile:
-# strings as Parquet STRING (a warehouse joins the hashes as strings), not BINARY.
+# Strings as Parquet STRING, not BINARY, whatever the server's profile says: a
+# warehouse joins the hashes as strings.
 PARQUET_SETTINGS = "SETTINGS output_format_parquet_string_as_string = 1"
 
 

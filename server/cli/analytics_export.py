@@ -56,11 +56,14 @@ def _cmd_export(args: argparse.Namespace) -> int:
         print(f"  ✗ {refusal}", file=sys.stderr)
         return 2
     name_key = name_hash_key(settings.analytics_export_name_key)
-    put = s3_put(
-        lambda: s3_client(role_arn=args.role_arn, region=args.region),
-        args.bucket,
-        expected_owner=args.expected_bucket_owner,
-    )
+
+    def new_client() -> Any:
+        return s3_client(role_arn=args.role_arn, region=args.region)
+
+    # Assume the role once before any read: a trust policy or region that is
+    # wrong fails here, not after the month's read.
+    new_client()
+    put = s3_put(new_client, args.bucket, expected_owner=args.expected_bucket_owner)
 
     # No model calls and no writes to ClickHouse: a plain connection, outside
     # the provider barrier that `run_connected` enters. It connects inside the

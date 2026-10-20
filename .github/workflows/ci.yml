@@ -326,6 +326,16 @@ jobs:
             helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
           done
           kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
+          # The analytics name key reaches the export pod only: the chart refuses it
+          # anywhere the web pods would read it.
+          for v in env.LOOM_ANALYTICS_EXPORT_NAME_KEY=x secrets.extra.LOOM_ANALYTICS_EXPORT_NAME_KEY=x "extraEnv[0].name=LOOM_ANALYTICS_EXPORT_NAME_KEY"; do
+            if helm template loom "$chart" -f "$chart/values-kind.yaml" --set secrets.jwtSecret="$secret" --set "$v" 2>&1 \
+              | grep -q "set LOOM_ANALYTICS_EXPORT_NAME_KEY through analyticsExport.nameKeySecret"; then
+              echo "refused as expected: $v"
+            else
+              echo "the chart accepted $v"; exit 1
+            fi
+          done
 
   agent-plugins:
     name: coding-agent plugins (node --test)

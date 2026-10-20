@@ -238,6 +238,7 @@ def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_th
     monkeypatch.setattr(settings, "analytics_export_name_key", secret)
     fake = _ConnectingCh()
     monkeypatch.setattr(ch_module, "get_client", lambda: fake)
+    monkeypatch.setattr(app, "s3_client", lambda **kw: None)
     monkeypatch.setattr(app, "s3_put", lambda client, bucket, **kw: lambda key, body: True)
     assert cli._cmd_export(_args()) == 0
     assert fake.read_timeout_at_connect >= app.STATEMENT_TIMEOUT_S and fake.disconnected
@@ -258,3 +259,22 @@ def test_day_must_be_iso() -> None:
     assert cli._day("2026-10-09") == date(2026, 10, 9)
     with pytest.raises(argparse.ArgumentTypeError):
         cli._day("10/09/2026")
+
+
+def test_a_role_that_cannot_be_assumed_fails_before_any_read(
+    now: datetime, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import ch as ch_module
+    from server.insights.app import analytics_export as app
+
+    monkeypatch.setattr(settings, "analytics_export_name_key", "s" * 32)
+    fake = _ConnectingCh()
+    monkeypatch.setattr(ch_module, "get_client", lambda: fake)
+
+    def refused(**kw: Any) -> Any:
+        raise PermissionError("AccessDenied: sts:AssumeRole")
+
+    monkeypatch.setattr(app, "s3_client", refused)
+    with pytest.raises(PermissionError):
+        cli._cmd_export(_args(role_arn="arn:aws:iam::123456789012:role/w"))
+    assert fake.calls == [] and fake.read_timeout_at_connect == 0
