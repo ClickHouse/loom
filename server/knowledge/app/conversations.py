@@ -1003,6 +1003,9 @@ async def handle_conversation_list_saved_messages(
     if len(rows) > input.limit and page:
         last = page[-1]
         next_cursor = _encode_cursor(last["saved_at"], f"{last['thread_id']}\x1f{last['msg_id']}")
+    project_rows(
+        hits, _SavedMessageHit, input.fields, always=frozenset({"conversation_id", "message_id"})
+    )
     return ConversationListSavedMessagesOutput(rows=hits, next_cursor=next_cursor)
 
 

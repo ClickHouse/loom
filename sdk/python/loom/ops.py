@@ -7903,6 +7903,7 @@ class ConversationListSavedMessagesInput(TypedDict, total=False):
     conversation_id: NotRequired[Optional[str]]
     limit: NotRequired[int]
     cursor: NotRequired[Optional[str]]
+    fields: NotRequired[Optional[list[str]]]
 
 
 class ConversationListSavedMessagesBody(TypedDict, total=False):
@@ -7915,6 +7916,7 @@ class ConversationListSavedMessagesBody(TypedDict, total=False):
     conversation_id: NotRequired[Optional[str]]
     limit: NotRequired[int]
     cursor: NotRequired[Optional[str]]
+    fields: NotRequired[Optional[list[str]]]
 
 
 class ConversationListSavedMessagesOutput(TypedDict, total=False):

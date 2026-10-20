@@ -171,6 +171,7 @@ Page through the messages a user saved, newest first, with no query: the first v
 | `conversation_id` | `str \| None` | `None` | Optional: only the messages saved from one conversation. |
 | `limit` | `int` | `50` | At most this many messages per page (1-200). |
 | `cursor` | `str \| None` | `None` | Opaque; pass the previous page's `next_cursor`. |
+| `fields` | `list[str] \| None` | `None` | The output fields the caller reads (a whitelist resolved against the row model; an unknown name is a 422); unset, every field. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

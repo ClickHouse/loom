@@ -2262,6 +2262,7 @@ export interface ConversationListSavedMessagesInput {
   conversation_id?: string | null;
   limit?: number;
   cursor?: string | null;
+  fields?: string[] | null;
 }
 
 export interface SavedMessageHit {

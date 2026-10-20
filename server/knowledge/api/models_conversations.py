@@ -388,7 +388,7 @@ class ConversationSearchSavedMessagesInput(BaseModel):
     top_k: int = Field(default=20, ge=1, le=200)
 
 
-class _SavedMessageHit(BaseModel):
+class _SavedMessageHit(ProjectedRow):
     conversation_id: str
     message_id: str
     role: Literal["user", "assistant"]
@@ -415,6 +415,9 @@ class ConversationListSavedMessagesInput(BaseModel):
     limit: int = Field(default=50, ge=1, le=200)
     # Opaque; pass the previous page's `next_cursor`.
     cursor: str | None = None
+    # The output fields the caller reads (a whitelist resolved against the row model;
+    # an unknown name is a 422); unset, every field.
+    fields: list[str] | None = None
 
 
 class ConversationListSavedMessagesOutput(BaseModel):
