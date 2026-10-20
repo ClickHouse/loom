@@ -7,7 +7,7 @@ limits, model names or support for the optional dimensions parameter.
 import hashlib
 from urllib.parse import urlsplit, urlunsplit
 
-from server.clients._http import get_client
+from server.clients._http import get_model_client
 from server.embedding._cache import cached_embed
 from server.embedding._provider import MalformedEmbedding, retrying, vector
 
@@ -73,7 +73,7 @@ class CompatibleEmbedder:
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
         async for attempt in retrying():
             with attempt:
-                response = await get_client().post(
+                response = await get_model_client().post(
                     self._endpoint, json=payload, headers=headers, follow_redirects=False
                 )
                 response.raise_for_status()

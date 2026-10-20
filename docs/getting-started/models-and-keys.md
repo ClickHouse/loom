@@ -200,34 +200,51 @@ OPENAI_API_KEY=<the key the gateway issued for Loom>
 ```
 
 Off its default, the Anthropic key is also sent as `Authorization: Bearer`, the
-scheme gateways take. With a gateway key, set `LOOM_INFERENCE_GATEWAY_REQUIRED=true`
-so a wrong root can never send prompts and the key straight to a provider. A
-token exchange turns this on by itself.
+scheme gateways take. With a gateway key, require the gateway, so a wrong root can
+never send prompts and the key anywhere else. A token exchange requires it by itself.
 
-- **At start**, Loom refuses to load while `LOOM_OPENAI_BASE_URL`,
-  `LOOM_ANTHROPIC_BASE_URL` or `LOOM_EMBEDDING_BASE_URL` points at a provider's
-  own API (OpenAI, Anthropic, Gemini, Cohere), while an entry of
-  `LOOM_RERANK_ENDPOINTS_JSON` does, while the embedder is Gemini's, or while
-  `LOOM_CODE_SEARCH_RERANK_DEFAULT` is `builtin:cohere`. Both
-  default roots are the providers' own APIs, so both must point at the gateway,
-  including the one for a provider you do not use: a model named per request
-  may be either provider's.
-- **At call time**, any call sent to a provider's own API is refused before it
+```bash
+LOOM_INFERENCE_GATEWAY_REQUIRED=true
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example   # comma-separated; exact names, any case
+```
+
+While the gateway is required, model calls and the memory content Loom posts
+to classifiers and rerankers go only to the hosts `LOOM_INFERENCE_GATEWAY_HOSTS`
+lists. A host matches exactly: no wildcard, and `gateway.example` does not
+admit `api.gateway.example` or `gateway.example.attacker.test`; an IP address
+matches only if it is listed.
+
+- **At start**, Loom refuses to load with no `LOOM_INFERENCE_GATEWAY_HOSTS`,
+  or while `LOOM_OPENAI_BASE_URL`, `LOOM_ANTHROPIC_BASE_URL`,
+  `LOOM_EMBEDDING_BASE_URL`, `LOOM_INFERENCE_TOKEN_URL` or an entry of
+  `LOOM_RERANK_ENDPOINTS_JSON` names another host, while the embedder is
+  Gemini's, or while `LOOM_CODE_SEARCH_RERANK_DEFAULT` is `builtin:cohere`.
+  Both API roots count, the one for a provider you do not use included (their
+  defaults are the providers' own APIs): a model named per request may be
+  either provider's.
+- **At call time**, a model call to any other host is refused before it
   leaves, on every redirect hop too, whatever named it: a model named per
-  request, a configuration saved in the dashboard, a `LOOM_CODE_SEARCH_VECTOR_MODELS`
-  entry, a namespace's `classify_endpoint`. `builtin:cohere` is refused as a
+  request, a `LOOM_CODE_SEARCH_VECTOR_MODELS` entry. A refused call is not
+  retried, and `/v1/health` reports the provider as failing.
+- **Namespaces**: `namespace.register` refuses a `classify_endpoint` at another
+  host (422), and one stored before is never called: memory.set keeps the
+  caller's type, with a warning in the log. `builtin:cohere` is refused as a
   rerank choice (422), and a namespace that stored it reranks with nothing,
-  with a warning in the log. A refused call is not retried, the dashboard's model check
-  answers `gateway_required`, and `/v1/health` reports the provider as failing.
-- **Rolling it out:** a previous build ignores the setting, so turn it on once
-  every replica runs this one. A deployment that already exchanges a token
-  refuses to start on this build while it embeds with Gemini (or at a provider's
-  own embedding root), names a rerank endpoint at a provider, or defaults code
-  search to `builtin:cohere`; requests naming `builtin:cohere` get a 422, and
-  namespaces that stored it stop reranking until their `rerank_endpoint` is changed.
-  Move the embedder behind the gateway (`LOOM_EMBEDDING_PROVIDER=compatible`,
-  `LOOM_EMBEDDING_BASE_URL` at the gateway) and the rerankers off the providers
-  first, or the rollout stops at the first upgraded replica.
+  with a warning in the log.
+- **Dashboard**: saving a model configuration with an endpoint at another host
+  (or the Gemini embedder) answers 422, and the model check answers
+  `gateway_required`. A stored one that the check refuses is not applied: the
+  settings in force stay, and `/v1/health` reports `model_configuration_refused`.
+- **Rolling it out:** a previous build ignores both settings, so turn them on
+  once every replica runs this one. A deployment that already exchanges a token
+  refuses to start on this build until `LOOM_INFERENCE_GATEWAY_HOSTS` lists its
+  gateway, and while it embeds with Gemini, names a rerank endpoint at another
+  host or defaults code search to `builtin:cohere`; requests naming
+  `builtin:cohere` get a 422, and namespaces that stored it or an off-gateway
+  `classify_endpoint` stop reranking or classifying until it is changed. Set the
+  hosts and move the embedder behind the gateway (`LOOM_EMBEDDING_PROVIDER=compatible`,
+  `LOOM_EMBEDDING_BASE_URL` at the gateway) first, or the rollout stops at the
+  first upgraded replica.
 
 A gateway that accepts workload identity (RFC 8693 token
 exchange) needs no key at all: Loom exchanges its workload's OIDC token there,
@@ -237,6 +254,7 @@ from, name the provider and the models:
 
 ```bash
 LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token         # https
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example                         # every root's host
 LOOM_INFERENCE_WORKLOAD_TOKEN_FILE=/var/run/secrets/tokens/gateway   # rotated by the platform
 LOOM_INFERENCE_TOKEN_SCOPE="chat embeddings"                         # if the gateway asks for one
 LOOM_OPENAI_BASE_URL=https://gateway.example/v1                      # both roots required:
@@ -246,10 +264,10 @@ LOOM_LLM_MODEL=gpt-6-luna
 LOOM_EMBEDDING_MODEL=text-embedding-3-large
 ```
 
-Loom refuses to start while either provider's root still points at that
-provider's own API: a model named per request may be either provider's, and the
-gateway's token would go there. In the dashboard, model
-changes for OpenAI and Anthropic are checked through the gateway too.
+Loom refuses to start while either provider's root, or the token endpoint,
+is at a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list: a model named per
+request may be either provider's, and the gateway's token would go there. In
+the dashboard, model changes are checked through the gateway too.
 
 On Kubernetes the token file is a projected service-account token with the
 gateway's audience; the gateway must trust the cluster's OIDC issuer and match
@@ -264,6 +282,7 @@ as an issuer.
 
 ```bash
 LOOM_INFERENCE_TOKEN_URL=https://gateway.example/oauth/token
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example
 LOOM_INFERENCE_TOKEN_AUDIENCE=loom-inference   # what the gateway's entry for Loom names
 LOOM_PUBLIC_BASE_URL=https://loom.example      # the issuer is <this>/v1
 LOOM_OPENAI_BASE_URL=https://gateway.example/v1

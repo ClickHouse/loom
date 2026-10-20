@@ -30,11 +30,15 @@ import logging
 
 import httpx
 
-from server.clients._http import refuse_provider_api
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
+from server.settings import settings
 
 log = logging.getLogger(__name__)
+
+_LOGGED_CAP = 1000  # log-once sets stop growing here
+# Namespaces whose stored classify_endpoint is off the gateway, logged once per process.
+_OFF_GATEWAY_LOGGED: set[tuple[str, str]] = set()
 
 _TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
 
@@ -50,7 +54,8 @@ async def classify(
     when the response's memory_type isn't in valid_types (when
     valid_types is non-empty).
     """
-    if not endpoint:
+    if not endpoint or settings.off_gateway(endpoint):
+        # Off the gateway: no call, fail closed, and the caller's type stays.
         return ""
     body = {
         "value": value,
@@ -58,7 +63,6 @@ async def classify(
         "valid_types": valid_types,
     }
     try:
-        refuse_provider_api(endpoint)  # its own client: the shared client's hook never runs
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(endpoint, json=body)
             resp.raise_for_status()
@@ -111,7 +115,19 @@ async def get_namespace_classify_config(
         return "", ""
     if not row:
         return "", ""
-    return (
-        row.get("classify_endpoint") or "",
-        row.get("classify_prompt_template") or "",
-    )
+    endpoint = row.get("classify_endpoint") or ""
+    host = settings.off_gateway(endpoint) if endpoint else ""
+    if host:
+        # Stored before the gateway was required: memory content never goes
+        # there, and the namespace has no classifier until it is changed.
+        full = len(_OFF_GATEWAY_LOGGED) >= _LOGGED_CAP
+        if (org, namespace) not in _OFF_GATEWAY_LOGGED and not full:
+            _OFF_GATEWAY_LOGGED.add((org, namespace))
+            log.warning(
+                "%s/%s classifies at %s, not in LOOM_INFERENCE_GATEWAY_HOSTS: not classified",
+                org,
+                namespace,
+                host,
+            )
+        return "", ""
+    return (endpoint, row.get("classify_prompt_template") or "")

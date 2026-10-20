@@ -25,7 +25,7 @@ from pathlib import Path
 
 import httpx
 
-from server.clients._http import refuse_provider_api
+from server.clients._http import refuse_off_gateway
 from server.core.errors import LoomServerError
 from server.settings import settings
 
@@ -60,10 +60,10 @@ def exchanging() -> bool:
 
 async def bearer(provider_key: str, url: str) -> str:
     """What a model call to `url` presents: the gateway's token when Loom
-    exchanges an identity token there, else the provider key. A provider's own
-    API is refused here, before a token is fetched for it, and on every hop by
-    the shared client (`server.clients._http._on_request`)."""
-    refuse_provider_api(url)
+    exchanges an identity token there, else the provider key. A host off the
+    gateway is refused here, before a token is fetched for it, and on every hop
+    by the model client (`server.clients._http._on_request`)."""
+    refuse_off_gateway(url)
     if not exchanging():
         return provider_key
     now = time.time()
@@ -79,7 +79,7 @@ async def bearer(provider_key: str, url: str) -> str:
 
 async def _renew() -> None:
     global _token, _expires_at, _renew_at
-    from server.clients._http import get_client as http
+    from server.clients._http import get_model_client as http
 
     try:
         form = {

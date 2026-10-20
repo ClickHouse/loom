@@ -94,6 +94,9 @@ class HealthState:
     # Cut-off carried writes held past their release or uncountable
     # (`rmt_carry.pinned_overdue()`): None = not a server process.
     carry_pinned: tuple[Mapping[str, Any], ...] | None = None
+    # Why the dashboard's stored model configuration is not applied
+    # (`provider_runtime.refused_configuration()`); '' when it is, or not a server.
+    refused_configuration: str = ""
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -254,6 +257,18 @@ def _llm_problems(settings: Any, state: HealthState) -> list[Problem]:
 
 def _runtime_problems(state: HealthState) -> list[Problem]:
     out: list[Problem] = []
+    if state.refused_configuration:
+        out.append(
+            Problem(
+                "model_configuration_refused",
+                "error",
+                "The model configuration saved in the dashboard is not applied: "
+                f"{state.refused_configuration}. The settings in force serve instead.",
+                "Save one whose endpoints are in LOOM_INFERENCE_GATEWAY_HOSTS (Settings, "
+                "Models & keys), or reset it to the environment's.",
+                source="runtime",
+            )
+        )
     providers = (state.provider_status or {}).get("providers") or {}
     for name, entry in sorted(providers.items()):
         if not entry.get("failing"):

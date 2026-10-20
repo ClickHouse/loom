@@ -70,13 +70,23 @@ mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
 
 **Model calls behind the gateway.** While the gateway is required
-(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), no model call reaches a
-provider's own API (`server/clients/_http.py::refuse_provider_api`). The settings refuse
-an API root or a rerank endpoint there, the Gemini embedder and a `builtin:cohere`
-code-search default; the shared provider client's request hook (`_on_request`) refuses
-every hop, redirects included; the rerank and classify senders, on their own clients,
-check each URL; and `builtin:cohere` is refused by name. A refusal (`GATEWAY_REQUIRED`)
-is a setting to fix, and neither SDK retries it.
+(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), model calls and the memory
+content posted to classifiers and rerankers go only to the hosts
+`LOOM_INFERENCE_GATEWAY_HOSTS` lists, matched exactly (`Settings.off_gateway`); an
+allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as
+a provider's API is. The settings refuse to load with no hosts, or with an API root, the
+token endpoint or a rerank endpoint elsewhere, the Gemini embedder or a `builtin:cohere`
+code-search default (`gateway_refusal`). Model calls go through their own client,
+`server/clients/_http.py::get_model_client`, whose request hook (`_on_request`) refuses
+every other host on every hop, redirects included; GitHub and an issuer's discovery
+document use the other client, which has no such hook. The rerank and classify senders,
+on their own clients, check each URL. `namespace.register` refuses a `classify_endpoint`
+elsewhere (422), and one stored before is never called: a namespace admin can neither
+send memory content off the gateway nor probe an internal host with it. A dashboard
+configuration goes through the same check: refused at save (422), and a stored one that
+fails is not applied (`provider_runtime.apply_configuration`; `/v1/health` reports
+`model_configuration_refused`). A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and
+neither SDK retries it.
 
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
 writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse

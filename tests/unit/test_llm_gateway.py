@@ -40,10 +40,11 @@ def gw(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Gateway:
     token = tmp_path / "token"
     token.write_text("projected-sa-token\n")
     monkeypatch.setattr(settings, "inference_token_url", "https://gateway.example/oauth/token")
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
     monkeypatch.setattr(settings, "inference_workload_token_file", str(token))
     monkeypatch.setattr(settings, "inference_token_scope", "chat embeddings")
     fake = _Gateway()
-    monkeypatch.setattr("server.clients._http.get_client", lambda: fake)
+    monkeypatch.setattr("server.clients._http.get_model_client", lambda: fake)
     gateway._reset_for_tests()
     yield fake
     gateway._reset_for_tests()
@@ -238,6 +239,7 @@ def test_a_gateway_set_up_to_leak_or_fail_is_refused_at_load(
     base = {
         "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
         "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE": str(token),
+        "LOOM_INFERENCE_GATEWAY_HOSTS": "gateway.example",
     }
     for name, value in {**base, **env}.items():
         monkeypatch.setenv(name, value)
@@ -259,13 +261,13 @@ def test_health_does_not_call_an_exchanging_deployment_keyless(gw: _Gateway, mon
     [
         "https://api.anthropic.com/v1/messages",
         "https://API.openai.com/v1/embeddings",
-        "https://api.openai.com./v1/chat/completions",  # a trailing dot
-        "https://eu.api.openai.com/v1/chat/completions",  # a regional host
+        "https://myres.openai.azure.com/openai/deployments/d/chat/completions",
+        "https://10.0.0.5/v1/chat/completions",  # an IP literal
     ],
 )
-def test_the_gateway_token_never_goes_to_a_providers_own_api(gw: _Gateway, url: str) -> None:
-    # Whatever path picked the provider: a model named per request, the dashboard's check.
-    with pytest.raises(GatewayRequiredError, match="not the gateway"):
+def test_the_gateway_token_never_goes_off_the_gateways_hosts(gw: _Gateway, url: str) -> None:
+    # Whatever path picked the host: a model named per request, the dashboard's check.
+    with pytest.raises(GatewayRequiredError, match="not in LOOM_INFERENCE_GATEWAY_HOSTS"):
         asyncio.run(gateway.bearer("", url))
     assert gw.sent == []
 
@@ -305,10 +307,11 @@ def test_an_exchange_needs_both_roots_at_the_gateway(
     base = {
         "LOOM_INFERENCE_TOKEN_URL": "https://gateway.example/oauth/token",
         "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE": str(token),
+        "LOOM_INFERENCE_GATEWAY_HOSTS": "gateway.example",
     }
     for name, value in {**base, **env}.items():
         monkeypatch.setenv(name, value)
-    with pytest.raises(ValueError, match="at the gateway"):
+    with pytest.raises(ValueError, match="at a host in LOOM_INFERENCE_GATEWAY_HOSTS"):
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 
@@ -394,77 +397,91 @@ def test_the_documented_gateway_block_starts(
 _AT_GATEWAY = {
     "LOOM_OPENAI_BASE_URL": "https://gateway.example/v1",
     "LOOM_ANTHROPIC_BASE_URL": "https://gateway.example",
+    "LOOM_INFERENCE_GATEWAY_HOSTS": "gateway.example",
 }
+
+# Hosts that are no gateway of this deployment: a provider, a cloud's own
+# endpoint, an IP literal, a name that only starts or ends like the gateway's.
+_OFF = [
+    "https://api.openai.com/v1/chat/completions",
+    "https://api.anthropic.com",
+    "https://myres.openai.azure.com/openai/deployments/d/embeddings",
+    "https://bedrock-runtime.us-east-1.amazonaws.com/model/m/invoke",
+    "https://10.0.0.5/v1/chat/completions",
+    "https://[::1]/v1/embeddings",
+    "https://gateway.example.attacker.test/v1",
+    "https://attacker.test/gateway.example/v1",
+    "https://api.cohere.com/v2/rerank",
+]
 
 
 @pytest.fixture
 def required(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A static gateway key, with the gateway required."""
+    """A static gateway key, with the gateway required at gateway.example."""
     monkeypatch.setattr(settings, "inference_gateway_required", True)
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "Gateway.Example")
     monkeypatch.setattr(settings, "inference_token_url", "")
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        "https://api.openai.com/v1/chat/completions",
-        "https://api.anthropic.com",
-        "https://eu.api.openai.com/v1/embeddings",
-        "https://generativelanguage.googleapis.com/v1beta/models/m:embedContent",
-        "https://api.cohere.com/v2/rerank",
-        "https://api.cohere.ai/v1/rerank",  # Cohere's older host
-    ],
-)
-def test_with_the_gateway_required_a_key_never_goes_to_a_providers_own_api(
-    required: None, url: str
-) -> None:
-    with pytest.raises(GatewayRequiredError, match="not the gateway"):
+@pytest.mark.parametrize("url", _OFF)
+def test_with_the_gateway_required_a_key_never_goes_off_its_hosts(required: None, url: str) -> None:
+    with pytest.raises(GatewayRequiredError, match="not in LOOM_INFERENCE_GATEWAY_HOSTS"):
         asyncio.run(gateway.bearer("sk-gateway", url))
 
 
-def test_with_the_gateway_required_its_key_is_the_bearer_at_the_gateway(required: None) -> None:
-    assert asyncio.run(gateway.bearer("sk-gateway", _GW)) == "sk-gateway"
+@pytest.mark.parametrize("url", [_GW, "https://GATEWAY.example./v1/embeddings"])
+def test_with_the_gateway_required_its_key_is_the_bearer_at_its_hosts(
+    required: None, url: str
+) -> None:
+    assert asyncio.run(gateway.bearer("sk-gateway", url)) == "sk-gateway"
 
 
 @pytest.fixture
 def wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
-    """The shared client, its hooks in place, over a transport that records
-    each URL it is sent and redirects the gateway's /moved to OpenAI."""
+    """The model client, its hook in place, over a transport that records each
+    URL it is sent and redirects the gateway's /moved to a host it does not list."""
     sent: list[str] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
         sent.append(str(request.url))
         if request.url.path.endswith("/moved"):
-            return httpx.Response(307, headers={"location": "https://api.openai.com/v1/embeddings"})
+            return httpx.Response(307, headers={"location": "https://mirror.example/v1/embeddings"})
         return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.5] * 8}]})
 
-    monkeypatch.setattr(_http, "_client", None)  # restored after the test
-    client = _http.get_client()
+    monkeypatch.setattr(_http, "_model_client", None)  # restored after the test
+    client = _http.get_model_client()
     monkeypatch.setattr(client, "_transport", httpx.MockTransport(answer))
     yield sent
     asyncio.run(client.aclose())
 
 
-def test_with_the_gateway_required_no_redirect_takes_a_call_to_a_provider(
+def test_with_the_gateway_required_no_redirect_takes_a_call_off_its_hosts(
     required: None, wire: list[str]
 ) -> None:
     async def follow() -> None:
-        await _http.get_client().post("https://gateway.example/v1/moved", json={})
+        await _http.get_model_client().post("https://gateway.example/v1/moved", json={})
 
     with pytest.raises(GatewayRequiredError):
         asyncio.run(follow())
-    assert wire == ["https://gateway.example/v1/moved"]  # the provider's hop never left
+    assert wire == ["https://gateway.example/v1/moved"]  # the other host's hop never left
 
 
-def test_with_the_gateway_required_no_embedder_posts_to_a_provider(
-    required: None, wire: list[str], monkeypatch: pytest.MonkeyPatch
+def test_the_client_for_other_calls_has_no_gateway_hook(required: None) -> None:
+    # GitHub and an issuer's discovery document are not model calls.
+    assert _http.get_client().event_hooks["request"] == []
+    assert _http.get_model_client().event_hooks["request"] == [_http._on_request]
+
+
+@pytest.mark.parametrize("url", _OFF[:7])
+def test_with_the_gateway_required_no_embedder_posts_off_its_hosts(
+    required: None, wire: list[str], monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
-    # Neither calls bearer: the shared client refuses the provider's host, at once.
+    # Neither calls bearer: the model client refuses the host, at once.
     from server.embedding import compatible, gemini
 
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
     direct = compatible.CompatibleEmbedder(
-        model="text-embedding-3-small", dim=8, base_url="https://api.openai.com/v1", api_key="k"
+        model="text-embedding-3-small", dim=8, base_url=url, api_key="k"
     )
     with pytest.raises(GatewayRequiredError):
         asyncio.run(direct._request(["text"]))
@@ -485,56 +502,171 @@ def test_the_dashboards_check_names_the_refusal(required: None, wire: list[str])
             "text-embedding-3-small",
             "k",
             8,
-            base_url="https://api.openai.com/v1",
+            base_url="https://myres.openai.azure.com/openai",
         )
     )
     assert (check.ready, check.code) == (False, "gateway_required")
 
 
-def test_no_rerank_or_classify_endpoint_reaches_a_provider(
+class _NoPost:
+    """An httpx.AsyncClient stand-in that records what would be posted."""
+
+    posted: list[str] = []
+
+    def __init__(self, **_: Any) -> None:
+        pass
+
+    async def __aenter__(self) -> _NoPost:
+        return self
+
+    async def __aexit__(self, *a: Any) -> None:
+        return None
+
+    async def post(self, url: str, **_: Any) -> httpx.Response:
+        _NoPost.posted.append(url)
+        return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+
+
+def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
     required: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Each posts on its own client, so each checks the URL itself.
     from server.memory.app import classify, rerank
     from server.memory.app.rerank import RerankCandidate
 
-    posted: list[str] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *a: Any) -> None:
-            return None
-
-        async def post(self, url: str, **_: Any) -> httpx.Response:
-            posted.append(url)
-            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(rerank.httpx, "AsyncClient", _Client)
-    monkeypatch.setattr(classify.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(_NoPost, "posted", [])
+    monkeypatch.setattr(rerank.httpx, "AsyncClient", _NoPost)
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _NoPost)
     monkeypatch.setenv("COHERE_API_KEY", "c-key")
-    monkeypatch.setattr(
-        settings, "rerank_endpoints_json", '{"direct": "https://api.openai.com/v1/rerank"}'
-    )
+    monkeypatch.setattr(settings, "rerank_endpoints_json", '{"direct": "https://10.0.0.5/rerank"}')
     candidates = [RerankCandidate("k", "ns", "text", "observation", 0.5)]
     for endpoint in ("direct", "builtin:cohere"):
         out = asyncio.run(
             rerank.rerank(endpoint=endpoint, prompt_template="", query="q", candidates=candidates)
         )
         assert out == candidates  # fails open, in input order
-    label = asyncio.run(
-        classify.classify(
-            endpoint="https://api.anthropic.com/classify",
-            prompt_template="",
-            value="v",
-            valid_types=[],
+    for url in _OFF:
+        label = asyncio.run(
+            classify.classify(endpoint=url, prompt_template="", value="v", valid_types=[])
         )
+        assert label == ""  # the caller's type stays
+    assert _NoPost.posted == []
+
+
+def test_a_classify_endpoint_off_the_gateways_hosts_is_refused_at_write(required: None) -> None:
+    from pydantic import ValidationError
+
+    from server.identity.api.models import NamespaceRegisterInput
+
+    base = {"org": "acme", "namespace": "ns", "owner_email": "a@acme.test"}
+    for url in ("https://myres.openai.azure.com/classify", "http://169.254.169.254/latest"):
+        with pytest.raises(ValidationError, match="classify_endpoint"):
+            NamespaceRegisterInput(**base, classify_endpoint=url)
+    ok = NamespaceRegisterInput(**base, classify_endpoint="https://gateway.example/classify")
+    assert ok.classify_endpoint == "https://gateway.example/classify"
+
+
+def test_a_stored_classify_endpoint_off_the_gateways_hosts_is_never_called(
+    required: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from server.core import ch
+    from server.memory.app import classify
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
+            return {"classify_endpoint": "https://10.0.0.5/c", "classify_prompt_template": "p"}
+
+    monkeypatch.setattr(ch, "get_client", lambda: _CH())
+    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", set())
+    for _ in range(2):
+        assert asyncio.run(classify.get_namespace_classify_config("acme", "ns")) == ("", "")
+    warned = [r for r in caplog.records if "classifies at" in r.getMessage()]
+    assert len(warned) == 1 and "10.0.0.5" in warned[0].getMessage()
+    full = {("acme", f"ns-{i}") for i in range(1000)}
+    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", set(full))
+    assert asyncio.run(classify.get_namespace_classify_config("acme", "new")) == ("", "")
+    assert classify._OFF_GATEWAY_LOGGED == full  # capped: still refused, not logged
+    monkeypatch.setattr(settings, "inference_gateway_required", False)
+    config = asyncio.run(classify.get_namespace_classify_config("acme", "ns"))
+    assert config == ("https://10.0.0.5/c", "p")
+
+
+@pytest.fixture
+def roots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both API roots at the gateway, so only a configuration can be refused."""
+    monkeypatch.setattr(settings, "openai_base_url", "https://gateway.example/v1")
+    monkeypatch.setattr(settings, "anthropic_base_url", "https://gateway.example")
+
+
+def _setup(provider: str = "compatible", base_url: str = "") -> Any:
+    from server.insights.api.models_provider_setup import ProviderSetupInput
+
+    model = "gemini-embedding-001" if provider == "gemini" else "text-embedding-3-small"
+    return ProviderSetupInput.model_validate(
+        {
+            "llm": {"provider": "openai", "model": "gpt-6-luna"},
+            "embedding": {"provider": provider, "model": model, "base_url": base_url},
+        }
     )
-    assert label == "" and posted == []
+
+
+@pytest.mark.parametrize(
+    "setup_args",
+    [
+        ("compatible", "https://myres.openai.azure.com/openai"),
+        ("compatible", "https://10.0.0.5/v1"),
+        ("gemini", ""),
+    ],
+)
+def test_a_dashboard_configuration_off_the_gateway_is_not_applied(
+    required: None, roots: None, monkeypatch: pytest.MonkeyPatch, setup_args: tuple[str, str]
+) -> None:
+    from server.insights.app import provider_runtime
+    from server.observability.problems import HealthState, collect_problems
+
+    monkeypatch.setattr(provider_runtime, "_refused", "")
+    before = settings.model_dump(include={"embedding_provider", "embedding_base_url", "llm_model"})
+    provider_runtime.apply_configuration(_setup(*setup_args))
+    after = settings.model_dump(include={"embedding_provider", "embedding_base_url", "llm_model"})
+    assert after == before  # the settings in force stay
+    refused = provider_runtime.refused_configuration()
+    assert refused and ("Gemini" in refused or "LOOM_EMBEDDING_BASE_URL" in refused)
+    state = HealthState(env={}, refused_configuration=refused)
+    assert "model_configuration_refused" in {p.code for p in collect_problems(settings, state)}
+
+
+def test_a_dashboard_configuration_at_the_gateway_applies(
+    required: None,
+    roots: None,
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Any,
+) -> None:
+    from server.insights.app import provider_runtime
+
+    applied: list[str] = []
+    monkeypatch.setattr(provider_runtime, "_refused", "stale")
+    monkeypatch.setattr(
+        provider_runtime, "install_provider_keys", lambda keys: applied.append("keys")
+    )
+    settings_override(**settings.model_dump())  # every field it sets is restored after
+    source = settings._llm_provider_source  # a private attribute, put back by hand
+    try:
+        provider_runtime.apply_configuration(_setup("compatible", "https://gateway.example/v1"))
+    finally:
+        settings._llm_provider_source = source
+    assert settings.embedding_base_url == "https://gateway.example/v1" and applied == ["keys"]
+    assert provider_runtime.refused_configuration() == ""
+
+
+def test_a_dashboard_save_off_the_gateway_answers_422(required: None, roots: None) -> None:
+    from fastapi import HTTPException
+
+    from server.insights.app import provider_activation
+
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(provider_activation._save_locked(_setup("compatible", "https://10.0.0.5/v1")))
+    assert refused.value.status_code == 422
+    assert "LOOM_INFERENCE_GATEWAY_HOSTS" in str(refused.value.detail)
 
 
 @pytest.mark.parametrize("rerank", ["builtin:cohere", "builtin:cohere:rerank-english-v3.0"])
@@ -616,44 +748,76 @@ def test_with_the_gateway_required_builtin_cohere_is_refused_by_name(required: N
 @pytest.mark.parametrize(
     ("env", "message"),
     [
-        ({}, "needs LOOM_OPENAI_BASE_URL at the gateway"),  # the defaults are the providers'
-        ({"LOOM_ANTHROPIC_BASE_URL": "https://api.anthropic.com"}, "LOOM_ANTHROPIC_BASE_URL"),
+        ({"LOOM_INFERENCE_GATEWAY_HOSTS": ""}, "needs LOOM_INFERENCE_GATEWAY_HOSTS"),
+        ({"LOOM_OPENAI_BASE_URL": "https://api.openai.com/v1"}, "LOOM_OPENAI_BASE_URL"),
+        (
+            {"LOOM_OPENAI_BASE_URL": "https://myres.openai.azure.com/openai"},
+            "LOOM_OPENAI_BASE_URL at a host in LOOM_INFERENCE_GATEWAY_HOSTS, not myres",
+        ),
+        ({"LOOM_ANTHROPIC_BASE_URL": "https://10.0.0.5"}, "LOOM_ANTHROPIC_BASE_URL"),
+        (
+            {"LOOM_ANTHROPIC_BASE_URL": "https://gateway.example.attacker.test"},
+            "LOOM_ANTHROPIC_BASE_URL",
+        ),
         (
             {
                 "LOOM_EMBEDDING_PROVIDER": "compatible",
-                "LOOM_EMBEDDING_BASE_URL": "https://api.openai.com/v1",
+                "LOOM_EMBEDDING_BASE_URL": "https://mirror.example/v1",
             },
             "LOOM_EMBEDDING_BASE_URL",
         ),
         ({"LOOM_EMBEDDING_MODEL": "gemini-embedding-001"}, "Gemini embedder"),
-        (
-            {"LOOM_RERANK_ENDPOINTS_JSON": '{"direct": "https://api.cohere.com/v2/rerank"}'},
-            "entry 'direct'",
-        ),
+        ({"LOOM_RERANK_ENDPOINTS_JSON": '{"direct": "https://10.0.0.5/rerank"}'}, "entry 'direct'"),
     ],
 )
-def test_the_gateway_required_refuses_to_load_with_a_providers_address(
+def test_the_gateway_required_refuses_to_load_with_an_address_off_its_hosts(
     monkeypatch: pytest.MonkeyPatch, env: dict[str, str], message: str
 ) -> None:
-    base = {"LOOM_INFERENCE_GATEWAY_REQUIRED": "true"} | (_AT_GATEWAY if env else {})
-    for name, value in {**base, **env}.items():
+    for name, value in {**_AT_GATEWAY, "LOOM_INFERENCE_GATEWAY_REQUIRED": "true", **env}.items():
         monkeypatch.setenv(name, value)
     with pytest.raises(ValueError, match=f"LOOM_INFERENCE_GATEWAY_REQUIRED.*{message}"):
         Settings(_env_file=None)  # type: ignore[call-arg]
 
 
-def test_the_gateway_required_loads_with_every_root_at_the_gateway(
+@pytest.mark.parametrize(
+    "hosts", ["*.gateway.example", "https://gateway.example", "gateway.example:443", "gate way"]
+)
+def test_a_gateway_host_is_a_bare_hostname(monkeypatch: pytest.MonkeyPatch, hosts: str) -> None:
+    monkeypatch.setenv("LOOM_INFERENCE_GATEWAY_HOSTS", hosts)
+    with pytest.raises(ValueError, match="is not a hostname"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+
+def test_the_gateway_required_loads_with_every_root_at_its_hosts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     env = _AT_GATEWAY | {
         "LOOM_INFERENCE_GATEWAY_REQUIRED": "true",
+        "LOOM_INFERENCE_GATEWAY_HOSTS": "gateway.example, embed.gateway.example",
         "LOOM_EMBEDDING_PROVIDER": "compatible",
-        "LOOM_EMBEDDING_BASE_URL": "https://gateway.example/v1",
+        "LOOM_EMBEDDING_BASE_URL": "https://EMBED.gateway.example/v1",
+        "LOOM_RERANK_ENDPOINTS_JSON": '{"ranker": "https://gateway.example/rerank"}',
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     loaded = Settings(_env_file=None)  # type: ignore[call-arg]
     assert loaded.gateway_required()
+    assert loaded.gateway_hosts() == {"gateway.example", "embed.gateway.example"}
+
+
+def test_an_exchange_needs_its_token_endpoint_at_the_gateways_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    token = tmp_path / "token"
+    token.write_text("t")
+    env = _AT_GATEWAY | {
+        "LOOM_INFERENCE_TOKEN_URL": "https://idp.example/oauth/token",
+        "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE": str(token),
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError, match="LOOM_INFERENCE_TOKEN_URL needs LOOM_INFERENCE_TOKEN_URL"):
+        Settings(_env_file=None)  # type: ignore[call-arg]
 
 
 def test_an_exchange_requires_the_gateway_and_refuses_the_gemini_embedder(

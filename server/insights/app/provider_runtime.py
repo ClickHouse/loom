@@ -11,7 +11,7 @@ from server.core.ch import get_client, set_query_tag
 from server.core.model_work_gate import get_model_work_gate
 from server.core.provider_keys import install_provider_keys
 from server.embedding import embedder
-from server.insights.api.models_provider_setup import ProviderSetupInput
+from server.insights.api.models_provider_setup import EmbeddingSetup, ProviderSetupInput
 from server.insights.app.provider_credentials import open_configuration
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.domain.provider_serving_policy import serving_vector_settings
@@ -27,6 +27,10 @@ from server.settings import settings
 
 _applied_version = ""
 _environment_settings: dict[str, Any] | None = None
+# Why the stored configuration was not applied ('' when it was): /v1/health says so.
+_refused = ""
+
+log = logging.getLogger(__name__)
 _maintenance_config_id: str | None = None
 
 
@@ -82,13 +86,37 @@ def current_embedding() -> embedding_space.Identity:
     return embedding_space.identity(settings.model_dump())
 
 
+def gateway_refusal(embedding: EmbeddingSetup) -> str:
+    """Why a configuration with this embedding would send model calls off the
+    gateway, as the settings check it at load; "" when it would not."""
+    return settings.gateway_refusal(
+        {
+            "embedding_provider": embedding.provider,
+            "embedding_model": embedding.model,
+            "embedding_base_url": embedding.base_url,
+        }
+    )
+
+
+def refused_configuration() -> str:
+    """Why the stored configuration is not applied; "" when it is."""
+    return _refused
+
+
 def apply_configuration(setup: ProviderSetupInput) -> None:
     """Apply a validated snapshot with no await points or environment mutation.
 
     Call at startup, or only after admission and workers have drained for a model
     transition. Embedding changes must not be applied to a live old-model index.
+    A configuration the gateway check refuses is not applied: the settings in
+    force stay, and /v1/health names it.
     """
+    global _refused
     environment_settings()
+    _refused = gateway_refusal(setup.embedding)
+    if _refused:
+        log.error("saved model configuration not applied: %s", _refused)
+        return
     values = llm_setup_settings(
         setup.llm.provider,
         setup.llm.model,

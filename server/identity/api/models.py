@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from server.memory.domain.classify_endpoints import ClassifyEndpoint
 from server.memory.domain.code_change import CodeChangePolicy
 from server.memory.domain.proposal_policy import ProposalPolicy
 from server.memory.domain.rerank_names import RerankName
@@ -169,8 +170,9 @@ class NamespaceRegisterInput(BaseModel):
     # Text forwarded as `prompt_template` in every call to `rerank_endpoint`.
     rerank_prompt_template: str | None = None
     # Optional pluggable classifier for memory.set(classify=True). Out-of-registry
-    # responses are ignored; fail-open on any error.
-    classify_endpoint: str | None = None
+    # responses are ignored; fail-open on any error. While the gateway is required
+    # its host must be in LOOM_INFERENCE_GATEWAY_HOSTS (else 422).
+    classify_endpoint: ClassifyEndpoint = None
     # Text forwarded as `prompt_template` in every call to `classify_endpoint`.
     classify_prompt_template: str | None = None
     # Per-tag TTL + dedup_threshold registry, matched on tags at memory.set time.
