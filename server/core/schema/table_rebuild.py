@@ -148,7 +148,7 @@ def find_target(table: str, mig_dir: Path = MIGRATIONS_DIR) -> tuple[str, str]:
 def live_layout(ch: Any, table: str) -> Layout | None:
     rows = ch.query(
         "SELECT sorting_key, partition_key FROM system.tables "
-        "WHERE database = 'loom' AND name = {t:String}",
+        "WHERE database = currentDatabase() AND name = {t:String}",
         parameters={"t": table},
     ).result_rows
     return Layout(str(rows[0][0]), str(rows[0][1])) if rows else None
@@ -172,7 +172,8 @@ def columns(ch: Any, table: str) -> dict[str, tuple[Any, ...]]:
     a fresh one, and every reader and writer names its columns."""
     rows = ch.query(
         "SELECT name, type, default_kind, default_expression, compression_codec "
-        "FROM system.columns WHERE database = 'loom' AND table = {t:String} ORDER BY position",
+        "FROM system.columns WHERE database = currentDatabase() AND table = {t:String} "
+        "ORDER BY position",
         parameters={"t": table},
     ).result_rows
     return {str(r[0]): tuple(r[1:]) for r in rows}
@@ -319,7 +320,7 @@ def table_row(ch: Any, name: str) -> tuple[str, str, Any] | None:
     """(engine, uuid, metadata modification time) of `loom.<name>`, or None."""
     rows = ch.query(
         "SELECT engine, toString(uuid), metadata_modification_time FROM system.tables "
-        "WHERE database = 'loom' AND name = {t:String}",
+        "WHERE database = currentDatabase() AND name = {t:String}",
         parameters={"t": name},
         settings=CONSISTENT,
     ).result_rows
@@ -422,7 +423,7 @@ def print_target(ch: Any, table: str) -> None:
     log(f"  server {ver} on {host}")
     for total, active in ch.query(
         "SELECT total_replicas, active_replicas FROM system.replicas "
-        "WHERE database = 'loom' AND table = {t:String}",
+        "WHERE database = currentDatabase() AND table = {t:String}",
         parameters={"t": table},
         settings=CONSISTENT,
     ).result_rows:

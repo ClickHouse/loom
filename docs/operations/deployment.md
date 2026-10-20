@@ -198,8 +198,25 @@ first applies pending migrations ([upgrades](./upgrades.md#how-migrations-run)).
 - Every setting is an environment variable `LOOM_<FIELD>`. Provider keys keep their own
   names (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`). The server reads them
   once at startup; a change needs a restart.
+- A setting marked live also takes a deployment-wide override (`loom settings set`, the
+  dashboard), which wins over the environment and every file and applies within seconds
+  without a restart ([runtime settings](./runtime-settings.md)).
 - `.env` in the working directory is read by default. `LOOM_ENV_FILE` names another
   file; an empty value reads none. `.env.example` is the commented template.
+- Settings that are not secrets can also go in a YAML settings file, the path
+  `LOOM_SETTINGS_FILE` names (`loom.example.yaml`, generated, lists every setting at its default,
+  `schemas/loom-settings.schema.json` its schema). The environment and `.env` win over
+  it. A secret, a key given twice, an unsupported `version` or a value of the wrong
+  type or outside its bounds (also one the environment overrides) stops the server
+  at startup; a name no setting has is logged and ignored, so a replica of the previous
+  build starts on a file that names a new setting. `LOOM_SETTINGS_FILE` can be set in
+  the environment or in `.env`. Under compose it names a path inside the containers:
+  mount the file into every Loom service, or they refuse to start on a file that does
+  not exist. In `compose.yaml`, add `./loom.yaml:/app/config/loom.yaml:ro` to the
+  `loom` service's `volumes:`. In `dev/docker-compose.cloud.yml`, add
+  `../loom.yaml:/app/config/loom.yaml:ro` (its relative paths resolve from `dev/`) to
+  `x-loom-common`'s `volumes:`, which both services share; a `volumes:` key on one
+  service replaces that list rather than adding to it.
 - The compose file's `environment:` wins over `.env`. `dev/docker-compose.dev.yml` pins
   the ClickHouse connection and `LOOM_SELF_SIGNUP=open`, so those lines in `.env` do
   nothing on the local stack. `compose.yaml` and `dev/docker-compose.cloud.yml` take
@@ -233,19 +250,33 @@ LOOM_REQUIRE_REAL_PROVIDERS=true            # a fake or keyless provider makes /
 
 ### ClickHouse connection
 
-| Variable           | Default     | Set it to                                                                                |
-| ------------------ | ----------- | ---------------------------------------------------------------------------------------- |
-| `LOOM_CH_HOST`     | `localhost` | Your service, outside the local stack.                                                   |
-| `LOOM_CH_PORT`     | `8123`      | `8443` for ClickHouse Cloud or any HTTPS endpoint.                                       |
-| `LOOM_CH_SECURE`   | unset       | `true` for HTTPS on a port other than `8443` (unset infers TLS from the port).           |
-| `LOOM_CH_USER`     | `loom`      | A user that may create tables in the `loom` database. Cloud's default user is `default`. |
-| `LOOM_CH_PASSWORD` | `loomdev`   | A real password. The default is a development placeholder.                               |
-| `LOOM_CH_DATABASE` | `loom`      | Leave it. It is only the connection's default database; see below.                       |
+| Variable           | Default     | Set it to                                                                            |
+| ------------------ | ----------- | ------------------------------------------------------------------------------------ |
+| `LOOM_CH_HOST`     | `localhost` | Your service, outside the local stack.                                               |
+| `LOOM_CH_PORT`     | `8123`      | `8443` for ClickHouse Cloud or any HTTPS endpoint.                                   |
+| `LOOM_CH_SECURE`   | unset       | `true` for HTTPS on a port other than `8443` (unset infers TLS from the port).       |
+| `LOOM_CH_USER`     | `loom`      | A user that may create tables in Loom's database. Cloud's default user is `default`. |
+| `LOOM_CH_PASSWORD` | `loomdev`   | A real password. The default is a development placeholder.                           |
+| `LOOM_CH_DATABASE` | `loom`      | The database Loom's schema lives in; set it before the first migration, see below.   |
 
-**The schema always lives in a database named `loom`.** The migrations ledger
-(`loom._migrations`) and the server's queries address `loom.<table>` directly, whatever
-`LOOM_CH_DATABASE` says. Two Loom deployments cannot share one ClickHouse service by
-renaming the database; give each its own service.
+`LOOM_CH_DATABASE` names the database that holds every table, view and the migrations
+ledger, and `LOOM_CH_TELEMETRY_DATABASE` (default `loom_telemetry`) the one that holds
+the telemetry Loom derives from its own tables. Statements and migrations are written
+against `loom.<table>` and `loom_telemetry.<table>`, and Loom maps both names to these
+settings where each statement reaches ClickHouse (`server/core/ch_names.py`); the
+KeeperMap tables' Keeper paths move with the schema (`/<database>/task_leases`). Two
+deployments can share one ClickHouse service with a database pair each.
+
+Choose the names before the first migration. A new name points Loom at an empty schema,
+so while a Loom schema exists in `loom`, a server or worker process, migrating or not,
+refuses to start when the named database does not exist or holds tables but no Loom
+ledger. To start a second schema on
+purpose, create its database empty first. A renamed schema names its own
+`LOOM_CH_TELEMETRY_DATABASE`. Names start with a letter or `_`, hold letters, digits, `_`
+and `-`, and are never
+`default`, `system`, `information_schema`, or a name the schema uses for a table or an
+alias (`memory`, say), which Loom could not tell from a database in the DDL it reads
+back.
 
 ### Identity and authentication
 
@@ -271,11 +302,18 @@ renaming the database; give each its own service.
   once every process has loaded it. Old tokens verify by
   the `kid` in their header until `loom signing-key retire <kid>`. No env change or
   restart is needed ([tokens and grants](../guides/tokens-and-grants.md#revoke-and-rotate)).
-  Replacing `LOOM_JWT_SECRET` itself re-keys everything: every token it signed, every
-  keyring key and every stored credential (repository tokens, tracker-source passwords,
-  provider keys) sealed under it stop opening; `loom signing-key record-root` then
-  records the new one and `loom deployment publish --yes` publishes it to the replicas. The keyring commands and `loom mint-token` refuse to run with any
-  other root secret than the one recorded; `/v1/health` (`keyring_root_mismatch`,
+  Replacing `LOOM_JWT_SECRET` itself re-keys everything. Tokens it signed (kid
+  `default`) stop verifying: mint new ones. The keyring keys and stored credentials
+  (repository tokens, tracker-source passwords, provider keys) sealed under it keep
+  opening only while the old value is set as `LOOM_JWT_SECRET_PREVIOUS`, which never
+  verifies a token. The order: put the new root in `LOOM_JWT_SECRET` and the old one in
+  `LOOM_JWT_SECRET_PREVIOUS` in `.env`; in a container with that env run
+  `loom secrets reseal --dry-run && loom signing-key record-root && loom deployment publish --yes`
+  (the dry run checks the previous root while the old one is still recorded); recreate
+  the containers; run `loom secrets reseal`; and remove `LOOM_JWT_SECRET_PREVIOUS` once
+  `loom secrets reseal --check` exits 0, since a value still sealed under the old root
+  stops opening without it. The keyring commands and `loom mint-token` refuse to run
+  with any other root secret than the one recorded; `/v1/health` (`keyring_root_mismatch`,
   `signing_keys_unsealable`) and `loom doctor` (`signing_keyring`) flag a process that
   holds another.
 - **`LOOM_PLATFORM_ADMINS`.** Tokens and grants carry only `viewer`, `writer` or
@@ -410,8 +448,8 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 
 ### Models per job
 
-Every setting that names a model is in one file,
-[`server/settings/_models.py`](../../server/settings/_models.py), one per job. Set any
+Every setting that names a model is in the `Models` section of
+[`server/settings/catalog.py`](../../server/settings/catalog.py), one per job. Set any
 of them in `.env` to move that job to another model. The provider comes from the name,
 so a job can run on Claude while the rest run on GPT, as long as both keys are set. An
 empty value uses `LOOM_LLM_MODEL`.

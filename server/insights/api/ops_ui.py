@@ -15,7 +15,6 @@ ui_vitals = Operation(
     output_model=UiVitalsOutput,
     handler=handle_ui_vitals,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.VIEWER,
     writes=True,
     maturity="experimental",

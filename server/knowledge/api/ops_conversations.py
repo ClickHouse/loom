@@ -60,7 +60,6 @@ conversation_create = Operation(
     output_model=ConversationCreateOutput,
     handler=handle_conversation_create,
     idempotent=True,
-    budget_p99_ms=30,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -71,7 +70,6 @@ conversation_append = Operation(
     output_model=ConversationAppendOutput,
     handler=handle_conversation_append,
     idempotent=True,  # dedup on msg_id
-    budget_p99_ms=30,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -83,7 +81,6 @@ conversation_save_message = Operation(
     output_model=ConversationSaveMessageOutput,
     handler=handle_conversation_save_message,
     idempotent=True,
-    budget_p99_ms=250,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -95,7 +92,6 @@ conversation_unsave_message = Operation(
     output_model=ConversationUnsaveMessageOutput,
     handler=handle_conversation_unsave_message,
     idempotent=True,
-    budget_p99_ms=250,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -107,7 +103,6 @@ conversation_set_logging = Operation(
     output_model=ConversationSetLoggingOutput,
     handler=handle_conversation_set_logging,
     idempotent=True,
-    budget_p99_ms=200,  # ALTER UPDATE mutation
     required_role=Role.ADMIN,  # changing a namespace setting
     audit=True,
 )
@@ -119,7 +114,6 @@ conversation_list = Operation(
     output_model=ConversationListOutput,
     handler=handle_conversation_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -131,7 +125,6 @@ conversation_get = Operation(
     output_model=ConversationGetOutput,
     handler=handle_conversation_get,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -143,7 +136,6 @@ conversation_update = Operation(
     output_model=ConversationUpdateOutput,
     handler=handle_conversation_update,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -155,7 +147,6 @@ conversation_delete = Operation(
     output_model=ConversationDeleteOutput,
     handler=handle_conversation_delete,
     idempotent=True,
-    budget_p99_ms=600,  # three bulk ALTER UPDATEs, mutations_sync=2
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -167,7 +158,6 @@ conversation_search = Operation(
     output_model=ConversationSearchOutput,
     handler=handle_conversation_search,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -179,7 +169,6 @@ conversation_search_saved_messages = Operation(
     output_model=ConversationSearchSavedMessagesOutput,
     handler=handle_conversation_search_saved_messages,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -191,7 +180,6 @@ conversation_list_saved_messages = Operation(
     output_model=ConversationListSavedMessagesOutput,
     handler=handle_conversation_list_saved_messages,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -203,7 +191,6 @@ conversation_saved_status = Operation(
     output_model=ConversationSavedStatusOutput,
     handler=handle_conversation_saved_status,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -214,7 +201,6 @@ conversation_threads = Operation(
     output_model=ConversationThreadsOutput,
     handler=handle_conversation_threads,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -227,7 +213,6 @@ conversation_compact = Operation(
     output_model=ConversationCompactOutput,
     handler=handle_conversation_compact,
     idempotent=True,
-    budget_p99_ms=3500,  # dominated by the LLM round-trip
     required_role=Role.WRITER,
     audit=True,
 )

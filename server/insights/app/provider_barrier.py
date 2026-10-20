@@ -168,7 +168,8 @@ async def enroll_before_migrations(ch: Any) -> None:
     the heartbeat could not land, and the boot enrolls after migrating anyway."""
     row = await ch.query_one(
         "SELECT count() AS n FROM system.columns "
-        "WHERE database = 'loom' AND table = '_provider_participants' AND name = 'host_proof'"
+        "WHERE database = currentDatabase() AND table = '_provider_participants' "
+        "AND name = 'host_proof'"
     )
     if row is not None and row.get("n") == 1:
         await register_process()

@@ -17,6 +17,7 @@ import pytest
 import server.code.app.coverage as h
 from server.code.domain.index import coverage_claim as cc
 from server.code.store.index import CodeRepo
+from server.settings import settings
 
 # The scalar code repository these tests model (none is configured by default).
 pytestmark = pytest.mark.usefixtures("scalar_code_repo")
@@ -256,7 +257,9 @@ async def test_positive_control_is_read_once_per_namespace_within_the_ttl(monkey
     assert len(repo.calls) == 6  # three trees once per namespace, not per call
     # the clock moves past the TTL: one more read
     real = h.time.monotonic
-    monkeypatch.setattr(h.time, "monotonic", lambda: real() + h._CONTROL_TTL_S + 1)
+    monkeypatch.setattr(
+        h.time, "monotonic", lambda: real() + settings.code_coverage_control_ttl_s + 1
+    )
     assert await h.positive_control(repo, ORG, NS) == (True, "arrayJoin")
     assert len(repo.calls) == 9
     # a failed read is not kept

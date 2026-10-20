@@ -169,7 +169,7 @@ def _post_score(body: dict[str, Any]) -> None:
         headers={"Authorization": auth, "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10.0) as r:
+    with urllib.request.urlopen(req, timeout=settings.langfuse_timeout_s) as r:
         r.read()
 
 

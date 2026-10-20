@@ -58,6 +58,9 @@ const Audit = lazy(() => import("./views/admin/Audit").then((m) => ({ default: m
 const Spending = lazy(() => import("./views/admin/Spending").then((m) => ({ default: m.Spending })));
 const Agents = lazy(() => import("./views/admin/Agents").then((m) => ({ default: m.Agents })));
 const AdminUsersView = lazy(() => import("./views/admin/Users").then((m) => ({ default: m.Users })));
+const DeploymentSettings = lazy(() =>
+  import("./views/admin/DeploymentSettings").then((m) => ({ default: m.DeploymentSettings })),
+);
 // The shell's own optional surfaces load when first needed, not with every page. The
 // memory inspector (47 kB of source) opens on a card click; the token gate shows only
 // when signed out; the two dialogs open on a key or a click.
@@ -553,6 +556,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Agents />;
     case "admin:users":
       return <AdminUsersView />;
+    case "admin:settings":
+      return <DeploymentSettings />;
     default:
       return <Recent />;
   }

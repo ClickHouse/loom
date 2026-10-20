@@ -230,7 +230,7 @@ async def _inject_code_context(
                     include_history=False,
                     include_examples=False,
                     include_lessons=False,
-                    token_budget=400,
+                    token_budget=settings.memory_ask_code_symbol_token_budget,
                     consumer=GROUNDING_CONSUMER,
                 )
             )
@@ -245,7 +245,7 @@ async def _inject_code_context(
                     namespace=code_ns,
                     query=query[:2000],
                     top_k=3,
-                    token_budget=1400,
+                    token_budget=settings.memory_ask_code_search_token_budget,
                     bodies="none",
                     consumer=GROUNDING_CONSUMER,
                 )

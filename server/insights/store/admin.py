@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.ch_names import SCHEMA, database, logical, telemetry_database
 from server.core.repo_base import _CHClient, _default_client
 
 # ----------------------------------------------------------------------
@@ -16,15 +17,16 @@ from server.core.repo_base import _CHClient, _default_client
 
 
 async def list_loom_tables(*, ch: _CHClient | None = None) -> list[str]:
-    """Names of tables in the `loom` database, and `loom_telemetry.<name>` for
+    """Names of tables in the schema database, and `loom_telemetry.<name>` for
     the telemetry database (excluding CH MV inner_id bookkeeping). Backs
     /v1/admin/schema.status."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT database, name FROM system.tables WHERE database IN ('loom', 'loom_telemetry')",
+        "SELECT database, name FROM system.tables WHERE database IN {dbs:Array(String)}",
+        {"dbs": [database(), telemetry_database()]},
     )
     return [
-        r["name"] if r["database"] == "loom" else f"{r['database']}.{r['name']}"
+        r["name"] if logical(r["database"]) == SCHEMA else f"{logical(r['database'])}.{r['name']}"
         for r in rows
         if not r["name"].startswith(".inner")
     ]
@@ -66,6 +68,25 @@ async def audit_summary(
         ORDER BY cnt DESC
         """,
         params=params,
+    )
+
+
+async def setting_changes(
+    event_type: str, name: str, limit: int, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The deployment-wide `event_type` rows (org and namespace `-`) of setting
+    `name` ("" = all), newest first; the sort key's prefix bounds the read."""
+    ch = ch or _default_client()
+    return await ch.query_all(
+        """
+        SELECT ts, actor, subject
+        FROM loom.audit_log
+        WHERE org = '-' AND namespace = '-' AND event_type = {event:String}
+          AND ({name:String} = '' OR JSONExtractString(subject, 'name') = {name:String})
+        ORDER BY ts DESC
+        LIMIT {limit:UInt32}
+        """,
+        params={"event": event_type, "name": name, "limit": int(limit)},
     )
 
 

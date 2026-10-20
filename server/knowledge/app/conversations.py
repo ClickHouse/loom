@@ -57,7 +57,6 @@ from server.knowledge.api.models_conversations import (
     _SavedMessageHit,
 )
 from server.knowledge.app.conversation_search import (
-    HIT_EXCERPT_CHARS,
     ConversationHit,
     ConversationVectorQuery,
     vector_search,
@@ -66,6 +65,7 @@ from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
+from server.settings.budgets import llm_max_tokens
 
 if TYPE_CHECKING:
     from server.knowledge.store.conversations import (
@@ -279,7 +279,7 @@ async def _store_embedding(msg: MessageInsert, embedded: EmbeddedTurn) -> None:
         "msg_id": msg.msg_id,
         "role": msg.role,
         # The text the vector was built from, which a re-embed starts from again;
-        # search hits show its first HIT_EXCERPT_CHARS characters.
+        # search hits show its first conversation_search_excerpt_chars characters.
         "content_excerpt": embedded.excerpt,
         "embedding_model": embedded.model,
         "embedding_dim": embedded.dim,
@@ -943,6 +943,7 @@ async def _search_substring_fallback(
     """Lexical fallback used when the embedder is unavailable: the same
     namespaces, newest match first."""
     from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
 
     rows = await conversation_repo.search_substring(
         input.org,
@@ -962,7 +963,7 @@ async def _search_substring_fallback(
             thread_id=r.thread_id,
             msg_id=r.msg_id,
             role=r.role,
-            content_excerpt=r.content[:HIT_EXCERPT_CHARS],
+            content_excerpt=r.content[: settings.conversation_search_excerpt_chars],
             ts=r.ts,
             namespace=r.namespace,
         )
@@ -1080,13 +1081,16 @@ def _fuse_saved(
 def _snippet(content: str, tokens: list[str]) -> str:
     """An excerpt around the first query term the content contains, so a match
     deep in a long message shows the matching words; the opening otherwise."""
+    from server.settings import settings
+
+    size = settings.conversation_search_excerpt_chars
     lowered = content.lower()
     hits = [p for p in (lowered.find(t) for t in tokens) if p >= 0]
-    if not hits or min(hits) < HIT_EXCERPT_CHARS // 2:
+    if not hits or min(hits) < size // 2:
         return _excerpt(content)
-    start = max(min(hits) - HIT_EXCERPT_CHARS // 3, 0)
-    window = content[start : start + HIT_EXCERPT_CHARS]
-    return "…" + window + ("…" if start + HIT_EXCERPT_CHARS < len(content) else "")
+    start = max(min(hits) - size // 3, 0)
+    window = content[start : start + size]
+    return "…" + window + ("…" if start + size < len(content) else "")
 
 
 async def handle_conversation_list_saved_messages(
@@ -1157,7 +1161,10 @@ async def handle_conversation_saved_status(
 
 
 def _excerpt(content: str) -> str:
-    return content[:HIT_EXCERPT_CHARS] + "…" if len(content) > HIT_EXCERPT_CHARS else content
+    from server.settings import settings
+
+    size = settings.conversation_search_excerpt_chars
+    return content[:size] + "…" if len(content) > size else content
 
 
 def _safe_load_json(s: Any) -> dict[str, Any]:
@@ -1372,7 +1379,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     result = await llm.complete(
         system=system_prompt,
         user=f"Conversation excerpt:\n\n{transcript}",
-        max_tokens=600,
+        max_tokens=llm_max_tokens("conversation_compact"),
     )
     summary_text = (result.text or "").strip()
     if not summary_text:

@@ -31,6 +31,8 @@ from server.llm.anthropic import AnthropicLLMClient
 from server.llm.openai import OpenAILLMClient
 from server.observability import provider_health
 from server.observability.genai import llm_stage
+from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 
 async def _probe_llm(provider: str, model: str, key: str) -> None:
@@ -41,7 +43,9 @@ async def _probe_llm(provider: str, model: str, key: str) -> None:
     )
     with llm_stage("provider_validation"), customer.system():
         result = await client.complete(
-            "This is a connection check. Reply with OK.", "Connection check.", max_tokens=128
+            "This is a connection check. Reply with OK.",
+            "Connection check.",
+            max_tokens=llm_max_tokens("provider_validation"),
         )
     if not result.text.strip():
         raise ValueError("empty completion")
@@ -100,7 +104,7 @@ async def _check(
         return check
     try:
         with provider_health.unrecorded():
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(settings.provider_check_timeout_s):
                 if role == "llm":
                     await _probe_llm(provider, model, key)
                 else:

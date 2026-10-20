@@ -182,9 +182,10 @@ def _chunk_text(content: str) -> list[Chunk]:
     """Chunk a document at the configured size and stride. Empty content is one empty chunk."""
     from server.settings import settings
 
-    return chunk_document(
-        content, size=settings.knowledge_chunk_size, stride=settings.knowledge_chunk_stride
-    )
+    size = settings.knowledge_chunk_size
+    # The two are set one at a time: a step past the window would skip text unindexed.
+    stride = min(settings.knowledge_chunk_stride, size)
+    return chunk_document(content, size=size, stride=stride)
 
 
 async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpsertOutput:

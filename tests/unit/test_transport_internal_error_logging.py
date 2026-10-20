@@ -43,7 +43,6 @@ def _client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
         output_model=_ProbeOutput,
         handler=_raises_keyerror,
         idempotent=False,
-        budget_p99_ms=100,
         required_role=Role.VIEWER,
     )
 
@@ -118,7 +117,6 @@ def _client_for(monkeypatch: pytest.MonkeyPatch, handler: Any, name: str) -> Tes
         output_model=_ProbeOutput,
         handler=handler,
         idempotent=False,
-        budget_p99_ms=100,
         required_role=Role.VIEWER,
     )
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)

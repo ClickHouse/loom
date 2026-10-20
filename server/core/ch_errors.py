@@ -40,21 +40,17 @@ def is_transient_network_error(e: BaseException) -> bool:
 
 
 # Server-side errors that are a property of the REPLICA that answered, not of
-# the query: retried once on a fresh connection so the load balancer can hand
-# the request to another replica. During a rolling Cloud upgrade an older
-# replica can fail a query (e.g. `NOT_FOUND_COLUMN_IN_BLOCK` on the text-index
-# leg of bm25_hybrid search under FINAL) that succeeds on the next connection.
-# A code that is
-# usually a genuine SQL bug is retried exactly once and re-raised if it
-# repeats, so a real bug still surfaces — one round-trip later.
+# the query: retried on a fresh connection, `ch_replica_bound_retries` times, so
+# the load balancer can hand the request to another replica. During a rolling
+# Cloud upgrade an older replica can fail a query (e.g. `NOT_FOUND_COLUMN_IN_BLOCK`
+# on the text-index leg of bm25_hybrid search under FINAL) that succeeds on the
+# next connection. A code that is usually a genuine SQL bug is retried as many
+# times and re-raised if it repeats, so a real bug still surfaces, a few
+# round-trips later.
 # 10  NOT_FOUND_COLUMN_IN_BLOCK — a 26.6 replica's FINAL+PREWHERE bug
 # 242 TABLE_IS_READ_ONLY — one replica lost its Keeper session; the others serve
 # 999 KEEPER_EXCEPTION "Session expired" — same event, seen from the query side
 _REPLICA_BOUND_ERROR_CODES: tuple[int, ...] = (10, 242, 999)
-# How many fresh connections to try after a replica-bound error. Cloud puts a
-# load balancer in front of the replicas, so one reconnect can land on the
-# same replica that just failed, so a single retry is not enough.
-REPLICA_BOUND_RETRIES: int = 2
 # Strict-mode KeeperMap answers, the same on every replica.
 _KEEPER_ANSWERS: tuple[str, ...] = ("Node exists", "Bad version")
 # A strict-mode KeeperMap write on a key another request just dropped (each
@@ -127,7 +123,6 @@ def is_replica_bound_error(e: BaseException) -> bool:
 
 __all__ = [
     "QUANTIZED_SETTING",
-    "REPLICA_BOUND_RETRIES",
     "error_code",
     "is_replica_bound_error",
     "is_transient_network_error",

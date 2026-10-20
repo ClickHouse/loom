@@ -159,7 +159,6 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
 # versions never reach the FINAL row read, and the flat candidate scan stays
 # cheap (a namespace-wide aggregate would read hundreds of MB a scan).
 _MAX_SCANS_PER_TABLE = 8
-_CHAIN_BUDGET_S = 20.0
 
 
 async def _recover_table(
@@ -186,7 +185,10 @@ async def _recover_table(
     rows: list[dict[str, Any]] = []
     chain_started = time.monotonic()
     for scan_no in range(_MAX_SCANS_PER_TABLE):
-        if scan_no and time.monotonic() - chain_started > _CHAIN_BUDGET_S:
+        if (
+            scan_no
+            and time.monotonic() - chain_started > settings.code_embed_recovery_chain_budget_s
+        ):
             break  # embed what the chain found; the watermark carries the rest over
         keys = await repo.pending_embed_keys(
             table,

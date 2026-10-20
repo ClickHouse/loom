@@ -68,9 +68,6 @@ EXACT_KEY_STORE_MIN_GETS = 200
 HOT_KEY_READS = 20
 # hand_rolled_index_rows: a value naming this many other live keys is an index.
 INDEX_ROW_MIN_KEYS = 8
-# The Python scan is O(total value bytes); above this many live rows the
-# check is skipped and says so.
-INDEX_ROW_SCAN_CAP = 20_000
 INDEX_ROW_VALUE_CLIP = 65_536
 # double_encoded_values: share of live rows that are a JSON string holding JSON.
 DOUBLE_ENCODED_CRITICAL_SHARE = 0.25
@@ -393,10 +390,10 @@ class _Audit:
 
     async def hand_rolled_index_rows(self) -> None:
         live = self.summary.live_rows
-        if live > INDEX_ROW_SCAN_CAP:
+        if live > settings.namespace_audit_index_row_scan_cap:
             self.skipped.append(
                 f"hand_rolled_index_rows: {live} live rows exceed the "
-                f"{INDEX_ROW_SCAN_CAP}-row scan cap"
+                f"{settings.namespace_audit_index_row_scan_cap}-row scan cap"
             )
             return
         rows = await self.rows(

@@ -23,6 +23,7 @@ from server.auth.jwt import AuthInfo, TokenError
 from server.core.errors import NotFoundError
 from server.operations.base import Operation, Role
 from server.settings import settings
+from server.settings.catalog import OP_BUDGETS_P99_MS
 
 TOOL = "loom_code_test_refusal_probe"
 PATH = "/v1/code.test_refusal_probe"
@@ -68,7 +69,6 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             output_model=_Out,
             handler=_handler,
             idempotent=False,
-            budget_p99_ms=10_000,
             required_role=Role.WRITER,
         )
 
@@ -103,6 +103,8 @@ def probe(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op, flat])
+    monkeypatch.setitem(OP_BUDGETS_P99_MS, op.name, 10_000)  # a probe op's budget
+    monkeypatch.setitem(OP_BUDGETS_P99_MS, flat.name, 10_000)  # a probe op's budget
     monkeypatch.setattr(bearer_mod, "verify_token", _verify)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     monkeypatch.setattr(http_mod, "_record_failure", lambda *a, **k: None)

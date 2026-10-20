@@ -31,7 +31,6 @@ def _op(name: str) -> Operation:
         output_model=_M,
         handler=_h,
         idempotent=True,
-        budget_p99_ms=10,
         required_role=Role.VIEWER,
     )
 

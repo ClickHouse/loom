@@ -114,6 +114,8 @@ spec:
                 - name: {{ $k }}
                   value: {{ $v | toString | quote }}
                 {{- end }}
+                - name: LOOM_SETTINGS_FILE
+                  value: /app/config/loom.yaml
                 - name: LOOM_ANALYTICS_EXPORT_NAME_KEY
                   valueFrom:
                     secretKeyRef:
@@ -131,6 +133,10 @@ spec:
                   mountPath: /tmp
                 - name: cache
                   mountPath: /app/var
+                # The release's settings file, as every pod reads it.
+                - name: settings-file
+                  mountPath: /app/config
+                  readOnly: true
                 {{- with $.Values.extraVolumeMounts }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
@@ -141,6 +147,9 @@ spec:
             - name: cache
               emptyDir:
                 sizeLimit: 1Gi
+            - name: settings-file
+              configMap:
+                name: {{ include "loom.suffixed" (dict "root" $ "suffix" "settings") }}
             {{- with $.Values.extraVolumes }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

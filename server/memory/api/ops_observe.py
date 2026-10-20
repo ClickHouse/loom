@@ -21,7 +21,6 @@ observe_record = Operation(
     handler=handle_observe_record,
     # Re-fired hook for the same tool call collapses onto the same RMT key.
     idempotent=True,
-    budget_p99_ms=150,  # hot path: single insert, no LLM/embedding
     required_role=Role.WRITER,
     audit=False,
 )
@@ -32,7 +31,6 @@ observe_crystallize = Operation(
     output_model=ObserveCrystallizeOutput,
     handler=handle_observe_crystallize,
     idempotent=True,
-    budget_p99_ms=2000,
     required_role=Role.WRITER,
     audit=False,
 )

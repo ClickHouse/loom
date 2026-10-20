@@ -6,30 +6,30 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.settings import settings
+
 logger = logging.getLogger(__name__)
 
 
-_KNOWLEDGE_MAX_PASSAGE_CHARS = 800
-_KNOWLEDGE_MAX_BLOCK_CHARS = 6000
-
-
 def knowledge_block_text(hits: list[Any]) -> str:
-    """Render knowledge.search hits as one labelled block,
-    each passage bounded, the block bounded (lowest-ranked dropped first).
-    Empty when there are no hits with content. Pure."""
+    """Render knowledge.search hits as one labelled block, each passage
+    bounded, the block bounded (lowest-ranked dropped first). Empty when there
+    are no hits with content."""
+    passage_max = settings.memory_ask_knowledge_passage_max_chars
+    block_max = settings.memory_ask_knowledge_block_max_chars
     lines: list[str] = []
     for h in hits:
         content = str(getattr(h, "content", "") or "").strip()
         if not content:
             continue
-        if len(content) > _KNOWLEDGE_MAX_PASSAGE_CHARS:
-            content = content[: _KNOWLEDGE_MAX_PASSAGE_CHARS - 12].rstrip() + " …[truncated]"
+        if len(content) > passage_max:
+            content = content[: passage_max - 12].rstrip() + " …[truncated]"
         src = str(getattr(h, "source_uri", "") or "document")
         idx = getattr(h, "chunk_idx", 0)
         title = str(getattr(h, "title", "") or getattr(h, "section", "") or "").strip()
         head = f"[knowledge:{src}#{idx}]" + (f" ({title})" if title else "")
         lines.append(f"{head} {content}")
-    while lines and sum(len(x) + 1 for x in lines) > _KNOWLEDGE_MAX_BLOCK_CHARS:
+    while lines and sum(len(x) + 1 for x in lines) > block_max:
         lines.pop()
     if not lines:
         return ""
@@ -47,14 +47,13 @@ async def knowledge_passages(
     try:
         from server.knowledge.api.models_knowledge import KnowledgeSearchInput
         from server.knowledge.app.knowledge_search import handle_knowledge_search
-        from server.settings import settings as _ks
 
         res = await handle_knowledge_search(
             KnowledgeSearchInput(
                 org=search_input.org,
                 namespace=search_input.namespace,
                 query=question,
-                top_k=int(_ks.memory_ask_knowledge_top_k),
+                top_k=int(settings.memory_ask_knowledge_top_k),
                 namespace_scope="this",
                 # The ask's hard tag filter reaches this leg too.
                 tags=(
@@ -72,29 +71,26 @@ async def knowledge_passages(
     return block, (len(hits) if block else 0)
 
 
-_RECENT_MAX_TURNS = 40
-_RECENT_MAX_TURN_CHARS = 1500
-_RECENT_MAX_BLOCK_CHARS = 12000
-
-
 def recent_turns_block(messages: list[dict[str, Any]]) -> str:
-    """Render the caller's recent turns as one block, newest
-    last, bounded per turn and in total (the oldest turns are dropped first).
-    Empty when there are no turns with content. Pure."""
+    """Render the caller's recent turns as one block, newest last, bounded
+    per turn and in total (the oldest turns are dropped first). Empty when
+    there are no turns with content."""
+    turn_max = settings.memory_ask_recent_turn_max_chars
+    block_max = settings.memory_ask_recent_block_max_chars
     turns: list[str] = []
-    for m in messages[-_RECENT_MAX_TURNS:]:
+    for m in messages[-settings.memory_ask_recent_max_turns :]:
         content = str((m or {}).get("content") or "").strip()
         if not content:
             continue
-        if len(content) > _RECENT_MAX_TURN_CHARS:
-            content = content[: _RECENT_MAX_TURN_CHARS - 12].rstrip() + " …[truncated]"
+        if len(content) > turn_max:
+            content = content[: turn_max - 12].rstrip() + " …[truncated]"
         role = str(m.get("role") or "user").strip() or "user"
         name = str(m.get("name") or "").strip()
         ts = str(m.get("timestamp") or "").strip()
         who = f"{role} {name}".strip()
         head = f"[{who} @ {ts}]" if ts else f"[{who}]"
         turns.append(f"{head} {content}")
-    while turns and sum(len(t) + 1 for t in turns) > _RECENT_MAX_BLOCK_CHARS:
+    while turns and sum(len(t) + 1 for t in turns) > block_max:
         turns.pop(0)
     if not turns:
         return ""

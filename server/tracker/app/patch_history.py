@@ -42,6 +42,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.settings import settings
 from server.tracker.domain.patch_presence import (
     EXACT,
     SYMBOL_ONLY,
@@ -63,7 +64,6 @@ ADDED = "added"  # a commit brought the line, and it does not name the fix
 PROBE_LINES = 3  # `-S` reads per branch
 LINES_PER_PATH = 40  # per kind, the longest informative lines: one grep pattern each
 MIN_LINES = 2
-LINE_TIMEOUT_S = 3.0
 _REAP_TIMEOUT_S = 2.0  # waiting for a killed git to exit
 ADDED_ABSENT_MAX = 0.2  # the fix's lines are not there …
 REMOVED_REMNANT_MAX = 0.5  # … and at most half of the pre-image is: restructured, by history
@@ -207,13 +207,15 @@ async def tip_presence(
     path: str,
     lines: list[str],
     *,
-    timeout_s: float = LINE_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> dict[str, bool] | None:
     """line → at the branch's tip, from ONE `git grep` over the path with
     every line as a pattern; {} for a path the tip does not have (every line
     absent); None on a deadline. A git command that fails (exit status other
     than a match or a clean miss) raises `MirrorReadError`: an unread file is
     never a file whose lines are all absent."""
+    if timeout_s is None:
+        timeout_s = settings.tracker_patch_line_timeout_s
     if not lines:
         return {}
     # `ls-tree` answers a missing path with an empty listing and status 0, so
@@ -279,11 +281,13 @@ async def line_history(
     path: str,
     norm: str,
     *,
-    timeout_s: float = LINE_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> LineHistory:
     """One removed line the tip lacks: never in the branch's first-parent
     history for that path (`never`), or there once and removed since
     (`removed`, with the commit that changed its count)."""
+    if timeout_s is None:
+        timeout_s = settings.tracker_patch_line_timeout_s
     rc, sha, _, _ = await _last_count_change(git_dir, branch, path, norm, timeout_s=timeout_s)
     if rc == -1:
         return LineHistory(path, norm, "deadline")
@@ -311,11 +315,13 @@ async def line_origin(
     *,
     pr_number: int,
     merge_sha: str,
-    timeout_s: float = LINE_TIMEOUT_S,
+    timeout_s: float | None = None,
 ) -> LineHistory:
     """One added line the tip HAS: the commit that brought it, and whether
     that commit names the fix (`picked`) or not (`added`: the line may be
     generic, or the pick was squashed into something unnamed)."""
+    if timeout_s is None:
+        timeout_s = settings.tracker_patch_line_timeout_s
     rc, sha, subject, body = await _last_count_change(
         git_dir,
         branch,
@@ -349,7 +355,7 @@ async def branch_history(
     branch: str,
     groups: list[HunkGroup],
     *,
-    timeout_s: float = LINE_TIMEOUT_S,
+    timeout_s: float | None = None,
     gate: asyncio.Semaphore | None = None,
     pr_number: int = 0,
     merge_sha: str = "",
@@ -361,6 +367,8 @@ async def branch_history(
     (`restructured` / `removed_on_branch`), or the commits that brought the
     fix's added lines when they are all there (`picked` when one names the
     fix). Git processes run under `gate`."""
+    if timeout_s is None:
+        timeout_s = settings.tracker_patch_line_timeout_s
     started = time.monotonic()
     hp = HistoryPresence()
     per_path = path_lines(groups)

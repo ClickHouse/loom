@@ -23,6 +23,7 @@ import server.transport.mcp_outcome as mcp_outcome
 from server.auth.jwt import AuthInfo, TokenError
 from server.operations.base import Operation, Role
 from server.settings import settings
+from server.settings.catalog import OP_BUDGETS_P99_MS
 
 TOOL = "loom_test_idem_across"
 
@@ -57,7 +58,6 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         output_model=_Out,
         handler=_handler,
         idempotent=True,
-        budget_p99_ms=10_000,
         required_role=Role.VIEWER,
         writes=True,
     )
@@ -107,6 +107,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
+    monkeypatch.setitem(OP_BUDGETS_P99_MS, op.name, 10_000)  # a probe op's budget
     monkeypatch.setattr(bearer_mod, "verify_token", _verify)
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)

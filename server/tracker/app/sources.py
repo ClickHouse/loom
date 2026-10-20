@@ -19,6 +19,7 @@ from typing import Any
 
 from server.auth.context import current_caller
 from server.core.errors import AuthInsufficientError, ValidationError
+from server.settings import settings
 from server.tracker.api.models import (
     TrackerContractInput,
     TrackerContractOutput,
@@ -42,9 +43,6 @@ from server.tracker.domain import contract as record_contract
 from server.tracker.store.source import contract_reports
 
 logger = logging.getLogger(__name__)
-
-_CONTRACT_BUDGET_S = 3.0
-_FRESHNESS_BUDGET_S = 2.0
 
 
 def _require_same_org(org: str) -> None:
@@ -114,16 +112,17 @@ async def _caller_grants(org: str, subject: str, names: list[str]) -> dict[str, 
     return out
 
 
-_SNAPSHOT_TTL_S = 60.0
 CONTRACT_SNAPSHOT_KEY = "qa_contract_snapshot"  # storage key
 FRESHNESS_SNAPSHOT_KEY = "qa_freshness_snapshot"
 
 
 async def _published(
-    org: str, ns: str, key: str, max_age_s: float = _SNAPSHOT_TTL_S
+    org: str, ns: str, key: str, max_age_s: float | None = None
 ) -> dict[str, Any] | None:
     """A view another process published within
     `max_age_s`, from `code_index_state`; None for none, stale or unparsable."""
+    if max_age_s is None:
+        max_age_s = settings.tracker_snapshot_ttl_s
     import json
     from datetime import UTC, datetime
 
@@ -187,7 +186,9 @@ async def _contract_view(
     checked_here = False
     if rep is None and configured and contract.enforced():
         try:
-            rep = await asyncio.wait_for(contract.check(name, database), timeout=_CONTRACT_BUDGET_S)
+            rep = await asyncio.wait_for(
+                contract.check(name, database), timeout=settings.tracker_contract_check_budget_s
+            )
             checked_here = rep is not None
         except Exception as e:  # noqa: BLE001 — the card says "unchecked", not a 500
             logger.info("tracker.source.list: contract check of %r did not answer: %s", name, e)
@@ -250,7 +251,8 @@ async def _freshness(org: str, namespace: str) -> dict[str, Any]:
         return published
     try:
         out = await asyncio.wait_for(
-            tracker_source(org, namespace).item_counts(org, namespace), timeout=_FRESHNESS_BUDGET_S
+            tracker_source(org, namespace).item_counts(org, namespace),
+            timeout=settings.tracker_freshness_budget_s,
         )
     except Exception as e:  # noqa: BLE001 — freshness is advisory
         logger.info("tracker.source.list: freshness of %s/%s did not answer: %s", org, namespace, e)
@@ -859,6 +861,7 @@ async def handle_tracker_contract(input: TrackerContractInput) -> TrackerContrac
 
 
 async def handle_tracker_source_check(input: TrackerSourceCheckInput) -> TrackerSourceCheckOutput:
+    from server.settings import settings
     from server.tracker.app import registry_sources
     from server.tracker.domain import sources
 
@@ -876,7 +879,9 @@ async def handle_tracker_source_check(input: TrackerSourceCheckInput) -> Tracker
             code="NOT_A_SOURCE",
         )
     try:
-        rep = await asyncio.wait_for(contract.check(name, ep.database), timeout=8.0)
+        rep = await asyncio.wait_for(
+            contract.check(name, ep.database), timeout=settings.tracker_source_check_timeout_s
+        )
     except Exception as e:  # noqa: BLE001 — the source did not answer
         return TrackerSourceCheckOutput(
             name=name,

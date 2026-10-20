@@ -92,7 +92,6 @@ namespace_register = Operation(
     output_model=NamespaceRegisterOutput,
     handler=handle_namespace_register,
     idempotent=True,
-    budget_p99_ms=30,
     # VIEWER can create a fresh namespace (auto-granted admin); updates to an
     # existing one require an admin grant. Handler enforces fresh-vs-update.
     required_role=Role.VIEWER,
@@ -108,7 +107,6 @@ namespace_list = Operation(
     output_model=NamespaceListOutput,
     handler=handle_namespace_list,
     idempotent=True,
-    budget_p99_ms=80,
     # Org-wide enumeration (incl. private namespaces) — operator-only.
     # Regular users use namespace.list_mine.
     required_role=Role.ORG_ADMIN,
@@ -123,7 +121,6 @@ namespace_get = Operation(
     output_model=NamespaceGetOutput,
     handler=handle_namespace_get,
     idempotent=True,
-    budget_p99_ms=30,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -136,7 +133,6 @@ namespace_delete = Operation(
     output_model=NamespaceDeleteOutput,
     handler=handle_namespace_delete,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -148,7 +144,6 @@ namespace_browse = Operation(
     output_model=NamespaceBrowseOutput,
     handler=handle_namespace_browse,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
     deployment_scoped=True,
@@ -162,7 +157,6 @@ namespace_join = Operation(
     output_model=NamespaceJoinOutput,
     handler=handle_namespace_join,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=True,
     # Handler enforces visibility=public + writes the grants row.
@@ -177,7 +171,6 @@ namespace_leave = Operation(
     output_model=NamespaceLeaveOutput,
     handler=handle_namespace_leave,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=True,
     # Handler enforces that the caller has a grant on the target.
@@ -192,7 +185,6 @@ namespace_cancel_request = Operation(
     output_model=NamespaceCancelRequestOutput,
     handler=handle_namespace_cancel_request,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=True,
     # Handler is self-only: it always operates on the calling subject.
@@ -206,7 +198,6 @@ namespace_list_mine = Operation(
     output_model=NamespaceListMineOutput,
     handler=handle_namespace_list_mine,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
     # The caller's own memberships, no namespace — a scoped
@@ -223,7 +214,6 @@ namespace_mark_seen = Operation(
     output_model=NamespaceMarkSeenOutput,
     handler=handle_namespace_mark_seen,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.VIEWER,
     writes=True,
     audit=False,
@@ -239,7 +229,6 @@ namespace_snapshot = Operation(
     output_model=NamespaceSnapshotOutput,
     handler=handle_namespace_snapshot,
     idempotent=True,
-    budget_p99_ms=2000,  # bounded by namespace size
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -252,7 +241,6 @@ namespace_restore = Operation(
     output_model=NamespaceRestoreOutput,
     handler=handle_namespace_restore,
     idempotent=True,  # snapshot_id-keyed
-    budget_p99_ms=3000,
     # VIEWER, like namespace.register: restore into a fresh target (auto-granted
     # admin); handler refuses an existing target unless caller is already admin.
     required_role=Role.VIEWER,
@@ -269,7 +257,6 @@ namespace_rollback = Operation(
     handler=handle_namespace_rollback,
     # A dry run is idempotent; an apply re-inserts heads and is not.
     idempotent=False,
-    budget_p99_ms=10000,  # bounded by max_keys; one FULL OUTER JOIN + batched inserts
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -281,7 +268,6 @@ namespace_taxonomy = Operation(
     output_model=NamespaceTaxonomyOutput,
     handler=handle_namespace_taxonomy,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -294,7 +280,6 @@ namespace_register_category = Operation(
     output_model=NamespaceRegisterCategoryOutput,
     handler=handle_namespace_register_category,
     idempotent=False,
-    budget_p99_ms=400,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -307,7 +292,6 @@ namespace_list_categories = Operation(
     output_model=NamespaceListCategoriesOutput,
     handler=handle_namespace_list_categories,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -320,7 +304,6 @@ namespace_search_categories = Operation(
     output_model=NamespaceSearchCategoriesOutput,
     handler=handle_namespace_search_categories,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -332,7 +315,6 @@ namespace_summary = Operation(
     output_model=NamespaceSummaryOutput,
     handler=handle_namespace_summary,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -344,9 +326,6 @@ namespace_validate = Operation(
     output_model=NamespaceValidateOutput,
     handler=handle_namespace_validate,
     idempotent=True,
-    # Ten FINAL-scoped aggregates plus two identity joins; namespace-sized,
-    # not cluster-sized.
-    budget_p99_ms=1500,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -358,11 +337,6 @@ namespace_audit = Operation(
     output_model=NamespaceAuditOutput,
     handler=handle_namespace_audit,
     idempotent=True,
-    # Three summary reads, ten FINAL-scoped aggregates over
-    # the namespace and one Python scan of up to 20k (key, clipped value)
-    # rows for the hand-rolled index check. Namespace-sized; the ledger
-    # reads are bounded by window_seconds.
-    budget_p99_ms=3000,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -374,7 +348,6 @@ namespace_register_ontology = Operation(
     output_model=NamespaceRegisterOntologyOutput,
     handler=handle_namespace_register_ontology,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -387,7 +360,6 @@ namespace_list_ontology = Operation(
     output_model=NamespaceListOntologyOutput,
     handler=handle_namespace_list_ontology,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.VIEWER,
     audit=False,
 )

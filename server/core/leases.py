@@ -43,7 +43,9 @@ log = logging.getLogger("loom.leases")
 
 LOCK_TABLE = "loom._migration_lock"
 
-ENGINE_SQL = "SELECT engine FROM system.tables WHERE database = 'loom' AND name = {table:String}"
+ENGINE_SQL = (
+    "SELECT engine FROM system.tables WHERE database = currentDatabase() AND name = {table:String}"
+)
 
 _STRICT = "SETTINGS keeper_map_strict_mode = 1"
 LOCK_HOLDER = (
