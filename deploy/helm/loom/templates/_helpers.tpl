@@ -64,16 +64,16 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{- /* Where a setting the chart guards is set instead: the root secret and its previous
-value through secrets.* (or the existingSecret, which then holds them, unchecked by the
-chart), the embedding space through embedding.*. Takes (dict "key" <env or
-settings-file name> "root" $). */}}
 {{- /* The settings every pod must share, as env names: the embedding space and the root
 secret. A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
 {{- define "loom.guardedNames" -}}
 ["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS"]
 {{- end -}}
 
+{{- /* Where a setting the chart guards is set instead: the root secret and its previous
+value through secrets.* (or the existingSecret, which then holds them, unchecked by the
+chart), the embedding space through embedding.*. Takes (dict "key" <env or
+settings-file name> "root" $). */}}
 {{- define "loom.guardedThrough" -}}
 {{- $key := upper .key | trimPrefix "LOOM_" -}}
 {{- $values := dict "JWT_SECRET" "secrets.jwtSecret" "JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious" -}}

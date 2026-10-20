@@ -21,6 +21,9 @@ class ModelWorkGate:
 
     def __init__(self) -> None:
         self._token: str | None = None
+        # Why admission is held for a refused configuration ('' for a model
+        # transition): nothing ends it but an operator, so it is not retried.
+        self._refusal = ""
         self._active = 0
         self._open = asyncio.Event()
         self._open.set()
@@ -35,11 +38,17 @@ class ModelWorkGate:
     def closed(self) -> bool:
         return self._token is not None
 
-    def close(self, token: str) -> None:
-        """Stop admission immediately; only the same transition can retry closing."""
+    @property
+    def refusal(self) -> str:
+        return self._refusal
+
+    def close(self, token: str, *, refusal: str = "") -> None:
+        """Stop admission immediately; only the same transition can retry closing.
+        `refusal` is why, when a refused configuration holds it."""
         if not token or self._token not in (None, token):
             raise ValueError("Model transition token does not own admission")
         self._token = token
+        self._refusal = refusal
         self._open.clear()
 
     async def wait_drained(self, token: str, *, timeout_s: float) -> bool:
@@ -61,7 +70,17 @@ class ModelWorkGate:
         if self._active:
             raise RuntimeError("Model work has not drained")
         self._token = None
+        self._refusal = ""
         self._open.set()
+
+    def transfer(self, old: str, new: str, *, refusal: str = "") -> None:
+        """Hand admission, closed by `old`, to the transition `new` without
+        opening it; `refusal` as for `close`."""
+        self._require_owner(old)
+        if not new:
+            raise ValueError("A model transition token is required")
+        self._token = new
+        self._refusal = refusal
 
     def _require_owner(self, token: str) -> None:
         if not token or self._token != token:
@@ -92,4 +111,5 @@ def get_model_work_gate() -> ModelWorkGate:
 
 
 def readiness_check() -> readiness.CheckResult:
-    return readiness.result(not _gate.closed, "model change in progress")
+    reason = "model configuration refused" if _gate.refusal else "model change in progress"
+    return readiness.result(not _gate.closed, reason)

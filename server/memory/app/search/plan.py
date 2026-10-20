@@ -6,13 +6,16 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import (
     _enrichment_parser_gate_active,
+    _is_llm_free,
     _should_run_query_enrichment,
 )
 from server.memory.app.search.scope import _SearchRun
 from server.memory.domain import set_expansion as _set_expansion
+from server.memory.domain.rerank_names import BUILTIN_OPENAI
 
 if TYPE_CHECKING:
     from server.memory.domain.query_intent import QueryIntent
@@ -68,10 +71,11 @@ def _collect_set_expansion(
 ) -> list[str]:
     """Phase 6: the set-question instance phrases, de-duplicated — the parser's deterministic
     collective-noun phrases, no model call, which ride the sub-query fusion as extra vector
-    legs. None under fast posture."""
-    phrases = (
-        [] if fast_posture else list(dict.fromkeys(_set_expansion.collective_phrases(input.query)))
-    )
+    legs. None under fast posture or while reads are LLM-free (one query embedding per read)."""
+    if fast_posture or reads_llm_free():
+        phrases: list[str] = []
+    else:
+        phrases = list(dict.fromkeys(_set_expansion.collective_phrases(input.query)))
     actual_work["set_expansion_phrases"] = len(phrases)
     return phrases
 
@@ -111,6 +115,14 @@ def _plan_retrieval(
         mode_pinned=not bool(getattr(input, "_search_mode_defaulted", False)),
         namespace_defaults=tuple(getattr(input, "_namespace_defaults_applied", ()) or ()),
     )
+    if _is_llm_free(input):
+        # The plan an LLM-free read reports runs no LLM step, whatever the planner chose
+        # (the deep budget turns HyDE on after `current_hyde`).
+        search_plan = replace(
+            search_plan,
+            hyde=False,
+            rerank="" if search_plan.rerank.startswith(BUILTIN_OPENAI) else search_plan.rerank,
+        )
     input = input.model_copy(update=search_plan.input_updates)
     return input, search_plan
 
@@ -120,20 +132,21 @@ async def _resolve_rerank_endpoint(
     search_plan: MemorySearchPlan,
     run: _SearchRun,
     actual_work: dict[str, Any],
-) -> tuple[MemorySearchInput, MemorySearchPlan, str, str, bool]:
+) -> tuple[MemorySearchInput, MemorySearchPlan, str, str]:
     """Phase 12: the relevance authority. Awaits the namespace rerank config
     (or takes the request override); without an external reranker the
     planner's unmatched plane is pruned. Returns the (possibly re-planned)
-    input and plan, the endpoint, its prompt template, and whether external
-    rerank is on."""
+    input and plan, the endpoint ("" for none) and its prompt template."""
 
     if run.rerank_cfg_task is None:
         endpoint = "" if run.rerank_override == "none" else run.rerank_override
         prompt_template = ""
     else:
         endpoint, prompt_template = await run.rerank_cfg_task
-    external_rerank_enabled = bool(endpoint)
-    if search_plan.include_top_n_unmatched > 0 and not external_rerank_enabled:
+    if endpoint.startswith(BUILTIN_OPENAI) and _is_llm_free(input):
+        # The built-in reranker is an LLM call, which an LLM-free read never makes.
+        endpoint, prompt_template = "", ""
+    if search_plan.include_top_n_unmatched > 0 and not endpoint:
         search_plan = replace(
             search_plan,
             include_top_n_unmatched=0,
@@ -141,7 +154,7 @@ async def _resolve_rerank_endpoint(
             reason=f"{search_plan.reason}:unmatched_pruned_no_rerank",
         )
         input = input.model_copy(update=search_plan.input_updates)
-    return input, search_plan, endpoint, prompt_template, external_rerank_enabled
+    return input, search_plan, endpoint, prompt_template
 
 
 def _size_candidate_pool(
@@ -149,9 +162,8 @@ def _size_candidate_pool(
     search_plan: MemorySearchPlan,
     run: _SearchRun,
     query_shape: str,
-    query_enrichment_used: bool,
     sub_queries: list[str],
-    external_rerank_enabled: bool,
+    endpoint: str,
     actual_work: dict[str, Any],
 ) -> tuple[MemorySearchPlan, int, dict[str, Any]]:
     """Phase 13: first-stage pool size (budget / rerank / shape multipliers,
@@ -159,6 +171,8 @@ def _size_candidate_pool(
     estimate, pool_top_k, and the estimate."""
     from server.memory.domain.query_planner import estimate_memory_search_work
     from server.settings import settings as _settings
+
+    external_rerank_enabled = bool(endpoint)
 
     namespaces = run.namespaces
     effective_entity_filter = run.effective_entity_filter
@@ -185,16 +199,17 @@ def _size_candidate_pool(
     # top_k when the namespace has the rows) silently truncates.
     pool_top_k = _quality_pool(input, pool_top_k, _settings)  # the cap; quality-filter widening
     actual_work["pool_top_k"] = int(pool_top_k)
+    llm_free = _is_llm_free(input)
     retrieval_cost_estimate = estimate_memory_search_work(
         search_plan,
         namespace_count=len(namespaces),
         top_k=int(input.top_k),
         pool_top_k=int(pool_top_k),
-        query_enrichment_used=query_enrichment_used,
         sub_query_count=len(sub_queries),
         entity_count=len(effective_entity_filter),
-        graph_triples_enabled=input.search_mode == "graph",
+        graph_triples_enabled=input.search_mode == "graph" and not llm_free,
         external_rerank_enabled=external_rerank_enabled,
+        llm_rerank=endpoint.startswith(BUILTIN_OPENAI),
     )
     search_plan = replace(search_plan, estimated_work=retrieval_cost_estimate)
     return search_plan, pool_top_k, retrieval_cost_estimate

@@ -115,7 +115,8 @@ async def test_the_gateway_token_exchange_waits_its_setting(
 
     monkeypatch.setattr(settings, "inference_token_exchange_timeout_s", 3.0)
     monkeypatch.setattr(settings, "inference_token_url", "https://gateway.example/token")
-    monkeypatch.setattr(http_client, "get_client", lambda: _Http())
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    monkeypatch.setattr(http_client, "get_model_client", lambda: _Http())
     monkeypatch.setattr(gateway, "_identity_token", _identity_token)
     try:
         await gateway._renew()

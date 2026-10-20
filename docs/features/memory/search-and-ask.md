@@ -87,7 +87,19 @@ default applies to HTTP and MCP callers that leave it out.
 
 `retrieval_budget` (`fast`, `standard`, `deep`) sets the cost. `standard` runs cheap
 recall first and adds the LLM, graph and rerank legs only when the planner or a
-weak-result fallback calls for them.
+weak-result fallback calls for them. `fast`, like the `fast` recipe, makes no LLM call,
+whichever field asks for one: no HyDE, graph triples, retry judge or `builtin:openai`
+rerank. A count or sum question still gets its computed answer when the
+query parser reads its intent, matched on the predicate without LLM synonyms; when the
+parser cannot, the search answers from recall alone. `context.pack` runs its memory search the
+same way in every mode, keeping its recipe's planes.
+
+`LOOM_READS_LLM_FREE=true` applies the same rule to every search, whatever its recipe or budget, and
+to every other read: a search also skips the spelling-fix and set-expansion embeddings and runs no
+namespace reranker (a reranker is a model call, so only one the request names runs, and never
+`builtin:openai`), `memory.ask` answers 409 `READS_LLM_FREE` unless it asks with
+`allow_synthesis=false`, and `memory.brief` returns its evidence with no answer
+([LLM-free reads](../../architecture/llm-architecture.md#llm-free-reads)).
 
 ### Filters and scope
 

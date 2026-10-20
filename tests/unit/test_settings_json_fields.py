@@ -1,6 +1,6 @@
 """JSON-valued settings are checked at load: a value that is not JSON, or
 whose top level is the wrong shape, fails naming the field and never
-printing the value. A field that also checks its entries gets a sample with real ones."""
+printing the value."""
 
 from __future__ import annotations
 

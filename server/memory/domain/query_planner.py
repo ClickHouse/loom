@@ -276,11 +276,11 @@ def estimate_memory_search_work(
     namespace_count: int,
     top_k: int,
     pool_top_k: int,
-    query_enrichment_used: bool,
     sub_query_count: int = 0,
     entity_count: int = 0,
     graph_triples_enabled: bool = False,
     external_rerank_enabled: bool = False,
+    llm_rerank: bool = False,
 ) -> dict[str, Any]:
     """Estimate retrieval work before executing the expensive legs.
 
@@ -301,13 +301,11 @@ def estimate_memory_search_work(
         vector_queries += entities  # entity_vectors ANN lookups
 
     llm_calls = 0
-    if query_enrichment_used:
-        llm_calls += 1
     if plan.hyde:
         llm_calls += 1
     if graph_triples_enabled:
         llm_calls += 1
-    if external_rerank_enabled:
+    if llm_rerank:  # the builtin:openai reranker; a rerank service is no LLM call
         llm_calls += 1
 
     candidate_pool = ns * int(pool_top_k)

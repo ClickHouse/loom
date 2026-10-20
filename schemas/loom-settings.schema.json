@@ -2076,7 +2076,7 @@
         "embedding_cache_shared": {
           "default": true,
           "type": "boolean",
-          "description": "Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, keyed (model, sha1 of normalised text). Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only."
+          "description": "Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside a request skips both tiers. Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only."
         },
         "embedding_cache_shared_max_chars": {
           "default": 2000,
@@ -2374,6 +2374,16 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, and a machine issuer's discovery."
+        },
+        "inference_gateway_hosts": {
+          "default": "",
+          "type": "string",
+          "description": "Comma-separated hostnames (exact, any case) of the gateway; required, and the only hosts sent to, while the gateway is required."
+        },
+        "inference_gateway_required": {
+          "default": false,
+          "type": "boolean",
+          "description": "True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set."
         },
         "inference_token_audience": {
           "default": "",
@@ -2977,7 +2987,7 @@
         "memory_ask_llm_cache_default": {
           "default": true,
           "type": "boolean",
-          "description": "Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a per-request llm_cache wins (benches measuring synthesis send false)."
+          "description": "Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by sha256(org, system, user, max_tokens, response_format) per model in loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a per-request llm_cache wins (benches measuring synthesis send false)."
         },
         "memory_ask_llm_cache_namespaces": {
           "default": "",
@@ -4578,6 +4588,11 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds one readiness check may take; a slower check fails."
+        },
+        "reads_llm_free": {
+          "default": false,
+          "type": "boolean",
+          "description": "True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call."
         },
         "ready_requires_mirrors": {
           "default": false,

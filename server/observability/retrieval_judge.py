@@ -35,6 +35,7 @@ import logging
 import time
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
 from server.settings.budgets import llm_max_tokens
@@ -243,7 +244,7 @@ def submit(
     Synchronous and non-blocking: the caller is inside a request.
     """
     global _dropped
-    if not enabled() or not trace_id or not query:
+    if not enabled() or not trace_id or not query or reads_llm_free():
         return False
     if not _sampled(trace_id):
         return False

@@ -336,8 +336,17 @@ settings:
   # Seconds one token exchange with the inference gateway may take. [restart]
   # inference_token_exchange_timeout_s: 10.0
 
+  # True: model calls and memory content go only to inference_gateway_hosts; on whenever
+  # inference_token_url is set. [restart]
+  # inference_gateway_required: false
+
+  # Comma-separated hostnames (exact, any case) of the gateway; required, and the only
+  # hosts sent to, while the gateway is required. [restart]
+  # inference_gateway_hosts: ""
+
   # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
-  # keyed (model, sha1 of normalised text). Only single-text (query) embeds up to
+  # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
+  # a request skips both tiers. Only single-text (query) embeds up to
   # `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only.
   # [restart]
   # embedding_cache_shared: true
@@ -3193,7 +3202,7 @@ settings:
   # memory_ask_precedents_fast_max_age_hours: 1
 
   # Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by
-  # sha256(system, user, max_tokens, response_format) per model in
+  # sha256(org, system, user, max_tokens, response_format) per model in
   # loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key,
   # so a changed memory misses. `memory_ask_llm_cache_namespaces` scopes the default; a
   # per-request llm_cache wins (benches measuring synthesis send false). [live]
@@ -3893,6 +3902,11 @@ settings:
   # rolling 24 h cost reached it. Overridden per namespace by
   # loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. [restart]
   # default_daily_cost_cap_usd: 1.0
+
+  # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and
+  # set-expansion embeddings, and rerank only as named, since a reranker is a model
+  # call. [restart]
+  # reads_llm_free: false
 
   # The rate limiter divides every cap by the deployment's replica count so the
   # replicas' sum matches the target (approximate, not cluster-strict). The count is the

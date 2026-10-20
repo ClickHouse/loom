@@ -24,6 +24,7 @@ from server.settings._env import DEV_JWT_SECRET, is_secret_field, unknown_env_ke
 from server.settings._file import SettingsFileSource
 from server.settings._loaded import LOADING, Recorded
 from server.settings.catalog import (
+    BUILTIN_COHERE,
     AuthSettings,
     ClickHouseSettings,
     CodeSettings,
@@ -44,6 +45,7 @@ from server.settings.catalog import (
     StorageSettings,
     TaskSettings,
     TrackerSettings,
+    is_builtin_cohere,
 )
 
 
@@ -126,6 +128,18 @@ class Settings(
         return f"{self.public_base_url.strip().rstrip('/')}/v1"
 
     @model_validator(mode="after")
+    def _check_code_rerank_behind_the_gateway(self) -> Settings:
+        """`builtin:cohere` calls Cohere's own API, and the code reranker fails
+        open: while the gateway is required, the default may not name it."""
+        why = self.gateway_required_by()
+        if why and is_builtin_cohere(self.code_search_rerank_default.strip()):
+            raise ValueError(
+                f"{why} refuses LOOM_CODE_SEARCH_RERANK_DEFAULT=builtin:cohere: "
+                "rerank through the gateway"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_inference_identity(self) -> Settings:
         """Signing its own identity tokens, Loom needs an https public address
         for their issuer (the gateway fetches the keys there, and a key swapped
@@ -179,4 +193,11 @@ def log_unknown_env_keys() -> None:
         )
 
 
-__all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]
+__all__ = [
+    "BUILTIN_COHERE",
+    "DEV_JWT_SECRET",
+    "Settings",
+    "is_builtin_cohere",
+    "log_unknown_env_keys",
+    "settings",
+]

@@ -115,7 +115,7 @@ async def test_miss_calls_the_provider_and_writes_the_row_under_its_model() -> N
     table, rows, settings = ch.inserts[0]
     assert table == "loom.t" and settings == {"async_insert": 1, "wait_for_async_insert": 0}
     row = rows[0]
-    assert row["model"] == "m-strong" and row["key"] == cache_key("sys", "user", 600)
+    assert row["model"] == "m-strong" and row["key"] == lc.scoped_key("sys", "user", 600, org="o")
     assert row["org"] == "o" and row["namespace"] == "n"
     assert (row["text"], row["tokens_in"], row["tokens_out"]) == ("A [k1].", 1200, 80)
     assert lc.stats()["misses"] == 1
@@ -127,12 +127,12 @@ async def test_hit_skips_the_provider_carries_tokens_and_counts_the_saving() -> 
     lc.reset_stats()
     ch = _CH()
     inner = _Inner(model="claude-opus-4-8")
-    first = CachedLLMClient(inner, ch=ch, table="loom.t")
+    first = CachedLLMClient(inner, org="o", ch=ch, table="loom.t")
     await first.complete("sys", "user", max_tokens=600)
     await _settle()
     # A second request (its own wrapper, as the handler builds one per ask).
     inner2 = _Inner(model="claude-opus-4-8", text="never used")
-    second = CachedLLMClient(inner2, ch=ch, table="loom.t")
+    second = CachedLLMClient(inner2, org="o", ch=ch, table="loom.t")
     res = await second.complete("sys", "user", max_tokens=600)
     assert res.from_cache is True and res.text == "A [k1]."
     assert res.model == "claude-opus-4-8" and (res.tokens_in, res.tokens_out) == (1200, 80)
@@ -148,10 +148,10 @@ async def test_hit_skips_the_provider_carries_tokens_and_counts_the_saving() -> 
 @pytest.mark.asyncio
 async def test_a_different_model_does_not_share_the_row() -> None:
     ch = _CH()
-    await CachedLLMClient(_Inner(model="a"), ch=ch, table="loom.t").complete("sys", "user")
+    await CachedLLMClient(_Inner(model="a"), org="o", ch=ch, table="loom.t").complete("sys", "user")
     await _settle()
     inner_b = _Inner(model="b", text="B's own")
-    res = await CachedLLMClient(inner_b, ch=ch, table="loom.t").complete("sys", "user")
+    res = await CachedLLMClient(inner_b, org="o", ch=ch, table="loom.t").complete("sys", "user")
     assert res.text == "B's own" and len(inner_b.calls) == 1
 
 
@@ -160,7 +160,7 @@ async def test_read_error_falls_open_to_the_provider() -> None:
     lc.reset_stats()
     ch = _CH(fail_reads=True)
     inner = _Inner()
-    c = CachedLLMClient(inner, ch=ch, table="loom.t")
+    c = CachedLLMClient(inner, org="o", ch=ch, table="loom.t")
     res = await c.complete("sys", "user")
     assert res.text == "A [k1]." and len(inner.calls) == 1
     assert c.errors == 1 and lc.stats()["errors"] == 1
@@ -171,11 +171,11 @@ async def test_fallback_served_and_empty_answers_are_not_memoed() -> None:
     ch = _CH()
     # The primary's provider was down; another model answered (fallback.py).
     served_elsewhere = _Inner(model="m-strong", answered_by="m-cheap")
-    await CachedLLMClient(served_elsewhere, ch=ch, table="loom.t").complete("sys", "user")
+    await CachedLLMClient(served_elsewhere, org="o", ch=ch, table="loom.t").complete("sys", "user")
     await _settle()
     assert ch.inserts == []
     empty = _Inner(text="")
-    await CachedLLMClient(empty, ch=ch, table="loom.t").complete("sys", "user")
+    await CachedLLMClient(empty, org="o", ch=ch, table="loom.t").complete("sys", "user")
     await _settle()
     assert ch.inserts == []
 
@@ -199,7 +199,7 @@ async def test_a_reply_the_provider_cut_is_not_memoed() -> None:
             )
 
         inner.complete = cut  # type: ignore[method-assign]
-        await CachedLLMClient(inner, ch=ch, table="loom.t").complete("sys", "user")
+        await CachedLLMClient(inner, org="o", ch=ch, table="loom.t").complete("sys", "user")
         await _settle()
     assert ch.inserts == []
 
@@ -234,21 +234,21 @@ async def test_same_window_hits_and_a_changed_memory_misses(monkeypatch) -> None
 
     inner1 = _Inner()
     await synthesis._synthesize(
-        CachedLLMClient(inner1, ch=ch, table="loom.t"), "what is the dose?", list(window)
+        CachedLLMClient(inner1, org="o", ch=ch, table="loom.t"), "what is the dose?", list(window)
     )
     await _settle()
     assert len(inner1.calls) == 1 and len(ch.inserts) == 1
 
     inner2 = _Inner(text="never used")
     await synthesis._synthesize(
-        CachedLLMClient(inner2, ch=ch, table="loom.t"), "what is the dose?", list(window)
+        CachedLLMClient(inner2, org="o", ch=ch, table="loom.t"), "what is the dose?", list(window)
     )
     assert inner2.calls == [], "an unchanged window is served from the cache"
 
     changed = [_mem("k1", "The dose is 40 mg."), _mem("k2", "Taken at breakfast.")]
     inner3 = _Inner(text="fresh")
     await synthesis._synthesize(
-        CachedLLMClient(inner3, ch=ch, table="loom.t"), "what is the dose?", changed
+        CachedLLMClient(inner3, org="o", ch=ch, table="loom.t"), "what is the dose?", changed
     )
     assert len(inner3.calls) == 1, "a changed memory misses"
     assert "<<memory k1 " in inner3.calls[0][1]
@@ -257,13 +257,15 @@ async def test_same_window_hits_and_a_changed_memory_misses(monkeypatch) -> None
     arrived = window + [_mem("k3", "Switched to 10 mg in May.")]
     inner4 = _Inner(text="fresh")
     await synthesis._synthesize(
-        CachedLLMClient(inner4, ch=ch, table="loom.t"), "what is the dose?", arrived
+        CachedLLMClient(inner4, org="o", ch=ch, table="loom.t"), "what is the dose?", arrived
     )
     assert len(inner4.calls) == 1, "a memory that entered the window misses"
 
     inner5 = _Inner(text="fresh")
     await synthesis._synthesize(
-        CachedLLMClient(inner5, ch=ch, table="loom.t"), "what is the dose now?", list(window)
+        CachedLLMClient(inner5, org="o", ch=ch, table="loom.t"),
+        "what is the dose now?",
+        list(window),
     )
     assert len(inner5.calls) == 1, "a different question misses"
 

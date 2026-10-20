@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerDuplicateCheckInput,
@@ -526,13 +527,14 @@ def _draft_text(input: Any, run: dict[str, Any]) -> tuple[str, str]:
 
 
 async def _rerank_call(input: Any, cands: list[dict[str, Any]]) -> Any:
-    """One model call over `cands`, under its timeout; None on no candidates."""
+    """One model call over `cands`, under its timeout; None on no candidates or
+    while reads are LLM-free."""
     import asyncio as _aio
 
     from server.llm.client import get_llm_client_for_model
     from server.tracker.app import dup_rerank as dr
 
-    if not cands:
+    if not cands or reads_llm_free():
         return None
     title, body = str(input.title or "").strip(), str(input.body or "").strip()
     model = str(settings.tracker_dupcheck_rerank_model) or None

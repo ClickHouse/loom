@@ -4,11 +4,14 @@
 `loom.llm_response_cache` by `(model, key)` where `key` is the sha256 of
 everything that decides the answer at temperature 0: the system prompt, the
 user prompt, `max_tokens`, the response format and any extra keyword the
-caller passed (a temperature, a tool schema). After a provider call it
-writes the row fire-and-forget. The evidence a synthesis read is inside the
-user prompt, so a memory that changes, arrives or leaves the window changes
-the key — staleness is impossible by construction, not by TTL (a
-question-keyed cache could serve an answer its evidence no longer supports).
+caller passed (a temperature, a tool schema), and the org the client serves:
+one org is never served another's answer, nor learns from a fast reply that
+another asked the same, and a client built with no org calls the provider.
+After a provider call it writes the row fire-and-forget. The evidence a
+synthesis read is inside the user prompt, so a memory that changes, arrives or
+leaves the window changes the key — staleness is impossible by construction,
+not by TTL (a question-keyed cache could serve an answer its evidence no longer
+supports).
 
 Same shape as the shared embedding cache: a primary-key point read
 per call, an async insert per miss, every step failing open to the
@@ -130,6 +133,23 @@ def cache_key(
     ]
     blob = json.dumps(parts, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def scoped_key(
+    system: str,
+    user: str,
+    max_tokens: int,
+    response_format: dict[str, str] | None = None,
+    extra: dict[str, Any] | None = None,
+    *,
+    org: str,
+    key_scope: str = "",
+) -> str:
+    """The key a `CachedLLMClient` for `org` reads and writes by."""
+    scoped = {**(extra or {}), "_org": org}
+    if key_scope:
+        scoped["_scope"] = key_scope
+    return cache_key(system, user, max_tokens, response_format, scoped)
 
 
 def read_sql(table: str | None = None) -> str:
@@ -263,14 +283,17 @@ class CachedLLMClient:
         **kw: Any,
     ) -> LLMResult:
         global hits, misses, saved_usd
-        if _BYPASS.get() or (
-            self._deterministic_only and float(kw.get("temperature") or 0.0) != 0.0
+        if (
+            _BYPASS.get()
+            or not self.org
+            or (self._deterministic_only and float(kw.get("temperature") or 0.0) != 0.0)
         ):
             return await self.inner.complete(
                 system, user, max_tokens=max_tokens, response_format=response_format, **kw
             )
-        extra = {**kw, "_scope": self._key_scope} if self._key_scope else kw
-        key = cache_key(system, user, max_tokens, response_format, extra)
+        key = scoped_key(
+            system, user, max_tokens, response_format, kw, org=self.org, key_scope=self._key_scope
+        )
         t0 = time.perf_counter()
         row = await self._get(key)
         if row and str(row.get("text") or ""):
