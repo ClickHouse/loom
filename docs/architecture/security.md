@@ -695,8 +695,10 @@ sent to the summarizer. A summary that reads as a credential anyway is refused
 (`reason: "summary-reads-high"`) and tombstones nothing, as when the summary cannot be
 embedded. A provider rebuild stages a chunk, digest or
 turn embedding that reads as a credential without a vector, and its verification reads
-the text of every row left empty and accepts those that read as a credential. `loom reembed` keeps such a row on its old model, which search does not read,
-until `--delete-old` removes it; `loom reembed --in-database` runs the embedding inside
+the text of every row left empty and accepts those that read as a credential.
+`loom reembed` keeps a conversation turn that reads as a credential on its old model, which
+search does not read, until `--delete-old` removes it (a memory row's vector follows its
+sensitivity label); `loom reembed --in-database` runs the embedding inside
 ClickHouse, cannot check the text, and re-embeds it. Chunks, digests and turn embeddings
 that an earlier build embedded keep their vector, so the reads that serve passages check
 their text too:
