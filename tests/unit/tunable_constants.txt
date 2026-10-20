@@ -271,7 +271,6 @@ server/core/ch.py::_OVERLOADED_LOG_EVERY_S
 server/core/ch.py::_POOL_TIMEOUTS_TOTAL
 server/core/ch.py::_POOL_WAITERS
 server/core/ch.py::_QUERY_TAG_MAX
-server/core/ch_errors.py::REPLICA_BOUND_RETRIES
 server/core/ch_schema_guard.py::_SCHEMA_GUARD_MAX_PENDING
 server/core/ch_schema_guard.py::_SCHEMA_GUARD_TTL_S
 server/core/grant_cache.py::_MAX_ENTRIES

@@ -47,7 +47,7 @@ async def corpus_stats(
     ch: _StatsClient, *, org: str, namespaces: list[str], embedding_model: str
 ) -> tuple[int, float]:
     """(N, avgdl) over the live chunks of `namespaces`, each namespace's pair
-    cached for 5 minutes and the ones missing read in one statement. avgdl is
+    cached for `knowledge_bm25_corpus_ttl_s` and the ones missing read in one statement. avgdl is
     in words of the same split the lexical leg counts tf and dl in."""
     now = time.time()
     stats: dict[str, tuple[int, float]] = {}

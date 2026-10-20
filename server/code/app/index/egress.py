@@ -113,9 +113,8 @@ class EgressProxy:
 
     async def _tunnel(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            head = await asyncio.wait_for(
-                reader.readuntil(b"\r\n\r\n"), timeout=10.0
-            )  # not a setting: a CONNECT head, read before any job byte flows
+            # not a setting: a CONNECT head, read before any job byte flows
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10.0)
         except (TimeoutError, asyncio.IncompleteReadError, asyncio.LimitOverrunError):
             return
         line = head.split(b"\r\n", 1)[0].decode("latin-1")

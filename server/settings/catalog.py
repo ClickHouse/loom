@@ -229,7 +229,8 @@ class AuthSettings(BaseModel):
     # Comma-separated email domains JIT provisioning admits; empty admits any verified email.
     oidc_jit_email_domains: str = ""
     # Seconds one call to an identity provider may take: OIDC discovery, the token and
-    # revocation endpoints, its signing keys, and a machine issuer's discovery.
+    # revocation endpoints, its signing keys, a machine issuer's discovery, and an end-user
+    # issuer's JWKS fetch.
     identity_provider_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
     # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
@@ -544,6 +545,10 @@ class ClickHouseSettings(BaseModel):
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
     ch_pool_wait_ms: int = 500
+    # Fresh connections a statement tries after a replica-bound error (a replica that
+    # lost its Keeper session, a replica's read-only table). Behind a load balancer one
+    # reconnect can land on the replica that just failed, so a single retry is not enough.
+    ch_replica_bound_retries: int = Field(default=2, ge=1)
     # Ceilings for the reads a caller shapes (code.grep, code.search with a
     # pattern or globs, memory.aggregate, memory.record.query). A ceiling only
     # lowers the statement's own value, so no request can widen it; 0 = none.
@@ -2221,8 +2226,9 @@ class MemorySettings(BaseModel):
     # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
     memory_expiry_demote_floor: float = 0.05
 
+    # ---- classify endpoint ----
     # Seconds a namespace's classify_endpoint may take to answer a write's
-    # classification; past it the write goes on unclassified.
+    # classification; past it the write keeps the caller's memory_type.
     memory_classify_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
 
     # ---- delete-version checks ----
@@ -2763,9 +2769,9 @@ class MemorySearchSettings(BaseModel):
     # namespace. A guard, not a tuning knob: set well above what one person
     # holds, so it bounds a runaway sweep rather than trimming normal ones.
     memory_search_fanout_max_namespaces: Annotated[int, LIVE] = Field(default=32, ge=1)
-    # Seconds memory.search's reranker (a namespace's rerank_endpoint, a builtin or a
-    # named endpoint) may take to answer; past it the search keeps its input order and
-    # says so in `degraded`.
+    # Seconds memory.search's reranker endpoint (a named endpoint of rerank_endpoints_json,
+    # or builtin:cohere) may take to answer; past it the search keeps its input order and
+    # says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s.
     memory_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
@@ -3591,6 +3597,9 @@ class ProviderSettings(ModelSettings):
     # Seconds between each process's reads of the orgs whose model calls are
     # switched off (loom.org_model_calls); a change reaches every process within it.
     model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
+    # Seconds a provider check (a model or key saved on the dashboard's Models & keys page)
+    # waits for its probe call before it reports the provider unreachable.
+    provider_check_timeout_s: Annotated[float, LIVE] = Field(default=30.0, gt=0)
     # Seconds a process trusts its copy of the org model-call switch when it cannot
     # read it again; past it, every model call for an org is refused (fail closed).
     # 15 to 300.
@@ -4031,19 +4040,6 @@ class RuntimeSettings(BaseModel):
     # embeddings, and rerank only as named, since a reranker is a model call.
     reads_llm_free: bool = False
 
-    # ---- outbound HTTP ----
-    # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
-    # embedding APIs, webhooks, provider checks) wait on a call that sets no timeout of
-    # its own. Read when a process builds the clients.
-    http_client_timeout_s: float = Field(default=20.0, gt=0)
-    # Seconds those clients wait to open a connection.
-    http_client_connect_timeout_s: float = Field(default=5.0, gt=0)
-    # Connections each shared outbound HTTP client keeps open at most, so one
-    # misbehaving downstream cannot exhaust the process's sockets.
-    http_client_max_connections: int = Field(default=100, ge=1)
-    # Idle connections each shared outbound HTTP client keeps for reuse.
-    http_client_max_keepalive_connections: int = Field(default=20, ge=0)
-
     # The rate limiter divides every cap by the deployment's replica count so
     # the replicas' sum matches the target (approximate, not cluster-strict).
     # The count is the hosts with a live serving loom.instances row; this is
@@ -4136,6 +4132,19 @@ class RuntimeSettings(BaseModel):
         if self.background_workers == "auto" and not self.deployment:
             return "off"
         return self.background_workers
+
+    # ---- outbound HTTP ----
+    # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
+    # embedding APIs, rerank and classify endpoints, provider checks) wait on a call that
+    # sets no timeout of its own. Read when a process builds the clients.
+    http_client_timeout_s: float = Field(default=20.0, gt=0)
+    # Seconds the shared outbound HTTP clients wait to open a connection.
+    http_client_connect_timeout_s: float = Field(default=5.0, gt=0)
+    # Connections each shared outbound HTTP client keeps open at most, so one
+    # misbehaving downstream cannot exhaust the process's sockets.
+    http_client_max_connections: int = Field(default=100, ge=1)
+    # Idle connections each shared outbound HTTP client keeps for reuse.
+    http_client_max_keepalive_connections: int = Field(default=20, ge=0)
 
     # ---- timeouts, budgets and caches ----
     # First wait, in seconds, after a worker's pass fails; it doubles per failure up to
@@ -4321,6 +4330,8 @@ class TrackerSettings(BaseModel):
     tracker_sources_json: Annotated[str, JsonObject] = ""
     # Seconds tracker.source_check waits for a source's contract check.
     tracker_source_check_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Seconds Loom waits to connect to a tracker source's ClickHouse.
+    tracker_source_connect_timeout_s: Annotated[float, LIVE] = Field(default=5.0, gt=0)
     # The repositories whose numbers name a restricted namespace's escalations and core
     # incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident":
     # "Org/incidents"}. `escalation_context` / `incident_context` read the record

@@ -37,10 +37,13 @@ def _numeric(node: ast.AST) -> bool:
 
 
 def _marked(lines: list[str], node: ast.AST) -> bool:
-    """`# not a setting: <reason>` on one of the node's lines, or on the line above it."""
+    """`# not a setting: <reason>` on one of the node's lines, or on a comment line
+    directly above it (a marker ending the statement before covers that one only)."""
     first = node.lineno - 1  # type: ignore[attr-defined]
     last = getattr(node, "end_lineno", None) or first + 1
-    return any("# not a setting: " in line for line in lines[max(0, first - 1) : last])
+    above = lines[first - 1] if first > 0 else ""
+    own = lines[first:last] + ([above] if above.lstrip().startswith("#") else [])
+    return any("# not a setting: " in line for line in own)
 
 
 def _constants(tree: ast.Module, lines: list[str]) -> list[str]:
@@ -100,8 +103,16 @@ def test_the_walk_sees_a_tunable_number() -> None:
     src = (
         "A_TTL = 60\n_FETCH_TIMEOUT_S = 2 * 60.0\nNAME = 'x'\nMAX_ROWS: int = 5\nFLAG = True\n"
         "B_TTL = 9  # not a setting: tokens issued under it read it back\n"
+        "C_TIMEOUT = 3\n"
+        "# not a setting: a comment line above covers the line below\n"
+        "D_TIMEOUT = 4\n"
     )
-    assert _constants(ast.parse(src), src.splitlines()) == ["A_TTL", "_FETCH_TIMEOUT_S", "MAX_ROWS"]
+    assert _constants(ast.parse(src), src.splitlines()) == [
+        "A_TTL",
+        "_FETCH_TIMEOUT_S",
+        "MAX_ROWS",
+        "C_TIMEOUT",
+    ]
 
 
 # Keyword arguments that bound a call's wait or its connection pool.
@@ -115,7 +126,10 @@ _TIMEOUT_ARGS = {
     "send_receive_timeout",
     "max_connections",
     "max_keepalive_connections",
+    "total",
 }
+# Calls whose first positional argument is a wait, in seconds.
+_WAIT_FIRST = ("asyncio.timeout", ".join", ".wait", "wait_for_event")
 
 
 def _literal(node: ast.AST) -> bool:
@@ -143,6 +157,8 @@ def test_no_call_site_waits_a_literal_timeout() -> None:
                 spots.append(node.args[0])
             if func.endswith("wait_for") and len(node.args) > 1 and _literal(node.args[1]):
                 spots.append(node.args[1])
+            if func.endswith(_WAIT_FIRST) and node.args and _literal(node.args[0]):
+                spots.append(node.args[0])
             if spots and not _marked(lines, node):
                 found.append(f"{rel}:{node.lineno}: {func}")
     assert not found, (

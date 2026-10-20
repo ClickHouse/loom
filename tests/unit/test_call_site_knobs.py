@@ -172,39 +172,78 @@ async def test_a_hyde_call_slower_than_its_setting_falls_back_to_the_query(
     assert vec and "HyDE generation failed" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_the_shared_http_clients_take_their_timeout_and_pool_from_settings(
+def test_the_shared_http_clients_take_their_timeout_and_pool_from_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.clients import _http
 
+    seen: dict[str, Any] = {}
     monkeypatch.setattr(settings, "http_client_timeout_s", 7.0)
     monkeypatch.setattr(settings, "http_client_connect_timeout_s", 1.5)
     monkeypatch.setattr(settings, "http_client_max_connections", 9)
     monkeypatch.setattr(settings, "http_client_max_keepalive_connections", 3)
-    client = _http._build()
-    try:
-        assert (client.timeout.read, client.timeout.connect) == (7.0, 1.5)
-        pool = client._transport._pool  # type: ignore[attr-defined]
-        assert (pool._max_connections, pool._max_keepalive_connections) == (9, 3)
-    finally:
-        await client.aclose()
+    monkeypatch.setattr(_http, "_ProviderClient", lambda **kw: seen.update(kw))
+    _http._build()
+    assert (seen["timeout"].read, seen["timeout"].connect) == (7.0, 1.5)
+    assert (seen["limits"].max_connections, seen["limits"].max_keepalive_connections) == (9, 3)
 
 
-@pytest.mark.parametrize(
-    ("module", "setting"),
-    [
-        ("server.memory.app.rerank", "memory_search_rerank_timeout_s"),
-        ("server.memory.app.classify", "memory_classify_timeout_s"),
-    ],
-)
-def test_a_rerank_or_classify_endpoint_waits_its_setting(
-    monkeypatch: pytest.MonkeyPatch, module: str, setting: str
+class _RecordingClient:
+    """Records the timeout a call builds its client with, then fails the call."""
+
+    seen: list[Any] = []
+
+    def __init__(self, **kw: Any) -> None:
+        _RecordingClient.seen.append(kw["timeout"])
+
+    async def __aenter__(self) -> _RecordingClient:
+        raise _Stop
+
+    async def __aexit__(self, *a: Any) -> None:
+        return None
+
+
+@pytest.fixture
+def recording_client(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    from server.llm import customer
+
+    async def _org() -> str:
+        return "acme"
+
+    _RecordingClient.seen = []
+    monkeypatch.setattr(customer, "require", _org)
+    monkeypatch.setattr(customer, "headers", lambda org: {})
+    return _RecordingClient.seen
+
+
+@pytest.mark.asyncio
+async def test_a_rerank_endpoint_call_waits_its_setting(
+    monkeypatch: pytest.MonkeyPatch, recording_client: list[Any]
 ) -> None:
-    import importlib
+    from server.memory.app import rerank
 
-    monkeypatch.setattr(settings, setting, 3.5)
-    assert importlib.import_module(module)._timeout().read == 3.5
+    monkeypatch.setattr(settings, "memory_search_rerank_timeout_s", 3.5)
+    monkeypatch.setattr(settings, "rerank_endpoints_json", '{"gw": "https://rerank.example/v1"}')
+    monkeypatch.setattr(rerank.httpx, "AsyncClient", _RecordingClient)
+    candidate = rerank.RerankCandidate("k", "ns", "text", "fact", 0.5)
+    kept = await rerank.rerank(endpoint="gw", prompt_template="", query="q", candidates=[candidate])
+    assert kept == [candidate]  # fail open
+    assert [t.read for t in recording_client] == [3.5]
+
+
+@pytest.mark.asyncio
+async def test_a_classify_endpoint_call_waits_its_setting(
+    monkeypatch: pytest.MonkeyPatch, recording_client: list[Any]
+) -> None:
+    from server.memory.app import classify
+
+    monkeypatch.setattr(settings, "memory_classify_timeout_s", 2.5)
+    monkeypatch.setattr(classify.httpx, "AsyncClient", _RecordingClient)
+    got = await classify.classify(
+        endpoint="https://classify.example/v1", prompt_template="", value="v", valid_types=[]
+    )
+    assert got == ""  # the caller's type stays
+    assert [t.read for t in recording_client] == [2.5]
 
 
 @pytest.mark.asyncio
@@ -251,6 +290,7 @@ _NEVER_ZERO = [
     "delete_version_check_batch_size",
     "model_calls_off_drop_per_pass",
     "http_client_max_connections",
+    "ch_replica_bound_retries",
     # an interval or backoff of 0 would spin
     "delete_version_check_interval_seconds",
     "delete_version_check_idle_interval_seconds",

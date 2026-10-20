@@ -725,6 +725,22 @@ async def test_a_retrieving_hit_moves_the_retrieval_time_so_the_next_ask_is_fast
     assert fast_env.searches == 2 and third.route_reason == "precedent:unmoved:reused=2"
 
 
+def test_a_timeout_or_cache_lifetime_leaves_the_shape_as_it_was() -> None:
+    """Raising a reranker timeout during an incident keeps every stored precedent."""
+    from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import Settings
+    from tests.unit.test_memory_ask import _input
+
+    base = Settings(_env_file=None)  # type: ignore[call-arg]
+    for name, value in (
+        ("memory_search_rerank_timeout_s", 30.0),
+        ("memory_search_hyde_timeout_s", 30.0),
+        ("memory_search_page_ttl_s", 60),
+    ):
+        changed = base.model_copy(update={name: value})
+        assert ask_shape_sha256(_input(), changed) == ask_shape_sha256(_input(), base), name
+
+
 def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     """Two tokens pinned to different end users, one body that names nobody: the read runs
     as each pinned user, so the shapes (and the precedent keys) must differ; a namespace

@@ -259,6 +259,12 @@
           "type": "string",
           "description": "ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`."
         },
+        "ch_replica_bound_retries": {
+          "default": 2,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough."
+        },
         "ch_secure": {
           "anyOf": [
             {
@@ -2403,7 +2409,7 @@
           "default": 5.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds those clients wait to open a connection."
+          "description": "Seconds the shared outbound HTTP clients wait to open a connection."
         },
         "http_client_max_connections": {
           "default": 100,
@@ -2421,7 +2427,7 @@
           "default": 20.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, webhooks, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
+          "description": "Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, rerank and classify endpoints, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients."
         },
         "identity_provider": {
           "default": "",
@@ -2438,7 +2444,7 @@
           "default": 10.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, and a machine issuer's discovery."
+          "description": "Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, a machine issuer's discovery, and an end-user issuer's JWKS fetch."
         },
         "inference_customer_format": {
           "default": "{org}",
@@ -3373,7 +3379,7 @@
           "default": 8.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write goes on unclassified."
+          "description": "Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write keeps the caller's memory_type."
         },
         "memory_code_links_batch": {
           "default": 500,
@@ -4111,7 +4117,7 @@
           "default": 8.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds memory.search's reranker (a namespace's rerank_endpoint, a builtin or a named endpoint) may take to answer; past it the search keeps its input order and says so in `degraded`."
+          "description": "Seconds memory.search's reranker endpoint (a named endpoint of rerank_endpoints_json, or builtin:cohere) may take to answer; past it the search keeps its input order and says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s."
         },
         "memory_search_sensitivity_demote": {
           "default": 0.1,
@@ -4708,6 +4714,12 @@
           "minimum": 1,
           "type": "integer",
           "description": "Recorded projection failures one pass retries (at least 1)."
+        },
+        "provider_check_timeout_s": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a provider check (a model or key saved on the dashboard's Models & keys page) waits for its probe call before it reports the provider unreachable."
         },
         "public_base_url": {
           "default": "",
@@ -5493,6 +5505,12 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "Seconds tracker.source_check waits for a source's contract check."
+        },
+        "tracker_source_connect_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds Loom waits to connect to a tracker source's ClickHouse."
         },
         "tracker_sources_json": {
           "default": "",

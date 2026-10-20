@@ -31,6 +31,7 @@ from server.llm.anthropic import AnthropicLLMClient
 from server.llm.openai import OpenAILLMClient
 from server.observability import provider_health
 from server.observability.genai import llm_stage
+from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 
 
@@ -103,7 +104,7 @@ async def _check(
         return check
     try:
         with provider_health.unrecorded():
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(settings.provider_check_timeout_s):
                 if role == "llm":
                     await _probe_llm(provider, model, key)
                 else:

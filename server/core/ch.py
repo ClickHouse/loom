@@ -31,7 +31,6 @@ from clickhouse_connect.driver.external import ExternalData
 from server.core.ch_class_settings import is_read_statement, traffic_class_settings
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
-    REPLICA_BOUND_RETRIES,
     WIDTH_MISMATCH_CODE,
     error_code,
     error_line,
@@ -902,13 +901,13 @@ class CHClient:
             if not is_replica_bound_error(e):
                 raise
             last: BaseException = e
-            for attempt in range(1, REPLICA_BOUND_RETRIES + 1):
+            for attempt in range(1, settings.ch_replica_bound_retries + 1):
                 log.warning(
                     "ch %s: replica-bound server error (%s), retry %d/%d on a new connection",
                     op_name,
                     str(last)[:80],
                     attempt,
-                    REPLICA_BOUND_RETRIES,
+                    settings.ch_replica_bound_retries,
                 )
                 await self._reconnect(int(self._generation))
                 try:

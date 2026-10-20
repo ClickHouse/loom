@@ -66,7 +66,7 @@ Authentication, tokens and identity providers.
 | `LOOM_OIDC_JIT_PROVISION` | `bool` | `False` |  | JIT provisioning: a first OIDC sign-in with no account creates a personal namespace in oidc_jit_org instead of being rejected. Off = fail closed. oidc_jit_email_domains (comma-separated) restricts it; empty admits any verified email the IdP authenticates. |
 | `LOOM_OIDC_JIT_ORG` | `str` | `''` |  | Org that JIT-provisioned accounts are created in; required when `oidc_jit_provision` is on. |
 | `LOOM_OIDC_JIT_EMAIL_DOMAINS` | `str` | `''` |  | Comma-separated email domains JIT provisioning admits; empty admits any verified email. |
-| `LOOM_IDENTITY_PROVIDER_TIMEOUT_S` | `float` | `10.0` | live | Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, and a machine issuer's discovery. |
+| `LOOM_IDENTITY_PROVIDER_TIMEOUT_S` | `float` | `10.0` | live | Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, a machine issuer's discovery, and an end-user issuer's JWKS fetch. |
 | `LOOM_SCIM_TOKEN` | `str` | *(unset)* |  | Bearer tokens (comma-separated, any one accepted) an identity provider presents to deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc. |
 | `LOOM_JWT_SECRET` | `str` | *(set)* |  | The root secret, and the one secret a deployment carries: it signs tokens as kid `default` and seals every stored credential and every signing key in loom.signing_keys (`loom signing-key rotate` adds those). Required when auth is on. The default is the checked-in DEV secret anyone can mint with: a deployment with auth on refuses to start with it, except the `make dev` stack (`loom doctor` warns everywhere else). |
 | `LOOM_JWT_SECRET_PREVIOUS` | `str` | *(unset)* |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
@@ -130,6 +130,7 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` |  | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
+| `LOOM_CH_REPLICA_BOUND_RETRIES` | `int` | `2` |  | Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough. |
 
 ### Caller-shaped read ceilings
 
@@ -969,7 +970,12 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_EXPIRY_SWEEP_BATCH_SIZE` | `int` | `500` |  | Expired rows one sweep pass applies. |
 | `LOOM_MEMORY_EXPIRY_DEMOTE_FACTOR` | `float` | `0.5` |  | `demote` multiplies confidence by this factor, never below `memory_expiry_demote_floor`. |
 | `LOOM_MEMORY_EXPIRY_DEMOTE_FLOOR` | `float` | `0.05` |  | Lowest confidence a `demote` (expiry or run.complete) leaves on a row. |
-| `LOOM_MEMORY_CLASSIFY_TIMEOUT_S` | `float` | `8.0` | live | Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write goes on unclassified. |
+
+### Classify endpoint
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_CLASSIFY_TIMEOUT_S` | `float` | `8.0` | live | Seconds a namespace's classify_endpoint may take to answer a write's classification; past it the write keeps the caller's memory_type. |
 
 ### Delete-version checks
 
@@ -1173,7 +1179,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_DEFAULT_NAMESPACE_SCOPE` | `'this' \| 'all_mine'` | `'this'` | live | Default `namespace_scope` when a request leaves it unset. "this" reads the addressed namespace only; "all_mine" also reads the caller's own namespaces (the MCP loom_search asks for it by name), see docs/concepts/identities-and-namespaces.md#reading-several-namespaces. |
 | `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory'` | live | Namespace kinds an all_mine fan-out spans (memory.search, conversation.search, MCP loom_search; knowledge.search reads knowledge_search_fanout_kinds): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s). |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `32` | live | Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every memory leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones. |
-| `LOOM_MEMORY_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds memory.search's reranker (a namespace's rerank_endpoint, a builtin or a named endpoint) may take to answer; past it the search keeps its input order and says so in `degraded`. |
+| `LOOM_MEMORY_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds memory.search's reranker endpoint (a named endpoint of rerank_endpoints_json, or builtin:cohere) may take to answer; past it the search keeps its input order and says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS` | `'auto' \| 'on' \| 'off'` | `'auto'` | live | Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace); "off" reads the value vector only; "auto" turns it on per namespace when its key-reuse share is at or above memory_search_key_axis_auto_reuse_share (cached for memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off). A per-request `key_axis` wins. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE` | `float` | `0.05` | live | "auto" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_TTL_SECONDS` | `int` | `600` | live | Seconds a namespace's "auto" key-axis probe result is cached before it is re-read. |
@@ -1418,6 +1424,7 @@ Embedding and LLM providers.
 | `LOOM_INFERENCE_CUSTOMER_FORMAT` | `str` | `'{org}'` |  | How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is). |
 | `LOOM_INFERENCE_FEATURE_MAP_JSON` | `str` | `''` |  | JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...) to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's. |
 | `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it. |
+| `LOOM_PROVIDER_CHECK_TIMEOUT_S` | `float` | `30.0` | live | Seconds a provider check (a model or key saved on the dashboard's Models & keys page) waits for its probe call before it reports the provider unreachable. |
 | `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` | `float` | `60.0` |  | Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300. |
 | `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` | `int` | `7` |  | Days a switched-off org's queued requests (the extraction queue) wait, from when the org was switched off, before they are dropped, each with a memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise remove them first, with no record. |
 | `LOOM_MODEL_CALLS_OFF_DROP_PER_PASS` | `int` | `500` |  | Waiting requests of a switched-off org one extraction-queue pass drops; the rest go on the next pass. |
@@ -1471,15 +1478,6 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` |  | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` |  | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
 | `LOOM_READS_LLM_FREE` | `bool` | `False` |  | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
-
-### Outbound HTTP
-
-| Variable | Type | Default | Live | Meaning |
-| --- | --- | --- | --- | --- |
-| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, webhooks, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
-| `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds those clients wait to open a connection. |
-| `LOOM_HTTP_CLIENT_MAX_CONNECTIONS` | `int` | `100` |  | Connections each shared outbound HTTP client keeps open at most, so one misbehaving downstream cannot exhaust the process's sockets. |
-| `LOOM_HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS` | `int` | `20` |  | Idle connections each shared outbound HTTP client keeps for reuse. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` |  | The rate limiter divides every cap by the deployment's replica count so the replicas' sum matches the target (approximate, not cluster-strict). The count is the hosts with a live serving loom.instances row; this is its floor, and the count while those rows cannot be read. |
 | `LOOM_SERVES_TRAFFIC` | `bool` | `True` |  | False for a process no load balancer routes to (a workers-only container): its instance row does not count as a replica. |
 | `LOOM_INSTANCE_HEARTBEAT_SECONDS` | `float` | `10.0` |  | Seconds between this process's loom.instances heartbeats, each of which also compares it with the deployment's published configuration. A row not renewed for three intervals is not live. |
@@ -1500,6 +1498,15 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks for the dev secret, auth-off and public_base_url. |
 | `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` |  | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. Required behind a load balancer: at the default every client counts as the balancer's address for the sign-in and sign-up limits. |
 | `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with the dev signing secret or with auth off. Only for a port that is not actually reachable by others. |
+
+### Outbound HTTP
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_HTTP_CLIENT_TIMEOUT_S` | `float` | `20.0` |  | Seconds the shared outbound HTTP clients (server/clients/_http.py: model and embedding APIs, rerank and classify endpoints, provider checks) wait on a call that sets no timeout of its own. Read when a process builds the clients. |
+| `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S` | `float` | `5.0` |  | Seconds the shared outbound HTTP clients wait to open a connection. |
+| `LOOM_HTTP_CLIENT_MAX_CONNECTIONS` | `int` | `100` |  | Connections each shared outbound HTTP client keeps open at most, so one misbehaving downstream cannot exhaust the process's sockets. |
+| `LOOM_HTTP_CLIENT_MAX_KEEPALIVE_CONNECTIONS` | `int` | `20` |  | Idle connections each shared outbound HTTP client keeps for reuse. |
 
 ### Timeouts, budgets and caches
 
@@ -1617,6 +1624,7 @@ The tracker plane: records, duplicate checks, bisect.
 | --- | --- | --- | --- | --- |
 | `LOOM_TRACKER_SOURCES_JSON` | `str` | `''` |  | Every tracker source and the namespaces that read them: {"sources": {"<name>": {"host": "x.clickhouse.cloud", "port": 8443, "secure": true, "database": "loom_tracker"}}, "namespaces": {"qa-<team>": {"source": "<name>", "repos": ["Org/repo"], "restricted": false}}}. A namespace naming an unknown source does not serve (one error line, never a guess). |
 | `LOOM_TRACKER_SOURCE_CHECK_TIMEOUT_S` | `float` | `8.0` | live | Seconds tracker.source_check waits for a source's contract check. |
+| `LOOM_TRACKER_SOURCE_CONNECT_TIMEOUT_S` | `float` | `5.0` | live | Seconds Loom waits to connect to a tracker source's ClickHouse. |
 | `LOOM_TRACKER_RESTRICTED_REPOS_JSON` | `str` | `''` |  | The repositories whose numbers name a restricted namespace's escalations and core incidents, as `Org/repo`: {"escalation": "Org/escalations", "incident": "Org/incidents"}. `escalation_context` / `incident_context` read the record `Org/repo#<number>`; a kind with no repository here reads no record by number. |
 | `LOOM_TRACKER_CREDENTIALS_JSON` | `str` | *(unset)* |  | Credentials per tracker source, kept apart from `tracker_sources_json`: {"<name>": {"user": "...", "password": "..."}}. |
 | `LOOM_TRACKER_CONTRACT_TTL_S` | `float` | `3600.0` |  | A source serves only while its schema meets the record contract (docs/features/tracker/record-contract.md), checked through its own credential once per this many seconds (at least 1 s); a failed check retries after 60 s. |

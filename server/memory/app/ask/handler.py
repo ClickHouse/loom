@@ -597,6 +597,10 @@ def _shape_settings(settings: Any) -> dict[str, Any]:
     for name, field in type(settings).model_fields.items():
         if not name.startswith(_ASK_SHAPE_SETTINGS) or name.startswith("memory_ask_precedent"):
             continue
+        # A timeout or a cache lifetime changes no answer a precedent holds: a call that
+        # timed out already changes the window the precedent is checked against.
+        if name.endswith(("_timeout_s", "_timeout_ms")) or "_ttl" in name:
+            continue
         value = getattr(settings, name)
         if value != field.get_default(call_default_factory=True):
             shape[name] = value

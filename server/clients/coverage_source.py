@@ -15,6 +15,7 @@ import httpx
 
 from server.clients._http import get_client
 from server.clients._http_errors import raise_for_status_with_detail
+from server.settings import settings
 
 
 class CoverageSource(Protocol):
@@ -49,9 +50,7 @@ class HttpCoverageSource:
         self._url = url.rstrip("/") + "/"
         self._auth = httpx.BasicAuth(user, password) if user else None
         self._database = database
-        self._timeout = httpx.Timeout(
-            timeout_s, connect=10.0
-        )  # not a setting: a connect; the read bound is the caller's
+        self._timeout = httpx.Timeout(timeout_s, connect=settings.http_client_connect_timeout_s)
 
     async def rows(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         query: dict[str, str] = {"database": self._database, "default_format": "JSONEachRow"}
