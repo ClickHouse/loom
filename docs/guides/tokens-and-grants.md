@@ -471,35 +471,49 @@ the real caller in `impersonated_by`. Empty disables the header.
 
 ## Act for a service's end users
 
-A service in front of Loom, whose users have no Loom account, holds one gateway token per
-org and names the end user on every HTTP request:
+A service in front of Loom, whose users have no Loom account, signs a short-lived RS256
+token per request for the user it serves. Register its public key, under its issuer and
+the key's `kid`, in `LOOM_JWT_END_USER_ISSUERS_JSON`:
 
 ```bash
-loom mint-token --gateway --subject sa:chat --org acme --ttl-days 30
-curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $GATEWAY_TOKEN" \
+LOOM_JWT_END_USER_ISSUERS_JSON='{"chat-app": {"chat-1": "-----BEGIN PUBLIC KEY-----\n…"}}'
+```
+
+The service then signs, for each call, a token with `iss` its issuer, `aud` Loom's
+audience (`LOOM_JWT_AUDIENCE`), `sub: user:<id>`, `org`, `iat` and an `exp` at most
+`LOOM_JWT_END_USER_MAX_TTL_SECONDS` (15 min) later, and `agent: agent:<id>` when the call
+runs inside one of its agents:
+
+```bash
+curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "X-Loom-On-Behalf-Of: user:u-42" -H "X-Loom-Agent: agent:helper" \
   -d '{"org": "acme", "namespace": "@me", "query": "renewal clause"}'
 ```
 
-- The request runs as `user:u-42` alone, in the token's org: no namespace or role of the
-  token carries over, reads are pinned to that user's rows, and the user reaches what grants
-  give `user:u-42`, the groups that list it, and `agent:helper` when the header names it.
-  A gateway request that names no user is refused; MCP refuses a gateway token.
+- The request runs as `user:u-42` alone, in the token's org: an org member with no claim,
+  reads pinned to that user's rows, reaching what grants give `user:u-42`, the groups that
+  list it, the agent the token names, and `everyone`. A token with any other claim
+  (namespaces, roles, a read scope) or a longer life is refused, and the key verifies its
+  own issuer's end-user tokens and nothing else. MCP, `/v1/me/*` and the admin routes
+  refuse an end-user token.
 - Grants name these principals as subjects: `grants.create` with `subject: "user:u-42"`,
-  `"group:finance"` or `"agent:helper"`. Groups and agents hold grants on collections only.
-- Groups are pushed with the same token to SCIM `/scim/v2/Groups` (create, replace, patch
-  members, delete); a member is a user id. A removed member loses the group's grants
-  within `LOOM_ACL_WATERMARK_POLL_SECONDS`.
+  `"group:finance"`, `"agent:helper"` or `"everyone"`. Groups, agents and `everyone` hold
+  grants on collections only.
+- Groups are pushed with a token of the org's admin to SCIM `/scim/v2/Groups` (create,
+  replace, patch members, delete); a member is a user id. A removed member loses the
+  group's grants within `LOOM_ACL_WATERMARK_POLL_SECONDS`.
 - Ids are lowercase letters, digits and `._@-`. `namespace: "@me"` is the user's personal
   collection: only they reach it, and it takes no grant.
 - Of the ops that name no namespace, an end user may call `collection.create`,
   `collection.list`, `namespace.list_mine` and `grants.pending_for_me`, but no directory
   self-service (`namespace.register`, `namespace.join`, `namespace.browse`).
-- Revoking the gateway token cuts off every user it acts for. To cut off one user, revoke
-  their grants and take them out of their groups, or erase them (`erasure.request` with
-  `scope_type: user_id`). Collections, their tree and the read cost are in
-  [Sharing knowledge](../architecture/sharing.md).
+- An agent's files: a collection granted to `agent:<id>`, searched with
+  `knowledge.search` and `namespaces: ["<that collection>", "@me"]`, so the search reads
+  those alone. A document's `agent`, `session_id` and `source_class` come back on each hit.
+- To cut off one user, revoke their tokens (`loom revoke-token --subject user:<id>`) and
+  grants and take them out of their groups, or erase them (`erasure.request` with
+  `scope_type: user_id`, and `purge: true` to take the rows off disk). Collections, their
+  tree and the read cost are in [Sharing knowledge](../architecture/sharing.md).
 
 ## Revoke and rotate
 

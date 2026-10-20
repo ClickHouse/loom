@@ -9,8 +9,8 @@ has this shape, and what it costs.
 
 ```mermaid
 flowchart LR
-    G["gateway token<br/>(one per org)"] -->|"X-Loom-On-Behalf-Of: user:u1<br/>X-Loom-Agent: agent:a1"| R["request runs as user:u1"]
-    R --> P["principals:<br/>user:u1, its groups, agent:a1"]
+    G["end-user token<br/>(signed per request)"] -->|"sub: user:u1<br/>agent: agent:a1"| R["request runs as user:u1"]
+    R --> P["principals:<br/>user:u1, its groups, agent:a1, everyone"]
     P --> M["each principal's grants<br/>(cached grant maps)"]
     T["collection tree<br/>(loom.collections)"] --> D{"best role on the collection<br/>or an ancestor"}
     M --> D
@@ -34,10 +34,10 @@ flowchart LR
   delegated token reaches one no further than its own claim names it, and a delegated one
   no further than its creator's role there. A platform admin passes, for operator erasure
   and export.
-- **Principals.** A request holds its subject, every group whose members include it, and
-  the agent a gateway asserted. A grant names any of them: a login handle or email, an
-  `sa:` service account, `user:<id>`, `group:<id>` or `agent:<id>`. Groups and agents hold
-  grants on collections only.
+- **Principals.** A request holds its subject, every group whose members include it, the
+  agent its end-user token signs in, and `everyone`. A grant names any of them: a login
+  handle or email, an `sa:` service account, `user:<id>`, `group:<id>`, `agent:<id>` or
+  `everyone`. Groups, agents and `everyone` hold grants on collections only.
 - **Inheritance.** A collection's role for a request is the best role any of its
   principals holds on the collection or on one of its ancestors, at most eight up. A child
   only adds to what its parents give. To make a child narrower, detach it: it then keeps
@@ -52,40 +52,49 @@ flowchart LR
 
 ## Identity
 
-A service in front of Loom holds one gateway token per org (`loom mint-token --gateway`)
-and names, on every HTTP request, the end user it acts for. `server/auth/gateway.py`
-turns that into the request's identity: subject `user:<id>`, the token's org, the
-`viewer` role of an org member with no claim, and reads pinned to that user's rows
-(`read_scope = own_user`). Nothing of the token's own carries over, and a gateway
-request that names no user is refused, so no row, collection or grant is ever addressed
-to the gateway's own account.
+A service in front of Loom (a chat app) signs a short-lived token for each request it
+makes for one of its users, with a key registered for it as an end-user issuer
+(`LOOM_JWT_END_USER_ISSUERS_JSON`: issuer → kid → RS256 public key). The token names the
+user (`sub: user:<id>`), one org, and, when the request runs inside one of its agents,
+that agent (`agent: agent:<id>`). `server.auth.jwt` verifies it into the request's
+identity: subject `user:<id>`, the `viewer` role of an org member with no claim, and
+reads pinned to that user's rows (`read_scope = own_user`). There is no long-lived
+secret per customer, and no header can name a different user.
 
-| The gateway can claim                        | It cannot claim                         |
-| -------------------------------------------- | --------------------------------------- |
-| any user id and agent id, inside its own org | another org                             |
-|                                              | a group (Loom reads membership itself)  |
-|                                              | a role, a namespace or admin            |
-|                                              | a Loom login handle or `sa:` subject    |
-|                                              | another user's personal collection      |
-|                                              | directory self-service (register, join) |
+| An end-user token may name                   | It may not                                                    |
+| -------------------------------------------- | ------------------------------------------------------------- |
+| one user id and one agent id, of its own org | name another org, or none                                     |
+|                                              | carry namespaces, roles or a read scope                       |
+|                                              | live longer than `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (15 min) |
+|                                              | be signed by a key of another issuer                          |
+
+An end-user key verifies only its own issuer's tokens, and only as an end user: it can
+never sign a Loom-shaped token (another `sub`, roles, Loom's own issuer). The agent is a
+signed claim because an agent's grants widen what the request reaches; the service
+decides who may use which agent before it signs one in, so Loom keeps no copy of that.
 
 Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
-SCIM member is the gateway's own lowercase user id, not an identity provider's. Of the
+SCIM member is the service's own lowercase user id, not an identity provider's. Of the
 org-level ops (those that name no namespace to gate), an end user may call only
 `collection.create`, `collection.list`, `namespace.list_mine` and `grants.pending_for_me`.
-A trusted caller (`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a
-`user:`, `group:` or `agent:` principal. Revoking the gateway token cuts off all its
-users; one user is cut off by revoking their grants and removing them from groups, or by
-erasing them.
+An end-user token is served by the op endpoint and `knowledge.download`; MCP, `/v1/me/*`,
+the admin routes and the task watch refuse it (403). A trusted caller
+(`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a `user:`,
+`group:` or `agent:` principal. One user is cut off by revoking their tokens
+(`loom revoke-token --subject user:<id>`) and grants, or by erasing them.
 
-The gateway authenticates its users and already holds their data, so Loom cannot make it
-less trusted than that; what Loom enforces is the org boundary and the shape of the
-claim. The MCP transport refuses a gateway token (MCP names no end user). A token
-exchange of the user's own identity-provider token would let Loom verify the user too;
-it would mint the same `user:` subject.
+**Everyone** is a built-in principal every request acting in the org holds: a grant to
+`everyone` on a collection opens it to the whole org (a chat app's "public"), with no
+group to keep in step with the org's users. No token is ever `everyone`.
 
-**Groups** come from one place: SCIM `/scim/v2/Groups`, written with the org's gateway
-token. The group lands in that token's org; a member is a user id, held as `user:<id>`.
+**An agent's files** go in a collection of its own (say `col-agent-<id>`) granted to
+`agent:<id>`: whoever the service signs in with that agent reads them. An agent's search
+names its collections explicitly (`knowledge.search` with `namespaces`), each checked as a
+read of its own, so it never reaches another agent's files; a chat's attachments go in
+the user's `@me` with the conversation as their `session_id`.
+
+**Groups** come from one place: SCIM `/scim/v2/Groups`, written with a token of the org's
+admin. The group lands in that org; a member is a user id, held as `user:<id>`.
 Membership is read by Loom on every request, never claimed by a token, so removing a
 member takes effect within the consistency window below.
 
@@ -161,20 +170,30 @@ not by subject, and a skip index on the subject prunes nothing at this granule s
 
 ## Erasure
 
-Every document carries who wrote it (`agent`, `user_id`, `actor`, `source_class`), for
-provenance and for erasure; access never reads these columns. A user erasure (`scope_type
-= user_id`) supersedes the documents and chunks that user wrote in any namespace of the
-org (a gateway's end user, or a token minted with `--read-user-id`, stamps its `user_id`;
-it supersedes and never purges, so no version another writer replaced reads as live
-again), deletes their uploaded originals that no other writer's document shares, revokes
-every grant naming `user:<id>`, blanks their id as the issuer of the grants they gave
-others (those grants stay), removes them from every group, and retires their personal
+Every document and chunk carries who wrote it and what it is: the agent, the end user,
+the session it was written in (a chat, an agent run), the token's principal and the
+content's class. Access never reads them; a write declares the agent, the session and a
+downgraded class (`derived`, `external`, `imported`), the end user comes from the token,
+and `knowledge.search` returns all of them on each hit and filters on the session and the
+class. A rewrite of the same text keeps them; new text, or a new original, takes the
+writer's.
+
+A user erasure (`scope_type = user_id`) supersedes the documents and chunks that user
+wrote in any namespace of the org (an end-user token, or a token minted with
+`--read-user-id`, stamps its `user_id`), or, with `purge` (a GDPR deletion), deletes every
+version of them from disk, after superseding another writer's versions that one of theirs
+replaced, so none reads as live again. It deletes their uploaded originals that no other
+writer's document shares, revokes and then deletes every grant naming `user:<id>`, blanks
+their id as the issuer of the grants they gave others (those grants stay), removes them
+from every group, and retires their personal
 collection's directory row (`namespace.delete` and `collection.delete` refuse a personal
 collection: it goes only with its user's erasure). The request ledger keeps the user's
 calls for cost with their `user:<id>` subject scrubbed, and the user's newest-call row is
 deleted. Deleting a SCIM group revokes the grants that named it, so a group made later
 under the same id starts with none. Collections that hold other writers' documents stay:
-Loom deletes only what its writer asked to delete. A user-scope
+Loom deletes only what its writer asked to delete. `collection.delete` purges what its
+collection held (a namespace erasure that takes the rows off disk) before the collection
+leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
 read: an org admin may erase a collection's rows without reading them, and a platform
 admin sees every collection.

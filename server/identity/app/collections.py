@@ -184,9 +184,9 @@ async def handle_collection_list(input: CollectionListInput) -> CollectionListOu
 
 async def handle_collection_delete(input: CollectionDeleteInput) -> CollectionDeleteOutput:
     """Delete a collection (the transport checked admin on it) with what it
-    holds: an erasure of the namespace first, while its admin still reaches it
-    (a saga that fails is retried by the recovery worker), then it leaves the
-    directory and the tree, and its children become top-level. A personal
+    holds: a purging erasure of the namespace first, while its admin still
+    reaches it (a saga that fails is retried by the recovery worker), then it
+    leaves the directory and the tree, and its children become top-level. A personal
     collection goes with its user's erasure."""
     from server.erasure.app.handlers import erase_namespace
 

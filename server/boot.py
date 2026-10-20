@@ -116,9 +116,9 @@ def require_safe_bind(
 
 
 async def warn_collection_named_namespaces() -> list[str]:
-    """Log one WARNING naming active namespaces that use a collection's reserved
-    prefix (`col-`) without being one: a `col-` name not in the collection tree
-    admits only a platform admin. Returns the names."""
+    """Log one WARNING naming the first 20 active namespaces that use a
+    collection's reserved prefix (`col-`) without being one: a `col-` name not in
+    the collection tree admits only a platform admin. Returns the names."""
     from server.auth.sharing import COLLECTION_PREFIX
     from server.core.ch import get_client
 
@@ -139,7 +139,7 @@ async def warn_collection_named_namespaces() -> list[str]:
     names = [str(r["namespace"]) for r in rows]
     if names:
         logging.getLogger(__name__).warning(
-            "namespaces named like collections admit only a platform admin: %s "
+            "namespaces named like collections admit only a platform admin (the first 20): %s "
             "(move their data to a new name, or recreate them with collection.create)",
             ", ".join(names),
         )

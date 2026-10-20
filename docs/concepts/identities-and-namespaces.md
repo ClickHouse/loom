@@ -338,9 +338,9 @@ How a caller gets a token at all is the deployment's identity mode
 - **`gateway`**: an upstream identity layer authenticates people and mints short-lived
   Loom tokens with the shared secret; Loom only verifies. A subject in
   `LOOM_TRUSTED_CALLERS` may act for an end user with `X-Loom-On-Behalf-Of`, and every
-  ledger row records the real caller. A service whose users have no Loom account holds a
-  gateway token per org instead (`loom mint-token --gateway`) and names a `user:<id>` on
-  every request ([act for a service's end users](../guides/tokens-and-grants.md#act-for-a-services-end-users)).
+  ledger row records the real caller. A service whose users have no Loom account signs a
+  short-lived token per request for a `user:<id>` instead, with a key registered for it
+  as an end-user issuer ([act for a service's end users](../guides/tokens-and-grants.md#act-for-a-services-end-users)).
 
 ## Collections
 

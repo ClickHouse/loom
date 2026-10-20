@@ -77,12 +77,20 @@ async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOu
 
 
 async def erase_namespace(org: str, namespace: str, *, requester: str) -> ErasureRequestOutput:
-    """`erasure.request` of one namespace, for an op that deletes it with what it
-    holds (`collection.delete`); authorized as that request is."""
-    return await handle_erasure_request(
-        ErasureRequestInput(
-            org=org, scope_type="namespace", scope_value=namespace, requester=requester
-        )
+    """A purging erasure of one namespace, for an op that deletes it with what it
+    holds (`collection.delete`, whose transport checked admin on it): its rows
+    leave the disk, not just the readable set. A one-name `namespace_list` scope,
+    the scope a purge rides on (and a resume reads it back from)."""
+    input = ErasureRequestInput(
+        org=org,
+        scope_type="namespace_list",
+        scope_value=json.dumps({"namespaces": [namespace], "purge": True}),
+        requester=requester,
+        purge=True,
+    )
+    input, row, erasure_id, now = await begin_erasure(input)
+    return await run_saga(
+        input=input, row=row, erasure_id=erasure_id, requested_at=now, previously_completed=set()
     )
 
 

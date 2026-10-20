@@ -66,9 +66,9 @@ class CollectionListOutput(BaseModel):
 
 
 class CollectionDeleteInput(BaseModel):
-    """Delete a collection with what it holds: an erasure of the namespace
-    (documents, chunks, originals, memory), then it leaves the directory and
-    the tree, and its name is never used again."""
+    """Delete a collection with what it holds: a purging erasure of the
+    namespace (documents, chunks, originals, memory leave the disk), then it
+    leaves the directory and the tree, and its name is never used again."""
 
     org: str
     namespace: str

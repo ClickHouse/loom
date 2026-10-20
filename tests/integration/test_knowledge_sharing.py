@@ -730,12 +730,14 @@ def test_deleting_a_collection_erases_what_it_held(gw: Gateway, ch_client: Any) 
     _add(gw, "alice", col, f"to go {_nonce()}", uri="doc/a")
     out = gw.ok("alice", "collection.delete", {"namespace": col})
     assert out["deleted"] and out["erasure_status"] == "completed", out
-    live = ch_client.query(
-        "SELECT count() FROM loom.chunks WHERE org = {o:String} AND namespace = {n:String}"
-        " AND doc_superseded_at IS NULL",
-        parameters={"o": gw.org, "n": col},
-    ).result_rows[0][0]
-    assert live == 0, "the collection's chunks went with it"
+    left = {
+        table: ch_client.query(
+            f"SELECT count() FROM {table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
+            parameters={"o": gw.org, "n": col},
+        ).result_rows[0][0]
+        for table in ("loom.chunks", "loom.documents")
+    }
+    assert left == {"loom.chunks": 0, "loom.documents": 0}, "purged off the disk, not superseded"
 
 
 def test_a_users_purge_removes_every_version_they_wrote(

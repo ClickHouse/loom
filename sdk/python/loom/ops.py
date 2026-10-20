@@ -7080,14 +7080,14 @@ class CollectionCreateOutput(TypedDict, total=False):
 
 
 class CollectionDeleteInput(TypedDict, total=False):
-    "Delete a collection with what it holds: an erasure of the namespace"
+    "Delete a collection with what it holds: a purging erasure of the"
 
     org: Required[str]
     namespace: Required[str]
 
 
 class CollectionDeleteBody(TypedDict, total=False):
-    "Delete a collection with what it holds: an erasure of the namespace"
+    "Delete a collection with what it holds: a purging erasure of the"
 
     org: NotRequired[str]
     namespace: NotRequired[str]

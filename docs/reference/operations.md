@@ -237,7 +237,7 @@ Fields for every `collection` op: [operations/collection.md](operations/collecti
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`collection.create`](operations/collection.md#collectioncreate) | Create a collection: a namespace read and written only through grants. | viewer | idempotent | no | yes |
-| [`collection.delete`](operations/collection.md#collectiondelete) | Delete a collection with what it holds: an erasure of the namespace (documents, chunks, originals, memory), then it leaves the directory and the tree, and its name is never used again. | admin | idempotent | no | yes |
+| [`collection.delete`](operations/collection.md#collectiondelete) | Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never… | admin | idempotent | no | yes |
 | [`collection.list`](operations/collection.md#collectionlist) | List the collections the caller can read, by name. | viewer | read | no |  |
 | [`collection.move`](operations/collection.md#collectionmove) | Put a collection under another one, or detach it. | admin | idempotent | no | yes |
 

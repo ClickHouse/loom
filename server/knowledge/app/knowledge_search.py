@@ -42,8 +42,9 @@ async def handle_knowledge_search(input: KnowledgeSearchInput) -> KnowledgeSearc
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec = await embedder.embed(input.query)
     search = _namespaces_search(input, embedder, query_vec)
+    skipped: list[str] = []
     if input.namespaces:
-        namespaces, skipped = await _named_namespaces(input), []
+        namespaces = await _named_namespaces(input)
     else:
         namespaces, skipped = await namespaces_to_search(
             input.org,
