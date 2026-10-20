@@ -243,3 +243,38 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
     res = await run_pass()
     assert (res.titled, res.skipped_titled, len(prompts), len(writes)) == (0, 1, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeypatch) -> None:
+    """Left unmarked, such a thread took a scan slot on every pass and starved older
+    untitled threads."""
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}]
+    ch = StubCH([_CAND], turns, None)
+    _patch(monkeypatch, ch)
+    prompts: list[str] = []
+
+    class _Recording:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _LLMOut()
+
+    import server.knowledge.store.conversations as repo
+    import server.llm.client as llmmod
+
+    writes = []
+
+    async def fake_insert(row, **k):
+        writes.append(row)
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
+    monkeypatch.setattr(repo, "insert_thread", fake_insert)
+    res = await run_pass()
+    assert (res.titled, prompts) == (0, [])
+    [written] = writes
+    assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
+
+    _patch(monkeypatch, StubCH([_CAND], turns, written))
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
+    res = await run_pass()
+    assert (res.skipped_titled, prompts, len(writes)) == (1, [], 1)

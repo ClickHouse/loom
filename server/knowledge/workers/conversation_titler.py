@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import Any, TypedDict, cast
 
 from server.core.datetimes import naive_utc_now_seconds
+from server.knowledge.domain.conversations import thread_metadata, title_refused
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
@@ -85,12 +86,17 @@ async def _make_title(
     )
     # A turn that reads as a credential never reaches the model: the title is listed to
     # every reader of the namespace.
+    spoken = [r for r in turns if str(r.get("content") or "").strip()]
     snippet = "\n".join(
         f"{r['role']}: {str(r['content'])[:500]}"
-        for r in turns
-        if str(r.get("content") or "").strip() and not reads_high(str(r["content"]))
+        for r in spoken
+        if not reads_high(str(r["content"]))
     )
     if not snippet:
+        if spoken:
+            # Every opening turn reads as a credential. The thread is marked, so it stops
+            # taking one of the scan's slots on every pass.
+            await _store_title(row, existing, "", refused=True)
         return False
 
     # Bind a cost accumulator, label the leg, and drain it into an AgentEvent
@@ -117,21 +123,26 @@ async def _make_title(
     # A title that reads as a credential is never stored. The thread is marked instead,
     # so later passes do not pay for the same title again.
     refused = reads_high(title)
-    stored_title = "" if refused else title
+    await _store_title(row, existing, "" if refused else title, refused=refused)
+    return not refused
 
+
+async def _store_title(
+    row: TitleCandidate, existing: ThreadInsertRow | None, title: str, *, refused: bool
+) -> None:
     now = naive_utc_now_seconds()
     if existing is not None:
         # A stored row (conversation.create with no title): carry every
         # column forward — its partition (created_at), agent, metadata,
         # run_id, user_id — and change only the title and the version.
-        new_row: ThreadInsertRow = {**existing, "title": stored_title, "updated_at": now}
+        new_row: ThreadInsertRow = {**existing, "title": title, "updated_at": now}
     else:
         new_row = {
             "org": row["org"],
             "namespace": row["namespace"],
             "agent": row["agent"],
             "thread_id": row["thread_id"],
-            "title": stored_title,
+            "title": title,
             "metadata": "{}",
             "run_id": "-",
             "user_id": "-",
@@ -140,18 +151,9 @@ async def _make_title(
             "tombstoned_at": None,
         }
     if refused:
-        new_row["metadata"] = json.dumps({**_metadata(new_row["metadata"]), "title_refused": True})
+        meta = thread_metadata(new_row["metadata"])
+        new_row["metadata"] = json.dumps({**meta, "title_refused": True})
     await conversation_repo.insert_thread(new_row)
-    return not refused
-
-
-def _metadata(raw: object) -> dict[str, Any]:
-    """A thread's metadata JSON as a dict; `{}` when it is empty or not a JSON object."""
-    try:
-        meta = json.loads(str(raw or "{}"))
-    except ValueError:
-        return {}
-    return meta if isinstance(meta, dict) else {}
 
 
 async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationTitlerResult:
@@ -194,7 +196,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                     continue
                 if existing is not None and (
                     str(existing.get("title") or "").strip()
-                    or _metadata(existing.get("metadata")).get("title_refused") is True
+                    or title_refused(existing.get("metadata"))
                 ):
                     result.skipped_titled += 1
                     continue

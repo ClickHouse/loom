@@ -65,6 +65,7 @@ from server.knowledge.domain.conversations import (
     EMBEDDED_EXCERPT_CHARS,
     LISTED_MARGIN_CHARS,
     THREAD_EXCERPT_CHARS,
+    title_refused,
 )
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
 from server.observability.genai import staged
@@ -636,9 +637,14 @@ async def handle_conversation_update(
 
     now = naive_utc_now()
     merged_title = input.title if input.title is not None else existing.get("title", "")
-    merged_metadata = (
-        json.dumps(input.metadata) if input.metadata is not None else existing.get("metadata", "{}")
-    )
+    merged_metadata = existing.get("metadata", "{}")
+    if input.metadata is not None:
+        metadata = dict(input.metadata)
+        if title_refused(merged_metadata):
+            # The titler's mark is server state: new caller metadata keeps it, so the
+            # titler does not ask the model again for a refused title.
+            metadata["title_refused"] = True
+        merged_metadata = json.dumps(metadata)
     merged_run_id = input.run_id if input.run_id is not None else existing.get("run_id", "-") or "-"
 
     await conversation_repo.insert_thread(
