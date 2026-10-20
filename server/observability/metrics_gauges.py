@@ -62,13 +62,18 @@ class _TTLCache:
         self._lock = threading.Lock()
 
     def _refresh(self) -> None:
+        failed = False
         try:
             v = self._producer()
         except Exception as e:  # noqa: BLE001 — never let telemetry break anything
             log.debug("gauge producer failed: %s", e)
-            v = None
+            v, failed = None, True
         with self._lock:
-            if v is not None:
+            # A failed probe keeps the last reading. A producer that answers
+            # None (a census this process no longer takes, `_census_only`)
+            # clears it, or a process that lost the workers lease would go on
+            # exporting its last census next to the new holder's.
+            if not failed:
                 self._value = v
             # Stamped on failure too, so a down CH is re-probed at the TTL
             # cadence — not with a new thread on every 3s export.

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from server.observability import otel_probes
+from server.observability import metrics_gauges, otel_probes
 
 ROOT = Path(__file__).resolve().parents[2]
 OTEL = ROOT / "server" / "observability" / "otel_probes.py"
@@ -199,3 +199,45 @@ def test_state_gauge_probes_wrap_the_censuses_and_not_the_fast_probe() -> None:
         "agent_trusts_probe",
     ):
         assert getattr(probes[name], "__wrapped__", None) is not None, name
+
+
+def _census_cache(monkeypatch: pytest.MonkeyPatch, probe: Any) -> Any:
+    from server.settings import settings
+    from server.workers import leader
+
+    monkeypatch.setattr(settings, "otel_census_scope", "leader")
+    monkeypatch.setattr(leader, "_CURRENT", _lease(True))
+    return metrics_gauges._TTLCache(300.0, otel_probes._census_only(probe))
+
+
+def _observed(cache: Any, key: str) -> list[float]:
+    return [o.value for o in metrics_gauges._cached_series(cache, key)(None)]
+
+
+def test_a_process_that_loses_the_lease_stops_exporting_its_census(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.workers import leader
+
+    reading = {"agent_trust_used_ratio": [(0.9, {"loom.org": "acme", "loom.trust": "fleet"})]}
+    cache = _census_cache(monkeypatch, lambda: reading)
+    cache._refresh()
+    assert _observed(cache, "agent_trust_used_ratio") == [0.9]
+    # The lease moves to another process, which takes the census from now on.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    cache._refresh()
+    assert _observed(cache, "agent_trust_used_ratio") == []
+
+
+def test_a_failed_census_keeps_its_last_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers: list[Any] = [{"agent_trust_agents": [(3.0, {})]}]
+
+    def probe() -> Any:
+        if not answers:
+            raise RuntimeError("ClickHouse away")
+        return answers.pop()
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()
+    cache._refresh()  # the probe fails: the holder's last reading stands
+    assert _observed(cache, "agent_trust_agents") == [3.0]

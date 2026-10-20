@@ -90,7 +90,9 @@ async def ensure_namespace(m: machines.Machine, agent: str) -> str:
             if row["owner_email"] != who:
                 raise machines.Refused("invalid_grant", f"{org}/{ns} is not this trust's")
             if not await _granted(org, ns, who):
-                await _finish_grant(org, ns, who)
+                # The first exchange stopped after the row, before its grant,
+                # and so before it counted and audited the agent: this one does.
+                made = await _finish_grant(org, ns, who)
         else:
             # The trust's own claim: two new agents at once must not both see room.
             async with bot_change(m["name"]):
@@ -134,15 +136,18 @@ async def _granted(org: str, ns: str, who: str) -> bool:
     return row is not None
 
 
-async def _finish_grant(org: str, ns: str, who: str) -> None:
+async def _finish_grant(org: str, ns: str, who: str) -> bool:
     """The agent's owner grant, held as a grant change is held from its read
-    to its write, so a revocation is never written over."""
+    to its write, so a revocation is never written over. True when this call
+    wrote it, so two repairs at once finish (and count) the agent once."""
     from server.auth.grant_claims import grant_change
     from server.auth.self_signup import insert_owner_grant
 
     async with grant_change(org, ns, who):
-        if not await _granted(org, ns, who):
-            await insert_owner_grant(org, ns, who)
+        if await _granted(org, ns, who):
+            return False
+        await insert_owner_grant(org, ns, who)
+        return True
 
 
 async def _made(org: str, trust: str) -> int:

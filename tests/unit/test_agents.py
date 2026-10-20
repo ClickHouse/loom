@@ -176,11 +176,18 @@ def test_a_first_exchange_cut_off_before_its_grant_is_finished_by_the_next(
             raise RuntimeError("ClickHouse away")
         await real(org, ns, subject)
 
+    from server.observability import metrics
+
+    counter = _Counter()
+    monkeypatch.setattr(metrics, "_agents_provisioned", counter)
     monkeypatch.setattr(self_signup, "insert_owner_grant", fails_once)
     with pytest.raises(RuntimeError):
         _ensure()  # the row landed, its grant did not
     _ensure()  # the next exchange finishes it
+    _ensure()  # and a later one is a repeat
     assert world["granted"] == [("acme", "fleet-a1", "sa:fleet:a1")]
+    # It holds a slot from its row on: counted once, by the exchange that finished it.
+    assert counter.ticks == [{"loom.org": "acme", "loom.trust": "fleet", "outcome": "made"}]
 
 
 def test_a_grant_revoked_since_stays_revoked(world) -> None:
