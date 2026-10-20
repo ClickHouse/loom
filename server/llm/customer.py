@@ -249,6 +249,5 @@ def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) ->
     _switch._reset_for_tests(
         off if read else None,
         read_age_s=0.0 if read else None,
-        due=not read,
-        refresh_s=settings.model_calls_policy_refresh_seconds,
+        due_in_s=settings.model_calls_policy_refresh_seconds if read else 0.0,
     )

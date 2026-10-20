@@ -37,7 +37,7 @@ async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
         raise ConnectionError("clickhouse away")
 
     copy: PolledCopy[str] = PolledCopy("t", failing, _LOG)
-    copy._reset_for_tests("last", read_age_s=0.0, due=False, refresh_s=0.01)
+    copy._reset_for_tests("last", read_age_s=0.0, due_in_s=0.01)
     copy.forget()
     got = await asyncio.gather(*(copy.get(refresh_s=0.01, max_stale_s=60) for _ in range(3)))
     assert got == ["last"] * 3
@@ -69,7 +69,7 @@ async def test_a_change_made_here_is_waited_for_even_with_a_young_copy(
         return "changed"
 
     copy: PolledCopy[str] = PolledCopy("t", read, _LOG)
-    copy._reset_for_tests("old", read_age_s=0.0, due=False, refresh_s=10)
+    copy._reset_for_tests("old", read_age_s=0.0, due_in_s=10)
     copy.forget()
     first = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
     await reading.wait()

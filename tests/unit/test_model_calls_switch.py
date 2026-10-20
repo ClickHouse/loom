@@ -205,19 +205,14 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
     assert switch.sequential == [True, True]  # the read after a write sees it on any replica
 
 
-def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch) -> None:
-    assert asyncio.run(customer.switched_off("acme")) is False
-    switch.down = True
+def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch) -> None:
     refresh = settings.model_calls_policy_refresh_seconds
-    customer._switch._reset_for_tests(
-        frozenset(), read_age_s=refresh + 1, due=False, refresh_s=refresh
-    )
+    customer._switch._reset_for_tests(frozenset(), read_age_s=refresh + 1, due_in_s=refresh)
     assert asyncio.run(customer.switched_off("acme")) is False  # still young enough
     customer._switch._reset_for_tests(
         frozenset(),
         read_age_s=settings.model_calls_policy_max_stale_seconds + 1,
-        due=False,
-        refresh_s=refresh,
+        due_in_s=refresh,
     )
     with pytest.raises(BackendUnavailableError):
         asyncio.run(customer.switched_off("beta"))
@@ -242,7 +237,7 @@ def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> N
         assert await together() == [False] * 3
         assert switch.reads == 1
         stale = settings.model_calls_policy_max_stale_seconds + 1
-        customer._switch._reset_for_tests(frozenset(), read_age_s=stale, due=True)
+        customer._switch._reset_for_tests(frozenset(), read_age_s=stale, due_in_s=0.0)
         assert await together() == [False] * 3
         assert switch.reads == 2
 
@@ -284,7 +279,7 @@ def test_a_call_made_during_a_read_is_served_the_copy_in_hand(switch: _Switch, m
 
     async def second_call_during_the_read() -> bool:
         # Read just now, due again, not asked for by a change made here.
-        customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due=True)
+        customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due_in_s=0.0)
         monkeypatch.setattr(switch, "query_all", slow)
         first = asyncio.ensure_future(customer.switched_off("acme"))
         await reading.wait()
@@ -626,7 +621,7 @@ def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: 
     switch.off = {"acme"}
     assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
     switch.down = True
-    customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due=True)
+    customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due_in_s=0.0)
     assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
     assert asyncio.run(customer.switched_off("acme")) is True
     assert switch.reads == 2  # the failed read is not tried again before its turn

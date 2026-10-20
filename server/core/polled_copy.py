@@ -39,8 +39,9 @@ class PolledCopy[T]:
         return self._read_at is not None and now - self._read_at <= max_stale_s
 
     async def get(self, *, refresh_s: float, max_stale_s: float) -> T | None:
-        """The copy, read first when a read is due; None when it is too old to
-        serve (never read, or every read since `max_stale_s` ago failed)."""
+        """The copy, read first when a read is due; None when the copy is older
+        than `max_stale_s`, counted from the start of the read that brought it
+        (or it was never read)."""
         now = time.monotonic()
         change_waiting = self._next_read == 0.0
         serve_in_hand = self._lock.locked() and self._fresh(now, max_stale_s) and not change_waiting
@@ -74,14 +75,14 @@ class PolledCopy[T]:
         self._next_read = 0.0
 
     def _reset_for_tests(
-        self, value: T | None, *, read_age_s: float | None, due: bool, refresh_s: float = 0.0
+        self, value: T | None, *, read_age_s: float | None, due_in_s: float
     ) -> None:
         """The copy `value`, read `read_age_s` ago (None: never read), with the
-        next read due now (`due`) or `refresh_s` from now; a fresh lock, since a
+        next read due `due_in_s` from now (0: due now); a fresh lock, since a
         test's event loop is not the last one's."""
         now = time.monotonic()
         self._value = value
         self._read_at = None if read_age_s is None else now - read_age_s
-        self._next_read = now if due else now + refresh_s
+        self._next_read = now + due_in_s
         self._changes = 0
         self._lock = asyncio.Lock()
