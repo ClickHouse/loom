@@ -30,7 +30,7 @@ export interface ChipProps {
   onRemove?: () => void;
   swatch?: string;
   mono?: boolean;
-  /** Drawn outlined on white (a tag), where a plain chip is filled (a filter value). */
+  /** Drawn outlined (a tag), where a plain chip is filled (a filter value). */
   outline?: boolean;
   disabled?: boolean;
   /** Override the accessible name (defaults to label, count and countLabel). */

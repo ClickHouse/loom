@@ -15,7 +15,7 @@ const api = vi.hoisted(() => ({
   downloadKnowledge: vi.fn(async () => undefined),
   deleteKnowledge: vi.fn(async () => ({})),
   getKnowledge: vi.fn(async () => ({ found: true, content: "text" })),
-  fetchKnowledgeInlineUrl: vi.fn(async () => null),
+  fetchKnowledgePreview: vi.fn(async () => null),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
 vi.mock("../components/ConfirmDialog", () => ({ confirmAction: vi.fn(async () => true) }));
