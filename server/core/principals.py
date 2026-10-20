@@ -58,3 +58,10 @@ def end_user_revocation_subject(org: str, subject: str) -> str:
     user id holds no `/`, so the last `/` ends the org: no other org's user
     spells the same key."""
     return f"{org}/{subject}"
+
+
+def org_of_end_user_revocation(subject: str) -> str:
+    """The org of `subject` when it is `end_user_revocation_subject(org,
+    user:<id>)` exactly as a token's check builds it (a lowercase id), else ''."""
+    org, _, user = subject.rpartition("/")
+    return org if org and principal_id(user, USER) else ""

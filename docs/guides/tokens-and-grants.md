@@ -520,10 +520,10 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
   `source_class` come back on each hit.
 - To cut off one user, revoke their tokens and grants and take them out of their groups,
   or erase them (`erasure.request` with `scope_type: user_id`, and `purge: true` to take
-  the rows off disk). An end user's tokens are revoked by subject under their org, `loom
-revoke-token --subject <org>/user:<id>`, since `user:<id>` names one person per org.
-  Collections, their tree and the read cost are in [Sharing
-  knowledge](../architecture/sharing.md).
+  the rows off disk). An end user's tokens are revoked by subject under their org,
+  `loom revoke-token --subject <org>/user:<id>`, since `user:<id>` names one person per
+  org. Collections, their tree and the read cost are in
+  [Sharing knowledge](../architecture/sharing.md).
 
 ## Revoke and rotate
 

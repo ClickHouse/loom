@@ -183,20 +183,29 @@ def test_cli_issued_before_rejects_a_bad_instant(
     assert fake_ch.connected == 0
 
 
-@pytest.mark.parametrize("subject", ["user:u-1", "Group:finance", "everyone"])
+@pytest.mark.parametrize(
+    "subject",
+    ["user:u-1", "Group:finance", "everyone", "acme/User:u-1", "acme/user:U-1", "/user:u-1"],
+)
 def test_cli_refuses_a_bare_principal_that_no_token_carries(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], subject: str
 ) -> None:
     """No token's sub is a bare principal: an end user is revoked under its org,
     so a bare one would cut off no one while saying it had."""
     rc = cli.main(["revoke-token", "--subject", subject])
-    assert rc == 2 and "<org>/user:<id>" in capsys.readouterr().err
+    assert rc == 2 and "<org>/user:<id>" in capsys.readouterr().err, subject
     assert fake_ch.inserts == []
 
 
 def test_cli_revokes_an_end_user_in_their_org(
-    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    audited: list[str] = []
+
+    async def _emit(event: str, *, org: str, **_k: Any) -> None:
+        audited.append(org)
+
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
     rc = cli.main(
         ["revoke-token", "--subject", "acme/user:u-1", "--issued-before", "2026-09-17T16:30:00Z"]
     )
@@ -206,6 +215,7 @@ def test_cli_revokes_an_end_user_in_their_org(
     out = capsys.readouterr().out
     assert "that org's end user; a token minted after that stays valid" in out
     assert "every org" not in out
+    assert audited == ["acme"], "the revocation's record is the org's"
 
 
 def test_cli_subject_with_cutoff_writes_it_and_says_the_re_mint_survives(

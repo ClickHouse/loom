@@ -340,7 +340,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     and its `sub` against the one revoked column, so `--jti` retires an
     IdP-minted JWT or a `loom mint-token` token (each carries one; mint-token
     prints it) and `--subject` retires every token minted for that
-    principal. Other replicas see the row on their next refresh tick.
+    principal, or, as `<org>/user:<id>`, every token of that end user in that
+    org. Other replicas see the row on their next refresh tick.
     `--subject S --issued-before T` retires only the tokens
     minted for S before T, so a token re-minted after the leak keeps working;
     with `--scim` it narrows SCIM's revocation of S instead (a subject a
@@ -349,7 +350,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     import getpass
 
     from server.auth import revocation
-    from server.core.principals import is_reserved_subject
+    from server.core.principals import is_reserved_subject, org_of_end_user_revocation
     from server.observability import audit
     from server.settings import settings
 
@@ -365,10 +366,14 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
         return 2
-    if args.subject and is_reserved_subject(args.subject):
-        # No token's sub is a bare principal: such a row would cut off no one.
+    subject = args.subject or ""
+    end_user_org = org_of_end_user_revocation(subject)
+    if is_reserved_subject(subject.rpartition("/")[2]) and not end_user_org:
+        # No token's sub is a bare principal, and an end user's key is built from
+        # a lowercase id under a named org: any other spelling cuts off no one.
         print(
-            "  ✗ no token's sub is a bare principal; revoke an end user as <org>/user:<id>",
+            "  ✗ no token is revoked by that subject; revoke an end user as "
+            "<org>/user:<id>, the id as its issuer signs it (lowercase)",
             file=sys.stderr,
         )
         return 2
@@ -401,11 +406,11 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             )
         kind = "jti" if args.jti else "subject"
         # A CLI revoke has no request ledger row; this is its only durable
-        # record. Identifiers only, never token material. Revocations span
-        # every org, hence the '-' scope.
+        # record. Identifiers only, never token material. A revocation spans
+        # every org ('-'), but an end user's belongs to their org alone.
         await audit.emit(
             "token.revoked",
-            org="-",
+            org=end_user_org or "-",
             namespace="-",
             actor=by,
             subject={
@@ -422,7 +427,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         else:
             what = "narrowed SCIM's revocation of" if args.scim else "revoked"
             print(f"{what} {kind} {token_id!r}", end="")
-            end_user = "/user:" in token_id
+            end_user = bool(end_user_org)
             where = "that org's end user" if end_user else "in every org"
             if kind == "subject" and issued_before is not None:
                 print(
