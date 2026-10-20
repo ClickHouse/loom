@@ -256,9 +256,12 @@ async def test_a_refusal_committed_while_another_transition_holds_then_replaced(
     store: dict[str, Any],
 ) -> None:
     runtime._hold_admission("m")  # a transition this process is draining for
-    _commit(store, _setup("gemini"))
+    refused = _commit(store, _setup("gemini"))
     await runtime.load_active_configuration()
     assert store["gate"].closed and runtime.refused_configuration()
+    # Refused, not asked to retry a rebuild that never ends.
+    assert store["gate"].refusal == runtime.refused_configuration()
+    assert runtime._maintenance_config_id == refused
     accepted = _setup("compatible", "https://gateway.example/v1").model_copy(
         update={"expected_version": "100"}
     )

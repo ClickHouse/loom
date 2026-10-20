@@ -139,9 +139,12 @@ class RateLimitedError(LoomServerError):
 class GatewayRequiredError(LoomServerError):
     """503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not
     list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a
-    token exchange). A setting to fix, not an outage: never retried. A
-    classifier or reranker refused the same way fails open instead: the
-    caller's type, or the input order, stays."""
+    token exchange); the message names the host. Also every data-plane request
+    on a server whose saved model configuration the check refuses with another
+    embedding, until a replacement is queued; that answer names no host. A
+    setting to fix, not an outage: never retried. A classifier or reranker
+    refused the same way fails open instead: the caller's type, or the input
+    order, stays."""
 
     code = "GATEWAY_REQUIRED"
     status_code = 503

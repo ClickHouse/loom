@@ -153,16 +153,16 @@ def _active_setup(active: dict[str, Any]) -> ProviderSetupInput | None:
         ) from None
 
 
-def _hold_admission(config_id: str) -> None:
+def _hold_admission(config_id: str, refusal: str = "") -> None:
     """Close admission for `config_id`; a transition already holding it (a
-    refused configuration's hold, an earlier change) hands it over."""
+    refused configuration's hold, an earlier change) hands it over. `refusal`
+    is set for a refused configuration's hold and empty for a transition's."""
     global _maintenance_config_id
     gate = get_model_work_gate()
     if _maintenance_config_id is not None and _maintenance_config_id != config_id:
-        gate.transfer(_maintenance_config_id, config_id)
+        gate.transfer(_maintenance_config_id, config_id, refusal=refusal)
     else:
-        gate.close(config_id)
-    gate.refusal = ""  # a transition's hold, until _refuse says otherwise
+        gate.close(config_id, refusal=refusal)
     _maintenance_config_id = config_id
 
 
@@ -246,7 +246,7 @@ async def load_active_configuration() -> None:
         )
     )
     changed = target != current_embedding()
-    if setup is not None and _refuse(setup, changed, str(active["config_id"])):
+    if setup is not None and _refuse(setup, changed and pending is None, str(active["config_id"])):
         return  # held or kept, retried at the next refresh
     if changed and pending is None and _maintenance_config_id is None:
         _hold_admission(str(active["config_id"]))
@@ -277,23 +277,23 @@ async def load_active_configuration() -> None:
     _applied_version = str(active["version"])
 
 
-def _refuse(setup: ProviderSetupInput, changed: bool, config_id: str) -> bool:
+def _refuse(setup: ProviderSetupInput, hold: bool, config_id: str) -> bool:
     """Whether the gateway check refuses the committed `setup`, as it refuses
     it at load. Then nothing of it applies, its serving vector settings
     included. With its embedding the one in force, the settings in force
-    serve on; with another, the index may be built for that other space, so
-    model work stays held until a configuration the check accepts replaces it."""
+    serve on; with another (`hold`: and no queued row has taken the hold),
+    the index may be built for that other space, so model work stays held
+    until a configuration the check accepts replaces it."""
     global _refused
     refusal = gateway_refusal(setup.embedding)
     if refusal and refusal != _refused:
         log.error("saved model configuration not applied: %s", refusal)
     _refused = refusal
-    if refusal and changed and _maintenance_config_id is None:
-        # An ordinary transition hold: what replaces it takes it over, and the
-        # replacement's commit resumes it. Until then requests are refused,
-        # not asked to retry.
-        _hold_admission(config_id)
-        get_model_work_gate().refusal = refusal
+    if refusal and hold:
+        # An ordinary transition hold, taken over from a change still draining:
+        # what replaces it takes it over, and the replacement's commit resumes
+        # it. Until then requests are refused, not asked to retry.
+        _hold_admission(config_id, refusal)
     return bool(refusal)
 
 

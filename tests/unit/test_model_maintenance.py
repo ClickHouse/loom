@@ -160,11 +160,10 @@ async def test_a_gate_held_for_a_refused_configuration_answers_a_code_not_retrie
     # Nothing is rebuilding and only an operator ends it: no Retry-After, and
     # GATEWAY_REQUIRED, which neither SDK retries (test_sdk_retry_logging,
     # sdk/typescript/src/transport.test.ts).
-    from server.core import model_work_gate
-
     gate = ModelWorkGate()
-    gate.close("refused")
-    gate.refusal = "LOOM_INFERENCE_GATEWAY_REQUIRED refuses the saved Gemini embedder"
+    gate.close(
+        "refused", refusal="LOOM_INFERENCE_GATEWAY_REQUIRED refuses the saved Gemini embedder"
+    )
     app, send = AsyncMock(), AsyncMock()
     middleware = ModelMaintenanceMiddleware(app, gate)
     await middleware(
@@ -179,12 +178,17 @@ async def test_a_gate_held_for_a_refused_configuration_answers_a_code_not_retrie
     assert b"Gemini" not in body  # the reason is the operator's, in /v1/health
     gate.resume("refused")
     assert gate.refusal == ""
-    monkey = model_work_gate._gate
-    try:
-        model_work_gate._gate = gate
-        gate.close("refused")
-        gate.refusal = "refused"
-        check = model_work_gate.readiness_check()
-        assert not check.ok and "refused" in str(check)
-    finally:
-        model_work_gate._gate = monkey
+
+
+def test_a_gate_held_for_a_refused_configuration_is_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import model_work_gate
+
+    gate = ModelWorkGate()
+    monkeypatch.setattr(model_work_gate, "_gate", gate)
+    gate.close("refused", refusal="refused")
+    check = model_work_gate.readiness_check()
+    assert not check.ok and "refused" in str(check)
+    gate.transfer("refused", "rebuild")  # a replacement takes the hold
+    assert "model change in progress" in str(model_work_gate.readiness_check())
