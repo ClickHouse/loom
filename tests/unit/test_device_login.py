@@ -1738,7 +1738,8 @@ _FORM_SUBMIT = {
 
 
 def _sign_in_routes_behind_the_gate(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """The sign-in routes behind the cross-site gate, with auth on."""
+    """The sign-in routes behind the cross-site gate, with auth on, posted to as a
+    browser posts a form from this server's own page."""
     from server.main import attach_web_gate
 
     monkeypatch.setattr(oauth.settings, "auth_required", True)
@@ -1747,7 +1748,7 @@ def _sign_in_routes_behind_the_gate(monkeypatch: pytest.MonkeyPatch) -> TestClie
     monkeypatch.setattr(oauth.settings, "cors_origins", "")
     app = oauth_app()
     attach_web_gate(app)
-    return TestClient(app)
+    return TestClient(app, headers={**_FORM_SUBMIT, "origin": "http://testserver"})
 
 
 def test_the_sign_in_pages_send_a_same_origin_referrer_policy(monkeypatch) -> None:
@@ -1757,23 +1758,10 @@ def test_the_sign_in_pages_send_a_same_origin_referrer_policy(monkeypatch) -> No
     grant = _start(c)
     page = c.get("/oauth/device", params={"user_code": grant["user_code"]})
     assert page.headers["referrer-policy"] == "same-origin"
-    submit = {**_FORM_SUBMIT, "origin": "http://testserver"}
-    signed_in = c.post(
-        "/oauth/device",
-        data={"user_code": grant["user_code"], "identifier": "alice@example.com", "password": "pw"},
-        headers=submit,
-    )
+    signed_in = _sign_in(c, grant["user_code"])
     assert signed_in.status_code == 200, signed_in.text
     assert signed_in.headers["referrer-policy"] == "same-origin"
-    approved = c.post(
-        "/oauth/device/approve",
-        data={
-            "user_code": grant["user_code"],
-            "ticket": _ticket(signed_in.text),
-            "decision": "approve",
-        },
-        headers=submit,
-    )
+    approved = _approve(c, grant["user_code"], signed_in.text)
     assert approved.status_code == 200, approved.text
     assert _poll(c, grant["device_code"]).status_code == 200
 
@@ -1793,5 +1781,5 @@ def test_each_sign_in_form_posted_from_its_own_page_reaches_its_route(
     monkeypatch, action: str
 ) -> None:
     c = _sign_in_routes_behind_the_gate(monkeypatch)
-    r = c.post(action, data={}, headers={**_FORM_SUBMIT, "origin": "http://testserver"})
+    r = c.post(action, data={})
     assert r.status_code == 400, r.text  # the route itself answers: no fields
