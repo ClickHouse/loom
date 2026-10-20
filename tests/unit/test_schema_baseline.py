@@ -111,7 +111,7 @@ def test_the_journal_files() -> None:
         "058_collections_and_groups.sql",
         "059_conversation_saved_messages.sql",
         "060_conversation_saved_at.sql",
-        "062_profile_schemas.sql",
+        "061_profile_schemas.sql",
     ]
 
 

@@ -378,6 +378,14 @@ def _parse(row: dict[str, Any], result: StructuredProfileResult) -> ActiveSchema
     return ActiveSchema(row["org"], row["namespace"], props, row["schema_sha256"])
 
 
+def _wrapped(rows: list[dict[str, Any]], start: tuple[str, str] | None, limit: int) -> bool:
+    """Whether the page `list_active` returned reached the end of the rotation: it is
+    short (every eligible namespace is in it), or it came back to or before `start`."""
+    if len(rows) < limit:
+        return True
+    return start is not None and any((r["org"], r["namespace"]) <= start for r in rows)
+
+
 async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProfileResult:
     cfg = cfg or StructuredProfileConfig()
     result = StructuredProfileResult()
@@ -388,9 +396,10 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         # Every namespace reached can build at least once, so a pass reaches at most `budget`.
         # A namespace backing off (its scan or its schema failed) waits like a user does,
         # left out in SQL so the limit counts only namespaces this pass can run.
+        start = _cursor()
         rows = await profile_schemas.list_active(
             exclude_orgs=off,
-            after=_cursor(),
+            after=start,
             limit=budget,
             only=cfg.only,
             waiting=namespaces_waiting(),
@@ -424,7 +433,10 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             users = _take(schema, budget) or []
             budget -= len(users)
             await _build_users(schema, users, result)
-        if not result.profiles_written and not result.errors:
+        # Idle only when the rotation came round: until then the namespaces past this
+        # pass's page are reached at the busy interval.
+        wrapped = _wrapped(rows, start, settings.structured_profile_max_users_per_pass)
+        if wrapped and not result.profiles_written and not result.errors:
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
     return result
@@ -458,6 +470,10 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
         label=settings.structured_profile_label,
         scope=WHOLE_NAMESPACE,
     )
+    if count == 0 and existing is None:
+        # No profile to clear and nothing to build from: a user erased after the scan
+        # listed them gets no new row.
+        return None
     profile_version = int(existing["version"]) if existing else 0
     if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
         return None  # built since the scan listed the user (another pass, another replica)
@@ -539,7 +555,7 @@ async def _ask(
         emit_worker_cost_event_for(
             org=org, namespace=ns, operation="worker.structured_profile", started=started
         )
-    answer = parse_answer(getattr(out, "text", "") or "")
+    answer = parse_answer(out.text)
     if not isinstance(answer, dict):
         raise ValueError("the profile model's answer is not a JSON object")
     return answer

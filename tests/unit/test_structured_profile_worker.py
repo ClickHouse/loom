@@ -588,3 +588,42 @@ async def test_a_new_schema_ends_a_namespace_wait(
     settings_override(structured_profile_max_users_per_pass=1)
     await w.run_pass(_cfg())
     assert _spaces_built(world["built"]) == [("o1", "a")]
+
+
+@pytest.mark.asyncio
+async def test_a_pass_with_nothing_to_build_is_idle_only_once_the_rotation_wraps(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
+) -> None:
+    async def nobody_behind(**kw: Any) -> list[Behind]:
+        return []
+
+    monkeypatch.setattr(profile_sources, "users_behind", nobody_behind)
+    # Three namespaces and a budget of two: the first pass sees only part of them.
+    settings_override(structured_profile_max_users_per_pass=2)
+    ctx = pass_context.begin("structured_profile")
+    await w.run_pass(_cfg())
+    assert not ctx.idle and json.loads(ctx.cursor) == ["o1", "b"]
+    ctx = pass_context.begin("structured_profile", resume_cursor=ctx.cursor)
+    await w.run_pass(_cfg())
+    assert ctx.idle
+
+
+@pytest.mark.asyncio
+async def test_a_user_with_no_facts_and_no_profile_gets_no_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user erased after a scan listed them: the cached entry writes nothing."""
+    written = _one_user(monkeypatch, set())
+
+    async def nothing(**kw: Any) -> tuple[str, int]:
+        return ("", 0)
+
+    async def no_facts(**kw: Any) -> list[dict[str, Any]]:
+        raise AssertionError("no facts are read for a user with no sources")
+
+    monkeypatch.setattr(profile_sources, "sources_digest", nothing)
+    monkeypatch.setattr(profile_sources, "user_facts", no_facts)
+    assert await w.build_profile(_ONE, "u1") is None
+    assert written == []

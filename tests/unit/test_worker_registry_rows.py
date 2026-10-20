@@ -147,3 +147,17 @@ def test_the_delete_version_check_row() -> None:
     assert row.interval == "delete_version_check_interval_seconds"
     assert row.idle_interval == "delete_version_check_idle_interval_seconds"
     assert importlib.util.find_spec(row.module) is not None
+
+
+def test_structured_profile_enabled_switches_the_structured_profile_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    row = _row("structured_profile")
+    assert row.enabled == "structured_profile_enabled"
+    monkeypatch.setattr(settings, "structured_profile_enabled", True)
+    assert registry._is_enabled(row)
+    monkeypatch.setattr(settings, "structured_profile_enabled", False)
+    assert not registry._is_enabled(row)
+    assert "structured_profile" not in [s.name for s in registry.enabled_workers()]

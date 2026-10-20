@@ -38,7 +38,9 @@ from server.settings.budgets import llm_max_tokens
 STRUCTURED_CHAR_LIMIT = 32768  # not a setting: row bound at the default output cap
 # Characters one output token can turn into once stored as JSON, so the row bound
 # grows with a raised `structured_profile` cap instead of refusing its answers.
-CHARS_PER_OUTPUT_TOKEN = 8  # not a setting: derived from the output cap
+CHARS_PER_OUTPUT_TOKEN = (
+    8  # not a setting: upper bound of JSON characters one output token can produce
+)
 
 
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:
@@ -144,7 +146,7 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
     from server.auth.context import current_auth
 
     auth = current_auth()
-    # Refused before resolving, so the answer does not hang on whether a session is named.
+    # own_session resolves once a session_id is named; a profile spans sessions, so refuse it here.
     if effective_read_scope(input.read_scope, auth) == "own_session":
         raise AuthInsufficientError(
             "profile.structured reads a user's profile, which spans their sessions; "

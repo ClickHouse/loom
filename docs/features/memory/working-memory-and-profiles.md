@@ -203,11 +203,15 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   blacklisted) is not retried until the user's memories or the profile row change (an
   unpin, an unlock), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
   a lock that lapses on its own is retried. Both waits are kept by the worker's process
-  and start over when another process takes the worker lease. A pass that finds nothing
-  to build waits `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next.
-- **Erasure.** A build writes nothing when a fact it read is no longer current once the
-  model has answered (erased or deleted while it ran). That narrows the window in which a
-  profile could land above an erasure; one that does is a live row the erasure saga's
+  and start over when another process takes the worker lease. A pass that reaches every
+  namespace with a schema and finds nothing to build waits
+  `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next; one that reached
+  only part of the rotation runs again at the worker's interval.
+- **Erasure.** A build writes nothing for a user with no facts and no profile row, so a
+  user erased after a scan listed them gets no new row when a later pass reaches them. A
+  build also writes nothing when a fact it read is no longer current once the model has
+  answered (erased or deleted while it ran). What is left is the short gap between that
+  check and the write: a row written there while the erasure saga runs is a live row its
   final census finds, and the saga fails closed on it.
   `memory.redact` does not scrub earlier profile versions built from the redacted text;
   see [security](../../architecture/security.md#sensitivity).
