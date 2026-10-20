@@ -42,9 +42,9 @@ settings:
   # name this database where they reach ClickHouse (server/core/ch_names.py); KeeperMap
   # paths move with it. Set it before the first migration: while a schema is in `loom`,
   # a server pointed at a name that does not exist, or holds tables but no Loom ledger,
-  # refuses to start (create it empty to start a second schema). Letters, digits, `_`
-  # and `-`; never `default`, `system`, `information_schema`, or a table or alias name
-  # the schema uses. Read once at startup. [restart]
+  # refuses to start (create it empty to start a second schema). A letter or `_`, then
+  # letters, digits, `_` and `-`; never `default`, `system`, `information_schema`, or a
+  # table or alias name the schema uses. Read once at startup. [restart]
   # ch_database: "loom"
 
   # The database the telemetry Loom derives from its own tables lives in (`sli_minute`),

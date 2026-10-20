@@ -211,9 +211,9 @@
         },
         "ch_database": {
           "default": "loom",
-          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string",
-          "description": "The database Loom's schema lives in: every table, view and the migrations ledger, and the connection's default database. Statements are written against `loom` and name this database where they reach ClickHouse (server/core/ch_names.py); KeeperMap paths move with it. Set it before the first migration: while a schema is in `loom`, a server pointed at a name that does not exist, or holds tables but no Loom ledger, refuses to start (create it empty to start a second schema). Letters, digits, `_` and `-`; never `default`, `system`, `information_schema`, or a table or alias name the schema uses. Read once at startup."
+          "description": "The database Loom's schema lives in: every table, view and the migrations ledger, and the connection's default database. Statements are written against `loom` and name this database where they reach ClickHouse (server/core/ch_names.py); KeeperMap paths move with it. Set it before the first migration: while a schema is in `loom`, a server pointed at a name that does not exist, or holds tables but no Loom ledger, refuses to start (create it empty to start a second schema). A letter or `_`, then letters, digits, `_` and `-`; never `default`, `system`, `information_schema`, or a table or alias name the schema uses. Read once at startup."
         },
         "ch_host": {
           "default": "localhost",
@@ -286,7 +286,7 @@
         },
         "ch_telemetry_database": {
           "default": "loom_telemetry",
-          "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
           "type": "string",
           "description": "The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. A schema outside `loom` names its own: two schemas never share one."
         },
@@ -312,7 +312,7 @@
         },
         "clickstack_database": {
           "default": "",
-          "pattern": "^(?:[A-Za-z0-9_][A-Za-z0-9_-]*)?$",
+          "pattern": "^(?:[A-Za-z_][A-Za-z0-9_-]*)?$",
           "type": "string",
           "description": "The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse service: where `otel_exporter = \"ch\"` writes spans, logs and metrics, and where the erasure cascade deletes a user's rows with ALTER TABLE DELETE. \"\" = the `default` database for the exporter, and no erasure cascade."
         },

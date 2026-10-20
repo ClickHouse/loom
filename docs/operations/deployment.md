@@ -272,7 +272,8 @@ so while a Loom schema exists in `loom`, a server or worker process, migrating o
 refuses to start when the named database does not exist or holds tables but no Loom
 ledger. To start a second schema on
 purpose, create its database empty first. A renamed schema names its own
-`LOOM_CH_TELEMETRY_DATABASE`. Names are letters, digits, `_` and `-`, and never
+`LOOM_CH_TELEMETRY_DATABASE`. Names start with a letter or `_`, hold letters, digits, `_`
+and `-`, and are never
 `default`, `system`, `information_schema`, or a name the schema uses for a table or an
 alias (`memory`, say), which Loom could not tell from a database in the DDL it reads
 back.

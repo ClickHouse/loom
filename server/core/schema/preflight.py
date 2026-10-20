@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from server.core.ch_errors import error_code, error_line
-from server.core.ch_names import SCHEMA, NamedClient, quote, telemetry_database
+from server.core.ch_names import SCHEMA, TELEMETRY, NamedClient, quote, telemetry_database
 from server.core.ch_names import database as database_name
 from server.core.paths import MIGRATIONS_DIR
 
@@ -302,19 +302,21 @@ def _lacks(user: str, grants: str, database: str = "") -> PreflightError:
     )
 
 
+# A name written before a dot, not itself the tail of a dotted name.
+_QUALIFIER = re.compile(r"(?<![\w.`])`?(\w[\w-]*)`?\.(?=[`\w*])")
+
+
 @functools.cache
 def _qualifiers() -> frozenset[str]:
     """Every name the migrations write before a dot: databases, but also table names
-    and aliases (`e.memory_key`), which DDL read back from ClickHouse holds too."""
+    and aliases (`memory.org`), which DDL read back from ClickHouse holds
+    too."""
     from server.core.schema.journal import sorted_migrations
 
     names: set[str] = set()
     for path in sorted_migrations(MIGRATIONS_DIR.glob("*.sql")):
         names.update(m.lower() for m in _QUALIFIER.findall(path.read_text(encoding="utf-8")))
-    return frozenset(names - {SCHEMA, "loom_telemetry"})
-
-
-_QUALIFIER = re.compile(r"(?<![\w.`])`?([A-Za-z_][\w-]*)`?\.(?=[`\w*])")
+    return frozenset(names - {SCHEMA, TELEMETRY})
 
 
 def _refuse_ambiguous_names() -> None:
@@ -331,8 +333,13 @@ def _refuse_ambiguous_names() -> None:
             )
 
 
+# What the migration runner makes before the ledger: a first boot stopped between the
+# two leaves a schema that is still Loom's own.
+_RUNNER_TABLES = ("_migration_lock", "_migration_lease")
+
+
 def _refuse_moved_schema(ch: Client) -> None:
-    """Refuse to migrate a LOOM_CH_DATABASE other than `loom` that holds no Loom
+    """Refuse to serve or migrate a LOOM_CH_DATABASE other than `loom` that holds no Loom
     ledger while Loom's schema is in `loom`: the setting would start an empty schema
     beside the deployment's data, or inside another application's database. An
     operator who means a new schema there creates the database, empty, first."""
@@ -340,10 +347,10 @@ def _refuse_moved_schema(ch: Client) -> None:
         return
     rows = ch.query(
         "SELECT countIf(database = {schema:String} AND name = '_migrations') AS other, "
-        "countIf(database = {db:String}) AS tables, "
+        "countIf(database = {db:String} AND name NOT IN {own:Array(String)}) AS tables, "
         "countIf(database = {db:String} AND name = '_migrations') AS ledger "
         "FROM system.tables WHERE database IN ({schema:String}, {db:String})",
-        parameters={"schema": SCHEMA, "db": database_name()},
+        parameters={"schema": SCHEMA, "db": database_name(), "own": list(_RUNNER_TABLES)},
     ).result_rows
     other, tables, ledger = rows[0] if rows else (0, 0, 0)
     if not other or ledger:

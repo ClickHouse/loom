@@ -195,7 +195,7 @@ def test_the_schema_dump_reads_the_configured_databases_and_writes_the_aliases()
     )
 
 
-@pytest.mark.parametrize("name", ["memory", "MEMORY"])
+@pytest.mark.parametrize("name", ["memory", "MEMORY", "conversation"])
 def test_a_database_named_like_a_schema_table_is_refused(
     monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
@@ -210,4 +210,48 @@ def test_the_configured_names_are_not_schema_qualifiers() -> None:
     from server.core.schema import preflight
 
     preflight._refuse_ambiguous_names()  # acme-loom / acme_telemetry
-    assert "loom" not in preflight._qualifiers()
+    qualifiers = preflight._qualifiers()
+    assert {"memory", "conversation"} <= qualifiers  # names the migrations write before a dot
+    assert not {"loom", "loom_telemetry"} & qualifiers
+
+
+@pytest.mark.parametrize("env", [{"ch_database": "0"}, {"ch_telemetry_database": "1x"}])
+def test_a_database_name_starts_with_a_letter(env: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**env)
+
+
+def test_every_preflight_reaches_the_name_and_schema_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.schema import preflight
+    from tests.unit.test_ch_preflight import FakeCH
+
+    seen: list[str] = []
+    monkeypatch.setattr(preflight, "_refuse_ambiguous_names", lambda: seen.append("names"))
+    monkeypatch.setattr(preflight, "_refuse_moved_schema", lambda ch: seen.append("schema"))
+    preflight.check(FakeCH(), need="server", migrates=False)
+    assert seen == ["names", "schema"]
+    seen.clear()
+    preflight.check(FakeCH(), need="read")
+    assert seen == ["names"]
+
+
+def test_the_runners_lock_table_does_not_make_a_schema_foreign(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.schema import preflight
+
+    class FirstBootStopped:
+        params: dict[str, Any] = {}
+
+        def query(self, sql: str, parameters: dict[str, Any]) -> SimpleNamespace:
+            self.params = parameters
+            return SimpleNamespace(result_rows=[(1, 0, 0)])  # only `_migration_lock` there
+
+        def command(self, sql: str, parameters: dict[str, Any] | None = None) -> int:
+            return 1
+
+    ch = FirstBootStopped()
+    preflight._refuse_moved_schema(ch)  # type: ignore[arg-type]
+    assert "_migration_lock" in ch.params["own"]

@@ -495,7 +495,7 @@ class AuthSettings(BaseModel):
 # ===== ClickHouse =============================================================
 
 # A database name Loom writes into statements and KeeperMap paths unescaped.
-_DATABASE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_-]*$"
+_DATABASE_NAME = r"^[A-Za-z_][A-Za-z0-9_-]*$"
 # Databases a ClickHouse server or other applications on it own.
 _SHARED_DATABASES = frozenset({"default", "system", "information_schema"})
 
@@ -516,9 +516,9 @@ class ClickHouseSettings(BaseModel):
     # and name this database where they reach ClickHouse (server/core/ch_names.py);
     # KeeperMap paths move with it. Set it before the first migration: while a schema is
     # in `loom`, a server pointed at a name that does not exist, or holds tables but no
-    # Loom ledger, refuses to start (create it empty to start a second schema). Letters,
-    # digits, `_` and `-`; never `default`, `system`, `information_schema`, or a table or
-    # alias name the schema uses. Read once at startup.
+    # Loom ledger, refuses to start (create it empty to start a second schema). A letter
+    # or `_`, then letters, digits, `_` and `-`; never `default`, `system`,
+    # `information_schema`, or a table or alias name the schema uses. Read once at startup.
     ch_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom"
     # The database the telemetry Loom derives from its own tables lives in
     # (`sli_minute`), outside the schema so a reader can be granted it alone. A schema
@@ -1733,7 +1733,7 @@ class ErasureSettings(BaseModel):
     # service: where `otel_exporter = "ch"` writes spans, logs and metrics, and where
     # the erasure cascade deletes a user's rows with ALTER TABLE DELETE. "" = the
     # `default` database for the exporter, and no erasure cascade.
-    clickstack_database: Annotated[str, Field(pattern=r"^(?:[A-Za-z0-9_][A-Za-z0-9_-]*)?$")] = ""
+    clickstack_database: Annotated[str, Field(pattern=r"^(?:[A-Za-z_][A-Za-z0-9_-]*)?$")] = ""
     # Comma-separated OTel Map attribute keys holding user_id, ORed in the delete.
     clickstack_user_id_keys: str = "user_id,user.id,enduser.id"
     # Per-request seconds for external trace/chat backend lookups and deletes

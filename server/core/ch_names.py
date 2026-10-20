@@ -85,10 +85,10 @@ def _tokens(names: tuple[str, ...], keeper: str) -> re.Pattern[str]:
         |--[^\n]*
         |/\*.*?\*/
         |(?<![\w.`"$]){name.format(1)}(?=\.)
-        |(?P<ddl>\bDATABASE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?){name.format(2)}(?![\w.`"$])
+        |(?P<ddl>\b(?i:DATABASE\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?)){name.format(2)}(?![\w.`"$])
         |`(?:[^`\\]|\\.|``)*`
         |"(?:[^"\\]|\\.)*\"""",
-        re.S | re.X | re.I,
+        re.S | re.X,
     )
 
 
