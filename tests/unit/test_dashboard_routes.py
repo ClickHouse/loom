@@ -169,17 +169,15 @@ def test_a_missing_build_answers_503_on_pages(client, tmp_path, monkeypatch) -> 
 
 @pytest.mark.parametrize("path", ["/v1/whoami", "/", "/assets/index-deadbeef.js"])
 def test_api_page_and_asset_answers_carry_the_browser_security_headers(client, path: str) -> None:
+    from tests.unit.security_headers import assert_security_headers
+
     r = client.get(path)
     assert r.status_code == 200
-    assert r.headers["strict-transport-security"] == "max-age=31536000"
-    assert r.headers["x-frame-options"] == "DENY"
-    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
-    assert r.headers["referrer-policy"] == "same-origin"
-    assert r.headers["x-content-type-options"] == "nosniff"
+    assert_security_headers(r)
 
 
 def test_the_dashboard_keeps_its_own_csp(client) -> None:
-    csp = client.get("/").headers["content-security-policy"]
+    [csp] = client.get("/").headers.get_list("content-security-policy")
     assert "nonce-" in csp and "script-src" in csp
 
 

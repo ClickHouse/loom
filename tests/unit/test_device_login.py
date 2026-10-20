@@ -276,15 +276,15 @@ def test_signing_in_shows_a_confirm_page_that_cannot_be_framed() -> None:
     assert _error(_poll(c, grant["device_code"])) == "authorization_pending"
 
 
-def test_the_device_page_keeps_its_own_referrer_policy_under_the_server_headers() -> None:
+def test_the_server_headers_leave_the_sign_in_page_its_own_policies() -> None:
     from server.main import _cache_and_security_headers
 
     app = oauth_app()
     app.middleware("http")(_cache_and_security_headers)
     page = TestClient(app).get("/oauth/device")
     assert page.status_code == 200
-    assert page.headers["referrer-policy"] == "no-referrer"
-    assert page.headers["content-security-policy"].startswith("default-src 'none'")
+    for name in ("Referrer-Policy", "Content-Security-Policy"):
+        assert page.headers.get_list(name) == [oauth._PAGE_HEADERS[name]]
     assert page.headers["strict-transport-security"] == "max-age=31536000"
 
 

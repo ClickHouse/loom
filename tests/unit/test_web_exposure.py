@@ -16,6 +16,7 @@ from starlette.requests import Request
 
 from server.boot import InsecureBindRefused, require_safe_bind
 from server.settings import settings
+from tests.unit.security_headers import assert_security_headers
 
 # ---- startup refusal on a non-loopback bind ----
 
@@ -88,15 +89,17 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _gated_client(base_url: str) -> TestClient:
-    """An app behind the web gate exactly as server.main attaches it."""
+    """An app behind the web gate and the header middleware exactly as server.main
+    attaches them."""
     from fastapi import FastAPI
 
-    from server.main import attach_web_gate
+    from server.main import _cache_and_security_headers, attach_web_gate
 
     app = FastAPI()
     app.get("/")(lambda: {"ok": True})
     app.post("/v1/memory.list")(lambda: {"ok": True})
     attach_web_gate(app)
+    app.middleware("http")(_cache_and_security_headers)
     return TestClient(app, base_url=base_url)
 
 
@@ -109,11 +112,7 @@ def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
     r = _gated_client("http://rebind.evil.example").get("/")
     assert r.status_code == 421
     assert r.json()["detail"]["code"] == "MISDIRECTED_REQUEST"
-    assert r.headers["x-content-type-options"] == "nosniff"
-    assert r.headers["x-frame-options"] == "DENY"  # a refusal carries every security header
-    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
-    assert r.headers["referrer-policy"] == "same-origin"
-    assert r.headers["strict-transport-security"] == "max-age=31536000"
+    assert_security_headers(r)
 
 
 @pytest.mark.usefixtures("auth_off")
@@ -153,11 +152,7 @@ def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) 
     r = _post(**{"content-type": "text/plain", **headers})
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
-    assert r.headers["x-content-type-options"] == "nosniff"
-    assert r.headers["x-frame-options"] == "DENY"
-    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
-    assert r.headers["referrer-policy"] == "same-origin"
-    assert r.headers["strict-transport-security"] == "max-age=31536000"
+    assert_security_headers(r)
 
 
 @pytest.mark.usefixtures("auth_off")
@@ -270,11 +265,11 @@ def test_auth_on_with_a_public_url_compares_the_scheme_too(
     assert _post_to("http://loom.example", origin="http://loom.example") == 403
 
 
-def test_every_response_is_nosniff() -> None:
+def test_the_server_app_answers_with_the_security_headers() -> None:
     from server.main import app
 
     r = TestClient(app, base_url="http://localhost").get("/", follow_redirects=False)
-    assert r.headers["x-content-type-options"] == "nosniff"
+    assert_security_headers(r)
 
 
 # ---- generated URLs use the canonical base ----
@@ -444,3 +439,26 @@ def test_the_host_allowlist_and_the_bind_check_share_one_loopback_definition() -
         assert is_loopback_host(host)
         assert host_header_allowed(f"{host}:7777", "")
     assert not host_header_allowed("10.0.0.1:7777", "")
+
+
+def test_a_cors_preflight_carries_the_security_headers() -> None:
+    """CORS is outside the web gate and inside the header middleware, as in server.main."""
+    from fastapi import FastAPI
+    from fastapi.middleware.cors import CORSMiddleware
+
+    from server.main import _cache_and_security_headers, attach_web_gate
+
+    app = FastAPI()
+    app.post("/v1/memory.list")(lambda: {"ok": True})
+    app.add_middleware(
+        CORSMiddleware, allow_origins=["https://app.example"], allow_methods=["GET", "POST"]
+    )
+    attach_web_gate(app)
+    app.middleware("http")(_cache_and_security_headers)
+    r = TestClient(app, base_url="http://localhost").options(
+        "/v1/memory.list",
+        headers={"origin": "https://app.example", "access-control-request-method": "POST"},
+    )
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "https://app.example"
+    assert_security_headers(r)

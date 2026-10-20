@@ -561,25 +561,27 @@ is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 
 ## Response headers
 
-Every response a route or the web gate answers carries these; a CORS preflight and an
-unhandled 500 carry none. A route that sets one of them itself keeps its value.
+Every response carries these except an unhandled 500, which Starlette answers outside every
+middleware. A route that sets one of them itself keeps its value.
 
-| Header                      | Value                                                       |
-| --------------------------- | ----------------------------------------------------------- |
-| `X-Content-Type-Options`    | `nosniff`                                                   |
-| `X-Frame-Options`           | `DENY`                                                      |
-| `Content-Security-Policy`   | `frame-ancestors 'none'`, unless the route sends its own    |
-| `Referrer-Policy`           | `same-origin`                                               |
-| `Strict-Transport-Security` | `max-age=` `LOOM_HSTS_MAX_AGE_SECONDS` (one year; `0` none) |
+| Header                      | Value                                                                      |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `X-Content-Type-Options`    | `nosniff`                                                                  |
+| `X-Frame-Options`           | `DENY`                                                                     |
+| `Content-Security-Policy`   | `frame-ancestors 'none'`, unless the route sends its own                   |
+| `Referrer-Policy`           | `same-origin`                                                              |
+| `Strict-Transport-Security` | `max-age=<LOOM_HSTS_MAX_AGE_SECONDS>`; one year by default, `0` sends none |
 
 - `nosniff`: no body is sniffed into a type it was not served as.
-- Frame denial: no other page frames the dashboard or an API answer. Nothing in Loom frames
-  the dashboard; its document preview is a `blob:` frame inside the page, which these
-  headers do not govern. The dashboard page and downloads send their own CSP (below); the
-  dashboard's includes `frame-ancestors 'none'`.
-- `same-origin`: a dashboard URL, which can name a record, is never sent to another origin.
-  Not `no-referrer`: under it a browser sends `Origin: null` on a same-origin form POST,
-  which the cross-site check refuses.
+- Frame denial: no other page can frame the dashboard or an API answer. The dashboard page
+  sends its own CSP (below) with `frame-ancestors 'none'`, and so do the sign-in pages,
+  which also set their own `Referrer-Policy`. The download CSP has no `frame-ancestors`, so
+  `X-Frame-Options: DENY` is what stops another page framing a download. Nothing in Loom
+  frames the dashboard; its document preview is a `blob:` frame inside the page, which
+  these headers do not govern.
+- `same-origin`: a dashboard URL, which can name a record, is never sent to another origin,
+  and a same-origin non-GET request still carries its real `Origin`, which the cross-site
+  check reads. Under `no-referrer` a browser sends `Origin: null` on a form POST.
 - HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
   terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
 

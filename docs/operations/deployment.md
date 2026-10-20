@@ -592,12 +592,13 @@ ledger row.
 
 The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
 
-- Loom sends `Strict-Transport-Security` itself on every answer a route or the web gate
-  sends, with `max-age` from `LOOM_HSTS_MAX_AGE_SECONDS` (default `31536000`, one year);
-  a browser honours it only over HTTPS. Set it to `0` to let the terminator send its own,
-  with `includeSubDomains` or `preload` if the domain wants them. Frame denial and
-  `Referrer-Policy` come from Loom too
-  ([response headers](../architecture/security.md#response-headers)).
+- Loom sends `Strict-Transport-Security` itself, with `max-age` from
+  `LOOM_HSTS_MAX_AGE_SECONDS` (default `31536000`, one year); a browser honours it only
+  over HTTPS. It covers the whole host name on every port, so give Loom its own host name,
+  or set `0` when the name is shared with a service that must stay reachable over plain
+  HTTP. Set `0` too to let the terminator send its own, with `includeSubDomains` or
+  `preload` if the domain wants them. Frame denial and `Referrer-Policy` come from Loom
+  too ([response headers](../architecture/security.md#response-headers)).
 - uvicorn honours `X-Forwarded-For` and `X-Forwarded-Proto` only from the peers in
   `LOOM_TRUSTED_PROXIES` (default `127.0.0.1`); set it to your proxy's address or
   network. `X-Forwarded-Host` is never read: client-facing URLs come from

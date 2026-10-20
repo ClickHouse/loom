@@ -318,36 +318,6 @@ from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-def _set_security_headers(response: Response) -> None:
-    """Browser security headers for a route's or the web gate's answer; a route's own value wins."""
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
-    # Not no-referrer: a same-origin form POST would send `Origin: null`, which web_refusal refuses.
-    response.headers.setdefault("Referrer-Policy", "same-origin")
-    # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
-    if settings.hsts_max_age_seconds > 0:
-        response.headers.setdefault(
-            "Strict-Transport-Security", f"max-age={settings.hsts_max_age_seconds}"
-        )
-
-
-@app.middleware("http")
-async def _cache_and_security_headers(request: Request, call_next: Any) -> Response:
-    response: Response = await call_next(request)
-    path = request.url.path
-    if path.startswith("/assets/") and response.status_code == 200:
-        from server.storage.frontend_assets import cache_control_for
-
-        response.headers["Cache-Control"] = cache_control_for(path)
-    _set_security_headers(response)
-    # Draining: the balancer's kept-alive connections close one response at a
-    # time, so none is still pooled here when the port closes.
-    if _readiness.draining():
-        response.headers["Connection"] = "close"
-    return response
-
-
 # CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins).
 if settings.cors_origins:
     from fastapi.middleware.cors import CORSMiddleware
@@ -375,12 +345,7 @@ if settings.cors_origins:
 def _refused(status: int, *, code: str, message: str) -> Response:
     from fastapi.responses import JSONResponse
 
-    response = JSONResponse(
-        status_code=status, content={"detail": {"code": code, "message": message}}
-    )
-    # The web gate runs outside the header middleware.
-    _set_security_headers(response)
-    return response
+    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message}})
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -442,11 +407,41 @@ async def _web_gate(request: Request, call_next: Any) -> Response:
     return response
 
 
+async def _cache_and_security_headers(request: Request, call_next: Any) -> Response:
+    """Cache-Control for /assets/*, the browser security headers (a route's own
+    value wins) and Connection: close while draining."""
+    response: Response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets/") and response.status_code == 200:
+        from server.storage.frontend_assets import cache_control_for
+
+        response.headers["Cache-Control"] = cache_control_for(path)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    # same-origin keeps the real Origin on a same-origin non-GET request, which
+    # web_refusal needs; no-referrer would send `Origin: null` on a form POST.
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
+    if settings.hsts_max_age_seconds > 0:
+        response.headers.setdefault(
+            "Strict-Transport-Security", f"max-age={settings.hsts_max_age_seconds}"
+        )
+    # Draining: the balancer's kept-alive connections close one response at a
+    # time, so none is still pooled here when the port closes.
+    if _readiness.draining():
+        response.headers["Connection"] = "close"
+    return response
+
+
 def attach_web_gate(target: FastAPI) -> None:
     target.middleware("http")(_web_gate)
 
 
 attach_web_gate(app)
+# Registered last, so it is the outermost middleware (Starlette inserts each at
+# the front): the web gate's refusals and CORS preflights carry its headers too.
+app.middleware("http")(_cache_and_security_headers)
 
 http_transport.attach(app)
 mcp_transport.attach(app)
