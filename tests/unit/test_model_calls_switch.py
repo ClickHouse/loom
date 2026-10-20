@@ -609,9 +609,8 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(client.complete("s", "u"))
     switch.down = True
-    customer._switch._reset_for_tests(
-        None, read_age_s=None, due_in_s=0.0
-    )  # never read, and the read fails: fail closed
+    # Never read, and the read fails: fail closed.
+    customer._switch._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
     with pytest.raises(BackendUnavailableError):
         asyncio.run(client.complete("s", "u"))
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")

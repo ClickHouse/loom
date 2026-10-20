@@ -2,7 +2,7 @@
 every call.
 
 It reads the whole table when a read is due: `refresh_s` after the last read
-ended, or at once after a change made in this process (`forget`). While a read
+ended, or at once after a change made in this process (`note_change`). While a read
 runs, a call is served the copy in hand if that copy is young enough and no
 change made here waits; otherwise it waits for the read. `get` answers None
 when the copy is older than `max_stale_s`, and the caller refuses.
@@ -23,8 +23,9 @@ class PolledCopy[T]:
         self._log = log
         self._value: T | None = None
         # When the copy was read (monotonic, from the start of its query; None =
-        # never), when the next read is due, how many changes were made here, and
-        # how many of them the last read, failed or not, started after.
+        # never) and when the next read is due.
+        # _changes counts changes made here; _changes_read is its value when the
+        # last finished read (failed or not) began.
         self._read_at: float | None = None
         self._next_read = 0.0
         self._changes = 0
@@ -41,7 +42,8 @@ class PolledCopy[T]:
         return now >= self._next_read or self._change_waiting()
 
     async def get(self, *, refresh_s: float, max_stale_s: float) -> T | None:
-        """The copy, read first when a read is due; None when the copy is older
+        """The copy, read first when a read is due (unless one is running and the
+        copy in hand is fresh with no change waiting); None when the copy is older
         than `max_stale_s`, counted from the start of the read that brought it
         (or it was never read)."""
         now = time.monotonic()
@@ -70,8 +72,9 @@ class PolledCopy[T]:
         self._changes_read = changes
         self._next_read = time.monotonic() + refresh_s
 
-    def forget(self) -> None:
-        """Make the next call read again, for a change just made here."""
+    def note_change(self) -> None:
+        """A change was made here: the next call reads, and calls during a read
+        wait for it."""
         self._changes += 1
 
     def _reset_for_tests(
