@@ -176,10 +176,11 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
     assert report.by_namespace()[("clickhouse", "demo-full")] == {"high": 1, "medium": 2}
     narrowed = await sweep.scan(only_shapes=["credential", "email"], pages=1, ch=ch)
     assert narrowed.by_shape == {"credential": 1, "email": 1}  # the phone-only row is skipped
-    sql, params = ch.calls[0]
-    assert "sensitivity = ''" in sql and "match(value, {shape:String})" in sql
-    assert params["shape"] == sweep.COARSE_SHAPE_RE and params["days"] == 2
-    assert "PREWHERE" not in sql
+    for sql, params in ch.calls[:2]:  # a page's keys, then their current versions
+        assert "sensitivity = ''" in sql and "{shape:String}" in sql
+        assert params["shape"] == sweep.COARSE_SHAPE_RE and params["days"] == 2
+        assert "PREWHERE" not in sql
+    assert "FINAL" not in ch.calls[0][0] and "FINAL" in ch.calls[1][0]
 
 
 @pytest.mark.asyncio
@@ -385,7 +386,7 @@ async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None
     ]
     ch = _local_memory(rows)
     report = await sweep.scan(since_days=2, limit=2, pages=None, ch=ch)  # type: ignore[arg-type]
-    returned = sorted(r["memory_id"] for r in ch.returned)
+    returned = sorted(r["memory_id"] for r in ch.returned if "memory_id" in r)  # FINAL reads
     assert returned == sorted(row[3] for row in rows)
     assert [c.memory_key for c in report.candidates] == ["vault_door"]
     assert report.scanned == 8
@@ -396,14 +397,20 @@ async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None
 async def test_phone_shaped_rows_in_one_org_never_hide_a_credential_in_another(
     monkeypatch,
 ) -> None:
-    # The first org holds more ten-digit runs (epoch seconds) than a pass's pages: the
-    # detector reads them as phone numbers, which the scheduled pass leaves alone, so they
-    # are not selected, and the token in the next org is labelled.
+    # The first org holds more long digit runs than a pass's pages: epoch seconds and
+    # milliseconds, which the detector reads as phone numbers, and 19-digit ids, which it
+    # leaves unlabelled. The scheduled pass's filter selects none of them, so the token in
+    # the next org is labelled.
     from server.memory.workers import sensitivity_sweep as w
     from server.settings import settings
 
+    values = [
+        *({"ts": 1760000000 + i} for i in range(6)),
+        *({"ts": 1760000000000 + i} for i in range(6)),
+        *({"id": 1234567890123456789 + i} for i in range(6)),
+    ]
     rows: list[_Row] = [
-        ("acme", "n", "-", _uuid(i), f"obs_{i}", {"ts": 1760000000 + i}, 60) for i in range(6)
+        ("acme", "n", "-", _uuid(i), f"obs_{i}", value, 60) for i, value in enumerate(values)
     ]
     token = "gh" + "p_" + "Ab3" * 12
     rows.append(("zeta", "n", "-", _uuid(99), "deploy_token", f"push with {token}", 60))
@@ -467,18 +474,6 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["pages"] == 3
     assert seen["only_shapes"] == ["credential", "email"]  # the phone shape is the operator's
     assert out["scanned"] == 3 and out["relabelled"] == 0
-
-
-@pytest.mark.parametrize(
-    "field", ["sensitivity_sweep_max_rows_per_pass", "sensitivity_sweep_pages_per_pass"]
-)
-def test_a_sweep_pass_bound_below_one_is_refused(field: str) -> None:
-    from pydantic import ValidationError
-
-    from server.settings.catalog import MemorySettings
-
-    with pytest.raises(ValidationError):
-        MemorySettings(**{field: 0})
 
 
 def test_the_worker_is_registered_and_described() -> None:

@@ -2856,7 +2856,7 @@ settings:
   # 1). [restart]
   # sensitivity_sweep_max_rows_per_pass: 500
 
-  # Pages of `sensitivity_sweep_max_rows_per_pass` rows one sensitivity sweep pass scans
+  # Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep pass scans
   # at most (at least 1); a row behind more waits for `loom sensitivity-sweep --apply`.
   # [live]
   # sensitivity_sweep_pages_per_pass: 10

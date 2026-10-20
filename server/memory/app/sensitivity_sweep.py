@@ -93,7 +93,11 @@ _COARSE_BY_SHAPE = {
         r"|PRIVATE KEY"
         r"|(?i:password|passwd|pwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token"
         r"|bearer|client[_-]?secret|private[_-]?key)"
-        r"|[0-9](?:[ -]?[0-9]){12}"  # card number
+        # A card number, as `_has_card` reads one: a lone 15- or 16-digit group, or a
+        # printed grouping that starts with a 4-digit group, each with a network's leading
+        # digit. So epoch milliseconds and 19-digit ids are not selected.
+        r"|(?:^|[^0-9])[2-6][0-9]{14,15}(?:[^0-9]|$)"
+        r"|(?:^|[^0-9])[2-6][0-9]{3}[ -][0-9]{4,6}[ -][0-9]{4}"
         r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
         rf"|{_COARSE_PIN}"
         rf"|{_COARSE_KEYED}"
@@ -183,29 +187,54 @@ def _after_cursor() -> str:
     return cond
 
 
-def scan_sql(
+# The text the coarse filter matches: an object value's JSON, any other value's text.
+_SCAN_TEXT = "if(length(toString(value_json)) > 2, toString(value_json), value)"
+_KEY_TUPLE = f"({', '.join(_SORT_KEY)})"
+
+
+def _where(*, org: str | None, namespace: str | None, since_days: int | None) -> str:
+    """The conditions a scanned row meets, each on one row version."""
+    where = f"""tombstoned_at IS NULL AND sensitivity = ''
+          AND (expires_at IS NULL OR expires_at > now())
+          AND match({_SCAN_TEXT}, {{shape:String}})"""
+    if org:
+        where += " AND org = {org:String}"
+    if namespace:
+        where += " AND namespace = {ns:String}"
+    if since_days:
+        where += " AND created_at > now() - INTERVAL {days:UInt32} DAY"
+    return where
+
+
+def keys_sql(
     *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
 ) -> str:
-    scope = ""
-    if org:
-        scope += " AND org = {org:String}"
-    if namespace:
-        scope += " AND namespace = {ns:String}"
-    if since_days:
-        scope += " AND created_at > now() - INTERVAL {days:UInt32} DAY"
-    if after:  # the next page, after the last row of the one before
-        scope += f" AND ({_after_cursor()})"
+    """The sort keys of one page, read without FINAL: any row version that meets the
+    conditions gives its key, so the page's keys include every key whose current version
+    meets them. Without FINAL the window prunes partitions, every thread reads, and a read
+    in key order stops at the LIMIT."""
+    where = _where(org=org, namespace=namespace, since_days=since_days)
+    if after:  # the next page, after the last key of the one before
+        where += f" AND ({_after_cursor()})"
     return f"""
-        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
-               if(length(toString(value_json)) > 2, toString(value_json), value) AS value
-        FROM loom.memory FINAL
-        WHERE tombstoned_at IS NULL AND sensitivity = ''
-          AND (expires_at IS NULL OR expires_at > now())
-          AND match(value, {{shape:String}})
-          {scope}
+        SELECT {", ".join(_SORT_KEY)}
+        FROM loom.memory
+        WHERE {where}
         ORDER BY {", ".join(_SORT_KEY)}
         LIMIT {{lim:UInt32}}
-        SETTINGS max_threads = 1  -- one stream in key order stops at the LIMIT; more read ahead
+    """
+
+
+def scan_sql(*, org: str | None, namespace: str | None, since_days: int | None) -> str:
+    """The current version of each of a page's keys that still meets the conditions."""
+    where = _where(org=org, namespace=namespace, since_days=since_days)
+    return f"""
+        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
+               {_SCAN_TEXT} AS value
+        FROM loom.memory FINAL
+        WHERE {_KEY_TUPLE} IN {{keys:Array(Tuple(String, String, String, String, String, String))}}
+          AND {where}
+        ORDER BY {", ".join(_SORT_KEY)}
     """
 
 
@@ -225,11 +254,11 @@ async def scan(
     `other`) — the phone shape is a ten-digit run and the noisiest, so an
     operator can apply the others first.
 
-    Reads pages of `limit` rows in the table's sort key order until `limit` candidates are
-    found, the rows run out or `pages` pages are read (`None`: no page cap). Only rows of
-    the shapes in `only_shapes` are selected. A selected row the detector leaves unlabelled
-    stays unlabelled and is selected again on the next run; reading past it keeps a run of
-    them from hiding a later row that is high."""
+    Reads pages of `limit` keys in the table's sort key order, then the current version of
+    each, until `limit` candidates are found, the rows run out or `pages` pages are read
+    (`None`: no page cap). Only rows of the shapes in `only_shapes` are selected. A selected
+    row the detector leaves unlabelled stays unlabelled and is selected again on the next
+    run; reading past it keeps a run of them from hiding a later row that is high."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
@@ -250,14 +279,19 @@ async def scan(
         page_params = dict(params)
         if last is not None:
             page_params |= {f"after_{col}": last[col] for col in _SORT_KEY}
-        sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=last is not None)
-        rows = await ch.query_all(sql, params=page_params)
+        sql = keys_sql(org=org, namespace=namespace, since_days=since_days, after=last is not None)
+        keys = await ch.query_all(sql, params=page_params)
+        rows: list[dict[str, Any]] = []
+        if keys:
+            sql = scan_sql(org=org, namespace=namespace, since_days=since_days)
+            key_tuples = [tuple(str(k[col]) for col in _SORT_KEY) for k in keys]
+            rows = await ch.query_all(sql, params=params | {"keys": key_tuples})
         report.scanned += len(rows)
-        report.truncated = len(rows) >= limit
+        report.truncated = len(keys) >= limit
         _add_candidates(report, rows, keep)
         if not report.truncated or len(report.candidates) >= limit:
             break
-        last = rows[-1]
+        last = keys[-1]
     if len(report.candidates) > limit:
         report.candidates = report.candidates[:limit]
         report.truncated = True
@@ -442,6 +476,7 @@ __all__ = [
     "apply",
     "coarse_shape_re",
     "high_with_embedding_count",
+    "keys_sql",
     "scan",
     "scan_sql",
 ]

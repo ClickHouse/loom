@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes
+from server.memory.app.sensitivity_sweep import COARSE_SHAPE_RE, _shapes, coarse_shape_re
 from server.memory.app.set_chunks import human_text
 from server.memory.domain.memory_types import is_embedded, is_searchable_type
 from server.memory.domain.sensitivity import (
@@ -29,6 +29,10 @@ from server.memory.store.rows import (
 )
 from server.memory.workers.observe_extract import _sendable
 from tests.unit.clickhouse_local import CLICKHOUSE, run
+
+# The coarse filter of the `credential` shape alone: the scheduled pass's filter
+# (`credential,email`) selects a high row through it.
+_HIGH_SHAPE_RE = coarse_shape_re({"credential"})
 
 # Credential SHAPES are assembled at runtime so no tracked file carries a
 # string the repo's secret guard (tests/unit/test_no_secrets_guard.py) would
@@ -560,7 +564,7 @@ def test_a_keyed_value_reads_the_same_on_every_path(value: object) -> None:
     # patterns read.
     assert value_reads_high(value) == reads_high(human_text(value))
     if value_reads_high(value):  # the prefilter is a superset: what reads as high is selected
-        assert re.search(COARSE_SHAPE_RE, json.dumps(value))
+        assert re.search(_HIGH_SHAPE_RE, json.dumps(value))
 
 
 def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label() -> None:
@@ -679,9 +683,9 @@ def test_long_runs_are_read_in_linear_time() -> None:
 )
 def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
-    # select whatever the detector labels.
-    assert re.search(COARSE_SHAPE_RE, text)
+    # select whatever the detector labels, and the scheduled pass's filter every high row.
     level = detect_sensitivity(text)
+    assert re.search(_HIGH_SHAPE_RE if level == "high" else COARSE_SHAPE_RE, text)
     assert _shapes(text, level) == (("credential",) if level == "high" else ("other",))
 
 
@@ -719,8 +723,9 @@ def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
     # `match()` runs on the stored column, where an object value's line break is the two
     # characters `\n`; the detector reads the decoded text.
     stored = json.dumps(value)
-    assert detect_sensitivity(detector_text(stored)) in ("high", "medium")
-    assert re.search(COARSE_SHAPE_RE, stored)
+    level = detect_sensitivity(detector_text(stored))
+    assert level in ("high", "medium")
+    assert re.search(_HIGH_SHAPE_RE if level == "high" else COARSE_SHAPE_RE, stored)
 
 
 def test_a_question_for_a_bank_account_is_contact_intent() -> None:
@@ -822,16 +827,19 @@ def test_a_dotted_security_code_key_is_not_selected_by_the_sweep() -> None:
 def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
     # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
     # the `json.dumps` text in `value` for any other. The prefilter is a superset: every case
-    # the detector labels is selected, and the only unlabelled cases it selects are keys
-    # whose last word ends in a label (documented in docs/architecture/security.md).
+    # the detector labels is selected (a high one by the scheduled pass's filter too), and
+    # the only unlabelled cases it selects are keys whose last word ends in a label
+    # (documented in docs/architecture/security.md).
     sql = (
-        "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
+        "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit,"
+        " match(t, {h:String}) AS high_hit"
         " FROM (SELECT arrayJoin({js:Array(String)}) AS j)"
-        " UNION ALL SELECT j AS t, match(j, {r:String}) AS hit"
+        " UNION ALL SELECT j AS t, match(j, {r:String}) AS hit, match(j, {h:String}) AS high_hit"
         " FROM (SELECT arrayJoin({ts:Array(String)}) AS j)"
     )
     params = {
         "r": COARSE_SHAPE_RE,
+        "h": _HIGH_SHAPE_RE,
         "js": [json.dumps(v) for v in _PREFILTER_OBJECTS],
         "ts": [json.dumps(t) for t in _PREFILTER_TEXTS],
     }
@@ -839,8 +847,10 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
     assert len(rows) == len(_PREFILTER_OBJECTS) + len(_PREFILTER_TEXTS)
     over_selected = set()
     for row in rows:
-        labelled = detect_sensitivity(detector_text(row["t"])) != ""
-        if labelled:
+        level = detect_sensitivity(detector_text(row["t"]))
+        if level == "high":
+            assert int(row["high_hit"]), row
+        if level:
             assert int(row["hit"]), row
         elif int(row["hit"]):
             over_selected.add(row["t"])

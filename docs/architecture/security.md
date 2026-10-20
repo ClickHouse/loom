@@ -815,10 +815,14 @@ An IBAN-only row is shape `other`, which `loom sensitivity-sweep --apply` labels
 sweep labels it, an unlabelled row that holds a credential is embedded like any other, so
 search serves it, and `memory.ask` and the conflict judge can send it to their models. A
 pass reads its window in the table's sort key order, in pages of
-`LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` rows, until that many candidates are found or
+`LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys taken from any row version that matches
+(without `FINAL`, so the window prunes partitions), then reads the current version of each
+key and keeps it only if it still matches. It goes on until that many candidates are found or
 `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read. The ClickHouse filter selects
 only the shapes in the shape filter, so a ten-digit run (an epoch timestamp, a run id) the
-default filter leaves alone is never selected. A selected row the detector leaves
+default filter leaves alone is never selected. Its card alternative selects only what can be
+a card: a lone 15- or 16-digit group or a printed grouping, each with a network's leading
+digit, so epoch milliseconds and 19-digit ids are not selected either. A selected row the detector leaves
 unlabelled is selected again on every pass, and paging past it keeps a run of them from
 hiding a later row that is high. A row behind more than that many pages of such rows
 waits for the operator's
