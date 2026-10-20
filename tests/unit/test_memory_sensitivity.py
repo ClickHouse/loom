@@ -546,11 +546,13 @@ def test_a_connector_pin_written_as_an_assignment_reads_as_a_pin() -> None:
     [{"pin": " 4471"}, {"pin": "\t4471"}, {"pin": "4471 "}, {"pin": "\u00a04471"}],
 )
 def test_a_keyed_value_reads_the_same_on_every_path(value: object) -> None:
-    # The stored value, a raw chunk of it and the sweep's prefilter give one answer; the
-    # whitespace stripped is the ASCII whitespace the patterns read.
+    # The stored value and a raw chunk of it give one answer, and the sweep's prefilter
+    # selects what reads as high; the whitespace stripped is the ASCII whitespace the
+    # patterns read.
     answers = {value_reads_high(value), reads_high(human_text(value))}
     assert len(answers) == 1
-    assert bool(re.search(COARSE_SHAPE_RE, json.dumps(value))) == (True in answers)
+    if True in answers:  # the prefilter is a superset: what reads as high is selected
+        assert re.search(COARSE_SHAPE_RE, json.dumps(value))
 
 
 def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label() -> None:
@@ -619,6 +621,10 @@ def test_a_value_reading_high_is_left_out_of_a_model_prompt_whatever_its_label()
         ({"PINcode": "4471"}, "high"),
         ({"CVVcode": "123"}, "high"),
         ({"SSNno": "123-45-6789"}, "high"),
+        ({"ATMPin": "4471"}, "high"),
+        ({"badgePin": "4471"}, "high"),
+        ({"Spin": 1200}, ""),  # one word
+        ({"ATMPIN": "4471"}, ""),  # one word
         ({"securitycode": "5512"}, "high"),
         ({"ssn": "000-12-3456"}, ""),
         ({"pan": "4111111111111112"}, ""),
@@ -748,6 +754,9 @@ _PREFILTER_OBJECTS = [
     {"ssnno": "123456789"},
     {"securitycode": "5512"},
     {"PINcode": "4471"},
+    {"ATMPin": "4471"},
+    {"Spin": 1200},
+    {"ATMPIN": "4471"},
     {"cvv_code": "123"},
     {"ssn_no": "123456789"},
     {"social_security_number": "123-45-6789"},
@@ -799,8 +808,9 @@ def test_a_dotted_security_code_key_is_not_selected_by_the_sweep() -> None:
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
     # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
-    # the raw `value` for a string. Every case the detector labels is selected, and these
-    # unlabelled ones are not.
+    # the raw `value` for a string. The prefilter is a superset: every case the detector
+    # labels is selected, and the only unlabelled cases it selects are keys whose last word
+    # ends in a label (documented in docs/architecture/security.md).
     sql = (
         "SELECT toString(CAST(j AS JSON)) AS t, match(t, {r:String}) AS hit"
         " FROM (SELECT arrayJoin({js:Array(String)}) AS j)"
@@ -814,6 +824,16 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
     }
     rows = run([], sql, params)
     assert len(rows) == len(_PREFILTER_OBJECTS) + len(_PREFILTER_TEXTS)
+    over_selected = set()
     for row in rows:
         labelled = detect_sensitivity(detector_text(row["t"])) != ""
-        assert bool(int(row["hit"])) == labelled, row
+        if labelled:
+            assert int(row["hit"]), row
+        elif int(row["hit"]):
+            over_selected.add(row["t"])
+    assert over_selected == {
+        '{"spin":"4471"}',
+        '{"unpin":"1234"}',
+        '{"Spin":1200}',
+        '{"ATMPIN":"4471"}',
+    }

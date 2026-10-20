@@ -694,22 +694,26 @@ An IBAN counts when it passes the ISO 13616 mod-97 check, and a question naming 
 or a bank account (number) counts as contact intent, so ranking does not demote the row
 that answers it.
 
-A JSON value is read scalar by scalar (`detector_text`). A key whose last one, two or three
-words name a PIN-like secret states its digits under that label, so the free-text rules
-above decide the length. A label's words may also be written as one word (`pincode`,
-`cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as `pin is <value>` (3-5 digits),
-`pin_number` as `pin number is <value>`, and `passcode`, `cvv`, `cvc` and `security_code`
-(with `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and `cvc_number`) as `<label> is <value>`
-(3-8 digits). An `ssn`, `ssn_number`, `ssn_no` or `social_security_number` key states an
-SSN with its dashes optional. A card number is found under any key. So `{"pin": "4471"}`,
-`{"pin_code": "4471"}`, `{"badge_pin": "4471"}` and `{"ssn": "123456789"}` are `high`, and
-`{"pin": "560001"}`, `{"pincode": "560001"}` (a postal code), `{"pin_count": 4}` and
-`{"pin": "A1"}` are not. A connector pin in a config (`{"pin": 115}`) reads as a PIN, as
-`GPIO pin: 115` does. Any other key labels nothing: a `{"password": ...}` key does not label
-its value. `reads_high` reads the same pairs in raw JSON text, such as a chunk of an object
-value, when the value is digits and dashes. The sweep reads an object value as ClickHouse
-stores it, where a dotted key is nested: a `{"security.code": "5512"}` row is read as
-`{"security": {"code": "5512"}}`, so the sweep does not label it.
+A JSON value is read scalar by scalar (`detector_text`). A key whose last one or two words
+name a PIN-like secret (three for `social_security_number`) states its digits under that
+label, so the free-text rules above decide the length. A label's words may also be written
+as one word (`pincode`, `cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as `pin is
+<value>` (3-5 digits), `pin_number` as `pin number is <value>`, and `passcode`, `cvv`, `cvc`
+and `security_code` (with, for example, `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and
+`cvc_number`) as `<label> is <value>` (3-8 digits). An `ssn`, `ssn_number`, `ssn_no` or
+`social_security_number` key states an SSN with its dashes optional. A card number is found
+under any key. So `{"pin": "4471"}`, `{"pin_code": "4471"}`, `{"badge_pin": "4471"}` and
+`{"ssn": "123456789"}` are `high`, and `{"pin": "560001"}`, `{"pincode": "560001"}` (a
+postal code), `{"pin_count": 4}` and `{"pin": "A1"}` are not. A connector pin in a config
+(`{"pin": 115}`) reads as a PIN, as `GPIO pin: 115` does. Any other key labels nothing: a
+`{"password": ...}` key does not label its value. `reads_high` reads the same pairs in raw
+JSON text, such as a chunk of an object value, when the value is digits and dashes. The
+sweep's prefilter is a superset of this key rule, not a copy: it selects a key that ends in
+a label, so it may select a few non-secret rows (`spin`, `unpin`, `ATMPIN`), which the
+detector, comparing whole key words, leaves unlabelled; each costs a re-check on the sweep's
+passes within its window. The sweep reads an object value as ClickHouse stores it, where a
+dotted key is nested: a `{"security.code": "5512"}` row is read as `{"security": {"code":
+"5512"}}`, so the sweep does not label it.
 
 A caller-supplied level wins for the stored label. Detection is
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT`.

@@ -338,9 +338,10 @@ _SCALAR_SEP = "\n;\n"
 # `pin__code`, `pin/code`, `cvv_2`, `pinCode`: at any run of characters that are neither
 # letters nor digits, or at a change of case), and the label each is stated under:
 # `{"pin_code": "4471"}` reads as `pin is 4471`, so the free-text grammar decides the
-# value's length ("pin is 560001", a postal code, stays unlabelled). A key's last one, two
-# or three words are compared as words, so `p_in` is not `pin`; a label's words may also be
-# written as one word (`pincode`, `cvv2`). The sweep's prefilter is built from the same list.
+# value's length ("pin is 560001", a postal code, stays unlabelled). A key's last one or two
+# words (three for `social_security_number`) are compared as words, so `p_in` is not `pin`;
+# a label's words may also be written as one word (`pincode`, `cvv2`). The sweep's
+# prefilter is built from the same list.
 _KEYED_SECRET_PARTS: dict[tuple[str, ...], str] = {
     ("pin",): "pin",
     ("pin", "code"): "pin",
@@ -364,9 +365,11 @@ KEYED_SECRET_WORDS = _KEYED_SECRET_PARTS | {
 _SSN_KEY_PARTS = (("ssn",), ("ssn", "number"), ("ssn", "no"), ("social", "security", "number"))
 SSN_KEYS = _SSN_KEY_PARTS + tuple(("".join(w),) for w in _SSN_KEY_PARTS if len(w) > 1)
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
-# The same key split at every change of case, so a run of capitals before a lowercase word
-# is a word of its own (`PINcode` is `PIN`, `code`; the split above reads `PI`, `Ncode`).
-_KEY_CASE_WORDS = re.compile(r"[A-Z]+|[a-z0-9]+")
+# A run of two or more capitals before a lowercase word is read both ways: `ATMPin` is
+# `ATM`, `Pin` above, and `PINcode` is `PIN`, `code` here (above it is `PI`, `Ncode`); the
+# two have the same shape, so one split cannot read both. A single capital starts its word
+# in both, so `Spin` is one word.
+_KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 
 def _keyed_secret(key: str, value: Any) -> str:
@@ -375,11 +378,10 @@ def _keyed_secret(key: str, value: Any) -> str:
     '' when the key names none."""
     if not isinstance(value, str | int) or isinstance(value, bool):
         return ""
-    # the last one, two and three words of both splits: (`pin`,) and (`badge`, `pin`) for
-    # `badge_pin`
+    # the last one, two and three words of both splits, lowercased
     tails = [
         tuple(w.lower() for w in words[-n:])
-        for words in (_KEY_WORDS.findall(key), _KEY_CASE_WORDS.findall(key))
+        for words in (_KEY_WORDS.findall(key), _KEY_CAPS_WORDS.findall(key))
         for n in (1, 2, 3)
         if len(words) >= n
     ]
