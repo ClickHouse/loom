@@ -272,22 +272,37 @@ curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Beare
   org, and no cached vector or answer is served to it either: the switch is a
   kill switch. A request that needs one is refused (403 `MODEL_CALLS_DISABLED`).
   The local embedder runs in-process and sends nothing, but it is switched off
-  too.
-- Background work waits. Each job leaves the org out when it picks its work,
-  so the org's queued rows keep their attempts and no other org waits behind
-  them. Code ingest skips the org's repositories altogether, so its whole code
-  index, lexical search included, stays as it was until the org is back on.
+  too. A call that names the org is checked even when Loom makes it for itself;
+  only its own calls that name no org (the startup check, calibration) go on.
 - `"enabled": true` switches it back on, and the waiting work runs.
+- **A platform admin's lock.** A platform admin can add `"locked": true`: the
+  org's own admins are then refused (403, naming who locked it) until a
+  platform admin sends `"locked": false`. Ending an org's use of Loom switches
+  it off locked. [`org.model_calls`](../reference/operations/org.md#orgmodel_calls)
+  reads the setting, the lock and who set it.
 - Every server applies a change within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`
-  (default 10; the process that took it, on its next call).
+  (default 10; the process that took it, on its next call). A server that
+  cannot read the switch for longer than
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` (default 60, 15 to 300) makes no
+  model call for any org until it can.
 - Switch an org off only once every replica runs a build that knows the
   switch: an older one keeps calling models for the org.
-- A server that cannot read the switch for longer than
-  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` makes no model call for any org
-  until it can.
-- [`org.model_calls`](../reference/operations/org.md#orgmodel_calls) reads the
-  current setting. The deployment's own calls (its startup check, calibration)
-  are never switched off.
+
+What waits, and for how long, while an org is off:
+
+| Work | While the org is off |
+| --- | --- |
+| Memory embeddings (the embedding worker) | Not picked: the memories stay, without a vector, and are embedded once the org is back on. Never dropped. |
+| Extraction requests (the extraction queue) | Stay pending, unclaimed. Past `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` (default 7; 0 = no limit) each is marked failed with a `memory_drops` record, reason `model_calls_off`. |
+| Entity tagging, profile folds, conversation titles, reflections, observation distillation | Not selected; done once the org is back on. They are derived from rows that stay, so nothing is dropped. |
+| Projection repairs | Not scanned; retried once the org is back on. |
+| Pending conflict judgements | Not re-judged. One older than the sweep's hour when the org comes back is past the sweep, as a judgement lost in an outage is: the write stands as made. |
+| Code ingest, code summaries, code embedding recovery | The org's repositories are skipped, so its whole code index, lexical search included, stays as it was. A stub the recovery scan moved past is found by its periodic full scan. |
+| Code-link judgements | Left due. |
+| Tracker embeddings | The namespace is skipped before its cursor moves. |
+| Retrieval-judge samples | Dropped: a sample is not owed work. |
+| `loom reembed` | The org's rows are left out, counted (`skipped_switched_off`) and reported; run it again once the org is back on. |
+| A model change's rebuild | Completes; the org's rows are staged without a vector (`rows_waiting`). Memory and code rows are embedded again by their workers once the org is back on; on the other surfaces those rows have no vector until they are written again. |
 
 #### Without a workload token
 

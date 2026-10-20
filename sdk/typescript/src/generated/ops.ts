@@ -6715,12 +6715,15 @@ export interface OrgModelCallsOutput {
   reason?: string;
   updated_by?: string;
   updated_at?: string | null;
+  locked?: boolean;
+  locked_by?: string;
 }
 
 export interface OrgSetModelCallsInput {
   org: string;
   enabled: boolean;
   reason?: string;
+  locked?: boolean | null;
 }
 
 export interface PolicyCheckInput {

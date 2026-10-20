@@ -436,7 +436,10 @@ change applies it on its next call, every other within
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`; an older build ignores the switch. It
 fails closed: a process whose copy of the switch is older than
 `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` refuses every model call until it reads it again. An
-org admin reaches only its own org's switch.
+org admin reaches only its own org's switch, and none while a platform admin has locked it
+(`"locked": true`, settable only by a platform admin, and by `model_calls.switch_off`, which
+ending an org's use calls); changes to one org's switch are serialized, so an org admin's write
+never carries an old lock state over a new one.
 
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn

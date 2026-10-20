@@ -529,7 +529,7 @@ Fields for every `org` op: [operations/org.md](operations/org.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`org.model_calls`](operations/org.md#orgmodel_calls) | The org's current setting; enabled when it was never set. | org_admin | idempotent | no |  |
+| [`org.model_calls`](operations/org.md#orgmodel_calls) | The org's current setting; enabled and unlocked when it was never set. | org_admin | idempotent | no |  |
 | [`org.set_model_calls`](operations/org.md#orgset_model_calls) | Switch the org's model calls off or on. | org_admin | idempotent | no | yes |
 
 ### policy

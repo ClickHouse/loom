@@ -14360,18 +14360,22 @@ class OrgModelCallsOutput(TypedDict, total=False):
     reason: NotRequired[str]
     updated_by: NotRequired[str]
     updated_at: NotRequired[Optional[str]]
+    locked: NotRequired[bool]
+    locked_by: NotRequired[str]
 
 
 class OrgSetModelCallsInput(TypedDict, total=False):
     org: Required[str]
     enabled: Required[bool]
     reason: NotRequired[str]
+    locked: NotRequired[Optional[bool]]
 
 
 class OrgSetModelCallsBody(TypedDict, total=False):
     org: NotRequired[str]
     enabled: Required[bool]
     reason: NotRequired[str]
+    locked: NotRequired[Optional[bool]]
 
 
 class PolicyCheckInput(TypedDict, total=False):

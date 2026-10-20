@@ -2854,6 +2854,8 @@ CREATE TABLE IF NOT EXISTS loom.org_model_calls
     `reason` String,
     `updated_by` String,
     `updated_at` DateTime64(3, 'UTC'),
+    `locked` UInt8,
+    `locked_by` String,
     `version` UInt64
 )
 ENGINE = ReplacingMergeTree(version)
