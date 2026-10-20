@@ -277,13 +277,15 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
             namespaces=(input.namespace,),
             embedding_model=embedder.model_name,
             query_vec=q_vec,
-            top_k=int(input.knowledge_top_k),
+            top_k=assistant_rules.hits_to_ask(int(input.knowledge_top_k)),
         )
-        khits = await hybrid_search(ksq)
-        for h in khits:
+        # Another bot's promoted rule is not a rule about this agent.
+        khits = [
+            h for h in await hybrid_search(ksq) if assistant_rules.serves_agent(h.tags, input.agent)
+        ]
+        for h in khits[: int(input.knowledge_top_k)]:
             val = str(getattr(h, "content", "") or "")
-            # Another bot's promoted rule is not a rule about this agent.
-            if not val or not assistant_rules.serves_agent(h.tags, input.agent):
+            if not val:
                 continue
             cost = _est_tokens(val)
             if not fill.fits(cost):

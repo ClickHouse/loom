@@ -1,6 +1,7 @@
 -- Rules an assistant states about itself are filed in loom.learnings_queue as
 -- `assistant_turn` candidates (server/memory/app/assistant_learnings.py). `agent` is
--- the agent the rule is for, and promotion writes the memory under it.
+-- the agent the rule is for: a promotion tags the knowledge document `agent:<agent>`,
+-- or, with destination="memory", writes the memory row under it.
 ALTER TABLE loom.learnings_queue
     ADD COLUMN IF NOT EXISTS `agent` LowCardinality(String) DEFAULT '';
 

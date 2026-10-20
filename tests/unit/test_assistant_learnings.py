@@ -169,6 +169,11 @@ def test_a_supporters_quotes_are_its_user_turn_then_the_cited_evidence() -> None
     # No user turn before the rule: no user quote.
     alone = [{"role": "assistant", "content": _RULE}]
     assert assistant_rules.quotes(_rule_fact(source_message_indices=[0]), alone) == ("", _RULE)
+    # No assistant turn cited: no user quote, not the user's later, unrelated turns.
+    later = [*_MESSAGES, {"role": "user", "content": "I live in Porto."}]
+    for indices in ([], [0, 2]):
+        fact = _rule_fact(evidence=_RULE, source_message_indices=indices)
+        assert assistant_rules.quotes(fact, later) == ("", _RULE)
     assert assistant_rules.rationale(asked, _RULE) == f'User: "{asked}"\nAssistant: "{_RULE}"'
     assert assistant_rules.rationale("", _RULE) == f'Assistant: "{_RULE}"'
 
@@ -899,6 +904,60 @@ def test_a_bots_promoted_rule_serves_only_that_bot() -> None:
     # A rule for every agent carries no agent tag; any other document is not a rule.
     assert serves_agent(["promoted-from-learning", "source-kind:assistant_turn"], "sales-bot")
     assert serves_agent(["agent:support-bot", "runbook"], "sales-bot")
+
+
+@pytest.mark.asyncio
+async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three support-bot rules outrank one plain document: sales-bot's pack drops
+    the rules and still packs the document."""
+    from server.knowledge.api.models_knowledge import KnowledgeSearchOutput, _SearchHit
+    from server.knowledge.app import knowledge_search
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app import context_pack
+
+    rule_tags = ["promoted-from-learning", "source-kind:assistant_turn", "agent:support-bot"]
+    ranked = [
+        _SearchHit(
+            source_uri=f"rule-{i}",
+            chunk_idx=0,
+            content=f"rule {i}",
+            tags=rule_tags,
+            distance=0.1,
+            similarity=0.9,
+        )
+        for i in range(3)
+    ] + [
+        _SearchHit(
+            source_uri="refunds.md",
+            chunk_idx=0,
+            content="Refunds take five days.",
+            tags=["runbook"],
+            distance=0.3,
+            similarity=0.7,
+        )
+    ]
+
+    async def search(input: Any) -> KnowledgeSearchOutput:
+        return KnowledgeSearchOutput(results=ranked[: input.top_k], embedding_model="fake")
+
+    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    st = context_pack._PackState(
+        input=ContextPackInput(
+            org="o",
+            namespace="ns",
+            agent="sales-bot",
+            query="refund",
+            include_knowledge=True,
+            top_k=1,
+        ),
+        default_section_tokens={},
+    )
+    await context_pack._pack_knowledge(st)
+
+    assert "Refunds take five days." in st.sections["knowledge"]
+    assert "rule 0" not in st.sections["knowledge"]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

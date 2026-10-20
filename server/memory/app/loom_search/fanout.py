@@ -239,7 +239,7 @@ async def search_sections(
         org=org,
         namespace=namespace,
         query=query,
-        top_k=top_k,
+        top_k=assistant_rules.hits_to_ask(top_k),
         tags=tags,
         namespace_scope=namespace_scope,
     )
@@ -275,7 +275,7 @@ async def search_sections(
         know = know_result.model_dump()
         know["results"] = [
             h for h in know["results"] if assistant_rules.serves_agent(h["tags"], agent)
-        ]
+        ][:top_k]
         payload["knowledge"] = knowledge_above_floor(know)
     payload["profile"] = {
         "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)

@@ -693,12 +693,13 @@ async def _pack_knowledge(st: _PackState) -> None:
             org=input.org,
             namespace=input.namespace,
             query=input.query,
-            top_k=input.top_k,
+            top_k=assistant_rules.hits_to_ask(input.top_k),
             namespace_scope="all_mine",
         )
     )
     # Another bot's promoted rule is not a rule about this agent.
     results = [h for h in out.results if assistant_rules.serves_agent(h.tags, input.agent)]
+    results = results[: input.top_k]
     if results:
         evidence = [
             EvidenceItem(

@@ -28,6 +28,12 @@ def serves_agent(tags: list[str], agent: str) -> bool:
     return not bots or agent in bots
 
 
+def hits_to_ask(top_k: int) -> int:
+    """How many knowledge hits a read asks for so that `top_k` remain after
+    serves_agent drops other bots' rules, within knowledge.search's cap of 100."""
+    return min(top_k * 4, 100)  # not a setting: headroom for other bots' rules
+
+
 def normalized_value(value: str) -> str:
     """The rule as its candidate is keyed: case and spacing folded, a trailing
     period dropped."""
@@ -49,22 +55,26 @@ def _bounded(text: str, limit: int) -> str:
 
 def quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
     """What one supporter's conversation shows a reviewer: the user turn before the
-    rule, and the rule as said (the span the extractor cited as evidence, else the
-    cited assistant turn, else the rule itself), each bounded. A quote that reads as
-    a credential is left blank, so no secret lands in the queue."""
+    cited assistant turn (blank when none is cited), and the rule as said (the span
+    the extractor cited as evidence, else the cited assistant turn, else the rule
+    itself), each bounded. A quote that reads as a credential is left blank, so no
+    secret lands in the queue."""
     cited = [
         i
         for i in fact.get("source_message_indices") or []
         if 0 <= i < len(messages) and messages[i].get("role") == "assistant"
     ]
-    at = cited[0] if cited else len(messages)
     said = str(fact.get("evidence") or "")
     if not said and cited:
-        said = str(messages[at].get("content") or "")
-    asked = next(
-        (str(m.get("content") or "") for m in reversed(messages[:at]) if m.get("role") == "user"),
-        "",
-    )
+        said = str(messages[cited[0]].get("content") or "")
+    # No cited assistant turn: no turn to quote the user before, so no user quote.
+    asked = ""
+    if cited:
+        before = messages[: cited[0]]
+        asked = next(
+            (str(m.get("content") or "") for m in reversed(before) if m.get("role") == "user"),
+            "",
+        )
     said = said or str(fact.get("value") or "")
     # Read whole: a credential the cut would split no longer reads as one.
     return (
