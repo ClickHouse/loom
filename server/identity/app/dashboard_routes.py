@@ -55,7 +55,8 @@ def dashboard_csp(nonce: str) -> str:
         # Vite inlines small font subsets as data: URLs.
         "font-src 'self' data:; "
         "img-src 'self' data: blob:; "
-        "frame-src 'self' blob:; "
+        # Only the preview's blob: frame; every Loom response refuses to be framed.
+        "frame-src blob:; "
         "connect-src 'self'; "
         "object-src 'none'; "
         "base-uri 'none'; "
