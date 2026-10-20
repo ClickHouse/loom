@@ -541,6 +541,8 @@ async def lease_strays(
             fence=int(t["fence"]),
         )
         for t in tasks
+        # `settled` too: a task the lease table names in the second read but not the
+        # first is one created between them, within its grace.
         if t["settled"] and t["task_status"] in ("todo", "triage") and str(t["id"]) not in leased
     ][: int(limit)]
     stray: list[StrayLeaseRow] = []

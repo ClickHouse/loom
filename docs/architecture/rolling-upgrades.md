@@ -116,9 +116,9 @@ schema. These rules keep that safe. The operator procedure is in
     Each task is whole (its event and its lease row) and claimable: a create of N cut
     off after its task row is finished by its retry, which under the key's lease writes
     the created event the first one left out, and by the lease sweep, which writes its
-    lease row after its grace. That event takes a fresh
-    seq, so cursor readers deliver it, unless the task has events since: then it goes
-    just before the first of them and is history only. A first create that was only
+    lease row after its grace. The created event takes a fresh seq, so cursor readers
+    deliver it, unless the task has events since: then it goes just before the first of
+    them and is history only. A first create that was only
     stalled past its lease, or cancelled while its insert ran on, can still land its own
     event. Both inserts carry one token, the task's (`insert_event`), so storage keeps
     whichever lands first. Past the dedup window both can be stored: the backfill is
@@ -180,9 +180,10 @@ schema. These rules keep that safe. The operator procedure is in
     superseded until the row's next write (or `loom reconcile-status`).
 16. **A triple row N-1 writes arrives at its whole second.** N-1 does not set
     `entity_triples.seen_at` (migration 048), so its rows take the column's default,
-    their `last_seen` second (`.000000`). Two values of a single-valued relation starting the
-    same day and arriving in the same second, one from each build, then order the N-1
-    row first, whichever arrived later; the next write of either fact orders them again.
+    their `last_seen` second (`.000000`). Two values of a single-valued relation
+    starting the same day and arriving in the same second, one from each build, then
+    order the N-1 row first, whichever arrived later; the next write of either fact
+    orders them again.
 17. **N-1 does not know N's retirement intents.** A user erasure N-1 runs deletes no
     projection failure (N-1 erases them by namespace only), so a point-write retirement
     intent naming that user in `retired[]` stays until N erases the user again, or the

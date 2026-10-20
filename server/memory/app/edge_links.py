@@ -208,8 +208,8 @@ async def _drop_links_of(
 
 def drop_payload(rows: Mapping[str, list[str]], versions: Mapping[str, int]) -> dict[str, Any]:
     """An EDGES_DROP_UNDECLARED payload: the version of the write that owes the drop for
-    each row, which dates the edges' end. `rows` (each row's declared entities when the
-    write landed) is kept in its shape, though the drop now reads the row's own."""
+    each row, which dates the edges' end. `rows` is what an N-1 replay reads; this build
+    reads the row's current entities."""
     return {
         "rows": {memory_id: list(declared) for memory_id, declared in rows.items()},
         "versions": {memory_id: int(versions[memory_id]) for memory_id in rows},

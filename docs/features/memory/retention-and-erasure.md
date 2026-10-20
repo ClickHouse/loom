@@ -11,8 +11,8 @@ No memory, embedding, version-history, conversation, entity, summary, working-me
 knowledge table has a TTL in `schemas/schema.sql`, and no worker retires rows by age.
 The link tables `entity_triple_rows` and `entity_edge_rows` follow `entity_triples` and
 `entity_edges`: no TTL. An erasure deletes the links of the memories it erases, and
-`loom erasure-re-verify --completed-since … --resume` the orphan links of memories an
-older build's erasure left gone.
+`loom erasure-re-verify --completed-since … --resume` the orphan links an older build's
+erasure left behind.
 A row leaves the served set only when:
 
 - **its writer removes it**: `memory.delete`, a same-key rewrite that supersedes it,

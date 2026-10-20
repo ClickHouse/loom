@@ -303,8 +303,8 @@ async def _claim_one(
     )
     if not result.won:
         return None
-    # A lease row can be written from a status read nobody holds (a late create retry or
-    # reopen): the claim stands only if the task, read after winning, is still the todo
+    # A lease row can be written from a status read nobody holds (the lease reconcile or
+    # a reopen): the claim stands only if the task, read after winning, is still the todo
     # task at the fence it claimed. Otherwise it undoes its own bump and nothing else; a
     # row left for an ended task is the lease sweep's to remove.
     now = await repo.fetch_task(task["org"], task_id)

@@ -38,7 +38,7 @@ RETIRING_POLICIES = ("newest_wins", "auto_reinforce")
 MAX_VALUE_CHARS = 700
 
 # Named in each memory.conflict_resolver audit row, so a verdict can be traced to the
-# prompt that produced it. Change it with SYSTEM_PROMPT.
+# prompt that produced it. Change it with SYSTEM_PROMPT or `user_prompt`.
 PROMPT_VERSION = "v3"
 
 SYSTEM_PROMPT = (

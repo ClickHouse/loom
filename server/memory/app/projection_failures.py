@@ -96,7 +96,8 @@ EDGES_CLOSE = "entity_edges_close"
 # Rows a write made 'high' (or whose declared entities it narrowed) whose links to
 # undeclared pairs are not dropped yet: payload versions (memory_id -> the version of
 # that write, which dates the edges' end) and rows (memory_id -> the entities it
-# declared then; the replay reads the row's current ones).
+# declared then). `rows` is what an N-1 replay reads; this build reads the row's current
+# entities.
 EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
 
 
