@@ -8,9 +8,9 @@ import { Recent } from "./Recent";
 import { must } from "../test/must";
 
 // While a search is active the Memories view asks memory.search with `explain: true` (so
-// the per-hit evidence rides above the excerpt k) and puts a "Why this result" button in
-// each ranked row's meta slot, whose popover holds the scoring. The count
-// is the toolbar's alone: no summary line, no "Results" heading.
+// the per-hit evidence rides above the excerpt k) and puts each ranked hit's similarity and
+// score in its row's meta line and a "Why this result" button after it, whose popover holds
+// the breakdown. The count is the toolbar's alone: no summary line, no "Results" heading.
 
 const entry = (memory_key: string): MemoryListEntry => ({
   memory_key,
@@ -708,6 +708,8 @@ describe("Recent search finds every row that names the word", () => {
     );
     expect(kw[2]).toMatchObject({ contains: "Azure" });
     expect(await screen.findAllByRole("button", { name: "Why this result" })).toHaveLength(2);
+    // A keyword row shows no score, a ranked hit that holds the text (coffee_pref) included.
+    expect(screen.queryAllByTestId("search-score")).toHaveLength(0);
     await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
     expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');
     // The toolbar's count says the keyword rows are the newest of more.
