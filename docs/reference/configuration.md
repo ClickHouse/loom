@@ -686,6 +686,12 @@ Source: `server/settings/_memory.py`
 | `LOOM_PROFILE_CONSOLIDATION_MEMORY_LIMIT` | `int` | `100` | Memories read into one fold, highest confidence then newest first. |
 | `LOOM_PROFILE_CONSOLIDATION_COOLDOWN_SECONDS` | `int` | `86400` | Seconds after a profile section is written before it is folded again. |
 | `LOOM_PROFILE_CONSOLIDATION_LABEL` | `str` | `'consolidated_profile'` | `memory_key` of the folded profile row. |
+| `LOOM_STRUCTURED_PROFILE_ENABLED` | `bool` | `True` | Keep each user's structured profile (memory_type='profile') current in the shape `profile_schema.set` gives the namespace. LLM calls, only for a namespace with a schema: setting one is the opt-in. |
+| `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | `int` | `120` | Seconds between structured profile passes. |
+| `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` | `int` | `20` | Profiles one pass builds, across every namespace with a schema. |
+| `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` | `int` | `100` | Memories read into one build, highest confidence then newest first. |
+| `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | Seconds after a profile is built before new memories rebuild it; a schema change rebuilds it at once. |
+| `LOOM_STRUCTURED_PROFILE_LABEL` | `str` | `'structured_profile'` | `memory_key` of the structured profile row. |
 | `LOOM_REFLECTION_DISTILL_ENABLED` | `bool` | `False` | Reflection distillation: label recent sessions that carry no outcome (positive / negative / unclear into loom.session_outcomes_by_user), pair each confidently failed session with its nearest successful one and distil the difference into one hidden `reflection` memory. LLM calls; sessions labelled through run.complete are not re-judged. |
 | `LOOM_REFLECTION_DISTILL_INTERVAL_SECONDS` | `int` | `3600` | Seconds between reflection distillation passes. |
 | `LOOM_REFLECTION_DISTILL_LOOKBACK_DAYS` | `int` | `14` | Days back a pass looks for unlabelled sessions and for failed sessions to contrast. |
@@ -964,6 +970,7 @@ Source: `server/settings/_models.py`
 | `LOOM_MEMORY_ASK_MID_MODEL` | `str` | `''` | memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer escalates to strong once. |
 | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. "" turns it off. |
 | `LOOM_PROFILE_CONSOLIDATION_MODEL` | `str` | `''` | The profile fold. |
+| `LOOM_STRUCTURED_PROFILE_MODEL` | `str` | `''` | The structured profile builder. |
 | `LOOM_REFLECTION_DISTILL_MODEL` | `str` | `''` | Reflection distillation: the outcome labeller and the contrast writer. |
 | `LOOM_CODE_LINK_REVISE_MODEL` | `str` | `''` | The code-link `revise` judge: does a memory's claim still hold for its code's new text. |
 | `LOOM_SESSION_BRIEF_LLM_MODEL` | `str` | `'gpt-6-luna'` | Session briefs; without its provider's key the deployment's LLM writes them. |

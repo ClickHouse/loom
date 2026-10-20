@@ -637,7 +637,7 @@ leg returns it. The other reads that could serve its value follow three rules:
   the `memory.stack`, context pack and MCP primer built from it, `memory.ask`'s bridge hop
   and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
-  duplicate's place), the profile fold, the entity graph (a row written as `high` projects
+  duplicate's place), the profile fold and the structured profile, the entity graph (a row written as `high` projects
   only the entities its writer declared, and the entity extractor never sends it to its
   model, nor an unlabelled value that reads as a credential; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
@@ -706,7 +706,7 @@ also reads text holding JSON, such as a chunk of an object value, with its strin
 undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
 `bodies: "source"`, the observations `observe_extract` sends its model, the entity
 extractor's input, the existing memories an extraction prompt shows, the rows
-`memory.consolidate` and the profile fold send their models, and a session digest's key
+`memory.consolidate`, the profile fold and the structured profile send their models, and a session digest's key
 facts when written, listed by `memory.digests` or read by the outcome judge. The
 `sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
 counting as `credential` for its default shape filter: a new version per row and, for

@@ -225,6 +225,20 @@
    }
   },
   {
+   "deadline_seconds()": 480.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 120,
+   "max_pass_seconds": null,
+   "name": "structured_profile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.structured_profile:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -872,6 +886,20 @@
    }
   },
   {
+   "deadline_seconds()": 480.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 120,
+   "max_pass_seconds": null,
+   "name": "structured_profile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.structured_profile:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 240.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -1360,6 +1388,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.knowledge.workers.conversation_titler:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 480.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 120,
+   "max_pass_seconds": null,
+   "name": "structured_profile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.structured_profile:run_pass"
    }
   },
   {

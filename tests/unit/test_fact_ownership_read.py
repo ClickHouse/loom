@@ -8,7 +8,10 @@ from server.memory.workers import profile_consolidation as pc
 def test_profile_fold_leaves_out_facts_about_others() -> None:
     import inspect
 
-    assert "NOT has(tags, 'about:other')" in inspect.getsource(pc._consolidate_identity)
+    from server.memory.store import profile_sources
+
+    assert "profile_sources import user_facts" in inspect.getsource(pc._consolidate_identity)
+    assert "NOT has(tags, 'about:other')" in profile_sources.CURRENT_FACTS
 
 
 def test_wire_hit_and_service_hit_carry_about_other() -> None:

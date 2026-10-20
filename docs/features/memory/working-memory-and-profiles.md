@@ -99,6 +99,82 @@ async with Agent(org="acme", namespace="support", agent="triage-bot") as bot:
     system = await bot.profile.render(user_id="u-42", read_scope="own_user")
 ```
 
+## Structured profiles
+
+A chat bot that must know its user before the first reply reads one object in a shape
+its operator defines, instead of free text. An admin gives the namespace a profile
+schema; the `structured_profile` worker keeps each user's profile current in that shape
+from the user's memories; `profile.structured` returns it with its status. A read never
+calls a model.
+
+| Op                     | Role   | Does                                                                         |
+| ---------------------- | ------ | ---------------------------------------------------------------------------- |
+| `profile_schema.set`   | admin  | Set the namespace's schema (`json_schema`); audited. Replaces the old one.   |
+| `profile_schema.get`   | viewer | The schema, its `schema_sha256`, who set it and when.                        |
+| `profile_schema.clear` | admin  | Remove the schema; audited. Built profiles stay as memory rows.              |
+| `profile.structured`   | viewer | One user's profile: `profile`, `status`, `built_at`, `memory_id`, `version`. |
+
+The schema is a JSON Schema object with 1 to 64 `properties`, at most 16 KiB. Each
+property has a `type` (`string`, `number`, `integer`, `boolean`, or `array` with `items`
+of one of those and an optional `maxItems` up to 50) and a `description`, which the
+model reads. Strings take `enum`, `pattern`, `minLength` and `maxLength`; numbers take
+`minimum` and `maximum`, the constraints [typed records](./writing.md#typed-records) use.
+Every property is in every profile, `null` when the memories do not settle it, so the
+schema has no `required`; `additionalProperties` may only be `false`.
+
+```python
+schema = {
+    "type": "object",
+    "properties": {
+        "preferred_name": {"type": "string", "description": "What the user asks to be called"},
+        "timezone": {"type": "string", "description": "IANA time zone, e.g. Europe/Berlin"},
+        "languages": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Languages they speak",
+        },
+    },
+}
+async with Agent(org="acme", namespace="support", agent="chat", api_key=ADMIN_TOKEN) as admin:
+    await admin.client.profile_schema.set({"json_schema": schema})
+
+async with Agent(org="acme", namespace="support", agent="chat") as bot:
+    out = await bot.client.profile.structured({"user_id": "u-42"})
+    # {"status": "ready", "profile": {"preferred_name": "Sam", "timezone": "Europe/Berlin",
+    #  "languages": ["en", "de"]}, "built_at": "...", ...}
+```
+
+| `status`    | Means                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------- |
+| `ready`     | Built from the user's current memories under the current schema.                        |
+| `stale`     | A memory or the schema changed since it was built; served as built until the next pass. |
+| `pending`   | Not built yet; every property reads `null`.                                             |
+| `no_schema` | The namespace has no schema; `profile` is `{}`.                                         |
+
+- **Storage.** The profile is the user's `profile` row with key `structured_profile`
+  (`agent` `-`), so `profile.render` and `context.pack` carry it too, and
+  [`memory.history`](./history-and-provenance.md#versions-memoryhistory) lists its versions.
+  Its provenance is `derived`; `source_trace` is
+  `profile.fold:structured_profile:<memory ids>`, the memories it was built from.
+- **Sources.** The user's current `semantic`, `preference` and `decision` facts, the rows
+  the free-text fold reads: never a `high` row, a fact about someone else
+  (`about:other`), a protected attribute or a stored request to forget.
+- **Staleness.** Each profile carries the hash of its schema and a digest of its sources'
+  ids and content hashes. A new, edited or deleted fact changes the digest; a recall or a
+  reinforcement does not. A schema change is rebuilt on the next pass; new memories after
+  `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user whose facts are all gone gets
+  an all-`null` profile without a model call.
+- **Validation.** The model's answer is held to the schema before it is written: a value
+  of the wrong type, outside its enum or constraints, or a property the schema does not
+  declare is dropped (`null`).
+- **Scope.** The read is always for one `user_id`. A token pinned to a user
+  (`read_user_id`, an end user's token) reads only that user's profile, with or without
+  `user_id` in the body; another user is 403.
+- **Model calls.** Only the worker calls the model, only for a namespace with a schema,
+  never for an org whose model calls are switched off
+  ([`org.set_model_calls`](../../reference/operations.md#org)), and through the
+  configured provider or inference gateway.
+
 ## How `context.pack` loads them
 
 `context.pack` renders `working_memory` first and `profile` second, ahead of the
@@ -116,6 +192,7 @@ in [unified search](../unified-search.md).
 | Setting                         | Effect                                                                                                                                                      |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_PROFILE_CONSOLIDATION_*`  | The profile fold worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                                  |
+| `LOOM_STRUCTURED_PROFILE_*`     | The structured profile worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                            |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | Tags rows with protected attributes, which the fold leaves out ([Sensitivity and provenance](../../reference/configuration.md#sensitivity-and-provenance)). |
 
 ## Limits

@@ -422,12 +422,13 @@ def _render_sections(sections: list[tuple[str, str]], fmt: str) -> str:
 
 
 # Every op whose response carries the caller's profile sections: `loom_activate` (the typed
-# "use loom"), `profile.render` (the SDK's system_prompt), `context.pack` (the plugin's
-# session-start primer, profile section by default) and `mcp.initialize` (the handshake's
-# instructions inline the primer). Counting fewer would tell a plugin user their profile was
-# "not yet read by any AI client" while every session began with it.
+# "use loom"), `profile.render` (the SDK's system_prompt), `profile.structured` (a chat
+# bot's structured profile), `context.pack` (the plugin's session-start primer, profile
+# section by default) and `mcp.initialize` (the handshake's instructions inline the primer).
+# Counting fewer would tell a plugin user their profile was "not yet read by any AI client"
+# while every session began with it.
 PROFILE_READ_OPERATIONS: frozenset[str] = frozenset(
-    {"loom_activate", "profile.render", "context.pack", "mcp.initialize"}
+    {"loom_activate", "profile.render", "profile.structured", "context.pack", "mcp.initialize"}
 )
 
 

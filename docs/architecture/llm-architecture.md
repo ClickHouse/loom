@@ -347,6 +347,7 @@ from a contradiction, which is why the optional LLM conflict judge exists.
 | Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                                                                                                                                                                                |
 | Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                                                                                                                                                                                     |
 | Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                                                                                                                                                                               |
+| Structured profiles                           | Yes           | `structured_profile` worker (on; only for a namespace with a profile schema), `LOOM_STRUCTURED_PROFILE_MODEL`                                                                                                                                                                                                |
 | Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                                                                                                                                                                                                                       |
 | `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                                                                                                                                                                                                                    |
 | Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                                                                                                                                                                                                                                |
@@ -389,13 +390,13 @@ and the background workers still call models.
 
 Prompts are Python constants, versioned with the code:
 
-| Prompt family                                                                  | Where                                                                                                   |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`       |
-| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                |
-| Rerank                                                                         | `server/memory/app/rerank.py`                                                                           |
-| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                      |
-| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `entity_extractor`) |
+| Prompt family                                                                  | Where                                                                                                                         |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`                             |
+| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                                      |
+| Rerank                                                                         | `server/memory/app/rerank.py`                                                                                                 |
+| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                                            |
+| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `structured_profile`, `entity_extractor`) |
 
 Which model runs each job is set in one place, `server/settings/_models.py`
 ([models per job](../operations/deployment.md#models-per-job)). Recalled memory

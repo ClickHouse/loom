@@ -58,9 +58,11 @@ def test_extraction_batch_rows_are_labelled(monkeypatch):
 def test_profile_fold_excludes_attribute_rows():
     import inspect
 
+    from server.memory.store import profile_sources
     from server.memory.workers import profile_consolidation as pc
 
-    src = inspect.getsource(pc._consolidate_identity)
+    assert "profile_sources import user_facts" in inspect.getsource(pc._consolidate_identity)
+    src = profile_sources.CURRENT_FACTS
     assert "NOT arrayExists(t -> startsWith(t, 'attribute:'), tags)" in src
 
 

@@ -10,7 +10,12 @@ from server.memory.api.models_profile import (
     ProfileRenderInput,
     ProfileRenderOutput,
     ProfileReplaceInput,
+    ProfileSchemaInput,
+    ProfileSchemaOutput,
+    ProfileSchemaSetInput,
     ProfileSetInput,
+    ProfileStructuredInput,
+    ProfileStructuredOutput,
 )
 from server.memory.app.profile import (
     handle_profile_activity,
@@ -18,6 +23,12 @@ from server.memory.app.profile import (
     handle_profile_render,
     handle_profile_replace,
     handle_profile_set,
+)
+from server.memory.app.profile_schema import (
+    handle_profile_schema_clear,
+    handle_profile_schema_get,
+    handle_profile_schema_set,
+    handle_profile_structured,
 )
 from server.operations.base import Operation, Role
 
@@ -88,6 +99,54 @@ profile_activity = Operation(
     audit=False,
 )
 
+profile_schema_set = Operation(
+    name="profile_schema.set",
+    maturity="experimental",
+    input_model=ProfileSchemaSetInput,
+    output_model=ProfileSchemaOutput,
+    handler=handle_profile_schema_set,
+    idempotent=True,  # the same schema again changes nothing a reader sees
+    budget_p99_ms=100,
+    required_role=Role.ADMIN,
+    audit=True,
+)
+
+profile_schema_get = Operation(
+    name="profile_schema.get",
+    maturity="experimental",
+    input_model=ProfileSchemaInput,
+    output_model=ProfileSchemaOutput,
+    handler=handle_profile_schema_get,
+    idempotent=True,  # pure read
+    budget_p99_ms=50,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+profile_schema_clear = Operation(
+    name="profile_schema.clear",
+    maturity="experimental",
+    input_model=ProfileSchemaInput,
+    output_model=ProfileSchemaOutput,
+    handler=handle_profile_schema_clear,
+    idempotent=True,
+    budget_p99_ms=100,
+    required_role=Role.ADMIN,
+    audit=True,
+)
+
+profile_structured = Operation(
+    name="profile.structured",
+    maturity="experimental",
+    input_model=ProfileStructuredInput,
+    output_model=ProfileStructuredOutput,
+    handler=handle_profile_structured,
+    idempotent=True,  # pure read, no model call
+    budget_p99_ms=60,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
 
 OPERATIONS: list[Operation] = [
     profile_set,
@@ -95,4 +154,8 @@ OPERATIONS: list[Operation] = [
     profile_replace,
     profile_render,
     profile_activity,
+    profile_structured,
+    profile_schema_set,
+    profile_schema_get,
+    profile_schema_clear,
 ]

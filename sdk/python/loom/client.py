@@ -2422,6 +2422,52 @@ class ProfileOps:
             "_ops.ProfileMutationOutput", await self._agent.call("profile.set", body, **options)
         )
 
+    async def structured(
+        self, body: _ops.ProfileStructuredBody | None = None, /, **options: Any
+    ) -> _ops.ProfileStructuredOutput:
+        """`profile.structured`."""
+        return cast(
+            "_ops.ProfileStructuredOutput",
+            await self._agent.call("profile.structured", body, **options),
+        )
+
+
+class ProfileSchemaOps:
+    """The `profile_schema.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def clear(
+        self, body: _ops.ProfileSchemaBody | None = None, /, **options: Any
+    ) -> _ops.ProfileSchemaOutput:
+        """`profile_schema.clear`."""
+        return cast(
+            "_ops.ProfileSchemaOutput",
+            await self._agent.call("profile_schema.clear", body, **options),
+        )
+
+    async def get(
+        self, body: _ops.ProfileSchemaBody | None = None, /, **options: Any
+    ) -> _ops.ProfileSchemaOutput:
+        """`profile_schema.get`."""
+        return cast(
+            "_ops.ProfileSchemaOutput",
+            await self._agent.call("profile_schema.get", body, **options),
+        )
+
+    async def set(
+        self, body: _ops.ProfileSchemaSetBody | None = None, /, **options: Any
+    ) -> _ops.ProfileSchemaOutput:
+        """`profile_schema.set`."""
+        return cast(
+            "_ops.ProfileSchemaOutput",
+            await self._agent.call("profile_schema.set", body, **options),
+        )
+
 
 class RunOps:
     """The `run.*` operations."""
@@ -2955,6 +3001,7 @@ class OpsClient:
         self.policy = PolicyOps(agent)
         self.procedure = ProcedureOps(agent)
         self.profile = ProfileOps(agent)
+        self.profile_schema = ProfileSchemaOps(agent)
         self.run = RunOps(agent)
         self.search = SearchOps(agent)
         self.session = SessionOps(agent)

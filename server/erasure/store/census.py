@@ -557,6 +557,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.categories": "namespace taxonomy (name, description, summary) authored by the operator",
     "loom.memory_schemas": "admin-authored record schemas.",
     "loom.memory_schema_fields": "fields of the admin-authored record schemas.",
+    "loom.profile_schemas": (
+        "admin-authored profile schemas: property names and descriptions; each user's "
+        "profile built from one is a loom.memory row."
+    ),
     "loom.blacklist": "consent patterns authored by admins; policy, not subject data.",
     # -- code plane: the indexed tables are `code_index.purge`'s; what stays
     # here is configuration (`code_repos`) and a per-question answer cache

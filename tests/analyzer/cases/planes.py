@@ -692,6 +692,39 @@ async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     await cost.recorded_turn_times(ORG, NS, "s1", ["m1"], ch=ch)
 
 
+async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The profile schema reads and the structured profile's source reads: a
+    user's facts (with and without the fold's key rule), their digest, and the
+    users whose profile is behind."""
+    from server.memory.store import profile_schemas, profile_sources
+
+    await profile_schemas.get(ORG, NS, ch=ch)
+    await profile_schemas.list_active(exclude_orgs=["o2"], limit=10, ch=ch)
+    for keys in (False, True):
+        await profile_sources.user_facts(
+            org=ORG,
+            namespace=NS,
+            user_id="u1",
+            types=["preference"],
+            limit=5,
+            user_keys_only=keys,
+            ch=ch,
+        )
+    await profile_sources.sources_digest(org=ORG, namespace=NS, user_id="u1", ch=ch)
+    await profile_sources.profile_row(
+        org=ORG, namespace=NS, user_id="u1", label="structured_profile", ch=ch
+    )
+    await profile_sources.users_behind(
+        org=ORG,
+        namespace=NS,
+        label="structured_profile",
+        schema_sha256="0" * 64,
+        cooldown_seconds=600,
+        limit=10,
+        ch=ch,
+    )
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -704,6 +737,7 @@ def cases() -> list[Case]:
         for name, module in HANDLER_MODULES
     ]
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
+    out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(
         Case(
             "memory_list_score",

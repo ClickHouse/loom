@@ -9,7 +9,8 @@ knowing memory.set with memory_type='profile' is the right call. Reads
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -123,8 +124,9 @@ class ProfileActivityEntry(BaseModel):
     last_activated_at: str  # ISO-8601 UTC
     event_count: int
     # Which read paths this agent used — loom_activate (a
-    # typed "use loom"), profile.render (the SDK), context.pack (the
-    # plugin's session start), mcp.initialize (the MCP handshake).
+    # typed "use loom"), profile.render (the SDK), profile.structured (a
+    # structured profile), context.pack (the plugin's session start),
+    # mcp.initialize (the MCP handshake).
     operations: list[str] = []
 
 
@@ -132,3 +134,53 @@ class ProfileActivityOutput(BaseModel):
     # Agents that read the profile in the window (at most 20), most recent first;
     # the dashboard's own reads are left out.
     entries: list[ProfileActivityEntry] = []
+
+
+class ProfileSchemaSetInput(BaseModel):
+    org: str
+    namespace: str
+    # A JSON Schema object: `properties` (1-64), each with a `type` (string, number,
+    # integer, boolean, or array with `items`) and a `description` the profile builder
+    # reads; at most 16 KiB. Setting it again replaces it and marks every profile stale.
+    json_schema: dict[str, Any]
+
+
+class ProfileSchemaInput(BaseModel):
+    org: str
+    namespace: str
+
+
+class ProfileSchemaOutput(BaseModel):
+    # False when the namespace has no profile schema.
+    found: bool
+    # The schema as stored (canonical JSON key order); {} when not found.
+    json_schema: dict[str, Any] = {}
+    # SHA-256 of the canonical schema; each built profile names the hash it was built under.
+    schema_sha256: str = ""
+    # Who set it and when; empty when not found.
+    updated_by: str = ""
+    updated_at: datetime | None = None
+
+
+class ProfileStructuredInput(_Identity):
+    # How far the read reaches across users (same grammar as profile.render.read_scope;
+    # the token's claim is the ceiling). The profile read is always the one of
+    # `user_id`, which the read needs; a token pinned to a user reads only its own.
+    read_scope: Literal["namespace", "own_user", "own_session"] = "namespace"
+
+
+class ProfileStructuredOutput(BaseModel):
+    # `ready`: built from the user's current memories under the current schema;
+    # `stale`: memories or the schema changed since it was built (a worker pass
+    # rebuilds it); `pending`: not built yet; `no_schema`: the namespace has none.
+    status: Literal["ready", "stale", "pending", "no_schema"]
+    # The profile in the schema's shape: every property, null when the user's
+    # memories do not settle it. All null while `pending`; {} under `no_schema`.
+    profile: dict[str, Any] = {}
+    # When the profile was built; None while pending.
+    built_at: datetime | None = None
+    # The memory row the profile is stored in; its history is the profile's history.
+    memory_id: str = ""
+    version: int = 0
+    # The hash of the schema the namespace has now.
+    schema_sha256: str = ""

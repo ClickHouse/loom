@@ -152,38 +152,19 @@ def render_fold_input(rows: list[dict[str, Any]]) -> str:
 async def _consolidate_identity(
     ch: Any, row: dict[str, Any], cfg: ProfileConsolidationConfig
 ) -> bool:
-    # The fold reads only what is current — no superseded or
-    # rejected version, nothing past its stated end or TTL — and sees each
-    # fact's date, oldest first, so the prompt's recency rule has something
-    # to act on. FINAL already keeps one live version per key.
-    rows = await ch.query_all(
-        """
-        SELECT value, toString(coalesce(valid_at, created_at)) AS since
-        FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND user_id = {uid:String} AND tombstoned_at IS NULL
-          -- a high row is readable by key only, never folded into the profile
-          AND sensitivity != 'high'
-          AND memory_type IN ('preference', 'decision')
-          AND status NOT IN ('superseded', 'rejected', 'proposed')  -- proposed: not a fact yet
-          AND (valid_to IS NULL OR valid_to > now())
-          AND (expires_at IS NULL OR expires_at > now())
-          AND NOT arrayExists(t -> startsWith(t, 'attribute:'), tags)
-          AND NOT has(tags, 'about:other')
-          -- The fold reads facts whose subject is the user (the extractor
-          -- keys them `user_…`; most preference/decision rows) and never a
-          -- stored request to forget.
-          AND startsWith(memory_key, 'user_')
-          AND NOT has(tags, 'forget')
-        ORDER BY confidence DESC, created_at DESC
-        LIMIT {lim:UInt32}
-        """,
-        params={
-            "org": row["org"],
-            "ns": row["namespace"],
-            "uid": row["user_id"],
-            "lim": int(cfg.memory_limit),
-        },
+    # The fold reads only what is current and sees each fact's date, oldest
+    # first, so the prompt's recency rule has something to act on. FINAL
+    # already keeps one live version per key.
+    from server.memory.store.profile_sources import user_facts
+
+    rows = await user_facts(
+        org=row["org"],
+        namespace=row["namespace"],
+        user_id=row["user_id"],
+        types=["preference", "decision"],
+        limit=int(cfg.memory_limit),
+        user_keys_only=True,
+        ch=ch,
     )
     # An unlabelled row (copy_to, an import, before the sweep) holding a credential is never
     # sent to the fold model, whose output becomes a plain profile section.

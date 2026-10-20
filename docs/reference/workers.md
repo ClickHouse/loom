@@ -240,6 +240,7 @@ adding its row.
 | `reflection_distill` | Reflection distillation worker (default-off). | `LOOM_REFLECTION_DISTILL_ENABLED` | False | `LOOM_REFLECTION_DISTILL_INTERVAL_SECONDS` | 3600 |
 | `retention_reconcile` | Retention reconcile worker. | `LOOM_RETENTION_RECONCILE_ENABLED` | True | `LOOM_RETENTION_RECONCILE_INTERVAL_SECONDS` | 300 |
 | `sensitivity_sweep` | Daily sensitivity sweep. | `LOOM_SENSITIVITY_SWEEP_ENABLED` | True | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | 86400 |
+| `structured_profile` | Structured-profile worker. | `LOOM_STRUCTURED_PROFILE_ENABLED` | True | `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | 120 |
 | `task_lease_sweep` | Task inbox sweeper. | `LOOM_TASK_LEASE_SWEEP_ENABLED` | True | `LOOM_TASK_LEASE_SWEEP_INTERVAL_SECONDS` | 60 |
 | `task_webhook_deliver` | Signed webhooks for the task inbox plane (wake-up layer). | `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | True | `LOOM_TASK_WEBHOOK_DELIVER_INTERVAL_SECONDS` | 5 |
 | `tracker_embed` | The `tracker_embed` pass: every thirty minutes (the leg's query-time catch-up covers the gap on the call), for EVERY configured tracker namespace (`configured_namespaces()` — the source map; a… | `LOOM_TRACKER_EMBED_ENABLED` | True | `LOOM_TRACKER_EMBED_INTERVAL_SECONDS` | 1800.0 |

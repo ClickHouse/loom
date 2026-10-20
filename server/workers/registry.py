@@ -261,6 +261,12 @@ _WORKERS: tuple[_Worker, ...] = (
         "profile_consolidation_interval_seconds",
     ),
     _Worker(
+        "structured_profile",
+        "server.memory.workers.structured_profile",
+        "structured_profile_enabled",
+        "structured_profile_interval_seconds",
+    ),
+    _Worker(
         "reflection_distill",
         "server.memory.workers.reflection_distill",
         "reflection_distill_enabled",

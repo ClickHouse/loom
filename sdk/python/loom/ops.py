@@ -294,6 +294,10 @@ OpName = Literal[
     "profile.render",
     "profile.replace",
     "profile.set",
+    "profile.structured",
+    "profile_schema.clear",
+    "profile_schema.get",
+    "profile_schema.set",
     "run.begin",
     "run.complete",
     "run.get",
@@ -609,6 +613,10 @@ OP_NAMES: tuple[str, ...] = (
     "profile.render",
     "profile.replace",
     "profile.set",
+    "profile.structured",
+    "profile_schema.clear",
+    "profile_schema.get",
+    "profile_schema.set",
     "run.begin",
     "run.complete",
     "run.get",
@@ -3727,6 +3735,54 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30,
         False,
+        False,
+    ),
+    "profile.structured": OpSpec(
+        "profile.structured",
+        "ProfileStructuredInput",
+        "ProfileStructuredBody",
+        "ProfileStructuredOutput",
+        True,
+        "viewer",
+        "experimental",
+        60,
+        False,
+        True,
+    ),
+    "profile_schema.clear": OpSpec(
+        "profile_schema.clear",
+        "ProfileSchemaInput",
+        "ProfileSchemaBody",
+        "ProfileSchemaOutput",
+        True,
+        "admin",
+        "experimental",
+        100,
+        True,
+        False,
+    ),
+    "profile_schema.get": OpSpec(
+        "profile_schema.get",
+        "ProfileSchemaInput",
+        "ProfileSchemaBody",
+        "ProfileSchemaOutput",
+        True,
+        "viewer",
+        "experimental",
+        50,
+        False,
+        True,
+    ),
+    "profile_schema.set": OpSpec(
+        "profile_schema.set",
+        "ProfileSchemaSetInput",
+        "ProfileSchemaSetBody",
+        "ProfileSchemaOutput",
+        True,
+        "admin",
+        "experimental",
+        100,
+        True,
         False,
     ),
     "run.begin": OpSpec(
@@ -15376,6 +15432,65 @@ class ProfileSetBody(TypedDict, total=False):
     char_limit: NotRequired[int]
     source_trace: NotRequired[str]
     if_match_sha256: NotRequired[str]
+
+
+class ProfileStructuredInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    read_scope: NotRequired[Literal["namespace", "own_user", "own_session"]]
+
+
+class ProfileStructuredBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    read_scope: NotRequired[Literal["namespace", "own_user", "own_session"]]
+
+
+class ProfileStructuredOutput(TypedDict, total=False):
+    status: Required[Literal["ready", "stale", "pending", "no_schema"]]
+    profile: NotRequired[dict[str, Any]]
+    built_at: NotRequired[Optional[str]]
+    memory_id: NotRequired[str]
+    version: NotRequired[int]
+    schema_sha256: NotRequired[str]
+
+
+class ProfileSchemaInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+
+
+class ProfileSchemaBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class ProfileSchemaOutput(TypedDict, total=False):
+    found: Required[bool]
+    json_schema: NotRequired[dict[str, Any]]
+    schema_sha256: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+
+
+class ProfileSchemaSetInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    json_schema: Required[dict[str, Any]]
+
+
+class ProfileSchemaSetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    json_schema: Required[dict[str, Any]]
 
 
 class RunBeginInput(TypedDict, total=False):

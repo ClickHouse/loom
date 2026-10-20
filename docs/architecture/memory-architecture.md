@@ -298,12 +298,21 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 | `memory_expiry_sweep`     | Rows past `expires_at`                                       | The `on_expire` action                                                             | No  |
 | `sensitivity_sweep`       | Recent rows from paths that skip detection                   | A labelled version; `high` rows' embedding rows tombstoned                         | No  |
 | `profile_consolidation`\* | A user's preference and decision memories (namespace opt-in) | One non-searchable `profile` section, loaded by `profile.render` / `context.pack`  | Yes |
+| `structured_profile`      | Users' facts in namespaces with a profile schema             | A new version of each user's `structured_profile` row, held to the schema          | Yes |
 | `reflection_distill`\*    | Recent sessions without an outcome                           | Outcome labels, then `reflection` memories hidden from unfiltered recall           | Yes |
 | `entity_communities`\*    | The co-occurrence graph                                      | `entity_communities`                                                               | No  |
 | `recalibration`           | The embedder's score distribution                            | Calibration thresholds                                                             | No  |
 
 \* Off by default (`LOOM_PROFILE_CONSOLIDATION_ENABLED`,
 `LOOM_REFLECTION_DISTILL_ENABLED`, `LOOM_ENTITY_COMMUNITIES_ENABLED`).
+
+`structured_profile` reads only namespaces with a row in `loom.profile_schemas`
+(`profile_schema.set`, one ReplacingMergeTree row per namespace, holding no memory
+content). A profile is a `profile` memory row, so its history, erasure and read scope are
+memory's own. It carries two tags: the schema's hash and a digest of its sources'
+`(memory_id, content_sha256)` pairs. `profile.structured` recomputes the digest to answer
+`stale` without a model call, and the worker rebuilds the users whose tags no longer
+match ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes

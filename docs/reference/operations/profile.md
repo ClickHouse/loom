@@ -140,4 +140,29 @@ WHAT: Create or replace a profile section at `label`.
 | `char_limit` | `int \| None` | The section's size cap after the write. |
 | `value_length` | `int` | Length of the JSON-encoded value after the write, the size `char_limit` caps; the gap is the headroom left. |
 
+## `profile.structured`
+
+The user's structured profile and whether it is current.
+
+`POST /v1/profile.structured` · MCP `loom_profile_structured` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `read_scope` | `Literal['namespace', 'own_user', 'own_session']` | `'namespace'` | How far the read reaches across users (same grammar as profile.render.read_scope; the token's claim is the ceiling). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | `ready`: built from the user's current memories under the current schema; `stale`: memories or the schema changed since it was built (a worker pass rebuilds it); `pending`: not built yet; `no_schema`: the namespace has none. |
+| `profile` | `dict[str, Any]` | The profile in the schema's shape: every property, null when the user's memories do not settle it. |
+| `built_at` | `datetime \| None` | When the profile was built; None while pending. |
+| `memory_id` | `str` | The memory row the profile is stored in; its history is the profile's history. |
+| `version` | `int` |  |
+| `schema_sha256` | `str` | The hash of the schema the namespace has now. |
+
 <!-- prettier-ignore-end -->

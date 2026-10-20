@@ -55,6 +55,8 @@ class ModelSettings(BaseModel):
     memory_extract_verify_models: str = "claude-opus-5-5"
     # The profile fold.
     profile_consolidation_model: str = ""
+    # The structured profile builder.
+    structured_profile_model: str = ""
     # Reflection distillation: the outcome labeller and the contrast writer.
     reflection_distill_model: str = ""
     # The code-link `revise` judge: does a memory's claim still hold for its code's

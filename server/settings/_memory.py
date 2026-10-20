@@ -179,6 +179,22 @@ class MemorySettings(BaseModel):
     # `memory_key` of the folded profile row.
     profile_consolidation_label: str = "consolidated_profile"
 
+    # Keep each user's structured profile (memory_type='profile') current in the
+    # shape `profile_schema.set` gives the namespace. LLM calls, only for a
+    # namespace with a schema: setting one is the opt-in.
+    structured_profile_enabled: bool = True
+    # Seconds between structured profile passes.
+    structured_profile_interval_seconds: int = 120
+    # Profiles one pass builds, across every namespace with a schema.
+    structured_profile_max_users_per_pass: int = 20
+    # Memories read into one build, highest confidence then newest first.
+    structured_profile_memory_limit: int = 100
+    # Seconds after a profile is built before new memories rebuild it; a schema
+    # change rebuilds it at once.
+    structured_profile_cooldown_seconds: int = 600
+    # `memory_key` of the structured profile row.
+    structured_profile_label: str = "structured_profile"
+
     # Reflection distillation: label recent sessions that carry no outcome
     # (positive / negative / unclear into loom.session_outcomes_by_user), pair each
     # confidently failed session with its nearest successful one and distil
