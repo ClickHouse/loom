@@ -65,6 +65,7 @@ from server.knowledge.domain.conversations import (
     EMBEDDED_EXCERPT_CHARS,
     LISTED_MARGIN_CHARS,
     THREAD_EXCERPT_CHARS,
+    thread_metadata,
     title_refused,
 )
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
@@ -96,14 +97,28 @@ async def namespace_recording_enabled(org: str, namespace: str) -> bool:
     return await conversation_repo.namespace_logging_enabled(org, namespace)
 
 
+def _metadata_keeping_mark(metadata: dict[str, Any], stored: object) -> str:
+    """The caller's new thread metadata as JSON, with the titler's `title_refused` mark
+    copied from the stored metadata. The mark is server state: keeping it stops the titler
+    from asking the model again for a refused title."""
+    merged = dict(metadata)
+    if title_refused(stored):
+        merged["title_refused"] = True
+    return json.dumps(merged, sort_keys=True)
+
+
 async def handle_conversation_create(
     input: ConversationCreateInput,
 ) -> ConversationCreateOutput:
     """Open a thread container. Idempotent: re-creating an existing
     (org, namespace, thread_id) tuple replaces title/metadata/run_id
-    (ReplacingMergeTree(updated_at))."""
+    (ReplacingMergeTree(updated_at)), keeping the titler's `title_refused` mark."""
     from server.knowledge.store import conversations as conversation_repo
 
+    existing = await conversation_repo.fetch_thread(
+        input.org, input.namespace, input.agent, input.thread_id
+    )
+    stored_metadata = existing.get("metadata") if existing else None
     now = naive_utc_now()
     await conversation_repo.insert_thread(
         {
@@ -112,7 +127,7 @@ async def handle_conversation_create(
             "agent": input.agent,
             "thread_id": input.thread_id,
             "title": input.title,
-            "metadata": json.dumps(input.metadata, sort_keys=True),
+            "metadata": _metadata_keeping_mark(input.metadata, stored_metadata),
             "run_id": input.run_id,
             "user_id": input.user_id,
             "created_at": now,
@@ -639,12 +654,7 @@ async def handle_conversation_update(
     merged_title = input.title if input.title is not None else existing.get("title", "")
     merged_metadata = existing.get("metadata", "{}")
     if input.metadata is not None:
-        metadata = dict(input.metadata)
-        if title_refused(merged_metadata):
-            # The titler's mark is server state: new caller metadata keeps it, so the
-            # titler does not ask the model again for a refused title.
-            metadata["title_refused"] = True
-        merged_metadata = json.dumps(metadata)
+        merged_metadata = _metadata_keeping_mark(input.metadata, merged_metadata)
     merged_run_id = input.run_id if input.run_id is not None else existing.get("run_id", "-") or "-"
 
     await conversation_repo.insert_thread(
@@ -801,7 +811,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
                 reasoning=r.reasoning,
                 user_id=r.user_id,
                 run_id=r.run_id,
-                metadata=_safe_load_json(r.metadata),
+                metadata=thread_metadata(r.metadata),
                 tokens=r.tokens,
                 ts=r.ts,
             )
@@ -812,7 +822,7 @@ async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGe
         found=True,
         thread_id=input.thread_id,
         title=thread_row.get("title", "") or "",
-        metadata=_safe_load_json(thread_row.get("metadata", "") or ""),
+        metadata=thread_metadata(thread_row.get("metadata")),
         run_id=thread_row.get("run_id", "-") or "-",
         user_id=thread_row.get("user_id", "-") or "-",
         # The owner (the thread row's agent), else the latest writer read.
@@ -853,7 +863,7 @@ async def handle_conversation_list(
             reasoning=r.reasoning,
             user_id=r.user_id,
             run_id=r.run_id,
-            metadata=_safe_load_json(r.metadata),
+            metadata=thread_metadata(r.metadata),
             tokens=r.tokens,
             ts=r.ts,
         )
@@ -1214,16 +1224,6 @@ def _excerpt(content: str) -> str:
 
     size = settings.conversation_search_excerpt_chars
     return content[:size] + "…" if len(content) > size else content
-
-
-def _safe_load_json(s: Any) -> dict[str, Any]:
-    if not s:
-        return {}
-    try:
-        v = json.loads(s)
-        return v if isinstance(v, dict) else {}
-    except (ValueError, TypeError):
-        return {}
 
 
 async def handle_conversation_threads(input: ConversationThreadsInput) -> ConversationThreadsOutput:

@@ -323,3 +323,118 @@ def test_the_outline_lists_a_credential_digest_without_its_headline() -> None:
 
     assert _headline(f"The user shared {AWS_KEY_ID}. Then planned the week.") == ""
     assert _headline(f"{_PLAIN} More.") == _PLAIN
+
+
+@pytest.mark.asyncio
+async def test_literal_completion_counts_a_credential_turn_but_never_shows_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import ask_literal_evidence as le
+
+    async def fetch(**_: Any) -> list[dict[str, Any]]:
+        return [
+            {"session_id": "s", "observed_at": "2026-01-01 08:00:00", "content": "Stripe is down"},
+            {
+                "session_id": "s",
+                "observed_at": "2026-01-01 09:00:00",
+                "content": f"my Stripe key is {OPENAI_KEY}",
+            },
+        ]
+
+    monkeypatch.setattr(le, "fetch_turns_with_literal", fetch)
+    search = SimpleNamespace(org="o", namespace="n")
+    hits = await le.literal_complete(
+        search, "How many times did I mention 'Stripe'?", [], max_hits=10
+    )
+    assert [h.content_excerpt for h in hits] == ["[user @ 2026-01-01 08:00] Stripe is down"]
+    assert le.LAST_LITERAL_STATEMENTS.get() == 2
+
+
+class _LinkedTurnsCH:
+    """The two reads of `fetch_raw_evidence`: the link rows, then the evidence rows."""
+
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = contents
+        self.calls = 0
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        self.calls += 1
+        if self.calls == 1:
+            return [
+                {
+                    "memory_key": "m1",
+                    "support_type": "extracted_from",
+                    "char_start": 0,
+                    "char_end": 10,
+                    "evidence_id": f"ev-{i}",
+                }
+                for i in range(len(self.contents))
+            ]
+        return [
+            {"evidence_id": f"ev-{i}", "role": "user", "observed_at": "", "content": c}
+            for i, c in enumerate(self.contents)
+        ]
+
+
+@pytest.mark.asyncio
+async def test_the_deep_evidence_pass_opens_no_turn_that_reads_as_a_credential() -> None:
+    from server.memory.app.deep_evidence import fetch_raw_evidence
+
+    turns = await fetch_raw_evidence(
+        org="o",
+        namespace="n",
+        memory_keys=["m1"],
+        max_chars_per_memory=1000,
+        max_chars_total=5000,
+        ch=_LinkedTurnsCH([f"deploy key {OPENAI_KEY}", _PLAIN]),
+    )
+    assert [t.content for t in turns] == [_PLAIN]
+
+
+@pytest.mark.asyncio
+async def test_a_summary_hit_opens_no_session_turn_that_reads_as_a_credential() -> None:
+    from server.memory.app.deep_evidence import fetch_session_turns
+
+    rows = [
+        {"session_id": "s1", "role": "user", "observed_at": "", "content": c}
+        for c in (f"the standup key is {AWS_KEY_ID}", _PLAIN)
+    ]
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+            return rows
+
+    turns = await fetch_session_turns(
+        org="o",
+        namespace="n",
+        session_ids=["s1"],
+        question="When is the standup?",
+        max_chars_per_session=1000,
+        max_chars_total=5000,
+        ch=_CH(),
+    )
+    assert [t.content for t in turns] == [_PLAIN]
+
+
+@pytest.mark.asyncio
+async def test_the_when_evidence_pass_recalls_no_turn_that_reads_as_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.memory.app.recall as recall
+    from server.memory.app import ask_when_evidence as awe
+
+    async def fake_recall(_: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            turns=[
+                SimpleNamespace(role="user", observed_at="2026-01-02", content=_PLAIN),
+                SimpleNamespace(
+                    role="user", observed_at="2026-01-03", content=f"key: {OPENAI_KEY}"
+                ),
+            ]
+        )
+
+    monkeypatch.setattr(recall, "handle_memory_recall", fake_recall)
+    turns = await awe._recall_turns(
+        {"org": "o", "namespace": "n", "agent": "*", "query": "standup"}
+    )
+    assert [t.content for t in turns] == [_PLAIN]

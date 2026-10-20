@@ -24,6 +24,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from server.memory.domain.sensitivity import reads_high
+
 log = logging.getLogger(__name__)
 
 _WHEN_RE = re.compile(
@@ -217,7 +219,8 @@ async def _recall_turns(kwargs: dict[str, Any]) -> list[DatedTurn]:
     turns: list[DatedTurn] = []
     for t in getattr(out, "turns", None) or []:
         content = str(getattr(t, "content", "") or "").strip()
-        if not content:
+        # A turn that reads as a credential never reaches the synthesis prompt.
+        if not content or reads_high(content):
             continue
         observed = str(getattr(t, "observed_at", "") or "")
         turns.append(

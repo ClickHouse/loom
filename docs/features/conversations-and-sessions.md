@@ -56,7 +56,8 @@ up front.
   1,024 past them. The titler never sends such a turn to its model. A thread whose
   opening turns all read as a credential, or whose generated title reads as one, stays
   untitled, marked `title_refused` in its metadata so the titler does not ask again;
-  `conversation.update` with new `metadata` keeps the mark.
+  `conversation.update` with new `metadata` and `conversation.create` on the same
+  thread keep the mark.
   `conversation.get` and `conversation.list` still serve the turn in its thread
   ([sensitivity](../architecture/security.md#sensitivity)).
 

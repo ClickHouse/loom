@@ -24,7 +24,7 @@ class ConversationCreateInput(BaseModel):
     namespace: str
     agent: str
     # The caller's id for the thread; re-creating the same id replaces its title,
-    # metadata and `run_id`.
+    # metadata and `run_id`, keeping the titler's `title_refused` mark.
     thread_id: str
     # Display title shown in thread lists; empty = untitled.
     title: str = ""
@@ -199,7 +199,8 @@ class ConversationUpdateInput(BaseModel):
     thread_id: str
     # Handler raises 400 if all three are absent (no-op signals a caller bug).
     title: str | None = None
-    # New metadata JSON, replacing the old object whole; None leaves it unchanged.
+    # New metadata JSON, replacing the old object whole except the titler's
+    # `title_refused` mark, which is kept; None leaves it unchanged.
     metadata: dict[str, Any] | None = None
     run_id: str | None = None
 

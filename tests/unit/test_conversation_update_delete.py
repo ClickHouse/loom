@@ -166,6 +166,43 @@ async def test_update_metadata_keeps_the_titlers_refused_mark(
 
 
 @pytest.mark.asyncio
+async def test_create_on_an_existing_thread_keeps_the_titlers_refused_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-creating a refused thread must not make it a titler candidate again."""
+    from server.knowledge.api.models_conversations import ConversationCreateInput
+    from server.knowledge.app.conversations import handle_conversation_create
+    from server.knowledge.store import conversations as conversation_repo
+
+    stored = {"t-1": {"metadata": '{"title_refused": true}'}, "t-2": None}
+    written: list[dict[str, Any]] = []
+
+    async def fake_fetch(org, namespace, agent, thread_id, **kw):
+        return stored[thread_id]
+
+    async def fake_insert(row, *, ch=None):
+        written.append(row)
+
+    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch)
+    monkeypatch.setattr(conversation_repo, "insert_thread", fake_insert)
+
+    for thread_id in ("t-1", "t-2"):
+        await handle_conversation_create(
+            ConversationCreateInput(
+                org="clickhouse",
+                namespace="finance",
+                agent="reviewer",
+                thread_id=thread_id,
+                metadata={"tag": "x"},
+            )
+        )
+    assert [json.loads(r["metadata"]) for r in written] == [
+        {"tag": "x", "title_refused": True},
+        {"tag": "x"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_update_thread_missing_returns_updated_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
