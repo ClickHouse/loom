@@ -26,50 +26,54 @@ def metered(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     genai._identity.set(None)  # the tests stamp identities a later test must not inherit
 
 
+def _headers() -> dict[str, str]:
+    return customer.headers(asyncio.run(customer.require()))
+
+
 def _request(org: str, op: str = "memory.search") -> None:
     genai.set_identity(org=org, namespace="ns", operation=op)
 
 
 def test_without_a_customer_header_nothing_is_sent_or_refused() -> None:
     genai._identity.set(None)
-    assert customer.headers() == {}
+    assert _headers() == {}
 
 
 def test_a_request_names_the_org_of_its_verified_identity(metered) -> None:
     _request("acme")
-    assert customer.headers() == {"X-Customer": "acme", "X-Feature": "memory.search"}
+    assert _headers() == {"X-Customer": "acme", "X-Feature": "memory.search"}
     with genai.llm_stage("hyde"):
-        assert customer.headers()["X-Feature"] == "hyde"
+        assert _headers()["X-Feature"] == "hyde"
 
 
 @pytest.mark.parametrize("org", ["", "-", "*"])
 def test_a_call_naming_no_org_is_refused(metered, org: str) -> None:
     _request(org)
     with pytest.raises(customer.Unattributed):
-        customer.headers()
+        _headers()
 
 
 def test_a_worker_names_its_rows_org_and_never_inherits_its_identity(metered) -> None:
     # A pass stamps the org of the row it last worked on; the next call is not that org's.
     genai.set_worker_identity("embedding", org="acme")
     with pytest.raises(customer.Unattributed):
-        customer.headers()
+        _headers()
     with customer.for_org("beta"):
-        assert customer.headers() == {"X-Customer": "beta", "X-Feature": "worker.embedding"}
+        assert _headers() == {"X-Customer": "beta", "X-Feature": "worker.embedding"}
     with pytest.raises(customer.Unattributed):
-        customer.headers()
+        _headers()
 
 
 def test_the_deployments_own_calls_name_the_system_customer(metered) -> None:
     with customer.system():
-        assert customer.headers()["X-Customer"] == "loom"
+        assert _headers()["X-Customer"] == "loom"
     with customer.system(), customer.for_org("acme"):
-        assert customer.headers()["X-Customer"] == "acme"  # an org's data is its own
+        assert _headers()["X-Customer"] == "acme"  # an org's data is its own
 
 
 def test_an_org_that_needs_it_is_quoted_for_the_header(metered) -> None:
     with customer.for_org("org one/ü"):
-        assert customer.headers()["X-Customer"] == "org%20one%2F%C3%BC"
+        assert _headers()["X-Customer"] == "org%20one%2F%C3%BC"
 
 
 class _Recorder:
@@ -285,10 +289,10 @@ def test_a_refusal_is_logged_once_a_minute_by_its_code(metered, monkeypatch, cap
     monkeypatch.setattr(customer.time, "monotonic", lambda: clock[0])
     for _ in range(3):
         with pytest.raises(customer.Unattributed):
-            customer.require()
+            asyncio.run(customer.require())
     clock[0] += 61
     with pytest.raises(customer.Unattributed):
-        customer.require()
+        asyncio.run(customer.require())
     logged = [r for r in caplog.records if "MODEL_CALL_UNATTRIBUTED" in r.getMessage()]
     assert len(logged) == 2
 

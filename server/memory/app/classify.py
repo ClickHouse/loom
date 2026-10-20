@@ -58,8 +58,7 @@ async def classify(
         "valid_types": valid_types,
     }
     # Outside the fail-open: a refused call is an error, not a kept type.
-    await customer.admit()
-    headers = customer.headers()
+    headers = customer.headers(await customer.require())
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(endpoint, json=body, headers=headers)

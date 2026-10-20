@@ -101,7 +101,7 @@ async def cached_embed(
     served-from-cache embedding (no upstream tokens, no cost) from a billed one
     on its telemetry span.
     """
-    await customer.admit()
+    await customer.require()
     k = _key(model, text)
     hit = _cache.get(k)
     if hit is not None:

@@ -68,9 +68,17 @@ def test_other_orgs_and_the_deployments_own_calls_go_on(monkeypatch) -> None:
     _off("acme")
     _request("beta")
     assert len(_chat(monkeypatch).calls) == 1
-    _request("acme")
-    with customer.system():
+    genai._identity.set(None)
+    with customer.system():  # the deployment's own, naming no org
         assert len(_chat(monkeypatch).calls) == 1
+
+
+def test_a_deployment_call_naming_a_switched_off_org_is_refused(monkeypatch) -> None:
+    # The kill switch holds whatever path names the org: system() only covers
+    # calls that name none.
+    _off("acme")
+    with customer.system(), customer.for_org("acme"), pytest.raises(customer.ModelCallsDisabled):
+        _chat(monkeypatch)
 
 
 def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkeypatch) -> None:
@@ -78,9 +86,9 @@ def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkey
     _off("acme")
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
-        asyncio.run(customer.admit())
+        asyncio.run(customer.require())
     genai._identity.set(None)  # a dev call naming no org: nothing to check, no header to send
-    assert asyncio.run(customer.admit()) == "" and customer.headers() == {}
+    assert asyncio.run(customer.require()) == ""
 
 
 def test_a_switched_off_org_is_served_no_cached_vector(monkeypatch) -> None:

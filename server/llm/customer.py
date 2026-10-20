@@ -14,13 +14,14 @@ customers, so a job batching several orgs' rows splits them first.
 
 An org an admin switched off (`org.set_model_calls`, loom.org_model_calls)
 gets no model call at all, header or not, and no cached vector or answer
-either: the switch is a kill switch. `admit()`, at the top of every sender,
-checks both before the gateway token, the caches or provider health. Each
-process reads the switched-off orgs at most every
+either: the switch is a kill switch. `require()`, at the top of every
+sender, checks both before the gateway token, the caches or provider health.
+Each process tries to read the switched-off orgs at most every
 `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and refuses every call for an org
 (`BackendUnavailableError`) once its copy is older than
-`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`: the switch fails closed. The
-deployment's own calls are never switched off.
+`LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`: the switch fails closed. A call that
+names an org is checked even as the deployment's (`system()`); only a
+deployment call that names none is never switched off.
 """
 
 from __future__ import annotations
@@ -58,7 +59,6 @@ class Unattributed(LoomServerError):
 
     code = "MODEL_CALL_UNATTRIBUTED"
     status_code = 500
-    not_sent = True  # not the provider's failure (provider_health.recording)
 
 
 class ModelCallsDisabled(LoomServerError):
@@ -66,13 +66,14 @@ class ModelCallsDisabled(LoomServerError):
 
     code = "MODEL_CALLS_DISABLED"
     status_code = 403
-    not_sent = True
 
 
-# The orgs switched off, as this process last read them, and when (monotonic;
-# 0.0 = never read).
+# The orgs switched off, as this process last read them, when (monotonic; 0.0 =
+# never read), and when the next read is due (a failed read waits its turn too,
+# so the waiters do not each query in turn).
 _off: frozenset[str] = frozenset()
 _read_at = 0.0
+_next_read = 0.0
 _lock = asyncio.Lock()
 
 
@@ -107,13 +108,17 @@ def current() -> str:
     return "" if org in _NO_ORG else org
 
 
-def require() -> str:
+async def require() -> str:
     """The customer the current model call is for, checked before anything is
     sent, cached or recorded: "" with no customer header configured. Raises
-    Unattributed, and logs it, when the call names none."""
+    ModelCallsDisabled when the call's org is switched off (header or not),
+    and Unattributed, logged, when a header is configured and the call names
+    no org."""
+    org = current()
+    if org and await switched_off(org):
+        raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
     if not settings.inference_customer_header:
         return ""
-    org = current()
     if org:
         return org
     if _system.get():
@@ -131,22 +136,9 @@ def require() -> str:
     )
 
 
-async def admit() -> str:
-    """`require()`, then the switch: raises ModelCallsDisabled when the
-    call's org is switched off. Called first by every sender, so a refused
-    call reaches no gateway, cache or provider-health record."""
-    org = require()
-    known = org or current()
-    if known and not _system.get() and await switched_off(known):
-        raise ModelCallsDisabled(f"model calls are switched off for org {known!r}")
-    return org
-
-
-def headers() -> dict[str, str]:
-    """The customer and feature headers for one model request; {} with no
-    customer header configured. Raises Unattributed when the call names no
-    customer."""
-    org = require()
+def headers(org: str) -> dict[str, str]:
+    """The customer and feature headers for one model request, for the org
+    `require()` returned; {} when it returned none (no header configured)."""
     if not org:
         return {}
     # Header values are latin-1 with no line breaks; an org id never needs more.
@@ -185,9 +177,9 @@ async def switched_off(org: str) -> bool:
 async def switched_off_orgs() -> frozenset[str]:
     """The orgs whose model calls are switched off, for a job to pass over;
     raises BackendUnavailableError when this process's copy is too old."""
-    if not _fresh():
+    if time.monotonic() >= _next_read:
         async with _lock:
-            if not _fresh():
+            if time.monotonic() >= _next_read:
                 await _read()
     if not _read_at or time.monotonic() - _read_at > settings.jwt_revocation_max_stale_seconds:
         raise BackendUnavailableError(
@@ -196,19 +188,15 @@ async def switched_off_orgs() -> frozenset[str]:
     return _off
 
 
-def _fresh() -> bool:
-    return bool(_read_at) and (
-        time.monotonic() - _read_at < settings.model_calls_policy_refresh_seconds
-    )
-
-
 async def _read() -> None:
-    global _off, _read_at
+    global _off, _read_at, _next_read
     from server.core.ch import get_client
 
+    _next_read = time.monotonic() + settings.model_calls_policy_refresh_seconds
     try:
+        # Every org switched off, one row each: never cut short, which would fail open.
         rows = await get_client().query_all(
-            "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0 LIMIT 100000"
+            "SELECT org FROM loom.org_model_calls FINAL WHERE enabled = 0"
         )
     except Exception as e:  # noqa: BLE001 — the last copy serves until it is too old
         log.warning("model-call switch: read failed (%s); serving the last copy", e)
@@ -219,11 +207,12 @@ async def _read() -> None:
 def forget_switch() -> None:
     """Make the next call read the switch again, for a change just made here.
     The copy in hand keeps its age, so a failed read serves it as before."""
-    global _read_at
-    if _read_at:
-        _read_at = min(_read_at, time.monotonic() - settings.model_calls_policy_refresh_seconds)
+    global _next_read
+    _next_read = 0.0
 
 
 def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
-    global _off, _read_at
-    _off, _read_at = off, (time.monotonic() if read else 0.0)
+    global _off, _read_at, _next_read
+    now = time.monotonic()
+    _off, _read_at = off, (now if read else 0.0)
+    _next_read = now + settings.model_calls_policy_refresh_seconds if read else 0.0

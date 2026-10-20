@@ -120,7 +120,7 @@ class FakeLLMClient:
         temperature: float | None = 0.0,
     ) -> LLMResult:
         # As a metered provider would: a path that names no customer fails in tests.
-        await customer.admit()
+        await customer.require()
         # response_format and temperature are no-ops — the anchors already return valid JSON.
         if _STAGE1_ANCHOR in system:
             # Detection stage: assume present so downstream stages run.

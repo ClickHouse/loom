@@ -75,10 +75,7 @@ def recording(provider: str) -> Iterator[None]:
     try:
         yield
     except Exception as exc:
-        # A call refused before it was sent (`not_sent`: no customer, or one
-        # switched off) says nothing about the provider.
-        if not getattr(exc, "not_sent", False):
-            record_failure(provider, exc)
+        record_failure(provider, exc)
         raise
     record_success(provider)
 
