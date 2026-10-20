@@ -115,6 +115,7 @@ class OrphanLinks(NamedTuple):
 
     scope: str  # a link in scope
     where: str  # an orphan link in scope; for reads only: it holds subqueries
+    kept: str  # the ids of the memories in scope that keep their links
     params: dict[str, Any]
 
 
@@ -145,7 +146,8 @@ def _orphan_row_links(
         "AND updated_at >= {verified_at:DateTime}"
     )
     where = f"{scope} AND memory_id NOT IN ({live_ids}) AND memory_id NOT IN ({later_ids})"
-    return OrphanLinks(scope, where, {**params, "verified_at": verified_at})
+    kept = f"{live_ids} UNION ALL {later_ids}"
+    return OrphanLinks(scope, where, kept, {**params, "verified_at": verified_at})
 
 
 async def count_orphan_row_links(
@@ -171,18 +173,17 @@ async def count_orphan_row_links(
     return out
 
 
-async def _written_since(
-    org: str, ids: list[str], verified_at: datetime, *, ch: _CHClient
+async def _live_or_written_since(
+    org: str, orphans: OrphanLinks, ids: list[str], *, ch: _CHClient
 ) -> set[str]:
-    """Of the memories `ids`, those live or written since `verified_at`: no orphan's."""
+    """Of the memories `ids`, those that keep their links now (`orphans.kept`: live, or
+    written since the census). A memory written after this read is not seen: its links
+    go with the DELETE that follows."""
     rows = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS id FROM loom.memory FINAL
-        WHERE org = {org:String} AND memory_id IN {ids:Array(UUID)}
-          AND (tombstoned_at IS NULL OR updated_at >= {verified_at:DateTime})
-        SETTINGS select_sequential_consistency = 1
-        """,
-        params={"org": org, "ids": ids, "verified_at": verified_at},
+        f"SELECT DISTINCT toString(memory_id) AS id FROM ({orphans.kept}) "
+        "WHERE memory_id IN {ids:Array(UUID)} "
+        "SETTINGS select_sequential_consistency = 1",
+        params={"org": org, **orphans.params, "ids": ids},
     )
     return {str(r["id"]) for r in rows}
 
@@ -211,7 +212,7 @@ async def delete_orphan_row_links(
             params={"org": org, **orphans.params},
         )
         for ids in param_slices(sorted(str(r["id"]) for r in found)):
-            kept = await _written_since(org, ids, verified_at, ch=ch)
+            kept = await _live_or_written_since(org, orphans, ids, ch=ch)
             still_orphans = [memory_id for memory_id in ids if memory_id not in kept]
             if not still_orphans:
                 continue

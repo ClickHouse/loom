@@ -20,7 +20,7 @@ class _CH:
         self.executed: list[str] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-        if "tombstoned_at IS NULL OR updated_at" in sql:
+        if "UNION ALL" in sql:
             return [{"id": i} for i in params["ids"] if i in self.live]
         if "sensitivity, entities" in sql:
             return []  # after the DELETE: the row is gone, so nothing is written back
