@@ -383,7 +383,7 @@ def _stale() -> None:
     from server.settings import settings
 
     _off()
-    customer._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
+    customer._switch.read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
 
 
 def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch) -> None:
