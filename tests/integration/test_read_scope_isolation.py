@@ -2,9 +2,11 @@
 
 Users U and V write into the SAME namespace: facts (one key both hold, the
 rest V's alone, across two sessions), raw turns through set_from_messages
-(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block, a procedure, a saved chat message (one conversation id for both) and a blacklist pattern. V's rows
-carry a nonce (each fact row its own, all starting with V's). A token minted with `read_user_id=U` then drives every op the
-registry holds:
+(the same session id for both), an entity both rows name, a profile section,
+a session brief, a working-memory block, a procedure, a saved chat message
+(one conversation id for both) and a blacklist pattern. V's rows carry a
+nonce (each fact row its own, all starting with V's). A token minted with
+`read_user_id=U` then drives every op the registry holds:
 
 * an op in `SCOPED_OPS` answers, and no answer carries V's nonce;
 * the same op asked for `user_id="*"` or `user_id=V` is refused (403);
@@ -13,7 +15,9 @@ registry holds:
 * every write a bounded token may call, aimed at V's keys, ids and brief by a
   token pinned to a third user W, answers without V's nonce and leaves each
   of V's rows (value, lifecycle, lock, version) and its usage counters as
-  they were.
+  they were;
+* W re-saving V's saved message is refused as another user's turn, W
+  unsaving it finds nothing, and V's message stays saved.
 
 An op the walks cannot build a body for fails the test unless `_UNBUILDABLE`
 names it with the reason.
