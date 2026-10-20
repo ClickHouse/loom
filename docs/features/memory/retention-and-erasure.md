@@ -140,7 +140,8 @@ flowchart TD
   with no supporter is then deleted when pending, or keeps its decision with the rule
   blanked ([extraction](./extraction.md#rules-the-assistant-states-about-itself)). The
   census counts such unsupported candidates across the org, not only the erased user's,
-  so a saga can fail on one another erasure left mid-step; its reopened step cleans it.
+  so a saga can fail on a candidate that another erasure in the org left mid-step; its
+  reopened step cleans it.
 
 ### The federated cascade
 

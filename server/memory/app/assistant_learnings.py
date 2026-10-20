@@ -68,14 +68,13 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     if not key or not value or not agent or reads_high(value):
         return False
     cid = assistant_rules.candidate_id(state.org, state.namespace, agent, key, value)
-    confidence = judged_confidence(fact)
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
     if row is not None and row["status"] != "pending":
         return False  # decided: support no longer changes anything
-    wrote_supporter = not await learnings_repo.supporter_exists(
+    new_supporter = not await learnings_repo.supporter_exists(
         state.org, state.namespace, cid, state.user_id, state.session_id
     )
-    if wrote_supporter:
+    if new_supporter:
         asked, said = assistant_rules.quotes(fact, state.messages)
         await learnings_repo.insert_supporter(
             {
@@ -84,13 +83,13 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "candidate_id": cid,
                 "user_id": state.user_id,
                 "session_id": state.session_id,
-                "confidence": confidence,
+                "confidence": judged_confidence(fact),
                 "asked": asked,
                 "said": said,
                 "created_at": naive_utc_now(),
             }
         )
-    wrote = row is None or wrote_supporter
+    wrote = row is None or new_supporter
     if wrote:
         # Written again with every new supporter, at version 1: an erasure that
         # deleted the candidate after the read above (no supporter left yet) cannot
@@ -107,8 +106,8 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "memory_type": "semantic",
                 "proposed_value": json.dumps(value),
                 "supporter_count": 0,
-                # Fixed: learnings.list and promotion read the supporters' mean.
-                "confidence_avg": 1.0,
+                # Not judged here: learnings.list and promotion read the supporters' mean.
+                "confidence_avg": 0.0,
                 "supporters": [],
                 "rationale": "",
                 "source_kind": assistant_rules.SOURCE_KIND,

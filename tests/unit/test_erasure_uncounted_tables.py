@@ -157,7 +157,9 @@ def test_an_orphaned_candidate_goes_when_pending_and_keeps_its_decision_when_dec
     assert sqls.index("INSERT INTO loom.learnings_queue") < sqls.index(decided[0])
 
 
-def _deleted(row: dict[str, Any], sql: str, params: dict[str, Any], supported: set[str]) -> bool:
+def _deleted(
+    row: dict[str, Any], sql: str, params: dict[str, Any], supported: frozenset[str]
+) -> bool:
     """Whether one recorded delete of loom.learnings_queue takes `row`, given the
     candidates with a supporter row when it runs: a pending delete only `pending`
     rows of a candidate nobody supports, a decided one only rows holding the rule
@@ -171,13 +173,13 @@ def _deleted(row: dict[str, Any], sql: str, params: dict[str, Any], supported: s
 
 
 def _survivors(
-    rows: list[dict[str, Any]], ch: _LearningsCH, supported: set[str] = frozenset()
+    rows: list[dict[str, Any]], ch: _LearningsCH, supported: frozenset[str] = frozenset()
 ) -> list[dict[str, Any]]:
     """`rows` and the step's inserts, after the deletes it sent."""
     left = [*rows, *ch.inserted]
     for sql, params in ch.commands:
         if "ALTER TABLE loom.learnings_queue" in sql:
-            left = [r for r in left if not _deleted(r, sql, params, set(supported))]
+            left = [r for r in left if not _deleted(r, sql, params, supported)]
     return left
 
 
@@ -207,7 +209,7 @@ def test_a_candidate_a_supporter_backed_after_the_read_survives_the_pending_dele
     ch = _LearningsCH(["c"], [filed])
     asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
     # The filer's rows landed before the delete ran: the candidate is supported.
-    assert _survivors([filed, dict(filed)], ch, supported={"c"}) == [filed, filed]
+    assert _survivors([filed, dict(filed)], ch, supported=frozenset({"c"})) == [filed, filed]
     # With nobody's support it goes.
     assert _survivors([filed], ch) == []
 

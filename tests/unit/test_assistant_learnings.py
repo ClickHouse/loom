@@ -248,7 +248,7 @@ async def test_a_rule_is_filed_once_and_each_session_adds_one_supporter_row(queu
         "memory_type": "semantic",
         "proposed_value": json.dumps(_VALUE),
         "supporter_count": 0,
-        "confidence_avg": 1.0,
+        "confidence_avg": 0.0,  # not judged on the candidate: the supporters' mean is read
         "supporters": [],
         # The candidate holds the rule and nothing of any user's conversation.
         "rationale": "",
@@ -635,6 +635,50 @@ async def test_reviewing_a_rule_an_erasure_blanked_answers_not_found(
             LearningsReviewInput(org="o", namespace="ns", candidate_id=_cid(), decision="promote")
         )
     assert e.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_decided_rule_with_no_supporters_lists_no_users_and_no_confidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its last supporter erased: no supporter rows to count, so the list shows the
+    candidate row's own zero support and its unjudged confidence of 0."""
+    from server.memory.api.models_learnings import LearningsListInput
+    from server.memory.app import learnings as h
+
+    row = {
+        "candidate_id": _cid(),
+        "memory_key": "assistant_rule_refund_escalation",
+        "memory_type": "semantic",
+        "proposed_value": "",
+        "supporter_count": 0,
+        "confidence_avg": 0.0,
+        "supporters": [],
+        "rationale": "",
+        "source_kind": "assistant_turn",
+        "agent": "support-bot",
+        "status": "rejected",
+        "proposed_at": datetime(2026, 1, 1),
+        "decided_at": datetime(2026, 1, 2),
+        "decided_by": "admin",
+        "decision_reason": "not our policy",
+    }
+
+    async def fake_list(*_a: Any, **_kw: Any) -> list[dict[str, Any]]:
+        return [row]
+
+    async def no_support(*_a: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(learnings_repo, "list_by_status", fake_list)
+    monkeypatch.setattr(learnings_repo, "supporter_stats", no_support)
+    out = await h.handle_learnings_list(
+        LearningsListInput(org="o", namespace="ns", status="rejected")
+    )
+    (entry,) = out.rows
+    assert (entry.supporter_count, entry.supporter_sessions, entry.supporters) == (0, 0, [])
+    assert entry.confidence_avg == 0.0
+    assert (entry.proposed_value, entry.rationale, entry.status) == (None, "", "rejected")
 
 
 @pytest.mark.asyncio
