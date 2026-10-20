@@ -6,7 +6,6 @@ from server.memory.workers import profile_consolidation as pc
 
 
 def test_profile_fold_leaves_out_facts_about_others() -> None:
-
     from server.memory.store import profile_sources
 
     assert pc.user_facts is profile_sources.user_facts  # the fold reads the shared predicate

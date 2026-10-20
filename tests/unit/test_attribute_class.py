@@ -56,7 +56,6 @@ def test_extraction_batch_rows_are_labelled(monkeypatch):
 
 
 def test_profile_fold_excludes_attribute_rows():
-
     from server.memory.store import profile_sources
     from server.memory.workers import profile_consolidation as pc
 

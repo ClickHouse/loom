@@ -92,7 +92,9 @@ def _fact(key: str, value: str, **cols: str) -> str:
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
-async def test_fold_reads_only_current_rows_about_the_user(monkeypatch) -> None:
+async def test_fold_reads_only_current_rows_about_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The fold reads the user's own current facts, each dated by when it became
     true, else when it last changed; nothing superseded, expired, past its
     `valid_to`, about someone else, keyed off the user or asking to be forgotten."""

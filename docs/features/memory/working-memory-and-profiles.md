@@ -178,8 +178,8 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   costs a model call that cannot change the answer. A schema change or a deletion
   (fewer sources than the profile was built from) is rebuilt on the next pass; other
   changes after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
-  whose facts are all gone gets an all-`null` profile without a model call. An expired or
-  redacted profile row reads as no profile (`pending`) and is rebuilt.
+  whose facts are all gone gets an all-`null` profile without a model call. An expired,
+  redacted or `high` profile row reads as no profile (`pending`) and is rebuilt.
 - **Validation.** The model's answer is held to the schema before it is written: a value
   of the wrong type, outside its enum or constraints, a number that is not finite (or an
   integer past 2^53), or a property the schema does not declare is dropped (`null`).

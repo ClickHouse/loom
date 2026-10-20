@@ -428,8 +428,11 @@ async def test_an_unpinned_or_unlocked_profile_is_rebuilt() -> None:
 
 @_needs_ch
 @pytest.mark.asyncio
-@pytest.mark.parametrize("gone", [{"expires_at": "now() - 60"}, {"redacted_at": "now()"}])
-async def test_an_expired_or_redacted_profile_is_no_profile(gone: dict[str, str]) -> None:
+@pytest.mark.parametrize(
+    "gone",
+    [{"expires_at": "now() - 60"}, {"redacted_at": "now()"}, {"sensitivity": "'high'"}],
+)
+async def test_an_expired_redacted_or_high_profile_is_no_profile(gone: dict[str, str]) -> None:
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import profile_sources as src
 

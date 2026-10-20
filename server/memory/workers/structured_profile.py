@@ -149,25 +149,27 @@ class StructuredProfileResult:
     errors: int = 0
 
 
+def _range(low: Any, high: Any, unit: str = "") -> str | None:
+    """A bound pair in words, or None when neither bound is set."""
+    if low is not None and high is not None:
+        return f"{low} to {high}{unit}"
+    if low is not None:
+        return f"at least {low}{unit}"
+    if high is not None:
+        return f"at most {high}{unit}"
+    return None
+
+
 def _limits(constraints: dict[str, Any]) -> list[str]:
     """The constraints `conform` checks, in words, so the model answers in that form."""
     parts = []
     if "pattern" in constraints:
         parts.append(f"pattern {constraints['pattern']}")
-    low, high = constraints.get("min_length"), constraints.get("max_length")
-    if low is not None and high is not None:
-        parts.append(f"{low} to {high} characters")
-    elif low is not None:
-        parts.append(f"at least {low} characters")
-    elif high is not None:
-        parts.append(f"at most {high} characters")
-    low, high = constraints.get("min_value"), constraints.get("max_value")
-    if low is not None and high is not None:
-        parts.append(f"{low} to {high}")
-    elif low is not None:
-        parts.append(f"at least {low}")
-    elif high is not None:
-        parts.append(f"at most {high}")
+    lengths = _range(constraints.get("min_length"), constraints.get("max_length"), " characters")
+    values = _range(constraints.get("min_value"), constraints.get("max_value"))
+    for part in (lengths, values):
+        if part is not None:
+            parts.append(part)
     return parts
 
 

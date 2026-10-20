@@ -131,25 +131,32 @@ and the row's current one:
 ## Scrubbing history: `memory.redact`
 
 `memory.redact(memory_id, version)` scrubs one historical version's text everywhere it is
-copied, stamps `redacted_at` and `redaction_reason`, and keeps the row and its audit
-entry. Use it for a secret or personal detail that leaked into an earlier version.
+copied, and every profile version a model built from the memory. It stamps `redacted_at`
+and `redaction_reason`, and keeps the rows and their audit entries. Use it for a secret or
+personal detail that leaked into an earlier version.
 
-| Where                                          | What happens                                                                                     |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `loom.memory`, `loom.memory_versions`          | `value` becomes `"[REDACTED]"`; `value_json`, `evidence`, `entities` and `concepts` are cleared. |
-| `loom.memory_embeddings`, `loom.memory_chunks` | Rows whose excerpt or chunk hash is not the live head's are deleted; the live head's rows stay.  |
+| Where                                             | What happens                                                                                                              |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `loom.memory`, `loom.memory_versions`             | `value` becomes `"[REDACTED]"`; `value_json`, `evidence`, `entities` and `concepts` are cleared.                          |
+| `loom.memory_embeddings`, `loom.memory_chunks`    | Rows whose excerpt or chunk hash is not the live head's are deleted; the live head's rows stay.                           |
+| The user's profile versions built from the memory | Every version whose trace names the memory is scrubbed the same way, the live head included, with its key's derived rows. |
 
 Out of scope: tags, files, `content_sha256`, `loom.memory_evidence` (owned by erasure),
 the lineage tables (ids and hashes only), `loom.shared` and the entity graph.
 
-- It refuses the live head (`refused_head=true`): delete or rewrite the key first.
-- Both lock modes refuse it.
+- It refuses the memory's live head (`refused_head=true`): delete or rewrite the key
+  first. A scrubbed live profile is left out of renders, packs and profile search until the
+  worker rebuilds it.
+- Both lock modes refuse it, on the memory's own key and on any profile key it reaches.
 - It deletes cached `memory.ask` answers and precedents that quoted the key
-  (`cache_rows_deleted`, `precedent_rows_deleted`).
+  (`cache_rows_deleted`, `precedent_rows_deleted`). For a profile key it reaches, the
+  deletion is org-wide: every user's profile has the same key, so it clears every cached
+  answer and precedent in the org whose window held that key, in every namespace.
 - The namespace is checked after the fetch; a refusal answers `redacted=false`, not 403.
 - It runs a synchronous `ALTER TABLE … UPDATE` on the two memory tables and a lightweight
   `DELETE` on derived rows: an administrative call.
 
+The profile reach and its limits are in [security](../../architecture/security.md#sensitivity).
 To remove a person's data everywhere, use [erasure](./retention-and-erasure.md#erasure).
 
 ## Rolling a namespace back: `namespace.rollback`

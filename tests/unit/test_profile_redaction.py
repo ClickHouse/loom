@@ -236,3 +236,61 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
     cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
     assert [r["key"] for r in cached] == ["k2"]
     assert await ch.query_all("SELECT answer FROM loom.memory_ask_precedents") == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_redacted_profile_head_leaves_render_and_profile_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.core.ch as core_ch
+    import server.memory.store as memory_repo
+    from server.memory.api.models_profile import ProfileRenderInput
+    from server.memory.app import curation
+    from server.memory.app.profile import handle_profile_render
+    from server.memory.app.profile_search import PROFILE_FETCH_SQL
+    from server.memory.store import redaction
+    from server.memory.store.history import HistoryTarget
+
+    # The live head (version 2) was built from the secret memory.
+    ch = _StatefulLocalCH(
+        *_PROFILE_TABLES,
+        *[
+            _profile_version(table, version, '{"timezone":"secret place"}', sources)
+            for table in ("memory", "memory_versions")
+            for version, sources in ((1, [_OTHER]), (2, [_SECRET]))
+        ],
+    )
+    monkeypatch.setattr(redaction, "_default_client", lambda: ch)
+    monkeypatch.setattr(core_ch, "get_client", lambda: ch)
+
+    class _LiveHead(_Head):
+        version = 2
+
+    async def head(*_a: Any, **_k: Any) -> _LiveHead:
+        return _LiveHead()
+
+    async def no_links(*_a: Any) -> str:
+        return ""
+
+    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(curation, "_live_link_inputs", no_links)
+
+    render_input = ProfileRenderInput(
+        org="o", namespace="n", agent="a", user_id="u1", read_scope="own_user"
+    )
+    search_params = {"org": "o", "keys": [("n", "-", "u1", "-", "structured_profile")]}
+    # Before the redact, both reads serve the section.
+    assert (await handle_profile_render(render_input)).labels == ["structured_profile"]
+    assert len(await ch.query_all(PROFILE_FETCH_SQL, search_params)) == 1
+
+    target = HistoryTarget(**_TARGET_KW)
+    profiles = await curation._profiles_built_from("o", target, _SECRET)
+    await curation._redact_profiles(
+        "o", target, profiles, when=datetime(2026, 1, 1), reason_blob="r|admin"
+    )
+
+    rendered = await handle_profile_render(render_input)
+    assert rendered.labels == [] and rendered.section_count == 0
+    assert "REDACTED" not in rendered.rendered
+    assert await ch.query_all(PROFILE_FETCH_SQL, search_params) == []

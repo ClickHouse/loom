@@ -56,10 +56,12 @@ SOURCES_DIGEST = (
     "coalesce(valid_at, updated_at))))), 16, '0')"
 )
 
-# A live structured profile row: not deleted, expired or redacted.
+# A live structured profile row: not deleted, expired or redacted. A 'high' row is
+# readable by key only, so profile.structured serves none and the worker rebuilds it.
 _LIVE_PROFILE = """
     agent = '-' AND session_id = '-' AND memory_key = {label:String}
     AND memory_type = 'profile' AND tombstoned_at IS NULL AND redacted_at IS NULL
+    AND sensitivity != 'high'
     AND (expires_at IS NULL OR expires_at > now())
 """
 
