@@ -209,9 +209,9 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
 def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch) -> None:
     assert asyncio.run(customer.switched_off("acme")) is False
     switch.down = True
-    customer._switch.read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
+    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
     assert asyncio.run(customer.switched_off("acme")) is False  # still young enough
-    customer._switch.read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
+    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
     with pytest.raises(BackendUnavailableError):
         asyncio.run(customer.switched_off("beta"))
 
@@ -235,7 +235,7 @@ def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> N
         assert await together() == [False] * 3
         assert switch.reads == 1
         stale = settings.model_calls_policy_max_stale_seconds + 1
-        customer._switch.read_at, customer._switch.next_read = time.monotonic() - stale, 0.0
+        customer._switch._read_at, customer._switch._next_read = time.monotonic() - stale, 0.0
         assert await together() == [False] * 3
         assert switch.reads == 2
 
@@ -277,7 +277,7 @@ def test_a_call_made_during_a_read_is_served_the_copy_in_hand(switch: _Switch, m
 
     async def second_call_during_the_read() -> bool:
         customer._reset_for_tests(frozenset({"acme"}))
-        customer._switch.next_read = time.monotonic() - 1  # due, not asked for by a change
+        customer._switch._next_read = time.monotonic() - 1  # due, not asked for by a change
         monkeypatch.setattr(switch, "query_all", slow)
         first = asyncio.ensure_future(customer.switched_off("acme"))
         await reading.wait()
@@ -619,7 +619,7 @@ def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: 
     switch.off = {"acme"}
     assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
     switch.down = True
-    customer._switch.next_read = 0.0  # the next read is due
+    customer._switch._next_read = 0.0  # the next read is due
     assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
     assert asyncio.run(customer.switched_off("acme")) is True
     assert switch.reads == 2  # the failed read is not tried again before its turn
