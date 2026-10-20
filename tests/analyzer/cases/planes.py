@@ -470,7 +470,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.search_substring(
         ORG, NS, AGENT, "deploy", scope=pinned, user_id="u1", saved_only=f, ch=ch
     )
-    await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.message_exists(ORG, NS, AGENT, "t1", "m1", live_only=f, ch=ch)
     await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
     await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)
     await R.saved_message_owner(ORG, NS, AGENT, "t1", "m1", ch=ch)
@@ -512,7 +512,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
 # key for the delete's embeddings pass to reconcile.
 _CONVERSATION_ROWS = rows_by_substring(
     {
-        "max(tombstoned_at) AS gone": [{"gone": _DT}],
+        "max(tombstoned_at) AS gone": [{"n": 1, "gone": _DT}],
         "SELECT DISTINCT embedding_model, msg_id": [{"embedding_model": "m", "msg_id": "m1"}],
     }
 )
@@ -536,7 +536,7 @@ def _logged_turn_rows(embedded: bool):
                     "unsaved": 1,
                 }
             ],
-            "countIf(embedding_model": [
+            "countIf(live AND embedding_model": [
                 {"current": 1 if embedded else 0, "unsaved": 1 if embedded else 0, "foreign": 0}
             ],
         }

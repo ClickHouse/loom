@@ -14,6 +14,14 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+
+@pytest.fixture(autouse=True)
+def _saved_write_leases(monkeypatch):
+    from tests.unit.claims_fake import held_leases
+
+    held_leases(monkeypatch)
+
+
 # ============================================================
 # conversation.update
 # ============================================================
