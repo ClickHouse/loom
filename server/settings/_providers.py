@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
-from typing import Annotated, Literal
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
+import httpx
 from pydantic import Field, PrivateAttr, model_validator
 
+from server.core.embedding_space import inferred_provider
 from server.settings._env import CaseFolded, JsonObject, json_map_items
 from server.settings._models import (
     DEFAULT_LOCAL_EMBEDDING_MODEL,
@@ -15,14 +19,50 @@ from server.settings._models import (
     ModelSettings,
 )
 
-# The providers' own APIs: a gateway's token never goes there (server/llm/gateway.py).
-PROVIDER_API_HOSTS = frozenset({"api.openai.com", "api.anthropic.com"})
+
+def url_host(url: str) -> str:
+    """The host httpx sends `url` to, as LOOM_INFERENCE_GATEWAY_HOSTS names it:
+    ASCII (an IDN as punycode), lower-case, no trailing dot; "" when httpx
+    cannot parse it. httpx's own parser, so the check and the send never read
+    a URL differently (several `@`, a backslash)."""
+    try:
+        return httpx.URL(url.strip()).raw_host.decode("ascii").lower().rstrip(".")
+    except (httpx.InvalidURL, UnicodeDecodeError):
+        return ""
 
 
-def is_provider_api(url: str) -> bool:
-    """Whether `url` is a provider's own API, a regional host of it too."""
-    host = (urlsplit(url).hostname or "").rstrip(".")
-    return any(host == h or host.endswith("." + h) for h in PROVIDER_API_HOSTS)
+# A DNS name LOOM_INFERENCE_GATEWAY_HOSTS may name: no scheme, port, path or wildcard.
+_GATEWAY_HOST_RE = re.compile(r"[a-z0-9][a-z0-9.-]*")
+
+
+def _is_gateway_host(host: str) -> bool:
+    """A bare DNS name, or an IPv6 address (its colons are not a port)."""
+    if ":" not in host:
+        return bool(_GATEWAY_HOST_RE.fullmatch(host))
+    try:
+        return ipaddress.ip_address(host).version == 6
+    except ValueError:
+        return False
+
+
+# The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
+_GATEWAY_CHECKED = (
+    "openai_base_url",
+    "anthropic_base_url",
+    "embedding_base_url",
+    "inference_token_url",
+    "embedding_provider",
+    "embedding_model",
+)
+
+
+# The rerank choice that calls Cohere's own API, optionally `:<model>`.
+BUILTIN_COHERE = "builtin:cohere"
+
+
+def is_builtin_cohere(name: str) -> bool:
+    """Whether a rerank choice is `builtin:cohere[:<model>]`, which calls Cohere's own API."""
+    return name == BUILTIN_COHERE or name.startswith(BUILTIN_COHERE + ":")
 
 
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
@@ -72,6 +112,12 @@ class ProviderSettings(ModelSettings):
     inference_token_audience: str = ""
     # The scope sent with that exchange; "" sends none.
     inference_token_scope: str = ""
+    # True: model calls and memory content go only to inference_gateway_hosts;
+    # on whenever inference_token_url is set.
+    inference_gateway_required: bool = False
+    # Comma-separated hostnames (exact, any case) of the gateway; required, and
+    # the only hosts sent to, while the gateway is required.
+    inference_gateway_hosts: str = ""
     # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
     # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
     # a request skips both tiers. Only single-text (query) embeds up to
@@ -233,19 +279,96 @@ class ProviderSettings(ModelSettings):
             return {}
         return dict(json_map_items(raw, "rerank_endpoints_json"))
 
-    @model_validator(mode="after")
-    def _check_gateway_is_in_front(self) -> ProviderSettings:
-        """The gateway's token is for the gateway: any model a request or the
-        dashboard names may be either provider's, so both API roots must point
-        away from the providers' own hosts (the senders refuse them too)."""
-        if not self.inference_token_url:
-            return self
-        for name, url in (
-            ("LOOM_OPENAI_BASE_URL", self.openai_base_url),
-            ("LOOM_ANTHROPIC_BASE_URL", self.anthropic_base_url),
+    def gateway_required(self) -> bool:
+        """Whether model calls may go only to the gateway's hosts."""
+        return bool(self.gateway_required_by())
+
+    def gateway_hosts(self) -> frozenset[str]:
+        """The hosts of inference_gateway_hosts, as `url_host` spells them."""
+        return frozenset(
+            h.strip().lower().rstrip(".")
+            for h in self.inference_gateway_hosts.split(",")
+            if h.strip()
+        )
+
+    def off_gateway(self, url: str) -> str:
+        """While the gateway is required, the host of a `url` it does not list
+        ("(none)" for a URL with no host); "" when the send may go."""
+        if not self.gateway_required():
+            return ""
+        host = url_host(url)
+        return "" if host in self.gateway_hosts() else host or "(none)"
+
+    def gateway_refusal(self, changes: Mapping[str, Any] | None = None) -> str:
+        """Why these settings, with `changes` (a dashboard configuration) over
+        them, would send a model call off the gateway; "" when none would."""
+        why = self.gateway_required_by()
+        if not why:
+            return ""
+        if not self.gateway_hosts():
+            return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
+        saved = dict(changes or {})
+        v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
+        # Both API roots count, a provider unused included: a model named per
+        # request may be either provider's.
+        for field, what in (
+            ("openai_base_url", "LOOM_OPENAI_BASE_URL"),
+            ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
+            ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
         ):
-            if is_provider_api(url):
-                raise ValueError(f"LOOM_INFERENCE_TOKEN_URL needs {name} at the gateway")
+            host = self.off_gateway(v[field]) if v[field] else ""
+            if host:
+                if field in saved:
+                    what = "the saved embedding base URL"
+                return f"{why} needs {what} at a host in LOOM_INFERENCE_GATEWAY_HOSTS, not {host}"
+        host = self.off_gateway(v["inference_token_url"]) if v["inference_token_url"] else ""
+        if host:
+            return (
+                f"LOOM_INFERENCE_GATEWAY_HOSTS does not list {host}, the host of "
+                "LOOM_INFERENCE_TOKEN_URL: the token exchange goes to the gateway too"
+            )
+        for name, url in self.rerank_endpoint_map().items():
+            if self.off_gateway(url):
+                # The entry, never its URL: it can carry a credential.
+                return (
+                    f"{why} refuses LOOM_RERANK_ENDPOINTS_JSON entry {name!r}: not a gateway host"
+                )
+        provider: str = v["embedding_provider"]
+        if not provider:
+            try:
+                provider = inferred_provider(v["embedding_model"])
+            except ValueError:
+                provider = ""  # an unknown model is refused where the embedder is built
+        if provider == "gemini":
+            # The Gemini embedder calls Google's own API, never a gateway.
+            which = (
+                "the saved Gemini embedder"
+                if "embedding_provider" in saved
+                else "the Gemini embedder"
+            )
+            return f"{why} refuses {which}: embed through the gateway"
+        return ""
+
+    def gateway_required_by(self) -> str:
+        """The setting that requires the gateway, for an error to name; "" when none does."""
+        if self.inference_token_url:
+            return "LOOM_INFERENCE_TOKEN_URL"
+        return "LOOM_INFERENCE_GATEWAY_REQUIRED" if self.inference_gateway_required else ""
+
+    @model_validator(mode="after")
+    def _check_gateway_hosts(self) -> ProviderSettings:
+        """Every gateway host is a bare hostname, and with the gateway required
+        every address Loom sends model calls to is one of them (the senders
+        refuse any other too, on every redirect hop)."""
+        for host in self.gateway_hosts():
+            if not _is_gateway_host(host):
+                raise ValueError(
+                    f"LOOM_INFERENCE_GATEWAY_HOSTS: {host[:64]!r} is not a hostname "
+                    "(no scheme, port, path or wildcard)"
+                )
+        refusal = self.gateway_refusal()
+        if refusal:
+            raise ValueError(refusal)
         return self
 
     @model_validator(mode="after")

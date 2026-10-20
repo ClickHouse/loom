@@ -195,7 +195,7 @@ _CUT_OFF_ERRORS = (httpx.ReadError, httpx.RemoteProtocolError, httpx.DecodingErr
 _NEVER_RAN_CODES = frozenset({"AUTH_UNAVAILABLE"})
 # 5xx answers to a deployment's configuration, which no retry changes: the
 # operator's fix is named in the error (and in /v1/health).
-_CONFIGURATION_CODES = frozenset({"CODED_WIDTH_MISMATCH"})
+_CONFIGURATION_CODES = frozenset({"CODED_WIDTH_MISMATCH", "GATEWAY_REQUIRED"})
 
 
 def _never_ran(status: int, code: str) -> bool:

@@ -136,6 +136,20 @@ class RateLimitedError(LoomServerError):
         super().__init__(message, retry_after_s=retry_after_s)
 
 
+class GatewayRequiredError(LoomServerError):
+    """503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not
+    list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a
+    token exchange); the message names the host. Also every data-plane request
+    on a server whose saved model configuration the check refuses, until a
+    replacement is saved or the configuration is reset; that answer names no
+    host. A setting to fix, not an outage: never retried. A classifier or
+    reranker refused the same way fails open instead: the caller's type, or
+    the input order, stays."""
+
+    code = "GATEWAY_REQUIRED"
+    status_code = 503
+
+
 class BackendUnavailableError(LoomServerError):
     """503 — ClickHouse could not be reached after the bounded reconnect.
 

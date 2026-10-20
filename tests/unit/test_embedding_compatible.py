@@ -50,7 +50,7 @@ async def test_batch_reorders_indices_and_omits_optional_dimensions(monkeypatch)
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        monkeypatch.setattr(compatible, "get_client", lambda: client)
+        monkeypatch.setattr(compatible, "get_model_client", lambda: client)
         assert await embedder().embed_many(["first", "second"]) == [[1, 0], [0, 1]]
 
 
@@ -69,7 +69,7 @@ async def test_rejects_malformed_batches(monkeypatch, entries):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"data": entries}))
     ) as client:
-        monkeypatch.setattr(compatible, "get_client", lambda: client)
+        monkeypatch.setattr(compatible, "get_model_client", lambda: client)
         with pytest.raises(MalformedEmbedding):
             await embedder().embed_many(["first", "second"])
 
@@ -85,7 +85,7 @@ async def test_does_not_follow_redirects_with_provider_credentials(monkeypatch):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(handler), follow_redirects=True
     ) as client:
-        monkeypatch.setattr(compatible, "get_client", lambda: client)
+        monkeypatch.setattr(compatible, "get_model_client", lambda: client)
         with pytest.raises(httpx.HTTPStatusError):
             await embedder()._embed_one_raw("test")
     assert set(seen) == {"https://embedding.example/v1/embeddings"}
@@ -117,7 +117,7 @@ async def test_explicit_dimensions_and_credential_probe_bypass_cache(monkeypatch
         return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1, 0]}]})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        monkeypatch.setattr(compatible, "get_client", lambda: client)
+        monkeypatch.setattr(compatible, "get_model_client", lambda: client)
         provider = embedder(send_dimensions=True)
         await provider._embed_one_raw("probe")
         await provider._embed_one_raw("probe")
