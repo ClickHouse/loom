@@ -55,6 +55,27 @@ describe("SearchWhy", () => {
     expect(await axeViolations(container.ownerDocument.body)).toEqual([]);
   });
 
+  it("marks a term that pushed the hit down", async () => {
+    render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
+    await open();
+    const chip = screen.getByText(/reinforcement -0\.20/);
+    expect(chip.closest('[class*="state_warning"]')).not.toBeNull();
+  });
+
+  it("says so when the server reported no ranking terms", async () => {
+    render(<SearchWhy rank={1} hit={hit()} />);
+    expect(await open()).toHaveTextContent("No ranking terms reported");
+  });
+
+  it("says a keyword row holds the typed text", async () => {
+    render(<SearchWhy contains="refund" />);
+    expect(await open()).toHaveTextContent('Contains "refund"');
+  });
+});
+
+describe("SearchScores", () => {
+  afterEach(cleanup);
+
   it("shows a hit's similarity and score", () => {
     render(<SearchScores hit={hit()} />);
     expect(screen.getByTestId("search-score")).toHaveTextContent("similarity 0.62 · score 0.71");
@@ -73,22 +94,5 @@ describe("SearchWhy", () => {
   it("renders nothing when neither score is a number", () => {
     render(<SearchScores hit={hit({ similarity: Number.NaN, rank_score: Number.NaN })} />);
     expect(screen.queryByTestId("search-score")).toBeNull();
-  });
-
-  it("marks a term that pushed the hit down", async () => {
-    render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
-    await open();
-    const chip = screen.getByText(/reinforcement -0\.20/);
-    expect(chip.closest('[class*="state_warning"]')).not.toBeNull();
-  });
-
-  it("says so when the server reported no ranking terms", async () => {
-    render(<SearchWhy rank={1} hit={hit()} />);
-    expect(await open()).toHaveTextContent("No ranking terms reported");
-  });
-
-  it("says a keyword row holds the typed text", async () => {
-    render(<SearchWhy contains="refund" />);
-    expect(await open()).toHaveTextContent('Contains "refund"');
   });
 });

@@ -222,7 +222,8 @@ for (const width of [375, 700, 1400]) {
     test.use({ viewport: { width, height: 800 }, hasTouch: touch, isMobile: touch });
 
     test("its scores sit on one line, clear of the key and the button, and open the row", async ({ page }) => {
-      await installApi(page, { memoryRows: 12 });
+      // A long agent name: the meta line still ends inside the row.
+      await installApi(page, { memoryRows: 12, firstMemoryAgent: "ingest-lane-partition-watchdog-agent" });
       // No row holds the typed text, so both hits are ranked rows rather than keyword rows.
       await page.route("**/v1/memory.list", (route) =>
         route.request().postDataJSON()?.contains
@@ -272,6 +273,9 @@ for (const width of [375, 700, 1400]) {
       expect(overlaps(s, key), "the scores clear the key").toBe(false);
       expect(overlaps(s, why), "the scores clear the button").toBe(false);
       expect(s.x + s.width).toBeLessThanOrEqual(width);
+      const time = await box(open.locator("time"));
+      const card = await box(row);
+      expect(time.x + time.width, "the time ends inside the row").toBeLessThanOrEqual(card.x + card.width);
 
       await scores.click();
       await expect(page.getByRole("dialog")).toBeVisible();
