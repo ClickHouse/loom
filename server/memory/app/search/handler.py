@@ -237,7 +237,6 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             search_plan,
             run,
             query_shape,
-            parsed_intent is not None,
             sub_queries,
             endpoint,
             actual_work,

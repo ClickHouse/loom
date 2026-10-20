@@ -191,12 +191,9 @@ def _enrichment_parser_gate_active(input: MemorySearchInput) -> bool:
 
 
 def _is_fast_posture(input: MemorySearchInput) -> bool:
-    """True when the caller asked for the cheap path (recipe or budget).
-
-    Fast posture means NO optional LLM spend: the iterative judge and
-    HyDE auto-fallback stay off so the latency floor is a
-    vector query, not an LLM round-trip.
-    """
+    """True when the caller asked for the cheap path (recipe or budget): no set
+    expansion, the parser-first enrichment gate, and an LLM-free read
+    (`_is_llm_free`)."""
     return input.recipe == "fast" or input.retrieval_budget == "fast"
 
 

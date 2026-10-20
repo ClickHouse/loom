@@ -276,7 +276,6 @@ def estimate_memory_search_work(
     namespace_count: int,
     top_k: int,
     pool_top_k: int,
-    query_enrichment_used: bool,
     sub_query_count: int = 0,
     entity_count: int = 0,
     graph_triples_enabled: bool = False,
@@ -302,8 +301,6 @@ def estimate_memory_search_work(
         vector_queries += entities  # entity_vectors ANN lookups
 
     llm_calls = 0
-    if query_enrichment_used:
-        llm_calls += 1
     if plan.hyde:
         llm_calls += 1
     if graph_triples_enabled:

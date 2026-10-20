@@ -161,7 +161,6 @@ def test_work_estimate_counts_agentic_fanout() -> None:
         namespace_count=2,
         top_k=5,
         pool_top_k=15,
-        query_enrichment_used=True,
         sub_query_count=3,
         entity_count=2,
         graph_triples_enabled=False,
@@ -172,7 +171,7 @@ def test_work_estimate_counts_agentic_fanout() -> None:
     assert est["namespace_count"] == 2
     assert est["vector_queries"] == 10
     assert est["embedding_calls"] == 6
-    assert est["llm_calls"] == 2  # enrichment and the LLM reranker
+    assert est["llm_calls"] == 1  # the LLM reranker; enrichment is the deterministic parser
     assert est["candidate_pool"] > 30
 
 
@@ -187,9 +186,7 @@ def test_a_rerank_service_is_no_llm_call_in_the_estimate() -> None:
     )
 
     def llm_calls(**rerank: bool) -> int:
-        est = estimate_memory_search_work(
-            plan, namespace_count=1, top_k=5, pool_top_k=15, query_enrichment_used=False, **rerank
-        )
+        est = estimate_memory_search_work(plan, namespace_count=1, top_k=5, pool_top_k=15, **rerank)
         return int(est["llm_calls"])
 
     assert llm_calls(external_rerank_enabled=True) == 0  # builtin:cohere, a configured endpoint

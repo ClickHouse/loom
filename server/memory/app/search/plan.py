@@ -160,7 +160,6 @@ def _size_candidate_pool(
     search_plan: MemorySearchPlan,
     run: _SearchRun,
     query_shape: str,
-    query_enrichment_used: bool,
     sub_queries: list[str],
     endpoint: str,
     actual_work: dict[str, Any],
@@ -204,8 +203,6 @@ def _size_candidate_pool(
         namespace_count=len(namespaces),
         top_k=int(input.top_k),
         pool_top_k=int(pool_top_k),
-        # The estimate counts enrichment as an LLM call; an LLM-free read's is the parser.
-        query_enrichment_used=query_enrichment_used and not llm_free,
         sub_query_count=len(sub_queries),
         entity_count=len(effective_entity_filter),
         graph_triples_enabled=input.search_mode == "graph" and not llm_free,

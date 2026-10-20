@@ -388,6 +388,18 @@ async def test_parser_gate_skips_enrichment_llm_on_confident_spec(search_env) ->
     assert out.retrieval_work["llm_calls_total"] == 0
 
 
+async def test_a_standard_read_estimates_no_llm_call_for_its_parser(search_env) -> None:
+    # Enrichment is the deterministic parser: a standard read that planned no LLM step
+    # (no HyDE, graph triples or LLM reranker) estimates no LLM call.
+    search_env.hits = [_svc_hit("a", sim=0.80, rank=1.0), _svc_hit("b", sim=0.70, rank=0.5)]
+    out = await _run(
+        search_env, query="how many books did I buy last month?", observation_date="2023-07-15"
+    )
+    assert out.retrieval_work["intent_parser_used"] is True
+    assert "hyde=off" in out.retrieval_plan
+    assert out.retrieval_cost_estimate["llm_calls"] == 0
+
+
 async def test_parser_gate_abstention_stays_llm_free_on_fast(search_env) -> None:
     search_env.hits = [_svc_hit("a", sim=0.80, rank=1.0)]
     out = await _run(
