@@ -330,8 +330,8 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
 
     monkeypatch.setattr(model_calls.repo, "insert_row", insert_row)
     monkeypatch.setattr(model_calls.repo, "get", get)
-    forgot: list[bool] = []
-    monkeypatch.setattr(customer, "note_switch_change", lambda: forgot.append(True))
+    noted: list[bool] = []
+    monkeypatch.setattr(customer, "note_switch_change", lambda: noted.append(True))
     admin = AuthInfo(
         subject="ops@acme.com",
         org="acme",
@@ -345,7 +345,7 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
         assert before.enabled is True and before.updated_at is None  # never set: on
         body = OrgSetModelCallsInput(org="acme", enabled=False, reason="AI off")
         out = asyncio.run(model_calls.handle_org_set_model_calls(body))
-        assert out.enabled is False and out.updated_by == "ops@acme.com" and forgot == [True]
+        assert out.enabled is False and out.updated_by == "ops@acme.com" and noted == [True]
         [row] = rows
         assert (row["org"], row["enabled"], row["reason"], row["updated_by"]) == (
             "acme",
