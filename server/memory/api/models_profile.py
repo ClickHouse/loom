@@ -182,5 +182,9 @@ class ProfileStructuredOutput(BaseModel):
     memory_id: str = ""
     # The row's version, higher for each rebuild; 0 while pending.
     version: int = 0
+    # The same version as a decimal string, exact for a JavaScript caller (the number is
+    # above 2^53, which JSON.parse rounds): send this one to memory.delete_version. Empty
+    # while pending.
+    version_text: str = ""
     # The hash of the schema the namespace has now.
     schema_sha256: str = ""

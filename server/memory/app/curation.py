@@ -636,7 +636,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
     # quote in place is not a completed redaction.
-    # A scrubbed profile key may be the only row of a window that quoted the text.
+    # A scrubbed profile key may be the only row of a window that quoted the text. Windows
+    # hold bare keys and every user's profile shares its key, so this reach is org-wide.
     cache_rows = precedent_rows = 0
     for key in [target.memory_key, *sorted({p.memory_key for p in profiles})]:
         cache_rows += await memory_repo.delete_llm_response_cache_by_key(input.org, key)

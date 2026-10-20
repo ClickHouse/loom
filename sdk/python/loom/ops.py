@@ -15697,6 +15697,7 @@ class ProfileStructuredOutput(TypedDict, total=False):
     built_at: NotRequired[Optional[str]]
     memory_id: NotRequired[str]
     version: NotRequired[int]
+    version_text: NotRequired[str]
     schema_sha256: NotRequired[str]
 
 

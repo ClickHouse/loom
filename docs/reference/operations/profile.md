@@ -163,6 +163,7 @@ The user's structured profile and whether it is current.
 | `built_at` | `datetime \| None` | When the profile was built; None while pending. |
 | `memory_id` | `str` | The memory row that holds the profile, whose history is the profile's history. |
 | `version` | `int` | The row's version, higher for each rebuild; 0 while pending. |
+| `version_text` | `str` | The same version as a decimal string, exact for a JavaScript caller (the number is above 2^53, which JSON.parse rounds): send this one to memory.delete_version. |
 | `schema_sha256` | `str` | The hash of the schema the namespace has now. |
 
 <!-- prettier-ignore-end -->

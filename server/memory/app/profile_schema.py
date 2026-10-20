@@ -38,9 +38,7 @@ from server.settings.budgets import llm_max_tokens
 STRUCTURED_CHAR_LIMIT = 32768  # not a setting: row bound at the default output cap
 # Characters one output token can turn into once stored as JSON, so the row bound
 # grows with a raised `structured_profile` cap instead of refusing its answers.
-CHARS_PER_OUTPUT_TOKEN = (
-    8  # not a setting: upper bound of JSON characters one output token can produce
-)
+CHARS_PER_OUTPUT_TOKEN = 8  # not a setting: JSON characters per output token, an upper bound
 
 
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:
@@ -195,5 +193,6 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
         built_at=row["updated_at"],
         memory_id=str(row["memory_id"]),
         version=int(row["version"]),
+        version_text=str(row["version"]),
         schema_sha256=sha,
     )

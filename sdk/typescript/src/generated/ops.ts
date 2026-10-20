@@ -7415,6 +7415,7 @@ export interface ProfileStructuredOutput {
   built_at?: string | null;
   memory_id?: string;
   version?: number;
+  version_text?: string;
   schema_sha256?: string;
 }
 
