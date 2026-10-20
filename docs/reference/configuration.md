@@ -862,7 +862,7 @@ Source: `server/settings/_memory_search.py`
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_ROUNDS` | `int` | `1` | Bounds on the recursive fallback cascade (iterative-judge retry), shared through one SearchBudget: recursive rounds and wall-clock ms; whichever trips first stops further fallbacks. The first-pass retrieve always runs. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_WALL_MS` | `int` | `4000` | Wall-clock ms the fallback cascade may spend across all rounds before it stops. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` | `int` | `2` | Finer caps inside a round: LLM calls and vector queries a fallback may spend before it is denied. |
-| `LOOM_READS_LLM_FREE` | `bool` | `False` | True: no read op calls an LLM (an ask's synthesis answers 409), and a search skips the spelling-fix and set-expansion embeddings. Writes and workers still call models. |
+| `LOOM_READS_LLM_FREE` | `bool` | `False` | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
 | `LOOM_MEMORY_SEARCH_FALLBACK_MAX_VECTOR_QUERIES` | `int` | `12` | Vector queries one fallback round may issue before further ones are denied. |
 | `LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_STANDARD` | `int` | `3` | First-stage pool = top_k × multiplier, per retrieval profile, capped at memory_search_max_pool_top_k (all_mine searches multiply by namespace and sub-query count). |
 | `LOOM_MEMORY_SEARCH_POOL_MULTIPLIER_RERANK` | `int` | `6` | Rerank gets the widest pool: a reranker only reorders what the first stage surfaced (measured: items it should promote sat at rank 11-30). Affects rerank-enabled searches only. |

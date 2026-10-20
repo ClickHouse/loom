@@ -95,8 +95,9 @@ parser cannot, the search answers from recall alone. `context.pack` runs its mem
 same way in every mode, keeping its recipe's planes.
 
 `LOOM_READS_LLM_FREE=true` applies the same rule to every search, whatever its recipe or budget, and
-to every other read: a search also skips the spelling-fix and set-expansion embeddings, a `builtin:openai`
-reranker keeps the fused order (a rerank service still runs), `memory.ask` answers 409 naming the setting
+to every other read: a search also skips the spelling-fix and set-expansion embeddings and runs no
+namespace reranker (a reranker is a model call, so only one the request names runs, and never
+`builtin:openai`), `memory.ask` answers 409 naming the setting
 unless it asks with `allow_synthesis=false`, and `memory.brief` returns its evidence with no answer
 ([LLM-free reads](../../architecture/llm-architecture.md#llm-free-reads)).
 

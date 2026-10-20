@@ -246,20 +246,20 @@ async def test_an_ask_for_the_evidence_alone_makes_no_llm_call(
     assert llm_attempts == []
 
 
-@pytest.mark.parametrize("named", ["namespace", "request"])
-async def test_a_read_reranks_with_a_service_but_never_an_llm(
-    search_env, llm_attempts, monkeypatch, named: str
+async def test_a_read_runs_only_the_reranker_its_request_names(
+    search_env, llm_attempts, monkeypatch
 ) -> None:
-    # builtin:cohere and LOOM_RERANK_ENDPOINTS_JSON endpoints call no LLM and still run;
-    # builtin:openai is an LLM and keeps the fused order.
+    # A reranker is a model call: under the setting a namespace's reranker is not
+    # even looked up, a reranker the request names runs, and builtin:openai never does.
     import server.memory.app.rerank as rerank_mod
 
+    looked_up: list[str] = []
     reranked: list[str] = []
     real_rerank = rerank_mod.rerank
-    configured = {"endpoint": ""}
 
     async def namespace_rerank(org: str, ns: str) -> tuple[str, str]:
-        return (configured["endpoint"], "")
+        looked_up.append(ns)
+        return ("builtin:cohere", "")
 
     async def recording_rerank(*, endpoint: str, **kw: Any) -> Any:
         reranked.append(endpoint)
@@ -268,14 +268,30 @@ async def test_a_read_reranks_with_a_service_but_never_an_llm(
     monkeypatch.setattr(rerank_mod, "get_namespace_rerank_config", namespace_rerank)
     monkeypatch.setattr(rerank_mod, "rerank", recording_rerank)
     search_env.hits = [_svc_hit("a", sim=0.80, rank=0.8), _svc_hit("b", sim=0.70, rank=0.7)]
-    for endpoint in ("builtin:cohere", "builtin:openai"):
-        configured["endpoint"] = endpoint
-        request = {"rerank": endpoint} if named == "request" else {}
-        with _serving(_op("memory.search"), monkeypatch):
-            await _run(search_env, **request)
-    assert reranked == ["builtin:cohere"] and llm_attempts == []
-    await _run(search_env, rerank="builtin:openai")  # off the setting it reaches the model
-    assert llm_attempts
+    with _serving(_op("memory.search"), monkeypatch):
+        await _run(search_env)
+        assert looked_up == [] and reranked == []  # the namespace's: skipped
+        await _run(search_env, rerank="builtin:cohere")
+        assert reranked == ["builtin:cohere"]  # named by the request: runs
+        await _run(search_env, rerank="builtin:openai")
+    assert llm_attempts == []  # builtin:openai: never
+    await _run(search_env)  # off the setting, the namespace's reranker runs
+    assert looked_up == ["ns"]
+    await _run(search_env, rerank="builtin:openai")
+    assert llm_attempts  # and builtin:openai reaches the model
+
+
+def test_a_code_search_runs_no_default_reranker(monkeypatch) -> None:
+    from server.code.app.search import rerank as code_rerank
+
+    monkeypatch.setattr(code_rerank.settings, "code_search_rerank_default", "builtin:cohere")
+    work = {"question_kind": "other"}
+    monkeypatch.setattr(
+        "server.code.domain.index.question_kind.kind_allowed", lambda kind, kinds: True
+    )
+    assert code_rerank._default_rerank(dict(work))[0] == "builtin:cohere"  # off the setting
+    with _serving(_op("code.search"), monkeypatch):
+        assert code_rerank._default_rerank(dict(work)) == ("", 0, 0)
 
 
 async def test_a_read_embeds_its_query_once(search_env, monkeypatch) -> None:

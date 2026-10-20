@@ -311,9 +311,9 @@ call a model reads `reads_llm_free()`:
   spelling-fix and set-expansion embeddings are skipped, so a plain search or pack embeds its query once.
 - `code.search`: no HyDE, model-named concept expansion or query expansion; its memo keeps LLM-free
   answers apart.
-- Reranking: a namespace's, a request's or code search's default reranker still runs when it is a
-  rerank service (`builtin:cohere`, a `LOOM_RERANK_ENDPOINTS_JSON` endpoint), which calls no LLM; a
-  `builtin:openai` one keeps the fused order.
+- Reranking: a reranker is a model call, and an LLM-free read makes only the ones it names. A
+  namespace's `rerank_endpoint` and code search's default (`LOOM_CODE_SEARCH_RERANK_DEFAULT`) do not
+  run; a reranker the request names runs, except `builtin:openai`, which keeps the fused order.
 - `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
   no rerank. Each keeps the deterministic answer it already falls back to.
 - `memory.ask` and `code.ask` answer 409 `PRECONDITION_FAILED` naming the setting when they would

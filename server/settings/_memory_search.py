@@ -55,8 +55,8 @@ class MemorySearchSettings(BaseModel):
     # Finer caps inside a round: LLM calls and vector queries a fallback may
     # spend before it is denied.
     memory_search_fallback_max_llm_calls: int = 2
-    # True: no read op calls an LLM (an ask's synthesis answers 409), and a search skips the
-    # spelling-fix and set-expansion embeddings. Writes and workers still call models.
+    # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
+    # embeddings, and rerank only as named, since a reranker is a model call.
     reads_llm_free: bool = False
     # Vector queries one fallback round may issue before further ones are denied.
     memory_search_fallback_max_vector_queries: int = 12
