@@ -559,7 +559,7 @@ class _MemorySearchHit(BaseModel):
     # the itemised boosts, bounded to the pool (the identifier lift does not
     # add a flat 1.0). After an external reranker it is the score of the rank
     # the row now holds; the row's own is score_components.rank_score_pre_rerank.
-    # For the full per-component decomposition use memory.search_trace.
+    # For the per-component decomposition read score_components (explain=true).
     rank_score: float = 0.0
     # ISO datetime the fact is ABOUT (distinct from valid_at = when it became
     # true), surfaced directly for temporal reasoning. Empty when the fact has

@@ -102,7 +102,7 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                     # A retry row's rerank trail describes the retry's own pool: it joins
                     # after this pool's rerank, so it carries none and the gates leave it
                     # where it lands.
-                    drop_rerank_trail(rh.score_components)
+                    drop_rerank_trail(rh)
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)
             ctx.final_hits = final_hits[: input.top_k]

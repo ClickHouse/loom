@@ -205,6 +205,9 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     retry_row.score_components.update(
         {"rerank_from": 0.0, "rerank_pos": 2.0, "rerank_delta": -2.0, "rerank_external": 1.0}
     )
+    # The retry's own rerank handed it another rank's score.
+    retry_row.score_components["rank_score_pre_rerank"] = retry_row.rank_score
+    retry_row.rank_score = 0.9
 
     async def _judge(query: str, excerpts: list[str]) -> tuple[bool, str]:
         return False, "where does the user work?"
@@ -234,6 +237,7 @@ async def test_a_retrys_rows_carry_no_rerank_position_into_the_gates(
     merged = {h.memory_key: h for h in ctx.final_hits}
     assert set(merged) == {"user_location", "user_employer"}
     assert not {k for k in merged["user_employer"].score_components if k.startswith("rerank_")}
+    assert merged["user_employer"].rank_score == pytest.approx(0.45)  # its own fused score
     assert merged["user_location"].score_components["rerank_from"] == 0.0
 
 
@@ -243,6 +247,7 @@ async def test_a_reranker_that_moved_nothing_leaves_the_floors_order(
 ) -> None:
     """A timeout keeps the fused order; the floor then puts a weak lexical rank 1 last. The
     gates must read what an unreranked search would: the floor's order."""
+    from server.memory.app.search.evidence import _apply_min_similarity_floor
     from server.memory.app.search.verdict import _gate_top_sim, gate_order
 
     weak, strong = _hit("lexical", 0.9), _hit("cosine", 0.5)
@@ -254,8 +259,9 @@ async def test_a_reranker_that_moved_nothing_leaves_the_floors_order(
     ctx = _ctx([weak, strong])
     monkeypatch.setattr("server.memory.app.rerank.rerank", _kept)
     await ranking._run_external_rerank(ctx)
-    weak.score_components["below_floor"] = 1.0
-    floored = [strong, weak]  # the floor's readmit order: kept rows, then fillers
+    block = assemble_context_block(ctx.all_hits, top_k=2)
+    floored = _apply_min_similarity_floor(block, 0.2, top_k=2, mode="readmit")
+    assert [h.memory_key for h in floored] == ["cosine", "lexical"]
     assert gate_order(floored) is floored
     assert _gate_top_sim(gate_order(floored)) == pytest.approx(0.6)
 
@@ -264,6 +270,7 @@ async def test_a_reranker_that_moved_nothing_leaves_the_floors_order(
 async def test_a_row_under_the_floor_stays_last_after_a_real_rerank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from server.memory.app.search.evidence import _apply_min_similarity_floor
     from server.memory.app.search.verdict import _gate_top_sim, gate_order
 
     weak, a, b = _hit("lexical", 0.9), _hit("a", 0.5), _hit("b", 0.4)
@@ -272,10 +279,63 @@ async def test_a_row_under_the_floor_stays_last_after_a_real_rerank(
     order = ["b in s1", "lexical in s1", "a in s1"]
     monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
     await ranking._run_external_rerank(ctx)
-    weak.score_components["below_floor"] = 1.0
-    floored = [b, a, weak]
+    block = assemble_context_block(ctx.all_hits, top_k=3)
+    floored = _apply_min_similarity_floor(block, 0.2, top_k=3, mode="readmit")
+    assert [h.memory_key for h in floored] == ["b", "a", "lexical"]
     assert [h.memory_key for h in gate_order(floored)] == ["a", "b", "lexical"]
     assert _gate_top_sim(gate_order(floored)) == pytest.approx(0.6)
+
+
+@pytest.mark.asyncio
+async def test_a_kept_order_reranker_leaves_a_lifted_chunk_and_its_digest_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The block bounds a parent-boosted chunk against the whole pool, digests included: a
+    reranker that kept the order must leave every score for that bound, so the block comes
+    out exactly as it would without a reranker."""
+
+    def _pool() -> list[_MemorySearchHit]:
+        chunk, fact = _hit("chunk", 1.0), _hit("fact", 0.6)
+        chunk.score_components["chunk_parent_boost"] = 0.4
+        digest = _hit("summary:s1", 0.8)
+        digest.source = "summary"
+        return [chunk, fact, digest]
+
+    async def _kept(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        return candidates
+
+    plain = assemble_context_block(_pool(), top_k=10, bound_component_lifts=True)
+    ctx = _ctx(_pool())
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _kept)
+    await ranking._run_external_rerank(ctx)
+    reranked = assemble_context_block(ctx.all_hits, top_k=10, bound_component_lifts=True)
+    assert [(h.memory_key, h.rank_score) for h in reranked] == [
+        (h.memory_key, h.rank_score) for h in plain
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_pinned_row_below_a_boosted_one_keeps_its_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The mention boost can lift an unpinned row above a pin; the reranker orders the other
+    slots and the pinned row neither moves nor reads as moved."""
+    boosted, pinned, a, b = (
+        _hit("boosted", 0.95),
+        _hit("finding_pr116016", 0.9),
+        _hit("a", 0.5),
+        _hit("b", 0.4),
+    )
+    pinned.score_components["identifier_match"] = 1.0
+
+    async def _reverse(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        return list(reversed(candidates))
+
+    ctx = _ctx([boosted, pinned, a, b])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reverse)
+    await ranking._run_external_rerank(ctx)
+    assert [h.memory_key for h in ctx.all_hits] == ["b", "finding_pr116016", "a", "boosted"]
+    assert pinned.score_components["rerank_delta"] == 0.0
 
 
 @pytest.mark.asyncio

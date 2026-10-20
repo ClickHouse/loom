@@ -164,20 +164,11 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
         return
     ctx.actual_work["external_rerank_used"] = True
     before = list(ctx.all_hits)
-    # Bound the chunk-parent lifts first, as the block does: the scores handed out below go
-    # to whichever row the reranker puts there, and an inflated one would put a plain fact
-    # above the pool's scale. (Not under rrf, whose fused value never carried the boost.)
-    if input.search_mode != "rrf":
-        from server.memory.domain.query_planner import bound_component_lift
-
-        bound_component_lift(ctx.all_hits)
     # An exact identifier match is the answer (`pin_identifier_hits`) and the reranker never
-    # reads the key it may have matched on: pinned rows keep the head, the reranker orders
-    # the rest. With every row pinned there is nothing to pin over.
-    pinned = [h for h in ctx.all_hits if (h.score_components or {}).get("identifier_match")]
-    rest = [h for h in ctx.all_hits if not (h.score_components or {}).get("identifier_match")]
-    if not rest:
-        pinned, rest = [], list(ctx.all_hits)
+    # reads the key it may have matched on: pinned rows keep their slots, the reranker
+    # orders the rows in the others.
+    slots = [i for i, h in enumerate(before) if not h.score_components.get("identifier_match")]
+    rest = [before[i] for i in slots]
     candidates = [
         RerankCandidate(
             memory_key=h.memory_key,
@@ -197,14 +188,27 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     # Order-only reranker (cohere / openai / operator HTTP endpoint): no per-candidate
     # score to blend, so honor its ordering directly. Candidates map back to their hits
     # by identity: extraction writes a key once per session, so a key names several hits.
-    hit_of = {id(c): h for c, h in zip(candidates, rest, strict=True)}
     # Every reranker returns a permutation of its candidates.
-    ordered = pinned + [hit_of[id(c)] for c in reranked]
+    hit_of = {id(c): h for c, h in zip(candidates, rest, strict=True)}
+    ordered = list(before)
+    for i, c in zip(slots, reranked, strict=True):
+        ordered[i] = hit_of[id(c)]
+    if all(a is b for a, b in zip(ordered, before, strict=True)):
+        # Kept order (a timeout, an unreadable reply, a ranking that agrees): nothing moves
+        # and no score changes.
+        ctx.actual_work.update(_record_rerank_trail(before, before, "external"))
+        return
     # The block sorts by rank_score: the pool's own scores, handed out in this order, make
-    # that sort keep it without changing the scores' spread.
-    for h, score in zip(
-        ordered, sorted((o.rank_score for o in ordered), reverse=True), strict=True
-    ):
+    # that sort keep it without changing the scores' spread. A chunk-parent lift can put a
+    # chunk above every fact (up to +0.40); handed to a fact the reranker promotes, it would
+    # leave the pool's scale, so the scores handed out are capped at the best unlifted one.
+    # The rows keep their own lifts for the block's bound, which also counts the digests.
+    unlifted = [o.rank_score for o in ordered if not o.score_components.get("chunk_parent_boost")]
+    cap = max(unlifted) if unlifted and input.search_mode != "rrf" else None
+    handed = sorted(
+        (o.rank_score if cap is None else min(o.rank_score, cap) for o in ordered), reverse=True
+    )
+    for h, score in zip(ordered, handed, strict=True):
         h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
         h.score_components["rank_score"] = score
         h.rank_score = score

@@ -126,15 +126,21 @@ def _anchor_rank_score(similarity: float, pool_floor: float) -> float:
     return pool_floor - 1e-6 - (1.0 - float(similarity))
 
 
-# The score_components a rerank stamps on each hit, beside `rerank_<source>`.
-RERANK_TRAIL = ("rerank_from", "rerank_pos", "rerank_delta")
-RERANK_SOURCES = ("external",)
+# The score_components a rerank stamps on each hit (`_record_rerank_trail`).
+RERANK_TRAIL = ("rerank_from", "rerank_pos", "rerank_delta", "rerank_external")
 
 
-def drop_rerank_trail(components: dict[str, float]) -> None:
-    """Remove a rerank's trail from a hit's components (a row that joins another pool)."""
-    for key in (*RERANK_TRAIL, *(f"rerank_{s}" for s in RERANK_SOURCES)):
-        components.pop(key, None)
+def drop_rerank_trail(hit: Any) -> None:
+    """Take a rerank's marks off a hit that joins another pool: the trail, and the score
+    of the rank it held there (its own fused score comes back)."""
+    from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
+
+    comps = hit.score_components
+    for key in RERANK_TRAIL:
+        comps.pop(key, None)
+    if RANK_SCORE_PRE_RERANK in comps:
+        hit.rank_score = float(comps.pop(RANK_SCORE_PRE_RERANK))
+        comps["rank_score"] = hit.rank_score
 
 
 def _record_rerank_trail(before: list[Any], after: list[Any], source: str) -> dict[str, float]:
@@ -156,7 +162,9 @@ def _record_rerank_trail(before: list[Any], after: list[Any], source: str) -> di
             max_move = max(max_move, abs(delta))
         h.score_components = {
             **(getattr(h, "score_components", None) or {}),
-            **dict(zip(RERANK_TRAIL, (float(frm), float(i), float(delta)), strict=True)),
+            "rerank_from": float(frm),
+            "rerank_pos": float(i),
+            "rerank_delta": float(delta),
             f"rerank_{source}": 1.0,
         }
     return {"rerank_moved": float(moved), "rerank_max_move": float(max_move)}
