@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from server.memory.domain.conflict_resolution import PROMPT_VERSION
 from tests.integration._resources import unique_org
 
 NS = "resolver"
@@ -450,6 +451,10 @@ async def test_two_rows_judged_at_once_retire_their_shared_peer_once(
     # One record of the retirement, and one versioned write of it.
     (record,) = await _audit(ch, org, "memory.auto_supersede")
     assert [e["memory_id"] for e in record["retired"]] == [rows["office_city"]["id"]]
+    # What decided it rides the entry, for the Undo to show.
+    (entry,) = record["retired"]
+    assert entry["verdict"] == "update" and float(entry["confidence"]) >= 0.98
+    assert entry["model"] and entry["prompt_version"] == PROMPT_VERSION
     # Distinct versions: the ReplacingMergeTree keeps a repeat of one until a merge.
     versions = await ch.query_all(
         "SELECT uniqExact(version) AS n FROM loom.memory_versions WHERE org = {org:String}"
@@ -1832,12 +1837,12 @@ async def test_a_pin_racing_a_retirement_waits_for_the_key_and_ends_served(
     real = resolver._retire
     pins: list[asyncio.Task[Any]] = []
 
-    async def retire_beside_a_pin(*a: Any) -> Any:
+    async def retire_beside_a_pin(*a: Any, **kw: Any) -> Any:
         pin = MemorySetInput(org=org, namespace=NS, **ident, value="The office is in Paris")
         pins.append(asyncio.create_task(handle_memory_pin(pin)))
         await asyncio.sleep(0.5)
         assert not pins[0].done(), "the pin waits for the key's lock"
-        return await real(*a)
+        return await real(*a, **kw)
 
     monkeypatch.setattr(resolver, "_retire", retire_beside_a_pin)
     assert (await run_pass())["retired"] == 1

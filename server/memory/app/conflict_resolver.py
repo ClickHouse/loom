@@ -249,11 +249,15 @@ class Retired:
     agent: str
 
 
-async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | None:
+async def _retire(
+    org: str, namespace: str, row: Any, peer: Any, *, why: Mapping[str, str]
+) -> Retired | None:
     """Supersede `peer` (stated first) behind the judged row `row`; what `_after_retire`
     records and follows, or None. The record and the follow are owed to the repair
     before the supersede commits (FOLLOW_OWED, acted on only while the loser is retired
-    behind the winner) and resolved once both land. No intent, no retirement."""
+    behind the winner) and resolved once both land. No intent, no retirement. `why`: the
+    verdict, its confidence, the model and the prompt version, kept on each retired entry
+    so an Undo shows what decided it."""
     from server.memory.app.auto_resolution import CONFLICT_RESOLVER, retired_entry
     from server.memory.app.conflicts import apply_refines
     from server.memory.app.projection_failures import FOLLOW_OWED, record_projection_failure
@@ -262,7 +266,11 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
     loser_sha = str(loser.content_sha256 or "")
     pair = (str(loser.memory_id), str(winner.memory_id))
     entry = retired_entry(
-        loser, superseded_by=pair[1], superseded_by_key=str(winner.memory_key), label=cr.UPDATE
+        loser,
+        superseded_by=pair[1],
+        superseded_by_key=str(winner.memory_key),
+        label=cr.UPDATE,
+        **why,
     )
     intent = await record_projection_failure(
         org=org,
@@ -287,7 +295,7 @@ async def _retire(org: str, namespace: str, row: Any, peer: Any) -> Retired | No
         skip_peer=lambda row: str(row.content_sha256 or "") != loser_sha,
         reason=CONFLICT_RESOLVER,
     )
-    retired = [{**r, "label": cr.UPDATE} for r in into.get(CONFLICT_RESOLVER, [])]
+    retired = [{**r, "label": cr.UPDATE, **why} for r in into.get(CONFLICT_RESOLVER, [])]
     if not retired:
         # Nothing tracked does not mean nothing landed (a lost response): the head says.
         head = await _head(org, pair[0])
@@ -447,12 +455,16 @@ async def _settle_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
+    *,
+    why: Mapping[str, str],
 ) -> dict[str, Any] | None:
     """Act on one pair after re-reading both rows; what was done ({"action": ...}, for
     the audit row) when something changed, else None. A key another write holds past
     the lock's wait raises PreconditionFailedError."""
     async with _pair_locks(org, namespace, row, peer):
-        taken, retired = await _settle_locked_pair(org, namespace, row, peer, action, counts)
+        taken, retired = await _settle_locked_pair(
+            org, namespace, row, peer, action, counts, why=why
+        )
     if retired is not None:
         await _after_retire(org, namespace, retired)
     return taken
@@ -465,6 +477,8 @@ async def _settle_locked_pair(
     peer: Mapping[str, Any],
     action: str,
     counts: Counts,
+    *,
+    why: Mapping[str, str],
 ) -> tuple[dict[str, Any] | None, Retired | None]:
     """Act on one pair's verdict as both rows stand under their key locks."""
     # Known gap, by design: an unconditional memory.set takes no lock, so one landing on
@@ -505,7 +519,7 @@ async def _settle_locked_pair(
             action = cr.FLAG  # the order does not show the judged row is newer: a person decides
     retired = None
     if action == cr.RETIRE:
-        retired = await _retire(org, namespace, row, head)
+        retired = await _retire(org, namespace, row, head, why=why)
         done = retired is not None
     elif action == cr.FLAG:
         done = await _flag(org, row, head)
@@ -823,7 +837,13 @@ async def _act_on_verdicts(
                 # stays as it is.
                 counts.skipped_no_action += 1
                 continue
-            taken = await _settle_pair(org, namespace, row, peer, action, counts)
+            why = {
+                "verdict": v.verdict,
+                "confidence": str(v.confidence),
+                "model": model,
+                "prompt_version": cr.PROMPT_VERSION,
+            }
+            taken = await _settle_pair(org, namespace, row, peer, action, counts, why=why)
             if taken is not None:
                 acted.append(
                     {"peer_id": str(peer["memory_id"]), **taken}

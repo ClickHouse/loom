@@ -20,6 +20,9 @@ from server.memory.domain import conflict_resolution as cr
 from server.memory.store import conflict_resolver as queue
 from server.settings import Settings, settings
 
+# What decided a retirement, as `_act_on_verdicts` passes it.
+_WHY = {"verdict": "update", "confidence": "0.99", "model": "m", "prompt_version": "v3"}
+
 
 @pytest.fixture(autouse=True)
 def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -505,8 +508,9 @@ def row_env(monkeypatch: pytest.MonkeyPatch) -> NS:
     async def head(org: str, mid: str) -> Any:
         return e.heads.get(mid)
 
-    async def retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
+    async def retire(org: str, namespace: str, row: Any, peer: Any, *, why: Any) -> Any:
         e.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
+        e.why = why
         return resolver.Retired("f1", [], "a")
 
     def acts(action: str) -> Any:
@@ -911,7 +915,7 @@ async def test_a_cancellation_while_acting_lets_the_act_and_its_audit_finish(
 ) -> None:
     acting = asyncio.Event()
 
-    async def slow_retire(org: str, namespace: str, row: Any, peer: Any) -> Any:
+    async def slow_retire(org: str, namespace: str, row: Any, peer: Any, **kw: Any) -> Any:
         acting.set()
         await asyncio.sleep(0.05)
         row_env.acted.append((cr.RETIRE, row.memory_id, peer.memory_id))
@@ -1181,9 +1185,10 @@ async def test_the_follow_is_owed_before_the_supersede_and_settled_after_it(
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
     retire_env.heads["m1"] = late  # not retired: still live as judged
-    done = await resolver._retire("o", "ns", current, late)
+    done = await resolver._retire("o", "ns", current, late, why=_WHY)
     assert (done is not None) is retires
     if done is not None:
+        assert done.retired and all(e.items() >= _WHY.items() for e in done.retired)
         await resolver._after_retire("o", "ns", done)
     await intent_marks.drain()  # the batched mark
     assert retire_env.log[0] == ("intent", "triples_follow_owed", [["m1", "m2"]])
@@ -1196,7 +1201,9 @@ async def test_retirements_intents_are_resolved_in_one_batched_mark(retire_env: 
     for loser, winner in (("m1", "m2"), ("m3", "m4"), ("m5", "m6")):
         late = _mem(loser, content_sha256=f"sha-{loser}")
         current = _mem(winner, session_id="s2", content_sha256=f"sha-{winner}")
-        await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
+        await resolver._after_retire(
+            "o", "ns", await resolver._retire("o", "ns", current, late, why=_WHY)
+        )
     assert not [x for x in retire_env.log if x[0] == "resolved"], "none before the flush"
     await intent_marks.drain()
     resolved = [x for x in retire_env.log if x[0] == "resolved"]
@@ -1207,7 +1214,9 @@ async def test_a_record_that_failed_leaves_the_intent_with_its_entry(retire_env:
     retire_env.record_ok = False
     late = _mem("m1", content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur", memory_key="office_town")
-    await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
+    await resolver._after_retire(
+        "o", "ns", await resolver._retire("o", "ns", current, late, why=_WHY)
+    )
     assert ("resolved", ["f1"]) not in retire_env.log, "the repair writes the record"
     assert retire_env.intent_payload["reason"] == "conflict_resolver"
     (entry,) = retire_env.intent_payload["retired"]
@@ -1223,7 +1232,9 @@ async def test_a_retirement_behind_the_newer_row_of_the_pair(retire_env: NS) -> 
     # The peer, an older statement, retires behind the judged row.
     late = _mem("m1", valid_at=datetime(2024, 1, 1), content_sha256="sha-late")
     current = _mem("m2", session_id="s2", content_sha256="sha-cur")
-    await resolver._after_retire("o", "ns", await resolver._retire("o", "ns", current, late))
+    await resolver._after_retire(
+        "o", "ns", await resolver._retire("o", "ns", current, late, why=_WHY)
+    )
     assert seen["new_memory_id"] == "m2" and seen["expected_sha256"] == "sha-cur"
     assert [p.memory_id for p in seen["refined_peers"]] == ["m1"]
     assert seen["skip_peer"](NS(content_sha256="sha-late")) is False
