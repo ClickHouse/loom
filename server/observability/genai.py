@@ -117,6 +117,8 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "compact",
         "title",
         "profile_fold",
+        # The sampled retrieval judge: the query and the excerpts it returned.
+        "retrieval_judge",
         "code_answer",
         "ask_synthesize",
         "ask_synthesize_cheap",

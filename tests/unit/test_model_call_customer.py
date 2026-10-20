@@ -1054,7 +1054,7 @@ def test_the_retrieval_judge_names_the_judged_org(metered, monkeypatch, caplog) 
     }
     asyncio.run(retrieval_judge._judge_one(item))
     # The prompt is the org's content, so the call is the org's, named as the judge.
-    assert seen == [{"X-Customer": "acme", "X-Feature": "worker.retrieval_judge"}]
+    assert seen == [{"X-Customer": "acme", "X-Feature": "retrieval_judge"}]
     _no_refusal_logged(caplog)
 
 
