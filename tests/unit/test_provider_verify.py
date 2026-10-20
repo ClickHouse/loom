@@ -61,48 +61,67 @@ async def test_complete_verified_target_returns_logical_count(verification):
 _KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 
 
+def _emptied_rows(texts: list[str]) -> list[list[dict]]:
+    """The two reads of one page: the target's empty ordinals, then their snapshot text.
+    The fixture's table has two vector columns; the first is the one left empty."""
+    ordinals = [4 + i for i in range(len(texts))]
+    return [
+        [{"ordinal": o, "empty": [True, False]} for o in ordinals],
+        [
+            {"ordinal": o, "text": t, "real": [True, True], "live": True}
+            for o, t in zip(ordinals, texts, strict=True)
+        ],
+    ]
+
+
 @pytest.mark.asyncio
 async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verification):
     args, client, result = verification
     result["emptied"] = 2
-    client.query_all.return_value = [{"text": f"key {_KEY}"}, {"text": f"also {_KEY}"}]
+    client.query_all.side_effect = _emptied_rows([f"key {_KEY}", f"also {_KEY}"])
     count = await verify_reembedded_target(
         *args, model="target", dimensions=3, passage_text="content", ch=client
     )
     assert count == 3
-    sql = client.query_all.await_args.args[0]
-    # Only the emptied rows' text is read: a semi-join, no join of the two tables.
-    assert "s.`content` AS text" in sql and "WHERE empty(`embedding`)" in sql
-    assert "JOIN" not in sql
-
-
-@pytest.mark.asyncio
-async def test_the_emptied_text_is_read_a_page_at_a_time(verification, monkeypatch):
-    from server.insights.store import provider_verify
-
-    monkeypatch.setattr(provider_verify, "_EMPTIED_PAGE", 2)
-    args, client, result = verification
-    result["emptied"] = 3
-    client.query_all.side_effect = [
-        [{"ordinal": 4, "text": f"key {_KEY}"}, {"ordinal": 9, "text": f"key {_KEY}"}],
-        [{"ordinal": 12, "text": f"key {_KEY}"}],
-    ]
-    count = await verify_reembedded_target(
-        *args, model="target", dimensions=3, passage_text="content", ch=client
-    )
-    assert count == 3
-    assert [c.args[1]["after"] for c in client.query_all.await_args_list] == [-1, 9]
+    target_sql, source_sql = (c.args[0] for c in client.query_all.await_args_list)
+    # A page of the target's empty ordinals, then the snapshot text of those only.
+    assert "_loom_rebuild_ordinal > {after:UInt64}" in target_sql and "LIMIT" in target_sql
+    assert "IN {ordinals:Array(UInt64)}" in source_sql and "`content` AS text" in source_sql
+    assert "JOIN" not in target_sql + source_sql
+    assert client.query_all.await_args_list[1].args[1] == {"ordinals": [4, 5]}
 
 
 @pytest.mark.asyncio
 async def test_an_emptied_plain_passage_fails_verification(verification):
     args, client, result = verification
     result["emptied"] = 2
-    client.query_all.return_value = [{"text": f"key {_KEY}"}, {"text": "a plain turn"}]
+    client.query_all.side_effect = _emptied_rows([f"key {_KEY}", "a plain turn"])
     with pytest.raises(ValueError, match="failed verification"):
         await verify_reembedded_target(
             *args, model="target", dimensions=3, passage_text="content", ch=client
         )
+
+
+@pytest.mark.asyncio
+async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monkeypatch):
+    from server.insights.store import provider_verify
+
+    monkeypatch.setattr(provider_verify, "_EMPTIED_PAGE", 2)
+    args, client, result = verification
+    result["emptied"] = 3
+    first, first_text = _emptied_rows([f"key {_KEY}", f"key {_KEY}"])
+    client.query_all.side_effect = [
+        first,
+        first_text,
+        [{"ordinal": 12, "empty": [True, False]}],
+        [{"ordinal": 12, "text": f"key {_KEY}", "real": [True, True], "live": True}],
+    ]
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, passage_text="content", ch=client
+    )
+    assert count == 3
+    afters = [c.args[1].get("after") for c in client.query_all.await_args_list]
+    assert afters == [0, None, 5, None]
 
 
 @pytest.mark.asyncio

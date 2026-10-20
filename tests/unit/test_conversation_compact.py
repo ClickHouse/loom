@@ -891,3 +891,39 @@ def test_a_saved_and_a_credential_turn_both_stay_live(monkeypatch) -> None:
         params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
     ]
     assert tombstoned == [["m0", "m3", "m4", "m5"]]
+
+
+@pytest.mark.parametrize("held", ["saved", "credential"])
+def test_a_window_of_only_held_turns_has_nothing_to_compact(monkeypatch, held) -> None:
+    """Every turn before the recent ones is saved, or reads as a credential: none can be
+    summarised, so nothing is (not `already-compacted`: there is no summary)."""
+    import server.core.ch
+    import server.llm.client
+
+    key = "sk-" + "proj-" + "Ab3" * 12
+    rows = [
+        {
+            "msg_id": f"m{i}",
+            "role": "user",
+            "content": f"my key is {key}" if held == "credential" and i < 4 else f"turn {i}",
+            "ts": T0 + timedelta(seconds=i),
+            "metadata": "{}",
+            "user_id": "alice",
+            "run_id": "-",
+            "is_saved": held == "saved" and i < 4,
+        }
+        for i in range(5)
+    ]
+    fake = _FakeCH(rows)
+    llm = _FakeLLM()
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1, min_to_compact=2
+            )
+        )
+    )
+    assert (out.compacted, out.reason) == (False, "nothing-to-compact")
+    assert llm.prompts == [] and fake.inserted == [] and fake.executed == []

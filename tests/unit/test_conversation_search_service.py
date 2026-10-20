@@ -13,6 +13,7 @@ from server.knowledge.app.conversation_search import (
     ConversationVectorQuery,
     vector_search,
 )
+from server.memory.domain.sensitivity import HELD_MARGIN
 
 
 class StubCH:
@@ -219,7 +220,7 @@ async def test_vector_search_holds_back_a_row_whose_text_reads_as_a_credential()
 async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credential(
     monkeypatch,
 ) -> None:
-    """Twice the page is read, so a held-back turn does not leave the page short."""
+    """Spare rows are read, so a held-back turn does not leave the page short."""
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.app import conversations as h
     from server.knowledge.store import conversations as conversation_repo
@@ -255,7 +256,7 @@ async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credenti
         saved_only=False,
     )
     assert [hit.msg_id for hit in out.hits] == ["m2", "m3"]
-    assert limits == [4]
+    assert limits == [2 + HELD_MARGIN]
 
 
 @pytest.mark.asyncio
@@ -311,3 +312,31 @@ async def test_a_bounded_scope_rides_the_vector_statement() -> None:
     sql, params = ch.query_all_calls[0]
     assert "user_id = {scope_uid:String}" in sql
     assert params["scope_uid"] == "u-1"
+
+
+@pytest.mark.asyncio
+async def test_a_thread_list_that_asks_no_last_turn_does_not_read_one(monkeypatch) -> None:
+    """`fields` without the agent, role, excerpt or count skips the keyed read."""
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+
+    asked: dict[str, Any] = {}
+
+    async def recent(*a, **k):
+        asked.update(k)
+        return []
+
+    async def titles(*a, **k):
+        return {}
+
+    monkeypatch.setattr(conversation_repo, "recent_threads", recent)
+    monkeypatch.setattr(conversation_repo, "thread_titles", titles)
+    await h.handle_conversation_threads(
+        ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=["title"])
+    )
+    assert (asked["count_turns"], asked["last_turn"]) == (False, False)
+    await h.handle_conversation_threads(
+        ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=["last_role"])
+    )
+    assert (asked["count_turns"], asked["last_turn"]) == (False, True)

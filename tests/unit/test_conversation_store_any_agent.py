@@ -114,7 +114,10 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     ch = StubCH(
         [
             [{"thread_id": "t-1", "msg_count": 5}, {"thread_id": "t-2", "msg_count": 2}],
-            [{"thread_id": "t-1", "n": 4}],
+            [
+                {"thread_id": "t-1", "n": 4, "last_turn": ("bot", "user", "hi")},
+                {"thread_id": "t-2", "n": 2, "last_turn": ("bot", "user", "hi")},
+            ],
         ]
     )
     rows = await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
@@ -124,8 +127,39 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     assert "thread_id IN {tids:Array(String)}" in counted
     assert "toIntervalDay" not in counted
     assert ch.calls[1][1]["tids"] == ["t-1", "t-2"]
-    # A thread the count answers for takes its distinct count; one it does not keeps its own.
     assert [(r["thread_id"], r["msg_count"]) for r in rows] == [("t-1", 4), ("t-2", 2)]
+    assert rows[0]["last_agent"] == "bot" and rows[0]["last_content"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_a_thread_gone_from_the_keyed_read_is_left_out() -> None:
+    # Its last live turn was deleted between the two statements.
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}, {"thread_id": "t-2", "msg_count": 2}],
+            [{"thread_id": "t-1", "n": 4, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
+    rows = await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
+    assert [r["thread_id"] for r in rows] == ["t-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_thread_list_that_asks_for_no_turn_or_count_is_one_statement() -> None:
+    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}]])
+    rows = await conversation_repo.recent_threads(
+        "o", "ns", window_days=30, limit=10, count_turns=False, last_turn=False, ch=ch
+    )
+    assert len(ch.calls) == 1
+    assert rows == [
+        {
+            "thread_id": "t-1",
+            "msg_count": 5,
+            "last_agent": "",
+            "last_role": "",
+            "last_content": "",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -149,7 +183,12 @@ async def test_a_read_across_agents_orders_two_turns_that_tie_on_time_and_id() -
 async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
     # The keyed read still runs, for the whole last turn the listing checks for a
     # credential, but counts raw rows and the page keeps the window's count.
-    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}], [{"thread_id": "t-1", "n": 9}]])
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}],
+            [{"thread_id": "t-1", "n": 9, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
     rows = await conversation_repo.recent_threads(
         "o", "ns", window_days=30, limit=10, count_turns=False, ch=ch
     )
@@ -235,7 +274,12 @@ async def test_a_shared_turns_first_copy_is_the_same_row_on_every_read() -> None
 async def test_the_thread_list_counts_one_agents_rows_as_its_opened_thread_does() -> None:
     # conversation.get counts a named agent's rows as stored (count_thread_msgs); the list
     # counts them the same way, so a raced double append reads N+1 in both.
-    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}], [{"thread_id": "t-1", "n": 5}]])
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}],
+            [{"thread_id": "t-1", "n": 5, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
     await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, agent="bot", ch=ch)
     counted = ch.calls[1][0]
     assert "count() AS n" in counted
@@ -246,7 +290,12 @@ async def test_the_thread_list_counts_one_agents_rows_as_its_opened_thread_does(
 async def test_the_thread_list_pages_past_its_first_page() -> None:
     """`offset` skips the threads earlier pages showed, in the same most-recent-first
     order, so a namespace's every thread in the window can be listed page by page."""
-    ch = StubCH([[{"thread_id": "t-3", "msg_count": 1}], [{"thread_id": "t-3", "n": 1}]])
+    ch = StubCH(
+        [
+            [{"thread_id": "t-3", "msg_count": 1}],
+            [{"thread_id": "t-3", "n": 1, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
     rows = await conversation_repo.recent_threads(
         "o", "ns", window_days=30, limit=2, offset=2, ch=ch
     )

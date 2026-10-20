@@ -1046,15 +1046,16 @@ async def recent_threads(
     offset: int = 0,
     agent: str | None = None,
     count_turns: bool = True,
+    last_turn: bool = True,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window. Most recent first, ties
-    by thread_id; `offset` skips that many. Each carries its message count, first/last seen
-    and the latest message's agent (`last_agent`), role and whole content
-    (`last_content`, read for the page's threads only, so the listing can check it for a
-    credential before it cuts the excerpt). `count_turns`: the message count is the thread's
-    distinct turns, as an opened thread shows; off, the window's raw row count (for a
-    caller that does not read the count)."""
+    by thread_id; `offset` skips that many. Each carries its message count and first/last
+    seen. `count_turns`: the message count is the thread's distinct turns, as an opened
+    thread shows; off, the window's raw row count (for a caller that does not read the
+    count). `last_turn`: the latest message's agent (`last_agent`), role and whole content
+    (`last_content`, so the listing can check it for a credential before it cuts the
+    excerpt); off, they are empty. With both off the page is one statement."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -1063,8 +1064,6 @@ async def recent_threads(
         "lim": limit,
         "off": offset,
     }
-    # The aggregate is aliased `last_agent`, not `agent`: the analyzer would resolve a bare
-    # `agent` in WHERE to the alias and reject the statement (code 184) under an agent filter.
     agent_clause = ""
     if agent:
         agent_clause = " AND agent = {agent:String}"
@@ -1073,11 +1072,9 @@ async def recent_threads(
         f"""
         SELECT
             thread_id,
-            argMax(agent, ts)                                AS last_agent,
             count()                                          AS msg_count,
             min(ts)                                          AS first_seen,
-            max(ts)                                          AS last_seen,
-            argMax(toString(role), ts)                       AS last_role
+            max(ts)                                          AS last_seen
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -1090,18 +1087,21 @@ async def recent_threads(
         """,
         params=params,
     )
-    if not rows:
-        return rows
+    blank = {"last_agent": "", "last_role": "", "last_content": ""}
+    if not rows or not (count_turns or last_turn):
+        return [{**r, **blank} for r in rows]
     # The count an opened thread shows (each thread whole, one per turn however many agents
-    # logged it) and the whole last turn, for the page's threads only: an exact distinct
-    # count, or every thread's last turn, over the whole window would hold every turn's key
-    # or text in memory to rank threads it then drops. The last turn's role and text come
-    # from one argMax, `msg_id` breaking a `ts` tie, so they name the same turn.
+    # logged it) and the last turn, for the page's threads only: an exact distinct count,
+    # or every thread's last turn, over the whole window would hold every turn's key or
+    # text in memory to rank threads it then drops. The last turn's agent, role and text
+    # come from one argMax, `msg_id` breaking a `ts` tie, so they name the same turn.
     per_thread = "count()" if agent or not count_turns else f"uniqExact({TURN})"
+    turn = (
+        ", argMax((agent, toString(role), content), (ts, msg_id)) AS last_turn" if last_turn else ""
+    )
     counted = await ch.query_all(
         f"""
-        SELECT thread_id, {per_thread} AS n,
-               argMax((toString(role), content), (ts, msg_id)) AS last_turn
+        SELECT thread_id, {per_thread} AS n{turn}
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -1115,12 +1115,15 @@ async def recent_threads(
     by_thread = {r["thread_id"]: r for r in counted}
     out = []
     for r in rows:
-        page = by_thread.get(r["thread_id"], {})
-        role, content = page.get("last_turn") or (r.get("last_role", ""), "")
+        page = by_thread.get(r["thread_id"])
+        if page is None:
+            continue  # its last live turn was deleted between the two statements
+        agent_of, role, content = page["last_turn"] if last_turn else ("", "", "")
         out.append(
             {
                 **r,
-                "msg_count": page.get("n", r["msg_count"]) if count_turns else r["msg_count"],
+                "msg_count": page["n"] if count_turns else r["msg_count"],
+                "last_agent": agent_of,
                 "last_role": role,
                 "last_content": content,
             }

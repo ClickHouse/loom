@@ -169,18 +169,8 @@ def test_threads_aggregate_alias_does_not_shadow_the_agent_filter(
     ts = datetime(2026, 9, 15, 6, 0)
     ch = _FakeCH(
         all_returns=[
-            [
-                {
-                    "thread_id": "t1",
-                    "last_agent": "a",
-                    "msg_count": 2,
-                    "first_seen": ts,
-                    "last_seen": ts,
-                    "last_role": "user",
-                    "last_content_excerpt": "hi",
-                }
-            ],
-            [{"thread_id": "t1", "n": 2}],
+            [{"thread_id": "t1", "msg_count": 2, "first_seen": ts, "last_seen": ts}],
+            [{"thread_id": "t1", "n": 2, "last_turn": ("a", "user", "hi")}],
             [{"thread_id": "t1", "title": "Titled"}],
         ]
     )
@@ -189,7 +179,9 @@ def test_threads_aggregate_alias_does_not_shadow_the_agent_filter(
         handle_conversation_threads(ConversationThreadsInput(org="o", namespace="ns", agent="a"))
     )
     sql, params = ch.calls[0]
-    assert "AS last_agent" in sql and " AS agent," not in sql
+    keyed = ch.calls[1][0]
+    # The last turn's agent rides one aliased tuple, never an `agent` alias.
+    assert "AS last_turn" in keyed and " AS agent" not in sql + keyed
     assert "AND agent = {agent:String}" in sql and params["agent"] == "a"
     assert out.threads[0].agent == "a" and out.threads[0].title == "Titled"
 

@@ -681,27 +681,26 @@ leg returns it. The other reads that could serve its value follow three rules:
 
 Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A verbatim chunk in `loom.memory_chunks` (a
-conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.set` value,
-a chunk `memory.import_evidence` writes) whose text reads as a credential is stored as
-written with no vector, and its text is never sent to the embedder; every chunk read that
-ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns it. A
-session digest whose text reads as a credential is likewise written without a vector, and
-so is a `conversation.append` turn: the message is stored as written in
-`loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing embedding
-row keeps the turn out of vector search. `conversation.save_message` answers
+conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.set`
+value, a chunk `memory.import_evidence` writes) whose text reads as a credential is stored
+as written with no vector, and its text is never sent to the embedder; every chunk read
+that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns
+it. A session digest whose text reads as a credential is likewise written without a
+vector, and so is a `conversation.append` turn: the message is stored as written in
+`loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing
+embedding row keeps the turn out of vector search. `conversation.save_message` answers
 `reason: "reads_as_credential"` for such a turn, so the saved search never holds it.
 `conversation.compact` leaves such a turn out of its window: it stays live and is never
-sent to the summarizer. A summary that reads as a credential anyway is refused
-(`reason: "summary-reads-as-credential"`) and tombstones nothing, as when the summary cannot be
-embedded. A provider rebuild stages a chunk, digest or
-turn embedding that reads as a credential without a vector, and its verification reads
-the text of every row left empty and accepts those that read as a credential.
-`loom reembed` keeps a conversation turn that reads as a credential on its old model, which
-search does not read, until `--delete-old` removes it (a memory row's vector follows its
-sensitivity label); `loom reembed --in-database` runs the embedding inside
-ClickHouse, cannot check the text, and re-embeds it. Chunks, digests and turn embeddings
-that an earlier build embedded keep their vector, so the reads that serve passages check
-their text too:
+sent to the summarizer. A summary that reads as a credential anyway is refused (`reason:
+"summary-reads-as-credential"`) and tombstones nothing, as when the summary cannot be
+embedded. A provider rebuild stages a chunk, digest or turn embedding that reads as a
+credential without a vector, and its verification reads the text of every row left empty
+and accepts those that read as a credential. `loom reembed` keeps a conversation turn that
+reads as a credential on its old model, which search does not read, until `--delete-old`
+removes it (a memory row's vector follows its sensitivity label); `loom reembed
+--in-database` runs the embedding inside ClickHouse, cannot check the text, and re-embeds
+it. Chunks, digests and turn embeddings that an earlier build embedded keep their vector,
+so the reads that serve passages check their text too:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
   its model and the context pack built from search), the chunks `memory.ask` injects for an
@@ -728,7 +727,8 @@ their text too:
 Other raw text is served to readers of the namespace, or sent to a model, as it is: a
 caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
 its own text, not by the rows it holds), the session digests `memory.digests` lists (their
-summary text; key facts that read as a credential are left out), what the session-summary
+summary text; key facts that read as a credential are left out) and the digest lines of
+the runs manifest, what the session-summary
 draft (the conversation turns), the period-digest draft and the outcome judge (session
 digest text) send their model, `memory.recall`'s raw turns, a title a caller set with
 `conversation.create` or `conversation.update` as `conversation.get` serves it, and a
@@ -741,25 +741,25 @@ Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
 The detector runs on `memory.set`, `memory.bulk_set`, `memory.update` and extraction when
-`LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`detector_text`): each
-key and scalar of the stored JSON on its own line, so a token after a newline, or a quoted
-password, keeps the word boundary it matches on, and a secret held in a key is seen. Lines
-are joined by a separator no pattern crosses, so two scalars never read as one: a config
-object (`{"password": "required"}`, a form label `Password:` before the next key, a list of
-numbers) reads as the stored JSON always did. Text that has no level of its own, or carries
-one a later sweep may not have set yet, is checked whatever the setting (`reads_high`, which
-also reads text holding JSON, such as a chunk of an object value, with its string escapes
-undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
-`bodies: "source"`, the observations `observe_extract` sends its model, the entity
-extractor's input, the existing memories an extraction prompt shows, the rows
-`memory.consolidate` and the profile fold send their models, a session digest's key
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`detector_text`):
+each key and scalar of the stored JSON on its own line, so a token after a newline, or a
+quoted password, keeps the word boundary it matches on, and a secret held in a key is
+seen. Lines are joined by a separator no pattern crosses, so two scalars never read as
+one: a config object (`{"password": "required"}`, a form label `Password:` before the next
+key, a list of numbers) reads as the stored JSON always did. Text that has no level of its
+own, or carries one a later sweep may not have set yet, is checked whatever the setting
+(`reads_high`, which also reads text holding JSON, such as a chunk of an object value,
+with its string escapes undone): `memory.export_evidence` (chunks, and digests with their
+key facts decoded), `bodies: "source"`, the observations `observe_extract` sends its
+model, the entity extractor's input, the existing memories an extraction prompt shows, the
+rows `memory.consolidate` and the profile fold send their models, a session digest's key
 facts when written, listed by `memory.digests` or read by the outcome judge, and the
-chunks, digests and turns above when written and when served. The
-`sensitivity_sweep` worker (on, daily) labels memory rows from paths that skip it, every high shape
-counting as `credential` for its default shape filter: a new version per row and, for
-`high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
-unlabelled row that holds a credential is embedded like any other, so search serves it, and
-`memory.ask` and the conflict judge can send it to their models.
+chunks, digests and turns above when written and when served. The `sensitivity_sweep`
+worker (on, daily) labels memory rows from paths that skip it, every high shape counting
+as `credential` for its default shape filter: a new version per row and, for `high`,
+tombstoned embedding rows and entity vectors. Until the sweep labels it, an unlabelled row
+that holds a credential is embedded like any other, so search serves it, and `memory.ask`
+and the conflict judge can send it to their models.
 
 ## Audit log
 

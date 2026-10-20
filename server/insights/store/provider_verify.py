@@ -62,24 +62,34 @@ async def _plain_emptied(
     client: _CHClient,
 ) -> int:
     """How many of the rows the rebuild left empty hold text that does not read as a
-    credential. Only those rows' text is read: a semi-join on the target's empty ordinals,
-    paged by ordinal, so neither table is joined whole."""
-    active = " AND isNull(s.tombstoned_at)" if "tombstoned_at" in schema.columns else ""
-    emptied = " OR ".join(
-        f"(s.{_ORDINAL} IN (SELECT {_ORDINAL} FROM loom.{names.target} FINAL"
-        f" WHERE empty({_identifier(c)})) AND arrayExists(x -> x != 0, s.{_identifier(c)}))"
-        for c in columns
-    )
-    plain, after = 0, -1
+    credential. A page of the target's empty ordinals, then the snapshot's text for those
+    ordinals only: neither table is joined, and no page reads past its own ordinals."""
+    # The `size0` subcolumn: the page reads the arrays' lengths, never the vectors.
+    empty = ", ".join(f"{_identifier(c)}.size0 = 0" for c in columns)
+    real = ", ".join(f"arrayExists(x -> x != 0, {_identifier(c)})" for c in columns)
+    live = "isNull(tombstoned_at)" if "tombstoned_at" in schema.columns else "1"
+    plain, after = 0, 0
     while True:
         page = await client.query_all(
-            f"SELECT s.{_ORDINAL} AS ordinal, s.{_identifier(passage_text)} AS text"
-            f" FROM loom.{names.snapshot} AS s"
-            f" WHERE s.{_ORDINAL} > {{after:Int64}} AND ({emptied}){active}"
-            f" ORDER BY s.{_ORDINAL} LIMIT {{page:UInt32}}",
+            f"SELECT {_ORDINAL} AS ordinal, [{empty}] AS empty FROM loom.{names.target} FINAL"
+            f" WHERE {_ORDINAL} > {{after:UInt64}} AND has([{empty}], true)"
+            f" ORDER BY {_ORDINAL} LIMIT {{page:UInt32}}",
             {"after": after, "page": _EMPTIED_PAGE},
         )
-        plain += sum(1 for r in page if not reads_high(str(r["text"])))
+        if page:
+            emptied = {int(r["ordinal"]): r["empty"] for r in page}
+            sources = await client.query_all(
+                f"SELECT {_ORDINAL} AS ordinal, {_identifier(passage_text)} AS text,"
+                f" [{real}] AS real, {live} AS live FROM loom.{names.snapshot}"
+                f" WHERE {_ORDINAL} IN {{ordinals:Array(UInt64)}}",
+                {"ordinals": sorted(emptied)},
+            )
+            for r in sources:
+                lost = any(
+                    e and v for e, v in zip(emptied[int(r["ordinal"])], r["real"], strict=True)
+                )
+                if lost and r["live"] and not reads_high(str(r["text"])):
+                    plain += 1
         if len(page) < _EMPTIED_PAGE:
             return plain
         after = int(page[-1]["ordinal"])
@@ -163,9 +173,16 @@ async def verify_reembedded_target(
         type(result.get(name)) is not int or result[name] < 0 for name in fields
     ):
         raise ValueError("Cannot establish rebuild verification result")
-    if result["emptied"] and passage_text:
-        result["emptied"] = await _plain_emptied(names, schema, vectors, passage_text, client)
-    if result["source_rows"] != result["target_rows"] or any(result[name] for name in fields[2:]):
+    # A raw-passage row the rebuild left empty is accepted when its text reads as a
+    # credential, as its write path leaves it.
+    lost = result["emptied"]
+    if lost and passage_text:
+        lost = await _plain_emptied(names, schema, vectors, passage_text, client)
+    if (
+        result["source_rows"] != result["target_rows"]
+        or any(result[name] for name in fields[2:-1])
+        or lost
+    ):
         raise ValueError("Staged rebuild failed verification")
     await verify_live_key_uniqueness(names, schema, client)
     return int(result["source_rows"])

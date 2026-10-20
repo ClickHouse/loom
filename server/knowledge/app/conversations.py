@@ -934,8 +934,8 @@ async def _search_substring_fallback(
         run_id=input.run_id,
         user_id=input.user_id,
         saved_only=saved_only,
-        # Twice the page, so the turns held back below do not leave it short.
-        limit=input.top_k * 2,
+        # Spare rows, so the turns held back below do not leave the page short.
+        limit=input.top_k + HELD_MARGIN,
     )
     # A turn that reads as a credential is never a search hit, as the vector path holds it.
     hits = [
@@ -1182,6 +1182,8 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         offset=input.offset,
         agent=_thread_reader(input.agent) if input.agent else None,
         count_turns=not input.fields or "msg_count" in input.fields,
+        last_turn=not input.fields
+        or bool({"agent", "last_role", "last_content_excerpt"} & set(input.fields)),
     )
     # Titles live on the conversation_threads metadata table (set by
     # conversation.create).

@@ -83,14 +83,13 @@ namespace's transcripts. `conversation.save_message` (writer) is that opt-in, an
   `conversation.search` and `conversation.get` stay refused under such a token, because
   a thread mixes users and has no user axis to bound.
 - **Ownership, deletion and role are checked on every save.** Saving a message stored
-  under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A
-  tombstoned message answers `reason: "deleted"`, and a stored system or tool turn,
-  which is never embedded, answers `reason: "unsupported_role"`. A message whose text
-  reads as a credential is never embedded either: it answers
-  `reason: "reads_as_credential"`, and a new one is not stored. One an earlier build
-  saved is never a vector or keyword hit of `conversation.search_saved_messages`, and
-  `conversation.list_saved_messages` lists it with an empty excerpt. The checks also apply to
-  a message that is already saved.
+  under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A tombstoned
+  message answers `reason: "deleted"`, and a stored system or tool turn, which is never
+  embedded, answers `reason: "unsupported_role"`. A message whose text reads as a
+  credential is never embedded either: it answers `reason: "reads_as_credential"`, and a
+  new one is not stored. One an earlier build saved is never a vector or keyword hit of
+  `conversation.search_saved_messages`, and `conversation.list_saved_messages` lists it
+  with an empty excerpt. The checks also apply to a message that is already saved.
 
 The transcript row decides who owns a saved message. A save claims only rows that no
 user owns or that the caller owns, in the mutation itself, so of two users saving one
@@ -145,25 +144,26 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
 ### Compacting and deleting
 
 - **`conversation.compact`** (writer, needs an LLM provider) summarises the oldest turns
-  before the last `keep_recent` (default 10) that fit the summarizer's prompt, writes
-  the summary as one embedded `system` turn whose `metadata.compacted_from` lists the
+  before the last `keep_recent` (default 10) that fit the summarizer's prompt, writes the
+  summary as one embedded `system` turn whose `metadata.compacted_from` lists the
   summarised `msg_id`s, and tombstones the originals and their embeddings:
-  `conversation.search` then finds the summary in their place. A turn another agent of
-  the thread still holds live with the same text, as a turn search indexes, keeps its
+  `conversation.search` then finds the summary in their place. A turn another agent of the
+  thread still holds live with the same text, as a turn search indexes, keeps its
   embedding (see delete below). A window of fewer than `min_to_compact` (default 4) new
   turns is left alone. An earlier summary counts toward neither `min_to_compact` nor
-  `messages_summarized`. Summaries at the start of the window fold into the prompt from
-  a separate allowance; one that doesn't fit what is left of it stays live, and one a
-  failed run left (its turns all still live and in the window, at the first one's `ts`)
-  is replaced unread. A summary further into the window takes prompt budget like any
-  turn and is replaced with it.
-  A turn that reads as a credential is left out of the window: it stays live and is
-  never sent to the summarizer, so the summary, placed at the window's first turn, can
-  come before it in the thread. A turn saved with `conversation.save_message` is never
-  summarised or tombstoned either; it stays verbatim between the summary and the recent
-  turns. A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`),
-  and neither does one that reads as a credential anyway (`reason: "summary-reads-as-credential"`),
-  since it would have no vector.
+  `messages_summarized`. Summaries at the start of the window fold into the prompt from a
+  separate allowance; one that doesn't fit what is left of it stays live, and one a failed
+  run left (its turns all still live and in the window, at the first one's `ts`) is
+  replaced unread. A summary further into the window takes prompt budget like any turn and
+  is replaced with it. A turn that reads as a credential is left out of the window: it
+  stays live and is never sent to the summarizer, so the summary, placed at the window's
+  first turn, can come before it in the thread. A turn saved with
+  `conversation.save_message` is never summarised or tombstoned either; it stays verbatim
+  between the summary and the recent turns. A summary that cannot be embedded compacts
+  nothing (`reason: "embed-failed"`), and neither does one that reads as a credential
+  anyway (`reason: "summary-reads-as-credential"`), since it would have no vector. A
+  window that holds only such turns, saved ones or both answers `reason:
+  "nothing-to-compact"`.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the
