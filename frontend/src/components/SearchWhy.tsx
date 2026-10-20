@@ -3,7 +3,7 @@ import { Popover } from "@clickhouse/click-ui/Popover";
 import type { SearchHit } from "../api";
 import { IconButton } from "./IconButton";
 import { PopoverTrigger } from "./ui/Menu";
-import { signed, whyTerms } from "../lib/whyNote";
+import { termText, whyTerms } from "../lib/whyNote";
 
 // A ranked search hit in the Memories list shows its similarity and blended score in the
 // row's meta line (SearchScores), and its "Why this result" info button, after the meta,
@@ -83,7 +83,7 @@ function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
               key={t.label}
               size="sm"
               state={t.value < 0 ? "warning" : "default"}
-              text={`${t.label} ${signed(t.value)}`}
+              text={`${t.label} ${termText(t)}`}
             />
           ))}
         </div>

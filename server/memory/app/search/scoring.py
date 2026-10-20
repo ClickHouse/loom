@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.memory.api.models_search import MemorySearchInput
+from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
 
 
 def _effective_ann_boosts(hits: list[Any], *, rrf_pool: bool) -> dict[int, float]:
@@ -124,6 +125,15 @@ def _anchor_rank_score(similarity: float, pool_floor: float) -> float:
     minimum raw base score (0.0 for an empty pool).
     """
     return pool_floor - 1e-6 - (1.0 - float(similarity))
+
+
+def drop_rerank_trail(hit: Any) -> None:
+    """Take a rerank's marks off a hit that joins another pool: every `rerank_*` entry
+    `_record_rerank_trail` stamps and the pre-rerank score. The row keeps the score its own
+    pool served it (after a rerank, that pool's handed-out score)."""
+    comps = hit.score_components
+    for key in [k for k in comps if k.startswith("rerank_") or k == RANK_SCORE_PRE_RERANK]:
+        del comps[key]
 
 
 def _record_rerank_trail(before: list[Any], after: list[Any], source: str) -> dict[str, float]:
