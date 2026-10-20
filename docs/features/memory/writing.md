@@ -382,7 +382,12 @@ sweep, the `delete_version` check).
   erased before it went out is marked `dead` and not sent: the key's history is read just
   before each POST, so only an erasure that lands during that POST can let one out.
 - **Repeats.** Delivery is at least once and unordered: order events by `version`, and
-  read the row back rather than trusting the event's age. A repeat shares its
+  read the row back rather than trusting the event's age. Two events can carry the same
+  `version`: a `memory.clear` tombstone does not write a new version, so its
+  `memory.tombstoned` event carries the version it tombstoned; on a tie,
+  `memory.tombstoned` comes after `memory.written` or `memory.revised`. A
+  `memory.redacted` event's `version` names the historical version it scrubbed, not a
+  new head, so it does not move the key's order. A repeat shares its
   `webhook-id`: a retry, two overlapping passes, and the same version of a memory
   announced twice to the same webhook (a `delete_version` check that runs again) all
   carry one id, so drop an id you have seen.
