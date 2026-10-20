@@ -15,6 +15,7 @@ from server.memory.domain import profile_schema as ps
 from server.memory.store import profile_schemas, profile_sources
 from server.memory.store.profile_sources import Behind
 from server.memory.workers import structured_profile as w
+from server.settings import settings
 from server.workers import pass_context
 
 _PROPS = ps.parse(
@@ -206,7 +207,7 @@ async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
     assert w._backoff[key][1] == 2 * first
     for _ in range(20):
         w._note_failure(key)
-    assert w._backoff[key][1] == w.BACKOFF_CAP_SECONDS
+    assert w._backoff[key][1] == settings.structured_profile_backoff_cap_seconds
 
     # Once the wait is over the user is built again, and the success clears it.
     w._backoff[key] = (0.0, w._backoff[key][1])
@@ -243,7 +244,8 @@ async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses
 def test_waits_that_are_over_are_pruned() -> None:
     w._backoff.clear()
     w._refused.clear()
-    w._backoff[("o", "n", "old")] = (-2 * w.BACKOFF_CAP_SECONDS, w.BACKOFF_CAP_SECONDS)
+    cap = settings.structured_profile_backoff_cap_seconds
+    w._backoff[("o", "n", "old")] = (-2 * cap, cap)
     w._backoff[("o", "n", "new")] = (1e18, 300.0)
     w._refused[("o", "n", "lapsed")] = ("d", 1, 0.0)
     w._refused[("o", "n", "held")] = ("d", 1, 1e18)
@@ -450,10 +452,10 @@ async def test_one_scan_serves_the_passes_after_it(world: dict[str, Any]) -> Non
     # The first scan found up to SCAN_FACTOR users; the next four passes took from it.
     assert world["scans"] == 1 and len(world["built"]) == 5
     # It found every user behind (5 of the 10 it asked for): drained, it is not
-    # scanned again until it is SCAN_MAX_AGE_SECONDS old.
+    # scanned again until it is `structured_profile_scan_max_age_seconds` old.
     await w.run_pass(cfg)
     assert world["scans"] == 1
-    w._scans[("o2", "a")].scanned_at -= w.SCAN_MAX_AGE_SECONDS + 1
+    w._scans[("o2", "a")].scanned_at -= settings.structured_profile_scan_max_age_seconds + 1
     await w.run_pass(cfg)
     assert world["scans"] == 2
 
@@ -497,7 +499,7 @@ async def test_a_schema_change_or_an_old_scan_scans_again(
 ) -> None:
     cfg = _cfg(1, ("o2", "a"))
     await w.run_pass(cfg)
-    w._scans[("o2", "a")].scanned_at -= w.SCAN_MAX_AGE_SECONDS + 1
+    w._scans[("o2", "a")].scanned_at -= settings.structured_profile_scan_max_age_seconds + 1
     await w.run_pass(cfg)
     assert world["scans"] == 2
     w._scans[("o2", "a")].schema_sha256 = "x" * 64

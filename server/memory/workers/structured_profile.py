@@ -20,7 +20,7 @@ failure, and so is a namespace whose scan or stored schema failed, until its
 wait is over or its schema changes. A user whose profile row refuses the
 write (locked, pinned, over a limit, blacklisted) is skipped until their
 sources digest or the profile row's version changes (an unpin, an unlock),
-or REFUSAL_RETRY_SECONDS pass.
+or `structured_profile_refusal_retry_seconds` pass.
 """
 
 from __future__ import annotations
@@ -62,23 +62,11 @@ log = logging.getLogger(__name__)
 
 # The actor its writes carry: no request is in flight.
 WORKER_ACTOR = "process:structured-profile-worker"
-# A failed build waits this long before the user is tried again, doubling up to the cap.
-BACKOFF_BASE_SECONDS = 300.0
-BACKOFF_CAP_SECONDS = 6 * 3600.0
-
-# A refused user is tried again after this long even when nothing changed, so a
-# lock whose `lock_until` ran out without a write does not hold the profile back.
-REFUSAL_RETRY_SECONDS = 6 * 3600.0
 # One scan of a namespace finds up to this many times the users a pass builds there,
 # and the next passes take from that list, so a namespace's whole set of facts is read
-# at most once per SCAN_FACTOR passes, not on every pass.
-SCAN_FACTOR = 10
-# A list older than this is scanned again, and a complete list (the scan found fewer
-# users than it asked for) that drained waits this long before the next scan: a user
-# who fell behind since waits at most this long on top of the cooldown, and a
-# namespace is scanned at most once per this long while nobody else is behind. Ten
-# minutes is five passes at the default interval.
-SCAN_MAX_AGE_SECONDS = 600.0
+# at most once per SCAN_FACTOR passes, not on every pass. A list older than
+# `structured_profile_scan_max_age_seconds` is scanned again.
+SCAN_FACTOR = 10  # not a setting: the scan's shape, sized with the scan-cost measurement
 
 # Kept in this process only, so each starts over when the worker lease moves.
 # (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
@@ -224,7 +212,8 @@ def parse_answer(text: str) -> Any:
 
 
 def _next_wait(wait: float) -> float:
-    return min(BACKOFF_CAP_SECONDS, wait * 2 if wait else BACKOFF_BASE_SECONDS)
+    first = settings.structured_profile_backoff_base_seconds
+    return min(settings.structured_profile_backoff_cap_seconds, wait * 2 if wait else first)
 
 
 def _note_failure(key: tuple[str, str, str]) -> None:
@@ -251,17 +240,18 @@ def _prune() -> None:
     """Drop what is over (a backoff past its cap, a refusal that lapsed, a scan too
     old to use), so the maps hold only what a pass may still read."""
     now = time.monotonic()
+    cap = settings.structured_profile_backoff_cap_seconds
     for key, (until, _) in list(_backoff.items()):
-        if until + BACKOFF_CAP_SECONDS < now:
+        if until + cap < now:
             del _backoff[key]
     for space, (until, _, _) in list(_namespace_backoff.items()):
-        if until + BACKOFF_CAP_SECONDS < now:
+        if until + cap < now:
             del _namespace_backoff[space]
     for key, (_, _, lapses) in list(_refused.items()):
         if lapses <= now:
             del _refused[key]
     for space, scanned in list(_scans.items()):
-        if now - scanned.scanned_at > SCAN_MAX_AGE_SECONDS:
+        if now - scanned.scanned_at > settings.structured_profile_scan_max_age_seconds:
             del _scans[space]
 
 
@@ -311,7 +301,8 @@ async def _build_users(
         except Refused as e:
             result.refused += 1
             log.info("structured profile refused for %s/%s: %s", schema.namespace, user_id, e)
-            _refused[key] = (e.digest, e.profile_version, time.monotonic() + REFUSAL_RETRY_SECONDS)
+            lapses = time.monotonic() + settings.structured_profile_refusal_retry_seconds
+            _refused[key] = (e.digest, e.profile_version, lapses)
             continue
         except Exception as e:  # one user's build must not stop the pass
             result.errors += 1
@@ -337,7 +328,7 @@ def _take(schema: ActiveSchema, limit: int) -> list[str] | None:
     if (
         scanned is None
         or scanned.schema_sha256 != schema.sha256
-        or time.monotonic() - scanned.scanned_at > SCAN_MAX_AGE_SECONDS
+        or time.monotonic() - scanned.scanned_at > settings.structured_profile_scan_max_age_seconds
         or (not scanned.behind and not scanned.complete)
     ):
         return None
@@ -558,8 +549,7 @@ async def _ask(
                 system=system_prompt(props),
                 # The facts are what agents wrote: data, never instructions.
                 user=fence("facts", facts, new_nonce(facts)),
-                # 64 short properties fit; an answer cut off here fails to parse and backs off.
-                max_tokens=2048,
+                max_tokens=settings.structured_profile_max_tokens,
                 response_format={"type": "json_object"},
             )
     finally:

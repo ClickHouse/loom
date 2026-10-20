@@ -323,9 +323,10 @@ the cooldown, and a recall or a backfill does not. Its cost follows the namespac
 rows, not their history, and it runs under `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS`
 and `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES`. Each scan lists up to ten times the
 namespace's share of a pass, kept in the worker's process; later passes take from that
-list until it is drained, the schema hash changes or it is ten minutes old, and a
-complete list that drained is not rescanned before then, so a namespace is read at most
-once per ten minutes in the steady state. A namespace whose scan fails backs off. A build
+list until it is drained, the schema hash changes or it is
+`LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` old, and a complete list that drained is
+not rescanned before then, so a namespace is read at most once per that age in the
+steady state. A namespace whose scan fails backs off. A build
 skips a user whose profile is already current. `profile.structured` recomputes one user's
 digest to answer `stale` without a model call ([structured
 profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).

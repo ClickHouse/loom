@@ -106,7 +106,7 @@ profile_schema_set = Operation(
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_set,
     idempotent=True,  # the same schema again changes nothing a reader sees
-    budget_p99_ms=100,
+    budget_p99_ms=100,  # one synchronous insert
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -118,7 +118,7 @@ profile_schema_get = Operation(
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_get,
     idempotent=True,  # pure read
-    budget_p99_ms=50,
+    budget_p99_ms=50,  # one point read by (org, namespace)
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -130,7 +130,7 @@ profile_schema_clear = Operation(
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_clear,
     idempotent=True,
-    budget_p99_ms=100,
+    budget_p99_ms=100,  # a point read, then one synchronous insert
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -142,7 +142,7 @@ profile_structured = Operation(
     output_model=ProfileStructuredOutput,
     handler=handle_profile_structured,
     idempotent=True,  # pure read, no model call
-    budget_p99_ms=60,
+    budget_p99_ms=60,  # the schema, the profile row and one user's digest aggregate
     required_role=Role.VIEWER,
     audit=False,
 )

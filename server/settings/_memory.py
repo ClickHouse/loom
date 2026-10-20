@@ -183,23 +183,44 @@ class MemorySettings(BaseModel):
     # shape `profile_schema.set` gives the namespace. LLM calls, only for a
     # namespace with a schema: setting one is the opt-in.
     structured_profile_enabled: bool = True
-    # Seconds between structured profile passes.
-    structured_profile_interval_seconds: int = 120
-    # Seconds to wait after a pass that found no profile to build.
-    structured_profile_idle_interval_seconds: int = 600
-    # Seconds one namespace's scan for users behind may run; past it the scan fails
-    # and the namespace backs off. At least 1.
+    # Seconds between structured profile passes. At least 1.
+    structured_profile_interval_seconds: int = Field(default=120, ge=1)
+    # Seconds the structured profile worker waits after a pass that found no profile
+    # to build. At least 1.
+    structured_profile_idle_interval_seconds: int = Field(default=600, ge=1)
+    # Seconds one namespace's scan for users behind their structured profile may run;
+    # past it the scan fails and the namespace backs off. At least 1.
     structured_profile_scan_timeout_seconds: int = Field(default=60, ge=1)
-    # Bytes of memory one namespace's scan may use (ClickHouse max_memory_usage). At
-    # least 1 MiB.
+    # Bytes of memory one namespace's structured profile scan may use (ClickHouse
+    # max_memory_usage). At least 1 MiB.
     structured_profile_scan_max_memory_bytes: int = Field(default=4 * 1024**3, ge=1024**2)
-    # Profiles one pass builds; each namespace the pass reaches gets an equal share.
+    # Structured profiles one pass builds; each namespace the pass reaches gets an
+    # equal share. At least 1.
     structured_profile_max_users_per_pass: int = Field(default=20, ge=1)
-    # Memories read into one build, highest confidence then newest first.
+    # Memories read into one structured profile build, highest confidence then newest
+    # first. At least 1.
     structured_profile_memory_limit: int = Field(default=100, ge=1)
-    # Seconds after a profile is built before new memories rebuild it; a schema
-    # change rebuilds it at once.
-    structured_profile_cooldown_seconds: int = 600
+    # Seconds after a structured profile is built before new memories rebuild it; a
+    # schema change rebuilds it at once. 0 rebuilds on the next pass.
+    structured_profile_cooldown_seconds: int = Field(default=600, ge=0)
+    # Seconds a user whose structured profile build failed waits before the first
+    # retry; each further failure doubles the wait. Also the first wait of a namespace
+    # whose scan or stored schema failed. At least 1.
+    structured_profile_backoff_base_seconds: int = Field(default=300, ge=1)
+    # Longest wait, in seconds, of a user or namespace whose structured profile build
+    # keeps failing. At least 1.
+    structured_profile_backoff_cap_seconds: int = Field(default=6 * 3600, ge=1)
+    # Seconds after which a user whose profile row refused the structured profile
+    # write (a lock, a pin, a 4xx) is tried again even when nothing changed, so a lock
+    # that ran out without a write does not hold the profile back. At least 1.
+    structured_profile_refusal_retry_seconds: int = Field(default=6 * 3600, ge=1)
+    # Seconds a namespace's list of users behind serves the structured profile passes
+    # before the namespace is scanned again; a complete list that drained waits this
+    # long before the next scan. At least 1.
+    structured_profile_scan_max_age_seconds: int = Field(default=600, ge=1)
+    # Output tokens of one structured profile build's model call; an answer cut off
+    # here fails to parse and the user backs off. 64 short properties fit in 2048.
+    structured_profile_max_tokens: int = Field(default=2048, ge=1)
     # `memory_key` of the structured profile row.
     structured_profile_label: str = "structured_profile"
 

@@ -839,19 +839,32 @@ async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.Mo
     assert seen == [7]
 
 
-def test_a_scan_timeout_or_memory_cap_below_its_floor_is_refused() -> None:
+@pytest.mark.parametrize(
+    "below_floor",
+    [
+        {"structured_profile_interval_seconds": 0},
+        {"structured_profile_idle_interval_seconds": 0},
+        {"structured_profile_scan_timeout_seconds": 0},
+        {"structured_profile_scan_max_memory_bytes": 1000},
+        {"structured_profile_max_users_per_pass": 0},
+        {"structured_profile_memory_limit": 0},
+        {"structured_profile_cooldown_seconds": -1},
+        {"structured_profile_backoff_base_seconds": 0},
+        {"structured_profile_backoff_cap_seconds": 0},
+        {"structured_profile_refusal_retry_seconds": 0},
+        {"structured_profile_scan_max_age_seconds": 0},
+        {"structured_profile_max_tokens": 0},
+    ],
+)
+def test_a_structured_profile_setting_below_its_floor_is_refused(
+    below_floor: dict[str, int],
+) -> None:
     from pydantic import ValidationError as PydanticError
 
     from server.settings._memory import MemorySettings
 
     with pytest.raises(PydanticError):
-        MemorySettings(structured_profile_scan_timeout_seconds=0)
-    with pytest.raises(PydanticError):
-        MemorySettings(structured_profile_scan_max_memory_bytes=1000)
-    with pytest.raises(PydanticError):
-        MemorySettings(structured_profile_max_users_per_pass=0)
-    with pytest.raises(PydanticError):
-        MemorySettings(structured_profile_memory_limit=0)
+        MemorySettings(**below_floor)
 
 
 @_needs_ch

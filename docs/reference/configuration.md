@@ -688,13 +688,18 @@ Source: `server/settings/_memory.py`
 | `LOOM_PROFILE_CONSOLIDATION_COOLDOWN_SECONDS` | `int` | `86400` | Seconds after a profile section is written before it is folded again. |
 | `LOOM_PROFILE_CONSOLIDATION_LABEL` | `str` | `'consolidated_profile'` | `memory_key` of the folded profile row. |
 | `LOOM_STRUCTURED_PROFILE_ENABLED` | `bool` | `True` | Keep each user's structured profile (memory_type='profile') current in the shape `profile_schema.set` gives the namespace. LLM calls, only for a namespace with a schema: setting one is the opt-in. |
-| `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | `int` | `120` | Seconds between structured profile passes. |
-| `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` | `int` | `600` | Seconds to wait after a pass that found no profile to build. |
-| `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS` | `int` | `60` | Seconds one namespace's scan for users behind may run; past it the scan fails and the namespace backs off. At least 1. |
-| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES` | `int` | `4294967296` | Bytes of memory one namespace's scan may use (ClickHouse max_memory_usage). At least 1 MiB. |
-| `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` | `int` | `20` | Profiles one pass builds; each namespace the pass reaches gets an equal share. |
-| `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` | `int` | `100` | Memories read into one build, highest confidence then newest first. |
-| `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | Seconds after a profile is built before new memories rebuild it; a schema change rebuilds it at once. |
+| `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | `int` | `120` | Seconds between structured profile passes. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` | `int` | `600` | Seconds the structured profile worker waits after a pass that found no profile to build. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS` | `int` | `60` | Seconds one namespace's scan for users behind their structured profile may run; past it the scan fails and the namespace backs off. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES` | `int` | `4294967296` | Bytes of memory one namespace's structured profile scan may use (ClickHouse max_memory_usage). At least 1 MiB. |
+| `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` | `int` | `20` | Structured profiles one pass builds; each namespace the pass reaches gets an equal share. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` | `int` | `100` | Memories read into one structured profile build, highest confidence then newest first. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | Seconds after a structured profile is built before new memories rebuild it; a schema change rebuilds it at once. 0 rebuilds on the next pass. |
+| `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` | `int` | `300` | Seconds a user whose structured profile build failed waits before the first retry; each further failure doubles the wait. Also the first wait of a namespace whose scan or stored schema failed. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` | `int` | `21600` | Longest wait, in seconds, of a user or namespace whose structured profile build keeps failing. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` | `int` | `21600` | Seconds after which a user whose profile row refused the structured profile write (a lock, a pin, a 4xx) is tried again even when nothing changed, so a lock that ran out without a write does not hold the profile back. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` | `int` | `600` | Seconds a namespace's list of users behind serves the structured profile passes before the namespace is scanned again; a complete list that drained waits this long before the next scan. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_MAX_TOKENS` | `int` | `2048` | Output tokens of one structured profile build's model call; an answer cut off here fails to parse and the user backs off. 64 short properties fit in 2048. |
 | `LOOM_STRUCTURED_PROFILE_LABEL` | `str` | `'structured_profile'` | `memory_key` of the structured profile row. |
 | `LOOM_REFLECTION_DISTILL_ENABLED` | `bool` | `False` | Reflection distillation: label recent sessions that carry no outcome (positive / negative / unclear into loom.session_outcomes_by_user), pair each confidently failed session with its nearest successful one and distil the difference into one hidden `reflection` memory. LLM calls; sessions labelled through run.complete are not re-judged. |
 | `LOOM_REFLECTION_DISTILL_INTERVAL_SECONDS` | `int` | `3600` | Seconds between reflection distillation passes. |
