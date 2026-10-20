@@ -1337,6 +1337,34 @@ def _compacted_from(row: Mapping[str, Any]) -> list[str]:
     return [str(i) for i in ids] if isinstance(ids, list) else []
 
 
+def _compaction_candidates(
+    turns: list[dict[str, Any]], min_to_compact: int
+) -> list[dict[str, Any]]:
+    """The turns before `keep_recent` that compaction may summarize, oldest first.
+
+    A saved turn is the user's explicit choice to keep that message findable: it stays
+    verbatim, never folded into a summary and tombstoned. A turn that reads as a
+    credential is never sent to the summarizer: it stays live, out of the window, and out
+    of search (it has no embedding row). The credential check stops once the turns kept
+    from the first new one on fill the window and `min_to_compact` new turns are kept:
+    later turns never reach the summarizer."""
+    candidates = []
+    kept_chars = 0
+    new_turns = 0
+    for r in turns:
+        window_full = kept_chars > _FOLDED_SUMMARY_CHARS + _COMPACT_TRANSCRIPT_CHARS
+        if window_full and new_turns >= min_to_compact:
+            break
+        if r.get("is_saved") or reads_high(str(r["content"])):
+            continue
+        candidates.append(r)
+        if not _compacted_from(r):
+            new_turns += 1
+        if kept_chars or not _compacted_from(r):
+            kept_chars += len(f"{r['role']}: {r['content']}") + 1
+    return candidates
+
+
 @staged("compact")
 async def handle_conversation_compact(input: ConversationCompactInput) -> ConversationCompactOutput:
     """LLM-summarize the oldest turns before the last `keep_recent` that fit the prompt
@@ -1385,21 +1413,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="nothing-to-compact",
         )
 
-    # A saved turn is the user's explicit choice to keep that message findable: it stays
-    # verbatim, never folded into a summary and tombstoned. A turn that reads as a
-    # credential is never sent to the summarizer: it stays live, out of the window, and out
-    # of search (it has no embedding row). The credential check stops once the turns kept
-    # from the first new one on fill the window: later turns never reach the summarizer.
-    candidates = []
-    kept_chars = 0
-    for r in rows[: -input.keep_recent]:
-        if kept_chars > _FOLDED_SUMMARY_CHARS + _COMPACT_TRANSCRIPT_CHARS:
-            break
-        if r.get("is_saved") or reads_high(str(r["content"])):
-            continue
-        candidates.append(r)
-        if kept_chars or not _compacted_from(r):
-            kept_chars += len(f"{r['role']}: {r['content']}") + 1
+    candidates = _compaction_candidates(rows[: -input.keep_recent], input.min_to_compact)
     if not candidates:
         return ConversationCompactOutput(
             compacted=False,

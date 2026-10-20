@@ -1537,7 +1537,8 @@ async def titler_candidates(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Recent threads with at least `min_turns` live messages in namespaces that
-    record conversations, untitled and not deleted, most recent first; none of
+    record conversations, untitled, not deleted and not marked `title_refused`, most
+    recent first; none of
     `exclude_orgs` (orgs whose model calls are switched off)."""
     ch = ch or _default_client()
     return await ch.query_all(
@@ -1553,10 +1554,12 @@ async def titler_candidates(
           AND NOT has({off:Array(String)}, c.org)
           -- Titled and deleted threads are not candidates: skipped after
           -- the LIMIT, they filled it every pass and older untitled
-          -- threads were never reached.
+          -- threads were never reached. Nor is a thread whose generated
+          -- title was refused as a credential.
           AND (c.org, c.namespace, c.thread_id) NOT IN (
               SELECT org, namespace, thread_id FROM loom.conversation_threads FINAL
               WHERE tombstoned_at IS NOT NULL OR title != ''
+                 OR JSONExtractBool(metadata, 'title_refused')
           )
         GROUP BY c.org, c.namespace, c.thread_id
         HAVING n >= {mt:UInt32}

@@ -53,7 +53,9 @@ up front.
   `conversation.search` never returns it, by vector or by the substring fallback, and
   `conversation.threads` lists such a last turn with an empty excerpt (and a title that
   reads as a credential as empty); it checks a turn's first 1,024 characters, past the
-  240 its excerpt shows. The titler never sends such a turn to its model.
+  240 its excerpt shows. The titler never sends such a turn to its model, and a thread
+  whose generated title reads as a credential stays untitled, marked `title_refused` in
+  its metadata so the titler does not ask again.
   `conversation.get` and `conversation.list` still serve the turn in its thread
   ([sensitivity](../architecture/security.md#sensitivity)).
 

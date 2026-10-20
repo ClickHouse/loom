@@ -30,8 +30,6 @@ async def embed_plain(
     held = [reads_high(text) for text in texts]
     plain = [text for text, h in zip(texts, held, strict=True) if not h]
     produced = await embed(plain) if plain else []
-    if len(produced) != len(plain):
-        raise ValueError(f"embedder returned {len(produced)} vectors for {len(plain)} texts")
     vectors = iter(produced)
     return [
         Embedded(vector=[], held=True) if h else Embedded(vector=list(next(vectors)), held=False)

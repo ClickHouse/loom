@@ -401,6 +401,7 @@ class _SavedMessageHit(ProjectedRow):
     conversation_id: str
     message_id: str
     role: Literal["user", "assistant"]
+    # The message's opening; empty in the saved list when it reads as a credential.
     content_excerpt: str
     ts: datetime
 
@@ -480,8 +481,10 @@ class ConversationThreadSummary(ProjectedRow):
     first_seen: datetime
     last_seen: datetime
     last_role: str
+    # The last turn's first 240 characters; empty when it reads as a credential.
     last_content_excerpt: str
-    title: str = ""  # from conversation.create, if set; "" otherwise
+    # Empty when untitled or when the title reads as a credential.
+    title: str = ""
 
 
 class ConversationThreadsOutput(BaseModel):

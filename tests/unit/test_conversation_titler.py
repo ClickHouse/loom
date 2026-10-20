@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
@@ -204,15 +205,21 @@ async def test_a_credential_turn_never_reaches_the_title_model(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_a_title_that_reads_as_a_credential_is_not_stored(monkeypatch) -> None:
+async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
+    monkeypatch,
+) -> None:
+    """The thread is marked instead: neither the scan nor the pass's re-check picks it
+    again, so a second pass makes no model call."""
     ch = StubCH([_CAND], _TURNS, None)
     _patch(monkeypatch, ch)
+    prompts: list[str] = []
 
     class _KeyTitle:
         text = f"Deploy key {OPENAI_KEY}"
 
     class _KeyLLM:
         async def complete(self, system, user, max_tokens):
+            prompts.append(user)
             return _KeyTitle()
 
     import server.knowledge.store.conversations as repo
@@ -226,4 +233,13 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored(monkeypatch) -> 
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
     monkeypatch.setattr(repo, "insert_thread", fake_insert)
     res = await run_pass()
-    assert (res.titled, writes) == (0, [])
+    assert res.titled == 0 and len(prompts) == 1
+    [written] = writes
+    assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
+    assert "JSONExtractBool(metadata, 'title_refused')" in ch.calls[0]
+
+    # A scan on a merge state behind the write still returns the thread.
+    _patch(monkeypatch, StubCH([_CAND], _TURNS, written))
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
+    res = await run_pass()
+    assert (res.titled, res.skipped_titled, len(prompts), len(writes)) == (0, 1, 1, 1)

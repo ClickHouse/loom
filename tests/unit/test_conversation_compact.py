@@ -903,3 +903,37 @@ def test_a_window_of_only_held_turns_has_nothing_to_compact(monkeypatch, held) -
     )
     assert (out.compacted, out.reason) == (False, "nothing-to-compact")
     assert llm.prompts == [] and fake.inserted == [] and fake.executed == []
+
+
+def test_long_turns_compact_and_the_check_stops_past_the_window(monkeypatch) -> None:
+    """Turns longer than a third of the window still compact at the default
+    min_to_compact: the credential check runs until the window is full and enough new
+    turns are counted, and never reaches a turn past that cut."""
+    import server.core.ch
+    import server.llm.client
+
+    rows = [
+        {**_turn(i), "role": "assistant", "content": f"turn {i} " + "x" * 6990} for i in range(6)
+    ]
+    rows += [_turn(6, secret=True), _turn(7)]
+    fake = _FakeCH(rows)
+    monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
+    monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
+    checked: list[str] = []
+    reads_high = ch_mod.reads_high
+
+    def recording_reads_high(text: str) -> bool:
+        checked.append(text)
+        return reads_high(text)
+
+    monkeypatch.setattr(ch_mod, "reads_high", recording_reads_high)
+
+    out = asyncio.run(
+        ch_mod.handle_conversation_compact(
+            ConversationCompactInput(
+                org="o", namespace="n", agent="a", thread_id="t", keep_recent=1
+            )
+        )
+    )
+    assert out.compacted is True and out.messages_summarized == 2
+    assert all(OPENAI_KEY not in text for text in checked)

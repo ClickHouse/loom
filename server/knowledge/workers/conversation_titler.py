@@ -15,6 +15,7 @@ provider, so on-by-default is safe out of the box.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -111,22 +112,26 @@ async def _make_title(
             started=row_started,
         )
     title = (getattr(out, "text", "") or "").strip().strip('"').strip()[:80]
-    if not title or reads_high(title):
+    if not title:
         return False
+    # A title that reads as a credential is never stored. The thread is marked instead,
+    # so later passes do not pay for the same title again.
+    refused = reads_high(title)
+    stored_title = "" if refused else title
 
     now = naive_utc_now_seconds()
     if existing is not None:
         # A stored row (conversation.create with no title): carry every
         # column forward — its partition (created_at), agent, metadata,
         # run_id, user_id — and change only the title and the version.
-        new_row: ThreadInsertRow = {**existing, "title": title, "updated_at": now}
+        new_row: ThreadInsertRow = {**existing, "title": stored_title, "updated_at": now}
     else:
         new_row = {
             "org": row["org"],
             "namespace": row["namespace"],
             "agent": row["agent"],
             "thread_id": row["thread_id"],
-            "title": title,
+            "title": stored_title,
             "metadata": "{}",
             "run_id": "-",
             "user_id": "-",
@@ -134,8 +139,28 @@ async def _make_title(
             "updated_at": now,
             "tombstoned_at": None,
         }
+    if refused:
+        new_row["metadata"] = _with_title_refused(str(new_row["metadata"]))
     await conversation_repo.insert_thread(new_row)
-    return True
+    return not refused
+
+
+def _with_title_refused(metadata: str) -> str:
+    """The thread's metadata with `title_refused` set, which `titler_candidates` and the
+    pass's own re-check skip."""
+    try:
+        meta = json.loads(metadata or "{}")
+    except ValueError:
+        meta = {}
+    return json.dumps({**(meta if isinstance(meta, dict) else {}), "title_refused": True})
+
+
+def _title_refused(stored: ThreadInsertRow) -> bool:
+    try:
+        meta = json.loads(str(stored.get("metadata") or "{}"))
+    except ValueError:
+        return False
+    return isinstance(meta, dict) and meta.get("title_refused") is True
 
 
 async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationTitlerResult:
@@ -176,7 +201,9 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 if existing is not None and existing.get("tombstoned_at") is not None:
                     result.skipped_deleted += 1
                     continue
-                if existing is not None and str(existing.get("title") or "").strip():
+                if existing is not None and (
+                    str(existing.get("title") or "").strip() or _title_refused(existing)
+                ):
                     result.skipped_titled += 1
                     continue
                 if await _make_title(row, cfg, llm, existing):
