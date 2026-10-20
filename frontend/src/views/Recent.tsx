@@ -14,7 +14,7 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { MemoryCard } from "../components/MemoryCard";
-import { SearchWhy } from "../components/SearchWhy";
+import { SearchScores, SearchWhy } from "../components/SearchWhy";
 import { IconButton } from "../components/IconButton";
 import { Alert, ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
@@ -285,17 +285,21 @@ function MemoryList() {
     searching,
     ranking,
   } = useMemorySearch(identity, rawQuery, searchFilter, entries, memoriesVersion);
-  // Each hit's "Why this result", made when the results change rather than in every render:
-  // an element made in render is a new prop each time, and every memoised card would render
-  // again on each keystroke.
-  const searchAsides = useMemo(() => {
+  // Each hit's scores and "Why this result", made when the results change rather than in
+  // every render: an element made in render is a new prop each time, and every memoised card
+  // would render again on each keystroke.
+  const { searchScores, searchAsides } = useMemo(() => {
+    const scores = new Map<string, ReactNode>();
     const asides = new Map<string, ReactNode>();
     searchHits?.forEach((key, i) => {
       const hit = searchWhy.get(key);
       if (keywordKeys.has(key)) asides.set(key, <SearchWhy contains={keywordFor} />);
-      else if (hit) asides.set(key, <SearchWhy hit={hit} rank={i + 1} />);
+      else if (hit) {
+        scores.set(key, <SearchScores hit={hit} />);
+        asides.set(key, <SearchWhy hit={hit} rank={i + 1} />);
+      }
     });
-    return asides;
+    return { searchScores: scores, searchAsides: asides };
   }, [searchHits, searchWhy, keywordKeys, keywordFor]);
 
   // Fetch conflicts once per identity change; cards consult this set to
@@ -841,6 +845,7 @@ function MemoryList() {
                       onSelect={openCard}
                       onTagClick={toggleTag}
                       activeTags={activeTags}
+                      meta={searchScores.get(e.memory_key)}
                       aside={searchAsides.get(e.memory_key)}
                     />
                     {isTombstoned && (
