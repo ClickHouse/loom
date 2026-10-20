@@ -1060,7 +1060,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="nothing-to-compact",
         )
 
-    candidates = rows[: -input.keep_recent]
+    # A saved turn is the user's explicit choice to keep that message findable:
+    # it stays verbatim, never folded into a summary and tombstoned.
+    candidates = [r for r in rows[: -input.keep_recent] if not r.get("is_saved")]
     # An earlier summary in the window is not a new turn: it counts toward neither
     # min_to_compact nor messages_summarized.
     is_summary = [bool(_compacted_from(r)) for r in candidates]
