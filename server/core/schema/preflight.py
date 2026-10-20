@@ -6,6 +6,7 @@ one line."""
 
 from __future__ import annotations
 
+import functools
 import logging
 import re
 from dataclasses import dataclass
@@ -301,6 +302,35 @@ def _lacks(user: str, grants: str, database: str = "") -> PreflightError:
     )
 
 
+@functools.cache
+def _qualifiers() -> frozenset[str]:
+    """Every name the migrations write before a dot: databases, but also table names
+    and aliases (`e.memory_key`), which DDL read back from ClickHouse holds too."""
+    from server.core.schema.journal import sorted_migrations
+
+    names: set[str] = set()
+    for path in sorted_migrations(MIGRATIONS_DIR.glob("*.sql")):
+        names.update(m.lower() for m in _QUALIFIER.findall(path.read_text(encoding="utf-8")))
+    return frozenset(names - {SCHEMA, "loom_telemetry"})
+
+
+_QUALIFIER = re.compile(r"(?<![\w.`])`?([A-Za-z_][\w-]*)`?\.(?=[`\w*])")
+
+
+def _refuse_ambiguous_names() -> None:
+    """Refuse a database named like a table or an alias the schema writes before a
+    dot: `unqualify` could not tell `e.memory_key` from a database qualifier."""
+    for setting, name in (
+        ("LOOM_CH_DATABASE", database_name()),
+        ("LOOM_CH_TELEMETRY_DATABASE", telemetry_database()),
+    ):
+        if name.lower() in _qualifiers():
+            raise PreflightError(
+                f"{setting} is {name!r}, a name Loom's schema uses for a table or an "
+                "alias: choose another"
+            )
+
+
 def _refuse_moved_schema(ch: Client) -> None:
     """Refuse to migrate a LOOM_CH_DATABASE other than `loom` that holds no Loom
     ledger while Loom's schema is in `loom`: the setting would start an empty schema
@@ -367,7 +397,8 @@ def check(
         floor = ".".join(map(str, MIN_VERSION))
         raise PreflightError(f"ClickHouse {version} is older than {floor}: upgrade the server")
 
-    if migrates:
+    _refuse_ambiguous_names()
+    if need == "server":
         _refuse_moved_schema(ch)
     if not database:
         if not migrates:

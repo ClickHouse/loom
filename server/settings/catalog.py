@@ -515,9 +515,10 @@ class ClickHouseSettings(BaseModel):
     # and the connection's default database. Statements are written against `loom`
     # and name this database where they reach ClickHouse (server/core/ch_names.py);
     # KeeperMap paths move with it. Set it before the first migration: while a schema is
-    # in `loom`, a name that does not exist, or holds tables but no Loom ledger, refuses
-    # to start (create it empty to start a second schema). Letters, digits, `_` and `-`;
-    # never `default`, `system` or `information_schema`. Read once at startup.
+    # in `loom`, a server pointed at a name that does not exist, or holds tables but no
+    # Loom ledger, refuses to start (create it empty to start a second schema). Letters,
+    # digits, `_` and `-`; never `default`, `system`, `information_schema`, or a table or
+    # alias name the schema uses. Read once at startup.
     ch_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom"
     # The database the telemetry Loom derives from its own tables lives in
     # (`sli_minute`), outside the schema so a reader can be granted it alone. A schema

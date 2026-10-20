@@ -193,3 +193,21 @@ def test_the_schema_dump_reads_the_configured_databases_and_writes_the_aliases()
         "loom.memory",
         "CREATE TABLE loom.memory (`a` String) ENGINE = Log",
     )
+
+
+@pytest.mark.parametrize("name", ["memory", "MEMORY"])
+def test_a_database_named_like_a_schema_table_is_refused(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    from server.core.schema import preflight
+
+    monkeypatch.setattr(settings, "ch_database", name)
+    with pytest.raises(preflight.PreflightError, match="a table or an alias"):
+        preflight._refuse_ambiguous_names()
+
+
+def test_the_configured_names_are_not_schema_qualifiers() -> None:
+    from server.core.schema import preflight
+
+    preflight._refuse_ambiguous_names()  # acme-loom / acme_telemetry
+    assert "loom" not in preflight._qualifiers()
