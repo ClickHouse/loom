@@ -275,11 +275,9 @@ analyticsExport:
   schedule: "30 0 * * *"
   bucket: ""
   prefix: ""
-  # hashed: org, namespace and agent leave as a keyed hash under the key in
-  # nameKeySecret. raw: as stored, only where every name is an opaque id.
-  names: hashed
-  # The Secret holding the hash key (a random string of 32 or more characters),
-  # read by the export pod only, never by the web or workers pods.
+  # Org, namespace and agent leave as a keyed hash. The Secret holding the key
+  # (a random string of 32 or more characters), read by the export pod only,
+  # never by the web or workers pods. Required.
   nameKeySecret:
     name: ""
     key: LOOM_ANALYTICS_EXPORT_NAME_KEY

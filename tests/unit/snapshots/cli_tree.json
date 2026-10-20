@@ -5303,7 +5303,6 @@
         "bucket",
         "prefix",
         "day",
-        "names",
         "role_arn",
         "region",
         "expected_bucket_owner"
@@ -5375,24 +5374,6 @@
       },
       {
        "option_strings": [
-        "--names"
-       ],
-       "dest": "names",
-       "action": "_StoreAction",
-       "default": "hashed",
-       "const": null,
-       "choices": [
-        "hashed",
-        "raw"
-       ],
-       "nargs": null,
-       "type": null,
-       "required": false,
-       "help": "hashed (default): org, namespace and agent as a keyed hash under LOOM_ANALYTICS_EXPORT_NAME_KEY; raw: as stored, for a deployment whose names are opaque ids (refused while self-signup is open)",
-       "metavar": null
-      },
-      {
-       "option_strings": [
         "--role-arn"
        ],
        "dest": "role_arn",
@@ -5403,7 +5384,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "An IAM role to assume with the default credentials before writing",
+       "help": "An IAM role to assume with the default credentials before each upload",
        "metavar": null
       },
       {
@@ -12463,7 +12444,7 @@
     },
     {
      "dest": "export-analytics",
-     "help": "Write one UTC day of usage and a namespace snapshot to S3 as Parquet. Never replaces an object, so a repeated run is safe.",
+     "help": "Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. Never replaces an object, so a repeated run is safe.",
      "metavar": "export-analytics"
     },
     {

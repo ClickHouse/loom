@@ -384,7 +384,8 @@ initContainers:
 {{- end }}
 {{- end }}
 
-{{/* Pod spec fields both Deployments share. */}}
+{{/* Pod spec fields the Deployments, the hook Jobs and the analytics export
+share; `serviceAccount` names another account than the release's. */}}
 {{/* `leads`: the pod may hold the workers lease, which alone reads the
 Kubernetes API (retireLostPods). */}}
 {{- define "loom.podCommon" -}}

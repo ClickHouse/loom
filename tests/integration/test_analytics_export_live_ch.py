@@ -120,8 +120,8 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
     assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
     assert s["kind"] == "request"
     assert by_op["memory.get"]["ops"] == 1
-    body = await parquet("usage", DAY, key=None, ch=ch)
-    assert b"alice@example.com" not in body and org.encode() in body
+    body = await parquet("usage", DAY, key=KEY, ch=ch)
+    assert b"alice@example.com" not in body
 
 
 async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient) -> None:
@@ -261,9 +261,6 @@ def _assert_namespaces(got: dict[str, dict[str, Any]]) -> None:
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
-@pytest.mark.parametrize("key", [None, KEY])
-async def test_each_entity_is_a_parquet_file(
-    ch: CHClient, entity: str, key: tuple[int, int] | None
-) -> None:
-    body = await parquet(entity, DAY, key=key, ch=ch)
+async def test_each_entity_is_a_parquet_file(ch: CHClient, entity: str) -> None:
+    body = await parquet(entity, DAY, key=KEY, ch=ch)
     assert body[:4] == b"PAR1" and body[-4:] == b"PAR1"

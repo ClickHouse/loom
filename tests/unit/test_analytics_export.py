@@ -35,28 +35,20 @@ class _Ch:
         return b"PAR1"
 
 
-async def test_export_day_reads_and_uploads_each_entity() -> None:
+async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
     ch, seen = _Ch(), []
 
     def put(key: str, body: bytes) -> bool:
         seen.append((key, body))
         return key.startswith("p/usage")
 
-    day = date(2026, 10, 9)
-    out = await export_day(day, prefix="p", put=put, key=None, ch=ch)  # type: ignore[arg-type]
+    day, key = date(2026, 10, 9), name_hash_key("secret")
+    out = await export_day(day, prefix="p", put=put, key=key, ch=ch)  # type: ignore[arg-type]
     assert [(e.entity, e.written) for e in out] == [("usage", True), ("namespaces", False)]
-    assert all(sql.endswith("FORMAT Parquet") for sql, _ in ch.calls)
-    assert all(params == {"day": day} for _, params in ch.calls)
     assert [k for k, _ in seen] == [e.key for e in out]
-
-
-async def test_a_hashed_export_hashes_every_name_column_under_the_key() -> None:
-    ch = _Ch()
-    key = name_hash_key("secret")
-    await export_day(date(2026, 10, 9), prefix="", put=lambda k, b: True, key=key, ch=ch)  # type: ignore[arg-type]
     for (sql, params), entity in zip(ch.calls, ENTITIES, strict=True):
         assert sql == f"{_hashed(entity)} FORMAT Parquet"
-        assert (params["k0"], params["k1"]) == key
+        assert params == {"day": day, "k0": key[0], "k1": key[1]}
         for column in NAME_COLUMNS[entity]:
             assert f"{{k1:UInt64}}), {column}))) AS {column}" in sql
 
@@ -84,8 +76,25 @@ def test_upload_is_conditional_and_names_the_bucket_owner() -> None:
     }
     stub.add_response("put_object", {}, expected)
     with stub:
-        assert s3_put(s3, "b", expected_owner="123456789012")("k", b"data") is True
+        assert s3_put(lambda: s3, "b", expected_owner="123456789012")("k", b"data") is True
     stub.assert_no_pending_responses()
+
+
+def test_each_upload_gets_a_fresh_client() -> None:
+    s3, stub = _stubbed()
+    made: list[Any] = []
+
+    def client() -> Any:
+        made.append(s3)
+        return s3
+
+    stub.add_response("put_object", {})
+    stub.add_response("put_object", {})
+    put = s3_put(client, "b")
+    with stub:
+        put("a", b"1")
+        put("b", b"2")
+    assert len(made) == 2
 
 
 def test_an_existing_object_is_kept_and_other_errors_raise() -> None:
@@ -94,7 +103,7 @@ def test_an_existing_object_is_kept_and_other_errors_raise() -> None:
         "put_object", service_error_code="PreconditionFailed", http_status_code=412
     )
     stub.add_client_error("put_object", service_error_code="AccessDenied", http_status_code=403)
-    put = s3_put(s3, "b")
+    put = s3_put(lambda: s3, "b")
     with stub:
         assert put("k", b"data") is False
         with pytest.raises(Exception, match="AccessDenied"):
@@ -118,7 +127,6 @@ def test_statements_export_no_content_and_no_person(entity: str) -> None:
 def _args(**kw: Any) -> argparse.Namespace:
     base = {
         "day": None,
-        "names": "hashed",
         "bucket": "b",
         "prefix": "",
         "role_arn": "",
@@ -134,21 +142,18 @@ def test_a_day_that_has_not_ended_is_refused(capsys: pytest.CaptureFixture[str])
 
 
 @pytest.mark.parametrize(
-    ("names", "key", "signup", "refused"),
+    ("key", "refused"),
     [
-        ("hashed", "", "off", "needs LOOM_ANALYTICS_EXPORT_NAME_KEY"),
-        ("hashed", "k" * 31, "off", "at least 32 characters"),
-        ("hashed", "k" * 32, "open", ""),
-        ("raw", "", "open", "refused while LOOM_SELF_SIGNUP=open"),
-        ("raw", "", "off", ""),
+        ("", "needs LOOM_ANALYTICS_EXPORT_NAME_KEY"),
+        ("k" * 31, "at least 32 characters"),
+        ("k" * 32, ""),
     ],
 )
-def test_names_fail_closed(
-    monkeypatch: pytest.MonkeyPatch, names: str, key: str, signup: str, refused: str
+def test_a_missing_or_short_name_key_is_refused(
+    monkeypatch: pytest.MonkeyPatch, key: str, refused: str
 ) -> None:
     monkeypatch.setattr(settings, "analytics_export_name_key", key)
-    monkeypatch.setattr(settings, "self_signup", signup)
-    got = cli._refusal(_args(names=names, day=date(2000, 1, 1)), date(2000, 1, 2))
+    got = cli._refusal(_args(day=date(2000, 1, 1)), date(2000, 1, 2))
     assert (refused in got) if refused else got == ""
 
 
@@ -177,8 +182,7 @@ def test_an_export_connects_inside_its_deadline_and_hashes_under_the_key(
     monkeypatch.setattr(settings, "analytics_export_name_key", secret)
     fake = _ConnectingCh()
     monkeypatch.setattr(ch_module, "get_client", lambda: fake)
-    monkeypatch.setattr(app, "s3_client", lambda **kw: None)
-    monkeypatch.setattr(app, "s3_put", lambda s3, bucket, **kw: lambda key, body: True)
+    monkeypatch.setattr(app, "s3_put", lambda client, bucket, **kw: lambda key, body: True)
     assert cli._cmd_export(_args(day=date(2000, 1, 1))) == 0
     assert fake.read_timeout_at_connect >= app.STATEMENT_TIMEOUT_S and fake.disconnected
     assert all((p["k0"], p["k1"]) == name_hash_key(secret) for _, p in fake.calls)

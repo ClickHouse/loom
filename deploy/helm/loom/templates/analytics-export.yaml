@@ -9,13 +9,11 @@ run of a day keeps the first run's files, so a retry is safe. */}}
 {{- if not (kindIs "string" .expectedBucketOwner) }}
 {{- fail "analyticsExport.expectedBucketOwner must be a quoted string: an unquoted account id renders as a float" }}
 {{- end }}
-{{- if not (has .names (list "hashed" "raw")) }}
-{{- fail "analyticsExport.names must be hashed or raw" }}
+{{- if not .nameKeySecret.name }}
+{{- fail "analyticsExport.enabled needs analyticsExport.nameKeySecret.name, the Secret holding the name hash key" }}
 {{- end }}
-{{- if and (eq .names "hashed") (not .nameKeySecret.name) }}
-{{- fail "analyticsExport.names: hashed needs analyticsExport.nameKeySecret.name, the Secret holding the hash key" }}
-{{- end }}
-{{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export") }}
+{{- /* 52: a Job created from the CronJob appends an 11-character suffix. */}}
+{{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export" "max" 52) }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -45,10 +43,10 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 3
-      # Over every attempt together: four of two 20-minute statements each.
+      # Over every attempt together: four attempts of two 20-minute statements.
       activeDeadlineSeconds: 10800
-      # Exit 2 is a refusal (a day not ended, a missing key, raw names with
-      # self-signup open): a retry would refuse the same way.
+      # Exit 2 is a refusal (a day not ended, a missing or short key): a retry
+      # would refuse the same way.
       podFailurePolicy:
         rules:
           - action: FailJob
@@ -84,7 +82,6 @@ spec:
                 - loom
                 - export-analytics
                 - {{ printf "--bucket=%s" .bucket | quote }}
-                - {{ printf "--names=%s" .names | quote }}
                 {{- with .prefix }}
                 - {{ printf "--prefix=%s" . | quote }}
                 {{- end }}
@@ -114,13 +111,11 @@ spec:
                   valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
                 - name: LOOM_INSTANCE_LABEL
                   value: k8s:analytics-export
-                {{- if eq .names "hashed" }}
                 - name: LOOM_ANALYTICS_EXPORT_NAME_KEY
                   valueFrom:
                     secretKeyRef:
                       name: {{ .nameKeySecret.name }}
                       key: {{ .nameKeySecret.key }}
-                {{- end }}
                 {{- with $.Values.extraEnv }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}

@@ -5,8 +5,9 @@ The columns are an allowlist. A file leaves Loom for a warehouse that erasure
 never reaches, so nothing here carries memory content (keys, values, the
 `args` map) or names a person (`user_id`, `session_id`, `subject`,
 `owner_email`): users and sessions go out as counts only. Org, namespace and
-agent names can name a person too (self-signup builds them from a username),
-so by default they leave as a keyed hash."""
+agent names can name a person too (a personal namespace is named after its
+owner's email, self-signup after a username), so they leave as a keyed hash: a
+pseudonym that the holder of the key can recompute."""
 
 from __future__ import annotations
 
@@ -81,7 +82,7 @@ ORDER BY org, namespace
 
 ENTITIES = {"usage": USAGE_SQL, "namespaces": NAMESPACES_SQL}
 
-# The columns of each entity that hold a name, hashed unless the export is raw.
+# The columns of each entity that hold a name, and leave hashed.
 NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "namespace")}
 
 
@@ -97,10 +98,7 @@ def _hashed(entity: str) -> str:
     return f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]})"
 
 
-async def parquet(entity: str, day: date, *, key: tuple[int, int] | None, ch: CHClient) -> bytes:
-    """`entity`'s rows for UTC day `day`, as one Parquet file: names hashed
-    under `key`, or as stored when `key` is None."""
-    if key is None:
-        return await ch.raw_bytes(f"{ENTITIES[entity]} FORMAT Parquet", {"day": day})
+async def parquet(entity: str, day: date, *, key: tuple[int, int], ch: CHClient) -> bytes:
+    """`entity`'s rows for UTC day `day`, as one Parquet file, names hashed under `key`."""
     params = {"day": day, "k0": key[0], "k1": key[1]}
     return await ch.raw_bytes(f"{_hashed(entity)} FORMAT Parquet", params)

@@ -24,14 +24,10 @@ def _refusal(args: argparse.Namespace, today: date) -> str:
 
     if args.day >= today:
         return f"{args.day} has not ended yet (UTC): export a past day"
-    if args.names == "hashed" and len(settings.analytics_export_name_key) < MIN_NAME_KEY_CHARS:
+    if len(settings.analytics_export_name_key) < MIN_NAME_KEY_CHARS:
         return (
-            f"--names hashed needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
+            f"export-analytics needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
             f"least {MIN_NAME_KEY_CHARS} characters"
-        )
-    if args.names == "raw" and settings.self_signup == "open":
-        return (
-            "--names raw is refused while LOOM_SELF_SIGNUP=open: self-signup names carry usernames"
         )
     try:
         import boto3  # noqa: F401
@@ -57,9 +53,12 @@ def _cmd_export(args: argparse.Namespace) -> int:
     if refusal := _refusal(args, today):
         print(f"  ✗ {refusal}", file=sys.stderr)
         return 2
-    key = name_hash_key(settings.analytics_export_name_key) if args.names == "hashed" else None
-    s3 = s3_client(role_arn=args.role_arn, region=args.region)
-    put = s3_put(s3, args.bucket, expected_owner=args.expected_bucket_owner)
+    key = name_hash_key(settings.analytics_export_name_key)
+    put = s3_put(
+        lambda: s3_client(role_arn=args.role_arn, region=args.region),
+        args.bucket,
+        expected_owner=args.expected_bucket_owner,
+    )
 
     # No model calls and no writes to ClickHouse: a plain connection, outside
     # the provider barrier that `run_connected` enters. It connects inside the
@@ -82,8 +81,9 @@ def _cmd_export(args: argparse.Namespace) -> int:
 def register_analytics_export_cli(sub: Any) -> None:
     p = sub.add_parser(
         "export-analytics",
-        help="Write one UTC day of usage and a namespace snapshot to S3 as Parquet. "
-        "Never replaces an object, so a repeated run is safe.",
+        help="Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names "
+        "hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. Never replaces an object, so a "
+        "repeated run is safe.",
     )
     p.add_argument("--bucket", required=True, help="The S3 bucket to write to")
     p.add_argument("--prefix", default="", help="A key prefix inside the bucket")
@@ -94,17 +94,9 @@ def register_analytics_export_cli(sub: Any) -> None:
         help="The UTC day to export, YYYY-MM-DD (default: yesterday)",
     )
     p.add_argument(
-        "--names",
-        choices=("hashed", "raw"),
-        default="hashed",
-        help="hashed (default): org, namespace and agent as a keyed hash under "
-        "LOOM_ANALYTICS_EXPORT_NAME_KEY; raw: as stored, for a deployment whose "
-        "names are opaque ids (refused while self-signup is open)",
-    )
-    p.add_argument(
         "--role-arn",
         default="",
-        help="An IAM role to assume with the default credentials before writing",
+        help="An IAM role to assume with the default credentials before each upload",
     )
     p.add_argument(
         "--region", default="", help="The bucket's AWS region (default: from AWS_REGION)"

@@ -54,10 +54,9 @@ def name_hash_key(secret: str) -> tuple[int, int]:
 
 
 async def export_day(
-    day: date, *, prefix: str, put: Put, key: tuple[int, int] | None, ch: CHClient
+    day: date, *, prefix: str, put: Put, key: tuple[int, int], ch: CHClient
 ) -> list[Exported]:
-    """Read and upload each entity of `day` in turn, names hashed under `key`
-    (None: as stored)."""
+    """Read and upload each entity of `day` in turn, names hashed under `key`."""
     out: list[Exported] = []
     for entity in ENTITIES:
         body = await parquet(entity, day, key=key, ch=ch)
@@ -85,15 +84,17 @@ def s3_client(*, role_arn: str = "", region: str = "") -> Any:
     return session.client("s3")
 
 
-def s3_put(s3: Any, bucket: str, *, expected_owner: str = "") -> Put:
-    """A conditional upload to `bucket`: an existing key is kept, not replaced."""
+def s3_put(client: Callable[[], Any], bucket: str, *, expected_owner: str = "") -> Put:
+    """A conditional upload to `bucket`: an existing key is kept, not replaced.
+    Each upload gets a fresh `client()`, so an assumed role's credentials,
+    which last an hour, never expire between two long reads."""
     from botocore.exceptions import ClientError
 
     extra: dict[str, Any] = {"ExpectedBucketOwner": expected_owner} if expected_owner else {}
 
     def put(key: str, body: bytes) -> bool:
         try:
-            s3.put_object(Bucket=bucket, Key=key, Body=body, IfNoneMatch="*", **extra)
+            client().put_object(Bucket=bucket, Key=key, Body=body, IfNoneMatch="*", **extra)
         except ClientError as e:
             if e.response.get("Error", {}).get("Code") == "PreconditionFailed":
                 return False

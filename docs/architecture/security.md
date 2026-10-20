@@ -740,14 +740,15 @@ hashing are engineering primitives, not a compliance guarantee.
 
 The [analytics export](../operations/analytics-export.md) is the one path that copies rows
 to a store erasure does not reach (an S3 bucket a warehouse loads). It is therefore an
-allowlist of aggregate and registry columns with no memory content and no person: users
-and sessions leave as distinct counts only, and
+allowlist of aggregate and registry columns with no memory content and no stored person
+identifier: users and sessions leave as distinct counts only, and
 `tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.
-Org, namespace and agent names leave as a keyed reference SipHash-2-4-128 by default,
-because self-signup builds names from OS usernames; the key (32 characters or more) is in
-a Secret only the export's pod reads. Raw names are an operator's choice, refused while
-self-signup is open. The bucket's write role is bound to the export's own Kubernetes
-ServiceAccount, not to the web pods, and the upload never replaces an object.
+Org, namespace and agent names always leave as a keyed reference SipHash-2-4-128, because a
+personal namespace carries its owner's email and self-signup a username. The hash is a
+pseudonym the key's holder can recompute, and erasure in Loom does not reach rows already
+exported. The key (32 characters or more) is in a Secret only the export's pod reads. The
+bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
+pods, and the upload never replaces an object.
 
 ## Secrets
 
