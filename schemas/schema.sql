@@ -16,7 +16,7 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 159 tables + 18 materialized views.
+-- Counts: 160 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
