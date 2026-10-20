@@ -1,5 +1,5 @@
-"""The mutations this release adds name their rows by bound parameters only: ClickHouse
-refuses a mutation with a subquery on a replicated table (code 36, nondeterministic)."""
+"""Mutations on the row-link tables name their rows by bound parameters only: ClickHouse
+refuses a mutation with a subquery on a replicated table (code 36)."""
 
 from __future__ import annotations
 
@@ -11,13 +11,17 @@ _ROW = "00000000-0000-0000-0000-0000000000a1"
 
 
 class _CH:
-    """Answers every read with `rows`; records every statement sent to execute."""
+    """Answers every read with `rows` (a re-read of which memories are live: `live`);
+    records every statement sent to execute."""
 
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
+    def __init__(self, rows: list[dict[str, Any]], live: tuple[str, ...] = ()) -> None:
         self.rows = rows
+        self.live = live
         self.executed: list[str] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+        if "tombstoned_at IS NULL OR updated_at" in sql:
+            return [{"id": i} for i in params["ids"] if i in self.live]
         return self.rows
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
@@ -59,3 +63,23 @@ async def test_the_orphan_row_link_delete_names_its_ids(monkeypatch) -> None:
         )
     assert wheres and not [w for w in wheres if "SELECT" in w]
     assert all("memory_id IN {ids:Array(UUID)}" in w for w in wheres)
+
+
+async def test_an_orphan_written_again_before_the_delete_keeps_its_links(monkeypatch) -> None:
+    """Two orphan ids read; one memory is written again before the DELETE: only the
+    other's links go."""
+    from server.erasure.store import mutations, steps_graph
+
+    deleted: list[list[str]] = []
+
+    async def record(table: str, *, params: dict[str, Any], **kw: Any) -> None:
+        deleted.append(params["ids"])
+
+    monkeypatch.setattr(mutations, "run_mutation", record)
+    monkeypatch.setattr(mutations, "run_lightweight_delete", record)
+    other = "00000000-0000-0000-0000-0000000000b2"
+    ch = _CH([{"id": _ROW}, {"id": other}], live=(other,))
+    await steps_graph.delete_orphan_row_links(
+        "o", "namespace", ["ns"], verified_at=datetime(2026, 1, 1), ch=ch
+    )
+    assert deleted == [[_ROW], [_ROW]]  # one DELETE per row-link table
