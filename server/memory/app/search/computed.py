@@ -43,7 +43,9 @@ def _read_identity(input: Any) -> dict[str, Any]:
 
 async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
     """Derived-answer aggregate leg. Gated on the derived-answer query
-    shapes; fail-open to None."""
+    shapes; fail-open to None. The fast posture makes no LLM call here: it
+    takes only the parser's intent, and matches the predicate without LLM
+    synonyms (its deterministic predicate class still applies)."""
     input = ctx.input
     cache = ctx.derived_aggregate_cache
     if "v" in cache:
@@ -55,7 +57,7 @@ async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
             from server.memory.app.retrieval import fetch_derived_aggregate
 
             intent = ctx.parser_derived_intent
-            if intent is None:
+            if intent is None and not ctx.fast_posture:
                 from server.memory.app.search_llm import extract_derived_intent_llm
 
                 ctx.search_budget.note_llm_call(1)
@@ -102,6 +104,7 @@ async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
                     subject_canonical_expanded=subj_expanded,
                     category_canonical_expanded=cat_expanded,
                     object_canonical_expanded=obj_expanded,
+                    expand_synonyms=not ctx.fast_posture,
                     on_llm_call=ctx.search_budget.note_llm_call,
                     **_read_identity(input),
                 )
@@ -121,6 +124,7 @@ async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
                         object_like=obj,
                         subject_canonical_expanded=subj_expanded,
                         object_canonical_expanded=obj_expanded,
+                        expand_synonyms=not ctx.fast_posture,
                         on_llm_call=ctx.search_budget.note_llm_call,
                         **_read_identity(input),
                     )

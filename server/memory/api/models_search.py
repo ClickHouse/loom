@@ -412,7 +412,7 @@ class MemorySearchInput(BaseModel):
     rerank: RerankName = ""
     # Cost posture. "standard" stages cheap recall first, spending expensive
     # LLM/graph/rerank legs only when the planner or fallback gates justify them.
-    # "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall.
+    # "fast" makes no LLM call (as recipe "fast"); "deep" allows upfront expensive recall.
     retrieval_budget: Literal["fast", "standard", "deep"] = "standard"
     # HyDE: embed an LLM-generated hypothetical answer instead of the raw query to
     # close the question/stored-phrasing vocabulary gap. Left unset, True means

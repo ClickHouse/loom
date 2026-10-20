@@ -129,7 +129,8 @@ async def _run_triple_matching(ctx: SearchContext) -> None:
     match. Matches get a rank_score boost above graph_overlap and
     entity_boost — typed relations are higher-signal than co-occurrence."""
     input = ctx.input
-    if input.search_mode != "graph":
+    # The fast posture makes no LLM call; graph expansion still runs.
+    if input.search_mode != "graph" or ctx.fast_posture:
         return
     from server.memory.app.search_llm import extract_query_triples_llm
 

@@ -416,6 +416,88 @@ async def test_parser_abstention_takes_the_empty_signal(
     assert out.retrieval_work["query_enrichment_used"] is False
 
 
+@pytest.fixture
+def llm_attempts(search_env, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every LLM call a search tries, each refused: the model client, the
+    derived-intent extractor and the judge record and raise. The real derived
+    aggregate runs (on the empty fake ClickHouse), so its synonym expansion
+    would reach the client, with an empty synonym cache."""
+    import server.llm.client as llm_client
+    import server.memory.app.retrieval as msearch
+    import server.memory.app.search_llm as sllm
+    from server.memory.app.retrieval.derived import fetch_derived_aggregate
+
+    attempts: list[str] = []
+
+    class _RefusingLLM:
+        model = "refusing"
+
+        async def complete(self, system: str = "", user: str = "", **kw: Any) -> Any:
+            attempts.append(f"complete: {user[:60]}")
+            raise AssertionError("an LLM call")
+
+    async def refused(name: str) -> Any:
+        attempts.append(name)
+        raise AssertionError("an LLM call")
+
+    monkeypatch.setattr(llm_client, "get_llm_client", lambda: _RefusingLLM())
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", lambda *a, **k: _RefusingLLM())
+    monkeypatch.setattr(sllm, "extract_derived_intent_llm", lambda *a, **k: refused("intent"))
+    monkeypatch.setattr(sllm, "judge_results_iteratively", lambda *a, **k: refused("judge"))
+    monkeypatch.setattr(sllm, "_VERB_SYNONYM_CACHE", type(sllm._VERB_SYNONYM_CACHE)())
+    monkeypatch.setattr(msearch, "fetch_derived_aggregate", fetch_derived_aggregate)
+    search_env.hits = [_svc_hit("a", sim=0.80, rank=0.8), _svc_hit("b", sim=0.40, rank=0.4)]
+    return attempts
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "what is my favorite color",
+        "how many model kits have I bought?",  # a count: the parser's intent
+        "how much did I spend on books in total?",
+        # A date difference the parser gives no aggregate intent for.
+        "how many days passed between the day I got my binoculars and the day I "
+        "noticed the goldfinches?",
+        "what changed about my job since last year?",
+    ],
+)
+@pytest.mark.parametrize(
+    "posture",
+    [
+        {"retrieval_budget": "fast"},
+        {"recipe": "fast"},
+        {"retrieval_budget": "fast", "recipe": "quality"},  # quality turns HyDE on
+        {"retrieval_budget": "fast", "recipe": "graph"},  # graph extracts triples
+        {"recipe": "fast", "hyde": True},
+        {"recipe": "fast", "rerank": "builtin:openai"},
+    ],
+    ids=["budget", "recipe", "budget-quality", "budget-graph", "recipe-hyde", "builtin-rerank"],
+)
+async def test_a_fast_read_makes_no_llm_call(
+    search_env, llm_attempts, query: str, posture: dict[str, Any]
+) -> None:
+    out = await _run(search_env, query=query, observation_date="2023-07-15", **posture)
+    assert llm_attempts == []
+    assert out.retrieval_work["llm_calls_total"] == 0
+    assert out.results  # still answered, from the vector query alone
+
+
+async def test_the_standard_budget_still_asks_the_llm_for_a_count_intent(
+    search_env, llm_attempts
+) -> None:
+    # The same date-difference question off the fast posture keeps its LLM leg.
+    await _run(
+        search_env,
+        query=(
+            "how many days passed between the day I got my binoculars and the day I "
+            "noticed the goldfinches?"
+        ),
+        observation_date="2023-07-15",
+    )
+    assert "intent" in llm_attempts
+
+
 def _canonical_recorder(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     # Recording canonical-lookup stub; prefixes 'C:' to mark the resolved set.
     import server.memory.app.entity_resolution as er
