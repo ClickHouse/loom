@@ -1095,7 +1095,8 @@ class CHClient:
     ) -> None:
         """Batch insert via the native typed insert path. `settings` forwards
         CH query settings; fire-and-forget settings are normalised by
-        `normalize_insert_settings`.
+        `normalize_insert_settings`. An `insert_deduplication_token` in
+        `settings` replaces the per-batch token.
 
         For the ledger tables in `PROJECTED_TABLES`, columns the live table
         does not have are dropped from the statement — one WARNING per
@@ -1217,10 +1218,12 @@ class CHClient:
         # One token per batch, drawn once here, so every
         # attempt below — loom's retry, the re-describe retries and the
         # driver's own retry after a peer close — names the same batch
-        # and ClickHouse keeps one copy.
-        settings = dedup_settings(
-            insert_dedup_token(table, list(rows[0].keys()), rows, uuid.uuid4().hex), settings
+        # and ClickHouse keeps one copy. A caller's token names the row's
+        # identity instead, so two writers of one row land it once.
+        token = (settings or {}).get("insert_deduplication_token") or insert_dedup_token(
+            table, list(rows[0].keys()), rows, uuid.uuid4().hex
         )
+        settings = dedup_settings(token, settings)
 
         async def _q() -> None:
             from server.core import rmt_carry
