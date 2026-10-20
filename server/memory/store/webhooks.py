@@ -69,20 +69,33 @@ ATTEMPT_COLS: tuple[str, ...] = (
 # The identity tuple and key an outbox row names a memory by.
 KEY_COLS = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 
-_COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
+# A webhook as statements name it: (org, namespace, webhook_id), the outbox's
+# sort-key prefix.
+Hook = tuple[str, str, str]
 
-# Each event's newest attempt row, of the attempts recorded since {since}.
-_LATEST_ATTEMPT = f"""
-    SELECT event_id,
-           argMax(status, version) AS status,
-           argMax(attempts, version) AS attempts,
-           argMax(next_attempt_at, version) AS next_attempt_at,
-           argMax(last_status, version) AS last_status,
-           argMax(last_error, version) AS last_error
-    FROM {ATTEMPTS}
-    WHERE recorded_at >= {{since:DateTime64(3)}}
-    GROUP BY event_id
-"""
+_COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
+_HOOKS = "{hooks:Array(Tuple(String, String, String))}"
+# The outbox events of {hooks} since {since}.
+_HOOK_EVENTS = (
+    f"SELECT event_id FROM {OUTBOX} WHERE (org, namespace, webhook_id) IN {_HOOKS} "
+    "AND occurred_at >= {since:DateTime64(3)}"
+)
+
+
+def _latest_attempts(events: str) -> str:
+    """Each event's newest attempt row, for the events the `events` subquery
+    names (attempts recorded since {since})."""
+    return f"""
+        SELECT event_id,
+               argMax(status, version) AS status,
+               argMax(attempts, version) AS attempts,
+               argMax(next_attempt_at, version) AS next_attempt_at,
+               argMax(last_status, version) AS last_status,
+               argMax(last_error, version) AS last_error
+        FROM {ATTEMPTS}
+        WHERE recorded_at >= {{since:DateTime64(3)}} AND event_id IN ({events})
+        GROUP BY event_id
+    """
 
 
 def _whole(row: dict[str, Any], cols: tuple[str, ...]) -> dict[str, Any]:
@@ -120,6 +133,16 @@ async def live_webhooks(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
         )
 
 
+async def removed_webhooks(*, ch: _CHClient | None = None) -> list[Hook]:
+    """Every removed registration."""
+    ch = ch or _default_client()
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"SELECT org, namespace, webhook_id FROM {WEBHOOKS} FINAL WHERE is_deleted = 1"
+        )
+    return [(str(r["org"]), str(r["namespace"]), str(r["webhook_id"])) for r in rows]
+
+
 async def insert_outbox(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
     """Outbox rows, committed before the call returns."""
     if not rows:
@@ -139,33 +162,76 @@ async def due_events(
     now: datetime,
     *,
     since: datetime,
+    hooks: list[Hook],
+    per_webhook: int,
     limit: int,
-    org: str = "",
-    namespace: str = "",
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Outbox rows since `since` with no attempt yet, or whose newest attempt is
-    pending (or a lease) and due, oldest first, at most `limit`; each with its
-    `attempts` so far. `org` and `namespace` narrow it when set (tests)."""
+    """Events of `hooks` since `since` with no attempt yet, or whose newest
+    attempt is pending (or a lease) and due: oldest first, at most `per_webhook`
+    of each webhook and `limit` in all, each with its `attempts` so far."""
+    if not hooks:
+        return []
     ch = ch or _default_client()
-    where = ["o.occurred_at >= {since:DateTime64(3)}"]
-    params: dict[str, Any] = {"now": now, "since": since, "limit": int(limit)}
-    if org:
-        where.append("o.org = {org:String}")
-        params["org"] = org
-    if namespace:
-        where.append("o.namespace = {ns:String}")
-        params["ns"] = namespace
     cols = ", ".join(f"o.{c} AS {c}" for c in OUTBOX_COLS)
     with own_write_reads():  # a lease just written must be seen
         return await ch.query_all(
-            f"SELECT {cols}, ifNull(a.attempts, 0) AS attempts "
-            f"FROM {OUTBOX} AS o LEFT JOIN ({_LATEST_ATTEMPT}) AS a ON a.event_id = o.event_id "
-            f"WHERE {' AND '.join(where)} AND (ifNull(a.event_id, '') = '' "
+            f"SELECT {cols}, ifNull(a.attempts, 0) AS attempts FROM {OUTBOX} AS o "
+            f"LEFT JOIN ({_latest_attempts(_HOOK_EVENTS)}) AS a ON a.event_id = o.event_id "
+            f"WHERE (o.org, o.namespace, o.webhook_id) IN {_HOOKS} "
+            "AND o.occurred_at >= {since:DateTime64(3)} AND (ifNull(a.event_id, '') = '' "
             "OR (a.status IN ('pending', 'leased') AND a.next_attempt_at <= {now:DateTime64(3)})) "
-            "ORDER BY o.occurred_at LIMIT {limit:UInt32}",
-            params=params,
+            "ORDER BY o.occurred_at "
+            "LIMIT {per:UInt32} BY o.webhook_id LIMIT {limit:UInt32}",
+            params={
+                "now": now,
+                "since": since,
+                "hooks": hooks,
+                "per": int(per_webhook),
+                "limit": int(limit),
+            },
         )
+
+
+async def mark_dead(
+    now: datetime,
+    *,
+    since: datetime,
+    hooks: list[Hook],
+    reason: str,
+    version: int,
+    before: datetime | None = None,
+    ch: _CHClient | None = None,
+) -> None:
+    """One statement: a `dead` attempt row with `reason` for every event of
+    `hooks` since `since` (and before `before` when set) not yet delivered or
+    dead."""
+    if not hooks:
+        return
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "now": now,
+        "since": since,
+        "hooks": hooks,
+        "reason": reason,
+        "version": int(version),
+    }
+    older = ""
+    if before is not None:
+        older = "AND o.occurred_at < {before:DateTime64(3)}"
+        params["before"] = before
+    await ch.execute(
+        f"INSERT INTO {ATTEMPTS} ({', '.join(ATTEMPT_COLS)}) "
+        "SELECT o.event_id, 'dead', ifNull(a.attempts, 0), {now:DateTime64(3)}, 0, "
+        "{reason:String}, {now:DateTime64(3)}, {version:UInt64} "
+        f"FROM {OUTBOX} AS o LEFT JOIN ({_latest_attempts(_HOOK_EVENTS)}) AS a "
+        "ON a.event_id = o.event_id "
+        f"WHERE (o.org, o.namespace, o.webhook_id) IN {_HOOKS} "
+        f"AND o.occurred_at >= {{since:DateTime64(3)}} {older} "
+        "AND (ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased'))",
+        params=params,
+        settings=_COMMITTED,
+    )
 
 
 async def keys_with_history(
@@ -177,12 +243,13 @@ async def keys_with_history(
     if not keys:
         return set()
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        f"SELECT DISTINCT {', '.join(KEY_COLS)} FROM loom.memory_versions "
-        f"WHERE ({', '.join(KEY_COLS)}) IN "
-        "{keys:Array(Tuple(String, String, String, String, String, String))}",
-        params={"keys": [tuple(k) for k in keys]},
-    )
+    with own_write_reads():  # an erasure that just finished must be seen
+        rows = await ch.query_all(
+            f"SELECT DISTINCT {', '.join(KEY_COLS)} FROM loom.memory_versions "
+            f"WHERE ({', '.join(KEY_COLS)}) IN "
+            "{keys:Array(Tuple(String, String, String, String, String, String))}",
+            params={"keys": [tuple(k) for k in keys]},
+        )
     return {tuple(str(r[c]) for c in KEY_COLS) for r in rows}
 
 
@@ -198,16 +265,22 @@ async def namespace_deliveries(
 ) -> list[dict[str, Any]]:
     """The namespace's events since `since` with their newest attempt, newest
     first; a lease reads as `pending`. `webhook_id` and `status` narrow it when
-    set."""
+    set. Only the namespace's events are read (the outbox's sort-key prefix)."""
     ch = ch or _default_client()
-    where = ["o.org = {org:String}", "o.namespace = {ns:String}"]
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "occurred_at >= {since:DateTime64(3)}",
+    ]
     params: dict[str, Any] = {"org": org, "ns": namespace, "since": since, "limit": int(limit)}
     if webhook_id:
-        where.append("o.webhook_id = {wid:String}")
+        where.append("webhook_id = {wid:String}")
         params["wid"] = webhook_id
-    outer = "WHERE status = {status:String}" if status else ""
+    outer = ""
     if status:
+        outer = "WHERE status = {status:String}"
         params["status"] = status
+    events = f"SELECT event_id FROM {OUTBOX} WHERE {' AND '.join(where)}"
     return await ch.query_all(
         f"""
         SELECT * FROM (
@@ -223,8 +296,8 @@ async def namespace_deliveries(
                    ifNull(a.last_status, 0) AS last_status,
                    ifNull(a.last_error, '') AS last_error
             FROM {OUTBOX} AS o
-            LEFT JOIN ({_LATEST_ATTEMPT}) AS a ON a.event_id = o.event_id
-            WHERE o.occurred_at >= {{since:DateTime64(3)}} AND {" AND ".join(where)}
+            LEFT JOIN ({_latest_attempts(events)}) AS a ON a.event_id = o.event_id
+            WHERE {" AND ".join(f"o.{w}" for w in where)}
         )
         {outer}
         ORDER BY occurred_at DESC

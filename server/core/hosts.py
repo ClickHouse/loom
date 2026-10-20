@@ -64,6 +64,6 @@ async def vet_host(host: str, *, allow_private: bool = False) -> tuple[str, str]
             return f"{h} resolved to {a!r}, not an address", ""
         if not public:
             return (
-                f"{h} resolves to {a}, a private or local address; loom reaches only public hosts"
+                f"{h} resolves to a private or local address; loom reaches only public hosts"
             ), ""
     return "", addrs[0]

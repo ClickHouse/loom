@@ -13,9 +13,10 @@ read again every `memory_webhook_refresh_seconds`: a webhook registered on
 another process applies to this one's writes within that interval. A
 register or remove here reads it again on the next write.
 
-An announcement never fails the write it describes: the row is in, so an
-outbox insert that fails is logged and noted as a degradation, and that event
-is not sent.
+An event's id is derived from what it is (`event_id`), so a repeat of one
+event to one webhook shares its id. An announcement never fails the write it
+describes: the row is in, so an outbox insert that fails is logged and noted
+as a degradation, and that event is not sent.
 """
 
 from __future__ import annotations
@@ -25,10 +26,10 @@ import hashlib
 import logging
 import os
 import time
-import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 from server.core import webhooks as signed
 from server.core.errors import ValidationError
@@ -51,14 +52,16 @@ from server.memory.store import webhooks as store
 from server.memory.store.rows import next_version
 from server.observability import degradations
 from server.settings import settings
+from server.workers import pass_context
 
 log = logging.getLogger(__name__)
 
 # Live webhooks a namespace may hold.
 MAX_PER_NAMESPACE = 10
 
+Hooks = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
 # (org, namespace) → ((webhook_id, its event types), ...), this process's copy.
-_hooks: dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]] = {}
+_hooks: Hooks = {}
 _next_read = 0.0
 _lock = asyncio.Lock()
 
@@ -72,8 +75,12 @@ def url_schemes() -> tuple[str, ...]:
 
 async def url_refusal(url: str) -> str:
     """Why `url` may not receive memory webhooks ("" when it may): https only
-    unless the deployment allows http, and a host that resolves to public
-    addresses unless memory_webhook_private_hosts names it."""
+    unless the deployment allows http, no user name or password, and a host
+    that resolves to public addresses unless memory_webhook_private_hosts
+    names it."""
+    parts = urlsplit(url)
+    if parts.username is not None or parts.password is not None:
+        return "the URL may not carry a user name or password"
     refusal, *_ = await signed.pinned_target(
         url, schemes=url_schemes(), private_hosts=settings.memory_webhook_private_host_set()
     )
@@ -94,7 +101,7 @@ async def _read() -> None:
     hooks: dict[tuple[str, str], list[tuple[str, frozenset[str]]]] = {}
     for r in rows:
         key = (str(r["org"]), str(r["namespace"]))
-        hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"] or ())))
+        hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"])))
     _hooks = {k: tuple(v) for k, v in hooks.items()}
 
 
@@ -104,16 +111,37 @@ def forget_registry() -> None:
     _next_read = 0.0
 
 
-async def subscribers(org: str, namespace: str, event: str) -> list[str]:
-    """The ids of the namespace's webhooks that take `event`."""
+async def _fresh_hooks() -> Hooks:
+    """This process's copy of the registry, read again once its interval is up."""
     if time.monotonic() >= _next_read:
         async with _lock:
             if time.monotonic() >= _next_read:
                 await _read()
-    return [wid for wid, events in _hooks.get((org, namespace), ()) if event in events]
+    return _hooks
+
+
+async def subscribers(org: str, namespace: str, event: str) -> list[str]:
+    """The ids of the namespace's webhooks that take `event`."""
+    hooks = await _fresh_hooks()
+    return [wid for wid, events in hooks.get((org, namespace), ()) if event in events]
+
+
+async def namespaces_with_hooks(org: str) -> list[str]:
+    """The org's namespaces that have a webhook."""
+    return sorted(ns for o, ns in await _fresh_hooks() if o == org)
 
 
 # ---------------------------------------------------------------- announcing
+
+
+def event_id(webhook_id: str, event: str, change: Mapping[str, Any]) -> str:
+    """One id per (webhook, event, memory id, version), or per (webhook, erasure)
+    for `memory.erased`: a write path that announces the same version again
+    (a delete_version check that runs twice) repeats the id, and the receiver
+    drops the repeat."""
+    what = change.get("erasure_id") or change.get("memory_id")
+    seed = "|".join((webhook_id, event, str(what), str(change.get("version", 0))))
+    return hashlib.sha256(seed.encode()).hexdigest()[:32]
 
 
 def _outbox_row(
@@ -123,7 +151,7 @@ def _outbox_row(
         "org": str(change["org"]),
         "namespace": str(change["namespace"]),
         "webhook_id": webhook_id,
-        "event_id": str(uuid.uuid4()),
+        "event_id": event_id(webhook_id, event, change),
         "event_type": event,
         "agent": str(change.get("agent") or "-"),
         "user_id": str(change.get("user_id") or "-"),
@@ -138,16 +166,25 @@ def _outbox_row(
     }
 
 
+def _actor() -> str:
+    """Who made the change: the request's principal, else `worker:<name>` for a
+    background pass (the expiry sweep, the delete_version check)."""
+    ctx = pass_context.current()
+    return provenance.writer_actor() or (f"worker:{ctx.worker}" if ctx else "")
+
+
 async def announce(event: EventType, changes: Sequence[Mapping[str, Any]]) -> None:
     """Leave one outbox row per (change, webhook that takes `event`). A change is
     a mapping with the memory's org, namespace, agent, user_id, session_id,
     memory_key, memory_id and version (a memory version row is one). Never
     raises."""
+    if not changes:
+        return
     try:
         now = datetime.now(UTC).replace(tzinfo=None)
-        actor = provenance.writer_actor()
+        actor = _actor()
         rows = [
-            _outbox_row(event, wid, c, actor=actor or str(c.get("actor") or ""), now=now)
+            _outbox_row(event, wid, c, actor=actor, now=now)
             for c in changes
             for wid in await subscribers(str(c["org"]), str(c["namespace"]), event)
         ]
@@ -159,8 +196,16 @@ async def announce(event: EventType, changes: Sequence[Mapping[str, Any]]) -> No
 
 def memory_change(memory: Any, version: int) -> dict[str, Any]:
     """The change `announce` takes, for a memory row object at `version`."""
-    fields = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "memory_id")
-    return {**{f: getattr(memory, f, "") for f in fields}, "version": version}
+    return {
+        "org": memory.org,
+        "namespace": memory.namespace,
+        "agent": memory.agent,
+        "user_id": memory.user_id,
+        "session_id": memory.session_id,
+        "memory_key": memory.memory_key,
+        "memory_id": memory.memory_id,
+        "version": version,
+    }
 
 
 async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_id: str) -> None:
@@ -169,8 +214,7 @@ async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_i
     names the erasure, never the user or a key: the receiver asked for it and
     knows what it covered."""
     if namespaces is None:
-        await subscribers(org, "", "memory.erased")  # refresh the copy when due
-        namespaces = sorted(ns for o, ns in _hooks if o == org)
+        namespaces = await namespaces_with_hooks(org)
     await announce(
         "memory.erased",
         [{"org": org, "namespace": ns, "erasure_id": erasure_id} for ns in namespaces],
@@ -180,9 +224,11 @@ async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_i
 # ---------------------------------------------------------------- the ops
 
 
-def _webhook_id(org: str, namespace: str, url: str) -> str:
-    """One registration per URL in a namespace: registering it again replaces it."""
-    return hashlib.sha256(f"{org}\0{namespace}\0{url}".encode()).hexdigest()[:16]
+def _new_webhook_id(org: str, namespace: str, url: str, created_at: datetime) -> str:
+    """A registration's own id: the same URL registered again after a remove
+    gets a new one, so the removed registration's events stay its own."""
+    seed = "|".join((org, namespace, url, created_at.isoformat()))
+    return hashlib.sha256(seed.encode()).hexdigest()[:16]
 
 
 def _info(row: Mapping[str, Any]) -> WebhookInfo:
@@ -191,9 +237,9 @@ def _info(row: Mapping[str, Any]) -> WebhookInfo:
         webhook_id=str(row["webhook_id"]),
         url=str(row["url"]),
         secret_ref=ref,
-        events=[str(e) for e in row["events"]],
-        created_by=str(row.get("created_by") or ""),
-        created_at=row.get("created_at"),
+        events=list(row["events"]),
+        created_by=str(row["created_by"]),
+        created_at=row["created_at"],
         secret_present=signed.read_secret(str(row["org"]), ref, os.environ) is not None,
     )
 
@@ -208,23 +254,28 @@ async def handle_webhook_register(input: WebhookRegisterInput) -> WebhookRegiste
     refusal = await url_refusal(input.url)
     if refusal:
         raise ValidationError(f"url refused: {refusal}")
-    webhook_id = _webhook_id(input.org, input.namespace, input.url)
     existing = await store.namespace_webhooks(input.org, input.namespace)
-    if webhook_id not in {r["webhook_id"] for r in existing} and (
-        len(existing) >= MAX_PER_NAMESPACE
-    ):
+    same_url = next((r for r in existing if r["url"] == input.url), None)
+    if same_url is None and len(existing) >= MAX_PER_NAMESPACE:
         raise ValidationError(
             f"a namespace holds at most {MAX_PER_NAMESPACE} webhooks; remove one first"
         )
+    now = datetime.now(UTC).replace(tzinfo=None)
+    # The URL registered again keeps its id and replaces its secret_ref and events.
+    kept = same_url or {
+        "webhook_id": _new_webhook_id(input.org, input.namespace, input.url, now),
+        "created_by": provenance.writer_actor(),
+        "created_at": now,
+    }
     row = {
         "org": input.org,
         "namespace": input.namespace,
-        "webhook_id": webhook_id,
+        "webhook_id": kept["webhook_id"],
         "url": input.url,
         "secret_ref": input.secret_ref,
         "events": sorted(set(input.events)),
-        "created_by": provenance.writer_actor(),
-        "created_at": datetime.now(UTC).replace(tzinfo=None),
+        "created_by": kept["created_by"],
+        "created_at": kept["created_at"],
         "is_deleted": 0,
         "version": next_version(),
     }
@@ -267,7 +318,7 @@ async def handle_webhook_deliveries(input: WebhookDeliveriesInput) -> WebhookDel
                 memory_id=str(r["memory_id"]),
                 version=int(r["memory_version"]),
                 occurred_at=r["occurred_at"],
-                status=str(r["status"]),
+                status=r["status"],
                 attempts=int(r["attempts"]),
                 next_attempt_at=r["next_attempt_at"],
                 last_status=int(r["last_status"]),

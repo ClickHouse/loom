@@ -44,6 +44,7 @@ from server.memory.api.models_crud import (
     MemoryUnpinOutput,
 )
 from server.memory.app import conflict_deferred as _cd
+from server.memory.app import webhooks
 from server.memory.app.get_output import duplicate_of_shown, row_output
 from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
@@ -605,8 +606,6 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
     tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
-    from server.memory.app import webhooks
-
     await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, version)])
     return MemoryDeleteOutput(
         tombstoned=True,
@@ -774,8 +773,6 @@ async def finish_delete_check(
         )
         # Here, where every finish of the delete passes (the call itself, a retry of
         # a deferred one, the delete_version_check worker).
-        from server.memory.app import webhooks
-
         await webhooks.announce("memory.tombstoned", [webhooks.memory_change(existing, tombstone)])
     try:
         await memory_repo.record_delete_check(check, done=True)

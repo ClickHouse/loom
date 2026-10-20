@@ -38,10 +38,11 @@ class WebhookInfo(BaseModel):
     webhook_id: str
     url: str
     secret_ref: str
-    events: list[str]
+    events: list[EventType]
     created_by: str = ""
     created_at: datetime | None = None
-    # Whether this server holds the variable secret_ref names; events wait until it does.
+    # Whether this server holds a usable secret in the variable secret_ref names; events
+    # wait until it does.
     secret_present: bool = False
 
 
@@ -98,8 +99,8 @@ class WebhookDelivery(BaseModel):
     version: int
     occurred_at: datetime
     # pending (waiting for its next try), delivered (a 2xx came back) or dead
-    # (out of attempts).
-    status: str
+    # (out of attempts, or never sendable: see last_error).
+    status: DeliveryStatus
     # POSTs made so far (a wait for a missing secret is not one).
     attempts: int
     # When the next attempt is due (pending), or when the last one was made.

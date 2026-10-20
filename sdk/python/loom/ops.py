@@ -17337,7 +17337,7 @@ class WebhookDelivery(TypedDict, total=False):
     memory_id: Required[str]
     version: Required[int]
     occurred_at: Required[str]  # date-time as ISO-8601 text
-    status: Required[str]
+    status: Required[Literal["pending", "delivered", "dead"]]
     attempts: Required[int]
     next_attempt_at: Required[str]  # date-time as ISO-8601 text
     last_status: Required[int]
@@ -17366,7 +17366,18 @@ class WebhookInfo(TypedDict, total=False):
     webhook_id: Required[str]
     url: Required[str]
     secret_ref: Required[str]
-    events: Required[list[str]]
+    events: Required[
+        list[
+            Literal[
+                "memory.written",
+                "memory.revised",
+                "memory.tombstoned",
+                "memory.restored",
+                "memory.redacted",
+                "memory.erased",
+            ]
+        ]
+    ]
     created_by: NotRequired[str]
     created_at: NotRequired[Optional[str]]
     secret_present: NotRequired[bool]

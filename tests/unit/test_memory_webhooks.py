@@ -1,6 +1,8 @@
-"""Memory webhooks: the body carries ids and never content, the write path's
-outbox rows, the signed delivery and its retries, the URL rules, and that an
-erasure leaves nothing a pass can send.
+"""Memory webhooks: the body carries ids and never content, the write paths'
+events, the registry copy, the signed delivery and its retries, fairness
+between webhooks, the URL rules, and that an erasure leaves nothing a pass can
+send. The integration test that reads the outbox back is the main check of the
+write paths; these cover the decisions and the failure cases.
 
 `loom.memory_webhooks`, `loom.memory_webhook_outbox` and
 `loom.memory_webhook_attempts` are written whole through `WEBHOOK_COLS`,
@@ -9,11 +11,13 @@ columns."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime, timedelta
+import logging
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -21,15 +25,18 @@ import httpx
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
+import server.memory.store as memory_repo
 from server.core import webhooks as signed
+from server.core.ch import sequential_reads_var
 from server.core.errors import ValidationError
-from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_webhook import WebhookRegisterInput
 from server.memory.app import webhooks as app
 from server.memory.domain.webhook_events import BODY_FIELDS, EVENT_TYPES, event_body
+from server.memory.store import MemoryRow
 from server.memory.store import webhooks as store
 from server.memory.workers import webhook_deliver as worker
 from server.settings import settings
+from server.workers import pass_context
 from tests.unit.ch_fake import RecordingCH
 from tests.unit.schema_ddl import column_names
 
@@ -52,25 +59,25 @@ def test_an_attempt_row_names_no_key_and_no_identity() -> None:
     )
 
 
-def _outbox_row(**over: Any) -> dict[str, Any]:
-    change = dict(zip(store.KEY_COLS, KEY, strict=True))
+def _change(**over: Any) -> dict[str, Any]:
+    change: dict[str, Any] = dict(zip(store.KEY_COLS, KEY, strict=True))
     change.update(memory_id="11111111-1111-1111-1111-111111111111", version=1_758_369_600 * 10**9)
-    row = app._outbox_row("memory.written", "wh1", change, actor="user:alice", now=NOW)
+    return {**change, **over}
+
+
+def _outbox_row(webhook_id: str = "wh1", event: str = "memory.written", **over: Any) -> Any:
+    row = app._outbox_row(event, webhook_id, _change(), actor="user:alice", now=NOW)
     return {**row, **over}
 
 
-# ------------------------------------------------------------ the body
+# ------------------------------------------------------------ the body and its id
 
 
 def test_the_body_names_the_change_and_never_its_content() -> None:
     # A memory version row handed to announce carries its value, tags and evidence;
     # the outbox row and the body keep none of them.
-    row = {
-        **_outbox_row(),
-        "value": "prefers green tea",
-        "tags": ["diet"],
-        "source_trace": "said so in chat",
-    }
+    change = _change(value="prefers green tea", tags=["diet"], source_trace="said so in chat")
+    row = app._outbox_row("memory.written", "wh1", change, actor="user:alice", now=NOW)
     body = json.loads(event_body(row))
     assert list(body) == list(BODY_FIELDS)
     assert body["type"] == "memory.written"
@@ -80,7 +87,27 @@ def test_the_body_names_the_change_and_never_its_content() -> None:
     text = json.dumps(body)
     for content in ("green tea", "diet", "said so"):
         assert content not in text
-    assert set(store.OUTBOX_COLS).isdisjoint({"value", "value_json", "tags", "source_trace"})
+
+
+def test_a_repeat_of_one_event_shares_its_id_and_nothing_else_does() -> None:
+    same = app.event_id("wh1", "memory.tombstoned", _change())
+    assert same == app.event_id("wh1", "memory.tombstoned", _change())
+    assert (
+        len(
+            {
+                same,
+                app.event_id("wh2", "memory.tombstoned", _change()),
+                app.event_id("wh1", "memory.revised", _change()),
+                app.event_id("wh1", "memory.tombstoned", _change(version=1)),
+                app.event_id("wh1", "memory.tombstoned", _change(memory_id="other")),
+            }
+        )
+        == 5
+    )
+    erased = {"org": "acme", "namespace": "chat", "erasure_id": "er-1"}
+    assert app.event_id("wh1", "memory.erased", erased) != app.event_id(
+        "wh1", "memory.erased", {**erased, "erasure_id": "er-2"}
+    )
 
 
 def test_an_event_type_outside_the_fixed_set_is_refused() -> None:
@@ -101,7 +128,7 @@ def test_an_event_type_outside_the_fixed_set_is_refused() -> None:
     ).events == list(EVENT_TYPES)
 
 
-# ------------------------------------------------------------ the write path
+# ------------------------------------------------------------ the registry copy
 
 
 @pytest.fixture
@@ -113,6 +140,57 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], Any]:
     return hooks
 
 
+def _registration(webhook_id: str, namespace: str = "chat", **over: Any) -> dict[str, Any]:
+    return {
+        "org": "acme",
+        "namespace": namespace,
+        "webhook_id": webhook_id,
+        "url": f"https://{namespace}.example/hooks/{webhook_id}",
+        "secret_ref": REF,
+        "events": list(EVENT_TYPES),
+        "created_by": "user:alice",
+        "created_at": NOW,
+        "is_deleted": 0,
+        "version": 1,
+        **over,
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reads: list[int] = []
+    answer: list[Any] = [[_registration("wh1")]]
+
+    async def live() -> list[dict[str, Any]]:
+        reads.append(1)
+        if isinstance(answer[0], Exception):
+            raise answer[0]
+        return answer[0]
+
+    monkeypatch.setattr(store, "live_webhooks", live)
+    monkeypatch.setattr(app, "_hooks", {})
+    monkeypatch.setattr(app, "_next_read", 0.0)
+    assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
+    # Within the interval the copy serves without a read.
+    assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
+    assert len(reads) == 1
+    # A failed read keeps the last copy.
+    answer[0] = RuntimeError("ClickHouse is away")
+    app.forget_registry()
+    assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
+    assert len(reads) == 2
+    # A change made here reads the registry again on the next write.
+    answer[0] = []
+    app.forget_registry()
+    assert await app.subscribers("acme", "chat", "memory.written") == []
+    assert await app.namespaces_with_hooks("acme") == []
+
+
+# ------------------------------------------------------------ announcing
+
+
 @pytest.mark.asyncio
 async def test_announce_writes_one_row_per_subscribed_webhook(
     monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
@@ -122,14 +200,7 @@ async def test_announce_writes_one_row_per_subscribed_webhook(
         ("wh2", frozenset({"memory.tombstoned"})),
     )
     ch = RecordingCH().install(monkeypatch)
-    change = {
-        **dict(zip(store.KEY_COLS, KEY, strict=True)),
-        "session_id": "s1",
-        "memory_id": "m",
-        "version": 7,
-        "value": "secret text",
-    }
-    await app.announce("memory.written", [change])
+    await app.announce("memory.written", [_change(session_id="s1", value="secret text")])
     rows = ch.inserted("memory_webhook_outbox")
     assert [r["webhook_id"] for r in rows] == ["wh1"]
     row = rows[0]
@@ -140,8 +211,22 @@ async def test_announce_writes_one_row_per_subscribed_webhook(
         "user_id": "u1",
         "session_id": "s1",
     }
-    assert (row["memory_key"], row["memory_id"], row["memory_version"]) == (KEY[5], "m", 7)
+    assert (row["memory_key"], row["memory_version"]) == (KEY[5], 1_758_369_600 * 10**9)
     assert "secret text" not in json.dumps(rows, default=str)
+
+
+@pytest.mark.asyncio
+async def test_a_background_pass_is_the_actor_of_its_changes(
+    monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
+) -> None:
+    registry[("acme", "chat")] = (("wh1", frozenset({"memory.tombstoned"})),)
+    ch = RecordingCH().install(monkeypatch)
+    pass_context.begin("memory_expiry_sweep")
+    try:
+        await app.announce("memory.tombstoned", [_change()])
+    finally:
+        pass_context.clear()
+    assert ch.inserted("memory_webhook_outbox")[0]["actor"] == "worker:memory_expiry_sweep"
 
 
 @pytest.mark.asyncio
@@ -149,7 +234,7 @@ async def test_a_namespace_without_webhooks_pays_no_insert(
     monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
 ) -> None:
     ch = RecordingCH().install(monkeypatch)
-    await app.announce("memory.written", [{"org": "acme", "namespace": "chat"}])
+    await app.announce("memory.written", [_change()])
     assert ch.calls == []
 
 
@@ -163,7 +248,7 @@ async def test_a_failed_outbox_insert_never_fails_the_write(
         raise RuntimeError("ClickHouse is away")
 
     monkeypatch.setattr(store, "insert_outbox", broken)
-    await app.announce("memory.written", [{"org": "acme", "namespace": "chat"}])
+    await app.announce("memory.written", [_change()])
 
 
 @pytest.mark.asyncio
@@ -186,148 +271,29 @@ def announced(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, list[dict[str,
     calls: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def record(event: str, changes: Any) -> None:
-        calls.append((event, [dict(c) for c in changes]))
+        if changes:
+            calls.append((event, [dict(c) for c in changes]))
 
     monkeypatch.setattr(app, "announce", record)
     return calls
 
 
-def _patch_set_phases(monkeypatch: pytest.MonkeyPatch, *, existing: bool, embedded: bool) -> None:
-    """memory.set's phases up to the insert, as no-ops that build a row."""
-    from server.memory.app import write
-
-    async def resolve(input: Any) -> Any:
-        return input, input.memory_type, ""
-
-    async def fetch(input: Any) -> Any:
-        return None, (SimpleNamespace() if existing else None)
-
-    async def expiry(*a: Any) -> None:
-        return None
-
-    async def prepare(w: Any, _restated: bool) -> None:
-        return None
-
-    async def check(w: Any) -> None:
-        return None
-
-    def build(w: Any) -> None:
-        w.had_existing_row = existing
-        w.memory_id = "m1"
-        w.memory_row = {
-            **dict(zip(store.KEY_COLS, KEY, strict=True)),
-            "memory_id": "m1",
-            "version": 42,
-        }
-
-    async def width(*a: Any) -> None:
-        return None
-
-    async def embed(w: Any) -> None:
-        return None
-
-    monkeypatch.setattr(write, "_set_resolve_type", resolve)
-    monkeypatch.setattr(write, "_set_fetch_existing", fetch)
-    monkeypatch.setattr(write, "_guard_existing_row", lambda *a: (False, None))
-    monkeypatch.setattr(write, "_set_expiry", expiry)
-    monkeypatch.setattr(write, "_set_prepare_value", prepare)
-    monkeypatch.setattr(write, "_set_check_if_match", check)
-    monkeypatch.setattr(write, "_set_build_memory_row", build)
-    monkeypatch.setattr(write, "is_embedded", lambda *a: embedded)
-    monkeypatch.setattr(write.codes_state, "refuse_width", width)
-    monkeypatch.setattr(write, "get_embedder", lambda: SimpleNamespace(dim=8))
-    monkeypatch.setattr(write, "_set_embed", embed)
-    monkeypatch.setattr(write, "get_client", lambda: None)
+def _events(announced: list[Any]) -> set[tuple[str, str]]:
+    return {(e, c["memory_key"]) for e, cs in announced for c in cs}
 
 
-def _set_input(**over: Any) -> MemorySetInput:
-    return MemorySetInput(
-        org="acme", namespace="chat", agent="bot", memory_key=KEY[5], value="v", **over
-    )
+def test_memory_set_announces_a_change_and_never_a_restatement() -> None:
+    from server.memory.app.write import set_event
 
-
-def _out(*, dry_run: bool = False) -> Any:
-    return SimpleNamespace(dry_run=dry_run)
+    assert set_event(had_existing_row=False, restated=False) == "memory.written"
+    assert set_event(had_existing_row=True, restated=False) == "memory.revised"
+    assert set_event(had_existing_row=True, restated=True) is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("existing", "embedded", "event"),
-    [
-        (False, False, "memory.written"),
-        (True, False, "memory.revised"),
-        (False, True, "memory.written"),
-        (True, True, "memory.revised"),
-    ],
-)
-async def test_memory_set_announces_the_row_it_wrote(
-    monkeypatch: pytest.MonkeyPatch,
+async def test_bulk_set_splits_written_and_revised_and_a_repeated_key_is_revised(
     announced: list[Any],
-    existing: bool,
-    embedded: bool,
-    event: str,
 ) -> None:
-    from server.memory.app import write
-
-    _patch_set_phases(monkeypatch, existing=existing, embedded=embedded)
-
-    async def plain(w: Any, ch: Any) -> Any:
-        return _out()
-
-    async def verdict(w: Any, cfg: Any) -> Any:
-        return None, SimpleNamespace(verdict="clear"), [], None
-
-    async def dual(*a: Any) -> None:
-        return None
-
-    async def after(*a: Any) -> Any:
-        return _out()
-
-    monkeypatch.setattr(write, "_set_plain_insert", plain)
-    monkeypatch.setattr(write, "_set_conflict_verdict", verdict)
-    monkeypatch.setattr(write, "_stamp_lifecycle", lambda *a: "")
-    monkeypatch.setattr(write, "_set_dual_write", dual)
-    monkeypatch.setattr(write, "_set_after_write", after)
-    await write._memory_set_phases(_set_input())
-    assert [(e, [c["version"] for c in cs]) for e, cs in announced] == [(event, [42])]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["merge", "dry_run", "plain_dry_run", "pin_refusal"])
-async def test_memory_set_announces_nothing_it_did_not_write(
-    monkeypatch: pytest.MonkeyPatch, announced: list[Any], path: str
-) -> None:
-    from server.memory.app import write
-
-    _patch_set_phases(monkeypatch, existing=True, embedded=path != "plain_dry_run")
-    verdict_name = "merge" if path == "merge" else "clear"
-
-    async def plain(w: Any, ch: Any) -> Any:
-        return _out(dry_run=True)
-
-    async def verdict(w: Any, cfg: Any) -> Any:
-        return None, SimpleNamespace(verdict=verdict_name), [], None
-
-    async def merge(*a: Any) -> Any:
-        return _out()
-
-    async def must_not_write(*a: Any) -> None:
-        raise AssertionError("no write on this path")
-
-    monkeypatch.setattr(write, "_set_plain_insert", plain)
-    monkeypatch.setattr(write, "_set_conflict_verdict", verdict)
-    monkeypatch.setattr(write, "_set_merge", merge)
-    monkeypatch.setattr(write, "_stamp_lifecycle", lambda *a: "")
-    monkeypatch.setattr(write, "_set_dry_run_answer", lambda *a: _out(dry_run=True))
-    monkeypatch.setattr(write, "_set_dual_write", must_not_write)
-    if path == "pin_refusal":
-        monkeypatch.setattr(write, "_guard_existing_row", lambda *a: (False, _out(dry_run=True)))
-    await write._memory_set_phases(_set_input(dry_run=path.endswith("dry_run")))
-    assert announced == []
-
-
-@pytest.mark.asyncio
-async def test_bulk_set_splits_written_and_revised(announced: list[Any]) -> None:
     from server.memory.app import bulk_set
 
     state = SimpleNamespace(
@@ -335,20 +301,50 @@ async def test_bulk_set_splits_written_and_revised(announced: list[Any]) -> None
         memory_rows=[
             {"memory_key": "new", "version": 1},
             {"memory_key": "old", "version": 2},
+            {"memory_key": "new", "version": 3},
         ],
     )
     await bulk_set._bulk_announce(state)  # type: ignore[arg-type]
-    assert [(e, [c["memory_key"] for c in cs]) for e, cs in announced] == [
-        ("memory.written", ["new"]),
-        ("memory.revised", ["old"]),
+    assert [(e, [c["version"] for c in cs]) for e, cs in announced] == [
+        ("memory.written", [1]),
+        ("memory.revised", [2, 3]),
     ]
 
 
 @pytest.mark.asyncio
-async def test_a_finished_delete_version_is_announced_once_with_its_tombstone(
+async def test_bulk_set_announces_nothing_for_an_unchanged_batch(announced: list[Any]) -> None:
+    from server.memory.app import bulk_set
+
+    # Unchanged restatements write no row: the batch's memory_rows are empty.
+    await bulk_set._bulk_announce(SimpleNamespace(existing_ids={"k": "m"}, memory_rows=[]))  # type: ignore[arg-type]
+    assert announced == []
+
+
+def _memory_row(key: str, version: int = 10, **over: Any) -> MemoryRow:
+    base: dict[str, Any] = {
+        "memory_id": "22222222-2222-2222-2222-222222222222",
+        "org": "acme",
+        "namespace": "chat",
+        "agent": "bot",
+        "user_id": "u1",
+        "session_id": "-",
+        "memory_key": key,
+        "memory_type": "episodic",
+        "value": "v",
+        "confidence": 0.8,
+        "version": version,
+        "pinned": False,
+        "created_at": NOW - timedelta(days=1),
+        "expires_at": None,
+        "entities": [],
+    }
+    return MemoryRow(**(base | over))
+
+
+@pytest.mark.asyncio
+async def test_a_finished_delete_version_is_announced_with_its_tombstone(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
 ) -> None:
-    import server.memory.store as memory_repo
     from server.memory.app import handlers
 
     async def not_moved(*a: Any, **k: Any) -> None:
@@ -363,19 +359,15 @@ async def test_a_finished_delete_version_is_announced_once_with_its_tombstone(
     monkeypatch.setattr(handlers, "_key_moved_on", not_moved)
     monkeypatch.setattr(handlers, "_retire_derived", retire)
     monkeypatch.setattr(memory_repo, "record_delete_check", record)
-    existing = SimpleNamespace(**dict(zip(store.KEY_COLS, KEY, strict=True)), memory_id="m1")
-    out = await handlers.finish_delete_check(existing, {"checked": 5, "tombstone": 9})
+    out = await handlers.finish_delete_check(_memory_row("k"), {"checked": 5, "tombstone": 9})
     assert out.tombstoned is True
-    assert [(e, cs[0]["memory_id"], cs[0]["version"]) for e, cs in announced] == [
-        ("memory.tombstoned", "m1", 9)
-    ]
+    assert [(e, cs[0]["version"]) for e, cs in announced] == [("memory.tombstoned", 9)]
 
 
 @pytest.mark.asyncio
 async def test_a_delete_version_whose_key_moved_on_is_not_announced(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
 ) -> None:
-    import server.memory.store as memory_repo
     from server.memory.api.models_crud import MemoryDeleteVersionOutput
     from server.memory.app import handlers
 
@@ -387,9 +379,98 @@ async def test_a_delete_version_whose_key_moved_on_is_not_announced(
 
     monkeypatch.setattr(handlers, "_key_moved_on", moved)
     monkeypatch.setattr(memory_repo, "record_delete_check", record)
-    existing = SimpleNamespace(**dict(zip(store.KEY_COLS, KEY, strict=True)), memory_id="m1")
-    await handlers.finish_delete_check(existing, {"checked": 5, "tombstone": 9})
+    await handlers.finish_delete_check(_memory_row("k"), {"checked": 5, "tombstone": 9})
     assert announced == []
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_announces_revisions_revivals_and_tombstones(
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+) -> None:
+    from server.memory.app import namespace_rollback as rb
+    from server.memory.domain.rollback import RollbackAction, RollbackPlan
+
+    historical = [
+        _memory_row("changed", 10),
+        _memory_row("revived", 11),
+        _memory_row("was_gone", 12, tombstoned_at=NOW - timedelta(days=2)),
+    ]
+
+    async def fetch(*a: Any, **k: Any) -> list[MemoryRow]:
+        return historical
+
+    async def head(ident: Any, key: str, **k: Any) -> MemoryRow:
+        return _memory_row(key, 30)
+
+    async def noop(*a: Any, **k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(memory_repo, "fetch_version_rows", fetch)
+    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", noop)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", noop)
+    monkeypatch.setattr(memory_repo, "fence_vectors", noop)
+    monkeypatch.setattr(rb, "insert_memory_versions", noop)
+
+    def act(key: str, action: str, to: int, dead_head: bool = False) -> RollbackAction:
+        return RollbackAction("bot", "u1", "-", key, action, 20, to, dead_head)
+
+    plan = RollbackPlan(
+        reinstate=[
+            act("changed", "reinstate", 10),
+            act("revived", "reinstate", 11, dead_head=True),
+            act("was_gone", "reinstate", 12),
+        ],
+        remove=[act("born_later", "remove", 0)],
+    )
+    await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object())
+    assert _events(announced) == {
+        ("memory.revised", "changed"),
+        ("memory.restored", "revived"),
+        ("memory.tombstoned", "was_gone"),
+        ("memory.tombstoned", "born_later"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_move_that_keeps_a_redirect_announces_the_source_revised(
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+) -> None:
+    from server.memory.app import move
+
+    async def noop(*a: Any, **k: Any) -> list[Any]:
+        return []
+
+    monkeypatch.setattr(memory_repo, "insert_memory_versions", noop)
+    monkeypatch.setattr(memory_repo, "embedding_mirror_for_keys", noop)
+    monkeypatch.setattr(memory_repo, "restamp_embedding_rows", noop)
+    await move._redirect_source(_memory_row("old/key"), "dest-id", ch=None)
+    assert _events(announced) == {("memory.revised", "old/key")}
+
+
+@pytest.mark.asyncio
+async def test_the_expiry_sweep_announces_its_tombstones_and_demotions(
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+) -> None:
+    from server.memory.app import expiry
+
+    expired = NOW - timedelta(days=1)
+    rows = [
+        _memory_row("gone", on_expire="tombstone", expires_at=expired),
+        _memory_row("faded", on_expire="demote", expires_at=expired),
+    ]
+
+    async def find(**k: Any) -> list[MemoryRow]:
+        return rows
+
+    async def noop(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(memory_repo, "find_expired_candidates", find)
+    monkeypatch.setattr(expiry, "insert_memory_versions", noop)
+    monkeypatch.setattr(expiry, "_mirror_embeddings_batch", noop)
+    await expiry.run_pass()
+    assert _events(announced) == {("memory.tombstoned", "gone"), ("memory.revised", "faded")}
 
 
 # ------------------------------------------------------------ erasure
@@ -463,6 +544,7 @@ class FakeStore:
     def __init__(self, outbox: list[dict[str, Any]], hooks: list[dict[str, Any]]) -> None:
         self.outbox = outbox
         self.hooks = hooks
+        self.removed: list[tuple[str, str, str]] = []
         self.attempts: list[dict[str, Any]] = []
         self.history: set[tuple[str, ...]] = {KEY}
 
@@ -470,16 +552,49 @@ class FakeStore:
         rows = [a for a in self.attempts if a["event_id"] == event_id]
         return max(rows, key=lambda a: a["version"]) if rows else None
 
-    async def due_events(self, now: datetime, *, since: datetime, limit: int, **_: Any) -> Any:
-        due = []
-        for o in sorted(self.outbox, key=lambda o: o["occurred_at"]):
+    def _of(self, hooks: list[Any]) -> list[dict[str, Any]]:
+        wanted = set(hooks)
+        return sorted(
+            (o for o in self.outbox if (o["org"], o["namespace"], o["webhook_id"]) in wanted),
+            key=lambda o: o["occurred_at"],
+        )
+
+    async def due_events(
+        self, now: datetime, *, since: datetime, hooks: list[Any], per_webhook: int, limit: int
+    ) -> list[dict[str, Any]]:
+        due, taken = [], {}
+        for o in self._of(hooks):
             a = self.latest(o["event_id"])
             if a is None or (a["status"] in ("pending", "leased") and a["next_attempt_at"] <= now):
-                due.append({**o, "attempts": a["attempts"] if a else 0})
+                if taken.get(o["webhook_id"], 0) < per_webhook:
+                    taken[o["webhook_id"]] = taken.get(o["webhook_id"], 0) + 1
+                    due.append({**o, "attempts": a["attempts"] if a else 0})
         return due[:limit]
+
+    async def mark_dead(
+        self, now: datetime, *, since: Any, hooks: list[Any], reason: str, version: int, before=None
+    ) -> None:
+        for o in self._of(hooks):
+            a = self.latest(o["event_id"])
+            if (before is None or o["occurred_at"] < before) and (
+                a is None or a["status"] in ("pending", "leased")
+            ):
+                self.attempts.append(
+                    worker._attempt_row(
+                        o["event_id"],
+                        status="dead",
+                        attempts=0,
+                        next_attempt_at=now,
+                        now=now,
+                        last_error=reason,
+                    )
+                )
 
     async def live_webhooks(self) -> list[dict[str, Any]]:
         return [dict(h) for h in self.hooks]
+
+    async def removed_webhooks(self) -> list[tuple[str, str, str]]:
+        return list(self.removed)
 
     async def insert_attempts(self, rows: list[dict[str, Any]]) -> None:
         self.attempts.extend(dict(r) for r in rows)
@@ -494,22 +609,21 @@ class FakeStore:
         self.attempts = [a for a in self.attempts if a["event_id"] not in gone]
         self.history = {k for k in self.history if k[3] != user_id}
 
-    def last(self) -> dict[str, Any]:
-        return self.attempts[-1]
+    def last(self, event_id: str = "ev-1") -> dict[str, Any]:
+        latest = self.latest(event_id)
+        assert latest is not None
+        return latest
 
 
 async def _public(host: str, **_: Any) -> tuple[str, str]:
     return "", PUBLIC
 
 
-def _hook(url: str = "https://chat.example/hooks/loom") -> dict[str, Any]:
-    return {"org": "acme", "namespace": "chat", "webhook_id": "wh1", "url": url, "secret_ref": REF}
-
-
 @pytest.fixture
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeStore:
-    fs = FakeStore([_outbox_row(webhook_id="wh1", event_id="ev-1")], [_hook()])
+    fs = FakeStore([_outbox_row(event_id="ev-1")], [_registration("wh1")])
     monkeypatch.setattr(worker, "store", fs)
+    monkeypatch.setattr(worker, "_health", {})
     monkeypatch.setattr(signed, "vet_host", _public)
     return fs
 
@@ -527,7 +641,7 @@ async def test_a_delivered_event_is_signed_over_its_timestamp_and_body(fake: Fak
     result = await _pass(lambda r: seen.append(r) or httpx.Response(204))
     assert result.delivered == 1
     req = seen[0]
-    assert str(req.url) == f"https://{PUBLIC}/hooks/loom"
+    assert str(req.url) == f"https://{PUBLIC}/hooks/wh1"
     assert req.headers["host"] == "chat.example"
     assert req.headers["webhook-id"] == "ev-1"
     ts = req.headers["webhook-timestamp"]
@@ -560,31 +674,53 @@ async def test_a_5xx_is_retried_with_backoff_and_then_marked_dead(
 
 
 @pytest.mark.asyncio
-async def test_an_event_waits_uncounted_while_its_secret_is_not_set(fake: FakeStore) -> None:
+async def test_an_event_waits_while_its_secret_is_not_set_and_dies_before_the_ttl(
+    fake: FakeStore,
+) -> None:
     seen: list[httpx.Request] = []
-    for minute in range(20):  # far past max_attempts waits, none of them counted
-        await _pass(
+    for minute in range(20):  # far past max_attempts passes; none of them counts
+        result = await _pass(
             lambda r: seen.append(r) or httpx.Response(204),
             now=NOW + timedelta(minutes=minute),
             env={},
         )
-    assert seen == []
-    out = fake.last()
-    assert out["status"] == "pending" and out["attempts"] == 0
-    assert out["last_error"] == f"no secret in env {REF}"
-    result = await _pass(
-        lambda r: seen.append(r) or httpx.Response(204), now=NOW + timedelta(hours=1)
-    )
-    assert result.delivered == 1 and fake.last()["attempts"] == 1
+        assert result.waiting == 1 and result.total == 0
+    assert seen == [] and fake.attempts == []
+    # The secret arrives: the event goes out on its first attempt.
+    assert (await _pass(lambda r: seen.append(r) or httpx.Response(204))).delivered == 1
+    assert fake.last()["attempts"] == 1
+    # A second event whose secret never comes is dead before the outbox drops it.
+    fake.outbox.append(_outbox_row(event_id="ev-2"))
+    await _pass(lambda r: httpx.Response(204), now=NOW + timedelta(days=2), env={})
+    assert fake.latest("ev-2") is None
+    await _pass(lambda r: httpx.Response(204), now=NOW + timedelta(days=2, hours=13), env={})
+    assert fake.last("ev-2")["status"] == "dead"
+    assert fake.last("ev-2")["last_error"] == "secret never set"
 
 
 @pytest.mark.asyncio
-async def test_an_event_of_a_removed_webhook_is_dead_without_a_send(fake: FakeStore) -> None:
+async def test_a_malformed_secret_is_not_usable_and_is_not_logged(
+    fake: FakeStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING)
+    bad = "whsec_not*base64!"
+    assert signed.read_secret("acme", REF, {REF: bad}) is None
+    assert REF in caplog.text and bad not in caplog.text
+    result = await _pass(lambda r: httpx.Response(204), env={REF: bad})
+    assert result.waiting == 1 and result.total == 0
+
+
+@pytest.mark.asyncio
+async def test_events_of_a_removed_webhook_are_dead_in_one_batch_without_a_send(
+    fake: FakeStore,
+) -> None:
+    fake.outbox += [_outbox_row(event_id=f"ev-{i}") for i in range(2, 30)]
     fake.hooks = []
+    fake.removed = [("acme", "chat", "wh1")]
     seen: list[httpx.Request] = []
     await _pass(lambda r: seen.append(r) or httpx.Response(204))
     assert seen == []
-    assert fake.last()["status"] == "dead"
+    assert {fake.last(o["event_id"])["status"] for o in fake.outbox} == {"dead"}
     assert fake.last()["last_error"] == "the webhook was removed"
 
 
@@ -602,11 +738,9 @@ async def test_an_event_whose_memory_was_erased_is_never_sent(fake: FakeStore) -
 @pytest.mark.asyncio
 async def test_an_erasure_event_names_no_key_and_is_sent(fake: FakeStore) -> None:
     fake.outbox = [
-        {
-            **_outbox_row(event_id="ev-e", event_type="memory.erased", erasure_id="er-1"),
-            "memory_key": "",
-            "user_id": "-",
-        }
+        _outbox_row(
+            event_id="ev-e", event="memory.erased", erasure_id="er-1", memory_key="", user_id="-"
+        )
     ]
     fake.history = set()
     assert (await _pass(lambda r: httpx.Response(204))).delivered == 1
@@ -614,13 +748,45 @@ async def test_an_erasure_event_names_no_key_and_is_sent(fake: FakeStore) -> Non
 
 @pytest.mark.asyncio
 async def test_another_orgs_secret_is_never_read(fake: FakeStore) -> None:
-    fake.hooks = [{**_hook(), "secret_ref": "LOOM_WEBHOOK_SECRET_GLOBEX__CHAT"}]
+    fake.hooks = [_registration("wh1", secret_ref="LOOM_WEBHOOK_SECRET_GLOBEX__CHAT")]
     seen: list[httpx.Request] = []
     await _pass(
         lambda r: seen.append(r) or httpx.Response(204),
         env={"LOOM_WEBHOOK_SECRET_GLOBEX__CHAT": SECRET},
     )
     assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_one_webhooks_backlog_never_delays_another_namespaces_event(
+    fake: FakeStore,
+) -> None:
+    """Three stuck webhooks with deep backlogs (no secret, removed, not
+    answering) and one healthy one: the healthy one's event goes out in the
+    first pass, and the unanswering webhook cools down after five failures."""
+    stuck = {"wh-nosecret": "LOOM_WEBHOOK_SECRET_ACME__NONE", "wh-down": REF}
+    fake.hooks = [_registration(w, namespace="busy", secret_ref=r) for w, r in stuck.items()]
+    fake.hooks.append(_registration("wh-ok", namespace="quiet"))
+    fake.removed = [("acme", "busy", "wh-removed")]
+    fake.outbox = [
+        _outbox_row(webhook_id=w, event_id=f"{w}-{i}", namespace="busy")
+        for w in ("wh-nosecret", "wh-removed", "wh-down")
+        for i in range(100)
+    ]
+    fake.outbox.append(
+        _outbox_row(webhook_id="wh-ok", event_id="ok-1", namespace="quiet", occurred_at=NOW)
+    )
+    fake.history = {(*KEY[:1], ns, *KEY[2:]) for ns in ("busy", "quiet")}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(204 if request.headers["host"] == "quiet.example" else 503)
+
+    first = await _pass(handler)
+    assert fake.last("ok-1")["status"] == "delivered"
+    assert first.delivered == 1 and first.failed == worker.PER_WEBHOOK
+    # wh-down failed ten POSTs: it waits out a cooldown instead of taking the pass.
+    second = await _pass(handler, now=NOW + timedelta(seconds=10))
+    assert second.total == 0 and second.waiting == 2
 
 
 @pytest.mark.asyncio
@@ -660,7 +826,100 @@ async def test_an_erasure_between_a_pass_read_and_its_writes_leaves_nothing_to_s
     assert later.total == 0 and seen == []
 
 
-# ------------------------------------------------------------ URL rules
+# ------------------------------------------------------------ reads
+
+
+class _SeqCH:
+    """Records whether each read ran with sequential consistency."""
+
+    def __init__(self) -> None:
+        self.sequential: list[bool] = []
+
+    async def query_all(self, sql: str, params: Any = None, **_: Any) -> list[Any]:
+        self.sequential.append(bool(sequential_reads_var.get()))
+        return []
+
+
+@pytest.mark.asyncio
+async def test_the_workers_reads_see_the_latest_writes() -> None:
+    ch = _SeqCH()
+    await store.keys_with_history([KEY], ch=ch)  # type: ignore[arg-type]
+    await store.due_events(
+        NOW,
+        since=NOW,
+        hooks=[("acme", "chat", "wh1")],
+        per_webhook=1,
+        limit=1,
+        ch=ch,  # type: ignore[arg-type]
+    )
+    assert ch.sequential == [True, True]
+
+
+# ------------------------------------------------------------ the POST
+
+
+async def _local_server(respond: Any) -> tuple[asyncio.Server, str]:
+    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    return server, f"http://127.0.0.1:{port}/hook"
+
+
+@pytest.mark.asyncio
+async def test_a_receiver_that_drips_its_answer_is_cut_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(signed, "ACK_TIMEOUT_SECONDS", 0.5)
+
+    async def drip(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(1024)
+        for byte in b"HTTP/1.1 200 OK\r\n":
+            writer.write(bytes([byte]))
+            await writer.drain()
+            await asyncio.sleep(0.2)
+        writer.close()
+
+    server, url = await _local_server(drip)
+    async with server:
+        started = asyncio.get_running_loop().time()
+        out = await signed.post(None, url, {}, b"{}", private_hosts={"127.0.0.1"})
+        assert asyncio.get_running_loop().time() - started < 2
+    assert out == signed.Delivery(0, "no answer: timeout")
+
+
+@pytest.mark.asyncio
+async def test_an_endless_answer_body_is_never_read() -> None:
+    async def endless(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(1024)
+        writer.write(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+        try:
+            while True:
+                writer.write(b"400\r\n" + b"x" * 1024 + b"\r\n")
+                await writer.drain()
+        except (ConnectionError, OSError):
+            pass
+
+    server, url = await _local_server(endless)
+    async with server:
+        out = await asyncio.wait_for(
+            signed.post(None, url, {}, b"{}", private_hosts={"127.0.0.1"}), timeout=5
+        )
+    assert out.ok and out.status == 200
+
+
+@pytest.mark.asyncio
+async def test_a_slow_name_lookup_is_inside_the_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(signed, "ACK_TIMEOUT_SECONDS", 0.2)
+
+    async def slow(host: str, **_: Any) -> tuple[str, str]:
+        await asyncio.sleep(5)
+        return "", PUBLIC
+
+    monkeypatch.setattr(signed, "vet_host", slow)
+    out = await asyncio.wait_for(signed.post(None, "https://hook.example/x", {}, b"{}"), 2)
+    assert out.error == "no answer: timeout"
+
+
+# ------------------------------------------------------------ URL rules and registration
 
 
 @pytest.mark.asyncio
@@ -674,18 +933,19 @@ async def test_an_erasure_between_a_pass_read_and_its_writes_leaves_nothing_to_s
     ],
     ids=["private", "loopback", "link-local", "mapped-private"],
 )
-async def test_a_url_resolving_inward_is_refused(
+async def test_a_url_resolving_inward_is_refused_without_naming_the_address(
     monkeypatch: pytest.MonkeyPatch, url: str, resolves_to: str
 ) -> None:
     import server.core.hosts as hosts
 
     monkeypatch.setattr(hosts, "_resolve", lambda host: [resolves_to])
     monkeypatch.setattr(settings, "memory_webhook_private_hosts", "")
-    assert await app.url_refusal(url)
+    refusal = await app.url_refusal(url)
+    assert "a private or local address" in refusal and resolves_to not in refusal
 
 
 @pytest.mark.asyncio
-async def test_http_is_refused_unless_the_deployment_allows_it(
+async def test_http_and_userinfo_are_refused_unless_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(signed, "vet_host", _public)
@@ -693,6 +953,7 @@ async def test_http_is_refused_unless_the_deployment_allows_it(
     assert await app.url_refusal("http://chat.example/hook")
     assert await app.url_refusal("ftp://chat.example/hook")
     assert await app.url_refusal("https://chat.example/hook") == ""
+    assert await app.url_refusal("https://user:pw@chat.example/hook")
     monkeypatch.setattr(settings, "memory_webhook_allow_http", True)
     assert await app.url_refusal("http://chat.example/hook") == ""
 
@@ -723,6 +984,61 @@ async def test_register_refuses_a_secret_ref_of_another_org() -> None:
                 secret_ref="LOOM_WEBHOOK_SECRET_GLOBEX__CHAT",
             )
         )
+
+
+@pytest.fixture
+def registered(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    async def listed(org: str, namespace: str) -> list[dict[str, Any]]:
+        return [r for r in rows if not r["is_deleted"]]
+
+    async def insert(row: dict[str, Any]) -> None:
+        rows[:] = [r for r in rows if r["webhook_id"] != row["webhook_id"]] + [row]
+
+    async def no_refusal(url: str) -> str:
+        return ""
+
+    monkeypatch.setattr(store, "namespace_webhooks", listed)
+    monkeypatch.setattr(store, "insert_webhook", insert)
+    monkeypatch.setattr(app, "url_refusal", no_refusal)
+    return rows
+
+
+async def _register(url: str) -> Any:
+    out = await app.handle_webhook_register(
+        WebhookRegisterInput(org="acme", namespace="chat", url=url, secret_ref=REF)
+    )
+    return out.webhook
+
+
+@pytest.mark.asyncio
+async def test_a_namespace_holds_ten_webhooks_and_a_url_again_replaces_its_own(
+    registered: list[dict[str, Any]],
+) -> None:
+    first = await _register("https://chat.example/0")
+    for i in range(1, app.MAX_PER_NAMESPACE):
+        await _register(f"https://chat.example/{i}")
+    with pytest.raises(ValidationError, match="at most 10"):
+        await _register("https://chat.example/10")
+    again = await _register("https://chat.example/0")
+    assert again.webhook_id == first.webhook_id and len(registered) == 10
+
+
+@pytest.mark.asyncio
+async def test_a_url_registered_again_after_a_remove_gets_a_new_id(
+    registered: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.api.models_webhook import WebhookRemoveInput
+
+    first = await _register("https://chat.example/h")
+    await app.handle_webhook_remove(
+        WebhookRemoveInput(org="acme", namespace="chat", webhook_id=first.webhook_id)
+    )
+    later = datetime.now(UTC) + timedelta(seconds=1)
+    monkeypatch.setattr(app, "datetime", SimpleNamespace(now=lambda tz=None: later))
+    second = await _register("https://chat.example/h")
+    assert second.webhook_id != first.webhook_id
 
 
 def test_the_worker_is_registered_on_its_settings() -> None:

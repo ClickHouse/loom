@@ -448,9 +448,10 @@ def _nobody_deactivated_over_scim() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _no_memory_webhooks() -> Iterator[None]:
-    """A memory write reads the webhook registry once per refresh interval; unit
-    fakes have no such table. test_memory_webhooks.py sets the copy itself. No
-    `monkeypatch`, as above."""
+    """A memory write reads the webhook registry once per refresh interval, and
+    the unit fakes have no such table: every test starts with an empty copy that
+    is never read again. test_memory_webhooks.py sets the copy itself. No
+    `monkeypatch`: requesting it would set it up ahead of the settings guard."""
     from server.memory.app import webhooks
 
     before = webhooks._hooks, webhooks._next_read

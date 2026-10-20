@@ -21,8 +21,9 @@ SETTINGS non_replicated_deduplication_window = 1000;
 -- One row per (event, webhook), written once by the write path and never rewritten:
 -- ids and the identity tuple, never a value, tags or evidence. The key and user id
 -- name a memory row, so erasure deletes the rows (erasure.store.steps_ledgers), and
--- nothing the delivery worker writes can bring one back. Sorted by time so a pass
--- reads only the recent days; a queue, so rows expire 3 days after the event.
+-- nothing the delivery worker writes can bring one back. Sorted by webhook so a pass
+-- reads only the webhooks it can send to and an admin only the namespace's events;
+-- a queue, partitioned by day, so whole days expire 3 days after their events.
 CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
 (
     `org` LowCardinality(String),
@@ -43,9 +44,9 @@ CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
 )
 ENGINE = MergeTree
 PARTITION BY toDate(occurred_at)
-ORDER BY (occurred_at, event_id)
+ORDER BY (org, namespace, webhook_id, occurred_at, event_id)
 TTL toDateTime(occurred_at) + toIntervalDay(3)
-SETTINGS non_replicated_deduplication_window = 1000;
+SETTINGS non_replicated_deduplication_window = 1000, ttl_only_drop_parts = 1;
 
 -- The delivery worker's record of each event: one row per lease and per attempt,
 -- appended, the newest `version` of an event winning. Event ids, counts and HTTP
@@ -65,4 +66,4 @@ ENGINE = MergeTree
 PARTITION BY toDate(recorded_at)
 ORDER BY (event_id, version)
 TTL toDateTime(recorded_at) + toIntervalDay(3)
-SETTINGS non_replicated_deduplication_window = 1000;
+SETTINGS non_replicated_deduplication_window = 1000, ttl_only_drop_parts = 1;

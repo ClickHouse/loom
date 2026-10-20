@@ -485,13 +485,16 @@ nothing rewrites it. Which namespaces have webhooks is a per-process copy of
 namespace with no webhook pays no insert, and the first write after each interval waits
 for one registry read.
 
-The `memory_webhook_deliver` worker reads the due events of the last 3 days through the
-outbox's sort key (`occurred_at`), joined to the newest row of each in
-`loom.memory_webhook_attempts`. It appends a lease (an attempt row whose
-`next_attempt_at` is the lease's end), skips an event whose key has no history left in
-`loom.memory_versions` (erased), POSTs each signed body (`server/core/webhooks.py`) and
-appends the outcome: `delivered`, `pending` with its next attempt, or `dead`. Attempt rows
-hold event ids and counters only, so an erasure that deletes an event while a pass is in
+The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
+the events of removed webhooks and those that waited 2.5 days for a secret, then reads
+the due events of the webhooks it can send to (registered, a usable secret, not cooling
+down) through the outbox's sort key (`org, namespace, webhook_id, occurred_at`), joined to
+each event's newest row in `loom.memory_webhook_attempts` and at most 10 per webhook. It
+appends a lease (an attempt row whose `next_attempt_at` is the lease's end), skips an
+event whose key has no history left in `loom.memory_versions` (erased), POSTs the signed
+bodies 4 at a time (`server/core/webhooks.py`, one 10 s deadline per POST) and appends
+each outcome: `delivered`, `pending` with its next attempt, or `dead`. Attempt rows hold
+event ids and counters only, so an erasure that deletes an event while a pass is in
 flight leaves nothing a later pass can send. An outbox insert that fails never fails the
 write. During a rolling upgrade an N-1 replica writes no outbox rows
 ([rule 12](rolling-upgrades.md#the-rules)).

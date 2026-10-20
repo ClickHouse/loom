@@ -14,7 +14,9 @@ name the certificate is checked against. Redirects are not followed.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import binascii
 import hashlib
 import hmac
 import logging
@@ -59,16 +61,22 @@ def webhook_secret_ref_ok(org: str, ref: str) -> bool:
 
 def read_secret(org: str, ref: str, env: Mapping[str, str]) -> bytes | None:
     """The signing key `ref` names in `env`, or None when the name is not one of
-    `org`'s own or the variable is unset."""
+    `org`'s own, the variable is unset, or its `whsec_` value is not base64."""
     raw = env.get(ref, "") if webhook_secret_ref_ok(org, ref) else ""
-    return secret_bytes(raw) if raw else None
+    if not raw:
+        return None
+    try:
+        return secret_bytes(raw)
+    except binascii.Error:
+        log.warning("webhook: the secret in %s is not usable: whsec_ must be base64", ref)
+        return None
 
 
 def secret_bytes(raw: str) -> bytes:
     """The HMAC key: a ``whsec_``-prefixed value is base64 (the spec's
     generated form); anything else is the literal UTF-8 string."""
     if raw.startswith("whsec_"):
-        return base64.b64decode(raw[len("whsec_") :])
+        return base64.b64decode(raw[len("whsec_") :], validate=True)
     return raw.encode("utf-8")
 
 
@@ -146,28 +154,39 @@ async def post(
     private_hosts: Collection[str] = (),
 ) -> Delivery:
     """POST `body` to `url` with `headers`, on `transport` (None = the network).
-    Each delivery has its own client: a pooled connection is keyed by the pinned
-    address, so a second registration on the same address would reuse a TLS
-    session verified for another name."""
-    refusal, pinned, host_header, server_name = await pinned_target(
-        url, schemes=schemes, private_hosts=private_hosts
-    )
-    if refusal:
-        log.warning("webhook: %s refused: %s", url, refusal)
-        return Delivery(0, f"refused: {refusal}")
-    extra_headers = {"Host": host_header} if host_header else {}
-    extensions = {"sni_hostname": server_name} if server_name else {}
+
+    One deadline, ACK_TIMEOUT_SECONDS, covers the whole delivery: the DNS lookup,
+    the connection and the response's status line. The body of the answer is
+    never read. Each delivery has its own client: a pooled connection is keyed by
+    the pinned address, so a second registration on the same address would reuse
+    a TLS session verified for another name."""
+    host = urlsplit(url).hostname or ""
     try:
-        async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
-            response = await client.post(
-                pinned,
-                content=body,
-                headers={**headers, **extra_headers},
-                timeout=ACK_TIMEOUT_SECONDS,
-                follow_redirects=False,
-                extensions=extensions,
+        async with asyncio.timeout(ACK_TIMEOUT_SECONDS):
+            refusal, pinned, host_header, server_name = await pinned_target(
+                url, schemes=schemes, private_hosts=private_hosts
             )
+            if refusal:
+                log.warning("webhook: %s refused: %s", host, refusal)
+                return Delivery(0, f"refused: {refusal}")
+            extra_headers = {"Host": host_header} if host_header else {}
+            extensions = {"sni_hostname": server_name} if server_name else {}
+            async with (
+                httpx.AsyncClient(transport=transport, follow_redirects=False) as client,
+                client.stream(
+                    "POST",
+                    pinned,
+                    content=body,
+                    headers={**headers, **extra_headers},
+                    timeout=ACK_TIMEOUT_SECONDS,
+                    follow_redirects=False,
+                    extensions=extensions,
+                ) as response,
+            ):
+                return Delivery(int(response.status_code))
+    except TimeoutError:
+        log.info("webhook: no answer from %s within %ss", host, ACK_TIMEOUT_SECONDS)
+        return Delivery(0, "no answer: timeout")
     except httpx.HTTPError as e:
-        log.info("webhook: no answer from %s: %s", url, type(e).__name__)
+        log.info("webhook: no answer from %s: %s", host, type(e).__name__)
         return Delivery(0, f"no answer: {type(e).__name__}")
-    return Delivery(int(response.status_code))

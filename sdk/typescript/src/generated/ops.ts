@@ -8456,7 +8456,7 @@ export interface WebhookDelivery {
   memory_id: string;
   version: number;
   occurred_at: string; // date-time
-  status: string;
+  status: "pending" | "delivered" | "dead";
   attempts: number;
   next_attempt_at: string; // date-time
   last_status: number;
@@ -8476,7 +8476,7 @@ export interface WebhookInfo {
   webhook_id: string;
   url: string;
   secret_ref: string;
-  events: string[];
+  events: Array<"memory.written" | "memory.revised" | "memory.tombstoned" | "memory.restored" | "memory.redacted" | "memory.erased">;
   created_by?: string;
   created_at?: string | null;
   secret_present?: boolean;

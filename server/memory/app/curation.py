@@ -52,6 +52,7 @@ from server.memory.api.models_temporal import (
     _OutlineHub,
     _OutlineSession,
 )
+from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
@@ -629,8 +630,6 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # quote in place is not a completed redaction.
     cache_rows = await memory_repo.delete_llm_response_cache_by_key(input.org, target.memory_key)
     precedent_rows = await memory_repo.delete_ask_precedents_by_key(input.org, target.memory_key)
-    from server.memory.app import webhooks
-
     change = {
         "org": input.org,
         "namespace": target.namespace,

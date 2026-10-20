@@ -224,7 +224,7 @@ async def test_a_missing_secret_holds_the_notice_and_warns_once(fake: FakeRepo, 
         r1 = await wd.deliver_once(transport=client, now=NOW, env={})
         r2 = await wd.deliver_once(transport=client, now=NOW, env={})
     assert r1.skipped == 1 and r2.skipped == 1 and calls == 0 and not fake.writes
-    assert sum("no secret in env" in rec.message for rec in caplog.records) == 1
+    assert sum("no usable secret in env" in rec.message for rec in caplog.records) == 1
 
 
 @pytest.mark.asyncio
@@ -250,19 +250,40 @@ async def test_nothing_new_makes_no_request(fake: FakeRepo) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("bad_url", "bad_secret"),
-    [
-        ("https://bad.example.invalid:port/hook", SECRET),
-        ("https://bad.example.invalid/hook", "whsec_abcde"),
-    ],
-    ids=["invalid-url", "undecodable-secret"],
-)
-async def test_one_broken_inbox_does_not_stop_the_next(
-    fake: FakeRepo, bad_url: str, bad_secret: str
-) -> None:
-    # inbox 1 raises outside httpx.HTTPError (httpx.InvalidURL / binascii.Error);
+async def test_an_undecodable_secret_holds_its_inbox_and_not_the_next(fake: FakeRepo) -> None:
+    fake.inboxes[:] = [
+        {**fake.inboxes[0], "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_ACME__BAD"},
+        {
+            "org": "acme",
+            "inbox": "good-bot",
+            "owner_namespace": "good",
+            "webhook_url": "https://good.example.invalid/hook",
+            "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT",
+        },
+    ]
+    fake.events.append({**_event(103), "inbox": "good-bot"})
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["host"])
+        return httpx.Response(204)
+
+    env = {
+        "LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": SECRET,
+        "LOOM_WEBHOOK_SECRET_ACME__BAD": "whsec_abcde",
+    }
+    async with _client(handler) as client:
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert seen == ["good.example.invalid"]
+    assert r.delivered == 1 and r.skipped == 1
+    assert ("acme", "private-bot") not in fake.cursors
+
+
+@pytest.mark.asyncio
+async def test_one_broken_inbox_does_not_stop_the_next(fake: FakeRepo) -> None:
+    # inbox 1 raises outside httpx.HTTPError (httpx.InvalidURL);
     # inbox 2 must still be delivered and inbox 1's failure lands in its cursor.
+    bad_url, bad_secret = "https://bad.example.invalid:port/hook", SECRET
     fake.inboxes[:] = [
         {
             **fake.inboxes[0],

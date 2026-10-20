@@ -14,6 +14,7 @@ from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
 )
+from server.memory.app import webhooks
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
@@ -369,8 +370,6 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
             "erasure-reversal audit insert failed (non-fatal): %s",
             e,
         )
-
-    from server.memory.app import webhooks
 
     await webhooks.announce("memory.restored", [restore_row])
     return MemoryRestoreOutput(

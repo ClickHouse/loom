@@ -22,6 +22,7 @@ from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
 )
+from server.memory.app import webhooks
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
     _bulk_build_rows,
@@ -710,16 +711,20 @@ async def handle_memory_bulk_set(
 
 
 async def _bulk_announce(state: _BulkWriteState) -> None:
-    """The written rows, to the namespace's webhooks: a key the batch found live
-    is revised, any other is written."""
-    from server.memory.app import webhooks
-
-    revised = [r for r in state.memory_rows if str(r["memory_key"]) in state.existing_ids]
-    written = [r for r in state.memory_rows if str(r["memory_key"]) not in state.existing_ids]
-    if written:
-        await webhooks.announce("memory.written", written)
-    if revised:
-        await webhooks.announce("memory.revised", revised)
+    """The written rows, to the namespace's webhooks: a key that was live, or
+    that an earlier entry of this batch wrote, is revised; any other is
+    written. An unchanged restatement writes no row and sends nothing. When
+    the live-key lookup failed (`existing_lookup_ok` is False) every key looks
+    new, so a revision is announced as written."""
+    seen = set(state.existing_ids)
+    written: list[dict[str, Any]] = []
+    revised: list[dict[str, Any]] = []
+    for row in state.memory_rows:
+        key = str(row["memory_key"])
+        (revised if key in seen else written).append(row)
+        seen.add(key)
+    await webhooks.announce("memory.written", written)
+    await webhooks.announce("memory.revised", revised)
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:

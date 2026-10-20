@@ -41,6 +41,7 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns
+from server.memory.app import webhooks
 from server.observability import audit
 
 log = logging.getLogger(__name__)
@@ -377,8 +378,6 @@ async def run_saga(
         request_id=erasure_id,
     )
     # After the census: the event names the erasure only, never the user or a key.
-    from server.memory.app import webhooks
-
     erased_namespaces: list[str] | None = None  # a user's erasure: every namespace
     if input.scope_type != "user_id":
         erased_namespaces = (

@@ -263,26 +263,29 @@ per change. The event names the change and never its content: the receiver reads
 memory back with its own token (`memory.get_by_id`), so what it may read is decided when
 it reads, as for any other read.
 
-| Event               | Sent after                                                                                                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row                                                                                                                                               |
-| `memory.revised`    | a new version of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes |
-| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, a key `namespace.rollback` removes, an expiry that tombstones                                                                                                            |
-| `memory.restored`   | `memory.restore` brings a tombstoned row back                                                                                                                                                                      |
-| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                        |
-| `memory.erased`     | an `erasure.request` saga completes                                                                                                                                                                                |
+| Event               | Sent after                                                                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row                                                                                                                                             |
+| `memory.revised`    | a new value of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes |
+| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `namespace.rollback` back to a tombstone or removing a key born later, an expiry that tombstones                                                                       |
+| `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                  |
+| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                      |
+| `memory.erased`     | an `erasure.request` saga completes                                                                                                                                                                              |
 
 Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
-events. A merge (`merged_into_key`) writes no version at your key and sends no event;
-neither does a dry run or a refused write. These writes send no event: the summaries
-`memory.delete` retires with the row they were built from, `memory.consolidate` and the
-consolidation worker, observations and their distillation, period digests,
-`memory.touch`, `memory.pin` and `memory.unpin`, `memory.lock` and `memory.unlock`,
-`memory.verify`, `memory.apply`, a proposal's decision, the undo of an automatic
-supersession through `memory.restore`, copies into another namespace
-(`memory.copy_to`, `memory.cross_promote`), `namespace.restore` from a snapshot, entity
-backfills, typed records (`memory.record.*`) and saved chat messages
-(`conversation.save_message`), neither of which is a memory row.
+events. The same value said again (a restatement, which only reinforces the row) sends
+none, on `memory.set` and `memory.bulk_set` alike. In one `memory.bulk_set`, a key that an
+earlier entry of the batch wrote is `memory.revised`; if the batch's lookup of live keys
+fails, its revisions are announced as `memory.written`. A merge (`merged_into_key`) writes
+no version at your key and sends no event; neither does a dry run or a refused write.
+These writes send no event: the summaries `memory.delete` retires with the row they were
+built from, `memory.consolidate` and the consolidation worker, observations and their
+distillation, period digests, `memory.touch`, `memory.pin` and `memory.unpin`,
+`memory.lock` and `memory.unlock`, `memory.verify`, `memory.apply`, a proposal's decision,
+the undo of an automatic supersession through `memory.restore`, copies into another
+namespace (`memory.copy_to`, `memory.cross_promote`), `namespace.restore` from a snapshot,
+entity backfills, typed records (`memory.record.*`) and saved chat messages
+(`conversation.*`), neither of which is a memory row.
 
 ```json
 {
@@ -323,23 +326,41 @@ org's own, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, encoded as for
 [task inbox webhooks](../tasks-and-decisions.md); a `whsec_` prefix marks a base64 key.
 
 **URLs.** `https` only, unless `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` is set (a local receiver
-in development). The host must resolve to public addresses: loopback, private,
+in development), and with no user name or password in it. The host must resolve to public addresses: loopback, private,
 link-local (cloud metadata) and multicast targets are refused at registration and at
 every delivery, unless `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` names the host. Each delivery
 connects to the address it checked and follows no redirect.
 
 **Delivery.** The write leaves one row per event and webhook in
 `loom.memory_webhook_outbox` and makes no network call; the `memory_webhook_deliver`
-worker sends it. Any 2xx within 10 s acknowledges it. Anything else is retried after 5 s,
-30 s, 2 min, 10 min, 30 min and then hourly, until `LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS`
-attempts mark it `dead`. While the variable `secret_ref` names is not set, the event
-waits and the wait counts as no attempt. An event whose memory was erased before it went
-out is marked `dead` and not sent. Delivery is at least once and unordered: order events
-by `version`, and read the row back rather than trusting the event's age. An outbox
-insert that fails is logged and that event is not sent; the write still stands. A
-webhook registered on one server process applies to writes on the others within
-`LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. Events and their delivery record are kept 3 days:
-one not delivered by then is dropped. An erasure deletes the events in its scope.
+worker sends it. Any 2xx within 10 s acknowledges it; the 10 s cover the name lookup, the
+connection and the status line, and the answer's body is never read. Anything else is
+retried after 5 s, 30 s, 2 min, 10 min, 30 min and then hourly, until
+`LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts mark it `dead`. `actor` is the principal that
+made the change, or `worker:<name>` for a change a background pass made (the expiry
+sweep, the `delete_version` check).
+
+- **Fairness.** A pass sends at most 40 events, at most 10 of one webhook, 4 at a time.
+  A webhook whose last 5 POSTs failed is passed over for a cooldown that starts at a
+  minute and doubles up to an hour; a 2xx ends it. The cooldown is kept per server
+  process, so a restart or a new worker leader starts it afresh. One webhook's backlog
+  never holds back another's events. With fast receivers the ceiling is about 40 events
+  per pass, a pass every 5 s while there is work: some 8 events a second per deployment.
+- **Waiting and dead events.** While the variable `secret_ref` names is unset or not
+  usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
+  counts as no attempt; after 2.5 days they are marked `dead` with "secret never set".
+  The events of a removed webhook are marked `dead` at once; registering the same URL
+  again creates a new webhook that does not inherit them. An event whose memory was
+  erased before it went out is marked `dead` and not sent.
+- **Repeats.** Delivery is at least once and unordered: order events by `version`, and
+  read the row back rather than trusting the event's age. A repeat shares its
+  `webhook-id`: a retry, two overlapping passes, and the same version of a memory
+  announced twice to the same webhook (a `delete_version` check that runs again) all
+  carry one id, so drop an id you have seen.
+- **Keeping.** An outbox insert that fails is logged and that event is not sent; the
+  write still stands. A webhook registered on one server process applies to writes on the
+  others within `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. Events and their delivery record
+  are kept 3 days, and an erasure deletes the events in its scope.
 
 ## Settings
 

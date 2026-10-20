@@ -39,7 +39,7 @@ from server.workers.status import record_pass
 log = logging.getLogger(__name__)
 
 # Notices POSTed per pass. The pass runs under a 120 s deadline and each POST
-# may wait the whole ack window, so ten is the most that always fit; inboxes
+# ends within the 10 s ack deadline, DNS lookup included, so ten fit; inboxes
 # past the cap go first next pass (they are ordered by their cursor's
 # next_try_at, and a delivered inbox's moves to now).
 MAX_POSTS_PER_PASS = 10
@@ -134,7 +134,7 @@ def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | N
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)
             log.warning(
-                "task webhook: inbox %s/%s has a webhook_url but no secret in env %r "
+                "task webhook: inbox %s/%s has a webhook_url but no usable secret in env %r "
                 "(it must be set and start %s); notices are held until then",
                 key[0],
                 key[1],
@@ -175,15 +175,20 @@ async def _deliver_inbox(
     headers = webhooks.signed_headers(
         secret, msg_id=msg_id, timestamp=int(time.time()), body=body, user_agent=USER_AGENT
     )
-    status = (await webhooks.post(transport, str(inbox_row["webhook_url"]), headers, body)).status
-    if 200 <= status < 300:
+    delivery = await webhooks.post(transport, str(inbox_row["webhook_url"]), headers, body)
+    if delivery.ok:
         await repo.insert_webhook_cursor(
             _cursor_row(
-                org, inbox, last_seq=int(msg_id), attempts=0, next_try_at=now, last_status=status
+                org,
+                inbox,
+                last_seq=int(msg_id),
+                attempts=0,
+                next_try_at=now,
+                last_status=delivery.status,
             )
         )
         return "delivered"
-    await _record_failure(org, inbox, cursor, now=now, status=status)
+    await _record_failure(org, inbox, cursor, now=now, status=delivery.status)
     return "failed"
 
 

@@ -51,30 +51,29 @@ def backoff_seconds(attempts: int) -> int:
     return BACKOFF_SECONDS[min(max(attempts, 1), len(BACKOFF_SECONDS)) - 1]
 
 
-def _iso(ts: Any) -> str:
-    """`ts` as ISO 8601 UTC with milliseconds and a Z."""
-    if not isinstance(ts, datetime):
-        return str(ts)
-    when: datetime = ts.astimezone(UTC).replace(tzinfo=None) if ts.tzinfo is not None else ts
-    return when.isoformat(timespec="milliseconds") + "Z"
+def _iso(ts: datetime) -> str:
+    """`ts` (naive UTC, or aware) as ISO 8601 UTC with milliseconds and a Z."""
+    if ts.tzinfo is not None:
+        ts = ts.astimezone(UTC).replace(tzinfo=None)
+    return ts.isoformat(timespec="milliseconds") + "Z"
 
 
 def event_body(row: Mapping[str, Any]) -> bytes:
     """The JSON body for one outbox row (its columns, by name)."""
     body = {
-        "type": str(row["event_type"]),
-        "event_id": str(row["event_id"]),
-        "org": str(row["org"]),
-        "namespace": str(row["namespace"]),
-        "agent": str(row.get("agent") or "-"),
-        "user_id": str(row.get("user_id") or "-"),
-        "session_id": str(row.get("session_id") or "-"),
-        "memory_key": str(row.get("memory_key") or ""),
-        "memory_id": str(row.get("memory_id") or ""),
-        "version": int(row.get("memory_version") or 0),
-        "actor": str(row.get("actor") or ""),
-        "request_id": str(row.get("request_id") or ""),
-        "erasure_id": str(row.get("erasure_id") or ""),
+        "type": row["event_type"],
+        "event_id": row["event_id"],
+        "org": row["org"],
+        "namespace": row["namespace"],
+        "agent": row["agent"],
+        "user_id": row["user_id"],
+        "session_id": row["session_id"],
+        "memory_key": row["memory_key"],
+        "memory_id": row["memory_id"],
+        "version": int(row["memory_version"]),
+        "actor": row["actor"],
+        "request_id": row["request_id"],
+        "erasure_id": row["erasure_id"],
         "occurred_at": _iso(row["occurred_at"]),
     }
     return json.dumps(body, separators=(",", ":")).encode("utf-8")

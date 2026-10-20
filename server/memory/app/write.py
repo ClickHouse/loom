@@ -25,6 +25,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
+from server.memory.app import webhooks
 from server.memory.app.set_commit import (
     _count_write,
     _set_after_write,
@@ -43,6 +44,7 @@ from server.memory.domain.files import files_for_set
 from server.memory.domain.graph_quality import canonical_entities
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.value_shape import value_shape_advisories
+from server.memory.domain.webhook_events import EventType
 from server.memory.store import key_write_lock
 from server.memory.store.rows import next_version
 from server.settings import settings
@@ -663,7 +665,7 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     if not is_embedded(w.input.memory_type, w.effective_sensitivity):
         out = await _set_plain_insert(w, ch)
         if not out.dry_run:
-            await _announce_set(w)
+            await _announce_set(w, restated=_restated)
         return out
 
     # Searchable: build + insert the embedding row too. The two inserts
@@ -694,18 +696,23 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
     await _set_dual_write(w, ch, _cfg, conflict_result)
 
     out = await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
-    await _announce_set(w)
+    await _announce_set(w, restated=_restated)
     return out
 
 
-async def _announce_set(w: _SetWrite) -> None:
-    """The written row, to the namespace's webhooks: a new key is written, a new
-    version of one is revised."""
-    from server.memory.app import webhooks
+def set_event(*, had_existing_row: bool, restated: bool) -> EventType | None:
+    """The webhook event a committed memory.set is: a new key is written, a new
+    value of one is revised, and the same value said again (a reinforcement)
+    is no change to announce."""
+    if restated:
+        return None
+    return "memory.revised" if had_existing_row else "memory.written"
 
-    await webhooks.announce(
-        "memory.revised" if w.had_existing_row else "memory.written", [w.memory_row]
-    )
+
+async def _announce_set(w: _SetWrite, *, restated: bool) -> None:
+    event = set_event(had_existing_row=w.had_existing_row, restated=restated)
+    if event:
+        await webhooks.announce(event, [w.memory_row])
 
 
 def _stamp_lifecycle(

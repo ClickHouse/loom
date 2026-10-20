@@ -63,6 +63,7 @@ def _row(agent: str, session_id: str) -> Any:
         user_id="-",
         session_id=session_id,
         memory_key="user_home_location",
+        memory_id="33333333-3333-3333-3333-333333333333",
         memory_type="semantic",
         value='"x"',
         run_id="",
