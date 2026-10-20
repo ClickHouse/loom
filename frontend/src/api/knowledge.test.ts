@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { downloadKnowledge, fetchKnowledgeInlineUrl, listKnowledge, previewKind } from "./knowledge";
+import { downloadKnowledge, fetchKnowledgePreview, listKnowledge, PREVIEW_TEXT_BYTES, previewKind } from "./knowledge";
 import { ApiError } from "../lib/errors";
 
 // knowledge.download is a GET the browser then saves; it rides the shared request path,
@@ -29,15 +29,15 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("fetchKnowledgeInlineUrl", () => {
+describe("fetchKnowledgePreview", () => {
   it("answers null when the document has no preserved blob", async () => {
     stubFetch(404, '{"detail":{"code":"NOT_FOUND","message":"no blob"}}');
-    await expect(fetchKnowledgeInlineUrl(id, "doc://a")).resolves.toBeNull();
+    await expect(fetchKnowledgePreview(id, "doc://a")).resolves.toBeNull();
   });
 
   it("throws an ApiError carrying the code and request id of an object detail", async () => {
     stubFetch(403, '{"detail":{"code":"AUTH_INSUFFICIENT"}}', { "X-Request-Id": "req-1" });
-    const err = await rejection(fetchKnowledgeInlineUrl(id, "doc://a"));
+    const err = await rejection(fetchKnowledgePreview(id, "doc://a"));
     expect(err.status).toBe(403);
     expect(err.code).toBe("AUTH_INSUFFICIENT");
     expect(err.requestId).toBe("req-1");
@@ -135,7 +135,7 @@ describe("previewKind", () => {
   });
 });
 
-describe("fetchKnowledgeInlineUrl re-types the blob", () => {
+describe("fetchKnowledgePreview re-types the blob", () => {
   function captureBlobs() {
     const blobs: Blob[] = [];
     vi.stubGlobal(
@@ -154,15 +154,22 @@ describe("fetchKnowledgeInlineUrl re-types the blob", () => {
   it("reads text as a string and makes no URL for it", async () => {
     stubFetch(200, "<script>alert(1)</script>", { "Content-Type": "text/markdown" });
     const blobs = captureBlobs();
-    const p = await fetchKnowledgeInlineUrl(id, "doc://a");
+    const p = await fetchKnowledgePreview(id, "doc://a");
     expect(p).toMatchObject({ kind: "text", url: null, text: "<script>alert(1)</script>" });
     expect(blobs).toEqual([]);
+  });
+
+  it("reads no more than the preview's share of a long text file", async () => {
+    stubFetch(200, "a".repeat(PREVIEW_TEXT_BYTES + 10), { "Content-Type": "text/plain" });
+    const p = await fetchKnowledgePreview(id, "doc://a");
+    expect(p?.text).toHaveLength(PREVIEW_TEXT_BYTES);
+    expect(p?.size).toBe(PREVIEW_TEXT_BYTES + 10);
   });
 
   it("gives an image its own allowlisted type", async () => {
     stubFetch(200, "x", { "Content-Type": "image/png; foo=bar" });
     const blobs = captureBlobs();
-    expect(await fetchKnowledgeInlineUrl(id, "doc://a")).toMatchObject({ kind: "image", url: "blob:p-1" });
+    expect(await fetchKnowledgePreview(id, "doc://a")).toMatchObject({ kind: "image", url: "blob:p-1" });
     expect(blobs[0].type).toBe("image/png");
   });
 
@@ -170,7 +177,7 @@ describe("fetchKnowledgeInlineUrl re-types the blob", () => {
     for (const t of ["text/html", "image/svg+xml", "application/pdf", "application/octet-stream"]) {
       stubFetch(200, "<svg onload=alert(1)>", { "Content-Type": t });
       const blobs = captureBlobs();
-      expect(await fetchKnowledgeInlineUrl(id, "doc://a")).toMatchObject({ kind: "download", url: null });
+      expect(await fetchKnowledgePreview(id, "doc://a")).toMatchObject({ kind: "download", url: null });
       expect(blobs).toEqual([]);
     }
   });

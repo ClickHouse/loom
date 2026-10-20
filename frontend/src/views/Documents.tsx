@@ -11,7 +11,8 @@ import {
   bulkDeleteKnowledge,
   downloadKnowledge,
   getKnowledge,
-  fetchKnowledgeInlineUrl,
+  fetchKnowledgePreview,
+  PREVIEW_TEXT_BYTES,
   textDownloadName,
   type KnowledgeEntry,
   type KnowledgeDocument,
@@ -318,7 +319,7 @@ export function Documents() {
         return null;
       });
       const blobPromise = r.has_blob
-        ? fetchKnowledgeInlineUrl({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch(() => null)
+        ? fetchKnowledgePreview({ org: identity.org, namespace: identity.namespace }, r.source_uri).catch(() => null)
         : Promise.resolve(null);
       const [d, blob] = await Promise.all([docPromise, blobPromise]);
       setPreviewDoc(d);
@@ -786,8 +787,14 @@ export function Documents() {
               aria-label={previewEntry.original_filename || "document preview"}
               // biome-ignore lint/a11y/noNoninteractiveTabindex: the file scrolls in this box, and the keyboard scrolls it only once it has focus
               tabIndex={0}
-              className="absolute inset-0 overflow-auto bg-bg"
+              className="doc-preview-text absolute inset-0 overflow-auto bg-bg"
             >
+              {inlineBlob.size > PREVIEW_TEXT_BYTES && (
+                <p className="m-0 px-3 pt-3 text-xs text-text-muted">
+                  The first {formatBytesShort(PREVIEW_TEXT_BYTES)} of {formatBytesShort(inlineBlob.size)}; Download has
+                  the whole file.
+                </p>
+              )}
               <pre className="m-0 p-3 font-mono text-xs text-text whitespace-pre-wrap break-words">
                 {inlineBlob.text}
               </pre>

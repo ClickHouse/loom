@@ -572,8 +572,8 @@ served as `text/plain`) and PNG, JPEG, GIF and WebP whose bytes match their type
 else (HTML, SVG, XML, PDF, unknown, mismatched) is an `application/octet-stream`
 attachment, and every download carries
 `Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the same
-allowlist itself, because a `blob:` URL ignores the server's headers: it re-types text as
-`text/plain` in an `<iframe sandbox="">`, shows images with `<img>`, and downloads
+allowlist itself, because a `blob:` URL ignores the server's headers: it reads text as
+UTF-8 and renders it as a text node in a `<pre>`, shows images with `<img>`, and downloads
 everything else, PDF and SVG included.
 
 ## Rate limiting
