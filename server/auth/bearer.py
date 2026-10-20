@@ -70,12 +70,15 @@ def verify_bearer_header(
 
 
 def gateway_refused() -> HTTPException:
-    """The 403 for a gateway token on a route that names no end user."""
+    """The 403 for a gateway token on a route that names no end user, counted
+    in `loom.auth.refusals`."""
+    message = "a gateway token acts only for the end user a request names"
+    record_auth_refusal(PermissionError(message), transport="http")
     return HTTPException(
         status_code=403,
         detail={
             "code": "AUTH_INSUFFICIENT",
-            "message": "a gateway token acts only for the end user a request names",
+            "message": message,
         },
     )
 

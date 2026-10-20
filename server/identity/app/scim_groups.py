@@ -31,6 +31,7 @@ from server.auth.bearer import bearer_token
 from server.auth.grant_claims import group_change
 from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
 from server.auth.scim_routes import (
+    LAST_INDEX,
     LIST_SCHEMA,
     MAX_RESULTS,
     SCIM_JSON,
@@ -214,9 +215,12 @@ async def _existing(org: str, group_id: str) -> dict[str, Any]:
     return row
 
 
+_EQ = re.compile(r"\s+eq\s+", re.IGNORECASE)
+
+
 @router.get("/Groups")
 async def list_groups(request: Request, caller: _Caller = _CALLER) -> JSONResponse:
-    start = max(1, int_param(request, "startIndex", 1))
+    start = min(LAST_INDEX, max(1, int_param(request, "startIndex", 1)))
     count = min(MAX_RESULTS, max(0, int_param(request, "count", MAX_RESULTS)))
     rows: list[dict[str, Any]] = []
     total = 0
@@ -226,7 +230,8 @@ async def list_groups(request: Request, caller: _Caller = _CALLER) -> JSONRespon
         params: dict[str, Any] = {"org": org}
         text = request.query_params.get("filter") or ""
         if text:
-            attribute, _, value = text.partition(" eq ")
+            # Operators are case-insensitive (RFC 7644 §3.4.2.2).
+            attribute, _, value = _EQ.sub(" eq ", text, count=1).partition(" eq ")
             column = {"displayname": "display_name", "externalid": "external_id"}.get(
                 attribute.strip().lower()
             )

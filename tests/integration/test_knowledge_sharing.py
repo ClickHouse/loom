@@ -260,7 +260,9 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
     _add(gw, "alice", col, f"alice wrote {theirs}")
     # An edit by someone else keeps the document bob's.
     gw.ok(
-        "alice", "knowledge.update_metadata", {"namespace": col, "source_uri": bobs, "title": "t"}
+        "alice",
+        "knowledge.update_metadata",
+        {"namespace": col, "source_uri": bobs, "title": "t", "reindex": True},
     )
     gw.ok(
         "bob", "knowledge.upsert", {"namespace": "@me", "source_uri": "chat/c1/m1", "content": mine}

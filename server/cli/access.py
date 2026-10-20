@@ -122,14 +122,14 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     # the summary can name it beside (or instead of) the token — it is the
     # handle `loom revoke-token --jti` retires and the ledgers' token_id.
     jti = new_jti()
+    if args.gateway:
+        return _mint_gateway_token(args, ttl_seconds, jti)
 
     # Scoped mode: --namespace-role NS=ROLE (repeatable). Arg order = read
     # priority. Emits an ns_roles claim → a scoped token (restricted to these
     # namespaces, ordered, authoritative per-namespace roles). This is a local
     # operator mint with the raw secret, so it is NOT capped against grants —
     # the /v1/me/service_accounts.create endpoint enforces that cap.
-    if args.gateway:
-        return _mint_gateway_token(args, ttl_seconds, jti)
     namespaces = _normalize_namespace_args(args.namespaces)
     bad = _invalid_namespace_names(namespaces)
     if bad:

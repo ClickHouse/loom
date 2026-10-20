@@ -41,7 +41,7 @@ LIST_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 MAX_RESULTS = 200
-_LAST_INDEX = 2**32 - 1
+LAST_INDEX = 2**32 - 1
 # A shorter bearer token is guessable: SCIM refuses to start with one.
 MIN_TOKEN_LENGTH = 32
 
@@ -572,7 +572,7 @@ async def service_provider_config() -> JSONResponse:
 @router.get("/Users")
 async def list_users(request: Request) -> JSONResponse:
     # Past the end is an empty page, however far: the offset must fit its UInt32.
-    start = min(_LAST_INDEX, max(1, int_param(request, "startIndex", 1)))
+    start = min(LAST_INDEX, max(1, int_param(request, "startIndex", 1)))
     count = min(MAX_RESULTS, max(0, int_param(request, "count", 100)))
     text = request.query_params.get("filter")
     if text is not None:

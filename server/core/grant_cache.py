@@ -113,10 +113,10 @@ def _may_stand_in(hit: _Entry, mark: tuple[str, str], writes: int | None) -> boo
 
 
 # Per-org values the watermark tracks (`org_value`): its collection tree
-# (COLLECTIONS) and its group members (GROUPS). (kind, org) -> (when stored,
-# mark, value).
+# (COLLECTIONS) and its group members (GROUPS). (org, kind) -> (when stored,
+# mark, value), keyed as the marks are.
 _org_values: OrderedDict[tuple[str, str], tuple[float, int | None, Any]] = OrderedDict()
-# The load in flight per (kind, org), and the org's mark when it began.
+# The load in flight per (org, kind), and the mark when it began.
 _org_loading: dict[tuple[str, str], tuple[asyncio.Task[Any], int | None]] = {}
 
 
@@ -124,7 +124,7 @@ async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]])
     """`load(org)`, kept as a grant map is: until this process makes a change
     of `kind` in the org, the org's watermark of `kind` moves, or the TTL
     passes."""
-    key = (kind, org)
+    key = (org, kind)
     writes = _writes(org, kind)
     hit = _org_values.get(key)
     if (
@@ -153,10 +153,9 @@ async def org_value[T](kind: str, org: str, load: Callable[[str], Awaitable[T]])
 async def _load_org_value(
     key: tuple[str, str], load: Callable[[str], Awaitable[Any]], writes: int | None
 ) -> Any:
-    kind, org = key
-    generation = _generation[(org, kind)]
-    value = await load(org)
-    if _generation[(org, kind)] == generation and not _unread(writes):
+    generation = _generation[key]
+    value = await load(key[0])
+    if _generation[key] == generation and not _unread(writes):
         _org_values[key] = (time.monotonic(), writes, value)
         _org_values.move_to_end(key)
         while len(_org_values) > _MAX_ENTRIES:
@@ -171,8 +170,8 @@ def invalidate(org: str, subjects: Iterable[str] | None = None, *, kind: str = G
     `changed` also tells every other process."""
     _generation[(org, kind)] += 1
     if kind != GRANTS:
-        _org_values.pop((kind, org), None)
-        _org_loading.pop((kind, org), None)
+        _org_values.pop((org, kind), None)
+        _org_loading.pop((org, kind), None)
         return
     lowered = None if subjects is None else {s.lower() for s in subjects}
     for key, entry in list(_entries.items()):

@@ -109,14 +109,15 @@ def _verify_bearer(request: Request) -> AuthInfo | None:
 
     Returns AuthInfo on success, None when the request carries no
     credential. Raises TokenError on a malformed or invalid one (the caller
-    answers 401).
+    answers 401), and PermissionError for a gateway token (403: it is valid,
+    and a 401 would make the client drop it).
     """
     # The checkout's code namespace, when the client's headers
     # helper named one; applied to namespace-less code.* calls. Read here, on
     # the same per-request path that reads the bearer.
     set_code_scope(request.headers.get("x-loom-code-scope"))
     from server.auth.bearer import bearer_token
-    from server.auth.jwt import TokenError, verify_token
+    from server.auth.jwt import verify_token
 
     token = bearer_token(request.headers.get("authorization"))
     if token is None:
@@ -124,7 +125,7 @@ def _verify_bearer(request: Request) -> AuthInfo | None:
     auth = verify_token(token)
     if auth.gateway:
         # A gateway names its end user per request, which only the HTTP API reads.
-        raise TokenError("a gateway token calls the HTTP API (/v1/<op>), not MCP")
+        raise PermissionError("a gateway token calls the HTTP API (/v1/<op>), not MCP")
     return auth
 
 
@@ -236,6 +237,15 @@ def _reject_unauthenticated(
         request, invalid_token_reason=invalid_token_reason
     )
     return _err(_echo_request_id(payload), INVALID_REQUEST, message)
+
+
+def _not_on_mcp(response: Response, payload: Any, error: PermissionError) -> dict[str, Any]:
+    """The 403 for a valid token MCP does not serve (a gateway token)."""
+    from server.observability.metrics import record_auth_refusal
+
+    record_auth_refusal(error, transport="mcp")
+    response.status_code = 403
+    return _err(_echo_request_id(payload), INVALID_REQUEST, str(error))
 
 
 def _token_refused(

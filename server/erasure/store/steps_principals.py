@@ -79,6 +79,19 @@ async def retire_personal_collection_by_user(
     )
 
 
+async def collections_created_by(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> list[str]:
+    """The collections whose directory row names the user as their creator."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT namespace FROM loom.namespaces FINAL WHERE org = {org:String}"
+        " AND kind = 'collection' AND owner_email = {p:String} ORDER BY namespace",
+        params={"org": org, "p": "user:" + user_id},
+    )
+    return [str(r["namespace"]) for r in rows]
+
+
 async def forget_collection_owner_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:

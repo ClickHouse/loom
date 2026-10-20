@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
-from server.auth.grant_claims import collections_change, group_change
+from server.auth.grant_claims import account_change, collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
+from server.core.principals import personal_name
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
@@ -125,10 +127,19 @@ async def _step_remove_from_groups_by_user(org: str, user_id: str) -> int:
     return removed
 
 
+async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> int:
+    """Under its directory row's claim, which `namespace.delete` holds too."""
+    async with account_change(org, personal_name(org, "user:" + user_id)):
+        return await principal_steps.retire_personal_collection_by_user(org, user_id)
+
+
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
-    """Under the tree's claim, so a move that lands meanwhile is not written
-    back to the parent it had."""
-    async with collections_change(org):
+    """Under each directory row's claim, then the tree's, so neither a
+    `namespace.delete` nor a move that lands meanwhile writes back what it read."""
+    async with AsyncExitStack() as held:
+        for namespace in await principal_steps.collections_created_by(org, user_id):
+            await held.enter_async_context(account_change(org, namespace))
+        await held.enter_async_context(collections_change(org))
         n = await principal_steps.forget_collection_owner_by_user(org, user_id)
     if n:
         await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
@@ -227,7 +238,7 @@ USER_STEPS: tuple[UserStep, ...] = (
     # tree still says about them.
     ("grants.revoke", _step_revoke_grants_by_user),
     ("groups.remove_member", _step_remove_from_groups_by_user),
-    ("personal.retire", principal_steps.retire_personal_collection_by_user),
+    ("personal.retire", _step_retire_personal_collection_by_user),
     ("collections.forget_owner", _step_forget_collection_owner_by_user),
     *_UNCOUNTED_STEPS_USER,
 )

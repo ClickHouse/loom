@@ -156,9 +156,12 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     `duplicate_chunk_count` (newly-inserted chunks whose hash already
     lives under a different source_uri).
     """
-    from server.knowledge.store import chunks as knowledge_repo
+    return await _upsert(input, _authorship())  # from the request's identity, never its body
 
-    author = _authorship()  # from the request's identity, never its body
+
+async def _upsert(input: KnowledgeUpsertInput, author: dict[str, str]) -> KnowledgeUpsertOutput:
+    """`knowledge.upsert`, the document and its chunks stamped with `author`."""
+    from server.knowledge.store import chunks as knowledge_repo
 
     embedder = get_embedder()
     await codes_state.refuse_width("chunks", embedder.dim)
@@ -515,7 +518,9 @@ async def handle_knowledge_update_metadata(
             tags=list(next_tags),
             metadata=(json.loads(existing.metadata) if existing.metadata else {}),
         )
-        upsert_out = await handle_knowledge_upsert(upsert_in)
+        # The same text: its author stays whoever wrote it, not the editor.
+        author = {c: getattr(existing, c) for c in ("agent", "user_id", "actor", "source_class")}
+        upsert_out = await _upsert(upsert_in, author)
         chunks_reindexed = upsert_out.chunks_superseded
 
     return KnowledgeUpdateMetadataOutput(

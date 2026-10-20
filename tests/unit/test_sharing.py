@@ -626,3 +626,22 @@ def test_a_grant_to_a_group_is_written_under_the_groups_claim(
     assert events == ["check eng held=['eng']", "write held=['eng']"]
     with pytest.raises(ValidationError, match="no group"):
         asyncio.run(_run("group:gone"))
+
+
+def test_mcp_refuses_a_gateway_token_as_not_allowed_not_as_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from fastapi import Response
+
+    from server.auth import jwt
+    from server.transport import mcp_auth
+
+    monkeypatch.setattr(jwt, "verify_token", lambda _token: _gateway())
+    request = SimpleNamespace(headers={"authorization": "Bearer gw"})
+    with pytest.raises(PermissionError) as refused:
+        mcp_auth._verify_bearer(request)  # type: ignore[arg-type]
+    response = Response()
+    answer = mcp_auth._not_on_mcp(response, {"id": 7}, refused.value)
+    assert response.status_code == 403 and answer["id"] == 7

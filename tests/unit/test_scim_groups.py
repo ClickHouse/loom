@@ -169,3 +169,12 @@ def test_a_delete_whose_revoke_fails_leaves_the_group_to_retry(
     monkeypatch.setattr("server.identity.app.grants.revoke_subject", _down)
     assert c.delete("/scim/v2/Groups/ops").status_code == 503
     assert c.get("/scim/v2/Groups/ops").status_code == 200, "still there for the retry"
+
+
+def test_a_list_takes_eq_in_any_case_and_any_start(store: _Store) -> None:
+    c = _client()
+    c.post("/scim/v2/Groups", json={"externalId": "ops", "displayName": "Ops"})
+    listed = c.get("/scim/v2/Groups", params={"filter": 'displayName EQ "Ops"'}).json()
+    assert [g["id"] for g in listed["Resources"]] == ["ops"]
+    far = c.get("/scim/v2/Groups", params={"startIndex": str(10**30)})
+    assert far.status_code == 200 and far.json()["Resources"] == []

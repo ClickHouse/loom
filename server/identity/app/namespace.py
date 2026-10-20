@@ -674,7 +674,15 @@ async def handle_namespace_browse(
         "(toString(n.classification) != 'restricted' "
         "OR (ifNull(n.kind, 'memory') = 'code' AND toString(n.join_policy) = 'approval'))",
     ]
-    params: dict[str, Any] = {"org": input.org, "lim": input.limit}
+    from server.auth.sharing import COLLECTION_PREFIX
+
+    # A collection is never joined (its grants open it), so it is not in the directory.
+    where.append("NOT startsWith(n.namespace, {col_prefix:String})")
+    params: dict[str, Any] = {
+        "org": input.org,
+        "lim": input.limit,
+        "col_prefix": COLLECTION_PREFIX,
+    }
     if input.query:
         where.append(
             "(positionCaseInsensitive(n.namespace, {q:String}) > 0 "
