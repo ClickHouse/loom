@@ -96,9 +96,11 @@ async def index_late_rows(rows: list[dict[str, Any]], *, ch: _CHClient | None = 
     ch = ch or _default_client()
 
     async def _run(sql: str) -> None:
+        # Inside a coroutine, a client that fails before returning one is a gathered
+        # failure like any other, so this never raises.
         await ch.execute(sql, params={"keys": keys})
 
-    # Independent statements, one round trip; both end before this returns, so shutdown's
+    # Independent statements, run concurrently; both end before this returns, so shutdown's
     # drain never closes the client under one of them.
     results = await asyncio.gather(
         *(_run(sql) for sql in _STATEMENTS.values()), return_exceptions=True

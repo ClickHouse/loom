@@ -66,7 +66,7 @@ async def test_late_rows_are_folded_with_both_views_statements_and_errors_are_lo
 
 @pytest.mark.asyncio
 async def test_both_statements_run_at_once_and_one_failing_waits_for_the_other(caplog) -> None:
-    """One round trip, and the call ends only after both have: shutdown's drain must not
+    """Concurrent, and the call ends only after both have: shutdown's drain must not
     close the client under the statement that is still running."""
     import asyncio
 
