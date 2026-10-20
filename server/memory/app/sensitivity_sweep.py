@@ -42,6 +42,22 @@ from server.memory.domain.sensitivity import (
     sensitivity_tags,
 )
 
+# The column holds JSON text for an object value, where a control character is an escape
+# (`\n`, `\u000b`) and a non-ASCII character is `\uXXXX`. For the PIN and IBAN shapes an
+# escape counts as a word boundary, and a control escape as whitespace; `\v` is listed
+# beside `\s` because the detector's `\s` has it and RE2's does not.
+_JSON_BOUNDARY = r"(?:\b|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
+_JSON_SPACE = r"(?:[\s\v]|\\[bfnrt]|\\u000[bB])"
+# A PIN label and its value in the detector's grammar: every label after `is`, `was`,
+# `:` or `=`, and all but a bare `pin` directly.
+_PIN_VALUE_AFTER = rf"(?:{_JSON_SPACE}+(?:is|was)(?:{_JSON_SPACE}*[:=])?|{_JSON_SPACE}*[:=])"
+_COARSE_PIN = (
+    rf"(?i:{_JSON_BOUNDARY}(?:pin(?: number| code)?|passcode|cv[vc]2?|security code)"
+    rf"{_PIN_VALUE_AFTER}{_JSON_SPACE}*[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}(?:pin number|pin code|passcode|cv[vc]2?|security code)"
+    rf"{_JSON_SPACE}+[0-9]{{3}})"
+)
+
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
 # the detector would miss too; anything it over-selects the detector drops.
@@ -53,14 +69,8 @@ COARSE_SHAPE_RE = (
     r"|[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}"
     r"|[0-9](?:[ -]?[0-9]){12}"  # card number
     r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
-    # A PIN label and its value, in the detector's grammar. The column holds JSON text for
-    # an object value, where a line break is the two characters `\n` and a non-ASCII
-    # character is `\uXXXX`, so an escape counts as a word boundary (and `\n`, `\r`, `\t`
-    # as whitespace); `\v` is listed beside `\s` because the detector's `\s` has it and
-    # RE2's does not.
-    r"|(?i:(?:\b|\\[nrt]|\\u[0-9a-f]{4})(?:pin|passcode|cv[vc]2?|security code)(?: number| code)?"
-    r"(?:(?:[\s\v]|\\[nrt])+(?:is|was))?(?:[\s\v]|\\[nrt])*[:=]?(?:[\s\v]|\\[nrt])*[0-9]{3})"
-    r"|(?:\b|\\[nrt]|\\u[0-9a-fA-F]{4})[A-Z]{2}[0-9]{2}(?: ?[A-Z0-9]{4}){2}"  # IBAN
+    rf"|{_COARSE_PIN}"
+    rf"|{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}"  # IBAN
 )
 
 # A probe shape reported beside the detector's levels, so a dry run says how many

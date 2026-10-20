@@ -563,6 +563,8 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     assert not re.search(COARSE_SHAPE_RE, "the passcode screen and the CVV field")
     assert not re.search(COARSE_SHAPE_RE, "verify SHA256SUMS before the upload")
     assert not re.search(COARSE_SHAPE_RE, "pin the base image before the 2025 release")
+    assert not re.search(COARSE_SHAPE_RE, "pin 128 rows before the import")
+    assert not re.search(COARSE_SHAPE_RE, "GPIO pin 115")
 
 
 @pytest.mark.parametrize(
@@ -573,6 +575,9 @@ def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
         {"note": "PIN\nis 4471"},
         {"note": "bank:\nMT84 MALT 0110 0001 2345 MTLC AST0 01S"},
         {"note": "\u201cPIN is 4471\u201d"},  # stored as `\u201cPIN`
+        {"note": "PIN:\f4471"},  # stored as `PIN:\f4471`
+        {"note": "PIN is\v4471"},  # stored as `PIN is\u000b4471`
+        {"note": "\bPIN is 4471"},  # stored as `\bPIN`
     ],
 )
 def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
