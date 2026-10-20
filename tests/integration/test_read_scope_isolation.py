@@ -462,7 +462,7 @@ def test_a_pinned_token_cannot_save_or_unsave_vs_saved_message(
         "conversation.saved_status",
         {**conv, "user_id": V, "message_ids": [msg["message_id"]]},
     )
-    assert status["saved"] == [f"msg-{seed.nonce_v}"], status
+    assert status["saved"] == [msg["message_id"]], status
 
 
 @pytest.mark.parametrize("other_user", ["*", V])
