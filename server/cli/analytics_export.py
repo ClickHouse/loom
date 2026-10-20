@@ -55,8 +55,8 @@ def _refusal(day: date, today: date) -> str:
     if found < BOTOCORE_FLOOR:
         floor = ".".join(map(str, BOTOCORE_FLOOR))
         return (
-            f"export-analytics needs boto3 and botocore {floor} or later: "
-            "pip install 'clickhouse-loom-server[aws]'"
+            f"export-analytics needs boto3 and botocore {floor} or later: the `aws` extra, "
+            "which the Loom image ships (from a checkout: uv sync --extra aws)"
         )
     return ""
 

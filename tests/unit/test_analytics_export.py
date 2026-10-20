@@ -10,6 +10,7 @@ from typing import Any
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
 from server.cli import analytics_export as cli
@@ -143,12 +144,18 @@ def test_each_upload_gets_a_fresh_client() -> None:
         made.append(s3)
         return s3
 
-    stub.add_response("put_object", {})
-    stub.add_response("put_object", {})
+    # No expected owner given: the parameter is left out, not sent empty.
+    stub.add_response(
+        "put_object", {}, {"Bucket": "b", "Key": "a", "Body": b"1", "IfNoneMatch": "*"}
+    )
+    stub.add_response(
+        "put_object", {}, {"Bucket": "b", "Key": "b", "Body": b"2", "IfNoneMatch": "*"}
+    )
     put = s3_put(client, "b")
     with stub:
         put("a", b"1")
         put("b", b"2")
+    stub.assert_no_pending_responses()
     assert len(made) == 2
 
 
@@ -161,7 +168,7 @@ def test_an_existing_object_is_kept_and_other_errors_raise() -> None:
     put = s3_put(lambda: s3, "b")
     with stub:
         assert put("k", b"data") is False
-        with pytest.raises(Exception, match="AccessDenied"):
+        with pytest.raises(ClientError, match="AccessDenied"):
             put("k", b"data")
 
 
@@ -252,7 +259,10 @@ def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_th
     monkeypatch.setattr(ch_module, "get_client", lambda: fake)
     monkeypatch.setattr(app, "s3_client", lambda **kw: None)
     monkeypatch.setattr(app, "check_credentials", lambda **kw: None)
-    monkeypatch.setattr(app, "s3_put", lambda client, bucket, **kw: lambda key, body: True)
+    # usage is written, namespaces is already there from an earlier run.
+    monkeypatch.setattr(
+        app, "s3_put", lambda client, bucket, **kw: lambda key, body: "/usage/" in f"/{key}"
+    )
     assert cli._cmd_export(_args()) == 0
     assert fake.read_timeout_at_connect >= app.STATEMENT_TIMEOUT_S and fake.disconnected
     assert all(
@@ -266,6 +276,8 @@ def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_th
     )
     out = capsys.readouterr().out
     assert "s3://b/usage/2026/10/09/usage-2026-10-09.parquet (wrote 4 bytes)" in out
+    kept = "s3://b/namespaces/2026/10/09/namespaces-2026-10-09.parquet (already there, kept)"
+    assert kept in out
 
 
 def test_day_must_be_iso() -> None:

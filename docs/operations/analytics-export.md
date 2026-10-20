@@ -26,17 +26,19 @@ Each upload carries `If-None-Match: *`, so an object is never replaced. A second
 day keeps the first run's files and prints `already there, kept` for each; a failed or
 repeated run can be retried as it is. To export a day again, delete its objects first.
 
-| Entity       | One row per                                                                                                         | Columns                                                                                                                                                                                                                                                            |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `usage`      | `org`, `namespace`, `agent`, `operation`, `kind`, `transport`, `traffic_class` of the day, from `loom.agent_events` | `day`, `ops`, `errors`, `server_errors`, `slow` (over its latency budget), `input_tokens`, `output_tokens`, `embedding_tokens`, `llm_calls`, `cost_usd`, `bytes_written`, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `users`, `sessions`, `snapshot_at` |
-| `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_on`, `live_memories`, `last_memory_on`, `day`, `snapshot_at`                                                                                                                                                |
+| Entity       | One row per                                                                                                         | Columns                                                                                                                                                                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `usage`      | `org`, `namespace`, `agent`, `operation`, `kind`, `transport`, `traffic_class` of the day, from `loom.agent_events` | `day`, `ops`, `errors`, `server_errors`, `slow`, `input_tokens`, `output_tokens`, `embedding_tokens`, `llm_calls`, `cost_usd`, `bytes_written`, `latency_p50_ms`, `latency_p95_ms`, `latency_p99_ms`, `users`, `sessions`, `snapshot_at` |
+| `namespaces` | `org`, `namespace` registered in `loom.namespaces` or holding a live memory row                                     | `registered`, `kind`, `visibility`, `active`, `created_on`, `live_memories`, `last_memory_on`, `day`, `snapshot_at`                                                                                                                      |
 
 `kind` in `usage` is `request` for a request, `worker` for a worker pass, `verdict` for a
 deferred `memory.ask` consistency check and `settle` for a deferred conflict settle. Every
 `/v1/me/*` route is one `operation`, `me`: the ledger names those rows after the request
 path, which can carry any string a caller sent. `users` and `sessions` are distinct counts
 within the row that leave out the `-` of a call that named none; a sum over rows counts a
-user once per row. The `namespaces` file is the state at `snapshot_at`, whatever `--day`
+user once per row. `slow` and the latency quantiles are the SLI rollup's: they count `ok`
+requests only, `slow` those past their latency budget (a budget of 0 makes every one slow),
+and a row with no `ok` request has latencies of 0. The `namespaces` file is the state at `snapshot_at`, whatever `--day`
 says: a backfill of an old day gets that day's usage and today's namespaces. An
 unregistered namespace has `registered = false` and NULL registry columns. `created_on` and
 `last_memory_on` are days, not times: an exact time beside a hashed personal namespace
@@ -108,8 +110,8 @@ encrypted with a customer-managed KMS key also needs `kms:GenerateDataKey` on th
 the writer role, or every upload is refused. `--expected-bucket-owner` makes S3 refuse the
 write when another account owns the bucket.
 
-Pass `--region` (the bucket's) where the process has no AWS region; on EKS the IRSA and Pod
-Identity webhooks set one.
+Pass `--region` (the bucket's, `analyticsExport.region` in the chart) unless the process's
+environment already names one in `AWS_REGION` or `AWS_DEFAULT_REGION`.
 
 ## On Kubernetes
 
@@ -150,9 +152,11 @@ attempts. A refusal (exit 2) fails the Job at once instead
 of retrying. Its pod takes none of the web pods' `podLabels`, `podAnnotations` or `affinity`.
 The web and workers pods keep their own ServiceAccount, so the role that may assume the
 writer role is bound to the export's pod only. With IRSA, that role's trust names
-`system:serviceaccount:<namespace>:<fullname>-analytics-export`, and its only permission is
-`sts:AssumeRole` on `roleArn`. With EKS Pod Identity, bind the role to the ServiceAccount
-and leave `annotations` empty.
+`system:serviceaccount:<namespace>:<fullname>-analytics-export`. With `roleArn` set, its
+only permission is `sts:AssumeRole` on `roleArn`; with `roleArn` empty it writes itself and
+needs `s3:PutObject` on the bucket (and `kms:GenerateDataKey` on a customer-managed KMS
+key). With EKS Pod Identity, bind the role to the ServiceAccount and leave `annotations`
+empty.
 
 The job reads ClickHouse with the release's Secret, settings, `extraEnv` and
 `extraVolumes`, as the web pods do, and writes nothing to it. A failed run shows as a

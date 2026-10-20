@@ -282,12 +282,14 @@ analyticsExport:
     name: ""
     key: LOOM_ANALYTICS_EXPORT_NAME_KEY
   # A writer role to assume (in the bucket's account) with the pod's credentials.
+  # Empty: the pod's own role writes, and needs s3:PutObject itself.
   roleArn: ""
   region: ""
   # The account id that must own the bucket, quoted; a write to any other is refused.
   expectedBucketOwner: ""
   serviceAccount:
-    # IRSA (eks.amazonaws.com/role-arn): a role that may only assume roleArn.
+    # IRSA (eks.amazonaws.com/role-arn): a role that may only assume roleArn, or,
+    # with roleArn empty, may only put objects into the bucket.
     annotations: {}
   # The pod's two emptyDirs are 1Gi each.
   resources:

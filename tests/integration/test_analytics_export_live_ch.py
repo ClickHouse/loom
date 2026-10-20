@@ -15,12 +15,12 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import date, datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 from server.core.ch import CHClient, get_client
+from server.core.paths import REPO_ROOT
 from server.insights.app.analytics_export import name_hash_key
 from server.insights.store.analytics_export import (
     ENTITIES,
@@ -124,6 +124,9 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
                 status_class="server",
             ),
             _event(org, "2026-01-02 23:59:59.999", user_id="-", session_id="-"),
+            # Slow as the SLI counts it: an `ok` request past its budget. The
+            # server error above at 300 ms is an error, not a slow request.
+            _event(org, "2026-01-02 13:00:00", latency_ms=250),
             _event(org, "2026-01-01 23:59:59.999"),
             _event(org, "2026-01-03 00:00:00"),
             _event(org, "2026-01-02 08:00:00", operation="memory.get", transport="mcp"),
@@ -143,7 +146,9 @@ async def test_usage_sums_one_utc_day_per_operation(ch: CHClient) -> None:
         by_op = {r["operation"]: r for r in rows}
         assert by_op["me"]["ops"] == 2
         s = by_op["memory.set"]
-        assert (s["ops"], s["errors"], s["server_errors"], s["slow"]) == (3, 1, 1, 1)
+        assert (s["ops"], s["errors"], s["server_errors"], s["slow"]) == (4, 1, 1, 1)
+        # Over the three `ok` requests (10, 10, 250 ms), not the 300 ms error.
+        assert (s["latency_p50_ms"], s["latency_p99_ms"]) == (10, 250)
         assert (s["users"], s["sessions"]) == (2, 1)
         assert (s["input_tokens"], s["cost_usd"]) == (7, Decimal("0.25"))
         assert (s["namespace"], s["agent"], s["transport"], s["day"]) == ("ns", "a", "http", DAY)
@@ -208,7 +213,7 @@ async def test_the_file_is_in_hash_order_never_name_order(ch: CHClient, entity: 
 
 async def test_the_operator_guides_join_sql_computes_the_exported_hash(ch: CHClient) -> None:
     # The ```sql block of the operator guide, run as a warehouse would run it.
-    guide = (Path(__file__).parents[2] / "docs/operations/analytics-export.md").read_text()
+    guide = (REPO_ROOT / "docs/operations/analytics-export.md").read_text()
     (sql,) = re.findall(r"```sql\n(.*?)```", guide, re.S)
     secret = "s" * 32
     sql = sql.replace("FROM tenants", "FROM (SELECT 'tenant-1' AS tenant_id)")
@@ -251,6 +256,36 @@ PROFILE_SETTINGS = (
     "cast_keep_nullable",
     "aggregate_functions_null_for_empty",
 )
+
+
+# Profile settings that cut a result short with no error when left to the server.
+TRUNCATING_PROFILES = (
+    {"limit": 1},
+    {"offset": 1},
+    {"max_result_rows": 1, "result_overflow_mode": "break"},
+    {"max_rows_to_group_by": 1, "group_by_overflow_mode": "any"},
+)
+
+
+@pytest.mark.parametrize("profile", TRUNCATING_PROFILES, ids=lambda p: ",".join(p))
+async def test_a_profile_never_cuts_the_file_short(
+    ch: CHClient, profile: dict[str, object]
+) -> None:
+    org = unique_org("analytics")
+    await ch.insert(
+        "loom.agent_events",
+        [_event(org, "2026-01-02 05:00:00", namespace=f"n{i}") for i in range(3)],
+    )
+    params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
+    shipped = f"{_hashed('usage')} {STATEMENT_SETTINGS}"
+    whole = await ch.client.query(shipped, parameters=params)
+    # A whole file or an error: never a partial file, which an upload would keep.
+    try:
+        under_profile = await ch.client.query(shipped, parameters=params, settings=profile)
+    except Exception as e:  # noqa: BLE001 — refusing is the other acceptable outcome
+        assert "TOO_MANY_ROWS" in str(e) or "exceeded" in str(e), e
+        return
+    assert len(under_profile.result_rows) == len(whole.result_rows) >= 3
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))

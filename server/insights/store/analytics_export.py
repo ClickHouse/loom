@@ -18,7 +18,9 @@ from server.core.ch import CHClient
 # One row per (org, namespace, agent, operation, kind, transport, traffic
 # class) of UTC day {day:Date}. `kind` is 'request', 'worker' (a worker pass),
 # 'verdict' or 'settle' (deferred ask and conflict judgements); `users` and
-# `sessions` leave out the '-' of a call that named none.
+# `sessions` leave out the '-' of a call that named none. `slow` and the
+# latency quantiles are the SLI rollup's (migration 045): `ok` requests only,
+# slow past their budget (a budget of 0 makes every one slow); 0 when none.
 # A `/v1/me/*` row's operation is built from the request path, so it can hold
 # any string a caller sent: every `me.*` operation leaves as `me`. That happens
 # in the inner query, so the GROUP BY can only mean the collapsed operation,
@@ -33,16 +35,22 @@ SELECT
     count() AS ops,
     countIf(NOT success) AS errors,
     countIf(status_class = 'server') AS server_errors,
-    countIf(budget_ms > 0 AND latency_ms > budget_ms) AS slow,
+    countIf(status_class = 'ok' AND latency_ms > budget_ms) AS slow,
     sum(toUInt64(input_tokens)) AS input_tokens,
     sum(toUInt64(output_tokens)) AS output_tokens,
     sum(toUInt64(embedding_tokens)) AS embedding_tokens,
     sum(toUInt64(llm_calls)) AS llm_calls,
     sum(upstream_cost_usd) AS cost_usd,
     sum(bytes_written) AS bytes_written,
-    toUInt32(quantiles(0.5, 0.95, 0.99)(latency_ms)[1]) AS latency_p50_ms,
-    toUInt32(quantiles(0.5, 0.95, 0.99)(latency_ms)[2]) AS latency_p95_ms,
-    toUInt32(quantiles(0.5, 0.95, 0.99)(latency_ms)[3]) AS latency_p99_ms,
+    toUInt32(ifNotFinite(
+        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok')[1], 0
+    )) AS latency_p50_ms,
+    toUInt32(ifNotFinite(
+        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok')[2], 0
+    )) AS latency_p95_ms,
+    toUInt32(ifNotFinite(
+        quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok')[3], 0
+    )) AS latency_p99_ms,
     uniqExactIf(user_id, user_id != '-') AS users,
     uniqExactIf(session_id, session_id != '-') AS sessions,
     now64(3, 'UTC') AS snapshot_at
@@ -94,11 +102,16 @@ NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "n
 ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 
-# Pinned whatever the server's profile says: sums that are never Nullable,
-# strings as Parquet STRING, not BINARY (a warehouse joins the hashes as
-# strings), and dates as DATE, not UInt16.
+# Pinned whatever the server's profile says. A whole file or an error: a `limit`
+# or a `break` / `any` overflow mode returns a partial result with no error, and
+# an upload never replaces it. Then sums that are never Nullable, strings as
+# Parquet STRING, not BINARY (a warehouse joins the hashes as strings), and
+# dates as DATE, not UInt16.
+_WHOLE = ("group_by", "result", "timeout", "read", "sort", "join", "set", "distinct", "transfer")
 STATEMENT_SETTINGS = (
-    "SETTINGS aggregate_functions_null_for_empty = 0, "
+    "SETTINGS limit = 0, offset = 0, "
+    + ", ".join(f"{m}_overflow_mode = 'throw'" for m in _WHOLE)
+    + ", aggregate_functions_null_for_empty = 0, "
     "output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
 )
 
