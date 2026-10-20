@@ -702,7 +702,7 @@ def _agent_trust_series_from_rows(rows: list[Any]) -> dict[str, list[tuple[float
     for org, trust, max_agents, made in rows:
         attrs = {"loom.org": str(org), "loom.trust": str(trust)}
         out["agent_trust_agents"].append((float(made), attrs))
-        out["agent_trust_used_ratio"].append((float(made) / max(int(max_agents), 1), attrs))
+        out["agent_trust_used_ratio"].append((float(made) / int(max_agents), attrs))
     return out
 
 
