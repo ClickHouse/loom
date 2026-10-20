@@ -413,6 +413,10 @@ jobs:
       LOOM_BASE_URL: http://localhost:7777
       LOOM_EMBEDDING_MODEL: fake-ngram-1024
       LOOM_LLM_PROVIDER: fake
+      # Files the fake extractor's "I always ..." assistant sentences as learnings
+      # candidates (tests/integration/test_assistant_turn_learnings.py); no other
+      # test's assistant turn opens that way.
+      LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS: "true"
       # GH Actions runners are noisy enough that the default per-op
       # budgets (e.g. memory.set p99=30ms) fire violations on most
       # runs. Multiply by 10x — same knob docs/operations/deployment.md recommends

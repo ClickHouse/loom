@@ -119,22 +119,23 @@ async def test_the_fake_provider_files_rules_under_the_block(
     assert all("escalate any refund" not in f.value for f in result.facts if f.about != "agent")
 
 
-def test_agent_learnings_follow_the_request_then_the_setting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_only_the_setting_turns_agent_learnings_on(monkeypatch: pytest.MonkeyPatch) -> None:
     def on(**state: Any) -> bool:
         return pipeline._agent_learnings_on(WorkflowState(**{"learning_agent": "bot", **state}))
 
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", True)
     assert on() is True
+    assert on(agent_learnings=True) is True
+    # The request can turn it off.
     assert on(agent_learnings=False) is False
     # No agent to file for (a pinned token that names none): never.
     assert on(learning_agent="") is False
+    # A coding session's assistant narrates its work: never.
+    assert on(extra_tags=["source:claude-code"]) is False
+    # The request cannot turn it on.
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", False)
     assert on() is False
-    assert on(agent_learnings=True) is True
-    # A coding session's assistant narrates its work: never.
-    assert on(agent_learnings=True, extra_tags=["source:claude-code"]) is False
+    assert on(agent_learnings=True) is False
 
 
 _VALUE = "The assistant escalates any refund over $500 to a human."
@@ -145,29 +146,30 @@ def _cid(value: str = _VALUE, agent: str = "support-bot") -> str:
 
 
 def test_the_candidate_id_is_one_per_agent_key_and_rule_text() -> None:
+    # Case, spacing and a trailing period are folded.
     assert _cid() == _cid("the assistant  escalates any refund over $500 to a human")
     assert _cid() != _cid(agent="other-bot")
     # Another rule under the same key is a sibling, never a supporter of the first.
     assert _cid() != _cid("The assistant refunds anything without asking.")
 
 
-def test_the_rationale_quotes_the_user_turn_then_the_cited_evidence() -> None:
-    assert assistant_rules.rationale(_rule_fact(evidence=_RULE), _MESSAGES) == (
-        f'User: "Can you refund my $800 order?"\nAssistant: "{_RULE}"'
-    )
+def test_a_supporters_quotes_are_its_user_turn_then_the_cited_evidence() -> None:
+    asked = "Can you refund my $800 order?"
+    assert assistant_rules.quotes(_rule_fact(evidence=_RULE), _MESSAGES) == (asked, _RULE)
     # No evidence span: the cited assistant turn.
-    assert assistant_rules.rationale(_rule_fact(), _MESSAGES) == (
-        'User: "Can you refund my $800 order?"\n'
-        f'Assistant: "{_RULE} Someone will reply within a day."'
+    assert assistant_rules.quotes(_rule_fact(), _MESSAGES) == (
+        asked,
+        f"{_RULE} Someone will reply within a day.",
     )
-    # Both quotes are bounded; no user turn, no user line.
+    # Both are bounded.
     long = [{"role": "user", "content": "ask " * 200}, {"role": "assistant", "content": "w " * 400}]
-    asked, said = assistant_rules.rationale(_rule_fact(), long).split("\n")
-    assert len(asked) < 215 and len(said) < 420
+    asked_long, said_long = assistant_rules.quotes(_rule_fact(), long)
+    assert len(asked_long) <= 200 and len(said_long) <= 400
+    # No user turn before the rule: no user quote.
     alone = [{"role": "assistant", "content": _RULE}]
-    assert assistant_rules.rationale(_rule_fact(source_message_indices=[0]), alone) == (
-        f'Assistant: "{_RULE}"'
-    )
+    assert assistant_rules.quotes(_rule_fact(source_message_indices=[0]), alone) == ("", _RULE)
+    assert assistant_rules.rationale(asked, _RULE) == f'User: "{asked}"\nAssistant: "{_RULE}"'
+    assert assistant_rules.rationale("", _RULE) == f'Assistant: "{_RULE}"'
 
 
 class _Queue:
@@ -234,7 +236,7 @@ async def _file(state: WorkflowState, fact: dict[str, Any] | None = None) -> int
 @pytest.mark.asyncio
 async def test_a_rule_is_filed_once_and_each_session_adds_one_supporter_row(queue: _Queue) -> None:
     assert await _file(_state("alice", "s1")) == 1
-    # The filer's supporter row first: the earliest one names who filed it.
+    # The supporter row first, so a candidate row never exists without one.
     assert queue.order == ["supporter", "candidate"]
     (row,) = queue.rows.values()
     assert row == {
@@ -248,18 +250,21 @@ async def test_a_rule_is_filed_once_and_each_session_adds_one_supporter_row(queu
         "supporter_count": 0,
         "confidence_avg": 1.0,
         "supporters": [],
-        "rationale": (
-            'User: "Can you refund my $800 order?"\n'
-            f'Assistant: "{_RULE} Someone will reply within a day."'
-        ),
+        # The candidate holds the rule and nothing of any user's conversation.
+        "rationale": "",
         "source_kind": "assistant_turn",
-        "seeded_from_thread_id": "s1",
+        "seeded_from_thread_id": None,
         "seeded_from_msg_id": None,
         "status": "pending",
         "proposed_at": row["proposed_at"],
         "version": 1,
     }
     first = dict(queue.supporters[(_cid(), "alice", "s1")])
+    # The user's words are on the user's own supporter row.
+    assert (first["asked"], first["said"]) == (
+        "Can you refund my $800 order?",
+        f"{_RULE} Someone will reply within a day.",
+    )
     await _file(_state("alice", "s1"))  # the same session again: its row is left as it is
     assert queue.supporters[(_cid(), "alice", "s1")] == first
     await _file(_state("alice", "s2"))
@@ -340,87 +345,99 @@ def _auth(**extra: Any) -> Any:
 
 
 @pytest.mark.parametrize(
-    ("auth", "agent", "pinned"),
+    ("auth", "agent"),
     [
         # An end-user token its issuer signed for an agent.
-        (dict(read_user_id="alice", agent_principal="agent:signed-bot"), "signed-bot", True),
+        (dict(read_user_id="alice", agent_principal="agent:signed-bot"), "signed-bot"),
         # An end-user token with no `agent`, and a token minted with `read_user_id`:
         # both pinned, neither names an agent, so nothing is filed.
-        (dict(read_user_id="alice", read_scope="own_user"), "", True),
-        (dict(read_user_id="alice"), "", True),
+        (dict(read_user_id="alice", read_scope="own_user"), ""),
+        (dict(read_user_id="alice"), ""),
         # An unpinned token files for the body's agent.
-        ({}, "body-bot", False),
+        ({}, "body-bot"),
     ],
 )
-def test_the_learning_agent_comes_from_the_token(
-    auth: dict[str, Any], agent: str, pinned: bool
-) -> None:
+def test_the_learning_agent_comes_from_the_token(auth: dict[str, Any], agent: str) -> None:
     from server.auth.context import current_auth_var
 
     token = current_auth_var.set(_auth(**auth))
     try:
-        assert assistant_learnings.learning_agent("body-bot") == agent
-        assert assistant_learnings.token_pinned() is pinned
+        assert assistant_learnings.request_learning_agent("body-bot") == agent
     finally:
         current_auth_var.reset(token)
 
 
-def test_a_replay_files_for_the_agent_its_request_resolved() -> None:
-    with assistant_learnings.replay_learning_agent(""):
-        assert assistant_learnings.learning_agent("body-bot") == ""
-    with assistant_learnings.replay_learning_agent("signed-bot"):
-        assert assistant_learnings.learning_agent("body-bot") == "signed-bot"
-    # A payload queued before the agent was stored: the body's, as before.
-    with assistant_learnings.replay_learning_agent(None):
-        assert assistant_learnings.learning_agent("body-bot") == "body-bot"
+def _body(**extra: Any) -> Any:
+    from server.memory.api.models_bulk import MemorySetFromMessagesInput
+
+    return MemorySetFromMessagesInput(
+        org="o",
+        namespace="ns",
+        agent="body-bot",
+        user_id="alice",
+        messages=[{"role": "user", "content": "hi"}],
+        **extra,
+    )
 
 
 @pytest.mark.parametrize(("setting", "applied"), [(False, None), (True, True)])
 @pytest.mark.asyncio
-async def test_a_pinned_token_cannot_turn_filing_on(
+async def test_a_request_cannot_turn_filing_on(
     monkeypatch: pytest.MonkeyPatch, setting: bool, applied: bool | None
 ) -> None:
-    from server.auth.context import current_auth_var
-    from server.memory.api.models_bulk import (
-        MemorySetFromMessagesInput,
-        MemorySetFromMessagesOutput,
-    )
+    from server.memory.api.models_bulk import MemorySetFromMessagesOutput
     from server.memory.app.extract import handler
 
-    seen: list[Any] = []
+    seen: list[tuple[Any, str]] = []
 
-    async def fake_inner(input: Any) -> MemorySetFromMessagesOutput:
-        seen.append(input.agent_learnings)
+    async def fake_inner(input: Any, learning_agent: str) -> MemorySetFromMessagesOutput:
+        seen.append((input.agent_learnings, learning_agent))
         return MemorySetFromMessagesOutput()
 
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", setting)
     monkeypatch.setattr(handler, "_set_from_messages", fake_inner)
-    body = MemorySetFromMessagesInput(
-        org="o",
-        namespace="ns",
-        agent="any-bot",
-        user_id="alice",
-        messages=[{"role": "user", "content": "hi"}],
-        agent_learnings=True,
-    )
-    token = current_auth_var.set(_auth(read_user_id="alice", agent_principal="agent:signed-bot"))
-    try:
-        out = await handler.handle_memory_set_from_messages(body)
-    finally:
-        current_auth_var.reset(token)
-    assert seen == [applied]
+    out = await handler.handle_memory_set_from_messages(_body(agent_learnings=True))
+    assert seen == [(applied, "body-bot")]
     assert out.ignored_args == ([] if setting else ["agent_learnings"])
+
+
+@pytest.mark.asyncio
+async def test_a_replay_files_for_the_agent_stored_with_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.api.models_bulk import MemorySetFromMessagesOutput
+    from server.memory.app import extraction_queue
+    from server.memory.app.extract import handler
+
+    seen: list[str | None] = []
+
+    async def fake_handler(input: Any, *, learning_agent: str | None = None) -> Any:
+        seen.append(learning_agent)
+        return MemorySetFromMessagesOutput()
+
+    monkeypatch.setattr(handler, "handle_memory_set_from_messages", fake_handler)
+    stored, _, _ = extraction_queue.payload_for(
+        _body(), scope=WHOLE_NAMESPACE, learning_agent="signed-bot"
+    )
+    await extraction_queue.replay_row({"payload": stored, "org": "o"})
+    # A payload that stored none files nothing: the replay fails closed.
+    bare = json.loads(stored)
+    bare.pop(extraction_queue.LEARNING_AGENT_KEY)
+    await extraction_queue.replay_row({"payload": json.dumps(bare), "org": "o"})
+    assert seen == ["signed-bot", ""]
 
 
 def test_the_transport_keeps_an_ops_own_ignored_args() -> None:
     from types import SimpleNamespace
 
-    from server.memory.api.models_bulk import MemorySetFromMessagesOutput
+    from server.memory.api.models_bulk import (
+        MemorySetFromMessagesInput,
+        MemorySetFromMessagesOutput,
+    )
     from server.transport.arg_check import attach, header_value
 
     out = attach({"ignored_args": ["agent_learnings"]}, {"ignored_args": ["typo"]})
     assert out["ignored_args"] == ["agent_learnings", "typo"]
-    op = SimpleNamespace(input_model=MemorySetFromMessagesOutput)
+    op = SimpleNamespace(input_model=MemorySetFromMessagesInput)
     result = MemorySetFromMessagesOutput(ignored_args=["agent_learnings"])
     assert header_value(op, {"typo": 1}, result) == "agent_learnings,typo"
     assert header_value(op, {"typo": 1}, {"ignored_args": ["agent_learnings"]}) == (
@@ -521,7 +538,15 @@ async def test_the_list_counts_a_rules_users_and_sessions(monkeypatch: pytest.Mo
     async def fake_stats(org: str, ns: str, ids: list[str]) -> list[dict[str, Any]]:
         asked.append(ids)
         return [
-            {"candidate_id": _cid(), "users": 2, "sessions": 3, "confidence": 0.9, "pairs": _PAIRS}
+            {
+                "candidate_id": _cid(),
+                "users": 2,
+                "sessions": 3,
+                "confidence": 0.9,
+                "pairs": _PAIRS,
+                "asked": "Can you refund my $800 order?",
+                "said": _RULE,
+            }
         ]
 
     monkeypatch.setattr(learnings_repo, "list_by_status", fake_list)
@@ -530,11 +555,13 @@ async def test_the_list_counts_a_rules_users_and_sessions(monkeypatch: pytest.Mo
 
     assert asked == [[_cid()]]  # only the assistant_turn rows are counted
     rule, other = out.rows
-    assert (rule.supporter_count, rule.supporter_users, rule.supporter_sessions) == (2, 2, 3)
+    assert (rule.supporter_count, rule.supporter_sessions) == (2, 3)
+    # The earliest remaining supporter's quotes; the candidate row holds none.
+    assert rule.rationale == f'User: "Can you refund my $800 order?"\nAssistant: "{_RULE}"'
     assert rule.confidence_avg == 0.9
     assert rule.supporters[2] == "o/ns/support-bot/bob/s3/assistant_rule_refund_escalation"
     assert rule.agent == "support-bot"
-    assert (other.supporter_count, other.supporter_users, other.supporter_sessions) == (4, 0, 0)
+    assert (other.supporter_count, other.supporter_sessions, other.rationale) == (4, 0, "r")
 
 
 @pytest.mark.asyncio
@@ -572,7 +599,15 @@ async def test_promoting_a_rule_writes_the_agents_memory_with_the_supporters_con
 
     async def fake_stats(*_a: Any) -> list[dict[str, Any]]:
         return [
-            {"candidate_id": _cid(), "users": 2, "sessions": 3, "confidence": 0.9, "pairs": _PAIRS}
+            {
+                "candidate_id": _cid(),
+                "users": 2,
+                "sessions": 3,
+                "confidence": 0.9,
+                "pairs": _PAIRS,
+                "asked": "",
+                "said": "",
+            }
         ]
 
     async def fake_set(set_input: Any) -> None:

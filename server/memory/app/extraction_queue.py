@@ -73,18 +73,18 @@ ENQUEUED_BY_KEY = "enqueued_by"
 # the inline call's would. Stamped by the server like `enqueued_by`.
 READ_SCOPE_KEY = "read_filters"
 # The agent a filed assistant rule is for, resolved from the enqueuing token
-# (`assistant_learnings.learning_agent`), so the replay files as the inline call would.
+# (`assistant_learnings.request_learning_agent`), so the replay files as the inline
+# call would; '' (or a payload without it) files nothing.
 LEARNING_AGENT_KEY = "learning_agent"
 
 
 def payload_for(
-    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None
+    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None, learning_agent: str = ""
 ) -> tuple[str, int, int]:
     """Serialize a MemorySetFromMessagesInput for storage: the request minus
     `defer` (the replay must run inline), plus the enqueuing principal
     (`enqueued_by`, else the current request's `writer_actor()`) and the
     request's resolved read `scope`. Returns (json, messages, chars)."""
-    from server.memory.app.assistant_learnings import learning_agent
     from server.memory.app.provenance import writer_actor
 
     data = input.model_dump(mode="json", exclude={"defer"})
@@ -93,7 +93,7 @@ def payload_for(
     actor = writer_actor() if enqueued_by is None else str(enqueued_by)
     if actor:
         data[ENQUEUED_BY_KEY] = actor
-    data[LEARNING_AGENT_KEY] = learning_agent(input.agent)
+    data[LEARNING_AGENT_KEY] = learning_agent
     data[READ_SCOPE_KEY] = {
         "scope": scope.scope,
         "user_id": scope.user_id,
@@ -111,13 +111,16 @@ def enqueued_actor(row: dict[str, Any]) -> str:
         return ""
 
 
-async def enqueue(input: Any, *, scope: ReadFilters, ch: Any | None = None) -> str:
-    """Persist one deferred set_from_messages request. Returns the queue_id
-    the caller can poll with `memory.extraction_status`."""
+async def enqueue(
+    input: Any, *, scope: ReadFilters, learning_agent: str = "", ch: Any | None = None
+) -> str:
+    """Persist one deferred set_from_messages request, with the agent a rule it
+    files is for ('' files nothing). Returns the queue_id the caller can poll with
+    `memory.extraction_status`."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    payload, n_msgs, chars = payload_for(input, scope=scope)
+    payload, n_msgs, chars = payload_for(input, scope=scope, learning_agent=learning_agent)
     now = _now()
     qid = uuid.uuid4().hex
     row = {
@@ -489,18 +492,16 @@ def replay_actor(row: dict[str, Any]) -> str:
     return enqueued_actor(row) or _prov.EXTRACTION_WORKER_ACTOR
 
 
-def queued_learning_agent(row: dict[str, Any]) -> str | None:
-    """The learning agent stored at enqueue time; None for a row queued before it
-    was stored (the replay then files for the body's agent, as it did)."""
-    stored = json.loads(row["payload"]).get(LEARNING_AGENT_KEY)
-    return None if stored is None else str(stored)
+def queued_learning_agent(row: dict[str, Any]) -> str:
+    """The learning agent stored at enqueue time; '' (nothing is filed) for a row
+    that stored none."""
+    return str(json.loads(row["payload"]).get(LEARNING_AGENT_KEY) or "")
 
 
 async def replay_row(row: dict[str, Any]) -> int:
     """Run one queued request through the inline handler under the enqueuer's
     principal and read scope; returns memories written."""
     from server.identity.domain.read_scope import read_filters_bound
-    from server.memory.app.assistant_learnings import replay_learning_agent
     from server.memory.app.extract.handler import handle_memory_set_from_messages
     from server.memory.domain import provenance as _prov
 
@@ -508,8 +509,9 @@ async def replay_row(row: dict[str, Any]) -> int:
     with (
         _prov.pipeline_actor(replay_actor(row)),
         read_filters_bound(None, replay_scope(row)),
-        replay_learning_agent(queued_learning_agent(row)),
         customer.for_org(str(row.get("org") or "")),
     ):
-        out = await handle_memory_set_from_messages(rebuild_input(row))
+        out = await handle_memory_set_from_messages(
+            rebuild_input(row), learning_agent=queued_learning_agent(row)
+        )
     return len(out.written)

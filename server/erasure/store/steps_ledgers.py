@@ -11,7 +11,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, NS_IN, UID, USER_FILED_LEARNING_IDS
+from server.erasure.store.predicates import NS_EQ, NS_IN, ORPHAN_LEARNINGS, UID
 
 log = logging.getLogger(__name__)
 
@@ -264,30 +264,57 @@ async def delete_learnings_queue_by_namespace(
 async def delete_learnings_queue_by_user(
     org: str, user_id: str, *, ch: _CHClient | None = None
 ) -> int:
-    """The user's support rows, and every version of each candidate the user filed
-    with all its supporters (`predicates.USER_LEARNING_SUPPORT`, `USER_LEARNINGS`).
-    The ids are read first, so no delete reads a table it mutates; the candidates go
-    before the supporter rows that name their filer, so a step that fails between
-    the two still finds them when it runs again."""
+    """The user's supporter rows, which hold every word of theirs the learnings queue
+    keeps; then the bot-rule candidates left with no supporter
+    (`predicates.ORPHAN_LEARNINGS`). A pending one is deleted. A decided one keeps
+    its decision on a status row with the rule blanked, so a rejected rule never
+    comes back as pending; its rows that still hold the rule are deleted after the
+    blank row is written, so a retry finds whatever a failed step left."""
     ch = ch or _default_client()
+    n = await delete_scoped(
+        "loom.learnings_supporters", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
+    )
     rows = await ch.query_all(
-        f"SELECT candidate_id FROM {USER_FILED_LEARNING_IDS}",
-        params={"org": org, "uid": user_id},
+        "SELECT DISTINCT candidate_id FROM loom.learnings_queue "
+        f"WHERE org = {{org:String}} AND {ORPHAN_LEARNINGS}",
+        params={"org": org},
     )
-    params: dict[str, Any] = {"uid": user_id, "cids": [str(r["candidate_id"]) for r in rows]}
-    filed = "candidate_id IN {cids:Array(UUID)}"
-    n = 0
-    if params["cids"]:
-        n += await delete_scoped(
-            "loom.learnings_queue", org=org, scope_where=filed, params=params, ch=ch
+    cids = [str(r["candidate_id"]) for r in rows]
+    if not cids:
+        return n
+    latest = await ch.query_all(
+        "SELECT * FROM loom.learnings_queue FINAL "
+        "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
+        params={"org": org, "cids": cids},
+    )
+    pending = [str(r["candidate_id"]) for r in latest if r["status"] == "pending"]
+    decided = [r for r in latest if r["status"] != "pending"]
+    blank = [
+        {**r, "proposed_value": "", "version": int(r["version"]) + 1}
+        for r in decided
+        if r["proposed_value"]
+    ]
+    if blank:
+        await ch.insert(
+            "loom.learnings_queue", blank, settings={"async_insert": 0, "wait_for_async_insert": 1}
         )
-    return n + await delete_scoped(
-        "loom.learnings_supporters",
-        org=org,
-        scope_where=f"(user_id = {{uid:String}} OR {filed})",
-        params=params,
-        ch=ch,
-    )
+    if pending:
+        n += await delete_scoped(
+            "loom.learnings_queue",
+            org=org,
+            scope_where="candidate_id IN {cids:Array(UUID)}",
+            params={"cids": pending},
+            ch=ch,
+        )
+    if decided:
+        n += await delete_scoped(
+            "loom.learnings_queue",
+            org=org,
+            scope_where="candidate_id IN {cids:Array(UUID)} AND proposed_value != ''",
+            params={"cids": [str(r["candidate_id"]) for r in decided]},
+            ch=ch,
+        )
+    return n
 
 
 async def _delete_run_claims(

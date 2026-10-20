@@ -5,11 +5,11 @@ ALTER TABLE loom.learnings_queue
     ADD COLUMN IF NOT EXISTS `agent` LowCardinality(String) DEFAULT '';
 
 -- One row per (candidate, end user, session) that stated an `assistant_turn`
--- candidate's rule, written once and never by a review, so support never rewrites a
--- candidate's status row; learnings.list counts it at read time. The earliest row of a
--- candidate names the user who filed it, whose conversation its rationale quotes. A
--- user erasure deletes the user's rows and every candidate the user filed
--- (erasure.store.steps_ledgers).
+-- candidate's rule, with that user's own bounded quotes: `asked` (the user turn before
+-- the rule) and `said` (the rule as the assistant said it). A user's words live only on
+-- that user's rows: a user erasure deletes them (erasure.store.steps_ledgers), and a
+-- candidate left with no supporters is deleted, or keeps only its decision.
+-- learnings.list counts the rows at read time with uniqExact.
 CREATE TABLE IF NOT EXISTS loom.learnings_supporters
 (
     `org` LowCardinality(String),
@@ -18,8 +18,10 @@ CREATE TABLE IF NOT EXISTS loom.learnings_supporters
     `user_id` String,
     `session_id` String,
     `confidence` Float32,
+    `asked` String,
+    `said` String,
     `created_at` DateTime64(3) DEFAULT now64(3)
 )
-ENGINE = ReplacingMergeTree(created_at)
+ENGINE = MergeTree
 ORDER BY (org, namespace, candidate_id, user_id, session_id)
 SETTINGS non_replicated_deduplication_window = 1000;

@@ -55,17 +55,9 @@ def _input(**kw: Any):
 
 
 def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> None:
-    set_current_auth(
-        SimpleNamespace(
-            org="o",
-            subject="b5-memo-bench",
-            is_service_account=True,
-            read_user_id="",
-            agent_principal="",
-        )
-    )
+    set_current_auth(SimpleNamespace(org="o", subject="b5-memo-bench", is_service_account=True))
     try:
-        payload, n_msgs, _chars = payload_for(_input(), scope=WHOLE_NAMESPACE)
+        payload, n_msgs, _chars = payload_for(_input(), scope=WHOLE_NAMESPACE, learning_agent="a")
     finally:
         set_current_auth(None)
     data = json.loads(payload)
@@ -75,7 +67,7 @@ def test_the_queue_payload_carries_the_enqueuer_and_the_rebuild_strips_it() -> N
     assert enqueued_actor(row) == "process:b5-memo-bench"
     rebuilt = queue.rebuild_input(row)
     assert rebuilt.defer is False and not hasattr(rebuilt, ENQUEUED_BY_KEY)
-    # The learning agent the token resolved rides beside it and is stripped the same way.
+    # The learning agent the request resolved rides beside it and is stripped the same way.
     assert data[queue.LEARNING_AGENT_KEY] == "a"
     assert queue.queued_learning_agent(row) == "a"
     assert not hasattr(rebuilt, queue.LEARNING_AGENT_KEY)
@@ -100,7 +92,7 @@ async def test_replay_runs_the_handler_under_the_enqueuers_principal(monkeypatch
 
     seen: list[str] = []
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         seen.append(writer_actor())
         return SimpleNamespace(written=[1, 2])
 

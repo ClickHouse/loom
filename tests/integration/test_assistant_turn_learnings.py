@@ -1,20 +1,24 @@
 """A rule a bot states about itself in a conversation lands in the learnings
-queue as a pending `assistant_turn` candidate, never in memory; a second
-session adds a supporter; an admin's promotion makes it the agent's memory for
-every user; a user erasure removes the candidates that user backs.
+queue as a pending `assistant_turn` candidate, never in memory; each session
+adds a supporter row with its own user's quotes; an admin's promotion makes it
+the agent's memory for every user; a user erasure takes that user's quotes and
+leaves a candidate nobody backs only its decision.
 
 Runs on the fake LLM, which reads an assistant's "I always ..." sentence as a
-rule when the extraction prompt carries the assistant-rules block.
+rule when the extraction prompt carries the assistant-rules block, against a
+server with LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS on (CI's integration posture).
 """
 
 from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from tests.integration._resources import unique_org
 
@@ -28,10 +32,30 @@ def base_url() -> str:
 
 
 @pytest.fixture
-def fake_llm(base_url: str) -> None:
+def token(base_url: str, mint_test_token: Any) -> tuple[str, str]:
+    """An admin token for a fresh org; skips unless the server runs the fake LLM with
+    assistant-turn learnings on (the only way they turn on is its setting)."""
     with httpx.Client(base_url=base_url, timeout=5.0) as c:
         if not c.get("/v1/health").json().get("fake_llm"):
             pytest.skip("scripts the fake LLM's reading of assistant rules")
+    org = unique_org("asst-rules")
+    tok = mint_test_token(org=org, roles=["admin"])
+    probe = _converse(base_url, tok, org, f"probe-{uuid.uuid4().hex[:8]}", "probe", "s0")
+    if "agent_learnings" in probe.get("ignored_args", []):
+        pytest.skip("the server runs with LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS off")
+    return org, tok
+
+
+@pytest_asyncio.fixture
+async def ch() -> AsyncIterator[Any]:
+    from server.core.ch import get_client
+
+    client = get_client()
+    await client.connect()
+    try:
+        yield client
+    finally:
+        await client.disconnect()
 
 
 def _call(base_url: str, token: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -39,6 +63,10 @@ def _call(base_url: str, token: str, op: str, body: dict[str, Any]) -> dict[str,
         r = c.post(f"/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200, f"{op}: {r.status_code} {r.text}"
     return r.json()
+
+
+def _asked(user_id: str) -> str:
+    return f"This is {user_id}: please refund my order of $800 today."
 
 
 def _converse(
@@ -62,55 +90,74 @@ def _converse(
             "session_id": session_id,
             "agent_learnings": True,
             "messages": [
-                {"role": "user", "content": "Please refund my order of $800 today."},
+                {"role": "user", "content": _asked(user_id)},
                 {"role": "assistant", "content": f"{rule} A colleague will reply soon."},
             ],
         },
     )
 
 
-def _pending(base_url: str, token: str, org: str, ns: str) -> list[dict[str, Any]]:
+def _listed(base_url: str, token: str, org: str, ns: str, status: str = "pending") -> list[Any]:
     out = _call(
         base_url,
         token,
         "learnings.list",
-        {"org": org, "namespace": ns, "source_kind": "assistant_turn"},
+        {"org": org, "namespace": ns, "status": status, "source_kind": "assistant_turn"},
     )
     return list(out["rows"])
 
 
-def _support(cand: dict[str, Any]) -> tuple[int, int, int]:
-    return cand["supporter_count"], cand["supporter_users"], cand["supporter_sessions"]
+def _support(cand: dict[str, Any]) -> tuple[int, int]:
+    return cand["supporter_count"], cand["supporter_sessions"]
 
 
-@pytest.mark.usefixtures("fake_llm")
+def _rationale(user_id: str, rule: str = _RULE) -> str:
+    return f'User: "{_asked(user_id)}"\nAssistant: "{rule}"'
+
+
+async def _erase(ch: Any, org: str, user_id: str) -> None:
+    from server.erasure.store import census as erasure_census
+    from server.erasure.store import steps_ledgers
+
+    await steps_ledgers.delete_learnings_queue_by_user(org, user_id, ch=ch)
+    after = await erasure_census.residue_census(org, "user_id", user_id, ch=ch)
+    assert after["loom.learnings_supporters"] == 0
+    assert after["loom.learnings_queue"] == 0
+
+
+async def _raw(ch: Any, table: str, org: str, where: str, **params: Any) -> list[dict[str, Any]]:
+    return list(
+        await ch.query_all(
+            f"SELECT * FROM {table} WHERE org = {{org:String}} AND {where}",
+            params={"org": org, **params},
+        )
+    )
+
+
 def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
-    base_url: str, mint_test_token: Any
+    base_url: str, token: tuple[str, str]
 ) -> None:
-    org = unique_org("asst-rules")
+    org, tok = token
     ns = f"bot-{uuid.uuid4().hex[:8]}"
-    token = mint_test_token(org=org, roles=["admin"])
 
-    first = _converse(base_url, token, org, ns, "alice", "s1")
+    first = _converse(base_url, tok, org, ns, "alice", "s1")
     assert first["learning_candidates"] == 1
     written = [w["memory_key"] for w in first["written"]]
     assert written, "the user's own turn is still extracted"
     assert not [k for k in written if k.startswith("assistant_rule_")]
 
-    (cand,) = _pending(base_url, token, org, ns)
+    (cand,) = _listed(base_url, tok, org, ns)
     assert cand["status"] == "pending"
     assert cand["agent"] == _AGENT
     assert cand["proposed_value"] == f"Assistant rule: {_RULE}"
-    assert _support(cand) == (1, 1, 1)
+    assert _support(cand) == (1, 1)
     assert cand["supporters"] == [f"{org}/{ns}/{_AGENT}/alice/s1/{cand['memory_key']}"]
-    assert cand["rationale"] == (
-        f'User: "Please refund my order of $800 today."\nAssistant: "{_RULE}"'
-    )
+    assert cand["rationale"] == _rationale("alice")
 
     # Not a memory: the user's search does not find it.
     hits = _call(
         base_url,
-        token,
+        tok,
         "memory.search",
         {
             "org": org,
@@ -123,21 +170,22 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     assert not [h for h in hits["results"] if "escalate any refund" in str(h.get("value"))]
 
     # The same session again changes nothing; another session of alice's and one of
-    # bob's: two users, three sessions, still pending.
-    _converse(base_url, token, org, ns, "alice", "s1")
-    _converse(base_url, token, org, ns, "alice", "s1b")
-    _converse(base_url, token, org, ns, "bob", "s2")
-    (cand,) = _pending(base_url, token, org, ns)
-    assert _support(cand) == (2, 2, 3)
+    # bob's: two users, three sessions, still pending, alice's quote first.
+    _converse(base_url, tok, org, ns, "alice", "s1")
+    _converse(base_url, tok, org, ns, "alice", "s1b")
+    _converse(base_url, tok, org, ns, "bob", "s2")
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert _support(cand) == (2, 3)
     assert [s.split("/")[3:5] for s in cand["supporters"]] == [
         ["alice", "s1"],
         ["alice", "s1b"],
         ["bob", "s2"],
     ]
+    assert cand["rationale"] == _rationale("alice")
 
     review = _call(
         base_url,
-        token,
+        tok,
         "learnings.review",
         {
             "org": org,
@@ -150,15 +198,15 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     )
     assert review["new_status"] == "promoted"
     assert review["promoted_to_shared"] is True
-    assert _pending(base_url, token, org, ns) == []
+    assert _listed(base_url, tok, org, ns) == []
     # A supporter after the decision does not reopen it.
-    _converse(base_url, token, org, ns, "carol", "s3")
-    assert _pending(base_url, token, org, ns) == []
+    _converse(base_url, tok, org, ns, "carol", "s3")
+    assert _listed(base_url, tok, org, ns) == []
 
     # The agent's memory now, for every user of the bot.
     got = _call(
         base_url,
-        token,
+        tok,
         "memory.get",
         {
             "org": org,
@@ -174,99 +222,122 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     assert "source-kind:assistant_turn" in got["tags"]
 
 
-@pytest.mark.usefixtures("fake_llm")
 def test_a_different_rule_under_one_key_is_its_own_candidate(
-    base_url: str, mint_test_token: Any
+    base_url: str, token: tuple[str, str]
 ) -> None:
-    org = unique_org("asst-sibling")
+    org, tok = token
     ns = f"bot-{uuid.uuid4().hex[:8]}"
-    token = mint_test_token(org=org, roles=["admin"])
     other = "I always escalate any refund over $5 to nobody."
-    _converse(base_url, token, org, ns, "mallory", "s1", rule=other)
-    _converse(base_url, token, org, ns, "alice", "s2")
+    _converse(base_url, tok, org, ns, "mallory", "s1", rule=other)
+    _converse(base_url, tok, org, ns, "alice", "s2")
 
-    rows = {r["proposed_value"]: r for r in _pending(base_url, token, org, ns)}
+    rows = {r["proposed_value"]: r for r in _listed(base_url, tok, org, ns)}
     assert set(rows) == {f"Assistant rule: {other}", f"Assistant rule: {_RULE}"}
     assert len({r["memory_key"] for r in rows.values()}) == 1
-    # Neither wording collects the other's support.
-    assert _support(rows[f"Assistant rule: {_RULE}"]) == (1, 1, 1)
-    assert _support(rows[f"Assistant rule: {other}"]) == (1, 1, 1)
+    # Neither wording collects the other's support, and each quotes its own user.
+    assert _support(rows[f"Assistant rule: {_RULE}"]) == (1, 1)
+    assert rows[f"Assistant rule: {_RULE}"]["rationale"] == _rationale("alice")
+    assert rows[f"Assistant rule: {other}"]["rationale"] == _rationale("mallory", other)
 
 
-@pytest.mark.usefixtures("fake_llm")
 @pytest.mark.asyncio
-async def test_a_user_erasure_removes_the_users_support_and_filings(
-    base_url: str, mint_test_token: Any
+async def test_an_erasure_takes_the_users_quote_and_the_next_supporters_shows(
+    base_url: str, token: tuple[str, str], ch: Any
 ) -> None:
-    from server.core.ch import get_client
-    from server.erasure.store import census as erasure_census
-    from server.erasure.store import steps_ledgers
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    _converse(base_url, tok, org, ns, "alice", "s1")
+    _converse(base_url, tok, org, ns, "bob", "s2")
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert cand["rationale"] == _rationale("alice")
 
-    org = unique_org("asst-erase")
-    ns_a = f"bot-{uuid.uuid4().hex[:8]}"
-    ns_b = f"bot-{uuid.uuid4().hex[:8]}"
-    token = mint_test_token(org=org, roles=["admin"])
-    # alice files in A, bob supports it; bob files in B, alice supports it.
-    _converse(base_url, token, org, ns_a, "alice", "s1")
-    _converse(base_url, token, org, ns_a, "bob", "s2")
-    _converse(base_url, token, org, ns_b, "bob", "s3")
-    _converse(base_url, token, org, ns_b, "alice", "s4")
-    (filed,) = _pending(base_url, token, org, ns_a)
+    await _erase(ch, org, "alice")
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert cand["rationale"] == _rationale("bob")
+    assert _support(cand) == (1, 1)
+    # No row anywhere still holds alice's words.
+    assert await _raw(ch, "loom.learnings_supporters", org, "user_id = 'alice'") == []
+    queue = await _raw(ch, "loom.learnings_queue", org, "namespace = {ns:String}", ns=ns)
+    assert queue and all("alice" not in str(r) for r in queue)
 
-    ch = get_client()
-    await ch.connect()
-    try:
-        # A review written by a build a release behind: no agent, no filed_by_user.
-        await ch.insert(
-            "loom.learnings_queue",
-            [
-                {
-                    "candidate_id": filed["candidate_id"],
-                    "org": org,
-                    "namespace": ns_a,
-                    "memory_key": filed["memory_key"],
-                    "memory_type": "semantic",
-                    "proposed_value": '"x"',
-                    "supporter_count": 0,
-                    "confidence_avg": 1.0,
-                    "supporters": [],
-                    "rationale": filed["rationale"],
-                    "source_kind": "assistant_turn",
-                    "status": "rejected",
-                    "version": 2**62,
-                }
-            ],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
-        )
-        # Merged away: only the review row, which carries nothing of the filer.
-        await ch.execute("OPTIMIZE TABLE loom.learnings_queue FINAL")
-        before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
-        assert before["loom.learnings_queue"] > 0 and before["loom.learnings_supporters"] > 0
-        await steps_ledgers.delete_learnings_queue_by_user(org, "alice", ch=ch)
-        after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
-        assert after["loom.learnings_queue"] == 0
-        assert after["loom.learnings_supporters"] == 0
-        # Not one physical row of alice's candidate is left in either table.
-        for table in ("loom.learnings_queue", "loom.learnings_supporters"):
-            row = await ch.query_one(
-                f"SELECT count() AS n FROM {table} "
-                "WHERE org = {org:String} AND candidate_id = {cid:UUID}",
-                params={"org": org, "cid": filed["candidate_id"]},
-            )
-            assert row is not None and int(row["n"]) == 0, table
-        # Nor of alice's support of bob's candidate.
-        row = await ch.query_one(
-            "SELECT count() AS n FROM loom.learnings_supporters "
-            "WHERE org = {org:String} AND user_id = 'alice'",
-            params={"org": org},
-        )
-        assert row is not None and int(row["n"]) == 0
-    finally:
-        await ch.disconnect()
+    # The last supporter goes: a pending candidate nobody backs goes with them.
+    await _erase(ch, org, "bob")
+    assert _listed(base_url, tok, org, ns) == []
+    cid = cand["candidate_id"]
+    for table in ("loom.learnings_queue", "loom.learnings_supporters"):
+        assert await _raw(ch, table, org, "candidate_id = {cid:UUID}", cid=cid) == [], table
 
-    # alice's filing is gone with bob's support of it; bob's candidate stays, backed
-    # by bob alone.
-    assert _pending(base_url, token, org, ns_a) == []
-    (kept,) = _pending(base_url, token, org, ns_b)
-    assert _support(kept) == (1, 1, 1)
-    assert kept["supporters"][0].split("/")[3] == "bob"
+
+@pytest.mark.asyncio
+async def test_a_candidate_whose_filing_failed_is_filed_by_the_next_session(
+    base_url: str, token: tuple[str, str], ch: Any
+) -> None:
+    """The first session's supporter row landed and its candidate row did not; the
+    next session files the candidate. Erasing either user leaves no word of theirs."""
+    from server.memory.domain import assistant_rules
+
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    _converse(base_url, tok, org, ns, "alice", "s1")
+    (cand,) = _listed(base_url, tok, org, ns)
+    cid = cand["candidate_id"]
+    # As if the candidate insert had failed after alice's supporter row.
+    await ch.execute(
+        "ALTER TABLE loom.learnings_queue DELETE WHERE org = {org:String} "
+        "AND candidate_id = {cid:UUID} SETTINGS mutations_sync = 2",
+        params={"org": org, "cid": cid},
+    )
+    assert cid == assistant_rules.candidate_id(
+        org, ns, _AGENT, cand["memory_key"], f"Assistant rule: {_RULE}"
+    )
+    _converse(base_url, tok, org, ns, "bob", "s2")
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert cand["candidate_id"] == cid and _support(cand) == (2, 2)
+    assert cand["rationale"] == _rationale("alice")
+
+    await _erase(ch, org, "alice")
+    (cand,) = _listed(base_url, tok, org, ns)
+    assert cand["rationale"] == _rationale("bob")
+    await _erase(ch, org, "bob")
+    assert _listed(base_url, tok, org, ns) == []
+    for table in ("loom.learnings_queue", "loom.learnings_supporters"):
+        assert await _raw(ch, table, org, "candidate_id = {cid:UUID}", cid=cid) == [], table
+
+
+@pytest.mark.asyncio
+async def test_erasing_the_only_supporter_of_a_rejected_rule_keeps_the_rejection(
+    base_url: str, token: tuple[str, str], ch: Any
+) -> None:
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+    _converse(base_url, tok, org, ns, "carol", "s1")
+    (cand,) = _listed(base_url, tok, org, ns)
+    _call(
+        base_url,
+        tok,
+        "learnings.review",
+        {
+            "org": org,
+            "namespace": ns,
+            "candidate_id": cand["candidate_id"],
+            "decision": "reject",
+            "reason": "not our policy",
+            "approver": "admin",
+        },
+    )
+    # Merged, so the erasure also meets a single status row.
+    await ch.execute("OPTIMIZE TABLE loom.learnings_queue FINAL")
+
+    await _erase(ch, org, "carol")
+    (rejected,) = _listed(base_url, tok, org, ns, status="rejected")
+    assert rejected["candidate_id"] == cand["candidate_id"]
+    assert rejected["proposed_value"] is None  # the rule text is gone
+    assert rejected["decision_reason"] == "not our policy"
+    rows = await _raw(
+        ch, "loom.learnings_queue", org, "candidate_id = {cid:UUID}", cid=cand["candidate_id"]
+    )
+    assert [(r["status"], r["proposed_value"]) for r in rows] == [("rejected", "")]
+
+    # The same rule stated again does not come back as pending.
+    _converse(base_url, tok, org, ns, "dave", "s2")
+    assert _listed(base_url, tok, org, ns) == []

@@ -592,15 +592,15 @@ def _is_coding_capture(state: WorkflowState) -> bool:
 
 
 def _agent_learnings_on(state: WorkflowState) -> bool:
-    """Whether the extractor is asked for the assistant's rules about itself: the
-    request's switch, else the deployment's. A coding session's assistant
-    narrates its work, so a coding capture never is; nor is a request with no
-    agent to file for (a token bound to one end user that names no agent)."""
+    """Whether the extractor is asked for the assistant's rules about itself: when
+    the deployment setting is on and the request did not turn it off. A coding
+    session's assistant narrates its work, so a coding capture never is; nor is a
+    request with no agent to file for (a token bound to one end user that names no
+    agent)."""
     if _is_coding_capture(state) or not state.learning_agent:
         return False
-    if state.agent_learnings is not None:
-        return state.agent_learnings
-    return settings.memory_extract_agent_learnings
+    # The deployment's setting turns them on; the request can only turn them off.
+    return settings.memory_extract_agent_learnings and state.agent_learnings is not False
 
 
 def _user_turns(messages: list[dict[str, Any]] | None) -> int:

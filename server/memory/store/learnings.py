@@ -106,6 +106,8 @@ SUPPORTER_COLUMNS = (
     "user_id",
     "session_id",
     "confidence",
+    "asked",
+    "said",
     "created_at",
 )
 
@@ -115,8 +117,8 @@ async def insert_supporter(
     *,
     ch: _CHClient | None = None,
 ) -> None:
-    """One session's support for an `assistant_turn` candidate; a repeat of the same
-    (candidate, user, session) collapses into it. Every column is written."""
+    """One session's support for an `assistant_turn` candidate, with that user's own
+    quotes. Append-only; every column is written."""
     ch = ch or _default_client()
     await ch.insert(
         "loom.learnings_supporters",
@@ -161,8 +163,9 @@ async def supporter_stats(
     *,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Per candidate: distinct users, distinct sessions, the mean confidence and the
-    first 50 (user_id, session_id) pairs by time."""
+    """Per candidate: distinct users, distinct sessions, the mean confidence, the
+    first 50 (user_id, session_id) pairs by time and the earliest remaining
+    supporter's quotes."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -170,8 +173,10 @@ async def supporter_stats(
                uniqExact(user_id) AS users,
                uniqExact(user_id, session_id) AS sessions,
                avg(confidence) AS confidence,
-               groupArraySorted(50)((created_at, user_id, session_id)) AS pairs
-        FROM loom.learnings_supporters FINAL
+               groupArraySorted(50)((created_at, user_id, session_id)) AS pairs,
+               argMin(asked, created_at) AS asked,
+               argMin(said, created_at) AS said
+        FROM loom.learnings_supporters
         WHERE org = {org:String} AND namespace = {ns:String}
           AND candidate_id IN {ids:Array(UUID)}
         GROUP BY candidate_id

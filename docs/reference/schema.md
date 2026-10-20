@@ -227,7 +227,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `instances` | `KeeperMap('/loom/instances')` |  |  |  |  |
 | `keyring_readers` | `MergeTree` | `(seen_at, process)` |  | `toDateTime(seen_at) + toIntervalDay(1)` |  |
 | `learnings_queue` | `ReplacingMergeTree(version)` | `(org, namespace, candidate_id)` | `toYYYYMM(proposed_at)` |  |  |
-| `learnings_supporters` | `ReplacingMergeTree(created_at)` | `(org, namespace, candidate_id, user_id, session_id)` |  |  |  |
+| `learnings_supporters` | `MergeTree` | `(org, namespace, candidate_id, user_id, session_id)` |  |  |  |
 | `llm_response_cache` | `ReplacingMergeTree(created_at)` | `(model, key)` |  | `created_at + toIntervalDay(7)` |  |
 | `machine_identities` | `ReplacingMergeTree(version)` | `name` |  |  |  |
 | `memory` | `ReplacingMergeTree(version)` | `(org, namespace, agent, user_id, session_id, memory_key)` | `toYYYYMM(created_at)` |  | 11 skip index (bloom_filter, minmax, ngrambf_v1, set) |

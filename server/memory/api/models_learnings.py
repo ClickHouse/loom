@@ -28,9 +28,8 @@ class _LearningEntry(BaseModel):
     proposed_value: Any
     # How many back it; for `assistant_turn`, the distinct end users.
     supporter_count: int
-    # `assistant_turn` only (0 otherwise): distinct end users and distinct
-    # (user, session) pairs that stated the rule.
-    supporter_users: int = 0
+    # `assistant_turn` only (0 otherwise): distinct (user, session) pairs that
+    # stated the rule.
     supporter_sessions: int = 0
     confidence_avg: float
     supporters: list[str]

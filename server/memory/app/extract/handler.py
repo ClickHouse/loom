@@ -84,7 +84,9 @@ def _deferred_by_allowlist(input: MemorySetFromMessagesInput) -> bool:
     return str(input.agent or "") in names
 
 
-async def _enqueue_deferred(input: MemorySetFromMessagesInput) -> MemorySetFromMessagesOutput:
+async def _enqueue_deferred(
+    input: MemorySetFromMessagesInput, learning_agent: str
+) -> MemorySetFromMessagesOutput:
     """defer=true: persist the request, return the queue handle.
 
     Nothing is validated here beyond the input model — the replay runs the
@@ -100,7 +102,9 @@ async def _enqueue_deferred(input: MemorySetFromMessagesInput) -> MemorySetFromM
     scope = request_scope()
     try:
         with traced("extract.defer_enqueue", messages=len(input.messages)):
-            queue_id = await extraction_queue.enqueue(input, scope=scope)
+            queue_id = await extraction_queue.enqueue(
+                input, scope=scope, learning_agent=learning_agent
+            )
     except Exception as e:
         log.warning("memory_extraction_queue enqueue failed: %s", e)
         raise HTTPException(
@@ -481,22 +485,25 @@ async def _project_extraction(
 
 async def handle_memory_set_from_messages(
     input: MemorySetFromMessagesInput,
+    *,
+    learning_agent: str | None = None,
 ) -> MemorySetFromMessagesOutput:
-    """Extract memorable facts from raw messages and bulk-write them. A token bound
-    to one end user cannot turn assistant-turn learnings on: its
-    `agent_learnings=true` is dropped and named in `ignored_args` unless the
-    deployment has them on."""
-    from server.memory.app.assistant_learnings import token_pinned
+    """Extract memorable facts from raw messages and bulk-write them.
+
+    Only the deployment setting turns assistant-turn learnings on; a request can
+    only turn them off, so its `agent_learnings=true` while the setting is off is
+    dropped and named in `ignored_args`. `learning_agent` is the agent a filed rule
+    is for: None resolves it from the request's token, a deferred replay passes the
+    one stored when it was queued ('' files nothing)."""
+    from server.memory.app.assistant_learnings import request_learning_agent
     from server.settings import settings as _settings
 
-    refused = (
-        bool(input.agent_learnings)
-        and token_pinned()
-        and not _settings.memory_extract_agent_learnings
-    )
+    refused = bool(input.agent_learnings) and not _settings.memory_extract_agent_learnings
     if refused:
         input = input.model_copy(update={"agent_learnings": None})
-    out = await _set_from_messages(input)
+    if learning_agent is None:
+        learning_agent = request_learning_agent(input.agent)
+    out = await _set_from_messages(input, learning_agent)
     if refused:
         out.ignored_args = [*out.ignored_args, "agent_learnings"]
     return out
@@ -504,6 +511,7 @@ async def handle_memory_set_from_messages(
 
 async def _set_from_messages(
     input: MemorySetFromMessagesInput,
+    learning_agent: str,
 ) -> MemorySetFromMessagesOutput:
     """Extract memorable facts from raw messages and bulk-write them.
 
@@ -515,9 +523,9 @@ async def _set_from_messages(
     from server.memory.app.extract import ExtractionError
 
     if input.defer:
-        return await _enqueue_deferred(input)
+        return await _enqueue_deferred(input, learning_agent)
     if _deferred_by_allowlist(input):
-        out = await _enqueue_deferred(input)
+        out = await _enqueue_deferred(input, learning_agent)
         out.deferred_by = "allowlist"
         return out
     msgs = [_message_dict(m) for m in input.messages]
@@ -578,6 +586,7 @@ async def _set_from_messages(
         max_tokens=input.max_tokens,
         extra_tags=list(input.extra_tags or []),
         valid_at=input.valid_at,
+        learning_agent=learning_agent,
         **_extract_request_pins(input),
     )
     # The session digest is a function of the transcript, not of the extraction result, so
@@ -740,15 +749,13 @@ __all__ = [
 def _extract_request_pins(input: Any) -> dict[str, Any]:
     """The per-call pins the pipeline state carries: the coverage sweep, the
     extractor's response cache and assistant-turn learnings (None = the namespace's or
-    the deployment's setting), the agent a filed rule is for (the token decides; ''
-    files nothing), and the session's served keys and tool values for the echo filters."""
-    from server.memory.app.assistant_learnings import learning_agent
+    the deployment's setting; the request can only turn learnings off), and the
+    session's served keys and tool values for the echo filters."""
 
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),
         "agent_learnings": getattr(input, "agent_learnings", None),
-        "learning_agent": learning_agent(str(getattr(input, "agent", "") or "")),
         # The keys the session's tools served ride into the workflow state so the echo filter
         # can judge against them.
         "recalled_keys": list(getattr(input, "recalled_keys", None) or []),

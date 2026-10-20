@@ -1836,9 +1836,11 @@ CREATE TABLE IF NOT EXISTS loom.learnings_supporters
     `user_id` String,
     `session_id` String,
     `confidence` Float32,
+    `asked` String,
+    `said` String,
     `created_at` DateTime64(3) DEFAULT now64(3)
 )
-ENGINE = ReplacingMergeTree(created_at)
+ENGINE = MergeTree
 ORDER BY (org, namespace, candidate_id, user_id, session_id)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 

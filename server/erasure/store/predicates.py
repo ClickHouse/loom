@@ -98,13 +98,11 @@ USER_COMMUNITY_ROWS = (
 LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
 
-# A learnings queue candidate belongs to the end user whose conversation its
-# rationale quotes: the one on its earliest supporter row. Every version of it is in
-# scope, a review's status row included, whatever columns that row carries.
-USER_FILED_LEARNING_IDS = (
-    "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String} "
-    "GROUP BY candidate_id HAVING argMin(user_id, created_at) = {uid:String})"
+# A bot-rule candidate (`assistant_turn`) holds no user's words: each user's quotes
+# live on their own loom.learnings_supporters rows, deleted by `UID`. A candidate left
+# with no supporter still holding its rule text is the residue a user erasure leaves:
+# the step deletes it when pending and blanks its rule when decided.
+ORPHAN_LEARNINGS = (
+    "source_kind = 'assistant_turn' AND proposed_value != '' AND candidate_id NOT IN "
+    "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String})"
 )
-USER_LEARNINGS = f"candidate_id IN {USER_FILED_LEARNING_IDS}"
-# The user's own support rows, and every supporter of a candidate the user filed.
-USER_LEARNING_SUPPORT = f"(user_id = {{uid:String}} OR {USER_LEARNINGS})"

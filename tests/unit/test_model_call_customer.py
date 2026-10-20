@@ -1125,7 +1125,7 @@ def test_an_extraction_queue_replay_names_the_rows_org(metered, monkeypatch, cap
 
     seen: list[str] = []
 
-    async def handler(inp: Any) -> Any:
+    async def handler(inp: Any, **_kw: Any) -> Any:
         await _model_call(seen)
         return MemorySetFromMessagesOutput()
 

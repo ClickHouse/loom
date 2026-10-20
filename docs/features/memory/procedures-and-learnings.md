@@ -196,14 +196,17 @@ records the reviewer's choice and never makes it.
 Extraction files one kind of candidate itself. With assistant-turn learnings on
 (experimental), a rule a bot states about its own behaviour in a conversation becomes an
 `assistant_turn` candidate for that agent (`agent`), never a memory
-([extraction](./extraction.md#rules-the-assistant-states-about-itself)). Its support is
-counted from `loom.learnings_supporters` when it is listed: `supporter_count` and
-`supporter_users` are the distinct end users, `supporter_sessions` the distinct sessions,
-and support never promotes it. Promoting it writes the rule as the agent's memory for
-every user. A user erasure deletes that user's supporter rows, and every candidate the
-user filed (the user on its earliest supporter row, whose conversation its rationale
-quotes) with all its supporters. Any other candidate is written by your own process to
-`loom.learnings_queue`.
+([extraction](./extraction.md#rules-the-assistant-states-about-itself)). The candidate
+row holds the rule and no user's words. Each session that states the rule adds a row to
+`loom.learnings_supporters` with that user's own quotes. When the candidate is listed,
+`supporter_count` is the distinct end users, `supporter_sessions` the distinct
+sessions, and the `rationale` the earliest remaining supporter's quotes. Support never
+promotes it; promoting it writes the rule as the agent's memory for every user.
+
+A user erasure deletes that user's supporter rows, and their quotes with them. A
+candidate left with no supporter is deleted when pending. When decided, it keeps its
+status row with the rule blanked, so a rejected rule never comes back as pending. Any
+other candidate is written by your own process to `loom.learnings_queue`.
 
 `learnings.quality` counts the conversation seeder by default, since it reports
 extraction quality; pass `source_kind="assistant_turn"` for the bot rules.

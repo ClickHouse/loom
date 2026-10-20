@@ -38,7 +38,6 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "delete_version_checks": ("builder", "test_delete_version_sql.py"),
     "machine_identities": ("builder", "test_machines.py"),
     "org_model_calls": ("builder", "test_model_calls_switch.py"),
-    "learnings_supporters": ("builder", "test_assistant_learnings.py"),
     "deployment_config": ("builder", "test_deployment_config.py"),
     "document_blobs": (
         "insert_once",

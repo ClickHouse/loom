@@ -55,8 +55,8 @@ class WorkflowState:
     llm_cache: bool | None = None
     # Per-call switch for assistant-turn learnings (None = the deployment setting).
     agent_learnings: bool | None = None
-    # The agent a filed rule is for (`assistant_learnings.learning_agent`): a pinned
-    # token's signed agent, else the body's; '' files nothing.
+    # The agent a filed rule is for (`assistant_learnings.request_learning_agent`):
+    # a pinned token's signed agent, else the body's; '' files nothing.
     learning_agent: str = ""
     # Assistant rules routed to the learnings queue.
     learning_candidates: int = 0

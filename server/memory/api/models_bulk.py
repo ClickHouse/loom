@@ -186,10 +186,10 @@ class MemorySetFromMessagesInput(_Identity):
     # statement-dense ingest (a fact list, a long update) asks for it; a chat
     # transcript keeps the default, which its asides do not repay.
     coverage_sweep: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
-    # Rules the assistant states about its own behaviour become pending
-    # `assistant_turn` candidates in the learnings queue for an admin to promote,
-    # never memories. None = the deployment setting memory_extract_agent_learnings
-    # (default off); a coding capture never uses it.
+    # False turns off filing the assistant's rules about its own behaviour as
+    # learnings candidates for this call. Only the deployment setting
+    # memory_extract_agent_learnings (default off) turns it on: true while the
+    # setting is off is ignored and named in ignored_args. A coding capture never uses it.
     agent_learnings: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
     # Per-call workflow override. Empty = default pipeline
     # (fetch_existing → llm_extract → hash_dedup → bulk_write). Each step ID names
@@ -259,8 +259,8 @@ class MemorySetFromMessagesOutput(BaseModel):
     # Rules the assistant stated about itself routed to the learnings queue, each
     # filing a candidate or supporting one; none is written as a memory.
     learning_candidates: int = 0
-    # Request fields the server did not apply: `agent_learnings` from a token bound
-    # to one end user while the deployment has assistant-turn learnings off.
+    # Request fields the server did not apply: unknown keys, and `agent_learnings=true`
+    # while the deployment setting memory_extract_agent_learnings is off.
     ignored_args: list[str] = Field(default_factory=list)
     # Which planner cut them: whole | size. With `segments`
     # this makes the segmentation fire rate one GROUP BY on agent_events

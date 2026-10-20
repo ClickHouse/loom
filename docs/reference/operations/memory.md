@@ -2020,7 +2020,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `last_messages` | `list[_Message]` | *(computed)* | Prior turns from the SAME session not being extracted this call — lets the extractor resolve pronouns/follow-ups/cross-turn references without re-extracting earlier facts. |
 | `extraction_instructions` | `str` | `''` | Per-request extraction-prompt suffix for workload-specific tuning. |
 | `coverage_sweep` | `bool \| None` | `None` | The coverage sweep (turn- and sentence-level second reading) per call — None = the namespace, then the density gates. |
-| `agent_learnings` | `bool \| None` | `None` | Rules the assistant states about its own behaviour become pending `assistant_turn` candidates in the learnings queue for an admin to promote, never memories. |
+| `agent_learnings` | `bool \| None` | `None` | False turns off filing the assistant's rules about its own behaviour as learnings candidates for this call. |
 | `pipeline_steps` | `list[dict[str, Any]]` | *(computed)* | Per-call workflow override. |
 | `valid_at` | `datetime \| None` | `None` | Fallback valid_at for facts the extractor didn't anchor itself. |
 | `defer` | `bool` | `False` | Capture now, extract later. |
@@ -2040,7 +2040,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `about_other` | `int` | Rows written as another person's (`about:other`), whether the extractor said so or the sentence's subject did. |
 | `premise_facts` | `int` | The user's facts read from the assistant's premises ("since you enjoy X…"), added to the batch. |
 | `learning_candidates` | `int` | Rules the assistant stated about itself routed to the learnings queue, each filing a candidate or supporting one; none is written as a memory. |
-| `ignored_args` | `list[str]` | Request fields the server did not apply: `agent_learnings` from a token bound to one end user while the deployment has assistant-turn learnings off. |
+| `ignored_args` | `list[str]` | Request fields the server did not apply: unknown keys, and `agent_learnings=true` while the deployment setting memory_extract_agent_learnings is off. |
 | `segmenter` | `str` | Which planner cut them: whole \| size. |
 | `cached_tokens_in` | `int` | Subset of tokens_in the provider served from its prompt cache (billed at a discount). |
 | `ontology_warnings` | `list[str]` | Extracted entity types / relation verbs outside the namespace's ontology (loom.namespace_ontology). |

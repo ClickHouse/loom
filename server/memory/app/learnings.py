@@ -18,6 +18,7 @@ from server.memory.api.models_learnings import (
     _LearningEntry,
 )
 from server.memory.api.models_lifecycle import MemoryPromoteInput
+from server.memory.domain import assistant_rules
 from server.memory.domain.assistant_rules import SOURCE_KIND as ASSISTANT_TURN
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
@@ -51,7 +52,6 @@ async def handle_learnings_list(
                 memory_type=r["memory_type"],
                 proposed_value=proposed_value,
                 supporter_count=int(r["supporter_count"]),
-                supporter_users=int(r.get("supporter_users") or 0),
                 supporter_sessions=int(r.get("supporter_sessions") or 0),
                 confidence_avg=float(r["confidence_avg"]),
                 supporters=list(r["supporters"]),
@@ -73,7 +73,8 @@ async def _assistant_turn_support(
 ) -> dict[str, dict[str, Any]]:
     """The support of each `assistant_turn` row, counted from
     loom.learnings_supporters: the headline count is distinct users, with the
-    distinct sessions beside it and the six-part supporter entries."""
+    distinct sessions beside it, the six-part supporter entries, and the earliest
+    remaining supporter's quotes as the rationale (the candidate row holds none)."""
     by_id = {str(r["candidate_id"]): r for r in rows if r.get("source_kind") == ASSISTANT_TURN}
     if not by_id:
         return {}
@@ -85,8 +86,8 @@ async def _assistant_turn_support(
         prefix = f"{org}/{namespace}/{row.get('agent') or '-'}"
         out[cid] = {
             "supporter_count": int(s["users"]),
-            "supporter_users": int(s["users"]),
             "supporter_sessions": int(s["sessions"]),
+            "rationale": assistant_rules.rationale(str(s["asked"]), str(s["said"])),
             "confidence_avg": float(s["confidence"]),
             "supporters": [f"{prefix}/{u}/{sid}/{row['memory_key']}" for _, u, sid in s["pairs"]],
         }

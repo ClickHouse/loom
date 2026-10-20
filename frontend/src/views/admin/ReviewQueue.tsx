@@ -557,8 +557,8 @@ const agentLabel = (r: LearningEntry) =>
 // A bot's rule is backed by distinct users, its sessions beside them; every other
 // candidate by its supporters. A server a release behind sends no user count.
 function supportLabel(r: LearningEntry): string {
-  if (isAgentRule(r) && r.supporter_users !== undefined) {
-    return `${plural(r.supporter_users, "user")}, ${plural(r.supporter_sessions ?? 0, "session")}`;
+  if (isAgentRule(r) && r.supporter_sessions !== undefined) {
+    return `${plural(r.supporter_count, "user")}, ${plural(r.supporter_sessions, "session")}`;
   }
   return plural(r.supporter_count, "supporter");
 }

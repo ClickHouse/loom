@@ -654,7 +654,6 @@ describe("ReviewQueue", () => {
           source_kind: "assistant_turn",
           agent: "support-bot",
           supporter_count: 2,
-          supporter_users: 2,
           supporter_sessions: 3,
         },
         // A server a release behind sends no agent and no user count.

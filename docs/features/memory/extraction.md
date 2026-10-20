@@ -62,11 +62,13 @@ a release changed is kept; whether its CI was green at the time is dropped.
 
 Experimental. A chat bot's replies carry rules about its own behaviour: "I escalate any
 refund over $500 to a human", "I always answer in bullet points". With
-`agent_learnings=true` on the request, or `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for
-the deployment, the extraction call also returns these, marked `"about": "agent"`, at no
-extra model call. Both are off by default: the switch adds a block to the extraction
-prompt, and extraction quality has not been benchmarked with it on. Coding captures never
-use it.
+`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for the deployment, the extraction call also
+returns these, marked `"about": "agent"`, at no extra model call. The setting is the
+only way on: a request's `agent_learnings=false` turns it off for that call, and
+`agent_learnings=true` while the setting is off is ignored and named in `ignored_args`
+(and the `X-Loom-Ignored-Args` header). It is off by default: it adds a block to the
+extraction prompt, and extraction quality has not been benchmarked with it on. Turn it
+on only once every replica runs a build that has it. Coding captures never use it.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule
@@ -74,26 +76,28 @@ becomes a pending `assistant_turn` candidate in the
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue) for the
 request's `(org, namespace, agent)`:
 
-- A candidate is keyed by the agent, the rule's memory key and its text, with only
-  case and spacing folded. A different rule under the same key is a separate candidate,
-  so a first wording never collects the support of a later one. The same rule worded
-  differently in another session is a separate candidate too, so wording drift splits
-  its support. The extractor's key rewrites leave a rule's key alone.
-- The end user and session are recorded as a supporter in `loom.learnings_supporters`,
-  one row per session, written once. A supporter never rewrites the candidate's row, so
-  a review is never undone by a late supporter. A decided candidate takes no new
-  supporters. The earliest supporter row names the user who filed the candidate.
-- The `rationale` quotes the filer's user turn before the rule (up to 200 characters),
-  then the evidence span the extractor cited, or the assistant turn when it cited none
-  (up to 400).
+- A candidate is keyed by the agent, the rule's memory key and its text, with only case
+  and spacing folded and a trailing period dropped. A different rule under the same key
+  is a separate candidate, so a first wording never collects the support of a later
+  one. The same rule worded differently in another session is a separate candidate too,
+  so wording drift splits its support. The extractor's key rewrites leave a rule's key
+  alone.
+- The candidate row holds the rule and no user's words. Each session that states it adds
+  a row to `loom.learnings_supporters` with the end user, the session and that user's
+  own quotes: the user turn before the rule (up to 200 characters) and the rule as said,
+  the span the extractor cited or the assistant turn (up to 400). A supporter never
+  rewrites the candidate's row, so a review is never undone by a late supporter. A
+  decided candidate takes no new supporters.
+- `learnings.list` shows the earliest remaining supporter's quotes as the `rationale`.
+  A user erasure deletes that user's supporter rows, so the next supporter's quotes
+  show. A candidate left with none is deleted when pending; when decided, it keeps its
+  decision with the rule blanked.
 - Support never promotes a candidate. An admin's `learnings.review` does, and the rule
   becomes the agent's memory (`user_id` `-`) for every user of the bot, with
   `source_trace` `learning:<candidate_id>`.
 - A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
   files for the agent its issuer signed, never the body's `agent`, and files nothing
-  when it names no agent. It cannot turn filing on: its `agent_learnings=true` is
-  dropped and named in `ignored_args` (and the `X-Loom-Ignored-Args` header) unless the
-  deployment setting is on.
+  when it names no agent.
 
 `learning_candidates` in the response counts the rules routed to the queue. A failed queue
 write is named in `pipeline_errors` and the rule is dropped.
@@ -158,18 +162,18 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 
 ### Request fields
 
-| Field                          | Effect                                                                                                                      |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                      |
-| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                             |
-| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC).  |
-| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                    |
-| `extraction_instructions`      | A prompt suffix (up to 4,096 characters).                                                                                   |
-| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                    |
-| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                              |
-| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                           |
-| `defer`                        | Queue instead of extracting inline.                                                                                         |
-| `agent_learnings`              | File the assistant's rules about itself for review ([above](#rules-the-assistant-states-about-itself)). Unset: the setting. |
+| Field                          | Effect                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                                      |
+| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                                             |
+| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC).                  |
+| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                                    |
+| `extraction_instructions`      | A prompt suffix (up to 4,096 characters).                                                                                                   |
+| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                                    |
+| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                                              |
+| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                                           |
+| `defer`                        | Queue instead of extracting inline.                                                                                                         |
+| `agent_learnings`              | `false` stops filing the assistant's rules for this call ([above](#rules-the-assistant-states-about-itself)); only the setting turns it on. |
 
 ### Response fields
 
@@ -178,8 +182,8 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 - `segments`, `segmenter` (`whole` or `size`).
 - `forgotten`, `forgotten_keys`, `evidence_ids`.
 - `learning_candidates`: assistant rules routed to the learnings queue.
-- `ignored_args`: request fields not applied, such as `agent_learnings` from a token bound
-  to one end user.
+- `ignored_args`: request fields not applied: unknown keys, and `agent_learnings=true`
+  while the setting is off.
 - `stage_ms`: wall time per stage (`step.<step_id>`, `bulk.<phase>`).
 - `observation_date_source`: `caller`, `request_time` or empty.
 - `stubbed_fields`: typed-record fields written as null after validation retries.

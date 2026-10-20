@@ -34,7 +34,9 @@ class ExtractionSettings(BaseModel):
     # Rules the assistant states about its own behaviour ("I escalate any refund over
     # $500") are filed as `assistant_turn` candidates in the learnings queue for an
     # admin to promote, never written as memories. On, the extraction prompt gains a
-    # block; a request's `agent_learnings` overrides. Coding captures never use it.
+    # block; a request's `agent_learnings=false` turns it off for that call, and nothing
+    # else turns it on. Turn it on only once every replica runs a build that has it.
+    # Coding captures never use it.
     # Experimental: extraction quality is not benchmarked with the block on.
     memory_extract_agent_learnings: bool = False
     # Current messages totalling at most this many characters are

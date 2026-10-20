@@ -9804,7 +9804,6 @@ class LearningEntry(TypedDict, total=False):
     memory_type: Required[str]
     proposed_value: Required[Any]
     supporter_count: Required[int]
-    supporter_users: NotRequired[int]
     supporter_sessions: NotRequired[int]
     confidence_avg: Required[float]
     supporters: Required[list[str]]

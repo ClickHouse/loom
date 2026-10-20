@@ -97,40 +97,60 @@ def test_delete_steps_are_keyed_alter_deletes_over_the_namespace_list(fn, tables
         assert " FINAL" not in sql  # none of these carries a live predicate
 
 
-class _CandidatesCH(_StubCH):
-    """Answers the candidate-id read with `ids`."""
+class _LearningsCH(_StubCH):
+    """Answers the orphan read with `ids` and the latest rows with `latest`."""
 
-    def __init__(self, ids: list[str], count: int = 1) -> None:
+    def __init__(self, ids: list[str], latest: list[dict[str, Any]], count: int = 1) -> None:
         super().__init__(count)
-        self.ids = ids
+        self.ids, self.latest = ids, latest
+        self.inserted: list[dict[str, Any]] = []
 
     async def query_all(self, sql, params=None):
-        if "argMin(user_id, created_at)" in sql:
+        if "SELECT DISTINCT candidate_id" in sql:
             self.counts.append((sql, params or {}))
             return [{"candidate_id": i} for i in self.ids]
+        if "FROM loom.learnings_queue FINAL" in sql:
+            return [dict(r) for r in self.latest]
         return await super().query_all(sql, params)
 
-
-def test_the_learnings_user_step_deletes_the_users_support_and_filings() -> None:
-    ch = _CandidatesCH(["c1", "c2"], count=3)
-    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 6
-    read_sql, read_params = ch.counts[0]
-    # The filer is read from the earliest supporter row, not from any queue column.
-    assert "FROM loom.learnings_supporters" in read_sql
-    assert "HAVING argMin(user_id, created_at) = {uid:String}" in read_sql
-    assert read_params["uid"] == "alice"
-    # The candidates go first, then the supporter rows that name their filer.
-    assert _tables(ch) == ["loom.learnings_queue", "loom.learnings_supporters"]
-    (queue_sql, params), (support_sql, _) = ch.commands
-    # The user's own support, and every supporter of a candidate the user filed.
-    assert "(user_id = {uid:String} OR candidate_id IN {cids:Array(UUID)})" in support_sql
-    assert "candidate_id IN {cids:Array(UUID)}" in queue_sql and params["cids"] == ["c1", "c2"]
+    async def insert(self, table, rows, settings=None):
+        self.commands.append((f"INSERT INTO {table}", {}))
+        self.inserted.extend(rows)
 
 
-def test_the_learnings_user_step_with_no_filings_deletes_only_the_users_support() -> None:
-    ch = _CandidatesCH([])
-    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
+def test_the_learnings_user_step_deletes_the_users_support_rows_only() -> None:
+    """A user's words live on their supporter rows: the step deletes those, then the
+    candidates left with none, and nothing of anyone else's."""
+    ch = _LearningsCH([], [])
+    assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 1
     assert _tables(ch) == ["loom.learnings_supporters"]
+    ((sql, params),) = ch.commands
+    assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
+    orphans, _ = ch.counts[-1]
+    assert "source_kind = 'assistant_turn' AND proposed_value != ''" in orphans
+    assert "NOT IN (SELECT candidate_id FROM loom.learnings_supporters" in orphans
+
+
+def test_an_orphaned_candidate_goes_when_pending_and_keeps_its_decision_when_decided() -> None:
+    latest = [
+        {"candidate_id": "p", "status": "pending", "proposed_value": '"rule"', "version": 1},
+        {"candidate_id": "r", "status": "rejected", "proposed_value": '"rule"', "version": 7},
+    ]
+    ch = _LearningsCH(["p", "r"], latest)
+    asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch))
+    # The rejected one keeps its decision on a newer row with the rule blanked...
+    assert ch.inserted == [
+        {"candidate_id": "r", "status": "rejected", "proposed_value": "", "version": 8}
+    ]
+    deletes = [(sql, params) for sql, params in ch.commands if "ALTER TABLE" in sql]
+    supporters, pending, decided = deletes
+    assert "loom.learnings_supporters" in supporters[0]
+    # ...the pending one goes whole, and only the rejected one's rows holding the rule go.
+    assert pending[1]["cids"] == ["p"] and "proposed_value" not in pending[0]
+    assert decided[1]["cids"] == ["r"] and "proposed_value != ''" in decided[0]
+    # The blank row is written before the rows holding the rule are deleted.
+    sqls = [sql for sql, _ in ch.commands]
+    assert sqls.index("INSERT INTO loom.learnings_queue") < sqls.index(decided[0])
 
 
 def test_the_agent_runs_step_drops_the_runs_claims_too() -> None:

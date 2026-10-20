@@ -74,7 +74,7 @@ def test_the_review_moved_the_named_tables_into_the_census() -> None:
         "loom.memory_exposures",
         "loom.events",
         "loom.code_search_trace",
-        # The candidates the user filed, and the user's support rows.
+        # The user's supporter rows, and any candidate the erasure leaves unsupported.
         "loom.learnings_queue",
         "loom.learnings_supporters",
     ):

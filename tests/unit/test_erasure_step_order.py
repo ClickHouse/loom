@@ -208,7 +208,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("events.delete", ((D, "loom.events"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
-    # The fake answers no filed candidates: only the user's own support goes.
+    # The fake finds no candidate left without a supporter: only the user's rows go.
     ("learnings_queue.delete", ((D, "loom.learnings_supporters"),)),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
