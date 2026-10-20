@@ -275,10 +275,14 @@ analyticsExport:
   schedule: "30 0 * * *"
   bucket: ""
   prefix: ""
-  # hashed: org, namespace and agent leave as a keyed hash; the key is
-  # LOOM_ANALYTICS_EXPORT_NAME_KEY in the release's Secret (secrets.extra or
-  # existingSecret). raw: as stored, only where every name is an opaque id.
+  # hashed: org, namespace and agent leave as a keyed hash under the key in
+  # nameKeySecret. raw: as stored, only where every name is an opaque id.
   names: hashed
+  # The Secret holding the hash key (a random string of 32 or more characters),
+  # read by the export pod only, never by the web or workers pods.
+  nameKeySecret:
+    name: ""
+    key: LOOM_ANALYTICS_EXPORT_NAME_KEY
   # A writer role to assume (in the bucket's account) with the pod's credentials.
   roleArn: ""
   region: ""
@@ -287,9 +291,10 @@ analyticsExport:
   serviceAccount:
     # IRSA (eks.amazonaws.com/role-arn): a role that may only assume roleArn.
     annotations: {}
+  # The pod's two emptyDirs are 1Gi each.
   resources:
-    requests: { cpu: 100m, memory: 512Mi }
-    limits: { cpu: "1", memory: 2Gi }
+    requests: { cpu: 100m, memory: 512Mi, ephemeral-storage: 2Gi }
+    limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 3Gi }
 
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, and TCP 443 and the ClickHouse port anywhere except

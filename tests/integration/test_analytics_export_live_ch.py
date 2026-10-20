@@ -22,6 +22,7 @@ from server.insights.store.analytics_export import (
     NAMESPACES_SQL,
     USAGE_SQL,
     _hashed,
+    name_hash_sql,
     parquet,
 )
 from tests.integration._resources import unique_org
@@ -121,9 +122,8 @@ async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient)
     await ch.insert("loom.agent_events", [_event(org, "2026-01-02 06:00:00")])
     params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
     want = await ch.query_one(
-        "SELECT lower(hex(sipHash128Keyed(({k0:UInt64}, {k1:UInt64}), {org:String}))) AS h, "
-        "lower(hex(sipHash128Keyed(({k0:UInt64}, {k1:UInt64}), 'ns'))) AS ns, "
-        "lower(hex(sipHash128Keyed(({k0:UInt64}, {k1:UInt64}), 'a'))) AS a",
+        f"SELECT {name_hash_sql('{org:String}')} AS h, "
+        f"{name_hash_sql("'ns'")} AS ns, {name_hash_sql("'a'")} AS a",
         {**params, "org": org},
     )
     rows = await ch.query_all(
@@ -132,6 +132,14 @@ async def test_hashed_names_are_the_keyed_hash_of_the_stored_names(ch: CHClient)
     assert [(r["namespace"], r["agent"], r["ops"]) for r in rows] == [(want["ns"], want["a"], 1)]
     body = await parquet("usage", DAY, key=KEY, ch=ch)
     assert org.encode() not in body
+
+
+async def test_the_hash_is_reference_siphash_2_4_128(ch: CHClient) -> None:
+    # The published SipHash-2-4-128 vector: key 00..0f, empty message. A system
+    # outside Loom with the same key computes the same hash with any library.
+    k0, k1 = (int.from_bytes(bytes(range(i, i + 8)), "little") for i in (0, 8))
+    row = await ch.query_one(f"SELECT {name_hash_sql("''")} AS h", {"k0": k0, "k1": k1})
+    assert row["h"] == "a3817f04ba25a8e66df67214c7550293"
 
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
@@ -164,10 +172,16 @@ async def test_namespaces_lists_registered_and_unregistered_with_live_counts(
             {**base, "org": org, "namespace": "loose", "memory_key": "k1", "value": "v"},
         ],
     )
-    rows = await ch.query_all(
-        f"SELECT * FROM ({NAMESPACES_SQL}) WHERE org = {{org:String}}", {"day": DAY, "org": org}
-    )
-    got = {r["namespace"]: r for r in rows}
+    for join_use_nulls in (0, 1):
+        rows = await ch.query_all(
+            f"SELECT * FROM ({NAMESPACES_SQL}) WHERE org = {{org:String}} "
+            f"SETTINGS join_use_nulls = {join_use_nulls}",
+            {"day": DAY, "org": org},
+        )
+        _assert_namespaces({r["namespace"]: r for r in rows})
+
+
+def _assert_namespaces(got: dict[str, dict[str, Any]]) -> None:
     assert sorted(got) == ["kb", "loose", "mem"]
     assert (got["kb"]["registered"], got["kb"]["kind"], got["kb"]["live_memories"]) == (
         True,

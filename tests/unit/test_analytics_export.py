@@ -137,7 +137,8 @@ def test_a_day_that_has_not_ended_is_refused(capsys: pytest.CaptureFixture[str])
     ("names", "key", "signup", "refused"),
     [
         ("hashed", "", "off", "needs LOOM_ANALYTICS_EXPORT_NAME_KEY"),
-        ("hashed", "k", "open", ""),
+        ("hashed", "k" * 31, "off", "at least 32 characters"),
+        ("hashed", "k" * 32, "open", ""),
         ("raw", "", "open", "refused while LOOM_SELF_SIGNUP=open"),
         ("raw", "", "off", ""),
     ],
@@ -149,6 +150,40 @@ def test_names_fail_closed(
     monkeypatch.setattr(settings, "self_signup", signup)
     got = cli._refusal(_args(names=names, day=date(2000, 1, 1)), date(2000, 1, 2))
     assert (refused in got) if refused else got == ""
+
+
+class _ConnectingCh(_Ch):
+    def __init__(self) -> None:
+        super().__init__()
+        self.read_timeout_at_connect = 0
+        self.disconnected = False
+
+    async def connect(self) -> None:
+        from server.core.ch import _driver_read_timeout_s
+
+        self.read_timeout_at_connect = _driver_read_timeout_s()
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+
+def test_an_export_connects_inside_its_deadline_and_hashes_under_the_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from server.core import ch as ch_module
+    from server.insights.app import analytics_export as app
+
+    secret = "s" * 32
+    monkeypatch.setattr(settings, "analytics_export_name_key", secret)
+    fake = _ConnectingCh()
+    monkeypatch.setattr(ch_module, "get_client", lambda: fake)
+    monkeypatch.setattr(app, "s3_client", lambda **kw: None)
+    monkeypatch.setattr(app, "s3_put", lambda s3, bucket, **kw: lambda key, body: True)
+    assert cli._cmd_export(_args(day=date(2000, 1, 1))) == 0
+    assert fake.read_timeout_at_connect >= app.STATEMENT_TIMEOUT_S and fake.disconnected
+    assert all((p["k0"], p["k1"]) == name_hash_key(secret) for _, p in fake.calls)
+    out = capsys.readouterr().out
+    assert "s3://b/usage/2000/01/01/usage-2000-01-01.parquet (4 bytes, wrote)" in out
 
 
 def test_day_must_be_iso() -> None:

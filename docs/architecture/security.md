@@ -743,8 +743,9 @@ to a store erasure does not reach (an S3 bucket a warehouse loads). It is theref
 allowlist of aggregate and registry columns with no memory content and no person: users
 and sessions leave as distinct counts only, and
 `tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.
-Org, namespace and agent names leave as a keyed SipHash by default, because self-signup
-builds names from OS usernames; raw names are an operator's choice, refused while
+Org, namespace and agent names leave as a keyed reference SipHash-2-4-128 by default,
+because self-signup builds names from OS usernames; the key (32 characters or more) is in
+a Secret only the export's pod reads. Raw names are an operator's choice, refused while
 self-signup is open. The bucket's write role is bound to the export's own Kubernetes
 ServiceAccount, not to the web pods, and the upload never replaces an object.
 

@@ -169,6 +169,7 @@ class ObservabilitySettings(BaseModel):
     # a few percent (e.g. 0.05) suits production.
     retrieval_judge_sample_rate: float = 0.0
     # Key of `loom export-analytics --names hashed` (the default): org, namespace
-    # and agent leave as a keyed hash of the name. Any string, kept secret and
-    # stable (a new key changes every hash); empty refuses a hashed export.
+    # and agent leave as a keyed hash of the name. A random string of at least
+    # 32 characters, kept secret and stable (a new key changes every hash);
+    # shorter or empty refuses a hashed export.
     analytics_export_name_key: str = ""

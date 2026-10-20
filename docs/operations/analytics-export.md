@@ -49,16 +49,21 @@ content and no person: no memory keys or values, no `args`, no `user_id`, `sessi
 Names can identify a person too: self-signup builds an agent's namespace and name from the
 OS username and host. `--names` decides how `org`, `namespace` and `agent` leave:
 
-| `--names`          | Written as                                                                                        | Refused when            |
-| ------------------ | ------------------------------------------------------------------------------------------------- | ----------------------- |
-| `hashed` (default) | the lowercase hex of `sipHash128Keyed` under `LOOM_ANALYTICS_EXPORT_NAME_KEY`, the same every day | the key is empty        |
-| `raw`              | the stored name                                                                                   | `LOOM_SELF_SIGNUP=open` |
+| `--names`          | Written as                                                                 | Refused when                                             |
+| ------------------ | -------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `hashed` (default) | the lowercase hex of the SipHash-2-4-128 of the name under the key (below) | `LOOM_ANALYTICS_EXPORT_NAME_KEY` has under 32 characters |
+| `raw`              | the stored name                                                            | `LOOM_SELF_SIGNUP=open`                                  |
 
-A hash is stable while the key is, so the warehouse can still group and join by it; a new
-key changes every hash. A system that knows the key computes the same hash of its own ids
-to join on them. Use `raw` only where every org, namespace and agent is an opaque id that
-the operator's own provisioning mints (a tenant or agent UUID), and where no namespace from
-an earlier self-signup remains.
+The key is a random string of 32 or more characters in `LOOM_ANALYTICS_EXPORT_NAME_KEY`.
+The 16-byte SipHash key is the first 16 bytes of SHA-256 of that string (UTF-8), and the
+hash is the reference SipHash-2-4-128 (ClickHouse's `sipHash128ReferenceKeyed`), so any
+SipHash-128 library with the same key computes the same value: a system outside Loom that
+holds the key can hash its own ids to join on them. A hash is stable while the key is; a
+new key changes every hash.
+
+Use `raw` only where every org, namespace and agent is an opaque id that the operator's own
+provisioning mints (a tenant or agent UUID), and where no namespace from an earlier
+self-signup remains.
 
 ## Credentials
 
@@ -78,19 +83,26 @@ analyticsExport:
   prefix: loom
   roleArn: arn:aws:iam::123456789012:role/loom-analytics-writer
   expectedBucketOwner: "123456789012"
+  nameKeySecret:
+    name: loom-analytics-export-key # key LOOM_ANALYTICS_EXPORT_NAME_KEY
   serviceAccount:
     annotations:
       eks.amazonaws.com/role-arn: arn:aws:iam::210987654321:role/loom-analytics-export
-secrets:
-  extra:
-    LOOM_ANALYTICS_EXPORT_NAME_KEY: "<a random string, kept>"
 ```
+
+```bash
+kubectl create secret generic loom-analytics-export-key \
+  --from-literal=LOOM_ANALYTICS_EXPORT_NAME_KEY="$(openssl rand -hex 32)"
+```
+
+Only the export's pod reads that Secret; the web and workers pods never see the key. With
+`names: hashed` the chart refuses to render without `nameKeySecret.name`.
 
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: the release name when it contains
 `loom`, else `<release>-loom` (`kubectl get sa` shows it). The job runs at 00:30 UTC
 (`schedule`), one run at a time, with up to 3 retries and a one-hour deadline; each
-statement may run 20 minutes. The web and workers pods keep their own ServiceAccount, so
+statement may run 20 minutes. A refusal (exit 2) fails the Job at once instead of retrying. The web and workers pods keep their own ServiceAccount, so
 the role that may assume the writer role is bound to the export's pod only. With IRSA, that
 role's trust names `system:serviceaccount:<namespace>:<fullname>-analytics-export`, and its
 only permission is `sts:AssumeRole` on `roleArn`. With EKS Pod Identity, bind the role to

@@ -19,12 +19,16 @@ def _day(value: str) -> date:
 
 def _refusal(args: argparse.Namespace, today: date) -> str:
     """Why the export must not run, or ''."""
+    from server.insights.app.analytics_export import MIN_NAME_KEY_CHARS
     from server.settings import settings
 
     if args.day >= today:
         return f"{args.day} has not ended yet (UTC): export a past day"
-    if args.names == "hashed" and not settings.analytics_export_name_key:
-        return "--names hashed needs LOOM_ANALYTICS_EXPORT_NAME_KEY"
+    if args.names == "hashed" and len(settings.analytics_export_name_key) < MIN_NAME_KEY_CHARS:
+        return (
+            f"--names hashed needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
+            f"least {MIN_NAME_KEY_CHARS} characters"
+        )
     if args.names == "raw" and settings.self_signup == "open":
         return (
             "--names raw is refused while LOOM_SELF_SIGNUP=open: self-signup names carry usernames"
@@ -37,8 +41,15 @@ def _refusal(args: argparse.Namespace, today: date) -> str:
 
 
 def _cmd_export(args: argparse.Namespace) -> int:
-    from server.core.ch import get_client
-    from server.insights.app.analytics_export import export_day, name_hash_key, s3_client, s3_put
+    from server.core.ch import get_client, statement_timeout
+    from server.insights.app.analytics_export import (
+        STATEMENT_TIMEOUT_S,
+        Exported,
+        export_day,
+        name_hash_key,
+        s3_client,
+        s3_put,
+    )
     from server.settings import settings
 
     today = datetime.now(UTC).date()
@@ -51,14 +62,16 @@ def _cmd_export(args: argparse.Namespace) -> int:
     put = s3_put(s3, args.bucket, expected_owner=args.expected_bucket_owner)
 
     # No model calls and no writes to ClickHouse: a plain connection, outside
-    # the provider barrier that `run_connected` enters.
-    async def _go() -> list[Any]:
-        ch = get_client()
-        await ch.connect()
-        try:
-            return await export_day(args.day, prefix=args.prefix, put=put, key=key, ch=ch)
-        finally:
-            await ch.disconnect()
+    # the provider barrier that `run_connected` enters. It connects inside the
+    # deadline's scope, so the driver's read timeout is the deadline too.
+    async def _go() -> list[Exported]:
+        with statement_timeout(STATEMENT_TIMEOUT_S):
+            ch = get_client()
+            await ch.connect()
+            try:
+                return await export_day(args.day, prefix=args.prefix, put=put, key=key, ch=ch)
+            finally:
+                await ch.disconnect()
 
     for e in asyncio.run(_go()):
         state = "wrote" if e.written else "already there, kept"

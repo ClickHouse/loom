@@ -12,6 +12,9 @@ run of a day keeps the first run's files, so a retry is safe. */}}
 {{- if not (has .names (list "hashed" "raw")) }}
 {{- fail "analyticsExport.names must be hashed or raw" }}
 {{- end }}
+{{- if and (eq .names "hashed") (not .nameKeySecret.name) }}
+{{- fail "analyticsExport.names: hashed needs analyticsExport.nameKeySecret.name, the Secret holding the hash key" }}
+{{- end }}
 {{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export") }}
 apiVersion: v1
 kind: ServiceAccount
@@ -43,6 +46,15 @@ spec:
     spec:
       backoffLimit: 3
       activeDeadlineSeconds: 3600
+      # Exit 2 is a refusal (a day not ended, a missing key, raw names with
+      # self-signup open): a retry would refuse the same way.
+      podFailurePolicy:
+        rules:
+          - action: FailJob
+            onExitCodes:
+              containerName: analytics-export
+              operator: In
+              values: [2]
       template:
         metadata:
           labels:
@@ -101,6 +113,13 @@ spec:
                   valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
                 - name: LOOM_INSTANCE_LABEL
                   value: k8s:analytics-export
+                {{- if eq .names "hashed" }}
+                - name: LOOM_ANALYTICS_EXPORT_NAME_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .nameKeySecret.name }}
+                      key: {{ .nameKeySecret.key }}
+                {{- end }}
                 {{- with $.Values.extraEnv }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}

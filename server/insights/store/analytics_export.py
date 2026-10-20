@@ -49,18 +49,19 @@ ORDER BY org, namespace, agent, operation, kind, transport, traffic_class
 # One row per (org, namespace) that is registered or holds a live memory row:
 # the registry's description of it and its live memory count, as of
 # `snapshot_at` whatever {day:Date} is. An unregistered namespace has
-# `registered = false` and NULL registry columns. The defaults the FULL JOIN
-# fills in (false, 0) are what the `if`s read, so `join_use_nulls` is pinned.
+# `registered = false` and NULL registry columns. The `ifNull`s give the same
+# answer whether the FULL JOIN fills a missing side with defaults or with NULLs
+# (`join_use_nulls`).
 NAMESPACES_SQL = """
 SELECT
     org, namespace,
-    n.registered AS registered,
-    if(n.registered, n.kind, NULL) AS kind,
-    if(n.registered, toString(n.visibility), NULL) AS visibility,
-    if(n.registered, n.active, NULL) AS active,
-    if(n.registered, n.created_at, NULL) AS created_at,
-    m.live_memories AS live_memories,
-    if(m.live_memories > 0, m.last_memory_at, NULL) AS last_memory_at,
+    ifNull(n.registered, false) AS registered,
+    if(registered, n.kind, NULL) AS kind,
+    if(registered, toString(n.visibility), NULL) AS visibility,
+    if(registered, n.active, NULL) AS active,
+    if(registered, n.created_at, NULL) AS created_at,
+    ifNull(m.live_memories, 0) AS live_memories,
+    if(live_memories > 0, m.last_memory_at, NULL) AS last_memory_at,
     {day:Date} AS day,
     now64(3, 'UTC') AS snapshot_at
 FROM (SELECT org, namespace, true AS registered, kind, visibility, active, created_at
@@ -72,7 +73,6 @@ FULL OUTER JOIN (SELECT org, namespace, count() AS live_memories,
                  GROUP BY org, namespace) AS m
   USING (org, namespace)
 ORDER BY org, namespace
-SETTINGS join_use_nulls = 0
 """
 
 ENTITIES = {"usage": USAGE_SQL, "namespaces": NAMESPACES_SQL}
@@ -81,13 +81,15 @@ ENTITIES = {"usage": USAGE_SQL, "namespaces": NAMESPACES_SQL}
 NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "namespace")}
 
 
+def name_hash_sql(expr: str) -> str:
+    """The lowercase hex of `expr`'s SipHash-2-4-128 under the key {k0:UInt64},
+    {k1:UInt64}: the reference variant, which any SipHash-128 library reproduces."""
+    return f"lower(hex(sipHash128ReferenceKeyed(({{k0:UInt64}}, {{k1:UInt64}}), {expr})))"
+
+
 def _hashed(entity: str) -> str:
-    """`entity`'s statement with each name column replaced by the lowercase
-    hex of its 128-bit SipHash under the key {k0:UInt64}, {k1:UInt64}."""
-    replace = ", ".join(
-        f"lower(hex(sipHash128Keyed(({{k0:UInt64}}, {{k1:UInt64}}), {c}))) AS {c}"
-        for c in NAME_COLUMNS[entity]
-    )
+    """`entity`'s statement with each name column replaced by its hash."""
+    replace = ", ".join(f"{name_hash_sql(c)} AS {c}" for c in NAME_COLUMNS[entity])
     return f"SELECT * REPLACE ({replace}) FROM ({ENTITIES[entity]})"
 
 
@@ -95,6 +97,6 @@ async def parquet(entity: str, day: date, *, key: tuple[int, int] | None, ch: CH
     """`entity`'s rows for UTC day `day`, as one Parquet file: names hashed
     under `key`, or as stored when `key` is None."""
     if key is None:
-        return await ch.raw_bytes(f"{ENTITIES[entity]}FORMAT Parquet", {"day": day})
+        return await ch.raw_bytes(f"{ENTITIES[entity]} FORMAT Parquet", {"day": day})
     params = {"day": day, "k0": key[0], "k1": key[1]}
     return await ch.raw_bytes(f"{_hashed(entity)} FORMAT Parquet", params)
