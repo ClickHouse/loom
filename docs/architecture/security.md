@@ -715,7 +715,9 @@ conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.
 value, a chunk `memory.import_evidence` writes) whose text reads as a credential is stored
 as written with no vector, and its text is never sent to the embedder; every chunk read
 that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns
-it. A session digest whose text reads as a credential is likewise written without a
+it. The chunks of a long `memory.set` value whose row resolves to `low` are all embedded:
+that row is embedded and served whatever it reads as, as `loom reembed` re-embeds a memory
+row by its label. A session digest whose text reads as a credential is likewise written without a
 vector, and so is a `conversation.append` turn: the message is stored as written in
 `loom.conversations` and gets no row in `loom.conversation_embeddings`. A missing
 embedding row keeps the turn out of vector search. `conversation.save_message` answers
@@ -740,13 +742,15 @@ the reads that serve passages check their text too:
   key, `conversation.search`'s hits (the vector ranking, checked on the text the vector
   was built from, and the substring fallback the search takes when the embedder is down),
   and `conversation.search_saved_messages`'s hits (its vector leg and its BM25 keyword leg
-  over the whole text). Each read asks for a few spare rows, so a held-back passage does
-  not leave it short.
+  over the whole text). Each read asks for two spare rows, so up to two held-back passages
+  do not leave it short.
 - Listed without the text: `conversation.list_saved_messages` shows an empty
   `content_excerpt` for a saved message that reads as a credential (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
   whose last turn reads as a credential (its first 1,024 characters are checked, not only
-  the 240-character excerpt), and an empty `title` for a title that reads as one. The
+  the 240-character excerpt), and an empty `title` for a title that reads as one.
+  `memory.outline` lists a session digest whose summary reads as a credential with an
+  empty `headline`. The
   conversation titler never sends a turn that reads as a credential to its model and
   never stores a title that reads as one.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a

@@ -14,7 +14,7 @@ from server.memory.app.retrieval.retry import _call_retrying_empty_block
 from server.memory.domain.passage_trim import trim_chunk_excerpt
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit, SearchQuery, _CHClient, hit_sort_key
-from server.memory.domain.sensitivity import without_credentials
+from server.memory.domain.sensitivity import reads_high
 
 log = logging.getLogger("server.memory.app.retrieval")
 
@@ -845,8 +845,13 @@ def _served(hits: list[SearchHit], rows: list[dict[str, Any]], n: int) -> list[S
     versions: dict[str, list[str]] = {}
     for r in rows:
         versions.setdefault(str(r["memory_key"]), []).append(str(r["content_full"]))
-    # Joined by a newline, which no credential pattern crosses.
-    return without_credentials(hits, lambda hit: "\n".join(versions[hit.memory_key]), n)
+    served: list[SearchHit] = []
+    for hit in hits:
+        if len(served) >= n:
+            break
+        if not any(reads_high(text) for text in versions[hit.memory_key]):
+            served.append(hit)
+    return served
 
 
 def _chunk_neighbor_sql(

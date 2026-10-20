@@ -147,7 +147,11 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     ],
 )
 async def test_a_thread_list_reads_the_last_turn_only_when_asked(
-    monkeypatch, fields, keyed_read, reads_last_turn, served
+    monkeypatch: pytest.MonkeyPatch,
+    fields: list[str],
+    keyed_read: bool,
+    reads_last_turn: bool,
+    served: tuple[int, str, str, str],
 ) -> None:
     """`fields` without the agent, role, excerpt or count is one statement over the
     transcript; asking for the count or the last turn adds the keyed read, which reads

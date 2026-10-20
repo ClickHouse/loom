@@ -33,8 +33,8 @@ Log one chat turn (role + content) to the active thread.
 | --- | --- | --- |
 | `msg_id` | `str` | The message id: the one sent, or the content hash the server derived. |
 | `ts` | `datetime` | Server time of this call; the message's timestamp when it was written. |
-| `stored` | `bool` | Whether this call left a row in the transcript. |
-| `reason` | `Literal['', 'duplicate', 'logging_disabled']` | "" (written), "duplicate" (this msg_id already landed; stored=True), "logging_disabled" (stored=False). |
+| `stored` | `bool` | False when recording is off or the turn was removed while embedding ran. |
+| `reason` | `Literal['', 'duplicate', 'logging_disabled', 'deleted']` | "" (written), "duplicate" (this msg_id already landed; stored=True), "logging_disabled" or "deleted" (stored=False). |
 
 ## `conversation.compact`
 

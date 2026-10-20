@@ -53,7 +53,7 @@ from server.memory.api.models_temporal import (
     _OutlineSession,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
@@ -157,7 +157,10 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
 
 
 def _headline(text: Any, limit: int = 160) -> str:
-    """The first sentence or line of a digest, clipped."""
+    """The first sentence or line of a digest, clipped; empty for a digest that reads as a
+    credential, since the outline lists every digest of the namespace."""
+    if reads_high(str(text or "")):
+        return ""
     t = " ".join(str(text or "").split())
     for sep in (". ", "; ", " — "):
         i = t.find(sep)

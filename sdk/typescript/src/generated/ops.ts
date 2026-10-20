@@ -2148,7 +2148,7 @@ export interface ConversationAppendOutput {
   msg_id: string;
   ts: string; // date-time
   stored?: boolean;
-  reason?: "" | "duplicate" | "logging_disabled";
+  reason?: "" | "duplicate" | "logging_disabled" | "deleted";
 }
 
 export interface ConversationCompactInput {

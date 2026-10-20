@@ -68,14 +68,11 @@ class ConversationAppendOutput(BaseModel):
     msg_id: str
     # Server time of this call; the message's timestamp when it was written.
     ts: datetime
-    # Whether this call left a row in the transcript. False only when the
-    # namespace's logging switch is off: the call is accepted (a client
-    # cannot override the user's choice) but nothing is kept, and a caller
-    # that plans around the transcript needs to know that.
+    # False when recording is off or the turn was removed while embedding ran.
     stored: bool = True
     # "" (written), "duplicate" (this msg_id already landed; stored=True),
-    # "logging_disabled" (stored=False).
-    reason: Literal["", "duplicate", "logging_disabled"] = ""
+    # "logging_disabled" or "deleted" (stored=False).
+    reason: Literal["", "duplicate", "logging_disabled", "deleted"] = ""
 
 
 class ConversationSaveMessageInput(BaseModel):

@@ -737,7 +737,9 @@ async def _set_after_write(
     # never as a condition of it.
     from server.memory.app import set_chunks as _set_chunks
 
-    chunks_written = await _set_chunks.write_set_chunks_fail_open(input, ch=ch, embedder=embedder)
+    chunks_written = await _set_chunks.write_set_chunks_fail_open(
+        input, ch=ch, embedder=embedder, sensitivity=str(w.memory_row.get("sensitivity") or "")
+    )
     # The insert happened either way; the verdict says what kind of row it is.
     _count_write(
         input.namespace,

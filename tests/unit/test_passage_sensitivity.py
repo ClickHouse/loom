@@ -155,6 +155,31 @@ async def test_a_long_value_chunk_holding_a_key_is_stored_without_a_vector(
 
 
 @pytest.mark.asyncio
+async def test_a_long_value_labelled_low_embeds_every_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row its writer labelled `low` is embedded and served whatever it reads as, so its
+    chunks are embedded too."""
+    from server.memory.app import set_chunks
+
+    async def head_still_embedded(*_: Any, **__: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(set_chunks, "_head_still_embedded", head_still_embedded)
+    ch, emb = _CH(), _Embedder()
+    value = ("Plain paragraph about the release. " * 30) + "\n\n" + (f"key {AWS_KEY_ID} " * 30)
+    write = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="u", memory_key="notes/release", value=value
+    )
+    await set_chunks.write_set_chunks(
+        write, memory_type="semantic", limit=100, ch=ch, embedder=emb, sensitivity="low"
+    )
+    rows = ch.inserts["loom.memory_chunks"]
+    assert rows and all(r["embedding_dim"] > 0 for r in rows)
+    assert any(AWS_KEY_ID in t for t in emb.seen)
+
+
+@pytest.mark.asyncio
 async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -325,3 +350,12 @@ async def test_embed_plain_refuses_a_short_answer_from_the_embedder() -> None:
 
     with pytest.raises(ValueError, match="embedder returned 1 vectors for 2 texts"):
         await embed_plain(["plain one", f"key {OPENAI_KEY}", "plain two"], short)
+
+
+def test_the_outline_lists_a_credential_digest_without_its_headline() -> None:
+    """`memory.outline` lists every digest of a namespace: one that reads as a credential
+    shows no headline."""
+    from server.memory.app.curation import _headline
+
+    assert _headline(f"The user shared {AWS_KEY_ID}. Then planned the week.") == ""
+    assert _headline(f"{_PLAIN} More.") == _PLAIN

@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -279,13 +280,13 @@ def test_a_conversation_turn_holding_a_credential_is_never_a_search_hit(
 
 
 def _insert_turns(
-    ch_client,
+    ch_client: Any,
     ns: str,
     thread: str,
     turns: list[tuple[str, str, bool]],
     *,
-    role_of=None,
-    agent_of=None,
+    role_of: dict[str, str] | None = None,
+    agent_of: dict[str, str] | None = None,
 ) -> None:
     """Transcript rows as an earlier build wrote them, all at one `ts`."""
     from datetime import UTC, datetime
