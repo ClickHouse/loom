@@ -103,8 +103,10 @@ or a bucket owner other than `--expected-bucket-owner` fails at the first upload
 `--role-arn` it assumes the role again before each upload and writes under its credentials.
 Assuming a writer role fits a bucket in another account: the bucket's account grants
 `s3:PutObject` to the writer role, and the writer role trusts only the export's own
-identity. The export needs no read, list or delete permission on the bucket.
-`--expected-bucket-owner` makes S3 refuse the write when another account owns the bucket.
+identity. The export needs no read, list or delete permission on the bucket; a bucket
+encrypted with a customer-managed KMS key also needs `kms:GenerateDataKey` on that key for
+the writer role, or every upload is refused. `--expected-bucket-owner` makes S3 refuse the
+write when another account owns the bucket.
 
 Pass `--region` (the bucket's) where the process has no AWS region; on EKS the IRSA and Pod
 Identity webhooks set one.
@@ -140,11 +142,11 @@ them.
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: `fullnameOverride` when set, else the
 release name when it contains the chart name (`nameOverride`, else `loom`), else
-`<release>-<chart name>`, cut to its first 35 characters
-so the name stays within 52 (`kubectl get sa` shows it). The job runs at 00:30 UTC
-(`schedule`), one run at a time, with up to 3 retries and a three-hour deadline over all
-attempts; each statement may run 20 minutes, and the ClickHouse client may retry one, so a
-slow day can get fewer than four attempts. A refusal (exit 2) fails the Job at once instead
+`<release>-<chart name>`, cut to its first 35 characters so the name stays within 52
+(`kubectl get sa` shows it). The job runs at 00:30 UTC (`schedule`), one run at a time,
+with up to 3 retries and a three-hour deadline over all attempts; each statement may run
+20 minutes, and the ClickHouse client may retry one, so a slow day can get fewer than four
+attempts. A refusal (exit 2) fails the Job at once instead
 of retrying. Its pod takes none of the web pods' `podLabels`, `podAnnotations` or `affinity`.
 The web and workers pods keep their own ServiceAccount, so the role that may assume the
 writer role is bound to the export's pod only. With IRSA, that role's trust names
@@ -158,9 +160,8 @@ failed Job; alert on the CronJob's last successful run being more than a day old
 
 A day whose run fails every attempt, or that misses its start window
 (`startingDeadlineSeconds`, one hour), is not exported later on its own: the next run
-exports only its own yesterday.
-Export it with a Job made from the CronJob, so it runs under the export's ServiceAccount
-and flags, with `--day` added to its command:
+exports only the day before it. Export it with a Job made from the CronJob, so it runs
+under the export's ServiceAccount and flags, with `--day` added to its command:
 
 ```bash
 kubectl create job --from=cronjob/<fullname>-analytics-export analytics-export-backfill \

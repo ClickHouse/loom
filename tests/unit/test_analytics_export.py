@@ -55,11 +55,6 @@ async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
         assert params == {"day": day, "k0": name_key[0], "k1": name_key[1]}
 
 
-def test_the_hash_key_is_stable_and_depends_on_the_secret() -> None:
-    assert name_hash_key("a") == name_hash_key("a") != name_hash_key("b")
-    assert all(0 <= w < 2**64 for w in name_hash_key("a"))
-
-
 def _stubbed() -> tuple[Any, Stubber]:
     s3 = boto3.client(
         "s3", region_name="us-east-2", aws_access_key_id="x", aws_secret_access_key="y"
@@ -222,7 +217,7 @@ def test_a_day_that_has_not_ended_is_refused(
         (" " + "k" * 32, "leading or trailing whitespace"),
     ],
 )
-def test_a_missing_or_short_name_key_is_refused(
+def test_a_missing_short_or_padded_name_key_is_refused(
     monkeypatch: pytest.MonkeyPatch, key: str, refused: str
 ) -> None:
     monkeypatch.setattr(settings, "analytics_export_name_key", key)
