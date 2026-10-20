@@ -1,8 +1,9 @@
 """Generate loom.example.yaml, the settings file template with every setting in it.
 
-Every setting but the secrets, in the catalog's order (one section per area, with its
-headings), commented out at its default under the comment that describes it, and marked
-`live` (changes while Loom runs, `loom settings set`) or `restart`. Copy the file,
+Every setting but the secrets, one section per area (ClickHouse, models, providers and
+auth first, the rest in the catalog's order), with its headings and their notes,
+commented out at its default under the comment that describes it, and marked `live`
+(changes while Loom runs, `loom settings set`) or `restart`. Copy the file,
 uncomment a line and change its value; the rest keep their defaults.
 
     python scripts/codegen/settings_example.py          # rewrite loom.example.yaml
@@ -117,6 +118,8 @@ def render() -> str:
     lines = src.splitlines()
     body = [HEADER.rstrip(), "version: 1", "settings:"]
     classes = [n for n in ast.parse(src).body if isinstance(n, ast.ClassDef)]
+    missing = set(FIRST) - {c.name for c in classes}
+    assert not missing, f"FIRST names no catalog class: {sorted(missing)}"
     order = sorted(classes, key=lambda c: FIRST.index(c.name) if c.name in FIRST else len(FIRST))
     for cls in order:
         body += _section(cls, lines)

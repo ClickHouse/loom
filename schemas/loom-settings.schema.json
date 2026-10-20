@@ -127,7 +127,7 @@
         "boot_migrate_lease_ttl_s": {
           "default": 300,
           "type": "integer",
-          "description": "Seconds after which a holder that stopped renewing is replaced."
+          "description": "Seconds after which the boot migration lease's holder, once it stops renewing, is replaced."
         },
         "boot_migrate_lease_wait_s": {
           "default": 900.0,
@@ -174,17 +174,17 @@
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
           "type": "number",
-          "description": "Seconds one caller-shaped read may run (the read class default)."
+          "description": "Seconds one caller-shaped read may run (the read class default); 0 = no ceiling, so the loom_reader profile's cap applies."
         },
         "ch_caller_shaped_max_memory_bytes": {
           "default": 4000000000,
           "type": "integer",
-          "description": "Bytes of memory one caller-shaped read may use."
+          "description": "Bytes of memory one caller-shaped read may use; 0 = no ceiling."
         },
         "ch_caller_shaped_max_rows_to_read": {
           "default": 500000000,
           "type": "integer",
-          "description": "Rows one such read may scan; past it the read fails (422), never a partial answer."
+          "description": "Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling."
         },
         "ch_capture_statements": {
           "default": "",
@@ -706,7 +706,7 @@
         "code_coverage_source_user": {
           "default": "",
           "type": "string",
-          "description": "User and password for the source endpoint."
+          "description": "User the coverage import signs in to the source endpoint as."
         },
         "code_coverage_specific_max_tests": {
           "default": 200,
@@ -873,7 +873,7 @@
         "code_git_dir": {
           "default": "",
           "type": "string",
-          "description": "Bare clone the ingest worker fetches into (created by `loom code init`) and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git` and `https://github.com/<owner>/<name>.git`."
+          "description": "Bare clone the ingest worker fetches into (created by `loom code init`). Empty = derived from code_repo: `var/code_repos/<name>.git`."
         },
         "code_git_extra_branches": {
           "default": "",
@@ -899,7 +899,7 @@
         "code_git_ledger_merge_batch": {
           "default": 40,
           "type": "integer",
-          "description": "40 shas ≈ 8.5 s"
+          "description": "Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s)."
         },
         "code_git_ledger_merge_page": {
           "default": 500,
@@ -1172,7 +1172,7 @@
         "code_org": {
           "default": "",
           "type": "string",
-          "description": "The scalar repository entry: its loom org, its code namespace and its GitHub `owner/name`. Empty repo = no scalar entry (nothing indexed until a repository is configured); an empty org or namespace is never a default for a code.* request, which then must name its own."
+          "description": "The scalar repository entry's loom org; empty is never a default for a code.* request, which then must name its own."
         },
         "code_org_readable": {
           "default": false,
@@ -1274,7 +1274,7 @@
         "code_repo": {
           "default": "",
           "type": "string",
-          "description": "The scalar entry's GitHub `owner/name`; empty = no scalar entry."
+          "description": "The scalar entry's GitHub `owner/name`; empty = no scalar entry, so nothing is indexed until a repository is configured."
         },
         "code_repo_public": {
           "default": false,
@@ -1310,7 +1310,7 @@
         "code_sandbox_max_file_mb": {
           "default": 32768,
           "type": "integer",
-          "description": "Largest file a process may write, in MiB (a pack or index.scip)."
+          "description": "Largest file one process of a sandboxed repository job may write, in MiB (a pack or index.scip)."
         },
         "code_sandbox_max_pids": {
           "default": 2048,
@@ -1320,7 +1320,7 @@
         "code_sandbox_memory_mb": {
           "default": 16384,
           "type": "integer",
-          "description": "Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in MiB. Not address space: node reserves far more of that than it uses."
+          "description": "Data memory (heap and private mappings, RLIMIT_DATA) one process of a sandboxed repository job may use, in MiB. Not address space: node reserves far more of that than it uses."
         },
         "code_sandbox_required": {
           "default": false,
@@ -1401,7 +1401,7 @@
         "code_scip_go_bin_dir": {
           "default": "",
           "type": "string",
-          "description": "Where `go` and scip-go live when not on PATH"
+          "description": "Directory holding `go` and scip-go when they are not on PATH; empty = PATH only."
         },
         "code_scip_go_delta_enabled": {
           "default": true,
@@ -1421,7 +1421,7 @@
         "code_scip_go_jobs": {
           "default": 2,
           "type": "integer",
-          "description": "Parallel module builds (~4 GB each)"
+          "description": "Go modules the delta harness builds in parallel (about 4 GB of memory each)."
         },
         "code_scip_go_modcache": {
           "default": "var/gocache",
@@ -1436,7 +1436,7 @@
         "code_scip_go_private": {
           "default": "",
           "type": "string",
-          "description": "GOPRIVATE / GONOSUMDB (a vanity import host)"
+          "description": "GOPRIVATE and GONOSUMDB for the Go delta harness: module paths fetched directly, without the proxy or checksum database (a vanity import host). Empty = none."
         },
         "code_scip_lock_dir": {
           "default": "var/cron/locks",
@@ -1471,7 +1471,7 @@
         "code_scip_py_heap_mb": {
           "default": 16384,
           "type": "integer",
-          "description": "Pyright dies silently at 8 GB"
+          "description": "Node heap size (MiB) given to scip-python; Pyright dies silently at 8 GB."
         },
         "code_scip_python_path": {
           "default": "scip-python",
@@ -1699,7 +1699,7 @@
         "code_search_medium_risk_from": {
           "default": 0.4,
           "type": "number",
-          "description": "The calibrated confidences from which a code.search result reads `retrieval_risk` \"medium\" and \"low\" (below the first it reads \"high\"). Code embeddings score a right hit lower than memory text does: on the conceptual question set every right top 3 scored 0.40–0.63, so the memory plane's 0.55 / 0.75 labelled three in four right answers \"high\"."
+          "description": "The calibrated confidence from which a code.search result reads `retrieval_risk` \"medium\"; below it the result reads \"high\". Code embeddings score a right hit lower than memory text does: on the conceptual question set every right top 3 scored 0.40–0.63, so the memory plane's 0.55 / 0.75 labelled three in four right answers \"high\"."
         },
         "code_search_memo_enabled": {
           "default": true,
@@ -2098,7 +2098,7 @@
           "default": 3072,
           "minimum": 1,
           "type": "integer",
-          "description": "Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave it commented out for a local model."
+          "description": "Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave it unset for a local model."
         },
         "embedding_model": {
           "default": "fake-ngram-3072",
@@ -2421,7 +2421,7 @@
         "jwt_issuer": {
           "default": "loom",
           "type": "string",
-          "description": "The `iss` Loom stamps on every token it mints; a verified token must carry it."
+          "description": "The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`."
         },
         "jwt_keyring_refresh_seconds": {
           "default": 30.0,
@@ -2443,11 +2443,6 @@
           "default": 600.0,
           "type": "number",
           "description": "Oldest revocation snapshot a process still trusts, seconds. Past it (refreshes keep failing) every bearer is refused with a retryable 503. A subject's cached grants are trusted as long when a re-read fails."
-        },
-        "jwt_secret_previous": {
-          "default": "",
-          "type": "string",
-          "description": "The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. \"\" = none."
         },
         "jwt_trusted_issuers": {
           "default": "",
@@ -2605,7 +2600,7 @@
         "llm_response_cache_table": {
           "default": "loom.llm_response_cache",
           "type": "string",
-          "description": "The table the wrapper reads and writes; an isolated server whose boot migrations are off points this at its own scratch mirror."
+          "description": "The table the LLM response cache reads and writes; an isolated server whose boot migrations are off points this at its own scratch mirror."
         },
         "llm_retry_attempts": {
           "default": 4,

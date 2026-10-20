@@ -1,7 +1,11 @@
 """Each setting's description: the comment written above its field.
 
-The configuration reference (`scripts/codegen/settings_reference.py`) and
-`/v1/admin/settings.list` both read it from here, so they say the same thing.
+The configuration reference (`scripts/codegen/settings_reference.py`), the settings
+file template and schema, and `/v1/admin/settings.list` all read it from here, so they
+say the same thing. A `# --- x ---` heading groups every field below it up to the next
+heading; the comment block directly above a heading is that group's note, which the
+reference and the template print once under the heading. A field's own comment stands
+alone without the note, since the listing and the schema show no headings.
 """
 
 from __future__ import annotations
@@ -32,19 +36,12 @@ def comment_block(lines: list[str], lineno: int) -> tuple[str | None, str]:
 
 
 def heading_note(lines: list[str], lineno: int) -> str:
-    """The comment block directly above the heading that governs the field at `lineno`:
-    a group's preamble, shown once under the heading rather than as one field's text."""
+    """The note of the heading directly above the field at `lineno` (its comment block
+    included): the comment block above that heading. '' when the field opens no group."""
     i = lineno - 2
     while i >= 0 and lines[i].strip().startswith("#"):
         if HEADING.match(lines[i].strip()):
-            out: list[str] = []
-            j = i - 1
-            while (
-                j >= 0 and lines[j].strip().startswith("#") and not HEADING.match(lines[j].strip())
-            ):
-                out.append(lines[j].strip().lstrip("#").strip())
-                j -= 1
-            return " ".join(reversed(out)).strip()
+            return comment_block(lines, i + 1)[1]
         i -= 1
     return ""
 

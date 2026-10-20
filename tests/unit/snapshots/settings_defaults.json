@@ -450,7 +450,6 @@
  "jwt_leeway_seconds": 30,
  "jwt_revocation_cache_ttl_seconds": 30.0,
  "jwt_revocation_max_stale_seconds": 600.0,
- "jwt_secret_previous": "",
  "jwt_trusted_issuers": "",
  "keeper_sweep_interval_seconds": 3600.0,
  "knowledge_bm25_corpus_ttl_s": 300.0,

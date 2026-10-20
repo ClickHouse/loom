@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from server.settings import Settings
+from server.settings._env import is_secret_field
 
 _SECRET = "s3cr3t-canary-value"
 
@@ -14,6 +15,7 @@ _SECRET = "s3cr3t-canary-value"
     [
         ("ch_password", _SECRET),
         ("jwt_secret", _SECRET),
+        ("jwt_secret_previous", _SECRET),
         ("oidc_client_secret", _SECRET),
         ("scim_token", _SECRET),
         ("langfuse_admin_token", f"pk:{_SECRET}"),
@@ -52,3 +54,14 @@ def test_a_load_error_names_the_field_never_the_environment(bad: dict[str, objec
     text = str(ei.value)
     assert _SECRET not in text
     assert "input_value" not in text
+
+
+# Names with a secret's word in them that hold no secret.
+_NOT_SECRETS = {"password_link_ttl_seconds"}
+
+
+def test_every_field_named_for_a_secret_or_password_is_a_secret() -> None:
+    """A secret the classifier misses is printed by settings.list and accepted from the
+    settings file; a new field with the word in its name must be one or be listed here."""
+    named = {n for n in Settings.model_fields if "secret" in n or "password" in n}
+    assert {n for n in named if not is_secret_field(n)} == _NOT_SECRETS

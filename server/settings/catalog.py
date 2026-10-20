@@ -177,7 +177,8 @@ class AuthSettings(BaseModel):
         warns, `loom doctor` grades WARN)."""
         return self.jwt_secret == DEV_JWT_SECRET
 
-    # The `iss` Loom stamps on every token it mints; a verified token must carry it.
+    # The `iss` Loom stamps on every token it mints; a verified token carries it or one
+    # of `jwt_trusted_issuers`.
     jwt_issuer: str = "loom"
     # The `aud` claim stamped on minted tokens and required on every verified token.
     jwt_audience: str = "loom-platform"
@@ -392,16 +393,19 @@ class ClickHouseSettings(BaseModel):
     # no ceiling, so the profile's cap applies (code.grep's deadline is then
     # clamped to ch_timeout_read_s, which the profile's cap matches).
     # --- caller-shaped read ceilings ---
-    # Seconds one caller-shaped read may run (the read class default).
+    # Seconds one caller-shaped read may run (the read class default); 0 = no
+    # ceiling, so the loom_reader profile's cap applies.
     ch_caller_shaped_max_execution_s: float = 30.0
-    # Bytes of memory one caller-shaped read may use.
+    # Bytes of memory one caller-shaped read may use; 0 = no ceiling.
     ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
-    # Rows one such read may scan; past it the read fails (422), never a partial answer.
+    # Rows one caller-shaped read may scan; past it the read fails (422), never a
+    # partial answer. 0 = no ceiling.
     ch_caller_shaped_max_rows_to_read: int = 500_000_000
     # ClickHouse user the caller-shaped reads run as, with `ch_password`; the
     # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
     ch_reader_user: str = ""
 
+    # --- traffic classes ---
     # JSON map {traffic class: ClickHouse settings} applied by
     # `server.core.ch.statement_settings` to every read (an explicit per-call
     # setting wins). `priority`: 1 served first, larger waits, 0 opts out;
@@ -414,10 +418,12 @@ class ClickHouseSettings(BaseModel):
         '"background": {"priority": 5, "max_threads": 3, '
         '"read_from_filesystem_cache_if_exists_otherwise_bypass_cache": 1}}'
     )
+    # --- migrations ---
     # Apply pending migrations at boot. Set False for any server started from
     # a branch against a shared service, or it applies unmerged migrations.
     boot_migrate: bool = True
-    # Seconds after which a holder that stopped renewing is replaced.
+    # Seconds after which the boot migration lease's holder, once it stops renewing,
+    # is replaced.
     boot_migrate_lease_ttl_s: int = 300
     # Seconds a contender waits for the holder before boot fails (exit 1, the
     # container restarts); also how long a booting process waits for the
@@ -428,6 +434,7 @@ class ClickHouseSettings(BaseModel):
     # file fails unrecorded.
     migrate_mutation_wait_s: int = 600
 
+    # --- vector search ---
     # HNSW candidate list size (`ef_search`) for the helper legs, emitted via
     # vector_search_settings(); tracks ClickHouse's default. The
     # main leg scales its own value with top_k.
@@ -461,14 +468,12 @@ class ClickHouseSettings(BaseModel):
 class CodeSettings(BaseModel):
     """The code plane: ingest, indexes, search, ask, review."""
 
-    # ------------------------------------------------------------------
-    # Code intelligence plane. One code
-    # namespace indexes ONE repo. No repository is configured by default: set
-    # LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add one from
-    # the Repositories page) before anything is indexed. The index-building workers (ingest, SCIP,
-    # PR history, graph stats, cards, embed recovery) default off and no-op
-    # on a namespace without a git_head watermark or pending work.
-    # ------------------------------------------------------------------
+    # One code namespace indexes one repository. No repository is configured by
+    # default: set LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add
+    # one from the Repositories page) before anything is indexed. The index-building
+    # workers (ingest, SCIP, PR history, graph stats, cards, embed recovery) default off
+    # and no-op on a namespace without a git_head watermark or pending work.
+    # --- switch, test gate and code.ask ---
     # Master kill switch, checked at the top of every code.* handler.
     code_intel_enabled: bool = True
 
@@ -495,15 +500,15 @@ class CodeSettings(BaseModel):
     # legs) read the per-namespace exact-prompt response cache; no_cache or a
     # traffic class with llm_cache off bypasses it.
     code_ask_llm_cache: bool = True
-    # The scalar repository entry: its loom org, its code namespace and its
-    # GitHub `owner/name`. Empty repo = no scalar entry (nothing indexed until a
-    # repository is configured); an empty org or namespace is never a default
-    # for a code.* request, which then must name its own.
+    # --- repositories ---
+    # The scalar repository entry's loom org; empty is never a default for a code.*
+    # request, which then must name its own.
     code_org: str = ""
     # The scalar entry's code namespace, used by a code.* request or `loom code` command
     # that names none; empty = the request must name one.
     code_namespace: str = ""
-    # The scalar entry's GitHub `owner/name`; empty = no scalar entry.
+    # The scalar entry's GitHub `owner/name`; empty = no scalar entry, so nothing is
+    # indexed until a repository is configured.
     code_repo: str = ""
 
     # The memory namespace code.ask fuses decision/rationale memories (the
@@ -559,6 +564,7 @@ class CodeSettings(BaseModel):
     # every serving host keeps its own full copy of every mirror it is asked about.
     # Off: such a host answers `no_git_mirror` and only the worker's host clones.
     code_history_clone_on_read: bool = True
+    # --- git history and mirrors ---
     # Where git-history reads (blame, citation commit checks, PR history, commit
     # coverage) come from. local = this host's mirrors; none = an edge host with
     # no mirrors: those reads answer without history.
@@ -589,13 +595,14 @@ class CodeSettings(BaseModel):
     # Free disk, in GB, a mirror's gc must leave beyond the mirror's own size; without
     # it the gc waits another interval.
     code_mirror_gc_margin_gb: float = 5.0
-    # rlimits for each process of a sandboxed repository job (clone, fetch,
+    # Resource limits (rlimits) for each process of a sandboxed repository job (clone, fetch,
     # dependency install, compiler-tier harness; code/app/index/sandbox.py).
     # They bound each process, not a job's total (max_pids aside): there is no cgroup.
     # --- repository job sandbox ---
     # CPU seconds one process of a sandboxed repository job may use.
     code_sandbox_cpu_seconds: int = 7200
-    # Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in
+    # Data memory (heap and private mappings, RLIMIT_DATA) one process of a sandboxed
+    # repository job may use, in
     # MiB. Not address space: node reserves far more of that than it uses.
     code_sandbox_memory_mb: int = 16384
     # Processes and threads one job may run at once (RLIMIT_NPROC, set inside
@@ -607,11 +614,12 @@ class CodeSettings(BaseModel):
     # missing sandbox as an error. False: without the sandbox, jobs fall back
     # to plain processes as "Without the sandbox" in code-index-operations.md says.
     code_sandbox_required: bool = False
-    # Largest file a process may write, in MiB (a pack or index.scip).
+    # Largest file one process of a sandboxed repository job may write, in MiB (a
+    # pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
-    # Bare clone the ingest worker fetches into (created by `loom code init`)
-    # and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git`
-    # and `https://github.com/<owner>/<name>.git`.
+    # --- mirror fetch ---
+    # Bare clone the ingest worker fetches into (created by `loom code init`). Empty =
+    # derived from code_repo: `var/code_repos/<name>.git`.
     code_git_dir: str = ""
     # The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`.
     code_git_remote: str = ""
@@ -628,7 +636,8 @@ class CodeSettings(BaseModel):
     code_git_fetch_ledger_merges: bool = True
     # Ledger merge rows checked for a missing sha per entry per pass.
     code_git_ledger_merge_page: int = 500
-    code_git_ledger_merge_batch: int = 40  # 40 shas ≈ 8.5 s
+    # Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s).
+    code_git_ledger_merge_batch: int = 40
     # The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN
     # (refetched when the tip moves, never pruned), so pre-merge reads diff the
     # PR's own head. Only open heads: fetching every PR head is too costly.
@@ -644,6 +653,7 @@ class CodeSettings(BaseModel):
     # GitHub `GET /pulls/N` calls per pass for open PRs the mirror lacks;
     # 0 = the mirror path only.
     code_gh_items_head_github_batch: int = 20
+    # --- ingest ---
     # CSV path prefixes of the scalar entry that are indexed; everything else
     # is skipped. Empty = the whole tree (the ingest denylist still applies).
     code_path_prefixes: str = ""
@@ -706,6 +716,7 @@ class CodeSettings(BaseModel):
     # contract); a lane waits on ClickHouse round trips, not on its capacity,
     # so lanes add throughput. 1 = one commit at a time across all entries.
     code_ingest_lanes: int = Field(default=1, ge=1, le=8)
+    # --- compiler-tier indexes (SCIP) ---
     # SCIP delta apply (compiler-grade tier uploaded via code.scip_ingest).
     code_scip_apply_enabled: bool = False
     # Seconds between SCIP apply passes.
@@ -785,7 +796,8 @@ class CodeSettings(BaseModel):
     code_scip_python_path: str = "scip-python"
     # Seconds the Python delta harness may run before it is killed.
     code_scip_py_delta_timeout_seconds: int = 3600
-    code_scip_py_heap_mb: int = 16384  # Pyright dies silently at 8 GB
+    # Node heap size (MiB) given to scip-python; Pyright dies silently at 8 GB.
+    code_scip_py_heap_mb: int = 16384
     # Go compiler-tier deltas: scip-go per touched module of an entry with
     # `scip_producer` "go". Needs the Go toolchain and scip-go
     # (`go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7`, the image's version).
@@ -794,16 +806,21 @@ class CodeSettings(BaseModel):
     code_scip_go_delta_interval_seconds: int = 900
     # The scip-go binary, looked up on PATH or in `code_scip_go_bin_dir`.
     code_scip_go_path: str = "scip-go"
-    code_scip_go_bin_dir: str = ""  # Where `go` and scip-go live when not on PATH
+    # Directory holding `go` and scip-go when they are not on PATH; empty = PATH only.
+    code_scip_go_bin_dir: str = ""
     # Seconds the Go delta harness may run before it is killed; also the
     # pass deadline.
     code_scip_go_delta_timeout_seconds: int = 7200
-    code_scip_go_jobs: int = 2  # Parallel module builds (~4 GB each)
+    # Go modules the delta harness builds in parallel (about 4 GB of memory each).
+    code_scip_go_jobs: int = 2
     # Root of the Go module caches kept across passes: one per entry beneath it
     # (<root>/<org>/<namespace>), never shared between repositories.
     code_scip_go_modcache: str = "var/gocache"
-    code_scip_go_private: str = ""  # GOPRIVATE / GONOSUMDB (a vanity import host)
+    # GOPRIVATE and GONOSUMDB for the Go delta harness: module paths fetched directly,
+    # without the proxy or checksum database (a vanity import host). Empty = none.
+    code_scip_go_private: str = ""
 
+    # --- PR history ---
     # Merged-PR history sync (GitHub REST, cursor-resumable).
     code_pr_history_enabled: bool = False
     # Seconds between PR-history sync passes.
@@ -1189,8 +1206,8 @@ class CodeSettings(BaseModel):
     # Calibrated confidence below which a result is flagged
     # `low_calibrated_confidence` (still returned). The deployment sets 0.30.
     code_search_abstain_confidence_below: float = 0.35
-    # The calibrated confidences from which a code.search result reads
-    # `retrieval_risk` "medium" and "low" (below the first it reads "high").
+    # The calibrated confidence from which a code.search result reads
+    # `retrieval_risk` "medium"; below it the result reads "high".
     # Code embeddings score a right hit lower than memory text does: on the
     # conceptual question set every right top 3 scored 0.40–0.63, so the
     # memory plane's 0.55 / 0.75 labelled three in four right answers "high".
@@ -1259,8 +1276,9 @@ class CodeSettings(BaseModel):
     # ClickHouse HTTP endpoint holding the coverage tables
     # (`checks_coverage_lines`, `checks`); "" = no source, the import is a no-op.
     code_coverage_source_url: str = ""
-    # User and password for the source endpoint.
+    # User the coverage import signs in to the source endpoint as.
     code_coverage_source_user: str = ""
+    # Password of `code_coverage_source_user`.
     code_coverage_source_password: str = ""
     # Database of the source tables.
     code_coverage_source_database: str = "default"
@@ -3051,10 +3069,9 @@ class ObservabilitySettings(BaseModel):
     # don't fire on baseline RTT.
     latency_budget_multiplier: float = 1.0
     # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
-    # server/settings/catalog.py):
-    # an integer replaces that op's budget, "3x" multiplies it. Checked after the
-    # per-consumer overrides and `admin/budget.set`; malformed = logged once and
-    # ignored. '' = the table as declared.
+    # server/settings/catalog.py): an integer replaces that op's budget, "3x"
+    # multiplies it. Checked after the per-consumer overrides and `admin/budget.set`;
+    # malformed = logged once and ignored. '' = the table as declared.
     latency_budget_overrides: Annotated[str, JsonObject] = ""
     # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in
     # ms, "3x" multiplies the op's declared budget. Checked after runtime
@@ -3147,8 +3164,8 @@ class ProviderSettings(ModelSettings):
 
     # Vector width the embedder is asked for and the schema is sized from; the width probed from
     # the embedder at boot wins when they differ. Change it together with `embedding_model`.
-    # Unset with a `local:*` model, it is that model's own width: leave it commented out
-    # for a local model.
+    # Unset with a `local:*` model, it is that model's own width: leave it unset for a
+    # local model.
     embedding_dim: int = Field(3072, ge=1)
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
@@ -3411,7 +3428,7 @@ class ProviderSettings(ModelSettings):
     embedding_worker_orphan_full_scan_seconds: int = 1800
     # Age window, seconds, of the memories a non-full orphan pass checks.
     embedding_worker_orphan_recent_seconds: int = 900
-    # The table the wrapper reads and writes; an isolated server whose boot
+    # The table the LLM response cache reads and writes; an isolated server whose boot
     # migrations are off points this at its own scratch mirror.
     llm_response_cache_table: str = "loom.llm_response_cache"
 

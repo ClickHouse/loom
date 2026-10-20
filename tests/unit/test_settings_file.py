@@ -13,6 +13,7 @@ import pytest
 
 from scripts.codegen import settings_example, settings_schema
 from server.settings import Settings
+from server.settings._describe import descriptions
 from server.settings._env import is_secret_field
 from server.settings._file import SettingsFileError
 
@@ -173,16 +174,11 @@ def test_the_example_file_is_current_and_names_every_setting_but_the_secrets_onc
     assert not any(f"\n  # {n}: " in text for n in Settings.model_fields if is_secret_field(n))
 
 
-def test_every_setting_in_the_example_says_what_it_does() -> None:
-    """A setting whose catalog comment is missing, or was left to a neighbour, shows up
-    here as a bare `[live]` or `[restart]` above its line."""
-    blocks = (ROOT / "loom.example.yaml").read_text().split("\n\n")
-    bare = [
-        block.splitlines()[-1].removeprefix("  # ").split(":")[0]
-        for block in blocks
-        if block.splitlines()[0].strip() in ("# [live]", "# [restart]")
-    ]
-    assert not bare, f"no description in server/settings/catalog.py: {bare}"
+def test_every_setting_says_what_it_does() -> None:
+    """The template, the reference, the schema and settings.list all show this text."""
+    described = descriptions(Settings)
+    bare = [n for n in Settings.model_fields if not described.get(n)]
+    assert not bare, f"no comment above these fields in server/settings/catalog.py: {bare}"
 
 
 def test_uncommenting_every_line_of_the_example_loads_every_default(

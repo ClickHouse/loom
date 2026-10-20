@@ -109,13 +109,14 @@ def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
 
 # A field whose name matches is a secret: `repr(settings)` shows only its length
 # and the configuration reference never prints its default. The word-boundary
-# suffixes avoid false positives like `clickstack_user_id_keys`. `code_repos_json`
+# suffixes avoid false positives like `clickstack_user_id_keys`; `jwt_secret_previous`
+# is the root secret a rotation still opens credentials with. `code_repos_json`
 # entries may carry a `github_token`; the OTLP headers carry the exporter's
 # bearer token.
 _SECRET_FIELD = re.compile(
     "|".join(
         (
-            r"(?:^|_)secret$",
+            r"(?:^|_)secret(?:_previous)?$",
             r"(?:^|_)password$",
             r"(?:^|_)(?:admin|github|scim)_token$",
             r"(?:^|_)key$",

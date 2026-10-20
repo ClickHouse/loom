@@ -67,9 +67,9 @@ Authentication, tokens and identity providers.
 | `LOOM_IDENTITY_PROVIDER_TIMEOUT_S` | `float` | `10.0` | live | Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, and a machine issuer's discovery. |
 | `LOOM_SCIM_TOKEN` | `str` | *(unset)* |  | Bearer tokens (comma-separated, any one accepted) an identity provider presents to deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc. |
 | `LOOM_JWT_SECRET` | `str` | *(set)* |  | The root secret, and the one secret a deployment carries: it signs tokens as kid `default` and seals every stored credential and every signing key in loom.signing_keys (`loom signing-key rotate` adds those). Required when auth is on. The default is the checked-in DEV secret anyone can mint with: a deployment with auth on refuses to start with it, except the `make dev` stack (`loom doctor` warns everywhere else). |
-| `LOOM_JWT_SECRET_PREVIOUS` | `str` | `''` |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
+| `LOOM_JWT_SECRET_PREVIOUS` | `str` | *(unset)* |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` |  | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
-| `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token must carry it. |
+| `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |
 | `LOOM_JWT_TRUSTED_ISSUERS` | `str` | `''` |  | Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass. |
 | `LOOM_JWT_PUBLIC_KEYS_JSON` | `str` | *(unset)* |  | JSON (or base64 JSON) map kid → PEM public key of a gateway whose RS256 tokens this deployment accepts. Loom's own keys live in loom.signing_keys. |
@@ -128,15 +128,30 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_CH_CALLER_SHAPED_MAX_EXECUTION_S` | `float` | `30.0` |  | Seconds one caller-shaped read may run (the read class default). |
-| `LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES` | `int` | `4000000000` |  | Bytes of memory one caller-shaped read may use. |
-| `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` |  | Rows one such read may scan; past it the read fails (422), never a partial answer. |
+| `LOOM_CH_CALLER_SHAPED_MAX_EXECUTION_S` | `float` | `30.0` |  | Seconds one caller-shaped read may run (the read class default); 0 = no ceiling, so the loom_reader profile's cap applies. |
+| `LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES` | `int` | `4000000000` |  | Bytes of memory one caller-shaped read may use; 0 = no ceiling. |
+| `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` |  | Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling. |
 | `LOOM_CH_READER_USER` | `str` | `''` |  | ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`. |
+
+### Traffic classes
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CH_SETTINGS_BY_TRAFFIC_CLASS` | `str` | `'{"production": {"priority": 1}, "interactive": {"priorit…` |  | JSON map {traffic class: ClickHouse settings} applied by `server.core.ch.statement_settings` to every read (an explicit per-call setting wins). `priority`: 1 served first, larger waits, 0 opts out; `max_threads` caps CPU per statement. Neither changes the rows returned. `background` (workers, operator CLIs) bypasses the filesystem cache on a miss so a backfill scan does not evict interactive data. |
+
+### Migrations
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_BOOT_MIGRATE` | `bool` | `True` |  | Apply pending migrations at boot. Set False for any server started from a branch against a shared service, or it applies unmerged migrations. |
-| `LOOM_BOOT_MIGRATE_LEASE_TTL_S` | `int` | `300` |  | Seconds after which a holder that stopped renewing is replaced. |
+| `LOOM_BOOT_MIGRATE_LEASE_TTL_S` | `int` | `300` |  | Seconds after which the boot migration lease's holder, once it stops renewing, is replaced. |
 | `LOOM_BOOT_MIGRATE_LEASE_WAIT_S` | `float` | `900.0` |  | Seconds a contender waits for the holder before boot fails (exit 1, the container restarts); also how long a booting process waits for the provider configuration lock (a sibling's rebuild step may hold it). |
 | `LOOM_MIGRATE_MUTATION_WAIT_S` | `int` | `600` |  | Seconds a migration file waits for the mutations it started (MATERIALIZE, UPDATE, a column type change) to finish on every replica; past it the file fails unrecorded. |
+
+### Vector search
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_VECTOR_SEARCH_EF_SEARCH` | `int` | `256` |  | HNSW candidate list size (`ef_search`) for the helper legs, emitted via vector_search_settings(); tracks ClickHouse's default. The main leg scales its own value with top_k. |
 | `LOOM_VECTOR_SEARCH_INDEX_FETCH_MULTIPLIER` | `float` | `10.0` |  | Post-filter over-fetch for a `vector_similarity` (HNSW) index: the index returns top-N before the tenant predicate drops rows. Sent on uncoded vector reads; coded reads use `vector_search_quantized_fetch_multiplier`. |
 | `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` | `bool` | `True` |  | Send `vector_search_use_quantized_codes = 1` on vector-ranked reads whose column has a `Quantized(...)` codec and whose table has no patch parts: a codes-first scan plus full-precision rescore. A replica that rejects the setting (code 115) drops the fragment and retries. |
@@ -153,6 +168,11 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 
 The code plane: ingest, indexes, search, ask, review.
 
+
+### Switch, test gate and code.ask
+
+One code namespace indexes one repository. No repository is configured by default: set LOOM_CODE_REPO / ORG / NAMESPACE (or LOOM_CODE_REPOS_JSON, or add one from the Repositories page) before anything is indexed. The index-building workers (ingest, SCIP, PR history, graph stats, cards, embed recovery) default off and no-op on a namespace without a git_head watermark or pending work.
+
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler. |
@@ -162,9 +182,14 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_ASK_CACHE_MAX_AGE_DAYS` | `int` | `14` |  | A cached code.ask answer older than this many days is a miss (checked and tombstoned at read time; no table TTL). 0 = no bound. |
 | `LOOM_CODE_ASK_NEGATIVE_CACHE_TTL_S` | `int` | `3600` |  | Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off. |
 | `LOOM_CODE_ASK_LLM_CACHE` | `bool` | `True` |  | code.ask's pre-synthesis LLM calls (identifier proposal, HyDE, concept legs) read the per-namespace exact-prompt response cache; no_cache or a traffic class with llm_cache off bypasses it. |
-| `LOOM_CODE_ORG` | `str` | `''` |  | The scalar repository entry: its loom org, its code namespace and its GitHub `owner/name`. Empty repo = no scalar entry (nothing indexed until a repository is configured); an empty org or namespace is never a default for a code.* request, which then must name its own. |
+
+### Repositories
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_ORG` | `str` | `''` |  | The scalar repository entry's loom org; empty is never a default for a code.* request, which then must name its own. |
 | `LOOM_CODE_NAMESPACE` | `str` | `''` |  | The scalar entry's code namespace, used by a code.* request or `loom code` command that names none; empty = the request must name one. |
-| `LOOM_CODE_REPO` | `str` | `''` |  | The scalar entry's GitHub `owner/name`; empty = no scalar entry. |
+| `LOOM_CODE_REPO` | `str` | `''` |  | The scalar entry's GitHub `owner/name`; empty = no scalar entry, so nothing is indexed until a repository is configured. |
 | `LOOM_CODE_ASK_MEMORY_NAMESPACE` | `str` | `''` |  | The memory namespace code.ask fuses decision/rationale memories (the "why") from into its answer; empty = no enrichment, never guessed. |
 | `LOOM_CODE_ASK_MEMORY_ORG` | `str` | `''` |  | The org of that namespace; empty = `code_org`. |
 | `LOOM_CODE_ORG_READABLE` | `bool` | `False` |  | Who may READ the code index. False: the namespace's own visibility and grants. True: every authenticated principal of the org reads every configured code namespace (right for public or org-internal repos). Writes stay grant-driven. Per-entry "org_readable" in LOOM_CODE_REPOS_JSON. |
@@ -181,6 +206,11 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` |  | Seconds between re-reads of loom.code_repos. |
 | `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S` | `float` | `1800.0` |  | Seconds a bare clone may take before the worker gives up for the pass and retries next pass. |
 | `LOOM_CODE_HISTORY_CLONE_ON_READ` | `bool` | `True` |  | Whether a history read (blame_range, bisect, first_build, lesson checks) on a host without a repository's mirror clones it there in the background. On: every serving host keeps its own full copy of every mirror it is asked about. Off: such a host answers `no_git_mirror` and only the worker's host clones. |
+
+### Git history and mirrors
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_GIT_HISTORY` | `'local' \| 'none'` | `'local'` |  | Where git-history reads (blame, citation commit checks, PR history, commit coverage) come from. local = this host's mirrors; none = an edge host with no mirrors: those reads answer without history. |
 | `LOOM_CODE_MIRROR_WARMUP` | `bool` | `True` |  | Every serving process clones the configured entries' mirrors it lacks at boot, in the background (code/app/index/mirrors.py): a history read answers `no_git_mirror: cloning <entry>` until its mirror is there. A full bare clone per host, again on every new disk: keep code_repos_root on a volume that outlives a rollout. Off: a mirror is cloned only when a read asks for it. |
 | `LOOM_CODE_MIRROR_WARMUP_CONCURRENCY` | `int` | `2` |  | Clones the warm-up runs at once on one host (each after a random wait), so N replicas starting together do not all clone from the remote at once. |
@@ -192,26 +222,36 @@ The code plane: ingest, indexes, search, ask, review.
 
 ### Repository job sandbox
 
-rlimits for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup.
+Resource limits (rlimits) for each process of a sandboxed repository job (clone, fetch, dependency install, compiler-tier harness; code/app/index/sandbox.py). They bound each process, not a job's total (max_pids aside): there is no cgroup.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_SANDBOX_CPU_SECONDS` | `int` | `7200` |  | CPU seconds one process of a sandboxed repository job may use. |
-| `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` |  | Data memory (heap and private mappings, RLIMIT_DATA) a process may use, in MiB. Not address space: node reserves far more of that than it uses. |
+| `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` |  | Data memory (heap and private mappings, RLIMIT_DATA) one process of a sandboxed repository job may use, in MiB. Not address space: node reserves far more of that than it uses. |
 | `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` |  | Processes and threads one job may run at once (RLIMIT_NPROC, set inside the job's user namespace, so other jobs and the server do not count; Linux 5.14+, older kernels count the uid's tasks host-wide). |
 | `LOOM_CODE_SANDBOX_REQUIRED` | `bool` | `False` |  | Set by deployments that ship the sandbox profiles: a repository job refuses to run rather than run unsandboxed, and /v1/health reports the missing sandbox as an error. False: without the sandbox, jobs fall back to plain processes as "Without the sandbox" in code-index-operations.md says. |
-| `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` |  | Largest file a process may write, in MiB (a pack or index.scip). |
-| `LOOM_CODE_GIT_DIR` | `str` | `''` |  | Bare clone the ingest worker fetches into (created by `loom code init`) and its remote. Empty = derived from code_repo: `var/code_repos/<name>.git` and `https://github.com/<owner>/<name>.git`. |
+| `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` |  | Largest file one process of a sandboxed repository job may write, in MiB (a pack or index.scip). |
+
+### Mirror fetch
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_GIT_DIR` | `str` | `''` |  | Bare clone the ingest worker fetches into (created by `loom code init`). Empty = derived from code_repo: `var/code_repos/<name>.git`. |
 | `LOOM_CODE_GIT_REMOTE` | `str` | `''` |  | The scalar entry's fetch remote; empty = `https://github.com/<owner>/<name>.git`. |
 | `LOOM_CODE_GIT_BRANCH` | `str` | `'main'` |  | The scalar entry's branch: the one the ingest worker fetches and indexes. |
 | `LOOM_CODE_GIT_EXTRA_BRANCHES` | `str` | `''` |  | Comma-separated fnmatch globs of extra remote branches the mirror fetches besides the configured one (`release/*` = release branches, `backport/*` = backport staging). Refs are never pruned. Empty = the configured branch only. |
 | `LOOM_CODE_GIT_FETCH_LEDGER_MERGES` | `bool` | `True` |  | Fetch ledger merge commits no branch reaches by sha and pin them under refs/loom/merges/<sha>: one ledger page and at most the batch below per entry per pass; the cursor wraps. Off = branches only. |
 | `LOOM_CODE_GIT_LEDGER_MERGE_PAGE` | `int` | `500` |  | Ledger merge rows checked for a missing sha per entry per pass. |
-| `LOOM_CODE_GIT_LEDGER_MERGE_BATCH` | `int` | `40` |  | 40 shas ≈ 8.5 s |
+| `LOOM_CODE_GIT_LEDGER_MERGE_BATCH` | `int` | `40` |  | Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s). |
 | `LOOM_CODE_GIT_FETCH_PR_HEADS` | `bool` | `True` |  | The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN (refetched when the tip moves, never pruned), so pre-merge reads diff the PR's own head. Only open heads: fetching every PR head is too costly. Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports `head_not_in_mirror`. |
 | `LOOM_CODE_GIT_PR_HEAD_BATCH` | `int` | `200` |  | Max PR heads fetched per shared mirror per ingest pass. |
 | `LOOM_CODE_GH_ITEMS_HEAD_FILL_BATCH` | `int` | `200` |  | Open-PR rows per pass whose head_sha / base_sha / files the PR-history worker fills from the mirror; rows the mirror lacks fall back to GitHub (batch below). |
 | `LOOM_CODE_GH_ITEMS_HEAD_GITHUB_BATCH` | `int` | `20` |  | GitHub `GET /pulls/N` calls per pass for open PRs the mirror lacks; 0 = the mirror path only. |
+
+### Ingest
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_PATH_PREFIXES` | `str` | `''` |  | CSV path prefixes of the scalar entry that are indexed; everything else is skipped. Empty = the whole tree (the ingest denylist still applies). |
 | `LOOM_CODE_GITHUB_TOKEN` | `str` | *(unset)* |  | GitHub token for the default repository: git fetches of a private remote, the PR-history and issue mirrors, and fork lookups. Empty = the REST calls go anonymously (60 requests/h per IP, public repos only; one warning) and the issue mirror is skipped. |
 | `LOOM_CODE_INGEST_ENABLED` | `bool` | `False` |  | Per-merge fast tier: git-poll → diff → re-chunk/re-embed changed files → tree-sitter symbols/edges → context pack → advance watermark. |
@@ -232,6 +272,11 @@ rlimits for each process of a sandboxed repository job (clone, fetch, dependency
 | `LOOM_CODE_INGEST_WALK_BUDGET_SHARE` | `float` | `0.3` |  | Share of that budget the commit phase leaves to the walk (reconcile heal, extractor re-chunk). 0 = commits may take it all. |
 | `LOOM_CODE_INGEST_ROUND_FILES` | `int` | `25` |  | Files per round in the walk, the bootstrap slice and a commit's file list; a round prefetches its per-file resolution reads in two statements. 0 = per-file reads. |
 | `LOOM_CODE_INGEST_LANES` | `int` | `1` |  | Entries whose commits ingest side by side in the commit phase. Each entry's own commits stay one at a time, oldest first (the watermark contract); a lane waits on ClickHouse round trips, not on its capacity, so lanes add throughput. 1 = one commit at a time across all entries. |
+
+### Compiler-tier indexes (SCIP)
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_SCIP_APPLY_ENABLED` | `bool` | `False` |  | SCIP delta apply (compiler-grade tier uploaded via code.scip_ingest). |
 | `LOOM_CODE_SCIP_APPLY_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between SCIP apply passes. |
 | `LOOM_CODE_SCIP_MAX_PART_BYTES` | `int` | `8388608` |  | Max bytes of one code.scip_ingest payload part; a larger part is refused. |
@@ -261,15 +306,20 @@ rlimits for each process of a sandboxed repository job (clone, fetch, dependency
 | `LOOM_CODE_SCIP_PY_DELTA_INTERVAL_SECONDS` | `int` | `600` |  | Seconds between Python delta passes. |
 | `LOOM_CODE_SCIP_PYTHON_PATH` | `str` | `'scip-python'` |  | The scip-python binary: a name looked up on PATH, or a path. |
 | `LOOM_CODE_SCIP_PY_DELTA_TIMEOUT_SECONDS` | `int` | `3600` |  | Seconds the Python delta harness may run before it is killed. |
-| `LOOM_CODE_SCIP_PY_HEAP_MB` | `int` | `16384` |  | Pyright dies silently at 8 GB |
+| `LOOM_CODE_SCIP_PY_HEAP_MB` | `int` | `16384` |  | Node heap size (MiB) given to scip-python; Pyright dies silently at 8 GB. |
 | `LOOM_CODE_SCIP_GO_DELTA_ENABLED` | `bool` | `True` |  | Go compiler-tier deltas: scip-go per touched module of an entry with `scip_producer` "go". Needs the Go toolchain and scip-go (`go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7`, the image's version). |
 | `LOOM_CODE_SCIP_GO_DELTA_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between Go delta passes. |
 | `LOOM_CODE_SCIP_GO_PATH` | `str` | `'scip-go'` |  | The scip-go binary, looked up on PATH or in `code_scip_go_bin_dir`. |
-| `LOOM_CODE_SCIP_GO_BIN_DIR` | `str` | `''` |  | Where `go` and scip-go live when not on PATH |
+| `LOOM_CODE_SCIP_GO_BIN_DIR` | `str` | `''` |  | Directory holding `go` and scip-go when they are not on PATH; empty = PATH only. |
 | `LOOM_CODE_SCIP_GO_DELTA_TIMEOUT_SECONDS` | `int` | `7200` |  | Seconds the Go delta harness may run before it is killed; also the pass deadline. |
-| `LOOM_CODE_SCIP_GO_JOBS` | `int` | `2` |  | Parallel module builds (~4 GB each) |
+| `LOOM_CODE_SCIP_GO_JOBS` | `int` | `2` |  | Go modules the delta harness builds in parallel (about 4 GB of memory each). |
 | `LOOM_CODE_SCIP_GO_MODCACHE` | `str` | `'var/gocache'` |  | Root of the Go module caches kept across passes: one per entry beneath it (<root>/<org>/<namespace>), never shared between repositories. |
-| `LOOM_CODE_SCIP_GO_PRIVATE` | `str` | `''` |  | GOPRIVATE / GONOSUMDB (a vanity import host) |
+| `LOOM_CODE_SCIP_GO_PRIVATE` | `str` | `''` |  | GOPRIVATE and GONOSUMDB for the Go delta harness: module paths fetched directly, without the proxy or checksum database (a vanity import host). Empty = none. |
+
+### PR history
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
 | `LOOM_CODE_PR_HISTORY_ENABLED` | `bool` | `False` |  | Merged-PR history sync (GitHub REST, cursor-resumable). |
 | `LOOM_CODE_PR_HISTORY_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between PR-history sync passes. |
 
@@ -317,7 +367,7 @@ rlimits for each process of a sandboxed repository job (clone, fetch, dependency
 | `LOOM_CODE_GH_ITEMS_ENABLED` | `bool` | `True` |  | Keep loom.code_gh_items current: every issue and PR updated since the last pass via /issues; the first pass reaches back backfill_days. Skipped anonymously. |
 | `LOOM_CODE_GH_ITEMS_BACKFILL_DAYS` | `int` | `730` |  | Days back the first mirror pass (and `loom code` with no start date) reads. |
 
-### Code.pr_check
+### code.pr_check
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -476,7 +526,7 @@ rlimits for each process of a sandboxed repository job (clone, fetch, dependency
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |
 | `LOOM_CODE_SEARCH_ABSTAIN_CARD_BELOW` | `float` | `0.0` |  | A prose question whose nearest file card's cosine is below this abstains `off_domain`; independent of the card leg. 0 = off. |
 | `LOOM_CODE_SEARCH_ABSTAIN_CONFIDENCE_BELOW` | `float` | `0.35` |  | Calibrated confidence below which a result is flagged `low_calibrated_confidence` (still returned). The deployment sets 0.30. |
-| `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` | `float` | `0.4` |  | The calibrated confidences from which a code.search result reads `retrieval_risk` "medium" and "low" (below the first it reads "high"). Code embeddings score a right hit lower than memory text does: on the conceptual question set every right top 3 scored 0.40–0.63, so the memory plane's 0.55 / 0.75 labelled three in four right answers "high". |
+| `LOOM_CODE_SEARCH_MEDIUM_RISK_FROM` | `float` | `0.4` |  | The calibrated confidence from which a code.search result reads `retrieval_risk` "medium"; below it the result reads "high". Code embeddings score a right hit lower than memory text does: on the conceptual question set every right top 3 scored 0.40–0.63, so the memory plane's 0.55 / 0.75 labelled three in four right answers "high". |
 | `LOOM_CODE_SEARCH_LOW_RISK_FROM` | `float` | `0.55` |  | The calibrated confidence from which a code.search result reads `retrieval_risk` "low" (see code_search_medium_risk_from). |
 | `LOOM_CODE_SEARCH_HYDE_KINDS` | `str` | `'responsibility'` |  | The question kinds the hypothetical answer votes on. |
 | `LOOM_CODE_SEARCH_HYDE_CAP` | `float` | `1.0` |  | The list's cap × the two-leg top (the history rule). |
@@ -505,8 +555,8 @@ rlimits for each process of a sandboxed repository job (clone, fetch, dependency
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_COVERAGE_IMPORT_ENABLED` | `bool` | `False` |  | Import per-test line coverage from an instrumented CI run into the test map (`method='coverage'`) and the per-file executed lines (`code_coverage_files`). Off by default; `loom code coverage-import` runs one import by hand whatever this says. |
 | `LOOM_CODE_COVERAGE_SOURCE_URL` | `str` | `''` |  | ClickHouse HTTP endpoint holding the coverage tables (`checks_coverage_lines`, `checks`); "" = no source, the import is a no-op. |
-| `LOOM_CODE_COVERAGE_SOURCE_USER` | `str` | `''` |  | User and password for the source endpoint. |
-| `LOOM_CODE_COVERAGE_SOURCE_PASSWORD` | `str` | *(unset)* |  |  |
+| `LOOM_CODE_COVERAGE_SOURCE_USER` | `str` | `''` |  | User the coverage import signs in to the source endpoint as. |
+| `LOOM_CODE_COVERAGE_SOURCE_PASSWORD` | `str` | *(unset)* |  | Password of `code_coverage_source_user`. |
 | `LOOM_CODE_COVERAGE_SOURCE_DATABASE` | `str` | `'default'` |  | Database of the source tables. |
 | `LOOM_CODE_COVERAGE_NAMESPACES` | `str` | `''` |  | Namespaces (CSV) whose repository the source's runs cover; every other namespace is skipped. |
 | `LOOM_CODE_COVERAGE_SHARDS` | `int` | `16` |  | The run's coverage is read in this many slices by file hash, two statements per slice. One slice must fit the source server's per-query memory, and a source with a per-statement-shape hourly quota (a public playground allows 100) must take a whole import plus a retry: a nightly run read in 16 slices is 16 statements of each shape. |
@@ -1226,7 +1276,7 @@ Embedding and LLM providers.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_EMBEDDING_DIM` | `int` | `3072` |  | Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave it commented out for a local model. |
+| `LOOM_EMBEDDING_DIM` | `int` | `3072` |  | Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave it unset for a local model. |
 | `LOOM_EMBEDDING_PROVIDER` | `'' \| 'openai' \| 'gemini' \| 'compatible' \| 'local' \| 'fake'` | `''` |  | "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini", "local", "fake". Switching providers changes the embedding space: a full re-embed is required. |
 | `LOOM_EMBEDDING_BASE_URL` | `str` | `''` |  | API root for an explicitly selected OpenAI-compatible embedding service, e.g. https://provider.example/v1. Empty is invalid for compatible providers. |
 | `LOOM_EMBEDDING_SEND_DIMENSIONS` | `bool` | `False` |  | Send the optional dimensions request parameter to a compatible endpoint. False uses its native output width; responses must still match embedding_dim. |
@@ -1262,7 +1312,7 @@ Embedding and LLM providers.
 | `LOOM_EMBEDDING_WORKER_IDLE_INTERVAL_SECONDS` | `int` | `30` |  | Sleep after an idle pass (nothing to embed); the 5 s interval resumes once a pass writes a row. |
 | `LOOM_EMBEDDING_WORKER_ORPHAN_FULL_SCAN_SECONDS` | `int` | `1800` |  | Orphan reconciliation: the full memory × embedding anti-join runs once per `full_scan_seconds`; other passes check only memories of the last `recent_seconds`. 0 = full join every pass. |
 | `LOOM_EMBEDDING_WORKER_ORPHAN_RECENT_SECONDS` | `int` | `900` |  | Age window, seconds, of the memories a non-full orphan pass checks. |
-| `LOOM_LLM_RESPONSE_CACHE_TABLE` | `str` | `'loom.llm_response_cache'` |  | The table the wrapper reads and writes; an isolated server whose boot migrations are off points this at its own scratch mirror. |
+| `LOOM_LLM_RESPONSE_CACHE_TABLE` | `str` | `'loom.llm_response_cache'` |  | The table the LLM response cache reads and writes; an isolated server whose boot migrations are off points this at its own scratch mirror. |
 
 ## RateLimit
 
@@ -1470,7 +1520,7 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_LINKS_WEIGHT_MENTION` | `float` | `1.5` |  | Score = bm25_norm (the pair's BM25F as a share of the issue's best) + weight_mention × (1 closing keyword, 0.5 bare mention) + 0.05 × component_match. The stack-frames-in-diff features ride the row unscored. |
 | `LOOM_TRACKER_LINKS_MIN_SCORE` | `float` | `1.0` |  | A consumer (code.backport_gap's issue path, the bisect's fix candidate) takes the top candidate as the fix only above `min_score` AND when a closing keyword names the issue. tracker.links serves every row with its score. |
 
-### Tracker.duplicate_check
+### tracker.duplicate_check
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
