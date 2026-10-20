@@ -110,14 +110,10 @@ def system() -> Iterator[None]:
 
 
 def current() -> str:
-    """The org the current model call is for; "" when none is known. A
-    request's identity counts, a worker's does not: a pass stamps the org of
-    the row it last worked on, which the next row's call must not inherit."""
+    """The org the current model call is for: `for_org`'s, else the
+    request's (`genai.request_org`); "" when neither names one."""
     org = _org.get()
-    if org in _NO_ORG:
-        op = genai.current_operation()
-        org = genai.current_org() if op and not op.startswith("worker.") else ""
-    return "" if org in _NO_ORG else org
+    return org if org not in _NO_ORG else genai.request_org()
 
 
 async def require() -> str:

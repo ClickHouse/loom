@@ -13,6 +13,7 @@ from typing import Any
 from server.auth.fanout import Fanout, resolve_fanout
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import _enrichment_parser_gate_active
 
@@ -87,7 +88,8 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     # concurrently with the plan/LLM/embed stages and are awaited at first use.
     request_rerank_override = (input.rerank or "").strip()
     _rerank_cfg_task: asyncio.Task[Any] | None = None
-    if not request_rerank_override:
+    # A reranker is a model call: an LLM-free read runs only the one its request names.
+    if not request_rerank_override and not reads_llm_free():
         _rerank_cfg_task = create_deferred_task(
             get_namespace_rerank_config(input.org, input.namespace)
         )

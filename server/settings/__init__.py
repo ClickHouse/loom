@@ -30,7 +30,7 @@ from server.settings._memory_search import MemorySearchSettings
 from server.settings._models import ModelSettings
 from server.settings._namespaces import NamespaceSettings
 from server.settings._observability import ObservabilitySettings
-from server.settings._providers import ProviderSettings
+from server.settings._providers import BUILTIN_COHERE, ProviderSettings, is_builtin_cohere
 from server.settings._ratelimit import RateLimitSettings
 from server.settings._runtime import RuntimeSettings
 from server.settings._storage import StorageSettings
@@ -77,6 +77,18 @@ class Settings(
         (`inference_token_audience`): its public address under /v1, where the
         discovery document and the JWKS are served."""
         return f"{self.public_base_url.strip().rstrip('/')}/v1"
+
+    @model_validator(mode="after")
+    def _check_code_rerank_behind_the_gateway(self) -> Settings:
+        """`builtin:cohere` calls Cohere's own API, and the code reranker fails
+        open: while the gateway is required, the default may not name it."""
+        why = self.gateway_required_by()
+        if why and is_builtin_cohere(self.code_search_rerank_default.strip()):
+            raise ValueError(
+                f"{why} refuses LOOM_CODE_SEARCH_RERANK_DEFAULT=builtin:cohere: "
+                "rerank through the gateway"
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_inference_identity(self) -> Settings:
@@ -146,4 +158,11 @@ def log_unknown_env_keys() -> None:
         )
 
 
-__all__ = ["DEV_JWT_SECRET", "Settings", "log_unknown_env_keys", "settings"]
+__all__ = [
+    "BUILTIN_COHERE",
+    "DEV_JWT_SECRET",
+    "Settings",
+    "is_builtin_cohere",
+    "log_unknown_env_keys",
+    "settings",
+]

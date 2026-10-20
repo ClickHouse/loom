@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
@@ -285,12 +286,13 @@ async def _call_tool(
     except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
         from server.observability import genai as _genai
 
-        # Not the previous batch entry's org: this entry's model calls name none and refuse.
+        # Not the previous batch entry's org: this entry's model calls name no org,
+        # so they skip the model caches and refuse.
         _genai.set_identity(operation=op.name, capture_level="off")
 
     start = time.perf_counter()
     try:
-        with gates.tenant_slot(auth, target):
+        with gates.tenant_slot(auth, target), llm_free.serving(op):
             result = await op.handler(input_obj)
     except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
         return _handler_failed(

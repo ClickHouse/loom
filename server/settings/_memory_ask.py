@@ -256,7 +256,7 @@ class MemoryAskSettings(BaseModel):
     memory_ask_precedents_fast_max_age_hours: int = 1
 
     # Exact-prompt LLM response cache for every memory.ask synthesis-path call, keyed by
-    # sha256(system, user, max_tokens, response_format) per model in
+    # sha256(org, system, user, max_tokens, response_format) per model in
     # loom.llm_response_cache; a miss writes fire-and-forget. The evidence is in the key, so
     # a changed memory misses. The namespace globs (comma-separated fnmatch, '' = all) scope
     # the default; a per-request llm_cache wins (benches measuring synthesis send false).

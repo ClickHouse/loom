@@ -48,6 +48,9 @@ _CROSS_CHECKED = {
     "openai_base_url",
     "anthropic_base_url",
     "inference_token_url",
+    # Read with the API roots and the embedder (test_llm_gateway.py).
+    "inference_gateway_required",
+    "inference_gateway_hosts",
     # Read with the token URL, the public URL and the JWT audience and issuers
     # (test_inference_identity_token.py).
     "inference_token_audience",

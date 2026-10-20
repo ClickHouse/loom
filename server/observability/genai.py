@@ -209,11 +209,17 @@ def current_operation() -> str:
     return str((ident or {}).get("operation") or "")
 
 
-def current_org() -> str:
-    """The org the transport (or a worker) stamped on this context; "" when
-    none was."""
-    ident = _identity.get()
-    return str((ident or {}).get("org") or "")
+def request_org() -> str:
+    """The org of the request this context serves, as the transport recorded
+    it once the token was verified; "" outside a request. A worker's identity
+    is not one: a pass stamps the org of the row it last worked on, which says
+    nothing about whose the next text is."""
+    ident = _identity.get() or {}
+    op = str(ident.get("operation") or "")
+    org = str(ident.get("org") or "")
+    if not op or op.startswith("worker.") or org == "*":
+        return ""
+    return org
 
 
 def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> None:

@@ -412,7 +412,7 @@ class MemorySearchInput(BaseModel):
     rerank: RerankName = ""
     # Cost posture. "standard" stages cheap recall first, spending expensive
     # LLM/graph/rerank legs only when the planner or fallback gates justify them.
-    # "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall.
+    # "fast" makes no LLM call (as recipe "fast"); "deep" allows upfront expensive recall.
     retrieval_budget: Literal["fast", "standard", "deep"] = "standard"
     # HyDE: embed an LLM-generated hypothetical answer instead of the raw query to
     # close the question/stored-phrasing vocabulary gap. Left unset, True means
@@ -449,6 +449,9 @@ class MemorySearchInput(BaseModel):
     # context.pack's per-section token budget, threaded down to govern the assembler
     # instead of the module default. 0 = default. Private attr; not on the wire.
     _context_pack_block_tokens: int = 0
+    # Internal: the read makes no LLM call whatever its recipe (context.pack's
+    # search), as the fast posture does, but keeps the recipe's recall width.
+    _llm_free: bool = False
 
 
 # The hit fields that ride only under `include_usage`.
