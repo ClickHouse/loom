@@ -96,10 +96,10 @@ same personal namespace in two orgs.
 The command uses the default AWS credentials of its process. With `--role-arn` it assumes
 that role with them once before reading, so a role it cannot assume fails before any
 ClickHouse work, and again before each upload, and writes under the role's credentials.
-That fits a bucket in another account: the bucket's account grants `s3:PutObject` to a writer role,
-and the writer role trusts only the export's own identity. The export needs no read, list or
-delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse the write when
-another account owns the bucket.
+That fits a bucket in another account: the bucket's account grants `s3:PutObject` to a
+writer role, and the writer role trusts only the export's own identity. The export needs no
+read, list or delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse
+the write when another account owns the bucket.
 
 ## On Kubernetes
 
@@ -123,20 +123,22 @@ kubectl create secret generic loom-analytics-export-key \
 ```
 
 Only the export's pod reads that Secret. The chart refuses to render without
-`nameKeySecret.name`, and refuses `LOOM_ANALYTICS_EXPORT_NAME_KEY` in `env`, `extraEnv` and
-`secrets.extra`, which every web and workers pod reads. It cannot see into
-`secrets.existingSecret` or an `envFrom` source, which those pods read too: keep the key out
-of them.
+`nameKeySecret.name`, and refuses whatever would hand the key to every web and workers pod:
+`LOOM_ANALYTICS_EXPORT_NAME_KEY` in `env`, `extraEnv` or `secrets.extra`, and a
+`nameKeySecret.name` that is the release's Secret (`secrets.existingSecret` or the chart's
+own) or an `envFrom` Secret. It cannot see the contents of those Secrets: keep the key out of
+them.
 
 The chart creates a ServiceAccount `<fullname>-analytics-export` and a CronJob of the same
 name, where `<fullname>` is the chart's full name: `fullnameOverride` when set, else the
 release name when it contains `loom`, else `<release>-loom`, cut to its first 35 characters
-so the name stays within 52 (`kubectl get sa` shows it). The job runs at 00:30 UTC (`schedule`), one run at a time, with up to 3 retries
-and a three-hour deadline over all attempts; each statement may run 20 minutes, and the
-ClickHouse client may retry one, so a slow day can get fewer than four attempts. A refusal
-(exit 2) fails the Job at once instead of retrying. The web and workers pods keep their own
-ServiceAccount, so the role that may assume the writer role is bound to the export's pod
-only. With IRSA, that role's trust names
+so the name stays within 52 (`kubectl get sa` shows it). The job runs at 00:30 UTC
+(`schedule`), one run at a time, with up to 3 retries and a three-hour deadline over all
+attempts; each statement may run 20 minutes, and the ClickHouse client may retry one, so a
+slow day can get fewer than four attempts. A refusal (exit 2) fails the Job at once instead
+of retrying. Its pod takes none of the web pods' `podLabels`, `podAnnotations` or `affinity`.
+The web and workers pods keep their own ServiceAccount, so the role that may assume the
+writer role is bound to the export's pod only. With IRSA, that role's trust names
 `system:serviceaccount:<namespace>:<fullname>-analytics-export`, and its only permission is
 `sts:AssumeRole` on `roleArn`. With EKS Pod Identity, bind the role to the ServiceAccount
 and leave `annotations` empty.
@@ -145,8 +147,9 @@ The job reads ClickHouse with the release's Secret, settings, `extraEnv` and
 `extraVolumes`, as the web pods do, and writes nothing to it. A failed run shows as a
 failed Job; alert on the CronJob's last successful run being more than a day old.
 
-A day whose run fails every attempt, or that misses its start window (`startingDeadlineSeconds`,
-one hour), is not exported later on its own: the next run exports only its own yesterday.
+A day whose run fails every attempt, or that misses its start window
+(`startingDeadlineSeconds`, one hour), is not exported later on its own: the next run
+exports only its own yesterday.
 Export it with a Job made from the CronJob, so it runs under the export's ServiceAccount
 and flags, with `--day` added to its command:
 

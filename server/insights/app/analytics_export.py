@@ -21,9 +21,9 @@ from server.insights.store.analytics_export import ENTITIES, parquet
 # put(key, body) -> True once written, False when the key already exists.
 Put = Callable[[str, bytes], bool]
 
-# A month partition of the ledger or every live memory row: far past the read
-# deadline. The CLI connects inside `statement_timeout(STATEMENT_TIMEOUT_S)`,
-# so the driver's read timeout covers it too.
+# Reading a month partition of the ledger, or every live memory row, can take
+# far longer than the 30-second read deadline. The CLI connects inside
+# `statement_timeout(STATEMENT_TIMEOUT_S)`, so the driver's read timeout covers it too.
 STATEMENT_TIMEOUT_S = 1200
 
 # A shorter key can be searched offline from one known name and its hash.

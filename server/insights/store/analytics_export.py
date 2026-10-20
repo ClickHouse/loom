@@ -94,11 +94,13 @@ NAME_COLUMNS = {"usage": ("org", "namespace", "agent"), "namespaces": ("org", "n
 ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 
-# The file's encodings, whatever the server's profile says: strings as Parquet
-# STRING, not BINARY (a warehouse joins the hashes as strings), and dates as
-# DATE, not UInt16.
-PARQUET_SETTINGS = (
-    "SETTINGS output_format_parquet_string_as_string = 1, output_format_parquet_date_as_uint16 = 0"
+# Pinned whatever the server's profile says: the analyzer (from 26.9 the only
+# one; on 26.4-26.8 a profile can still turn it off, and FULL JOIN USING and
+# alias resolution differ without it), strings as Parquet STRING, not BINARY (a
+# warehouse joins the hashes as strings), and dates as DATE, not UInt16.
+STATEMENT_SETTINGS = (
+    "SETTINGS enable_analyzer = 1, output_format_parquet_string_as_string = 1, "
+    "output_format_parquet_date_as_uint16 = 0"
 )
 
 
@@ -125,4 +127,4 @@ def _hashed(entity: str) -> str:
 async def parquet(entity: str, day: date, *, name_key: tuple[int, int], ch: CHClient) -> bytes:
     """`entity`'s rows for UTC day `day`, as one Parquet file, names hashed under `name_key`."""
     params = {"day": day, "k0": name_key[0], "k1": name_key[1]}
-    return await ch.raw_bytes(f"{_hashed(entity)} {PARQUET_SETTINGS} FORMAT Parquet", params)
+    return await ch.raw_bytes(f"{_hashed(entity)} {STATEMENT_SETTINGS} FORMAT Parquet", params)

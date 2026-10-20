@@ -346,6 +346,10 @@ jobs:
           refused "needs analyticsExport.bucket" "${on[@]}" --set analyticsExport.bucket=
           refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
           refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012
+          # The release Secret (named after the release here) and envFrom Secrets reach every pod.
+          shared="is a Secret every web and workers pod loads"
+          refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom
+          refused "$shared" "${on[@]}" --set "envFrom[0].secretRef.name=ci"
 
   agent-plugins:
     name: coding-agent plugins (node --test)

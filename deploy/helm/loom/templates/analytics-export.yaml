@@ -12,6 +12,14 @@ run of a day keeps the first run's files, so a retry is safe. */}}
 {{- if not .nameKeySecret.name }}
 {{- fail "analyticsExport.enabled needs analyticsExport.nameKeySecret.name, the Secret holding the name hash key" }}
 {{- end }}
+{{- /* Every web and workers pod loads the release Secret and each envFrom Secret. */}}
+{{- $shared := list (include "loom.secretName" $) }}
+{{- range $.Values.envFrom }}
+{{- with .secretRef }}{{ $shared = append $shared .name }}{{ end }}
+{{- end }}
+{{- if has .nameKeySecret.name $shared }}
+{{- fail (printf "analyticsExport.nameKeySecret.name %q is a Secret every web and workers pod loads: give the name key a Secret of its own" .nameKeySecret.name) }}
+{{- end }}
 {{- /* 52: a Job created from the CronJob appends an 11-character suffix. */}}
 {{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export" "max" 52) }}
 apiVersion: v1
@@ -47,15 +55,15 @@ spec:
       # minutes each, more when the client retries one; a slow day may get
       # fewer than four attempts.
       activeDeadlineSeconds: 10800
-      # Exit 2 is a refusal (a day not ended, a missing or short key): a retry
-      # would refuse the same way.
-      # A pod evicted by a drain or preemption is retried without using up an attempt.
       podFailurePolicy:
         rules:
+          # A pod evicted by a drain or preemption is retried without using up an attempt.
           - action: Ignore
             onPodConditions:
               - type: DisruptionTarget
                 status: "True"
+          # Exit 2 is a refusal (a day not ended, a missing or short key): a retry
+          # would refuse the same way.
           - action: FailJob
             onExitCodes:
               containerName: analytics-export
@@ -63,19 +71,16 @@ spec:
               values: [2]
       template:
         metadata:
-          # Not the web pods' podLabels / podAnnotations, as the hook Jobs: a
-          # mesh sidecar injected through them outlives the export and the Job
-          # never completes.
+          # Not the web pods' podLabels, podAnnotations or affinity, as the hook
+          # Jobs: a mesh sidecar injected through them outlives the export and the
+          # Job never completes, and an affinity written for the web pods can
+          # leave this one unschedulable.
           labels:
             {{- include "loom.labels" $ | nindent 12 }}
             app.kubernetes.io/component: analytics-export
         spec:
           restartPolicy: Never
           {{- include "loom.podCommon" (dict "root" $ "leads" false "serviceAccount" $name) | nindent 10 }}
-          {{- with $.Values.affinity }}
-          affinity:
-            {{- toYaml . | nindent 12 }}
-          {{- end }}
           {{- include "loom.waitForDevClickhouse" $ | nindent 10 }}
           containers:
             - name: analytics-export

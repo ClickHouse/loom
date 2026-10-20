@@ -17,7 +17,7 @@ from server.insights.app.analytics_export import export_day, name_hash_key, obje
 from server.insights.store.analytics_export import (
     ENTITIES,
     NAME_COLUMNS,
-    PARQUET_SETTINGS,
+    STATEMENT_SETTINGS,
     name_hash_sql,
 )
 from server.settings import settings
@@ -52,7 +52,7 @@ async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
     assert [(e.entity, e.written) for e in out] == [("usage", True), ("namespaces", False)]
     assert [k for k, _ in seen] == [e.key for e in out]
     for (sql, params), entity in zip(ch.calls, ENTITIES, strict=True):
-        assert sql.endswith(f"{PARQUET_SETTINGS} FORMAT Parquet")
+        assert sql.endswith(f"{STATEMENT_SETTINGS} FORMAT Parquet")
         assert params == {"day": day, "k0": name_key[0], "k1": name_key[1]}
         for column in NAME_COLUMNS[entity]:
             assert f"{name_hash_sql(column)} AS {column}" in sql
