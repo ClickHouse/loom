@@ -111,16 +111,15 @@ def require() -> str:
 
 def names_one() -> bool:
     """Whether the current model call names a customer, as `require` checks,
-    for a job that records a row naming none instead of calling."""
-    try:
-        require()
-    except Unattributed:
-        return False
-    return True
+    for a job that records a row naming none instead of calling. Logs nothing:
+    the row is bad data, not a missed call path."""
+    if not settings.inference_customer_header:
+        return not settings.inference_customer_required
+    return bool(current() or _system.get())
 
 
 # The error a job records on a row that names no customer: retrying cannot
-# help until the row has an org, so the row is given up on at once.
+# help, since a row's org never changes, so the row is given up on at once.
 NO_CUSTOMER = "MODEL_CALL_UNATTRIBUTED: the row names no org to bill"
 
 

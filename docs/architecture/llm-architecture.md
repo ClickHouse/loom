@@ -276,7 +276,7 @@ the shared HTTP client also carries non-model calls, which name no customer.
   (`MODEL_CALL_UNATTRIBUTED`) before anything is sent. A missed call path fails loudly
   instead of being billed to no one. The embedding workers (memory and code) check first and
   give up on a row that names no org at once, recording that error with no model call, since a
-  retry cannot help and is not a provider failure.
+  retry cannot help and the refusal is not a provider failure.
 
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no

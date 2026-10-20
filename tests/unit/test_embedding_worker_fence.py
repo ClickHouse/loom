@@ -163,9 +163,12 @@ async def test_a_stub_naming_no_customer_is_given_up_on_without_a_model_call(
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
     genai._identity.set(None)
     worker_env["stubs"][0]["org"] = org
-    worker_env["embedder"].fail = True  # a call would be a provider failure
+    worker_env["stubs"].append(_stub(memory_key="k2"))  # an org's row in the same batch
     result = await w.run_pass(EmbeddingWorkerConfig(batch_size=10, max_attempts=5))
     assert result.poisoned_count == 1 and result.failed_count == 0
-    (retry,) = [r for batch in worker_env["inserted"] for r in batch if r["embedding_dim"] == 0]
-    assert retry["embed_last_error"] == customer.NO_CUSTOMER
+    assert result.embedded_count == 1
+    rows = [r for batch in worker_env["inserted"] for r in batch]
+    (retry,) = [r for r in rows if r["embedding_dim"] == 0]
+    assert retry["memory_key"] == "k" and retry["embed_last_error"] == customer.NO_CUSTOMER
     assert retry["embed_attempts"] == 1 and retry["embed_failed_at"] is not None
+    assert [r["memory_key"] for r in rows if r["embedding_dim"] == 3] == ["k2"]
