@@ -246,7 +246,7 @@ async def load_active_configuration() -> None:
         )
     )
     changed = target != current_embedding()
-    if setup is not None and _refuse(setup, changed and pending is None, str(active["config_id"])):
+    if setup is not None and _refuse(setup, pending is None, str(active["config_id"])):
         return  # held or kept, retried at the next refresh
     if changed and pending is None and _maintenance_config_id is None:
         _hold_admission(str(active["config_id"]))
@@ -280,19 +280,19 @@ async def load_active_configuration() -> None:
 def _refuse(setup: ProviderSetupInput, hold: bool, config_id: str) -> bool:
     """Whether the gateway check refuses the committed `setup`, as it refuses
     it at load. Then nothing of it applies, its serving vector settings
-    included. With its embedding the one in force, the settings in force
-    serve on; with another (`hold`: and no queued row has taken the hold),
-    the index may be built for that other space, so model work stays held
-    until a configuration the check accepts replaces it."""
+    included. The check reads only the embedding, so a refused one is never
+    the one in force: the index may be built for that other space, and
+    unless a queued row holds requests already (`hold` false), model work
+    stays held until a configuration the check accepts replaces it."""
     global _refused
     refusal = gateway_refusal(setup.embedding)
     if refusal and refusal != _refused:
         log.error("saved model configuration not applied: %s", refusal)
     _refused = refusal
     if refusal and hold:
-        # An ordinary transition hold, taken over from a change still draining:
-        # what replaces it takes it over, and the replacement's commit resumes
-        # it. Until then requests are refused, not asked to retry.
+        # An ordinary transition hold (taken over from any change still holding
+        # it): what replaces it takes it over, and its commit resumes it. Until
+        # then requests are refused, not asked to retry.
         _hold_admission(config_id, refusal)
     return bool(refusal)
 

@@ -173,6 +173,7 @@ async def test_a_reset_needing_a_rebuild_takes_over_a_refusals_hold(
     assert queued["state"] == "queued" and queued["parent_id"].hex == refused.replace("-", "")
     assert runtime._maintenance_config_id == str(queued["config_id"])
     assert store["gate"].closed
+    assert store["gate"].refusal == ""  # a rebuild now holds, retried as one
 
     from server.insights.app import provider_coordinator
 
@@ -213,6 +214,7 @@ async def test_a_save_needing_a_rebuild_takes_over_a_refusals_hold(store: dict[s
     assert result.state == "queued"
     await runtime.load_active_configuration()
     assert runtime._maintenance_config_id == result.config_id and store["gate"].closed
+    assert store["gate"].refusal == ""
 
 
 @pytest.mark.asyncio
@@ -268,6 +270,7 @@ async def test_a_refusal_committed_while_another_transition_holds_then_replaced(
     result = await activation.save_configuration(accepted)
     await runtime.load_active_configuration()  # the queued save takes the hold from m
     assert result.state == "queued" and runtime._maintenance_config_id == result.config_id
+    assert store["gate"].refusal == ""
 
 
 @pytest.mark.asyncio

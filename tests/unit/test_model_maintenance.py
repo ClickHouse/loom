@@ -176,8 +176,13 @@ async def test_a_gate_held_for_a_refused_configuration_answers_a_code_not_retrie
     body = send.await_args_list[1].args[0]["body"]
     assert b"GATEWAY_REQUIRED" in body and b"model_configuration_refused" in body
     assert b"Gemini" not in body  # the reason is the operator's, in /v1/health
+
+
+def test_resuming_a_gate_clears_its_refusal() -> None:
+    gate = ModelWorkGate()
+    gate.close("refused", refusal="refused")
     gate.resume("refused")
-    assert gate.refusal == ""
+    assert not gate.closed and gate.refusal == ""
 
 
 def test_a_gate_held_for_a_refused_configuration_is_not_ready(
@@ -189,6 +194,6 @@ def test_a_gate_held_for_a_refused_configuration_is_not_ready(
     monkeypatch.setattr(model_work_gate, "_gate", gate)
     gate.close("refused", refusal="refused")
     check = model_work_gate.readiness_check()
-    assert not check.ok and "refused" in str(check)
+    assert not check.ok and "model configuration refused" in str(check)
     gate.transfer("refused", "rebuild")  # a replacement takes the hold
     assert "model change in progress" in str(model_work_gate.readiness_check())

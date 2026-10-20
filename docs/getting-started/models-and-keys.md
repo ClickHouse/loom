@@ -235,9 +235,9 @@ matches only if it is listed.
   (or the Gemini embedder) answers 422, and the model check answers
   `gateway_required`. A stored one that the check refuses is not applied, its
   serving vector settings included, and `/v1/health` reports
-  `model_configuration_refused`. With the same embedding as the settings in force,
-  those serve on. With another, the vector tables may hold that other space, so
-  every data-plane request on that server is refused (503 `GATEWAY_REQUIRED`,
+  `model_configuration_refused`. The check reads only the embedding, so a refused
+  configuration always embeds differently from the settings in force, and the vector
+  tables may hold that other space: every data-plane request on that server is refused (503 `GATEWAY_REQUIRED`,
   which neither SDK retries, with no `Retry-After`) and the server is not ready,
   until a configuration the check accepts replaces it or it is reset to the
   environment's. A rolling restart then stops at that server: replace the

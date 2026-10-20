@@ -508,24 +508,6 @@ async def test_a_refused_rebuilt_configuration_with_another_embedding_keeps_mode
     assert "model_configuration_refused" in codes
 
 
-@pytest.mark.asyncio
-async def test_a_refused_configuration_with_the_same_embedding_leaves_the_settings_serving(
-    monkeypatch,
-):
-    s = runtime.settings
-    _behind_the_gateway(s)
-    s.embedding_provider, s.embedding_model, s.embedding_dim = "openai", "text-embedding-test", 3072
-    s.embedding_base_url, s.embedding_send_dimensions = "", False
-    refused = setup_input()
-    monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[prepared_serving_row()]))
-    monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=refused))
-    monkeypatch.setattr(runtime, "gateway_refusal", lambda embedding: "refused for the test")
-    await runtime.load_active_configuration()
-    assert not runtime.get_model_work_gate().closed
-    assert runtime.refused_configuration() == "refused for the test"
-    assert runtime._applied_version == ""
-
-
 def test_a_reset_to_the_environment_clears_a_refused_configuration(monkeypatch) -> None:
     monkeypatch.setattr(
         runtime, "_refused", "LOOM_INFERENCE_GATEWAY_REQUIRED refuses the Gemini embedder"
