@@ -190,6 +190,8 @@ _GROUPS = (
     # A session brief carries a session's goal, decisions and paths
     "session.",
 )
+# The end user tenant A's saved-message canary belongs to.
+_SAVED_USER = "saved-canary-user"
 # Surfaces the suite must exercise with a well-formed body (no 422) or fail.
 _CORE = {
     "memory.search",
@@ -219,6 +221,7 @@ _CORE = {
     "conversation.get",
     "conversation.list",
     "conversation.search",
+    "conversation.search_saved_messages",
     "conversation.threads",
     "run.get",
     "run.list",
@@ -639,6 +642,23 @@ def seed(control_plane_url: str, mint_test_token) -> _Seed:
         },
     )
     assert r.status_code == 200, r.text
+    # The same canary saved for search: the saved-message plane is its own read.
+    r = _post(
+        control_plane_url,
+        tok_a,
+        "conversation.save_message",
+        {
+            "org": org,
+            "namespace": s.ns_a,
+            "agent": "a",
+            "conversation_id": s.thread_id,
+            "message_id": f"saved-{uuid.uuid4().hex[:8]}",
+            "role": "assistant",
+            "content": f"The saved rotation passphrase is {n_cv}.",
+            "user_id": _SAVED_USER,
+        },
+    )
+    assert r.status_code == 200 and r.json().get("indexed") is True, r.text
     s.conversation_nonce = n_cv
     n_run = _canary()
     s.nonces.append(n_run)
@@ -1309,6 +1329,46 @@ def test_positive_control_tenant_a_reads_its_canaries_in_the_tenant_text_planes(
         },
     )
     assert r.status_code == 200 and seed.leaked(r.text), r.text[:300]
+
+
+def test_positive_control_tenant_a_finds_its_saved_canary(control_plane_url, seed, tokens) -> None:
+    """The saved-message canary is real, so tenant B's empty saved search is a
+    refusal, not a vacuous probe."""
+    r = _post(
+        control_plane_url,
+        tokens["a_writer"],
+        "conversation.search_saved_messages",
+        {
+            "org": seed.org,
+            "namespace": seed.ns_a,
+            "agent": "a",
+            "user_id": _SAVED_USER,
+            "query": f"saved rotation passphrase {seed.conversation_nonce}",
+        },
+    )
+    assert r.status_code == 200 and seed.leaked(r.text), r.text[:300]
+
+
+def test_saved_message_search_from_own_namespace_with_the_canary_text_finds_nothing(
+    control_plane_url, seed, tokens
+) -> None:
+    """B searches its own namespace's saved messages with A's saved text, naming
+    A's user: the namespace boundary holds whatever user the body names."""
+    for who in ("b_writer", "b_viewer"):
+        r = _post(
+            control_plane_url,
+            tokens[who],
+            "conversation.search_saved_messages",
+            {
+                "org": seed.org,
+                "namespace": seed.ns_b,
+                "agent": "a",
+                "user_id": _SAVED_USER,
+                "query": f"saved rotation passphrase {seed.conversation_nonce}",
+            },
+        )
+        assert r.status_code in _OK_STATUSES, f"{who}: {r.status_code} {r.text[:200]}"
+        assert not seed.leaked(r.text), f"{who}: {seed.leaked(r.text)}"
 
 
 def test_conversation_search_from_own_namespace_with_the_canary_text_finds_nothing(
