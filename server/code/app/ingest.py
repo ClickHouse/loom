@@ -36,7 +36,7 @@ _REFRESH_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 _REFRESH_TASKS = TaskSet()
 # A refresh holds the namespace's lease while it runs, so CI calls that land on
 # different replicas run one pass, not one each; a dead holder's lease expires.
-_LEASE_TTL_S = 120
+_LEASE_TTL_S = 120  # not a setting: the lease takeover protocol between replicas
 
 
 async def _take_lease(org: str, ns: str) -> leases.Lease | None:

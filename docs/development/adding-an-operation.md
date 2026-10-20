@@ -95,13 +95,14 @@ calibration_get = Operation(
     output_model=CalibrationGetOutput,
     handler=handle_calibration_get,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.VIEWER,
     audit=False,
 )
 
 OPERATIONS: list[Operation] = [calibration_get]
 ```
+
+Its latency budget is one entry of `OP_BUDGETS_P99_MS` in `server/settings/catalog.py`, where every op's budget is set, `"calibration.get": 60,` (the op's design-target p99 in ms; a successful call over it emits a `budget.violated` event). Request shapes the handler notes at run time (`server.observability.budget_shape`) get their own budgets in `OP_SHAPE_BUDGETS_P99_MS`, and the catalogue lists them. `tests/unit/test_op_budgets.py` fails an op with no entry. A deployment tunes one op with `LOOM_LATENCY_BUDGET_OVERRIDES` and all of them with `LOOM_LATENCY_BUDGET_MULTIPLIER`.
 
 The declaration lives in the group's ops module, `server/<domain>/api/ops_<group>.py`, which imports the models and the handler. Append it to the module's `OPERATIONS` list. A **new group module** is imported and appended to `_OPERATION_MODULES` in `server/operations/registry.py`.
 
@@ -111,12 +112,10 @@ The declaration lives in the group's ops module, `server/<domain>/api/ops_<group
 | `input_model`, `output_model` | yes      | Pydantic models.                                                                                                                                                    |
 | `handler`                     | yes      | Async callable: input model → output model.                                                                                                                         |
 | `idempotent`                  | yes      | Safe to retry on a transient failure. The SDKs and clients rely on it.                                                                                              |
-| `budget_p99_ms`               | yes      | Design-target latency. A successful call over it emits a `budget.violated` event (`LOOM_LATENCY_BUDGET_MULTIPLIER` scales it).                                      |
 | `required_role`               | yes      | `Role.VIEWER`, `WRITER`, `ADMIN`, `ORG_ADMIN` or `PLATFORM_ADMIN`.                                                                                                  |
 | `audit`                       | no       | `True`: success writes one row to `loom.audit_log`. Set it for anything that changes memory, grants, policy or configuration.                                       |
 | `writes`                      | no       | The op changes stored state although a viewer may call it and a retry is safe (a feedback row, a seen-marker). A writer role or `audit=True` already says "writes". |
 | `maturity`                    | no       | `stable` (default) or `experimental`. See [step 5](#5-check-reach-and-maturity).                                                                                    |
-| `shape_budgets_p99_ms`        | no       | `{shape: ms}` for request shapes the handler notes at run time (`server.observability.budget_shape`); listed in the catalogue.                                      |
 | `skip_namespace_authz`        | no       | Skip the transport's namespace check for ops that act **on** a namespace (join, leave, register); the handler enforces its own rules. The role check still runs.    |
 | `deployment_scoped`           | no       | The op reads facts about the deployment (its build, its registry), not any namespace's data; a scoped token passes with its best per-namespace role.                |
 | `row_scoped`                  | no       | Addressed by an org-wide id; the handler authorizes the row with `row_in_scope` and hides a foreign row as not found.                                               |

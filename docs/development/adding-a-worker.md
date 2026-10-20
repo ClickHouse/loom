@@ -64,7 +64,7 @@ set_query_tag("worker.my_loop")
 
 ## 3. Add its settings
 
-Add the switch and the cadence to the area's settings mixin (`server/settings/_memory.py`, `_code.py`, `_tracker.py`, …). Each comment becomes the row's text in the generated [configuration reference](../reference/configuration.md).
+Add the switch and the cadence to the area's section of `server/settings/catalog.py` (`Memory`, `Code`, `Tracker`, …). Each comment becomes the row's text in the generated [configuration reference](../reference/configuration.md).
 
 ```python
     # Lease sweeper: return expired leases to todo, resume deferred tasks at
@@ -98,7 +98,6 @@ Default a worker **off** when it needs credentials, spends on a provider, or ser
 | `module`                               | The full module path. Imported only when the worker is enabled, so boot stays fast and optional dependencies stay optional.               |
 | `enabled`                              | The settings flag that switches it on; `None` = always on.                                                                                |
 | `interval`                             | The settings field holding the cadence in seconds.                                                                                        |
-| `interval_in_module`                   | `interval` names a module attribute instead of a setting.                                                                                 |
 | `pass_attr`                            | The pass function's name (default `run_pass`).                                                                                            |
 | `also_requires`                        | A second settings flag the worker needs (the ledger it reads, the plane it serves); off → the worker is off.                              |
 | `idle_interval`                        | Settings field for the sleep after an idle pass.                                                                                          |

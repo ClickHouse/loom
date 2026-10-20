@@ -7,7 +7,8 @@ Loom emits a span per operation, plus logs and metrics. Spans carry `loom.operat
 `loom.org`, `loom.namespace`, `loom.agent`, `loom.request_id`, and `loom.user_id` /
 `enduser.id` when present. By default Loom inserts them straight into the
 `default.otel_*` tables on its own ClickHouse service, in the collector's schema, so
-HyperDX reads them with no collector to run. The column layout is
+HyperDX reads them with no collector to run. With `LOOM_CLICKSTACK_DATABASE` set, the
+tables are in that database instead of `default`, here and in every query below. The column layout is
 `schemas/otel/clickstack_otel_tables.sql`; if ClickStack changes its schema, that file
 must follow.
 

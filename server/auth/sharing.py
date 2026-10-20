@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 
 # Ancestors a collection inherits from, at most; `collection.move` refuses a
 # deeper tree.
-MAX_DEPTH = 8
+MAX_DEPTH = 8  # not a setting: a lower value would cut inheritance in trees already stored
 # A collection is known by its name, so the gate needs no read to tell one,
 # and nothing that fails to load can let another rule admit one. The prefixes
 # are reserved: `namespace.register` refuses them.
@@ -227,6 +227,7 @@ async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Ro
 
 
 # Grant-map reads one request runs at once: each holds a ClickHouse connection.
+# not a setting: one request's fan-out; the ClickHouse pool bounds the total
 _GRANT_READS_AT_ONCE = 8
 
 

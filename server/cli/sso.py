@@ -19,6 +19,16 @@ _ADOPT_HELP = (
 )
 
 
+def _duration(seconds: int) -> str:
+    """`1 day`, `6 h` or `45 min`: the largest whole unit."""
+    if seconds % 86400 == 0:
+        days = seconds // 86400
+        return f"{days} day" + ("s" if days != 1 else "")
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} h"
+    return f"{seconds // 60} min"
+
+
 def register_sso_cli(sub: Any) -> None:
     p_sso = sub.add_parser("sso", help="Carry password accounts over to single sign-on.")
     sso = p_sso.add_subparsers(dest="subcommand", required=True)
@@ -59,8 +69,9 @@ def register_sso_cli(sub: Any) -> None:
     p_unlink.set_defaults(func=_cmd_unlink)
     p_password_link = sso.add_parser(
         "password-link",
-        help="Print a one-time link (a day) that sets the password of an email's SSO "
-        "accounts, for after single sign-on is turned off.",
+        help="Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by "
+        "default) that sets the password of an email's SSO accounts, for after single "
+        "sign-on is turned off.",
     )
     p_password_link.add_argument("--email", required=True)
     p_password_link.add_argument(
@@ -178,8 +189,8 @@ def _cmd_password_link(args: argparse.Namespace) -> int:
             )
         print(f"{base}/oauth/set-password?code={code}")
         print(
-            "  one use, for a day, while single sign-on is off; sets the password of "
-            + ", ".join(namespaces)
+            f"  one use, for {_duration(settings.password_link_ttl_seconds)}, while single "
+            "sign-on is off; sets the password of " + ", ".join(namespaces)
         )
         return 0
 

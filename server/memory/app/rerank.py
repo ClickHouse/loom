@@ -61,7 +61,13 @@ from server.settings import BUILTIN_COHERE, is_builtin_cohere, settings
 
 log = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
+
+def _timeout() -> httpx.Timeout:
+    # not a setting: the connect, write and pool waits; the read is the setting
+    return httpx.Timeout(
+        connect=2.0, read=settings.memory_search_rerank_timeout_s, write=2.0, pool=2.0
+    )
+
 
 _BUILTIN_COHERE_DEFAULT_MODEL = "rerank-english-v3.0"
 _COHERE_API_URL = "https://api.cohere.com/v2/rerank"
@@ -185,7 +191,7 @@ async def rerank(
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
             refuse_off_gateway(url)  # its own client: the model client's hook never runs
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=_timeout()) as client:
                 resp = await client.post(url, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
@@ -226,13 +232,13 @@ async def _rerank_with_builtin_cohere(
     query: str,
     candidates: list[RerankCandidate],
 ) -> list[RerankCandidate]:
-    """Cohere rerank via their hosted API. Reads COHERE_API_KEY from env.
+    """Cohere rerank via their hosted API, with COHERE_API_KEY.
 
     Fail-open: any error returns candidates in input order.
     """
-    import os
+    from server.core.provider_keys import rerank_key
 
-    api_key = os.environ.get("COHERE_API_KEY", "")
+    api_key = rerank_key("cohere")
     if not api_key:
         log.warning(
             "builtin:cohere rerank requested but COHERE_API_KEY unset; falling back to input order",
@@ -260,7 +266,7 @@ async def _rerank_with_builtin_cohere(
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
             refuse_off_gateway(_COHERE_API_URL)
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=_timeout()) as client:
                 resp = await client.post(_COHERE_API_URL, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()

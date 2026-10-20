@@ -8,6 +8,7 @@ import {
   SETTINGS_ITEM,
   groupAdminItems,
   isDrawerView,
+  operatorItems,
   scopeHint,
   type NavItem,
 } from "./Sidebar";
@@ -121,5 +122,20 @@ describe("the admin drawer reads as workflows", () => {
     const withUsers = groupAdminItems([...ADMIN_BASE, { id: "admin:users", label: "Users", icon: ADMIN_BASE[0].icon }]);
     expect(withUsers.map((g) => g.label)).toEqual(["Review", "Observe", "Access"]);
     expect(groupAdminItems([])).toEqual([]);
+  });
+});
+
+describe("operator entries", () => {
+  const who = (roles: string[]) => ({ authenticated: true, roles }) as never;
+  it("open Users to an org admin and Deployment settings to a platform admin alone", () => {
+    expect(operatorItems(who(["org_admin"])).map((i) => i.id)).toEqual(["admin:users"]);
+    expect(operatorItems(who(["platform_admin"])).map((i) => i.id)).toEqual(["admin:users", "admin:settings"]);
+    expect(operatorItems(who(["admin"]))).toEqual([]);
+  });
+  it("file Deployment settings under Deployment, for every org", () => {
+    const groups = groupAdminItems(operatorItems(who(["platform_admin"])));
+    expect(groups.map((g) => g.label)).toEqual(["Access", "Deployment"]);
+    expect(scopeHint(must(groups[1]?.items[0], "the settings entry"))).toBe("for every org on this Loom");
+    expect(isDrawerView("admin:settings")).toBe(true);
   });
 });

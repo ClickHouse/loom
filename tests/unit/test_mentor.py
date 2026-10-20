@@ -525,7 +525,14 @@ def test_profile_is_cached_per_agent_and_a_failure_is_remembered_briefly(
     assert asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 6.0)) is None
     assert len(ch2.sqls) == before
     assert (
-        asyncio.run(m.mentor_profile("o", "ns", "a", clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1))
+        asyncio.run(
+            m.mentor_profile(
+                "o",
+                "ns",
+                "a",
+                clock=lambda: 5.0 + m.FAILURE_TTL_SECONDS + 1,
+            )
+        )
         is None
     )
 

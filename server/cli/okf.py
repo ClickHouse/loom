@@ -67,7 +67,7 @@ from server.memory.domain.trust import actor_for
 _PAGE = 1000
 _BULK = 500
 # Listings of a namespace that keeps changing before the export gives up calling it complete.
-_LIST_ATTEMPTS = 3
+_LIST_ATTEMPTS = 3  # not a setting: a CLI's consistency retry while a namespace changes
 # Every concept row the import writes carries this source_trace prefix; --prune deletes
 # nothing else.
 _TRACE_PREFIX = "okf:"

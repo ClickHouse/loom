@@ -65,7 +65,6 @@ _MAX_SRC_FILES = 20
 _MAX_TOUCHED = 40
 _MAX_WIDE = 5
 _MAX_PREFIXES = 3
-_DIFF_TIMEOUT_S = 25.0
 
 
 # ---------------------------------------------------------------- the source
@@ -117,7 +116,7 @@ async def _diff_between(
         base,
         head,
         max_bytes=max_bytes,
-        timeout_s=_DIFF_TIMEOUT_S,
+        timeout_s=settings.code_conventions_diff_timeout_s,
     )
     diff = cv.parse_unified_diff(text, truncated=truncated)
     if truncated:

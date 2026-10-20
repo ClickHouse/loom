@@ -122,7 +122,7 @@ async def verify_live_key_uniqueness(
     """
     live = await client.query_one(
         "SELECT uuid, engine, sorting_key FROM system.tables "
-        "WHERE database = 'loom' AND name = {table:String}",
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.table},
     )
     if (

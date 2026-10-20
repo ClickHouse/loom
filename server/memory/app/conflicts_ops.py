@@ -28,10 +28,10 @@ from server.memory.api.models_conflicts import (
     _ConflictRow,
 )
 from server.operations.read_projection import project_rows
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-_COUNT_TTL_S = 60.0
 _count_cache: dict[tuple[str, str, ReadFilters], tuple[float, int]] = {}
 
 
@@ -47,7 +47,7 @@ async def _conflicted_count_cached(
     key = (org, namespace, scope)
     hit = _count_cache.get(key)
     now = time.monotonic()
-    if not fresh and hit is not None and now - hit[0] < _COUNT_TTL_S:
+    if not fresh and hit is not None and now - hit[0] < settings.memory_conflicts_count_ttl_s:
         return hit[1]
     n = int(await repo.count_conflicted(org, namespace, scope=scope))
     if len(_count_cache) > 1024:
@@ -68,9 +68,9 @@ async def handle_conflicts_list(
         keys = await conflicts_repo.conflicted_keys(input.org, input.namespace, scope=scope)
         return ConflictsListOutput(rows=[], keys=keys)
     if input.count_only:
-        # The sidebar badge wants a number every minute from every open tab. One count per (org,
-        # namespace) per `_COUNT_TTL_S` serves them all, and the count reads no value column —
-        # reading the rows costs ~33 MB per tick on a large namespace.
+        # The sidebar badge wants a number every minute from every open tab. One count per
+        # (org, namespace) per `memory_conflicts_count_ttl_s` serves them all, and the count
+        # reads no value column — reading the rows costs ~33 MB per tick on a large namespace.
         total = await _conflicted_count_cached(
             conflicts_repo, input.org, input.namespace, scope, fresh=input.fresh
         )

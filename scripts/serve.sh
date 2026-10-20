@@ -1,21 +1,24 @@
 #!/bin/sh
-# The image's web tier. LOOM_WEB_WORKERS comes from the environment, else from
-# the env file the server reads (.env outside Docker); unset in both, it starts
-# one uvicorn process per CPU this container may use, bounded by its memory and
-# at most 8 (server/core/web_workers.py). The count is exported so the server's
-# rate limiter divides by the same number. The deployment's workers run in the
+# The image's web tier. LOOM_WEB_WORKERS, LOOM_RUNTIME_DIR and
+# LOOM_TRUSTED_PROXIES come from the environment, else from the env file or the
+# settings file, in the server's own order (server/settings/launch.py, one load
+# for the three). With no count set anywhere it starts one uvicorn process per
+# CPU this container may use, bounded by its memory and at most 8
+# (server/core/web_workers.py). The count is exported so the server's rate
+# limiter divides by the same number. The deployment's workers run in the
 # one process holding the ClickHouse workers lease (server/workers/leader.py).
 set -eu
 
 chosen=""
-# LOOM_RUNTIME_DIR, like the count, may be pinned in the env file alone.
-pinned=${LOOM_RUNTIME_DIR:-}
-if [ -z "$pinned" ]; then
-  pinned=$(python -m server.core.env_file LOOM_RUNTIME_DIR)
+launch_runtime_dir="" launch_web_workers="" launch_trusted_proxies=""
+if [ -z "${LOOM_RUNTIME_DIR:-}" ] || [ -z "${LOOM_WEB_WORKERS:-}" ] || [ -z "${LOOM_TRUSTED_PROXIES:-}" ]; then
+  # Assigned first, so a settings load that fails stops the launcher (set -e).
+  resolved=$(python -m server.settings.launch runtime_dir web_workers trusted_proxies)
+  eval "$resolved"
 fi
-if [ -z "${LOOM_WEB_WORKERS:-}" ]; then
-  LOOM_WEB_WORKERS=$(python -m server.core.env_file LOOM_WEB_WORKERS)
-fi
+pinned=${LOOM_RUNTIME_DIR:-$launch_runtime_dir}
+LOOM_WEB_WORKERS=${LOOM_WEB_WORKERS:-$launch_web_workers}
+LOOM_TRUSTED_PROXIES=${LOOM_TRUSTED_PROXIES:-$launch_trusted_proxies}
 if [ -z "$LOOM_WEB_WORKERS" ]; then
   LOOM_WEB_WORKERS=$(python -m server.core.web_workers)
   chosen=1

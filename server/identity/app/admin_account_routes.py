@@ -95,13 +95,15 @@ async def sso_link(input: LinkInput, info: Admin) -> dict[str, Any]:
 
 @router.post("/v1/admin/sso.unlink")
 async def sso_unlink(input: EmailInput, info: Admin) -> dict[str, Any]:
+    """Detach the email's accounts from their SSO sign-in (see `loom sso unlink`)."""
     accounts = await account_admin.unlink(input.email, input.org, by=_by(info))
     return {"unlinked": [{"org": org, "namespace": ns} for org, ns in accounts]}
 
 
 @router.post("/v1/admin/sso.password_link")
 async def sso_password_link(input: EmailInput, info: Admin, request: Request) -> dict[str, Any]:
-    """A one-time link (a day) that gives the email's SSO accounts a password."""
+    """A one-time link (valid for `password_link_ttl_seconds`) that gives the email's SSO
+    accounts a password."""
     try:
         code, namespaces = await account_admin.password_link(input.email, input.org, by=_by(info))
     except ValueError as e:
@@ -171,6 +173,7 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
 
 @router.post("/v1/admin/bots.list")
 async def bots_list() -> dict[str, Any]:
+    """Every registered bot: its namespaces and roles, key or issuer, and limits."""
     rows = await machines.listed()
     return {
         "bots": [
@@ -200,4 +203,5 @@ class NameInput(_Input):
 
 @router.post("/v1/admin/bots.disable")
 async def bots_disable(input: NameInput, info: Admin) -> dict[str, Any]:
+    """Disable a bot: its proofs are refused and the tokens it holds revoked."""
     return {"disabled": await account_admin.disable_bot(input.name, by=_by(info))}

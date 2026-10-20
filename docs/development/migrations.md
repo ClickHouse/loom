@@ -13,8 +13,11 @@ This page holds the rules for writing a migration. How a deployment applies them
   (a CI step and the deploy preflight) fails on either. A file renamed with its text
   unchanged is not ledger-only: its SHA-256 names it, and it is recorded under the new
   name without running again.
-- Every file addresses `loom.<table>`, so the schema always lives in a database named
-  `loom` whatever `LOOM_CH_DATABASE` says.
+- Every file addresses `loom.<table>` and `loom_telemetry.<table>`. The runner maps
+  them to `LOOM_CH_DATABASE` and `LOOM_CH_TELEMETRY_DATABASE` as it sends each
+  statement (`server/core/ch_names.py`), so the checksum is over the file as written.
+  A database is compared by value as `currentDatabase()` or a bound name, never a
+  literal `'loom'` (`tests/unit/test_ch_names.py`).
 
 ## Numbering
 

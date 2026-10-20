@@ -58,3 +58,15 @@ def test_clear_all_empties_every_cache(clock: list[float]) -> None:
     two.put("b", 2)
     clear_all()
     assert len(one) == len(two) == 0
+
+
+def test_a_callable_ttl_is_read_at_each_put(clock: list[float]) -> None:
+    """A cache whose TTL is a setting reads it per put: a change applies to the next entry."""
+    ttl = [10.0]
+    c: TtlCache[str, int] = TtlCache(lambda: ttl[0])
+    c.put("a", 1)
+    ttl[0] = 2.0
+    c.put("b", 2)
+    assert c.ttl_s == 2.0
+    clock[0] += 3.0
+    assert c.get("a") == 1 and c.get("b") is None

@@ -37,13 +37,11 @@ from server.memory.store import session_briefs as repo
 from server.observability.budget_shape import note_budget_shape
 from server.observability.genai import staged
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
 _MAX_SOURCE_SESSIONS = 20
-# A full revision is ~600-1,500 output tokens; the cap leaves room for a
-# verbose model, and a cut-off answer is salvaged key by key.
-_REVISION_MAX_TOKENS = 3000
 
 
 def resolve_key(inp: Any) -> str:
@@ -134,7 +132,7 @@ async def _revise_window(
             user=sb.user_prompt(
                 prev, condensed, window=index, windows=total, context_line=context_line
             ),
-            max_tokens=_REVISION_MAX_TOKENS,
+            max_tokens=llm_max_tokens("session_brief_revision"),
             response_format={"type": "json_object"},
         )
     except Exception as e:  # noqa: BLE001 — a brief without the model beats no brief

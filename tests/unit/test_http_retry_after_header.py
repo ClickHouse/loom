@@ -37,7 +37,6 @@ def _raise(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> HTTPException:
         output_model=_Out,
         handler=_handler,
         idempotent=True,
-        budget_p99_ms=10_000,
         required_role=Role.VIEWER,
     )
     call = http._HttpCall(request_id="rid-1", identity={"namespace": "ns"})

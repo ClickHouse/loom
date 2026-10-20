@@ -31,7 +31,6 @@ OPERATIONS: list[Operation] = [
         output_model=PolicySetOutput,
         handler=handle_policy_set,
         idempotent=True,
-        budget_p99_ms=400,
         required_role=Role.ADMIN,
         audit=True,
     ),
@@ -41,7 +40,6 @@ OPERATIONS: list[Operation] = [
         output_model=PolicyListOutput,
         handler=handle_policy_list,
         idempotent=True,
-        budget_p99_ms=200,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -51,7 +49,6 @@ OPERATIONS: list[Operation] = [
         output_model=PolicyDeleteOutput,
         handler=handle_policy_delete,
         idempotent=True,
-        budget_p99_ms=400,
         required_role=Role.ADMIN,
         audit=True,
     ),
@@ -61,7 +58,6 @@ OPERATIONS: list[Operation] = [
         output_model=PolicyCheckOutput,
         handler=handle_policy_check,
         idempotent=True,
-        budget_p99_ms=500,
         required_role=Role.VIEWER,
     ),
     Operation(
@@ -71,7 +67,6 @@ OPERATIONS: list[Operation] = [
         output_model=PolicyDecisionsOutput,
         handler=handle_policy_decisions,
         idempotent=True,
-        budget_p99_ms=300,
         required_role=Role.VIEWER,
     ),
 ]

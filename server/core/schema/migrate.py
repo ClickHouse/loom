@@ -40,9 +40,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from server.core.ch_errors import error_code as _error_code
+from server.core.ch_names import NamedClient
 from server.core.hashing import sha256_text as _checksum
 from server.core.leases import LOCK_TABLE
 from server.core.paths import MIGRATIONS_DIR
@@ -92,7 +93,7 @@ def client(
 
     from server.core.ch_target import connection_kwargs
 
-    c = clickhouse_connect.get_client(
+    driver = clickhouse_connect.get_client(
         **connection_kwargs(),
         # A statement waits for its mutation on every replica; the read
         # timeout must outlast that wait, which the runner bounds itself.
@@ -107,10 +108,11 @@ def client(
     )
     from clickhouse_connect.driver.httpclient import HttpClient
 
-    c.server_tz = UTC
-    if not retries and isinstance(c, HttpClient):
-        c.http_retries = 0
-    return c
+    driver.server_tz = UTC
+    if not retries and isinstance(driver, HttpClient):
+        driver.http_retries = 0
+    # A migration names the `loom` alias; the wrapper names the configured database.
+    return cast("Client", NamedClient(driver))
 
 
 def _reads_loom_table(stmt: str) -> bool:
@@ -234,7 +236,7 @@ _MUTATED_TABLE = re.compile(r"^\s*(?:ALTER\s+TABLE|DELETE\s+FROM)\s+loom\.(\w+)"
 
 _PENDING_MUTATIONS_SQL = (
     "SELECT table, mutation_id, command, latest_fail_reason FROM system.mutations "
-    "WHERE database = 'loom' AND table IN {tables:Array(String)} AND NOT is_done "
+    "WHERE database = currentDatabase() AND table IN {tables:Array(String)} AND NOT is_done "
     "ORDER BY create_time LIMIT 100"
 )
 
@@ -488,8 +490,8 @@ def _install_vector_width(ch: Client) -> int | None:
     from server.settings import settings
 
     rows = ch.query(
-        "SELECT table, name, compression_codec FROM system.columns WHERE database = 'loom' "
-        "AND table IN {tables:Array(String)}",
+        "SELECT table, name, compression_codec FROM system.columns "
+        "WHERE database = currentDatabase() AND table IN {tables:Array(String)}",
         parameters={"tables": sorted(CODED_TABLES)},
     ).result_rows
     widths: Counter[int] = Counter()

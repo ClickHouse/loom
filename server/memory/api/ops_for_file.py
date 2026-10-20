@@ -12,9 +12,6 @@ memory_for_file = Operation(
     output_model=MemoryForFileOutput,
     handler=handle_memory_for_file,
     idempotent=True,
-    # One FINAL scan filtered by array predicates;
-    # it sits on the PreToolUse path, so the hook bounds it at 3 s anyway.
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )

@@ -14,10 +14,7 @@ from server.identity.domain.read_scope import ReadFilters
 from server.memory.store import code_links as links_store
 from server.memory.store import code_plane_reads as reads
 from server.memory.store.code_links import LinkRow
-
-# The branch's own read and parse, a share of the code plane's enrichment bound: past
-# it the lesson is served as trunk last checked it.
-_PARSE_TIMEOUT_S = 0.2
+from server.settings import settings
 
 
 async def lesson_namespaces(org: str, code_namespace: str, extra: Sequence[str]) -> list[str]:
@@ -118,7 +115,7 @@ async def _definitions_at(
     """The definitions `qualified_name` names in `paths` at `head`, by identity; None
     where the files cannot be read here: no git mirror holding `head` (LOOM_GIT_HISTORY=none,
     a host still cloning or fetching it, a PR head it lacks), one that fails, or a read and
-    parse slower than `_PARSE_TIMEOUT_S`."""
+    parse slower than `memory_code_plane_parse_timeout_s`."""
     from server.code.app import memory_links as code
     from server.code.app.index import gitrepo
 
@@ -129,7 +126,7 @@ async def _definitions_at(
         *(code.parsed(org, code_namespace, head, p, named=named) for p in dict.fromkeys(paths))
     )
     try:
-        files = await asyncio.wait_for(parse, _PARSE_TIMEOUT_S)
+        files = await asyncio.wait_for(parse, settings.memory_code_plane_parse_timeout_s)
     except (gitrepo.GitError, code.ParseFailed, TimeoutError):
         return None
     here: dict[tuple[str, str], Definition] = {}

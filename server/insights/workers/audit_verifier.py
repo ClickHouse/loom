@@ -22,6 +22,7 @@ from typing import Any
 
 from server.observability import audit
 from server.observability.audit import row_matches_hash
+from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -30,7 +31,6 @@ log = logging.getLogger(__name__)
 # Rows read per page of the window scan, and the most one pass reads. A
 # window past the cap is reported (`truncated`) rather than read unbounded.
 VERIFY_PAGE_ROWS = 10_000
-VERIFY_MAX_ROWS = 500_000
 # Break keys one tamper row lists; a break past it is reported next pass.
 MAX_BREAK_KEYS = 1000
 
@@ -50,7 +50,7 @@ class AuditVerifierResult:
     breaks: list[dict[str, Any]] = field(default_factory=list)
     windows_sealed: int = 0
     windows_verified: int = 0
-    # The window held more than VERIFY_MAX_ROWS rows; the newest went unchecked.
+    # The window held more than `audit_verify_max_rows_per_pass` rows; the newest went unchecked.
     truncated: bool = False
     # Breaks this pass found that no earlier tamper row reported.
     new_breaks: int = 0
@@ -141,7 +141,7 @@ def break_key(b: dict[str, Any]) -> str:
 
 async def _check_rows(cfg: AuditVerifierConfig, result: AuditVerifierResult) -> None:
     """Re-hash the look-back window page by page (keyset on ts, request_id,
-    row_hash), holding one page in memory, at most VERIFY_MAX_ROWS rows."""
+    row_hash), holding one page in memory, at most `audit_verify_max_rows_per_pass` rows."""
     from server.insights.store import audit as audit_repo
 
     after: tuple[Any, str, str] | None = None
@@ -164,11 +164,11 @@ async def _check_rows(cfg: AuditVerifierConfig, result: AuditVerifierResult) -> 
             )
         if len(page) < VERIFY_PAGE_ROWS:
             return
-        if result.rows_checked >= VERIFY_MAX_ROWS:
+        if result.rows_checked >= settings.audit_verify_max_rows_per_pass:
             result.truncated = True
             log.warning(
                 "audit verifier: window holds more than %d rows; the rest is unchecked",
-                VERIFY_MAX_ROWS,
+                settings.audit_verify_max_rows_per_pass,
             )
             return
         last = page[-1]

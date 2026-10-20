@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from server.code.domain.index import citations as cit
+from server.settings import settings
 
 BODY = """### Root cause
 
@@ -482,7 +483,6 @@ def test_at_commit_line_beyond_eof_at_commit_and_unknown_commit() -> None:
 
 
 def test_at_commit_leg_is_capped_at_twenty_calls() -> None:
-    from server.code.app import citations as h
 
     files = {f"src/f{i}.cpp": {"lang": "cpp", "loc": 100, "indexed_commit": ""} for i in range(30)}
     repo = _Repo(files=files)
@@ -491,9 +491,11 @@ def test_at_commit_leg_is_capped_at_twenty_calls() -> None:
         repo, text, at_commit="abc", resolve=lambda rev: "a" * 40, show=lambda p: b"x\n" * 100
     )
     shows = [c for c in calls if c[0] == "show"]
-    assert len(shows) == h.GIT_CALL_CAP - 2 and out.at_commit["capped"] is True
+    assert (
+        len(shows) == settings.code_citations_git_call_cap - 2 and out.at_commit["capped"] is True
+    )
     unchecked = [c for c in out.citations if c["target"].get("at_commit") == {"checked": False}]
-    assert len(unchecked) == 30 - (h.GIT_CALL_CAP - 2)
+    assert len(unchecked) == 30 - (settings.code_citations_git_call_cap - 2)
     assert "capped" in out.note
 
 

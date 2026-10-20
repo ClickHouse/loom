@@ -30,7 +30,6 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-_DISCOVERY_TTL = 3600.0
 # issuer -> (expiry_epoch, openid-configuration document)
 _discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _jwk_clients: dict[str, PyJWKClient] = {}
@@ -48,13 +47,13 @@ async def _discover() -> dict[str, Any]:
     now = time.time()
     if cached and cached[0] > now:
         return cached[1]
-    async with httpx.AsyncClient(timeout=10.0) as c:
+    async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as c:
         r = await c.get(f"{issuer}/.well-known/openid-configuration")
         r.raise_for_status()
         doc: dict[str, Any] = r.json()
     if str(doc.get("issuer") or "").rstrip("/") != issuer:
         raise ValueError(f"discovery issuer {doc.get('issuer')!r} is not {issuer!r}")
-    _discovery_cache[issuer] = (now + _DISCOVERY_TTL, doc)
+    _discovery_cache[issuer] = (now + settings.auth_oidc_discovery_ttl_s, doc)
     return doc
 
 
@@ -100,7 +99,7 @@ async def build_authorize_url(
 
 async def _token_request(form: dict[str, str]) -> dict[str, Any]:
     doc = await _discover()
-    async with httpx.AsyncClient(timeout=10.0) as c:
+    async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as c:
         r = await c.post(
             doc["token_endpoint"],
             data={
@@ -168,7 +167,7 @@ async def revoke(refresh_token: str) -> None:
         endpoint = (await _discover()).get("revocation_endpoint")
         if not endpoint:
             return
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as c:
             await c.post(
                 endpoint,
                 data={
@@ -197,7 +196,9 @@ def signing_key(jwks_uri: str, id_token: str) -> Any:
     cache, and an unknown `kid` refetches once, which follows IdP rotation."""
     client = _jwk_clients.get(jwks_uri)
     if client is None:
-        client = _jwk_clients[jwks_uri] = PyJWKClient(jwks_uri, timeout=10)
+        client = _jwk_clients[jwks_uri] = PyJWKClient(
+            jwks_uri, timeout=settings.identity_provider_timeout_s
+        )
     return client.get_signing_key_from_jwt(id_token).key
 
 
