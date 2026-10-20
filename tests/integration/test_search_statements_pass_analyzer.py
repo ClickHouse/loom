@@ -1335,15 +1335,13 @@ def test_storage_housekeeping_statements_pass_the_analyzer(ch_client) -> None:
     )
 
     for sql, params in (
-        (_STORAGE_PARTS_SQL, {"tables": list(STORAGE_TABLES)}),
-        (_VIEW_REFRESH_SQL, {}),
+        (_STORAGE_PARTS_SQL, {**database_parameters(), "tables": list(STORAGE_TABLES)}),
+        (_VIEW_REFRESH_SQL, database_parameters()),
         (_SLI_LAG_SQL, {}),
         (_SLI_MISSED_SQL, {}),
     ):
         try:
-            ch_client.query(
-                f"EXPLAIN QUERY TREE {sql}", parameters={**database_parameters(), **params}
-            )
+            ch_client.query(f"EXPLAIN QUERY TREE {sql}", parameters=params)
         except Exception as exc:  # pragma: no cover - the assertion message is the point
             raise AssertionError(
                 f"storage statement rejected by the analyzer: {str(exc)[:300]}\n{sql}"

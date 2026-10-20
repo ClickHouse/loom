@@ -258,16 +258,15 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
     )
 
 
-def _row(ch: Any, sql: str) -> dict[str, int]:
-    from server.observability.otel_probe_client import database_parameters
-
-    res = ch.query(sql, parameters=database_parameters())
+def _row(ch: Any, sql: str, params: dict[str, Any] | None = None) -> dict[str, int]:
+    res = ch.query(sql, parameters=params)
     return {k: int(v or 0) for k, v in zip(res.column_names, res.result_rows[0], strict=True)}
 
 
 @pytest.mark.parametrize("seed", [3, 17])
 def test_one_pass_census_equals_the_per_invariant_statements(ch_client, seed: int) -> None:
     from server.observability import otel_probes
+    from server.observability.otel_probe_client import database_parameters
 
     prefix = f"census_eq_{uuid.uuid4().hex[:8]}_"
     created: list[str] = []
@@ -281,7 +280,9 @@ def test_one_pass_census_equals_the_per_invariant_statements(ch_client, seed: in
                 pass
         _seed(ch_client, prefix, random.Random(seed))
         expected = _row(ch_client, _retarget(_reference_sql(), prefix))
-        got = _row(ch_client, _retarget(otel_probes._invariants_sql(), prefix))
+        got = _row(
+            ch_client, _retarget(otel_probes._invariants_sql(), prefix), database_parameters()
+        )
         assert {k: got[k] for k in COUNTS} == expected
         assert all(expected[k] != 0 for k in COUNTS), expected
     finally:
