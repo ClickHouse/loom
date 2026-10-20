@@ -33,6 +33,7 @@ RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 # What a customer or feature header value carries unencoded (`customer.headers`).
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
+_HEADER_NAME_TEXT = re.compile(r"[A-Za-z0-9._~:@-]+")
 
 
 class ProviderSettings(ModelSettings):
@@ -89,12 +90,11 @@ class ProviderSettings(ModelSettings):
     # True (a cell serving several customers): refuse to start without
     # inference_customer_header, so no model call goes out unattributed.
     inference_customer_required: bool = False
-    # How the customer header names an org, as the gateway knows it; `{org}` is
-    # replaced by the org id ("{org}" = the id as is).
+    # How the customer header names an org, as the gateway knows it: `{org}` is the
+    # org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is).
     inference_customer_format: str = "{org}"
-    # JSON object from Loom's feature names (hyde, extract_typed, memory.search,
-    # worker.embedding, ...) to the gateway's; "*" names the one for any other.
-    # "" = Loom's own names.
+    # JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...)
+    # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
     inference_feature_map_json: Annotated[str, JsonObject] = ""
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
@@ -187,15 +187,17 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_CUSTOMER_FORMAT must contain {org}, and around it only "
                 "letters, digits and . _ ~ : @ -, which a header carries as they are"
             )
-        if not all(_HEADER_TEXT.fullmatch(v) for v in self.feature_map().values()):
+        if not all(_HEADER_NAME_TEXT.fullmatch(v) for v in self.feature_map().values()):
             raise ValueError(
-                "inference_feature_map_json: each gateway feature name is letters, digits "
+                "LOOM_INFERENCE_FEATURE_MAP_JSON: each gateway feature name is letters, digits "
                 "and . _ ~ : @ -, which a header carries as they are"
             )
-        if self.inference_customer_header and not self.inference_system_customer.strip():
+        if self.inference_customer_header and not _HEADER_NAME_TEXT.fullmatch(
+            self.inference_system_customer
+        ):
             raise ValueError(
                 "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "
-                "LOOM_INFERENCE_CUSTOMER_HEADER is set"
+                "LOOM_INFERENCE_CUSTOMER_HEADER is set: letters, digits and . _ ~ : @ -"
             )
         return self
 

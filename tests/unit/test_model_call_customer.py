@@ -430,6 +430,13 @@ def test_an_operator_reranker_carries_the_customer_and_refuses_outside_its_fail_
             {"LOOM_INFERENCE_CUSTOMER_HEADER": "X-Customer", "LOOM_INFERENCE_SYSTEM_CUSTOMER": " "},
             "LOOM_INFERENCE_SYSTEM_CUSTOMER",
         ),
+        (
+            {
+                "LOOM_INFERENCE_CUSTOMER_HEADER": "X-Customer",
+                "LOOM_INFERENCE_SYSTEM_CUSTOMER": "loom deployment",
+            },
+            "LOOM_INFERENCE_SYSTEM_CUSTOMER",
+        ),
     ],
 )
 def test_settings_refuse_headers_a_call_could_not_send(monkeypatch, env, error) -> None:
@@ -605,6 +612,8 @@ def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeyp
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, "inference_feature_map_json"),
         ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud/{org}"}, "as they are"),
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": "search/expand"}'}, "as they are"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": null}'}, "map names to strings"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": ""}'}, "as they are"),
     ],
 )
 def test_settings_refuse_a_cell_that_could_not_name_its_customers(monkeypatch, env, error) -> None:
@@ -623,3 +632,5 @@ def test_the_system_customer_is_named_as_configured_not_formatted(metered, monke
         assert customer.headers()["X-Customer"] == "loom-deployment"
     with customer.system(), customer.for_org("acme"):
         assert customer.headers()["X-Customer"] == "cloud:acme"
+    with customer.system(), customer.for_org("loom-deployment"):  # an org named like it
+        assert customer.headers()["X-Customer"] == "cloud:loom-deployment"

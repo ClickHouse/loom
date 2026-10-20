@@ -84,7 +84,8 @@ def require() -> str:
     """The customer the current model call is for, checked before anything is
     sent, cached or recorded: "" with no customer header configured. Raises
     Unattributed, and logs it, when the call names none."""
-    if not settings.inference_customer_header:
+    # Load refuses a required cell without the header; never treat one as unmetered.
+    if not (settings.inference_customer_header or settings.inference_customer_required):
         return ""
     org = current()
     if org:
@@ -111,12 +112,8 @@ def headers() -> dict[str, str]:
     org = require()
     if not org:
         return {}
-    # The deployment's own calls name the system customer as configured; an
-    # org is named as the gateway knows it.
-    if org != current():
-        named = org
-    else:
-        named = settings.inference_customer_format.replace("{org}", org)
+    # An org is named as the gateway knows it; the system customer as configured.
+    named = settings.inference_customer_format.replace("{org}", org) if current() else org
     # Header values are latin-1 with no line breaks: quote whatever the org adds.
     out = {settings.inference_customer_header: quote(named, safe="-._~:@")}
     if settings.inference_feature_header:
