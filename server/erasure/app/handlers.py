@@ -284,7 +284,12 @@ async def _authorize_status_read(row: RequestStatusRow) -> bool:
         return True
     row_org = str(row["org"])
     if str(row["scope_type"]) == "namespace":
-        return await authz.row_in_scope(row_org, str(row["scope_value"]), Role.VIEWER)
+        namespace = str(row["scope_value"])
+        # An org admin may erase a collection its grants do not open (a deleted
+        # one's documents go no other way), so it sees that erasure's status.
+        if sharing.is_collection(namespace) and _org_wide_admin(auth, row_org):
+            return True
+        return await authz.row_in_scope(row_org, namespace, Role.VIEWER)
     # A user_id saga spans every namespace of the org, and a scoped token's authority is its
     # namespaces — org membership is a flat token's gate, never a scoped one's.
     return auth.org in ("*", row_org) and not auth.has_ns_roles()
@@ -340,8 +345,9 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
             return None
         where = "" if admin_view else " AND scope_type = 'namespace'"
         params: dict[str, object] = {}
-        if not auth.has_role(Role.PLATFORM_ADMIN):
-            # A collection's erasures show only to whom the collection shows.
+        if not (admin_view or auth.has_role(Role.PLATFORM_ADMIN)):
+            # A collection's erasures show only to whom the collection shows, and
+            # to an org admin, who may request them.
             where += (
                 " AND (scope_type != 'namespace'"
                 " OR NOT startsWith(scope_value, {col_prefix:String})"

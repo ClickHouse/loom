@@ -14,12 +14,17 @@ ONE_SPELLING = ("sa:", *PRINCIPAL_PREFIXES)
 _ID = re.compile(r"[a-z0-9][a-z0-9._@-]{0,127}")
 
 
+def is_principal_id(ident: str) -> bool:
+    """Whether `ident` is a well-formed principal id (lowercase, as `_ID`)."""
+    return _ID.fullmatch(ident) is not None
+
+
 def principal_id(value: str, prefix: str) -> str:
     """The id of `value` when it is `prefix<id>` with a well-formed id, else ''."""
     if not value.startswith(prefix):
         return ""
     ident = value[len(prefix) :]
-    return ident if _ID.fullmatch(ident) else ""
+    return ident if is_principal_id(ident) else ""
 
 
 def is_reserved_subject(subject: str) -> bool:

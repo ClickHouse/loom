@@ -187,6 +187,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("groups.remove_member", (("OTHER", "INSERT"),)),
     ("personal.retire", (("OTHER", "INSERT"),)),
     ("collections.forget_owner", (("OTHER", "INSERT"), ("OTHER", "INSERT"))),
+    ("subject_last_seen.delete", ((D, "loom.subject_last_seen"),)),
     (
         "conversations.tombstone",
         (

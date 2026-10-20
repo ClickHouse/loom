@@ -350,7 +350,7 @@ def test_an_erasure_rewrite_outranks_a_row_versioned_by_a_faster_clock() -> None
     assert steps_principals._NEW_VERSION.startswith("greatest(version + 1,")
 
 
-# ── a third review's cases ────────────────────────────────────────────────
+# ── principals, erasure and the transports ───────────────────────────────
 
 
 @pytest.mark.parametrize("header", ["User:alice", "GROUP:finance", "Agent:helper"])
@@ -783,3 +783,39 @@ def test_a_personal_collection_is_not_deleted_as_a_namespace() -> None:
     mine = NamespaceDeleteInput(org=ORG, namespace=personal_name(ORG, "user:bob"))
     with pytest.raises(ValidationError, match="erasure"):
         asyncio.run(handle_namespace_delete(mine))
+
+
+def test_an_outage_answers_503_for_a_collection_as_for_any_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service in front of Loom must tell an outage from a revoke: the
+    collection gate and the readable set raise the 503, never a 403 or an
+    empty list."""
+    from server.core.errors import BackendUnavailableError
+
+    async def _down(_org: str) -> sharing.Tree:
+        raise BackendUnavailableError("tree unreadable", operation="tree")
+
+    monkeypatch.setattr(sharing, "tree", _down)
+    user = _user("alice")
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(sharing.check(user, Role.VIEWER, ORG, "col-hr"))
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(sharing.readable(user, ORG))
+
+
+def test_every_op_an_end_user_reaches_without_a_namespace_is_known() -> None:
+    """An op that names no namespace and is not org-level passes the role gate
+    on the end user's org membership alone: memory.get_by_id authorizes its
+    row's namespace, and erasure.status is refused by the end user's own-user
+    read scope. A new one must say which it does."""
+    from server.operations.registry import ALL_OPERATIONS
+
+    reachable = sorted(
+        o.name
+        for o in ALL_OPERATIONS
+        if o.required_role.value <= Role.VIEWER.value
+        and not (o.skip_namespace_authz or o.deployment_scoped)
+        and "namespace" not in o.input_model.model_fields
+    )
+    assert reachable == ["erasure.status", "memory.get_by_id"], reachable

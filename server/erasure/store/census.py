@@ -324,6 +324,8 @@ _CENSUS: tuple[Substrate, ...] = (
 # step cannot appear without saying whether the census sees its table.
 #   entity_canonical_map.tombstone   — alias map, no memory content.
 #   agent_events.scrub               — identity scrubbed, rows kept for cost.
+#   subject_last_seen.delete         — a gateway end user's newest-call row: an
+#                                       identifier, no memory content.
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.
 #   consolidated.tombstone           — loom.memory rows under another identity,
@@ -375,6 +377,7 @@ CODE_INDEX_STEP_ONLY_TABLES: tuple[str, ...] = (
 STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
     "agent_events.scrub": ("loom.agent_events",),
+    "subject_last_seen.delete": ("loom.subject_last_seen",),
     "shared.tombstone": ("loom.shared",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
     "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
@@ -496,10 +499,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.grant_claims": "auth plane: no code path writes it; never holds memory content.",
     "loom.service_accounts": "auth plane: service-account definitions.",
     "loom.user_state": "per-subject UI state (default namespace).",
-    "loom.subject_last_seen": (
-        "one row per (org, subject) with the newest ledger call time; "
-        "subjects, not memory rows — the ledger it aggregates is agent_events.scrub's."
-    ),
     # -- ledgers of the erasure itself, kept by design ----------
     "loom.erasure_requests": "the erasure ledger; scope_value names the scope, 90-day TTL.",
     "loom.erasure_reversals": "reversal ledger: memory ids/keys restored after an erasure.",

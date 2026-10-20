@@ -136,15 +136,40 @@ async def scrub_events_by_user(
 ) -> int:
     """Replace user_id with '<erased>' on loom.agent_events, and the
     `memory_key` column and the identifier entries of `args` that named the
-    subject's rows. Preserves aggregate cost rollups; removes the identity
-    and what it pointed at."""
+    subject's rows; on a gateway's end user's own calls, the `subject` that
+    names them (`user:<user_id>`) too. Preserves aggregate cost rollups;
+    removes the identity and what it pointed at."""
+    where = "org = {org:String} AND (user_id = {uid:String} OR subject = {p:String})"
     return await count_then_mutate(
         "loom.agent_events",
-        count_where="org = {org:String} AND user_id = {uid:String}",
-        mutation=EVENTS_SCRUB_MUTATION,
-        mutation_where="org = {org:String} AND user_id = {uid:String}",
-        params={"org": org, "uid": user_id},
+        count_where=where,
+        mutation=EVENTS_SCRUB_MUTATION
+        + f", subject = if(subject = {{p:String}}, '{ERASED}', subject)",
+        mutation_where=where,
+        params={"org": org, "uid": user_id, "p": "user:" + user_id},
         final=False,
+        ch=ch,
+    )
+
+
+async def delete_last_seen_by_user(
+    org: str,
+    user_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """The newest-call row of a gateway's end user (`user:<user_id>`). Its
+    refresh reads only ledger rows newer than its mark, which the scrub has
+    already taken the subject off, so the row is not written back."""
+    where = "org = {org:String} AND subject = {p:String}"
+    return await count_then_mutate(
+        "loom.subject_last_seen",
+        count_where=where,
+        mutation="DELETE",
+        mutation_where=where,
+        params={"org": org, "p": "user:" + user_id},
+        final=False,
+        lightweight=True,
         ch=ch,
     )
 

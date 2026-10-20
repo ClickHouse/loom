@@ -23,6 +23,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from server.core import grant_cache
+from server.core.errors import BackendUnavailableError
 from server.core.principals import PERSONAL_PREFIX, USER, personal_name, principal_id
 from server.operations.base import Role, rank_role
 
@@ -241,6 +242,8 @@ async def readable(auth: AuthInfo | None, org: str) -> list[str]:
         if auth.has_ns_roles() or auth.creator:
             capped = await roles(auth, org, sorted(shared))
             shared = {ns for ns, r in capped.items() if r is not None}
+    except BackendUnavailableError:
+        raise  # an outage answers 503, as for any namespace: never "every share is gone"
     except Exception as e:  # noqa: BLE001 — what cannot be read is not readable
         log.warning("readable collections of %s in %s not resolved: %s", auth.subject, org, e)
         note_unreadable()
@@ -262,6 +265,8 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
         raise refusal
     try:
         granted = await role(auth, org, namespace)
+    except BackendUnavailableError:
+        raise  # an outage answers 503, as for any namespace, so a caller retries
     except Exception as e:  # a tree or grant that cannot be read admits nothing: refused
         note_unreadable()
         raise refusal from e

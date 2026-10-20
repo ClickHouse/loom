@@ -138,8 +138,8 @@ async def authorize(
     # provisions for the effective user. A gateway's end user gets a personal
     # collection instead, the first time a request addresses `@me`.
     if is_end_user(auth):
-        # Of the ops no namespace gates, an end user may only make and list
-        # collections: no directory self-service (register, join, browse).
+        # Of the ops no namespace gates, an end user may call only those in
+        # END_USER_ORG_OPS: no directory self-service (register, join, browse).
         org_level = op.skip_namespace_authz or op.deployment_scoped
         if org_level and op.name not in END_USER_ORG_OPS:
             raise PermissionError(f"{op.name} is not open to a gateway's end user")

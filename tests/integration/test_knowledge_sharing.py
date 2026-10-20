@@ -545,6 +545,14 @@ def test_an_erased_users_id_leaves_the_collections_and_grants_they_made(
 ) -> None:
     col = _collection(gw, "bob", f"col-bobs-{uuid.uuid4().hex[:6]}")
     gw.ok("bob", "grants.create", {"namespace": col, "subject": "user:carol", "role": "viewer"})
+
+    def _ledgered() -> int:
+        return ch_client.query(
+            "SELECT count() FROM loom.agent_events WHERE org = {o:String} AND subject = 'user:bob'",
+            parameters={"o": gw.org},
+        ).result_rows[0][0]
+
+    wait_until(lambda: _ledgered() > 0, max_wait=30, description="bob's calls are ledgered")
     admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
     _erase_user(control_plane_url, admin, gw.org, "bob")
     left = {
@@ -556,8 +564,41 @@ def test_an_erased_users_id_leaves_the_collections_and_grants_they_made(
             ("loom.namespace_grants", "granted_by = 'user:bob'"),
             ("loom.collections", "owner = 'user:bob'"),
             ("loom.namespaces", "owner_email = 'user:bob'"),
+            ("loom.subject_last_seen", "subject = 'user:bob'"),
         )
     }
     assert left == dict.fromkeys(left, 0), left
+    assert _ledgered() == 0, "bob's calls stay in the ledger for cost, with no subject"
     carol = gw.ok("carol", "collection.list", {})["collections"]
     assert [c["namespace"] for c in carol if not c["personal"]] == [col], "carol's grant stays"
+
+
+def test_an_org_admin_erases_a_deleted_collection_and_follows_the_erasure(
+    gw: Gateway, control_plane_url: str, mint_test_token: Any
+) -> None:
+    col = _collection(gw, "alice", f"col-old-{uuid.uuid4().hex[:6]}")
+    _add(gw, "alice", col, f"to be erased {_nonce()}")
+    gw.ok("alice", "collection.delete", {"namespace": col})
+    admin = mint_test_token(org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="o")
+
+    def _as_admin(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        r = httpx.post(
+            f"{control_plane_url}/v1/{op}",
+            json={"org": gw.org, **body},
+            headers={"Authorization": f"Bearer {admin}"},
+            timeout=180,
+        )
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    erasure = _as_admin(
+        "erasure.request", {"scope_type": "namespace", "scope_value": col, "requester": "ops"}
+    )
+    status = _as_admin("erasure.status", {"erasure_id": erasure["erasure_id"]})
+    assert status["found"] and status["scope_value"] == col
+    listed = _as_admin("erasure.list", {})
+    assert erasure["erasure_id"] in {e["erasure_id"] for e in listed["rows"]}
+    # A gateway's end user holding the id reads nothing of it: its reads are
+    # pinned to its own rows, which a saga's status is not.
+    theirs = gw.call("bob", "erasure.status", {"erasure_id": erasure["erasure_id"]})
+    assert theirs.status_code == 403, theirs.text

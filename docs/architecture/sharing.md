@@ -135,6 +135,17 @@ chunks per collection, the readable set scattered through the sort order (p50 of
 `namespaces_skipped`. Smaller granules read fewer rows for a handful of collections but
 were 6–8 times slower at 1,000, so the default granule stays.
 
+A lexical or hybrid search first reads the BM25 statistics (chunk count and mean length) of
+the namespaces its process has not cached yet, in one statement; each process keeps them
+for a few minutes. Cold, on a tenant of 10,000 collections and 320,000 chunks (p50 of 5):
+
+| Readable collections | Rows read | Read    | Memory  | p50   |
+| -------------------- | --------- | ------- | ------- | ----- |
+| 1                    | 1,675     | 0.1 MB  | 5.8 MB  | 5 ms  |
+| 10                   | 16,731    | 0.7 MB  | 5.6 MB  | 8 ms  |
+| 1,000                | 319,866   | 19.1 MB | 26.8 MB | 12 ms |
+| 10,000               | 320,000   | 19.1 MB | 41.9 MB | 35 ms |
+
 A watermark move re-reads only what its kind made stale, in each process, once per value
 and on its next use. On the 48,000-collection tenant (5,000 users, 200 groups of 25,
 84,000 grant rows; p50 of 7):
@@ -159,9 +170,11 @@ again), deletes their uploaded originals that no other writer's document shares,
 every grant naming `user:<id>`, blanks their id as the issuer of the grants they gave
 others (those grants stay), removes them from every group, and retires their personal
 collection's directory row (`namespace.delete` and `collection.delete` refuse a personal
-collection: it goes only with its user's erasure). Deleting a SCIM group revokes the
-grants that named it, so a group made later under the same id starts with none. Collections that hold other writers'
-documents stay: Loom deletes only what its writer asked to delete. A user-scope
+collection: it goes only with its user's erasure). The request ledger keeps the user's
+calls for cost with their `user:<id>` subject scrubbed, and the user's newest-call row is
+deleted. Deleting a SCIM group revokes the grants that named it, so a group made later
+under the same id starts with none. Collections that hold other writers' documents stay:
+Loom deletes only what its writer asked to delete. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
 read: an org admin may erase a collection's rows without reading them, and a platform
 admin sees every collection.

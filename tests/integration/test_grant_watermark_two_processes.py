@@ -1,5 +1,5 @@
-"""A revoke, or a member's removal from a group, written by one process is
-enforced by another within the poll interval, through the grant watermark in a
+"""A revoke, a member's removal from a group, or a collection detached from its
+parent, written by one process, is enforced by another within the poll interval, through the grant watermark in a
 live ClickHouse.
 
 The child process caches what it reads, then reads it in a loop; the parent
@@ -50,6 +50,8 @@ async def _admitted(kind: str, org: str) -> bool:
 
     if kind == "grant":
         return bool((await grant_cache.grant_map(org, "alice@example.com")).rank("team"))
+    if kind == "tree":  # the parent's grants reach the child
+        return "col-parent" in (await sharing.tree(org)).lineage("col-child")
     return bool(await sharing.groups_of(org, "user:bob"))
 
 
@@ -99,6 +101,20 @@ def _run_change(kind: str, org: str, step: str) -> None:
         if kind == "grant":
             await grants_repo.insert_row(_grant(org, revoked=step == "change"))
             return
+        if kind == "tree":
+            # As collection.move writes a detach: the tree row, then the watermark.
+            from server.core import grant_cache
+            from server.identity.store import collections as collections_repo
+
+            if step == "setup":
+                await collections_repo.write(collections_repo.collection_row(org, "col-parent"))
+            parent = "col-parent" if step == "setup" else ""
+            after = await collections_repo.stored_version(org, "col-child")
+            await collections_repo.write(
+                collections_repo.collection_row(org, "col-child", parent=parent, after=after)
+            )
+            await grant_cache.changed(org, kind=grant_cache.COLLECTIONS)
+            return
         members = ["user:bob"] if step == "setup" else []
         row = scim_groups.group_row(
             org, "readers", display_name="Readers", external_id="", members=members
@@ -108,7 +124,7 @@ def _run_change(kind: str, org: str, step: str) -> None:
     asyncio.run(_connected(_work))
 
 
-@pytest.mark.parametrize("kind", ["grant", "group"])
+@pytest.mark.parametrize("kind", ["grant", "group", "tree"])
 def test_another_process_denies_within_the_window(kind: str) -> None:
     org = unique_org("watermark")
     _run_change(kind, org, "setup")

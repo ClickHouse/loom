@@ -42,7 +42,7 @@ from server.auth.scim_routes import (
 )
 from server.core import grant_cache
 from server.core.ch import get_client, own_write_reads, set_query_tag
-from server.core.principals import USER, principal_id
+from server.core.principals import USER, is_principal_id
 from server.observability import audit
 from server.observability.metrics import record_auth_refusal
 from server.settings import settings
@@ -96,7 +96,9 @@ async def _caller(request: Request) -> _Caller:
         record_auth_refusal(e, transport="scim")
         raise ScimError(401, message) from None
     if not auth.gateway:
-        raise ScimError(403, "groups are pushed with the org's gateway token")
+        refused = PermissionError("groups are pushed with the org's gateway token")
+        record_auth_refusal(refused, transport="scim")
+        raise ScimError(403, str(refused))
     return _Caller(org=auth.org, actor=auth.subject)
 
 
@@ -174,7 +176,7 @@ def _members(value: Any) -> list[str]:
     out = []
     for m in value or []:
         ident = str((m or {}).get("value") or "") if isinstance(m, dict) else ""
-        if not principal_id(USER + ident, USER):
+        if not is_principal_id(ident):
             raise ScimError(400, f"a member is a user id, not {ident!r}", "invalidValue")
         out.append(USER + ident)
     return out
@@ -277,7 +279,7 @@ async def create_group(request: Request, caller: _Caller = _CALLER) -> JSONRespo
     org = _gateway_org(caller)
     body = await read_body(request)
     external = str(body.get("externalId") or "")
-    group_id = external if principal_id(USER + external, USER) else uuid.uuid4().hex
+    group_id = external if is_principal_id(external) else uuid.uuid4().hex
     members = _members(body.get("members"))
     async with group_change(org, group_id):
         if await fetch_group(org, group_id) is not None:

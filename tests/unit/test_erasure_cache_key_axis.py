@@ -360,8 +360,10 @@ def test_events_scrub_rewrites_memory_key_and_the_identifier_args_in_one_mutatio
         "subject",
     ):
         assert f"'{key}'" in sql, key
-    assert "WHERE (org = {org:String} AND user_id = {uid:String})" in sql
-    assert params["uid"] == "alice"
+    # A gateway's end user is named by its subject too.
+    assert "WHERE (org = {org:String} AND (user_id = {uid:String} OR subject = {p:String}))" in sql
+    assert "subject = if(subject = {p:String}, '<erased>', subject)" in sql
+    assert (params["uid"], params["p"]) == ("alice", "user:alice")
     # the identity tuple never reaches args (event_args strips it); the scrub list is the rest
     assert not (set(memory_steps.ARGS_SCRUB_KEYS) & IDENTITY_KEYS)
     assert erasure_census.STEP_ONLY_TABLES["agent_events.scrub"] == ("loom.agent_events",)
