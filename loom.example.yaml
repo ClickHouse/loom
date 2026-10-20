@@ -3765,8 +3765,8 @@ settings:
 
   # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
   # server/settings/catalog.py): an integer replaces that op's budget, "3x" multiplies
-  # it. Checked after the per-consumer overrides and `admin/budget.set`; malformed =
-  # logged once and ignored. '' = the table as declared. [restart]
+  # it. Checked after the per-consumer overrides and `admin/budget.set`; an entry naming
+  # no op, or neither ms nor "<n>x", is refused. '' = the table as declared. [restart]
   # latency_budget_overrides: ""
 
   # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in ms, "3x"

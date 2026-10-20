@@ -16,17 +16,13 @@ _parsed: tuple[str, dict[str, int]] = ("", {})
 
 def _overrides(raw: str) -> dict[str, int]:
     """`llm_max_tokens_overrides` parsed, re-parsed only when the raw string changes.
-    The field refuses a bad map; one stored by a build that had a call this one lacks is
-    logged once and treated as empty, so it cannot take the model calls down."""
+    The field refuses a bad map at startup, in the settings file and at `settings.set`,
+    and a stored override this build cannot use is skipped when it is adopted."""
     global _parsed
     with _lock:
         if raw == _parsed[0]:
             return _parsed[1]
-        try:
-            out = parse_llm_max_tokens(raw)
-        except ValueError as exc:
-            log.warning("LOOM_LLM_MAX_TOKENS_OVERRIDES ignored: %s", exc)
-            out = {}
+        out = parse_llm_max_tokens(raw)
         _parsed = (raw, out)
         return out
 

@@ -3,13 +3,13 @@ and a deployment tunes an entry without editing it."""
 
 from __future__ import annotations
 
-import logging
-
 import pytest
+from pydantic import ValidationError
 
 from server.observability.budgets import BudgetOverrides
 from server.operations.registry import ALL_OPERATIONS
-from server.settings import settings
+from server.settings import Settings, settings
+from server.settings._live import coerce
 from server.settings.catalog import OP_BUDGETS_P99_MS, OP_SHAPE_BUDGETS_P99_MS
 from server.tasks.api.models_task import MAX_WAIT_SECONDS
 
@@ -50,14 +50,20 @@ def test_the_deployment_overrides_one_op_by_setting(
     assert BudgetOverrides().effective("memory.search", 300) == budget
 
 
-def test_a_runtime_override_wins_over_the_setting_and_a_bad_map_is_ignored(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_runtime_override_wins_over_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     overrides = BudgetOverrides()
     monkeypatch.setattr(settings, "latency_budget_overrides", '{"memory.search": 900}')
     overrides.set("memory.search", 50)
     assert overrides.effective("memory.search", 300) == 50
-    monkeypatch.setattr(settings, "latency_budget_overrides", '{"memory.search": "lots"}')
-    with caplog.at_level(logging.WARNING):
-        assert BudgetOverrides().effective("memory.search", 300) == 300
-    assert "LOOM_LATENCY_BUDGET_OVERRIDES ignored" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "raw", ['{"memory.search": "lots"}', '{"memory.search": -5}', '{"memory.serch": 50}']
+)
+def test_a_bad_override_map_is_refused_at_startup_and_by_settings_set(raw: str) -> None:
+    """An unknown op or an unusable budget is refused, naming the rule, never the value."""
+    with pytest.raises(ValidationError) as caught:
+        Settings(_env_file=None, latency_budget_overrides=raw)  # type: ignore[call-arg]
+    assert "lots" not in str(caught.value) and "serch" not in str(caught.value)
+    with pytest.raises(ValidationError):
+        coerce(Settings, "latency_budget_overrides", raw)

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from server.core import settings_overrides as so
 from server.settings import Settings, settings
 from server.settings._live import coerce
 from server.settings.budgets import llm_max_tokens
@@ -76,14 +77,15 @@ def test_a_bad_override_map_is_refused_at_startup_and_by_settings_set(raw: str) 
         coerce(Settings, "llm_max_tokens_overrides", raw)
 
 
-@pytest.mark.parametrize("raw", _BAD_MAPS)
-def test_a_bad_stored_map_is_ignored_and_said(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, raw: str
+def test_a_stored_map_this_build_cannot_use_is_skipped_when_adopted(
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setattr(settings, "llm_max_tokens_overrides", raw)
+    """A row another build stored (a call this one lacks) never reaches the calls."""
     with caplog.at_level(logging.WARNING):
-        assert llm_max_tokens("hyde") == LLM_MAX_TOKENS["hyde"]
-    assert "LOOM_LLM_MAX_TOKENS_OVERRIDES ignored" in caplog.text
+        so.adopt({so.KIND: {("llm_max_tokens_overrides",): '{"no_such_call": 64}'}})
+    assert settings.llm_max_tokens_overrides == ""
+    assert llm_max_tokens("hyde") == LLM_MAX_TOKENS["hyde"]
+    assert any("ignored" in r.message for r in caplog.records)
 
 
 def test_an_unknown_call_is_an_error_not_a_default() -> None:

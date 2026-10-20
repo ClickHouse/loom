@@ -436,7 +436,8 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     installs for that consumer only; {consumer, op, clear: true} removes it.
     """
     from server.core import runtime_overrides as ro
-    from server.observability.budgets import get_overrides, parse_value, stored_ms
+    from server.core.numbers import parse_budget_value
+    from server.observability.budgets import get_overrides, stored_ms
 
     set_query_tag("admin.budget_set")
     overrides = get_overrides()
@@ -454,7 +455,7 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
                     "message": "budget_ms (ms) or budget ('<n>x') required when clear=false",
                 },
             )
-        if parse_value(value) is None:
+        if parse_budget_value(value) is None:
             raise HTTPException(
                 status_code=422,
                 detail={

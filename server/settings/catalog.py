@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core.numbers import parse_budget_value
 from server.settings._env import (
     DEV_JWT_SECRET,
     CaseFolded,
@@ -3014,6 +3015,35 @@ class NamespaceSettings(BaseModel):
 # ===== Observability ==========================================================
 
 
+def parse_latency_budgets(raw: str) -> dict[str, int | float]:
+    """`latency_budget_overrides` as {op: ms | factor}; ValueError when an entry names no
+    op of OP_BUDGETS_P99_MS or is neither milliseconds nor "<n>x". The message states
+    the rule, never the value."""
+    if not raw.strip():
+        return {}
+    obj = json.loads(raw)
+    if not isinstance(obj, dict):
+        raise ValueError("not a JSON object")
+    out: dict[str, int | float] = {}
+    for op_name, value in obj.items():
+        if op_name not in OP_BUDGETS_P99_MS:
+            raise ValueError("an entry names no op (OP_BUDGETS_P99_MS)")
+        parsed = parse_budget_value(value)
+        if parsed is None:
+            raise ValueError("an entry is neither milliseconds nor '<n>x'")
+        out[op_name] = parsed
+    return out
+
+
+def _latency_budgets_map(raw: str) -> str:
+    parse_latency_budgets(raw)
+    return raw
+
+
+# Startup and `loom settings set` refuse a map naming no op or an unusable budget.
+LatencyBudgetsMap = AfterValidator(_latency_budgets_map)
+
+
 class ObservabilitySettings(BaseModel):
     """Telemetry, audit, tracing and the ops surface."""
 
@@ -3130,8 +3160,9 @@ class ObservabilitySettings(BaseModel):
     # JSON map {op: ms | "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in
     # server/settings/catalog.py): an integer replaces that op's budget, "3x"
     # multiplies it. Checked after the per-consumer overrides and `admin/budget.set`;
-    # malformed = logged once and ignored. '' = the table as declared.
-    latency_budget_overrides: Annotated[str, JsonObject] = ""
+    # an entry naming no op, or neither ms nor "<n>x", is refused. '' = the table as
+    # declared.
+    latency_budget_overrides: Annotated[str, JsonObject, LatencyBudgetsMap] = ""
     # JSON map {consumer: {op | "*": ms | "<n>x"}}: an integer is a budget in
     # ms, "3x" multiplies the op's declared budget. Checked after runtime
     # `admin/budget.set` overrides, before per-op ones; malformed = logged once
@@ -3215,8 +3246,8 @@ RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
 def parse_llm_max_tokens(raw: str) -> dict[str, int]:
-    """`llm_max_tokens_overrides` as {call: tokens}; ValueError names the first entry that
-    is no LLM call or no positive token count."""
+    """`llm_max_tokens_overrides` as {call: tokens}; ValueError says which rule an entry
+    breaks (no LLM call, no positive token count), never the value."""
     if not raw.strip():
         return {}
     obj = json.loads(raw)
@@ -3225,9 +3256,9 @@ def parse_llm_max_tokens(raw: str) -> dict[str, int]:
     out: dict[str, int] = {}
     for call, tokens in obj.items():
         if call not in LLM_MAX_TOKENS:
-            raise ValueError(f"{call!r} is no LLM call (LLM_MAX_TOKENS)")
+            raise ValueError("an entry names no LLM call (LLM_MAX_TOKENS)")
         if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1:
-            raise ValueError(f"{call!r}: {tokens!r} is not a positive token count")
+            raise ValueError("an entry's count is not a positive token count")
         out[call] = tokens
     return out
 

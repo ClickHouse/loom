@@ -41,30 +41,11 @@ import logging
 import threading
 from typing import Any
 
-from server.core.numbers import finite_non_negative
+from server.core.numbers import finite_non_negative, parse_budget_value
 
 log = logging.getLogger(__name__)
 
 ANY_OP = "*"
-
-
-def parse_value(raw: Any) -> int | float | None:
-    """An override entry: int/float milliseconds, or "<n>x" multiplier
-    returned as a float factor. None when unusable (negative, not finite)."""
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int | float):
-        return int(raw) if finite_non_negative(raw) else None
-    if isinstance(raw, str):
-        text = raw.strip().lower()
-        try:
-            number = float(text.removesuffix("x"))
-        except ValueError:
-            return None
-        if not finite_non_negative(number):
-            return None
-        return number if text.endswith("x") else int(number)
-    return None
 
 
 def _apply(value: int | float, default_ms: int) -> int:
@@ -121,7 +102,7 @@ class BudgetOverrides:
         covers every op for the consumer."""
         if not consumer:
             raise ValueError("consumer must be non-empty")
-        parsed = parse_value(value)
+        parsed = parse_budget_value(value)
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
         with self._lock:
@@ -157,7 +138,7 @@ class BudgetOverrides:
         consumers = {
             (k[0], k[1]): parsed
             for k, v in snapshot.get(ro.BUDGET_CONSUMER, {}).items()
-            if len(k) == 2 and (parsed := parse_value(v)) is not None
+            if len(k) == 2 and (parsed := parse_budget_value(v)) is not None
         }
         with self._lock:
             self._overrides, self._by_consumer = ops, consumers
@@ -184,7 +165,7 @@ class BudgetOverrides:
                             raise ValueError(f"{consumer!r}: expected an object of op -> value")
                         entry: dict[str, int | float] = {}
                         for op_name, value in ops.items():
-                            v = parse_value(value)
+                            v = parse_budget_value(value)
                             if v is None:
                                 raise ValueError(
                                     f"{consumer!r}.{op_name!r}: {value!r} is not ms or '<n>x'"
@@ -221,28 +202,16 @@ class BudgetOverrides:
         return int(default_ms)
 
     def op_settings_map(self) -> dict[str, int | float]:
-        """`latency_budget_overrides` parsed: {op: value}. Re-parsed only when the
-        raw string changes; a malformed map is logged once and treated as empty."""
+        """`latency_budget_overrides` parsed: {op: value}, re-parsed only when the raw
+        string changes. The field refuses a bad map at startup and at `settings.set`."""
         from server.settings import settings
+        from server.settings.catalog import parse_latency_budgets
 
         raw = str(settings.latency_budget_overrides)
         with self._lock:
             if raw == self._op_settings_raw:
                 return self._op_settings_map
-            parsed: dict[str, int | float] = {}
-            if raw.strip():
-                try:
-                    obj = json.loads(raw)
-                    if not isinstance(obj, dict):
-                        raise ValueError("not a JSON object")
-                    for op_name, value in obj.items():
-                        v = parse_value(value)
-                        if v is None:
-                            raise ValueError(f"{op_name!r}: {value!r} is not ms or '<n>x'")
-                        parsed[str(op_name)] = v
-                except (ValueError, TypeError) as exc:
-                    log.warning("LOOM_LATENCY_BUDGET_OVERRIDES ignored: %s", exc)
-                    parsed = {}
+            parsed = parse_latency_budgets(raw)
             self._op_settings_raw = raw
             self._op_settings_map = parsed
             return parsed

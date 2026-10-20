@@ -25,7 +25,10 @@ _OBJECTS = [
     "tracker_restricted_repos_json",
 ]
 # An object whose entries the field also checks needs a sample with real entries.
-_OBJECT_SAMPLES = {"llm_max_tokens_overrides": ' {"hyde": 64} '}
+_OBJECT_SAMPLES = {
+    "llm_max_tokens_overrides": ' {"hyde": 64} ',
+    "latency_budget_overrides": ' {"memory.search": "2x"} ',
+}
 _ARRAYS = ["code_repos_json", "code_test_gate_run_templates"]
 _CANARY = "s3cr3t-canary"
 

@@ -2538,7 +2538,7 @@
         "latency_budget_overrides": {
           "default": "",
           "type": "string",
-          "description": "JSON map {op: ms | \"<n>x\"} over the op budgets table (OP_BUDGETS_P99_MS in server/settings/catalog.py): an integer replaces that op's budget, \"3x\" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; malformed = logged once and ignored. '' = the table as declared."
+          "description": "JSON map {op: ms | \"<n>x\"} over the op budgets table (OP_BUDGETS_P99_MS in server/settings/catalog.py): an integer replaces that op's budget, \"3x\" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; an entry naming no op, or neither ms nor \"<n>x\", is refused. '' = the table as declared."
         },
         "latency_budget_overrides_by_consumer": {
           "default": "",

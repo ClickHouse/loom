@@ -82,17 +82,19 @@ pod template rather than a ConfigMap, so a pod of the previous ReplicaSet that
 restarts mid-rollout keeps its own config instead of booting with the new one. */}}
 {{- define "loom.config" -}}
 {{- $dev := .Values.devClickhouse.enabled -}}
+{{- /* The settings every pod must share: the embedding space and the root secret. */}}
+{{- $guarded := list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" -}}
 {{- range $k, $_ := .Values.env }}
-{{- if has $k (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
+{{- if has $k $guarded }}
 {{- fail (printf "set %s through %s, not env" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}
 {{- end }}
 {{- end }}
 {{- range .Values.extraEnv }}
-{{- if has .name (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
+{{- if has .name $guarded }}
 {{- fail (printf "set %s through %s, not extraEnv" .name (include "loom.guardedThrough" (dict "key" .name "root" $))) }}
 {{- end }}
 {{- end }}
-{{- range list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}
+{{- range $guarded }}
 {{- if hasKey $.Values.secrets.extra . }}
 {{- fail (printf "set %s through %s, not secrets.extra" . (include "loom.guardedThrough" (dict "key" . "root" $))) }}
 {{- end }}
