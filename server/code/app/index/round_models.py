@@ -12,8 +12,9 @@ every embedding in batches.
 The answers are keyed by the exact call a file would make: the description's (system,
 user, max_tokens), the embedding's clipped text. A file's own call looks there first and
 makes the call itself on a miss, so a prefetch can only save a round trip, never change
-a row. A failed call is not recorded (the file retries it on its own path). Nothing here
-raises: a failing prefetch leaves the per-file path exactly as it was.
+a row. A failed call is not recorded (the file retries it on its own path), a held one
+included: the file's own call then answers the hold. Nothing here raises: a failing
+prefetch leaves the per-file path exactly as it was.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ import asyncio
 import logging
 from typing import Any
 
-from server.llm import customer
 from server.observability.genai import staged
 
 logger = logging.getLogger("loom.code_index.round_models")
@@ -42,8 +42,6 @@ async def _bounded(limit: int, coros: list[Any]) -> list[Any]:
         async with gate:
             try:
                 return await c
-            except customer.HOLDS:
-                raise  # the org's model calls are held: the repository waits
             except Exception as exc:  # noqa: BLE001 — a miss, the file calls itself
                 logger.debug("round models: call skipped (%s)", exc)
                 return None

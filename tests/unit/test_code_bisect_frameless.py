@@ -620,3 +620,32 @@ async def test_handler_drops_post_report_prs_and_runs_no_diff_on_a_frameless_poo
     out = await h.handle_code_bisect_candidates(_inp(wideners=["patterns"]))
     assert [c["pr_number"] for c in out.candidates] == [702, 700, 701]
     assert "dropped_after_report" not in out.model_dump()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", ["switched_off", "unread"])
+async def test_a_held_embed_answers_the_refusal_not_a_ranking_without_vectors(
+    wired, monkeypatch, held
+) -> None:
+    from server.llm import customer
+
+    error = (
+        customer.ModelCallsDisabled("model calls are switched off for org 'clickhouse'")
+        if held == "switched_off"
+        else customer.SwitchUnread("the model-call switch could not be read")
+    )
+
+    class _Refusing:
+        model_name, dim = "m", 8
+
+        async def embed(self, text: str) -> list[float]:
+            raise error
+
+    class _Down(_Source):
+        async def window_prs(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("window read down")  # fails as the embed is held
+
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Refusing())
+    wired(_Down(_issue(), prs=_prs(), dirs=["src/Storages/MergeTree/"], stats=STATS))
+    with pytest.raises(type(error)):  # 403 / 503 as memory.search answers, not a degraded rank
+        await h.handle_code_bisect_candidates(_inp())

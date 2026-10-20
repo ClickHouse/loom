@@ -100,16 +100,22 @@ async def _read_window(
     """(rows by number, vector order, status): the window's PRs and the
     report's nearest among them. Status "" when read."""
     wall, floor = bounds
-    try:
-        rows, vector = await asyncio.gather(
-            source.window_prs(org, tracker_ns, versions, before=wall, after=floor),
-            _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
-        )
-    except customer.HOLDS:
-        raise
-    except Exception as e:  # noqa: BLE001 — the scan's candidates stand
-        logger.info("bisect fusion: window read failed: %s", e)
-        return {}, [], "window_unavailable"
+
+    async def window() -> list[dict[str, Any]]:
+        return list(await source.window_prs(org, tracker_ns, versions, before=wall, after=floor))
+
+    # Both run to their end, so a held embed is the answer even when the read failed first.
+    rows, vector = await asyncio.gather(
+        window(),
+        _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
+        return_exceptions=True,
+    )
+    if isinstance(vector, customer.HOLDS):
+        raise vector  # the org's model calls are held: the request answers that
+    for failed in (rows, vector):
+        if isinstance(failed, BaseException):  # the scan's candidates stand
+            logger.info("bisect fusion: window read failed: %s", failed)
+            return {}, [], "window_unavailable"
     by_number = {int(r["pr_number"]): r for r in rows if r.get("pr_number")}
     if not by_number:
         return {}, [], "empty_window"

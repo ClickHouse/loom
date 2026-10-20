@@ -588,7 +588,7 @@ def test_bisect_fusion_lets_a_held_embed_and_rerank_through(monkeypatch, error) 
 
 @held
 def test_code_ingest_lets_a_held_embed_or_description_through(error) -> None:
-    from server.code.app.index import describe, ingest, round_models
+    from server.code.app.index import describe, ingest
 
     class _Refusing:
         calls = 0
@@ -617,8 +617,6 @@ def test_code_ingest_lets_a_held_embed_or_description_through(error) -> None:
     llm = SimpleNamespace(complete=_raise(error))
     with pytest.raises(type(error)):  # not an empty description
         asyncio.run(describe._describe_chunk.__wrapped__(llm, chunk))
-    with pytest.raises(type(error)):  # nor a prefetch miss the file then repeats
-        asyncio.run(round_models._bounded(2, [_raise(error)()]))
 
 
 @held
@@ -663,44 +661,184 @@ def test_a_bootstrap_slice_held_at_a_file_leaves_its_cursor(monkeypatch, error) 
     assert not bs.embed_breaker_open()  # a held call is no provider outage
 
 
+class _IngestRepo:
+    """Enough of the code repository for the real `heal` and `ingest_file`."""
+
+    def __init__(self) -> None:
+        self.state: dict[str, str] = {}
+        self.inserts: list[str] = []
+
+    async def all_state(self, org: str, ns: str) -> dict[str, Any]:
+        return {}
+
+    async def set_state(self, org: str, ns: str, key: str, value: str, **k: Any) -> None:
+        self.state[key] = value
+
+    async def live_file_hashes(self, org: str, ns: str) -> dict[str, str]:
+        return {"a.py": "old", "b.py": "old"}
+
+    async def insert_rows(self, table: str, rows: list[dict[str, Any]]) -> None:
+        self.inserts.append(table)
+
+    async def name_candidates(self, *a: Any, **k: Any) -> dict[str, Any]:
+        return {}
+
+    def __getattr__(self, name: str) -> Any:
+        if not name.startswith("live_") and name != "chunks_full_by_ids":
+            raise AttributeError(name)
+
+        async def nothing(*a: Any, **k: Any) -> Any:
+            return {} if name.endswith("_for_paths") else []
+
+        return nothing
+
+
+def _heal_through_the_real_ingest(monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    """The heals run the real `heal` and `ingest_file` over two files; only the
+    embedder refuses."""
+    from server.settings import settings
+
+    class _Refusing:
+        model_name, dim = "m", 4
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            raise error
+
+    async def show(*a: Any, **k: Any) -> bytes:
+        return b"def f():\n    return 1\n"
+
+    async def no_denylist(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.code.app.index.gitrepo.show_file", show)
+    monkeypatch.setattr("server.code.app.index.denylist.load_denylist", no_denylist)
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Refusing())
+    monkeypatch.setattr(settings, "code_ingest_round_files", 0)
+
+
 @held
-def test_the_reconcile_and_rechunk_heals_let_a_held_call_through(monkeypatch, error) -> None:
-    """Both heal through ingest, which embeds; a held call ends the repository's
-    turn rather than land on the pass's errors as a failed reconcile."""
+def test_a_held_rechunk_heal_leaves_the_rechunk_cursor(monkeypatch, error) -> None:
+    from server.code.app.index import ingest_pass as ip
+    from server.code.domain.extract.extractor_stamp import STAGES
+    from server.settings import settings
+
+    _heal_through_the_real_ingest(monkeypatch, error)
+    monkeypatch.setattr(settings, "code_extractor_rechunk_enabled", True)
+    monkeypatch.setattr(ip, "_stage_plan", lambda *a: ("heal", frozenset(STAGES), {"cursor": 0}))
+    monkeypatch.setattr(ip, "_heal_languages", lambda *a: set())
+    monkeypatch.setattr(ip, "_scope_paths", lambda paths, langs: list(paths))
+    cfg = SimpleNamespace(
+        org="acme", namespace="code-a", git_dir="/g", label="r", embed_reuse_from=""
+    )
+    repo, result = _IngestRepo(), ip.CodeIngestResult()
+    with pytest.raises(type(error)):  # not a per-file error the cursor moves past
+        asyncio.run(ip._maybe_rechunk(repo, cfg, "sha", result))
+    assert "extractor_stamp" not in repo.state  # the cursor stays at the held files
+    assert "code_chunks" not in repo.inserts and result.errors == []
+
+
+@held
+def test_a_held_reconcile_heal_records_no_reconcile(monkeypatch, error) -> None:
     from server.code.app.index import ingest_pass as ip
     from server.code.app.index import reconcile
     from server.settings import settings
 
-    class _Repo:
-        async def all_state(self, org: str, ns: str) -> dict[str, Any]:
-            return {}
-
-        async def live_file_hashes(self, org: str, ns: str) -> dict[str, str]:
-            return {"a.py": "h"}
+    _heal_through_the_real_ingest(monkeypatch, error)
 
     async def stale(*a: Any, **k: Any) -> Any:
-        return SimpleNamespace(stale=["a.py"], stale_count=1)
+        return SimpleNamespace(stale=["a.py", "b.py"], stale_count=2)
 
     async def scope(*a: Any, **k: Any) -> None:
         return None
 
     monkeypatch.setattr(settings, "code_reconcile_enabled", True)
     monkeypatch.setattr(settings, "code_ingest_dependents_enabled", False)
-    monkeypatch.setattr(settings, "code_extractor_rechunk_enabled", True)
     monkeypatch.setattr(reconcile, "find_stale_paths", stale)
-    monkeypatch.setattr(reconcile, "heal", _raise(error))  # heal re-ingests: the embed is held
     monkeypatch.setattr(ip, "_scope_of", scope)
-    monkeypatch.setattr(
-        "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="m")
+    cfg = SimpleNamespace(
+        org="acme", namespace="code-a", git_dir="/g", label="r", embed_reuse_from=""
     )
-    cfg = SimpleNamespace(org="acme", namespace="code-a", git_dir="/g", label="r")
-    result = ip.CodeIngestResult()
+    repo, result = _IngestRepo(), ip.CodeIngestResult()
+    with pytest.raises(type(error)):  # not a heal error counted in a recorded reconcile
+        asyncio.run(ip._maybe_reconcile(repo, cfg, "sha", result))
+    assert "reconcile" not in repo.state and result.errors == []
+
+
+async def _held_and_a_slow_peer(error: Exception, run: Any) -> bool:
+    """Runs `run(one)` where one file is held and its peer would still be
+    running; returns whether the peer was cancelled before `run` raised."""
+    peer = asyncio.Event()
+    cancelled = False
+
+    async def one(reads: Any, path: str, source: bytes) -> None:
+        nonlocal cancelled
+        if path == "a.py":
+            await asyncio.sleep(0)
+            raise error
+        try:
+            await peer.wait()  # never set: only a cancel ends it
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+
     with pytest.raises(type(error)):
-        asyncio.run(ip._maybe_reconcile(_Repo(), cfg, "sha", result))
-    monkeypatch.setattr(ip, "_stage_plan", lambda *a: ("heal", frozenset({"chunk"}), {}))
-    monkeypatch.setattr(ip, "_heal_languages", lambda *a: set())
-    monkeypatch.setattr(ip, "_scope_paths", lambda paths, langs: list(paths))
-    monkeypatch.setattr(ip, "_rechunk_batch", _raise(error))
-    with pytest.raises(type(error)):
-        asyncio.run(ip._maybe_rechunk(_Repo(), cfg, "sha", result))
-    assert result.errors == []
+        await run(one)
+    return cancelled
+
+
+@held
+def test_a_held_file_cancels_its_peers_in_a_heal_round(monkeypatch, error) -> None:
+    from server.code.app.index import reconcile
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_ingest_round_files", 0)
+
+    async def show(*a: Any, **k: Any) -> bytes:
+        return b"x = 1\n"
+
+    async def no_denylist(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.code.app.index.denylist.load_denylist", no_denylist)
+    cfg = SimpleNamespace(org="acme", namespace="code-a", git_dir="/g", embed_reuse_from="")
+
+    def run(one: Any) -> Any:
+        async def ingest_file(reads: Any, org: str, ns: str, *, path: str, **k: Any) -> Any:
+            return await one(reads, path, b"")
+
+        return reconcile.heal(
+            _IngestRepo(),
+            cfg,
+            "sha",
+            ["a.py", "b.py"],
+            embedder=SimpleNamespace(model_name="m"),
+            ingest_file=ingest_file,
+            show_file=show,
+        )
+
+    assert asyncio.run(_held_and_a_slow_peer(error, run))
+
+
+@held
+def test_a_held_file_cancels_its_peers_in_a_bootstrap_round(monkeypatch, error) -> None:
+    from server.code.app.index import bootstrap as bs
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_ingest_round_files", 0)
+
+    async def source(path: str) -> tuple[str, bytes]:
+        return path, b"x = 1\n"
+
+    def run(one: Any) -> Any:
+        return bs._slice_rounds(
+            _IngestRepo(),
+            "acme",
+            "code-a",
+            ["a.py", "b.py"],
+            source=source,
+            one=one,
+            denylist=None,
+            stop_after=None,
+        )
+
+    assert asyncio.run(_held_and_a_slow_peer(error, run))

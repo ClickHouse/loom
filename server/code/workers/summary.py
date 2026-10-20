@@ -312,7 +312,9 @@ async def _summarize_repo(
             started = time.monotonic()
             cost_accumulator.begin_op()
             try:
-                if await _write_card(repo, llm, embedder, live, (org, ns, path), content_hash):
+                if await _write_card(
+                    repo, llm, embedder, live, org=org, ns=ns, path=path, content_hash=content_hash
+                ):
                     result.cards_written += 1
             except customer.HOLDS:
                 raise  # the org's calls are held: the pass leaves the rest of this repository
@@ -330,15 +332,22 @@ async def _summarize_repo(
 
 
 async def _write_card(
-    repo: Any, llm: Any, embedder: Any, live: dict[str, Any], at: tuple[str, str, str], hash_: str
+    repo: Any,
+    llm: Any,
+    embedder: Any,
+    live: dict[str, Any],
+    *,
+    org: str,
+    ns: str,
+    path: str,
+    content_hash: str,
 ) -> bool:
     """One file's card, summarised, embedded and written; False with no excerpts."""
-    org, ns, path = at
     excerpts = await _file_excerpts(repo, org, ns, path, embedder.model_name)
     if not excerpts:
         return False
     summary = await _summarize(llm, path, excerpts)
-    row = await _card_row(embedder, live, summary, getattr(llm, "model", ""), hash_)
+    row = await _card_row(embedder, live, summary, getattr(llm, "model", ""), content_hash)
     await repo.insert_rows("code_summaries", [row])
     return True
 

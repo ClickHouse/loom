@@ -14,6 +14,8 @@ from typing import Any
 
 from server.cli.code_maintenance import _compact_after_bulk
 from server.cli.code_run import _identity, _note, _repo_cfg
+from server.core.background import gather_or_cancel
+from server.llm import customer
 
 log = logging.getLogger("loom.cli.code")
 
@@ -117,6 +119,8 @@ async def _backfill(args: argparse.Namespace) -> int:
                     callers_namespace=str(getattr(args, "callers_from", "") or ""),
                     parsed=reads.parsed.get(path),
                 )
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the run stops, its cursor kept
             except Exception as e:  # noqa: BLE001 — per-file, keep going
                 counters["errors"] += 1
                 print(f"  ! {path}: {type(e).__name__}: {e}", file=sys.stderr)
@@ -134,15 +138,12 @@ async def _backfill(args: argparse.Namespace) -> int:
     batch = 200
     for b_start in range(start_idx, len(paths), batch):
         chunk_paths = paths[b_start : b_start + batch]
-        await _backfill_batch_rounds(
-            repo,
-            org,
-            ns,
-            chunk_paths,
-            source=_source,
-            one=_one,
-            denylist=denylist,
+        held = await _held_batch(
+            repo, org, ns, chunk_paths, source=_source, one=_one, denylist=denylist
         )
+        if held:
+            print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
+            return 1
         if not paths_file:
             await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
         rate = counters["files"] / max(time.monotonic() - started, 1e-9)
@@ -382,6 +383,21 @@ async def _dialect_folder_pass(repo: Any, org: str, ns: str, head: str) -> dict[
     return {"undecided": len(undecided), "inherited": len(assigned)}
 
 
+async def _held_batch(
+    repo: Any, org: str, ns: str, batch_paths: list[str], *, source: Any, one: Any, denylist: Any
+) -> str:
+    """One cursor batch as the org's model calls, so its switch applies to them;
+    "" once written, else why the switch held it (the cursor stays)."""
+    try:
+        with customer.for_org(org):
+            await _backfill_batch_rounds(
+                repo, org, ns, batch_paths, source=source, one=one, denylist=denylist
+            )
+    except customer.HOLDS as e:
+        return str(e)
+    return ""
+
+
 async def _backfill_batch_rounds(
     repo: Any,
     org: str,
@@ -410,7 +426,7 @@ async def _backfill_batch_rounds(
         async with RoundReads(repo, org, ns) as reads:
             if size > 0:
                 await reads.prefetch(sources, denylist)
-            await asyncio.gather(*(one(reads, p, sources[p]) for p in rnd if p in sources))
+            await gather_or_cancel(*(one(reads, p, sources[p]) for p in rnd if p in sources))
 
 
 async def _backfill_head(git_dir: str, cfg: Any, args: argparse.Namespace) -> str:

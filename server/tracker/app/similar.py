@@ -61,9 +61,12 @@ def _merge_similar(namespaces: list[str], outs: list[Any], top_k: int) -> Tracke
     """One `tracker.similar` answer over several trackers: every item names
     its `namespace`; ranked by the fused score (reciprocal-rank based, so
     comparable across trackers); `query` and `legs` are the primary's; a
-    tracker that failed inside the fan-out is left out and logged."""
+    tracker that failed inside the fan-out is left out and logged, except a
+    held model call (`customer.HOLDS`), which is the answer."""
     served: list[tuple[str, Any]] = []
     for ns, o in zip(namespaces, outs, strict=False):
+        if isinstance(o, customer.HOLDS):
+            raise o  # the org's model calls are held: the request answers that
         if isinstance(o, BaseException):
             logger.info("tracker.similar on %s failed inside a fan-out: %s", ns, o)
             continue
@@ -288,21 +291,26 @@ async def _similar_legs(
             raise  # the org's model calls are held: the request answers that, not an outage
         except Exception as e:
             # The leg's own store or embedder failed: the leg is unavailable and the
-            # answer degraded (guarded() records it), never a 500 that also leaves the
+            # answer degraded (`_guarded` records it), never a 500 that also leaves the
             # sibling legs running.
             raise TrackerUnavailable(f"vector leg: {type(e).__name__}: {e}") from e
 
     timings: dict[str, int] = {}
     if meta is not None:
         meta["timings_ms"] = timings
-    marks = (input.namespace, status, errors, timings)
+
+    def leg(name: str, coro: Any) -> Any:
+        return _guarded(
+            name, coro, ns=input.namespace, status=status, errors=errors, timings=timings
+        )
+
     # Every leg runs to its end; then a held model call (`customer.HOLDS`) is the
     # request's answer, rather than a degraded one without the vector leg.
     results = await asyncio.gather(
-        _guarded("lexical", lexical(), *marks),
-        _guarded("frames", frames(), *marks),
-        _guarded("mentions", mentions(), *marks),
-        _guarded("vector", vector(), *marks),
+        leg("lexical", lexical()),
+        leg("frames", frames()),
+        leg("mentions", mentions()),
+        leg("vector", vector()),
         return_exceptions=True,
     )
     legs: dict[str, list[dict[str, Any]]] = {}

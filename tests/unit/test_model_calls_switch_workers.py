@@ -548,6 +548,102 @@ def test_code_backfill_stops_on_a_switched_off_org_and_records_its_pass(monkeypa
     assert len(recorded) == 1 and recorded[0]["phase"] == "embed"
 
 
+def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkeypatch) -> None:
+    """The run's model calls are the org's: with no customer header the switch
+    still refuses them, and the run stops with its cursor where it was."""
+    import argparse
+
+    from server.cli import code_backfill
+    from server.settings import settings
+
+    sent: list[str] = []
+
+    class _Embedder:
+        model_name, dim = "m", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            await customer.require()  # as every sender does
+            sent.extend(texts)
+            return [[0.5, 0.5] for _ in texts]
+
+    class _Repo:
+        state: dict[str, str] = {}
+
+        async def get_state(self, org: str, ns: str, key: str) -> str:
+            return ""
+
+        async def all_state(self, org: str, ns: str) -> dict[str, Any]:
+            return {}
+
+        async def set_state(self, org: str, ns: str, key: str, value: str, **k: Any) -> None:
+            self.state[key] = value
+
+        async def insert_rows(self, table: str, rows: list[Any]) -> None:
+            return None
+
+        async def name_candidates(self, *a: Any, **k: Any) -> dict[str, Any]:
+            return {}
+
+        def __getattr__(self, name: str) -> Any:
+            if not name.startswith("live_") and name != "chunks_full_by_ids":
+                raise AttributeError(name)
+
+            async def nothing(*a: Any, **k: Any) -> Any:
+                return {} if name.endswith("_for_paths") else []
+
+            return nothing
+
+    async def connect() -> None:
+        return None
+
+    async def head(*a: Any) -> str:
+        return "sha"
+
+    async def tree(*a: Any) -> list[str]:
+        return ["a.py"]
+
+    async def show(*a: Any) -> bytes:
+        return b"def f():\n    return 1\n"
+
+    async def no_denylist(*a: Any) -> None:
+        return None
+
+    repo = _Repo()
+    cfg = SimpleNamespace(
+        org="acme",
+        namespace="code-a",
+        git_dir="/g",
+        git_branch="main",
+        path_prefixes=("",),
+        embed_reuse_from="",
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(connect=connect))
+    monkeypatch.setattr("server.code.store.index.CodeRepo", lambda: repo)
+    monkeypatch.setattr(code_backfill, "_repo_cfg", lambda args: cfg)
+    monkeypatch.setattr(code_backfill.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(code_backfill, "_backfill_head", head)
+    monkeypatch.setattr(code_backfill, "_tree_paths_with_coverage", tree)
+    monkeypatch.setattr("server.code.app.index.gitrepo.show_file", show)
+    monkeypatch.setattr("server.code.app.index.denylist.load_denylist", no_denylist)
+    monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(settings, "code_ingest_round_files", 0)
+    assert settings.inference_customer_header == ""
+    _off("acme")
+    args = argparse.Namespace(
+        org="acme",
+        namespace="code-a",
+        phase="index",
+        embed=True,
+        allow_fake_embedder=True,
+        limit=0,
+        paths_file="",
+        concurrency=1,
+    )
+    assert asyncio.run(code_backfill._backfill(args)) == 1
+    assert sent == []  # nothing of the switched-off org's code went out
+    assert "backfill_cursor:index" not in repo.state
+
+
 def test_a_switch_gone_stale_mid_reembed_stops_the_page_before_its_write() -> None:
     from server.core.errors import BackendUnavailableError
     from server.memory.app import reembed

@@ -35,6 +35,7 @@ from server.code.app.index.mirror_locks import (
     partial_mirror,
     partial_temp_dir,
 )
+from server.core.background import gather_or_cancel
 from server.llm import customer
 from server.settings import settings
 
@@ -553,7 +554,8 @@ async def _slice_rounds(
         async with RoundReads(repo, org, ns) as reads:
             if size > 0:
                 await reads.prefetch(sources, denylist)
-            await asyncio.gather(*(one(reads, p, sources[p]) for p in batch if p in sources))
+            # A held file ends the round, its peers cancelled before the reads close.
+            await gather_or_cancel(*(one(reads, p, sources[p]) for p in batch if p in sources))
     return attempted, partial
 
 
