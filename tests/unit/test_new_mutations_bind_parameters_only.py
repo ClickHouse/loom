@@ -1,5 +1,6 @@
-"""Mutations on the row-link tables name their rows by bound parameters only: ClickHouse
-refuses a mutation with a subquery on a replicated table (code 36)."""
+"""Mutations on the row-link tables, and the drop's undo of its edge ends, name their rows
+by bound parameters only: ClickHouse refuses a mutation with a subquery on a replicated
+table (code 36)."""
 
 from __future__ import annotations
 
@@ -11,19 +12,13 @@ _ROW = "00000000-0000-0000-0000-0000000000a1"
 
 
 class _CH:
-    """Answers every read with `rows` (a re-read of which memories are live: `live`;
-    the drop's read after its DELETE: none); records every statement sent to execute."""
+    """Answers every read with `rows`; records every statement sent to execute."""
 
-    def __init__(self, rows: list[dict[str, Any]], live: tuple[str, ...] = ()) -> None:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
-        self.live = live
         self.executed: list[str] = []
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-        if "UNION ALL" in sql:
-            return [{"id": i} for i in params["ids"] if i in self.live]
-        if "sensitivity, entities" in sql:
-            return []  # after the DELETE: the row is gone, so nothing is written back
         return self.rows
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
@@ -40,6 +35,7 @@ async def test_the_undeclared_edge_drop_deletes_by_parameters_only(monkeypatch) 
         return None
 
     monkeypatch.setattr(projections, "end_edges", no_edges)
+    monkeypatch.setattr(edge_links, "_restore_kept_links", no_edges)
     link = {"id": _ROW, "sha": "a" * 64, "entity_a": "alice", "entity_b": "carol"}
     ch = _CH([{**link, "entities": ["alice", "bob"]}])
     scope = SimpleNamespace(org="o", namespace="ns")
@@ -56,8 +52,12 @@ async def test_the_orphan_row_link_delete_names_its_ids(monkeypatch) -> None:
     async def record(table: str, *, mutation: str = "", where: str, **kw: Any) -> None:
         wheres.append(where)
 
+    async def none_kept(*a: Any, **kw: Any) -> set[str]:
+        return set()
+
     monkeypatch.setattr(mutations, "run_mutation", record)
     monkeypatch.setattr(mutations, "run_lightweight_delete", record)
+    monkeypatch.setattr(steps_graph, "_live_or_written_since", none_kept)
     ch = _CH([{"id": _ROW}])
     for scope_type, value in (("namespace", ["ns"]), ("user", "u1")):
         await steps_graph.delete_orphan_row_links(
@@ -77,11 +77,27 @@ async def test_an_orphan_written_again_before_the_delete_keeps_its_links(monkeyp
     async def record(table: str, *, params: dict[str, Any], **kw: Any) -> None:
         deleted.append(params["ids"])
 
+    other = "00000000-0000-0000-0000-0000000000b2"
+
+    async def other_written_again(org: str, orphans: Any, ids: list[str], **kw: Any) -> set[str]:
+        return {other} & set(ids)
+
     monkeypatch.setattr(mutations, "run_mutation", record)
     monkeypatch.setattr(mutations, "run_lightweight_delete", record)
-    other = "00000000-0000-0000-0000-0000000000b2"
-    ch = _CH([{"id": _ROW}, {"id": other}], live=(other,))
+    monkeypatch.setattr(steps_graph, "_live_or_written_since", other_written_again)
+    ch = _CH([{"id": _ROW}, {"id": other}])
     await steps_graph.delete_orphan_row_links(
         "o", "namespace", ["ns"], verified_at=datetime(2026, 1, 1), ch=ch
     )
     assert deleted == [[_ROW], [_ROW]]  # one DELETE per row-link table
+
+
+async def test_the_drops_edge_undo_names_its_closes_and_pairs() -> None:
+    from server.memory.app import projections
+
+    ch = _CH([])
+    await projections.reopen_closed_by(
+        ch, org="o", namespace="ns", close_ids=["c1"], pairs=[("alice", "carol")]
+    )
+    assert len(ch.executed) == 1 and "SELECT" not in ch.executed[0]
+    assert "closed_by IN {close_ids:Array(String)}" in ch.executed[0]
