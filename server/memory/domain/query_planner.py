@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
+
 # Identifier-shaped tokens: a UUID, a hash-like hex run, a
 # token that mixes letters and digits (a build id, a handle with digits, a
 # key), and the PR / issue / @handle forms the calibrator already extracts.
@@ -372,7 +374,9 @@ def bound_component_lift(
         comps = h.score_components
         boost = float(comps.get(component, 0.0) or 0.0)
         h.rank_score = target
-        comps[lift_key] = target - (own - boost)
+        # A reranked row holds another rank's score; its own is kept beside it.
+        unboosted = float(comps.get(RANK_SCORE_PRE_RERANK, own)) - boost
+        comps[lift_key] = target - unboosted
         comps["rank_score"] = target
         moved += 1
     return moved

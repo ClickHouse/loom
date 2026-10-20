@@ -58,8 +58,11 @@ retention window. See [retention and erasure](features/memory/retention-and-eras
 
 ### How do I find out why a result ranked where it did?
 
-Call `memory.search_trace` with the same query; it returns each hit's score components. See
-[search and ask](features/memory/search-and-ask.md).
+Call `memory.search` with `explain=true`: each hit's `score_components` carry the ranking
+signals and, after a reranker, its move (`rerank_from`, `rerank_pos`, `rerank_delta`) and,
+when the reranker changed the order, its own fused score (`rank_score_pre_rerank`).
+`memory.search_trace` scores the vector leg alone. See [search and
+ask](features/memory/search-and-ask.md).
 
 ### Can Loom answer questions about my code?
 

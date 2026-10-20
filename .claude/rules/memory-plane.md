@@ -25,7 +25,7 @@ The design, its invariants and the code paths are in [memory architecture](../..
 ## Ranking
 
 - Change a similarity gate or rank weight only with a paired benchmark (`loom-bench`). With adaptive thresholds on (the default), the gates come from the embedder's own distribution at boot (`server/memory/app/embedder_calibration.py`); the scalar settings are the fallback.
-- `memory.search_trace` returns the same ranking as `memory.search` with each component's score: use it to explain a rank.
+- `memory.search_trace` scores the vector leg alone (no fusion, assembly or reranker); to explain a served rank, read `memory.search` with `explain=true`, whose `score_components` carry each component and a reranker's moves.
 
 ## Deletion and erasure
 

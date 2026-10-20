@@ -17,7 +17,7 @@ from server.memory.app.search.scoring import (
     _effective_arm_boosts,
     _record_rerank_trail,
 )
-from server.memory.domain.search_types import hit_sort_key
+from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK, hit_sort_key
 
 log = logging.getLogger(__package__)
 
@@ -153,15 +153,22 @@ def _apply_chronological_sort(ctx: SearchContext) -> None:
 
 
 async def _run_external_rerank(ctx: SearchContext) -> None:
-    """Pluggable rerank: if the namespace has a rerank_endpoint, POST the
-    pool to the operator's reranker. Fail-open so a broken reranker degrades
-    to cosine ordering. Yields to chronological_intent (the date-sort above
-    owns the final order)."""
+    """Pluggable rerank: if the request or namespace names a reranker, send the pool's rows
+    that no identifier pin holds to it; it returns a permutation of them (the input order
+    when it fails). Yields to chronological_intent (the date-sort above owns the order)."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
     input = ctx.input
     if not (ctx.endpoint and ctx.all_hits and not ctx.chronological_intent):
         return
+    before = list(ctx.all_hits)
+    # An exact identifier match is the answer (`pin_identifier_hits`) and the reranker never
+    # reads the key it may have matched on: pinned rows keep their slots, the reranker
+    # orders the rows in the others.
+    slots = [i for i, h in enumerate(before) if not h.score_components.get("identifier_match")]
+    rest = [before[i] for i in slots]
+    if len(rest) < 2:
+        return  # nothing the reranker could reorder: no model call
     ctx.actual_work["external_rerank_used"] = True
     candidates = [
         RerankCandidate(
@@ -171,7 +178,7 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
             memory_type=h.memory_type,
             similarity=h.similarity,
         )
-        for h in ctx.all_hits
+        for h in rest
     ]
     reranked = await rerank(
         endpoint=ctx.endpoint,
@@ -179,10 +186,20 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
         query=input.query,
         candidates=candidates,
     )
-    # Order-only reranker (cohere / openai / operator HTTP endpoint):
-    # no per-candidate score to blend, so honor its ordering directly.
-    ranked_keys = [(c.namespace, c.memory_key) for c in reranked]
-    hits_by_key = {(h.namespace or input.namespace, h.memory_key): h for h in ctx.all_hits}
-    before = list(ctx.all_hits)
-    ctx.all_hits = [hits_by_key[k] for k in ranked_keys if k in hits_by_key]
+    # Candidates map back to their hits by identity: extraction writes a key once per
+    # session, so a key names several hits.
+    hit_of = {id(c): h for c, h in zip(candidates, rest, strict=True)}
+    ordered = list(before)
+    for i, c in zip(slots, reranked, strict=True):
+        ordered[i] = hit_of[id(c)]
+    # A kept order (a timeout, an unreadable reply, a ranking that agrees) changes no score.
+    if any(a is not b for a, b in zip(ordered, before, strict=True)):
+        # The pool's own scores, handed out in the new order, keep the block's sort; `before`
+        # is sorted best-first, so a pinned slot keeps its own score.
+        handed = sorted((o.rank_score for o in ordered), reverse=True)
+        for h, score in zip(ordered, handed, strict=True):
+            h.score_components[RANK_SCORE_PRE_RERANK] = h.rank_score
+            h.score_components["rank_score"] = score
+            h.rank_score = score
+        ctx.all_hits = ordered
     ctx.actual_work.update(_record_rerank_trail(before, ctx.all_hits, "external"))
