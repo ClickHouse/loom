@@ -391,9 +391,10 @@ def test_the_dashboard_csp_admits_only_the_nonced_boot_script(
 
 
 def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
-    """frontend/e2e/preview-isolation.spec.ts hand-copies the policy (vite preview sends
-    no headers), so a change to dashboard_csp must change the spec too."""
+    """frontend/e2e/preview-isolation.spec.ts hand-copies the dashboard and download
+    policies (vite preview sends no headers), so a change to either must change the spec too."""
     from server.identity.app.dashboard_routes import dashboard_csp
+    from server.knowledge.app.download_routes import _DOWNLOAD_CSP
 
     spec = (
         Path(__file__).resolve().parents[2] / "frontend/e2e/preview-isolation.spec.ts"
@@ -404,6 +405,7 @@ def test_the_e2e_spec_serves_the_dashboard_csp_the_server_sends() -> None:
     parts = re.findall(r'"([^"]*)"|`([^`]*)`', block.group(1))
     copied = "".join(a or b for a, b in parts).replace("${NONCE}", nonce.group(1))
     assert copied == dashboard_csp(nonce.group(1))
+    assert f'"Content-Security-Policy": "{_DOWNLOAD_CSP}"' in spec
 
 
 # ---- `loom serve` ----
