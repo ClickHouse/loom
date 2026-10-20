@@ -1607,28 +1607,19 @@ async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("outcome", ["the delete stands", "the key moved on"])
-async def test_the_worker_audits_a_delete_it_finishes(
-    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, outcome: str
+@pytest.mark.parametrize("failure", ["the tombstone insert", "the check after it"])
+async def test_a_503_writes_its_audit_row_and_the_worker_none(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    # The call answered 503, so the transport wrote no audit row. The worker writes the
-    # op's row when it finishes the delete, under the deleting call's actor and request
-    # id; a check that finds the key moved on deleted nothing and writes none.
+    # The transport audits only a call that succeeds. A call that answers 503 writes its
+    # own row, outcome `deferred`, as the transport would name it; the worker that later
+    # finishes the delete writes none, so the call has exactly one.
     from server.auth import context as auth_context
     from server.core.logging_config import request_id_var
     from server.memory.workers import delete_version_check
     from server.observability import audit
     from server.settings import settings
 
-    monkeypatch.setattr(auth_context, "current_auth", lambda: SimpleNamespace(subject="okf"))
-    rid = request_id_var.set("rid-1")
-    try:
-        if outcome == "the delete stands":
-            head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
-        else:
-            head = await _owed_after_a_failed_check(ch, monkeypatch)
-    finally:
-        request_id_var.reset(rid)
     emitted: list[tuple[str, dict[str, Any]]] = []
 
     async def record(event_type: str, **kw: Any) -> str:
@@ -1636,15 +1627,25 @@ async def test_the_worker_audits_a_delete_it_finishes(
         return ""
 
     monkeypatch.setattr(audit, "emit", record)
-    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
-    assert await delete_version_check.run_pass() == 1
-    if outcome == "the key moved on":
-        assert emitted == []
-        return
+    monkeypatch.setattr(auth_context, "current_auth", lambda: SimpleNamespace(subject="okf"))
+    rid = request_id_var.set("rid-1")
+    try:
+        if failure == "the tombstone insert":
+            head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
+        else:
+            head = await _owed_after_a_failed_check(ch, monkeypatch)
+    finally:
+        request_id_var.reset(rid)
     ((event, row),) = emitted
     assert event == "memory.delete_version"
     assert (row["actor"], row["request_id"]) == ("okf", "rid-1")
-    assert row["subject"]["memory_key"] == _KEY and row["subject"]["version"] == str(head)
+    expected = MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head).model_dump(
+        mode="json"
+    )
+    assert row["subject"] == {**expected, "outcome": "deferred"}
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    assert len(emitted) == 1
 
 
 @pytest.mark.asyncio

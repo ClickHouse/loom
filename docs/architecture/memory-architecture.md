@@ -368,8 +368,10 @@ it, as two racing `memory.delete` calls can. Between the tombstone and a write b
 key reads as deleted, and a `memory.delete` in that window answers `found=false`. Before
 its tombstone the delete records the check it owes in `loom.delete_version_checks`, and
 marks it done once the check has run; if the record fails, nothing is deleted. If the
-tombstone's insert or the read after it fails, the delete answers 503 and retires nothing.
-A check whose tombstone is not in the key's history (its insert failed) runs against a
+tombstone's insert or the read after it fails, the delete answers 503 and retires nothing;
+the transport audits only a call that succeeds, so the 503 writes the op's audit row
+itself, outcome `deferred`, and the retry or worker that finishes it writes none for it. A
+check whose tombstone is not in the key's history (its insert failed) runs against a
 retry's tombstone of the same version when one committed, or writes one first when nothing
 came after the removed version, at a new version so the namespace's watermark moves, and
 then runs as after any tombstone: the delete finishes. When the key moved on, it writes
@@ -381,11 +383,9 @@ them, and copies another remover's tombstone on top unless the newest of them al
 carries that row in the same sense. A retry of the same delete runs the owed check and
 answers as the delete would have (when the tombstone's insert is what failed, the retry
 finds the row live and deletes it again); otherwise the `delete_version_check` worker runs
-it under the key lock, and writes the op's audit row for a delete it finishes, under the
-deleting call's actor and request id (the 503 left none)
-(`memory/workers/delete_version_check.py`), by default within about six minutes (a
-60-second grace, then a pass at most 300 seconds later). Until the check runs,
-`memory.get` and the list ops read the key as deleted (as live, when the tombstone's
+it under the key lock (`memory/workers/delete_version_check.py`), by default within about
+six minutes (a 60-second grace, then a pass at most 300 seconds later). Until the check
+runs, `memory.get` and the list ops read the key as deleted (as live, when the tombstone's
 insert failed), search can still return the removed value from its vectors and chunks, and
 a write the tombstone hid is not served; it comes back when the check runs. A write that
 lands under such a tombstone, aimed at an older version, writes itself again above it.

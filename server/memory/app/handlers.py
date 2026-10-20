@@ -659,6 +659,7 @@ async def handle_memory_delete_version(
                 try:
                     answer = await rerun_delete_check(check)
                 except Exception as e:  # still owed: the next retry or the worker runs it
+                    await _audit_deferred(input)
                     raise _check_deferred(e) from e
                 if answer is not None:
                     return answer
@@ -680,7 +681,6 @@ async def handle_memory_delete_version(
             "memory_key": existing.memory_key,
             "checked": int(input.version),
             "tombstone": version,
-            **_calling(),
         }
         await memory_repo.record_delete_check(check, done=False)
         try:
@@ -689,20 +689,28 @@ async def handle_memory_delete_version(
             )
             return await finish_delete_check(existing, check)
         except Exception as e:  # the check is recorded: a retry or the worker runs it
+            await _audit_deferred(input)
             raise _check_deferred(e) from e
 
 
-def _calling() -> dict[str, str]:
-    """The calling principal and request id, as the transport stamps the op's audit row:
-    kept with the check, so the worker's audit row for a delete it finishes names them."""
+async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
+    """The op's audit row for a call that answers 503. The transport writes one only for a
+    call that succeeds, and the delete may stand once a retry or the worker runs its check:
+    the row names the call as the transport would, its outcome `deferred`. The worker that
+    finishes it writes none, so each call has one row. Never raises."""
     from server.auth.context import current_auth
     from server.core.logging_config import request_id_var
+    from server.observability import audit
 
     auth = current_auth()
-    return {
-        "actor": str(getattr(auth, "subject", "") or "") if auth is not None else "",
-        "request_id": request_id_var.get() or "",
-    }
+    await audit.emit(
+        "memory.delete_version",
+        org=input.org,
+        namespace=input.namespace,
+        actor=str(getattr(auth, "subject", "") or "anonymous"),  # the transport's actor
+        subject={**input.model_dump(mode="json"), "outcome": "deferred"},
+        request_id=request_id_var.get() or "",
+    )
 
 
 def _check_deferred(e: Exception) -> BackendUnavailableError:

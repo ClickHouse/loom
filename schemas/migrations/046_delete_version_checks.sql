@@ -4,10 +4,8 @@
 -- committed between the delete's version check and its tombstone is found only by that
 -- read; when it fails, the row stays `done = 0` and the delete_version_check worker
 -- runs the check later, so the write is never left under the tombstone. `checked` is
--- the version the delete removed, `tombstone` its tombstone's; `actor` and `request_id`
--- are the deleting call's, for the audit row the worker writes when it finishes the
--- delete. The identity and key name a memory row, so erasure clears the rows
--- (erasure.store.steps_ledgers).
+-- the version the delete removed, `tombstone` its tombstone's. The identity and key
+-- name a memory row, so erasure clears the rows (erasure.store.steps_ledgers).
 CREATE TABLE IF NOT EXISTS loom.delete_version_checks
 (
     `org` LowCardinality(String),
@@ -18,8 +16,6 @@ CREATE TABLE IF NOT EXISTS loom.delete_version_checks
     `memory_key` String,
     `checked` UInt64,
     `tombstone` UInt64,
-    `actor` String DEFAULT '',
-    `request_id` String DEFAULT '',
     `done` UInt8 DEFAULT 0,
     `created_at` DateTime DEFAULT now(),
     `updated_at` DateTime64(3) DEFAULT now64(3)
