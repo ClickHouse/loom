@@ -392,7 +392,8 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
     with record_pass("structured_profile") as rec:
         _prune()
         off = sorted(await customer.switched_off_orgs())
-        budget = settings.structured_profile_max_users_per_pass
+        page = settings.structured_profile_max_users_per_pass
+        budget = page
         # Every namespace reached can build at least once, so a pass reaches at most `budget`.
         # A namespace backing off (its scan or its schema failed) waits like a user does,
         # left out in SQL so the limit counts only namespaces this pass can run.
@@ -400,7 +401,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         rows = await profile_schemas.list_active(
             exclude_orgs=off,
             after=start,
-            limit=budget,
+            limit=page,
             only=cfg.only,
             waiting=namespaces_waiting(),
         )
@@ -435,7 +436,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             await _build_users(schema, users, result)
         # Idle only when the rotation came round: until then the namespaces past this
         # pass's page are reached at the busy interval.
-        wrapped = _wrapped(rows, start, settings.structured_profile_max_users_per_pass)
+        wrapped = _wrapped(rows, start, page)
         if wrapped and not result.profiles_written and not result.errors:
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
