@@ -57,6 +57,7 @@ from server.memory.domain.rerank_names import (
 from server.observability import degradations as _degradations
 from server.observability.genai import llm_stage
 from server.settings import settings
+from server.settings._providers import is_builtin_cohere
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,8 @@ class RerankCandidate:
 # Names already logged as not configured, so a namespace holding one logs once per
 # process, not once per search.
 _UNCONFIGURED_LOGGED: set[str] = set()
+# Namespaces whose stored builtin:cohere was unset, logged once per process.
+_COHERE_UNSET_LOGGED: set[tuple[str, str]] = set()
 
 
 def _note_unconfigured(endpoint: str) -> None:
@@ -415,5 +418,17 @@ async def get_namespace_rerank_config(
         _note_unconfigured(endpoint)
         return "", ""
     if endpoint == "none":
+        return "", ""
+    if settings.gateway_required() and is_builtin_cohere(endpoint):
+        # Stored before the gateway was required: Cohere's own API would be
+        # refused at each search, unseen behind the fail-open, so it is unset.
+        if (org, namespace) not in _COHERE_UNSET_LOGGED:
+            _COHERE_UNSET_LOGGED.add((org, namespace))
+            log.warning(
+                "%s/%s reranks with builtin:cohere, refused while %s is set: not reranked",
+                org,
+                namespace,
+                settings.gateway_required_by(),
+            )
         return "", ""
     return (endpoint, row.get("rerank_prompt_template") or "")

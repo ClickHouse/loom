@@ -97,7 +97,7 @@ SDK has no class for raises the class its HTTP status maps to (a 409
 `SCHEMA_PENDING`, `OVERRIDE_NOT_SHARED`, `CODED_WIDTH_MISMATCH` and `GATEWAY_REQUIRED`
 are 503s because the server cannot serve the request in its current state, not because
 the request is wrong; they send no `Retry-After` since only an operator's fix ends them,
-and the SDKs never retry the last three.
+and the SDKs never retry `CODED_WIDTH_MISMATCH` or `GATEWAY_REQUIRED`.
 
 The SDKs' default policy: three attempts with exponential backoff; 408 and 5xx
 retried for ops the registry marks idempotent (any other op only on a 408 or a

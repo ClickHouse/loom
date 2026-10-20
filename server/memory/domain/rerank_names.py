@@ -13,6 +13,7 @@ from typing import Annotated
 from pydantic import AfterValidator
 
 from server.settings import settings
+from server.settings._providers import is_builtin_cohere
 
 BUILTIN_OPENAI = "builtin:openai"
 BUILTIN_COHERE = "builtin:cohere"
@@ -31,13 +32,12 @@ def is_rerank_choice(name: str) -> bool:
 def check_rerank_name(value: str) -> str:
     """The stripped choice, or ValueError (a 422) listing what may be sent."""
     name = value.strip()
-    if settings.gateway_required() and (
-        name == BUILTIN_COHERE or name.startswith(BUILTIN_COHERE + ":")
-    ):
+    why = settings.gateway_required_by()
+    if why and is_builtin_cohere(name):
         # Cohere's own API takes no gateway; the reranker would fail open unseen.
         raise ValueError(
-            "builtin:cohere is refused while LOOM_INFERENCE_GATEWAY_REQUIRED (or a token "
-            "exchange) is on: rerank with builtin:openai or an endpoint behind the gateway"
+            f"builtin:cohere is refused while {why} is set: rerank with "
+            "builtin:openai or an endpoint behind the gateway"
         )
     if is_rerank_choice(name):
         return name

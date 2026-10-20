@@ -4,6 +4,7 @@ at it, and a workload token exchanged there instead of a provider key."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -426,7 +427,7 @@ def test_with_the_gateway_required_its_key_is_the_bearer_at_the_gateway(required
 
 
 @pytest.fixture
-def wire(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     """The shared client, its hooks in place, over a transport that records
     each URL it is sent and redirects the gateway's /moved to OpenAI."""
     sent: list[str] = []
@@ -437,11 +438,11 @@ def wire(monkeypatch: pytest.MonkeyPatch) -> list[str]:
             return httpx.Response(307, headers={"location": "https://api.openai.com/v1/embeddings"})
         return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.5] * 8}]})
 
-    monkeypatch.setattr(_http, "_client", None)
+    monkeypatch.setattr(_http, "_client", None)  # restored after the test
     client = _http.get_client()
     monkeypatch.setattr(client, "_transport", httpx.MockTransport(answer))
     yield sent
-    monkeypatch.setattr(_http, "_client", None)
+    asyncio.run(client.aclose())
 
 
 def test_with_the_gateway_required_no_redirect_takes_a_call_to_a_provider(
@@ -550,6 +551,39 @@ def test_the_gateway_required_refuses_cohere_as_the_code_search_rerank_default(
         Settings(_env_file=None)  # type: ignore[call-arg]
     monkeypatch.setenv("LOOM_CODE_SEARCH_RERANK_DEFAULT", "builtin:openai")
     assert Settings(_env_file=None).code_search_rerank_default == "builtin:openai"  # type: ignore[call-arg]
+
+
+def test_a_namespace_that_stored_builtin_cohere_reranks_with_nothing(
+    required: None, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Stored before the gateway was required: unset, not refused at each search.
+    from server.core import ch
+    from server.memory.app import rerank
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
+            return {"rerank_endpoint": "builtin:cohere", "rerank_prompt_template": "p"}
+
+    monkeypatch.setattr(ch, "get_client", lambda: _CH())
+    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", set())
+    for _ in range(2):
+        assert asyncio.run(rerank.get_namespace_rerank_config("acme", "ns")) == ("", "")
+    warned = [r for r in caplog.records if "builtin:cohere" in r.getMessage()]
+    assert len(warned) == 1 and "LOOM_INFERENCE_GATEWAY_REQUIRED" in warned[0].getMessage()
+    monkeypatch.setattr(settings, "inference_gateway_required", False)
+    config = asyncio.run(rerank.get_namespace_rerank_config("acme", "ns"))
+    assert config == ("builtin:cohere", "p")
+
+
+def test_a_refused_cohere_names_the_setting_that_requires_the_gateway(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.domain.rerank_names import check_rerank_name
+
+    monkeypatch.setattr(settings, "inference_gateway_required", False)
+    monkeypatch.setattr(settings, "inference_token_url", "https://gateway.example/oauth/token")
+    with pytest.raises(ValueError, match="while LOOM_INFERENCE_TOKEN_URL is set"):
+        check_rerank_name("builtin:cohere")
 
 
 def test_with_the_gateway_required_builtin_cohere_is_refused_by_name(required: None) -> None:

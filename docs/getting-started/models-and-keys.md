@@ -216,13 +216,15 @@ token exchange turns this on by itself.
   leaves, on every redirect hop too, whatever named it: a model named per
   request, a configuration saved in the dashboard, a `LOOM_CODE_SEARCH_VECTOR_MODELS`
   entry, a namespace's `classify_endpoint`. `builtin:cohere` is refused as a
-  rerank choice (422). A refused call is not retried, the dashboard's model check
+  rerank choice (422), and a namespace that stored it reranks with nothing,
+  with a warning in the log. A refused call is not retried, the dashboard's model check
   answers `gateway_required`, and `/v1/health` reports the provider as failing.
 - **Rolling it out:** a previous build ignores the setting, so turn it on once
   every replica runs this one. A deployment that already exchanges a token
   refuses to start on this build while it embeds with Gemini (or at a provider's
   own embedding root), names a rerank endpoint at a provider, or defaults code
-  search to `builtin:cohere`, and requests naming `builtin:cohere` get a 422.
+  search to `builtin:cohere`; requests naming `builtin:cohere` get a 422, and
+  namespaces that stored it stop reranking until their `rerank_endpoint` is changed.
   Move the embedder behind the gateway (`LOOM_EMBEDDING_PROVIDER=compatible`,
   `LOOM_EMBEDDING_BASE_URL` at the gateway) and the rerankers off the providers
   first, or the rollout stops at the first upgraded replica.

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, PrivateAttr, model_validator
 
+from server.core.embedding_space import inferred_provider
 from server.settings._env import CaseFolded, JsonObject, json_map_items
 from server.settings._models import (
     DEFAULT_LOCAL_EMBEDDING_MODEL,
@@ -32,6 +33,11 @@ def is_provider_api(url: str) -> bool:
     """Whether `url` is a provider's own API, a regional host of it too."""
     host = (urlsplit(url).hostname or "").rstrip(".")
     return any(host == h or host.endswith("." + h) for h in PROVIDER_API_HOSTS)
+
+
+def is_builtin_cohere(name: str) -> bool:
+    """Whether a rerank choice is `builtin:cohere[:<model>]`, which calls Cohere's own API."""
+    return name == "builtin:cohere" or name.startswith("builtin:cohere:")
 
 
 # A configured rerank endpoint's name: what a request or a namespace sends instead of a URL.
@@ -247,20 +253,22 @@ class ProviderSettings(ModelSettings):
 
     def gateway_required(self) -> bool:
         """Whether model calls may go only to a gateway, never a provider's own API."""
-        return self.inference_gateway_required or bool(self.inference_token_url)
+        return bool(self.gateway_required_by())
+
+    def gateway_required_by(self) -> str:
+        """The setting that requires the gateway, for an error to name; "" when none does."""
+        if self.inference_token_url:
+            return "LOOM_INFERENCE_TOKEN_URL"
+        return "LOOM_INFERENCE_GATEWAY_REQUIRED" if self.inference_gateway_required else ""
 
     @model_validator(mode="after")
     def _check_gateway_is_in_front(self) -> ProviderSettings:
         """With the gateway required, every API root points away from the
         providers' own hosts: any model a request or the dashboard names may be
         either provider's (the senders refuse them too)."""
-        if not self.gateway_required():
+        why = self.gateway_required_by()
+        if not why:
             return self
-        why = (
-            "LOOM_INFERENCE_TOKEN_URL"
-            if self.inference_token_url
-            else "LOOM_INFERENCE_GATEWAY_REQUIRED"
-        )
         for name, url in (
             ("LOOM_OPENAI_BASE_URL", self.openai_base_url),
             ("LOOM_ANTHROPIC_BASE_URL", self.anthropic_base_url),
@@ -272,8 +280,6 @@ class ProviderSettings(ModelSettings):
             if is_provider_api(url):
                 # The entry, never its URL: it can carry a credential.
                 raise ValueError(f"{why} refuses LOOM_RERANK_ENDPOINTS_JSON entry {name!r}")
-        from server.core.embedding_space import inferred_provider
-
         provider: str = self.embedding_provider
         if not provider:
             try:

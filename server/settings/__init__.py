@@ -30,7 +30,7 @@ from server.settings._memory_search import MemorySearchSettings
 from server.settings._models import ModelSettings
 from server.settings._namespaces import NamespaceSettings
 from server.settings._observability import ObservabilitySettings
-from server.settings._providers import ProviderSettings
+from server.settings._providers import ProviderSettings, is_builtin_cohere
 from server.settings._ratelimit import RateLimitSettings
 from server.settings._runtime import RuntimeSettings
 from server.settings._storage import StorageSettings
@@ -82,13 +82,11 @@ class Settings(
     def _check_code_rerank_behind_the_gateway(self) -> Settings:
         """`builtin:cohere` calls Cohere's own API, and the code reranker fails
         open: while the gateway is required, the default may not name it."""
-        rerank = self.code_search_rerank_default.strip()
-        if self.gateway_required() and (
-            rerank == "builtin:cohere" or rerank.startswith("builtin:cohere:")
-        ):
+        why = self.gateway_required_by()
+        if why and is_builtin_cohere(self.code_search_rerank_default.strip()):
             raise ValueError(
-                "LOOM_INFERENCE_GATEWAY_REQUIRED (or a token exchange) refuses "
-                "LOOM_CODE_SEARCH_RERANK_DEFAULT=builtin:cohere: rerank through the gateway"
+                f"{why} refuses LOOM_CODE_SEARCH_RERANK_DEFAULT=builtin:cohere: "
+                "rerank through the gateway"
             )
         return self
 
