@@ -267,10 +267,12 @@ settings where each statement reaches ClickHouse (`server/core/ch_names.py`); th
 KeeperMap tables' Keeper paths move with the schema (`/<database>/task_leases`). Two
 deployments can share one ClickHouse service with a database pair each.
 
-Choose the names before the first migration. A new name points Loom at an empty schema:
-a process that finds no database by that name while a Loom schema exists in `loom`
-refuses to start, and to start a second schema there on purpose, create the database
-first. Names are letters, digits, `_` and `-`.
+Choose the names before the first migration. A new name points Loom at an empty schema,
+so while a Loom schema exists in `loom`, a process refuses to start when the named
+database does not exist or holds tables but no Loom ledger. To start a second schema on
+purpose, create its database empty first. A renamed schema names its own
+`LOOM_CH_TELEMETRY_DATABASE`. Names are letters, digits, `_` and `-`, and never
+`default` or `system`.
 
 ### Identity and authentication
 

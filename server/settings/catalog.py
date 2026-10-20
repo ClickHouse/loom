@@ -496,6 +496,8 @@ class AuthSettings(BaseModel):
 
 # A database name Loom writes into statements and KeeperMap paths unescaped.
 _DATABASE_NAME = r"^[A-Za-z0-9_][A-Za-z0-9_-]*$"
+# Databases a ClickHouse server or other applications on it own.
+_SHARED_DATABASES = frozenset({"default", "system", "information_schema"})
 
 
 class ClickHouseSettings(BaseModel):
@@ -512,12 +514,14 @@ class ClickHouseSettings(BaseModel):
     # The database Loom's schema lives in: every table, view and the migrations ledger,
     # and the connection's default database. Statements are written against `loom`
     # and name this database where they reach ClickHouse (server/core/ch_names.py);
-    # KeeperMap paths move with it. Set it before the first migration: a name with no
-    # database while a schema is in `loom` refuses to start (create the database first
-    # to start a second schema). Letters, digits, `_` and `-`. Read once at startup.
+    # KeeperMap paths move with it. Set it before the first migration: while a schema is
+    # in `loom`, a name that does not exist, or holds tables but no Loom ledger, refuses
+    # to start (create it empty to start a second schema). Letters, digits, `_` and `-`;
+    # never `default` or `system`. Read once at startup.
     ch_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom"
     # The database the telemetry Loom derives from its own tables lives in
-    # (`sli_minute`), outside the schema so a reader can be granted it alone.
+    # (`sli_minute`), outside the schema so a reader can be granted it alone. A schema
+    # outside `loom` names its own: two schemas never share one.
     ch_telemetry_database: Annotated[str, Field(pattern=_DATABASE_NAME)] = "loom_telemetry"
     # The cluster `clusterAllReplicas` reads to find a stopped Loom process's
     # queries on every node (`default` on ClickHouse Cloud). A server without
@@ -645,6 +649,13 @@ class ClickHouseSettings(BaseModel):
     def _check_databases(self) -> ClickHouseSettings:
         """Statements name `loom` and `loom_telemetry` and are mapped to these two;
         a database named after the other alias would be mapped twice."""
+        for field in ("ch_database", "ch_telemetry_database"):
+            if getattr(self, field).lower() in _SHARED_DATABASES:
+                raise ValueError(
+                    f"LOOM_{field.upper()} must not be {getattr(self, field)!r}: a database "
+                    "the server or other applications use. If Loom's schema is in `loom`, "
+                    "unset it"
+                )
         if self.ch_database == self.ch_telemetry_database:
             raise ValueError("LOOM_CH_DATABASE and LOOM_CH_TELEMETRY_DATABASE must differ")
         if self.ch_database == "loom_telemetry" or self.ch_telemetry_database == "loom":
@@ -654,7 +665,10 @@ class ClickHouseSettings(BaseModel):
             )
         # A second schema on the service would read and roll up into the first's.
         if self.ch_database != "loom" and self.ch_telemetry_database == "loom_telemetry":
-            raise ValueError("LOOM_CH_DATABASE is renamed: name its LOOM_CH_TELEMETRY_DATABASE too")
+            raise ValueError(
+                "LOOM_CH_DATABASE names a schema outside `loom` (if Loom's schema is in "
+                "`loom`, unset it): name its LOOM_CH_TELEMETRY_DATABASE too"
+            )
         return self
 
 
@@ -1716,7 +1730,7 @@ class ErasureSettings(BaseModel):
     # service: where `otel_exporter = "ch"` writes spans, logs and metrics, and where
     # the erasure cascade deletes a user's rows with ALTER TABLE DELETE. "" = the
     # `default` database for the exporter, and no erasure cascade.
-    clickstack_database: Annotated[str, Field(pattern=r"^[^`]*$")] = ""
+    clickstack_database: Annotated[str, Field(pattern=r"^(?:[A-Za-z0-9_][A-Za-z0-9_-]*)?$")] = ""
     # Comma-separated OTel Map attribute keys holding user_id, ORed in the delete.
     clickstack_user_id_keys: str = "user_id,user.id,enduser.id"
     # Per-request seconds for external trace/chat backend lookups and deletes

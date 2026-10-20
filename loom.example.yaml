@@ -40,13 +40,15 @@ settings:
   # The database Loom's schema lives in: every table, view and the migrations ledger,
   # and the connection's default database. Statements are written against `loom` and
   # name this database where they reach ClickHouse (server/core/ch_names.py); KeeperMap
-  # paths move with it. Set it before the first migration: a name with no database while
-  # a schema is in `loom` refuses to start (create the database first to start a second
-  # schema). Letters, digits, `_` and `-`. Read once at startup. [restart]
+  # paths move with it. Set it before the first migration: while a schema is in `loom`,
+  # a name that does not exist, or holds tables but no Loom ledger, refuses to start
+  # (create it empty to start a second schema). Letters, digits, `_` and `-`; never
+  # `default` or `system`. Read once at startup. [restart]
   # ch_database: "loom"
 
   # The database the telemetry Loom derives from its own tables lives in (`sli_minute`),
-  # outside the schema so a reader can be granted it alone. [restart]
+  # outside the schema so a reader can be granted it alone. A schema outside `loom`
+  # names its own: two schemas never share one. [restart]
   # ch_telemetry_database: "loom_telemetry"
 
   # The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on
