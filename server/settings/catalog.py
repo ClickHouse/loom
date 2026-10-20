@@ -4764,7 +4764,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "conversation.delete": 600,
     "conversation.get": 100,
     "conversation.list": 80,
+    "conversation.save_message": 250,
     "conversation.search": 120,
+    "conversation.search_saved_messages": 200,
     # ALTER UPDATE mutation.
     "conversation.set_logging": 200,
     "conversation.threads": 120,

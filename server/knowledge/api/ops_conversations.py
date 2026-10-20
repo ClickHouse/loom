@@ -72,7 +72,6 @@ conversation_save_message = Operation(
     output_model=ConversationSaveMessageOutput,
     handler=handle_conversation_save_message,
     idempotent=True,
-    budget_p99_ms=250,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -150,7 +149,6 @@ conversation_search_saved_messages = Operation(
     output_model=ConversationSearchSavedMessagesOutput,
     handler=handle_conversation_search_saved_messages,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )

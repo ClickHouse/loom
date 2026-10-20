@@ -231,7 +231,10 @@ async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
 
     monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
     out = await h._search_substring_fallback(
-        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"),
+        ["ns"],
+        [],
+        saved_only=False,
     )
     assert out.hits[0].content_excerpt == content[:12]
 
