@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from server.clients._http import get_model_client
 from server.embedding._cache import cached_embed
 from server.embedding._provider import MalformedEmbedding, retrying, vector
+from server.llm import customer
 
 
 def endpoint_url(base_url: str) -> str:
@@ -71,6 +72,7 @@ class CompatibleEmbedder:
         if self._send_dimensions:
             payload["dimensions"] = self.dim
         headers = {"Authorization": f"Bearer {self._key}"} if self._key else {}
+        headers |= customer.headers()
         async for attempt in retrying():
             with attempt:
                 response = await get_model_client().post(

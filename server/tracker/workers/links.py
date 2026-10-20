@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds as _now
+from server.llm import customer
 from server.settings import settings
 from server.tracker.app import links as lk
 from server.tracker.domain import similar as sim
@@ -130,9 +131,11 @@ async def _run(
         set_namespace(ns)  # Where a cut pass stopped
         src = make(cfg.org, ns)
         try:
-            await score_namespace(src, repo, cfg.org, ns, result=result, now=now or _now())
-            result.namespaces += 1
-            await refit_dupcheck(src, cfg.org, ns, result=result, now=now or _now())
+            # The refit replays the gold set through the vector leg: that org's embeds.
+            with customer.for_org(cfg.org):
+                await score_namespace(src, repo, cfg.org, ns, result=result, now=now or _now())
+                result.namespaces += 1
+                await refit_dupcheck(src, cfg.org, ns, result=result, now=now or _now())
         except TrackerUnavailable as e:
             result.errors.append(f"{ns}: tracker_unavailable: {e}")
             note_failure(e, f"tracker_links:{ns}")

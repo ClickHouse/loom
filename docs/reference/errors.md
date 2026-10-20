@@ -479,6 +479,10 @@ Raised in `server/memory/domain/record_values.py`.
 
 Raised in `server/memory/app/handlers.py`.
 
+#### `MODEL_CALL_UNATTRIBUTED`
+
+HTTP 500, raised as `server.llm.customer.Unattributed`. A model call with no customer to bill: a caller that set none (a job that did not name the org of its rows).
+
 #### `MODEL_CHANGE_IN_PROGRESS`
 
 Raised in `server/transport/model_maintenance.py`.

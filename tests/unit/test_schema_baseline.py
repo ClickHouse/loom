@@ -33,6 +33,7 @@ TRANSIENT_TABLES = {
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",
     "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
+    "delete_version_checks": "memory.delete_version's owed checks (identity and key only)",
 }
 
 # Objects that are gone and must not come back.
@@ -104,8 +105,9 @@ def test_the_journal_files() -> None:
         "044_service_account_lineage.sql",
         "045_request_sli.sql",
         "054_embedding_cache_org.sql",
-        "055_acl_versions.sql",
-        "056_collections_and_groups.sql",
+        "055_delete_version_checks.sql",
+        "056_acl_versions.sql",
+        "057_collections_and_groups.sql",
     ]
 
 

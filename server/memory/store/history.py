@@ -12,7 +12,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity, MemoryRow, _hydrate
-from server.memory.store.sql import _is_full_row
+from server.memory.store.sql import _SEQUENTIAL, _is_full_row, read_your_writes_enabled
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,18 +296,22 @@ async def fetch_version_rows(
     namespace: str,
     pairs: list[tuple[str, int]],
     *,
+    sequential: bool = False,
     ch: _CHClient | None = None,
 ) -> list[MemoryRow]:
     """The exact historical rows for (memory_key, version) pairs, hydrated
-    so build_memory_version_row can re-emit them as new heads."""
+    so build_memory_version_row can re-emit them as new heads. `sequential` reads with
+    sequential consistency, for a row another read just saw committed."""
     if not pairs:
         return []
     ch = ch or _default_client()
+    settings = _SEQUENTIAL if sequential and read_your_writes_enabled() else ""
     rows = await ch.query_all(
-        """
+        f"""
         SELECT * FROM loom.memory_versions FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND (memory_key, version) IN {pairs:Array(Tuple(String, UInt64))}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (memory_key, version) IN {{pairs:Array(Tuple(String, UInt64))}}
+        {settings}
         """,
         params={"org": org, "ns": namespace, "pairs": [(k, int(v)) for k, v in pairs]},
     )

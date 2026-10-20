@@ -49,6 +49,7 @@ import httpx
 
 from server.clients._http import refuse_off_gateway
 from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.llm.json_text import strip_code_fence
 from server.memory.app.log_once import LogOnce
 from server.memory.domain.rerank_names import BUILTIN_OPENAI, is_rerank_choice
@@ -177,11 +178,12 @@ async def rerank(
     # reranker read as slow retrieval.
     from server.observability.otel import traced
 
+    headers = customer.headers()  # outside the fail-open: a call naming no customer is a bug
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
             refuse_off_gateway(url)  # its own client: the model client's hook never runs
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(url, json=body)
+                resp = await client.post(url, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed reranker keeps the input order
@@ -249,18 +251,16 @@ async def _rerank_with_builtin_cohere(
     }
     from server.observability.otel import traced
 
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        **customer.headers(),  # outside the fail-open: a call naming no customer is a bug
+    }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
             refuse_off_gateway(_COHERE_API_URL)
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    _COHERE_API_URL,
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
+                resp = await client.post(_COHERE_API_URL, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed Cohere call keeps the input order
@@ -342,6 +342,8 @@ async def _rerank_with_builtin_openai(
                 user=user_prompt,
                 max_tokens=rerank_max_tokens,
             )
+    except customer.Unattributed:
+        raise  # a missed path, not a provider fault: never "kept the input order"
     except Exception as e:  # noqa: BLE001 — a failed LLM rerank keeps the input order
         log.warning("builtin:openai rerank failed (%s); fallback", e)
         _degradations.note("rerank:openai", "input_order_kept", e)

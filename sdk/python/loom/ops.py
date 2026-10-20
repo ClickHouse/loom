@@ -185,6 +185,7 @@ OpName = Literal[
     "memory.dedup_list",
     "memory.dedup_resolve",
     "memory.delete",
+    "memory.delete_version",
     "memory.demonstrate",
     "memory.demote",
     "memory.digests",
@@ -199,6 +200,7 @@ OpName = Literal[
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.keys",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -496,6 +498,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.dedup_list",
     "memory.dedup_resolve",
     "memory.delete",
+    "memory.delete_version",
     "memory.demonstrate",
     "memory.demote",
     "memory.digests",
@@ -510,6 +513,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.keys",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -2413,6 +2417,18 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "memory.delete_version": OpSpec(
+        "memory.delete_version",
+        "MemoryDeleteVersionInput",
+        "MemoryDeleteVersionBody",
+        "MemoryDeleteVersionOutput",
+        True,
+        "writer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
     "memory.demonstrate": OpSpec(
         "memory.demonstrate",
         "MemoryDemonstrateInput",
@@ -2580,6 +2596,18 @@ OPS: dict[str, OpSpec] = {
         30000,
         True,
         False,
+    ),
+    "memory.keys": OpSpec(
+        "memory.keys",
+        "MemoryKeysInput",
+        "MemoryKeysBody",
+        "MemoryKeysOutput",
+        True,
+        "viewer",
+        "experimental",
+        2000,
+        False,
+        True,
     ),
     "memory.lineage": OpSpec(
         "memory.lineage",
@@ -10187,6 +10215,7 @@ class MemoryGetOutput(TypedDict, total=False):
     memory_type: NotRequired[Optional[str]]
     confidence: NotRequired[Optional[float]]
     version: NotRequired[Optional[int]]
+    version_text: NotRequired[Optional[str]]
     created_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
     expires_at: NotRequired[Optional[str]]
@@ -10606,6 +10635,37 @@ class MemoryDeleteOutput(TypedDict, total=False):
     tombstoned: Required[bool]
     version: Required[int]
     found: NotRequired[bool]
+    dependents_tombstoned: NotRequired[int]
+    dependents_downgraded: NotRequired[int]
+
+
+class MemoryDeleteVersionInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    version: Required[Union[int, str]]
+
+
+class MemoryDeleteVersionBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    version: Required[Union[int, str]]
+
+
+class MemoryDeleteVersionOutput(TypedDict, total=False):
+    tombstoned: Required[bool]
+    version: NotRequired[int]
+    found: NotRequired[bool]
+    reason: NotRequired[str]
     dependents_tombstoned: NotRequired[int]
     dependents_downgraded: NotRequired[int]
 
@@ -11239,6 +11299,30 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     skipped: NotRequired[int]
 
 
+class MemoryKeysInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class MemoryKeysBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class MemoryKeysOutput(TypedDict, total=False):
+    keys: Required[list["MemoryKeyRef"]]
+    truncated: NotRequired[bool]
+
+
+class MemoryKeyRef(TypedDict, total=False):
+    agent: Required[str]
+    user_id: Required[str]
+    session_id: Required[str]
+    memory_key: Required[str]
+
+
 class MemoryLineageInput(TypedDict, total=False):
     "Assemble the provenance chain for a SHARED memory."
 
@@ -11432,6 +11516,7 @@ class MemoryListEntry(TypedDict, total=False):
     memory_type: Required[str]
     confidence: Required[float]
     version: Required[int]
+    version_text: NotRequired[str]
     source_trace: NotRequired[str]
     created_at: Required[str]  # date-time as ISO-8601 text
     updated_at: NotRequired[Optional[str]]

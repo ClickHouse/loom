@@ -158,6 +158,7 @@ def test_every_write_feeding_head_read_is_strong() -> None:
         _mw._set_check_if_match,
         set_commit._set_merge,
         memory.handle_memory_delete,
+        memory._delete_version_locked,
         memory.handle_memory_touch,
         update_mod.handle_memory_update,
         update_mod.handle_memory_update_by_id,

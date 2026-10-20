@@ -22,6 +22,8 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from server.llm import customer
+
 # (text-source column, vector column) per table, plus an optional secondary
 # (key text -> key vector, key dim) embedding.
 _TABLES: dict[str, dict[str, Any]] = {
@@ -301,12 +303,20 @@ async def _rewrite_page(
 ) -> None:
     cfg = _TABLES[table]
     model, dim = embedder.model_name, embedder.dim
-    vecs: list[list[float]] | None = None
-    if not key_only:
-        vecs = await embedder.embed_many([str(r.get(cfg["text"]) or "") for r in chunk])
-    kvecs = None
-    if cfg.get("key_text"):
-        kvecs = await embedder.embed_many([_key_input(r) for r in chunk])
+    vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
+    kvecs: list[list[float]] | None = [[] for _ in chunk] if cfg.get("key_text") else None
+    # A page can span two orgs (the keyset leads with org): one call per org,
+    # since a model call names a single customer.
+    for org, positions in customer.by_org(str(r.get("org") or "") for r in chunk).items():
+        with customer.for_org(org):
+            if vecs is not None:
+                texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]
+                for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
+                    vecs[i] = v
+            if kvecs is not None:
+                keys = [_key_input(chunk[i]) for i in positions]
+                for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
+                    kvecs[i] = v
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in enumerate(chunk)

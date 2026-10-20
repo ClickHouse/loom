@@ -528,7 +528,7 @@ async def handle_memory_link(input: MemoryLinkInput) -> MemoryLinkOutput:
 
     from server.auth.context import current_auth
     from server.core.ch import get_client
-    from server.memory.domain.edge_relations import canonical_link_relation
+    from server.memory.domain.edge_relations import canonical_edge
 
     ch = get_client()
     author = ""
@@ -539,14 +539,12 @@ async def handle_memory_link(input: MemoryLinkInput) -> MemoryLinkOutput:
         # Background callers (workers, CLI) may not have an auth context.
         pass
 
-    relation, flip = canonical_link_relation(input.relation)
     # An edge without a verb is a co-occurrence, which loom.entity_edges already records, and
     # most authored edges arrive without one. Store the honest fallback and say so on the
     # output, so the row can guide a read and the ledger can count the habit.
-    relation_defaulted = False
-    if not relation:
-        relation, relation_defaulted = "related_to", True
-    from_key, to_key = (input.to_key, input.from_key) if flip else (input.from_key, input.to_key)
+    from_key, to_key, relation, relation_defaulted = canonical_edge(
+        input.from_key, input.to_key, input.relation
+    )
     evidence = [
         str(e).strip()[:_EDGE_EVIDENCE_ITEM_LIMIT] for e in (input.evidence or []) if str(e).strip()
     ]

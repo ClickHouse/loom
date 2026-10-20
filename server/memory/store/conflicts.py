@@ -25,6 +25,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.domain.delete_marks import carried_trace
 
 
 async def list_conflicted(
@@ -238,7 +239,7 @@ async def tombstone_ids(
     import server.memory.store as memory_repo
 
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
-        trace = row.source_trace or ""
+        trace = carried_trace(row.source_trace)  # the delete_version marker is not carried
         return {"source_trace": f"{trace} | {audit_note}" if trace else audit_note}
 
     # The tombstone must reach memory_embeddings too, or the losing side of a

@@ -1427,6 +1427,15 @@ class MemoryOps:
             "_ops.MemoryDeleteOutput", await self._agent.call("memory.delete", body, **options)
         )
 
+    async def delete_version(
+        self, body: _ops.MemoryDeleteVersionBody | None = None, /, **options: Any
+    ) -> _ops.MemoryDeleteVersionOutput:
+        """`memory.delete_version`."""
+        return cast(
+            "_ops.MemoryDeleteVersionOutput",
+            await self._agent.call("memory.delete_version", body, **options),
+        )
+
     async def demonstrate(
         self, body: _ops.MemoryDemonstrateBody | None = None, /, **options: Any
     ) -> _ops.MemoryDemonstrateOutput:
@@ -1542,6 +1551,12 @@ class MemoryOps:
             "_ops.MemoryImportEvidenceOutput",
             await self._agent.call("memory.import_evidence", body, **options),
         )
+
+    async def keys(
+        self, body: _ops.MemoryKeysBody | None = None, /, **options: Any
+    ) -> _ops.MemoryKeysOutput:
+        """`memory.keys`."""
+        return cast("_ops.MemoryKeysOutput", await self._agent.call("memory.keys", body, **options))
 
     async def lineage(
         self, body: _ops.MemoryLineageBody | None = None, /, **options: Any

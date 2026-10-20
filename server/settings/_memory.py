@@ -240,6 +240,18 @@ class MemorySettings(BaseModel):
     # Lowest confidence a `demote` (expiry or run.complete) leaves on a row.
     memory_expiry_demote_floor: float = 0.05
 
+    # Run the delete_version_check worker, which finishes the memory.delete_version checks a
+    # 503 left owed (False: only a retry of the delete finishes them).
+    delete_version_check_enabled: bool = True
+    # Seconds between passes while checks are owed.
+    delete_version_check_interval_seconds: int = 60
+    # Seconds between passes that found none.
+    delete_version_check_idle_interval_seconds: int = 300
+    # Seconds a check is left to the delete that owes it before a pass runs it.
+    delete_version_check_grace_seconds: int = 60
+    # Checks one pass runs.
+    delete_version_check_batch_size: int = 200
+
     # ---- namespace health, knowledge graph, communities ----
     # Seconds a namespace's health summary is cached per process (a failed
     # lookup at most 300 s). 0 disables the summary and its pack section.

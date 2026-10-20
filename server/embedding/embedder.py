@@ -11,7 +11,7 @@ from typing import Protocol
 from server.core.embedding_space import inferred_provider
 from server.core.provider_keys import provider_key
 from server.embedding.alias import PREFIX as ALIAS_PREFIX
-from server.llm import gateway
+from server.llm import customer, gateway
 from server.settings import settings
 
 
@@ -229,7 +229,8 @@ async def probe_embedding_dim() -> int | None:
     global _probed_dim
     try:
         embedder = get_embedder()
-        vec = await embedder.embed("loom")
+        with customer.system():  # the deployment's own check, no org's data
+            vec = await embedder.embed("loom")
     except Exception as e:  # noqa: BLE001 — boot must survive an unreachable embedder
         logging.getLogger(__name__).warning(
             "embedding dim probe failed (%s); falling back to settings.embedding_dim=%d",

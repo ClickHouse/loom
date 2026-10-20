@@ -28,18 +28,18 @@ files under `--out`. Existing concept files are overwritten; nothing else in the
 is touched. The mapping lives in `server/memory/domain/okf_bundle.py` (pure functions, unit
 tested); `server/cli/okf.py` is the transport and the file system.
 
-| Memory                             | Concept                                                                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory_key`                       | file name (slug) and `loom.memory_key`                                                                                                      |
-| `memory_type`                      | directory and `type`: `semantic` → Fact, `procedural` → Procedure, `preference` → Preference, `episodic` → Event, anything else title-cased |
-| value                              | body: text as is, JSON as a fenced block                                                                                                    |
-| `tags`                             | `tags`                                                                                                                                      |
-| agent and `created_at`             | `generated: {by: "agent:<agent>", at}`                                                                                                      |
-| live `verified_by` / `verified_at` | `verified: [{by, at}]` (human and process attestations only)                                                                                |
-| `status`                           | `active` → `stable`, `conflicted` → `draft`, anything else → `deprecated`                                                                   |
-| `expires_at`                       | `stale_after`, a review-by date                                                                                                             |
-| `source_resource_id`               | `sources: [{resource}]`                                                                                                                     |
-| everything Loom-specific           | the `loom:` block, including `source_class`, `sensitivity`, `superseded_by`, `valid_to` and `content_sha256`                                |
+| Memory                             | Concept                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_key`                       | file name and `loom.memory_key`: the key's slug, capped at 160 bytes, with a `-<hash>` of the key and row id when another key holds that name or it is a bundle file's (`index`, `log`, `README`, `AGENTS`, in any case) or a Windows device name (`nul`, `con`, `com1`)                                                                                       |
+| `memory_type`                      | directory (the type's lowercased slug, capped like a file name; `type-<slug>` for `evidence`, `digests`, `staging`, `node_modules`, a bundle file's full name (`index.md`, `log.md`) or a Windows device name such as `nul`) and `type`: `semantic` → Fact, `procedural` → Procedure, `preference` → Preference, `episodic` → Event, anything else title-cased |
+| value                              | body: text as is, JSON as a fenced block                                                                                                                                                                                                                                                                                                                       |
+| `tags`                             | `tags`                                                                                                                                                                                                                                                                                                                                                         |
+| agent and `created_at`             | `generated: {by: "agent:<agent>", at}`                                                                                                                                                                                                                                                                                                                         |
+| live `verified_by` / `verified_at` | `verified: [{by, at}]` (human and process attestations only)                                                                                                                                                                                                                                                                                                   |
+| `status`                           | `active` → `stable`, `conflicted` → `draft`, anything else → `deprecated`                                                                                                                                                                                                                                                                                      |
+| `expires_at`                       | `stale_after`, a review-by date                                                                                                                                                                                                                                                                                                                                |
+| `source_resource_id`               | `sources: [{resource}]`                                                                                                                                                                                                                                                                                                                                        |
+| everything Loom-specific           | the `loom:` block, including `source_class`, `sensitivity`, `superseded_by`, `valid_to` and `content_sha256`                                                                                                                                                                                                                                                   |
 
 **Links.** Edges someone authored (the namespace's typed `memory.link` edges, read with
 `memory.export_evidence kind=edges`, and the `supersedes` chain a superseded row implies)
@@ -66,22 +66,22 @@ trip cannot turn an inference into a first-hand fact.
 no network. Each finding carries an id, a path, a message and a severity
 (`server/memory/domain/okf_lint.py`).
 
-| id                              | Severity | Means                                                                                            |
-| ------------------------------- | -------- | ------------------------------------------------------------------------------------------------ |
-| `frontmatter`                   | critical | a concept has no frontmatter, unparseable YAML, or an empty `type`                               |
-| `required_keys`                 | critical | `title`, `description`, `loom.memory_key` or `loom.memory_type` is missing                       |
-| `relates_to`                    | critical | an edge is malformed or its `.md` target does not exist in the bundle                            |
-| `index_missing` / `okf_version` | critical | a directory with concepts has no `index.md`; the root index declares no `okf_version`            |
-| `staging`                       | critical | a `staging/` directory exists; staging never answers                                             |
-| `type_directory_mismatch`       | warning  | `loom.memory_type` disagrees with the folder the file sits in                                    |
-| `pointer_unmounted`             | warning  | a `relates_to` path is a `loom://org/namespace/key` pointer to a concept outside the bundle      |
-| `unknown_relation`              | warning  | a `relates_to` kind outside Loom's canonical verbs                                               |
-| `edited_since_export`           | warning  | the body no longer hashes to `loom.content_sha256` (a concept or raw chunk edited by hand)       |
-| `derived_needs_confidence`      | warning  | `source_class: derived` at confidence 1.0: an inference written as a fact                        |
-| `high_sensitivity_present`      | warning  | a `sensitivity: high` row (by field or tag) travelled                                            |
-| `index_listing`                 | warning  | a concept its directory index or the root index does not list                                    |
-| `drift`                         | warning  | the root index's `loom.corpus_digest` no longer matches the concept files                        |
-| `orphans`                       | info     | concepts that link to nothing and are linked from nothing (a property of the data, not a defect) |
+| id                              | Severity | Means                                                                                                |
+| ------------------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `frontmatter`                   | critical | a concept has no frontmatter, unparseable YAML, an empty `type` or a `tags` value that is not a list |
+| `required_keys`                 | critical | `title`, `description`, `loom.memory_key` or `loom.memory_type` is missing                           |
+| `relates_to`                    | critical | an edge is malformed or its `.md` target does not exist in the bundle                                |
+| `index_missing` / `okf_version` | critical | a directory with concepts has no `index.md`; the root index declares no `okf_version`                |
+| `staging`                       | critical | a `staging/` directory exists; staging never answers                                                 |
+| `type_directory_mismatch`       | warning  | `loom.memory_type` disagrees with the folder the file sits in                                        |
+| `pointer_unmounted`             | warning  | a `relates_to` path is a `loom://org/namespace/key` pointer to a concept outside the bundle          |
+| `unknown_relation`              | warning  | a `relates_to` kind outside Loom's canonical verbs                                                   |
+| `edited_since_export`           | warning  | the body no longer hashes to `loom.content_sha256` (a concept or raw chunk edited by hand)           |
+| `derived_needs_confidence`      | warning  | `source_class: derived` at confidence 1.0: an inference written as a fact                            |
+| `high_sensitivity_present`      | warning  | a high row (`loom.sensitivity: high` or the `sensitivity:high` tag) travelled                        |
+| `index_listing`                 | warning  | a concept its directory index or the root index does not list                                        |
+| `drift`                         | warning  | the root index's `loom.corpus_digest` no longer matches the concept files                            |
+| `orphans`                       | info     | concepts that link to nothing and are linked from nothing (a property of the data, not a defect)     |
 
 Exit codes follow what a compile step needs: **2** on any critical finding, **1** on
 warnings only, **0** clean. `--strict` makes warnings exit 2 as well (orphans stay
@@ -97,17 +97,51 @@ file's SHA-256 hex digest with no separator, and SHA-256 that string. A mismatch
 `loom import-okf DIR --namespace NS` lints first and refuses a bundle with critical
 findings unless `--force-import` (`--no-lint` skips the gate). It then writes each concept
 through `memory.set`, with identity from the token or the `--agent`, `--user-id` and
-`--session-id` flags, so an import is idempotent by content hash and subject to conflict
-detection, the blacklist and the audit log. Afterwards it re-creates `relates_to` edges
-with `memory.link` (`--no-links` skips this). The bundle's `evidence/` and `digests/` are
-written back through `memory.import_evidence` (`--no-evidence` skips them) and re-embedded
-by the importing server.
+`--session-id` flags, subject to conflict detection, the blacklist and the audit log.
+Afterwards it re-creates `relates_to` edges with `memory.link` (`--no-links` skips this).
 
-| Flag              | Effect                                                                                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--verify`        | re-attest concepts whose frontmatter carries a `human:` verification, through `memory.verify`, **as the importing caller**                                   |
-| `--keep-sessions` | write each concept under the session in its `loom.session_id`, so a key that lived under several sessions stays several rows; `--session-id` is the fallback |
-| `--dry-run`       | plan the writes without sending them                                                                                                                         |
+Before writing, the import reads the live rows under its identity and skips every concept
+whose row already holds what the write would send: the value (`content_sha256`), type,
+tags, confidence, `valid_at`, `valid_to`, `source_trace` and `source_class` (the declared
+class, else `imported`), and the entities when the bundle carries them. It skips edges
+that are already live. Concepts that land on the same row (one key exported for several
+writers) are written once: the most recently updated wins. Re-sending an identical row
+would count as a reinforcement, so importing the same bundle twice writes no concept or
+edge the second time, except a concept with `sources:`, which is written on every run
+because the reads the import makes do not return its source, and a concept the target
+merges into another key, which is sent again on every run and reinforces that row (counted
+as merged). The last line counts the target rows written, unchanged, merged and failed.
+
+`source_trace` is `okf:<path inside the bundle>`, so where the bundle sits on disk does
+not change it: each run can export to a fresh directory.
+
+The bundle's `evidence/` and `digests/` are written back through `memory.import_evidence`
+(`--no-evidence` skips them) and re-embedded by the importing server on every import,
+changed or not: a scheduled import passes `--no-evidence`.
+
+| Flag              | Effect                                                                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--verify`        | re-attest concepts whose frontmatter carries a `human:` verification, through `memory.verify`, **as the importing caller**                                                              |
+| `--keep-sessions` | write each concept under the session in its `loom.session_id`, so a key that lived under several sessions stays several rows; `--session-id` is the fallback                            |
+| `--dry-run`       | plan the writes against the target's live rows (it reads them) without sending any write                                                                                                |
+| `--prune`         | delete the rows an earlier import with this `--agent` and token wrote (an `okf:` `source_trace`) whose key is no longer in the bundle, through `memory.delete_version`; needs `--agent` |
+
+Each bundle imported into a namespace with `--prune` needs an `--agent` of its own: prune
+deletes the rows of that agent with an `okf:` trace, written by its token, that the bundle
+lacks. `--prune` refuses a bundle with no concepts and one whose concept files do not hash
+to the root index's `loom.corpus_digest`, so a hand-edited bundle never drives deletes. A
+bundle whose root index does not carry `loom.complete: true` is written but not pruned.
+Export writes the marker only when it read every row: every row `memory.keys` reads in
+one statement after the listing was listed, and every listed row came back from
+`memory.bulk_get`. Never when it stopped at `--limit`, with `--include-tombstoned` (which
+keeps deleted rows in the bundle), or from an older release. Each delete goes through
+`memory.delete_version` with the version the import's listing saw with an `okf:` trace,
+under that exact identity: a row rewritten since, or locked with `memory.lock`, is kept,
+and a target too old to know the op deletes nothing. Export into an empty directory for a
+prune: export overwrites concept files but never removes the file of a key that left the
+namespace, so a reused `--out` directory no longer matches its digest. [Copying a
+namespace to another Loom](../../operations/okf-sync.md) runs export and import on a
+schedule.
 
 `--verify` never forges an attestation. The server decides the actor from the token; the
 bundle's original verifier is recorded in the memory's tags for provenance.
@@ -151,8 +185,8 @@ uv run --project .okf-lint-loom --frozen --python 3.12 loom okf-lint <OKF_ROOT> 
 
 - **A bundle is a snapshot.** Changes made in Loom after the export are not in it until
   the next export; re-export before editing a stale bundle.
-- **Deletions do not travel.** Removing a concept file does not delete the memory on
-  import. Use `memory.delete` for that.
+- **Deletions travel only with `--prune`,** and only for rows the import wrote. Edges
+  removed from the bundle are not deleted.
 - **High-sensitivity rows stay home** unless you pass `--include-high`: a row is high by
   its `sensitivity` field or its `sensitivity:high` tag. A row whose sensitivity the export
   could not read, or read as a level it does not know, stays home too. So do the raw chunks

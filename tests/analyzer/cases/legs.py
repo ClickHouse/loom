@@ -411,6 +411,15 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
     await M.live_shared_embedding_rows_for_key(ch, org=ORG, namespace=NS, memory_key="k1")
 
 
+async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory import store as M
+
+    # memory.keys' one read of the namespace, and the write fence's read before an insert
+    await M.live_keys(ORG, NS, scope=WHOLE_NAMESPACE, limit=10, ch=ch)
+    row = {"agent": AGENT, "user_id": "-", "session_id": "-", "memory_key": "k", "version": 1}
+    await M.versions_above(ORG, NS, [row], ch=ch)
+
+
 async def _memory_workers(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory import store as M
 
@@ -592,6 +601,7 @@ def cases() -> list[Case]:
             {"scope": ("private", "shared"), "user_id": (False, True), "vector": (False, True)},
         ),
         Case("memory_repo.workers", MR, _memory_workers, {"filters": (False, True)}),
+        Case("memory_repo.keys_and_fence", MR, _keys_and_fence, {}),
         Case("deep_evidence", DE, _deep_evidence, {}),
         Case(
             "code_links.stale_of_served",
