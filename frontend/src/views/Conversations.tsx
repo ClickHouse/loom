@@ -647,7 +647,7 @@ export function Conversations() {
                         knownTitle: g.title || UNTITLED_THREAD,
                       })
                     }
-                    // The row's own hover is this tint already: a matching turn darkens its text.
+                    // The row's own hover is this tint already: a matching turn takes the full text colour.
                     className="list-row-control -mx-1 flex w-[calc(100%+0.5rem)] min-w-0 items-center gap-2 rounded px-1 py-0.5 text-left text-xs text-text-muted hover:text-text"
                   >
                     <span className="inline-flex shrink-0">

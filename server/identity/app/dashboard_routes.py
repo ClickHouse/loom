@@ -47,7 +47,7 @@ PAGE_SEGMENTS = frozenset(
 def dashboard_csp(nonce: str) -> str:
     """The dashboard page's Content-Security-Policy. Scripts run only from the
     bundle's own origin or the one boot snippet carrying `nonce`; a document
-    preview is a blob: frame or image, never a script source."""
+    preview is a text node or a blob: image, never a script source or a frame."""
     return (
         "default-src 'self'; "
         f"script-src 'self' 'nonce-{nonce}'; "
@@ -55,8 +55,7 @@ def dashboard_csp(nonce: str) -> str:
         # Vite inlines small font subsets as data: URLs.
         "font-src 'self' data:; "
         "img-src 'self' data: blob:; "
-        # Only the preview's blob: frame; every Loom response refuses to be framed.
-        "frame-src blob:; "
+        "frame-src 'none'; "
         "connect-src 'self'; "
         "object-src 'none'; "
         "base-uri 'none'; "
