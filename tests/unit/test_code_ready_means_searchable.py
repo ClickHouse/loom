@@ -99,8 +99,8 @@ def test_bootstrap_embedder_is_the_real_one_unless_the_breaker_is_open(
 
 def test_breaker_closes_by_itself_after_the_hold() -> None:
     bs.open_embed_breaker(now=1000.0)
-    assert bs.embed_breaker_open(now=1000.0 + bs._EMBED_BREAKER_HOLD_S - 1)
-    assert not bs.embed_breaker_open(now=1000.0 + bs._EMBED_BREAKER_HOLD_S)
+    assert bs.embed_breaker_open(now=1000.0 + settings.code_bootstrap_embed_breaker_hold_s - 1)
+    assert not bs.embed_breaker_open(now=1000.0 + settings.code_bootstrap_embed_breaker_hold_s)
 
 
 # ---- index_slice end to end over fakes ---------------------------------------

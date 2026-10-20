@@ -14,8 +14,6 @@ search = Operation(
     output_model=SearchOutput,
     handler=handle_search,
     idempotent=True,
-    # The tracker leg is bounded at 3 s; the memory legs run beside it.
-    budget_p99_ms=3500,
     required_role=Role.VIEWER,
     maturity="experimental",
 )

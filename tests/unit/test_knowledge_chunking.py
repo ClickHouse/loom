@@ -134,3 +134,15 @@ def test_chunk_text_uses_the_size_and_stride_settings(monkeypatch) -> None:
     structured = h._chunk_text(DOC)
     assert structured == chunk_document(DOC, size=40, stride=30)
     assert any(c.section_path for c in structured)
+
+
+def test_a_stride_past_the_size_steps_one_window_so_no_text_is_skipped(monkeypatch) -> None:
+    """The two settings change one at a time: a size lowered under the stride must not
+    leave the text between windows unindexed."""
+    from server.knowledge.app import writes as h
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "knowledge_chunk_size", 40)
+    monkeypatch.setattr(settings, "knowledge_chunk_stride", 55)
+    assert h._chunk_text(DOC) == chunk_document(DOC, size=40, stride=40)
+    assert h._chunk_text(DOC) != chunk_document(DOC, size=40, stride=55)

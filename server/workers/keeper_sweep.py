@@ -7,8 +7,6 @@ from __future__ import annotations
 from server.core import leases
 from server.workers.status import record_pass
 
-INTERVAL_SECONDS = 3600.0
-
 
 async def run_pass() -> int:
     """The number of tables swept."""

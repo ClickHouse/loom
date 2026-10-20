@@ -12,10 +12,10 @@ from scripts.ops import vector_codec_rebuild as R  # noqa: E402
 
 
 def test_patch_parts_statement_counts_active_patch_parts_of_the_named_table() -> None:
-    sql = R.patch_parts_sql("loom", "memory_embeddings_q")
+    sql = R.patch_parts_sql("memory_embeddings_q")
     assert sql == (
         "SELECT countIf(startsWith(name, 'patch')) FROM system.parts "
-        "WHERE database = 'loom' AND table = 'memory_embeddings_q' AND active"
+        "WHERE database = currentDatabase() AND table = 'memory_embeddings_q' AND active"
     )
 
 

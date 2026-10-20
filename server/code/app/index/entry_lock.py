@@ -49,12 +49,9 @@ from server.core import leases
 from server.settings import settings
 
 # A dead holder's lease is taken over after this long.
-ENTRY_LEASE_TTL_S = 120
+ENTRY_LEASE_TTL_S = 120  # not a setting: the lease takeover protocol between replicas
 # The environment variable the `entry-lock` wrapper hands its command the holder in.
 HOLDER_ENV = "LOOM_ENTRY_LEASE_HOLDER"
-# A full pass waits this long for a delta on its entry (past any delta's
-# harness timeout).
-_WAIT_S = 4 * 3600.0
 # How often a waiting pass retries the host's lock file.
 _POLL_S = 1.0
 
@@ -147,7 +144,7 @@ async def _take_lease(org: str, namespace: str, *, wait: bool) -> leases.Lease:
         lease = await leases.take(
             name,
             ttl_s=ENTRY_LEASE_TTL_S,
-            wait_s=_WAIT_S if wait else 0.0,
+            wait_s=settings.code_entry_lock_wait_s if wait else 0.0,
             poll_s=2.0,
             poll_max_s=30.0,
         )

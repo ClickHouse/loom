@@ -27,6 +27,7 @@ from server.memory.domain.sensitivity import (
 )
 from server.memory.store.rows import next_version
 from server.observability.genai import staged
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -422,7 +423,7 @@ async def _ask_merge(llm: Any, cluster: list[dict[str, Any]]) -> tuple[Any, str,
         llm_result = await llm.complete(
             system=_MERGE_SYSTEM,
             user=user,
-            max_tokens=256,
+            max_tokens=llm_max_tokens("consolidate_merge"),
         )
         canonical_key, canonical_value = _parse_merge_response(llm_result.text)
     except Exception as e:  # noqa: BLE001 — recorded, never silent

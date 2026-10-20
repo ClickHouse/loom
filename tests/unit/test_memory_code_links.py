@@ -1173,7 +1173,7 @@ async def test_a_finished_sweep_waits_before_its_next_cycle(monkeypatch) -> None
     done = await code_links.sweep_erased({}, 10, code_link_pass.PassResult())
     assert pages == [None] and "done_at" in done
     assert await code_links.sweep_erased(done, 10, code_link_pass.PassResult()) == done
-    stale = {"done_at": time.time() - code_links._SWEEP_EVERY_S - 1}
+    stale = {"done_at": time.time() - settings.memory_code_links_sweep_interval_s - 1}
     await code_links.sweep_erased(stale, 10, code_link_pass.PassResult())
     assert pages == [None, None]
 

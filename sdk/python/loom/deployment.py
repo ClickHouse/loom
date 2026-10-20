@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from loom.admin_routes import AdminRoutes
+
 if TYPE_CHECKING:
     from loom.agent import Agent
 
@@ -18,6 +20,9 @@ if TYPE_CHECKING:
 class DeploymentClient:
     def __init__(self, agent: Agent) -> None:
         self._agent = agent
+        # Every /v1/admin/* route, one method each (generated); these methods are the
+        # curated layer over them.
+        self.routes = AdminRoutes(agent)
 
     async def _call(
         self, method: str, path: str, body: dict[str, Any] | None = None
@@ -31,6 +36,36 @@ class DeploymentClient:
     async def workers_status(self) -> dict[str, Any]:
         """Each background worker: enabled, interval, last run, why it is off."""
         return await self._call("GET", "/v1/admin/workers.status")
+
+    async def settings(self, prefix: str = "", changed: bool = False) -> dict[str, Any]:
+        """Every setting: value in force, default, where the value came from
+        (override, dashboard, env, env_file, settings_file, inferred, default) and
+        whether it is live. `changed`: only the ones off their default or overridden."""
+        return await self._call(
+            "POST", "/v1/admin/settings.list", {"prefix": prefix, "changed": changed}
+        )
+
+    async def set_setting(self, name: str, value: Any, *, expected: Any = ...) -> dict[str, Any]:
+        """Override a live setting for the whole deployment; outlives a restart.
+        `expected`: change nothing (409) unless that is the value in force."""
+        body: dict[str, Any] = {"name": name, "value": value}
+        if expected is not ...:
+            body["expected"] = expected
+        return await self._call("POST", "/v1/admin/settings.set", body)
+
+    async def reset_setting(self, name: str, *, expected: Any = ...) -> dict[str, Any]:
+        """Remove the override: back to the environment's value or the default.
+        `expected`: change nothing (409) unless that is the value in force."""
+        body: dict[str, Any] = {"name": name, "clear": True}
+        if expected is not ...:
+            body["expected"] = expected
+        return await self._call("POST", "/v1/admin/settings.set", body)
+
+    async def setting_history(self, name: str = "", limit: int = 50) -> dict[str, Any]:
+        """Recorded changes of one setting ("" = all), newest first."""
+        return await self._call(
+            "POST", "/v1/admin/settings.history", {"name": name, "limit": limit}
+        )
 
     async def models(self) -> dict[str, Any]:
         """The LLM and embedding settings in force, and any change pending."""

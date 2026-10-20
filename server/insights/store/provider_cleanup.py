@@ -9,6 +9,7 @@ import asyncio
 import time
 from uuid import UUID
 
+from server.core.ch_names import SCHEMA, physical
 from server.core.repo_base import _CHClient, _default_client
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_staging import StagingNames, _identifier
@@ -87,7 +88,7 @@ async def _assert_idle(tables: list[str], database: str, client: _CHClient) -> N
 async def cleanup_rebuild_copies(
     manifest: RebuildManifest,
     *,
-    database: str = "loom",
+    database: str = SCHEMA,
     ch: _CHClient | None = None,
 ) -> int:
     """Resume cleanup by UUID; never delete live tables or infer ownership by name.
@@ -96,6 +97,7 @@ async def cleanup_rebuild_copies(
     fails the whole preflight before the first DROP. Keep the fence and admission
     closed through the final census. This does not activate a provider.
     """
+    database = physical(database)
     db = _identifier(database)
     client = ch or _default_client()
     private = await _inspect(manifest, database, client)

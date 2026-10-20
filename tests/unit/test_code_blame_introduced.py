@@ -19,6 +19,7 @@ from server.code.api.models_history import CodeBlameRangeInput
 from server.code.app.index.gitrepo import GitError
 from server.code.domain.index import blame_introduced as intro
 from server.code.domain.index import blame_range as br
+from server.settings import settings
 from tests.unit.test_code_blame_range import mirror_on_disk
 
 ORG, NS, QA = "clickhouse", "code-clickhouse", "tracker-clickhouse"
@@ -308,7 +309,11 @@ def test_diff_order_and_blameless_rule() -> None:
     marks = {c.pr_number: intro.Mark() for c in cands}
     marks[3].demoted = "backport"
     order = [c.pr_number for c in intro.diff_order(cands, marks)]
-    assert len(order) == intro.MAX_DIFF_CALLS and 3 not in order and 99 not in order
+    assert (
+        len(order) == settings.code_blame_introduced_max_diff_calls
+        and 3 not in order
+        and 99 not in order
+    )
     assert order[:7] == [15, 13, 11, 9, 7, 5, 1] and order[7:] == [14, 12, 10]
     assert intro.is_blameless(blame_ok=False, attributed_lines=3, noise_only=False)
     assert intro.is_blameless(blame_ok=True, attributed_lines=0, noise_only=False)

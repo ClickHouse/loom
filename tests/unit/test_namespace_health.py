@@ -179,7 +179,7 @@ def test_lookup_failure_returns_none_never_raises_and_is_held_briefly(
     clock = lambda: t[0]  # noqa: E731
     assert asyncio.run(nh.namespace_health("o", "ns", clock=clock)) is None
     n = len(ch.sqls)
-    t[0] += nh.FAILURE_TTL_SECONDS - 1
+    t[0] += settings.memory_namespace_health_failure_ttl_s - 1
     assert asyncio.run(nh.namespace_health("o", "ns", clock=clock)) is None
     assert len(ch.sqls) == n  # the failure is remembered, not retried on every pack
     t[0] += 2

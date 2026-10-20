@@ -26,6 +26,7 @@ export const VIEW_LOADERS: Record<View, () => Promise<unknown>> = {
   "admin:usage": () => import("./admin/Spending"),
   "admin:agents": () => import("./admin/Agents"),
   "admin:users": () => import("./admin/Users"),
+  "admin:settings": () => import("./admin/DeploymentSettings"),
 };
 
 /** Start loading a view's chunk; failures are the lazy boundary's to report. */

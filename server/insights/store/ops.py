@@ -17,7 +17,7 @@ async def active_parts_by_table(*, ch: _CHClient | None = None) -> list[dict[str
             """
             SELECT table, count() AS parts, sum(rows) AS rows
             FROM system.parts
-            WHERE active AND database = 'loom'
+            WHERE active AND database = currentDatabase()
             GROUP BY table
             ORDER BY parts DESC
             LIMIT 20
@@ -37,7 +37,7 @@ async def failed_merges_15m(*, ch: _CHClient | None = None) -> list[dict[str, An
                 SELECT table, count() AS failures, any(exception) AS exception,
                        any(merge_reason) AS merge_reason, max(event_time) AS last_failure
                 FROM system.part_log
-                WHERE database = 'loom' AND event_type = 'MergeParts' AND error != 0
+                WHERE database = currentDatabase() AND event_type = 'MergeParts' AND error != 0
                   AND event_time > now() - INTERVAL 15 MINUTE
                 GROUP BY table
                 ORDER BY failures DESC

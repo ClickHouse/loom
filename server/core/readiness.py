@@ -6,7 +6,7 @@ lifespan registers them (`server.boot.register_readiness_checks`), so the
 health route imports no subsystem. A check returns a `CheckResult`, sync or async; it should
 read in-memory state, and one that does I/O sets `ttl_s` so its answer is
 cached and a probe every second costs nothing. A check that raises or takes
-longer than `CHECK_TIMEOUT_S` fails.
+longer than `readiness_check_timeout_s` fails.
 
 `required=False` checks are reported but never make the process unready.
 
@@ -23,7 +23,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-CHECK_TIMEOUT_S = 2.0
+from server.settings import settings
 
 
 @dataclass(frozen=True)
@@ -77,10 +77,10 @@ async def _run(entry: _Entry) -> CheckResult:
     try:
         out = entry.check()
         if inspect.isawaitable(out):
-            out = await asyncio.wait_for(out, timeout=CHECK_TIMEOUT_S)
+            out = await asyncio.wait_for(out, timeout=settings.readiness_check_timeout_s)
         return out
     except TimeoutError:
-        return CheckResult(False, f"no answer within {CHECK_TIMEOUT_S:g} s")
+        return CheckResult(False, f"no answer within {settings.readiness_check_timeout_s:g} s")
     except Exception as e:  # noqa: BLE001 — a failing check is an unready answer, not a 500
         return CheckResult(False, f"{type(e).__name__}: {e}"[:200])
 

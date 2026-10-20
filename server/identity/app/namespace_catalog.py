@@ -24,13 +24,8 @@ from server.identity.api.models_namespace_catalog import (
     _TaxonomyCommunity,
     _TaxonomyEntry,
 )
+from server.settings import settings
 
-# A taxonomy is four FINAL scans of the namespace (~20 MB per Graph open on a large
-# namespace) and changes only when the namespace does. It is remembered per (org, namespace,
-# namespace version, top-N arguments) for up to five minutes — the version watermark is
-# `max(version)` over the namespace, one 90 kB read; the five minutes bound the communities,
-# which come from their own table.
-_TAXONOMY_TTL_S = 300.0
 _taxonomy_cache: dict[tuple[Any, ...], tuple[float, NamespaceTaxonomyOutput]] = {}
 
 
@@ -86,7 +81,10 @@ async def handle_namespace_taxonomy(
     if nsv is not None:
         if len(_taxonomy_cache) > 512:
             _taxonomy_cache.clear()
-        _taxonomy_cache[memo_key] = (time.monotonic() + _TAXONOMY_TTL_S, out.model_copy(deep=True))
+        _taxonomy_cache[memo_key] = (
+            time.monotonic() + settings.namespace_taxonomy_ttl_s,
+            out.model_copy(deep=True),
+        )
         if published is None:
             await _publish_taxonomy(input, nsv, out)
     return out

@@ -25,6 +25,7 @@ from server.memory.app import after_write, recent_writes
 from server.memory.app import facts as facts_handler
 from server.memory.app import graph_write_marks as gwm
 from server.memory.store import graph_projections as gp
+from server.settings import settings
 
 
 class _Server:
@@ -319,7 +320,7 @@ async def test_a_walk_does_not_wait_on_projections_that_began_after_it(server: _
 async def test_a_projection_still_in_flight_after_the_wait_retires_the_memo(
     monkeypatch: pytest.MonkeyPatch, server: _Server
 ) -> None:
-    monkeypatch.setattr(facts_handler, "_OWN_PROJECTION_WAIT_S", 0.15)
+    monkeypatch.setattr(settings, "memory_facts_projection_wait_s", 0.15)
     state = _walk_counter(monkeypatch, server)
     await facts_handler.handle_facts_traverse(_walk())
     await facts_handler.handle_facts_traverse(_walk())
@@ -348,7 +349,7 @@ async def test_a_projection_waited_out_once_is_not_waited_on_again(server: _Serv
 async def test_no_walk_is_remembered_while_a_waited_out_projection_is_recorded(
     monkeypatch: pytest.MonkeyPatch, server: _Server
 ) -> None:
-    monkeypatch.setattr(facts_handler, "_OWN_PROJECTION_WAIT_S", 0.1)
+    monkeypatch.setattr(settings, "memory_facts_projection_wait_s", 0.1)
     state = _walk_counter(monkeypatch, server)
     server.another_process()  # its process died mid-projection
     for _ in range(3):
@@ -397,7 +398,7 @@ async def test_the_wait_for_another_processs_projection_is_bounded(
     monkeypatch: pytest.MonkeyPatch, server: _Server
 ) -> None:
     state = _walk_counter(monkeypatch, server)
-    monkeypatch.setattr(facts_handler, "_OWN_PROJECTION_WAIT_S", 0.3)
+    monkeypatch.setattr(settings, "memory_facts_projection_wait_s", 0.3)
     server.another_process()  # never ends
     t0 = time.monotonic()
     await facts_handler.handle_facts_traverse(_walk())

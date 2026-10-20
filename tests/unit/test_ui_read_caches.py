@@ -12,6 +12,7 @@ import pytest
 import server.insights.app.agents as agents
 from server.code.app import index_status
 from server.insights.api.models_agents import AgentsConnectedInput
+from server.settings import settings
 
 
 @pytest.mark.asyncio
@@ -91,7 +92,7 @@ async def test_a_stale_status_is_served_at_once_and_refreshed_behind(monkeypatch
     # age the entry past the TTL
     key = (cfg.org, cfg.namespace)
     at, st = index_status._status_cache[key]
-    index_status._status_cache[key] = (at - index_status._STATUS_TTL_S - 1, st)
+    index_status._status_cache[key] = (at - settings.code_status_ttl_s - 1, st)
     stale = await index_status._repo_status_cached(cfg)
     assert stale is first  # served at once, no wait
     await asyncio.sleep(0)  # let the background refresh run

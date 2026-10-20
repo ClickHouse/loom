@@ -18,6 +18,7 @@ from server.code.domain.index import query_trim
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ async def _concept_leg_rows(
                     res = await llm.complete(
                         _CONCEPT_SYSTEM.format(namespace=ns),
                         query,
-                        max_tokens=160,
+                        max_tokens=llm_max_tokens("code_query_expand"),
                         response_format={"type": "json_object"},
                     )
                 terms = parse_concept_terms(

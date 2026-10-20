@@ -20,7 +20,6 @@ memory_export_evidence = Operation(
     output_model=MemoryExportEvidenceOutput,
     handler=handle_memory_export_evidence,
     idempotent=True,
-    budget_p99_ms=800,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -31,8 +30,6 @@ memory_import_evidence = Operation(
     output_model=MemoryImportEvidenceOutput,
     handler=handle_memory_import_evidence,
     idempotent=False,
-    # one embed_many over ≤256 chunks + two synchronous inserts
-    budget_p99_ms=30_000,
     required_role=Role.WRITER,
     audit=True,
 )

@@ -4,7 +4,7 @@
 empty array: an [] would make the worker write the permanent `_none_`
 sentinel and drop the row from the `empty(entities)` rescan on the strength
 of one bad reply. The row is left for the next pass, and only after
-_PARSE_FAIL_MAX consecutive failures is the DISTINCT `_parse_failed_`
+`memory_entity_extract_parse_fail_max` consecutive failures is the DISTINCT `_parse_failed_`
 sentinel written so the row stops costing budget.
 
 CH-free: the repo functions are stubbed.
@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from server.memory.workers import entity_extractor as ee
+from server.settings import settings
 
 
 def test_parse_entities_distinguishes_failure_from_empty() -> None:
@@ -95,7 +96,7 @@ async def test_parse_failure_streak_writes_distinct_sentinel(
         return None
 
     monkeypatch.setattr(ee, "_extract", _garbled)
-    for _ in range(ee._PARSE_FAIL_MAX - 1):
+    for _ in range(settings.memory_entity_extract_parse_fail_max - 1):
         await ee.run_pass(ee.EntityExtractorConfig())
     assert wired.applied == []
     result = await ee.run_pass(ee.EntityExtractorConfig())

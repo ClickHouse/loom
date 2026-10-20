@@ -31,7 +31,6 @@ erasure_request = Operation(
     output_model=ErasureRequestOutput,
     handler=handle_erasure_request,
     idempotent=True,  # saga steps are individually idempotent
-    budget_p99_ms=2000,  # multiple ALTER UPDATEs are slow; tolerated for compliance
     # Input encodes the target via scope_type/scope_value, not a literal
     # `namespace` field, so the transport can't bind the authz grant — the
     # handler does the scope-specific check itself. WRITER (not ADMIN) lets a
@@ -48,7 +47,6 @@ erasure_status = Operation(
     output_model=ErasureStatusOutput,
     handler=handle_erasure_status,
     idempotent=True,
-    budget_p99_ms=25,
     required_role=Role.VIEWER,
     audit=False,
     row_scoped=True,  # The handler authorizes the row's namespace
@@ -61,7 +59,6 @@ erasure_export = Operation(
     output_model=ErasureExportOutput,
     handler=handle_erasure_export,
     idempotent=True,
-    budget_p99_ms=2000,  # multi-table scan; not on hot path
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -74,7 +71,6 @@ erasure_list = Operation(
     output_model=ErasureListOutput,
     handler=handle_erasure_list,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     skip_namespace_authz=True,  # handler scopes by caller role
     audit=False,
