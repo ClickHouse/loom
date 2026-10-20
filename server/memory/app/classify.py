@@ -55,7 +55,7 @@ async def classify(
     valid_types is non-empty).
     """
     if not endpoint or classify_refusal(endpoint):
-        # Off the gateway: no call, fail closed, and the caller's type stays.
+        # Off the gateway: no call; the caller's type stays.
         return ""
     body = {
         "value": value,

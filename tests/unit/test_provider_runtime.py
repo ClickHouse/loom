@@ -26,7 +26,6 @@ def clean_runtime(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(runtime, "_environment_settings", None)
     monkeypatch.setattr(runtime, "_maintenance_config_id", None)
     monkeypatch.setattr(runtime, "_refused", "")
-    monkeypatch.setattr(runtime, "_refused_hold", None)
     gate = ModelWorkGate()
     monkeypatch.setattr(runtime, "get_model_work_gate", lambda: gate)
     monkeypatch.setattr(runtime, "_refresh_calibration", AsyncMock())
@@ -489,7 +488,6 @@ async def test_a_refused_rebuilt_configuration_with_another_embedding_keeps_mode
     )
     monkeypatch.setattr(runtime, "configurations", AsyncMock(return_value=[row]))
     monkeypatch.setattr(runtime, "open_configuration", Mock(return_value=_gemini_setup()))
-    monkeypatch.setattr(runtime, "_refused", "")
     before = (s.embedding_model, s.code_search_vector_model_default, s.code_vector_tables)
     for _ in range(2):  # every refresh keeps it so
         await runtime.load_active_configuration()

@@ -29,9 +29,6 @@ _applied_version = ""
 _environment_settings: dict[str, Any] | None = None
 # Why the stored configuration was not applied ('' when it was): /v1/health says so.
 _refused = ""
-# The configuration whose refusal holds admission, if one does: what replaces it
-# (a queued save or reset) takes the hold over.
-_refused_hold: str | None = None
 
 log = logging.getLogger(__name__)
 _maintenance_config_id: str | None = None
@@ -157,13 +154,14 @@ def _active_setup(active: dict[str, Any]) -> ProviderSetupInput | None:
 
 
 def _hold_admission(config_id: str) -> None:
-    global _maintenance_config_id, _refused_hold
+    """Close admission for `config_id`; a transition already holding it (a
+    refused configuration's hold, an earlier change) hands it over."""
+    global _maintenance_config_id
     gate = get_model_work_gate()
-    if _refused_hold is not None and _refused_hold != config_id:
-        gate.transfer(_refused_hold, config_id)  # the replacement takes the refusal's hold
+    if _maintenance_config_id is not None and _maintenance_config_id != config_id:
+        gate.transfer(_maintenance_config_id, config_id)
     else:
         gate.close(config_id)
-    _refused_hold = None
     _maintenance_config_id = config_id
 
 
@@ -284,22 +282,27 @@ def _refuse(setup: ProviderSetupInput, changed: bool, config_id: str) -> bool:
     included. With its embedding the one in force, the settings in force
     serve on; with another, the index may be built for that other space, so
     model work stays held until a configuration the check accepts replaces it."""
-    global _refused, _refused_hold
+    global _refused
     refusal = gateway_refusal(setup.embedding)
     if refusal and refusal != _refused:
         log.error("saved model configuration not applied: %s", refusal)
     _refused = refusal
     if refusal and changed and _maintenance_config_id is None:
+        # An ordinary transition hold: what replaces it takes it over, and the
+        # replacement's commit resumes it.
         _hold_admission(config_id)
-        _refused_hold = config_id
     return bool(refusal)
+
+
+# The pause between refreshes; a seam for tests.
+_sleep = asyncio.sleep
 
 
 async def refresh_loop() -> None:
     """Every web/worker process sees committed key and model rotations."""
     set_query_tag("boot.provider_configuration_refresh")
     while True:
-        await asyncio.sleep(3)
+        await _sleep(3)
         try:
             await load_active_configuration()
             from server.insights.app.provider_coordinator import coordinate_once

@@ -395,6 +395,21 @@ def test_the_documented_gateway_block_starts(
     Settings(_env_file=None)  # type: ignore[call-arg]
 
 
+def _full_log_once() -> LogOnce:
+    """A LogOnce that has logged as many keys as it remembers."""
+    full = LogOnce()
+    assert all(full.first(("acme", f"ns-{i}")) for i in range(1000))
+    return full
+
+
+def test_a_log_once_logs_each_key_once_up_to_its_cap() -> None:
+    once = LogOnce()
+    assert once.first("a") and not once.first("a")
+    full = _full_log_once()
+    assert not full.first("new")  # past the cap
+    assert not full.first(("acme", "ns-0"))
+
+
 _AT_GATEWAY = {
     "LOOM_OPENAI_BASE_URL": "https://gateway.example/v1",
     "LOOM_ANTHROPIC_BASE_URL": "https://gateway.example",
@@ -669,11 +684,10 @@ def test_a_stored_classify_endpoint_off_the_gateways_hosts_is_never_called(
         assert asyncio.run(classify.get_namespace_classify_config("acme", "ns")) == ("", "")
     warned = [r for r in caplog.records if "classify_endpoint is refused" in r.getMessage()]
     assert len(warned) == 1 and "10.0.0.5" in warned[0].getMessage()
-    full = LogOnce()
-    full.keys = {("acme", f"ns-{i}") for i in range(1000)}
-    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", full)
+    caplog.clear()
+    monkeypatch.setattr(classify, "_OFF_GATEWAY_LOGGED", _full_log_once())
     assert asyncio.run(classify.get_namespace_classify_config("acme", "new")) == ("", "")
-    assert ("acme", "new") not in full.keys  # capped: still refused, not logged
+    assert not caplog.records  # capped: still refused, not logged
     monkeypatch.setattr(settings, "inference_gateway_required", False)
     config = asyncio.run(classify.get_namespace_classify_config("acme", "ns"))
     assert config == ("https://10.0.0.5/c", "p")
@@ -757,12 +771,9 @@ def test_past_its_log_cap_a_stored_builtin_cohere_still_gets_no_reranker(
         async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, str]:
             return {"rerank_endpoint": "builtin:cohere", "rerank_prompt_template": ""}
 
-    full = LogOnce()
-    full.keys = {("acme", f"ns-{i}") for i in range(1000)}
     monkeypatch.setattr(ch, "get_client", lambda: _CH())
-    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", full)
+    monkeypatch.setattr(rerank, "_COHERE_UNSET_LOGGED", _full_log_once())
     assert asyncio.run(rerank.get_namespace_rerank_config("acme", "new")) == ("", "")
-    assert ("acme", "new") not in full.keys
     assert not [r for r in caplog.records if "builtin:cohere" in r.getMessage()]
 
 

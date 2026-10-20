@@ -67,7 +67,7 @@ class ModelWorkGate:
         """Hand admission, closed by `old`, to the transition `new` without opening it."""
         self._require_owner(old)
         if not new:
-            raise ValueError("Model transition token does not own admission")
+            raise ValueError("A model transition token is required")
         self._token = new
 
     def _require_owner(self, token: str) -> None:

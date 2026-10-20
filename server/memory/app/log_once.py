@@ -13,11 +13,11 @@ _CAP = 1000
 
 class LogOnce:
     def __init__(self) -> None:
-        self.keys: set[Hashable] = set()
+        self._keys: set[Hashable] = set()
 
     def first(self, key: Hashable) -> bool:
         """Whether to log `key`: the first time it is seen, while there is room."""
-        if key in self.keys or len(self.keys) >= _CAP:
+        if key in self._keys or len(self._keys) >= _CAP:
             return False
-        self.keys.add(key)
+        self._keys.add(key)
         return True

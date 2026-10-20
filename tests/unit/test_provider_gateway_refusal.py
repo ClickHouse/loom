@@ -101,7 +101,6 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(runtime, "_environment_settings", None)
     monkeypatch.setattr(runtime, "_maintenance_config_id", None)
     monkeypatch.setattr(runtime, "_refused", "")
-    monkeypatch.setattr(runtime, "_refused_hold", None)
     monkeypatch.setattr(runtime, "_refresh_calibration", AsyncMock())
     monkeypatch.setattr(runtime, "environment_embedding", lambda: _ENV)
     monkeypatch.setattr(reset, "environment_embedding", lambda: _ENV)
@@ -140,7 +139,7 @@ async def test_a_configuration_off_the_gateway_applies_nothing_and_holds_model_w
     config_id = _commit(store, refused)
     await runtime.load_active_configuration()
     assert s.model_dump(include={"embedding_provider", "embedding_base_url", "llm_model"}) == before
-    assert store["gate"].closed and runtime._refused_hold == config_id
+    assert store["gate"].closed and runtime._maintenance_config_id == config_id
     state = HealthState(env={}, refused_configuration=runtime.refused_configuration())
     assert "model_configuration_refused" in {p.code for p in collect_problems(s, state)}
 
@@ -182,7 +181,7 @@ async def test_a_reset_needing_a_rebuild_takes_over_a_refusals_hold(
             raise asyncio.CancelledError
 
     monkeypatch.setattr(provider_coordinator, "coordinate_once", coordinate_once)
-    monkeypatch.setattr(runtime.asyncio, "sleep", one_refresh)
+    monkeypatch.setattr(runtime, "_sleep", one_refresh)
     with pytest.raises(asyncio.CancelledError):
         await runtime.refresh_loop()
     assert reached == [True]  # the rebuild can start
@@ -222,3 +221,58 @@ async def test_a_save_off_the_gateway_is_refused_before_it_is_stored(store: dict
     with pytest.raises(HTTPException) as refused:
         await activation.save_configuration(_setup("compatible", "https://10.0.0.5/v1"))
     assert refused.value.status_code == 422 and store["rows"] == []
+
+
+async def _reset_without_rebuild(store: dict[str, Any]) -> None:
+    reset.rebuild_required.return_value = False
+    version = str(store["rows"][0]["version"])
+    result = await reset.reset_configuration(ProviderResetInput(expected_version=version))
+    assert result.state == "active"
+    await runtime.load_active_configuration()
+    assert not store["gate"].closed and runtime._maintenance_config_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_save_after_a_reset_that_ended_a_refusals_hold_queues_cleanly(
+    store: dict[str, Any],
+) -> None:
+    _commit(store, _setup("gemini"))
+    await runtime.load_active_configuration()
+    await _reset_without_rebuild(store)
+    activation.rebuild_required.return_value = True
+    version = str(store["rows"][0]["version"])
+    accepted = _setup("compatible", "https://gateway.example/v1").model_copy(
+        update={"expected_version": version}
+    )
+    result = await activation.save_configuration(accepted)
+    assert result.state == "queued"
+    await runtime.load_active_configuration()  # nothing stale to hand over
+    assert runtime._maintenance_config_id == result.config_id and store["gate"].closed
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_committed_while_another_transition_holds_then_replaced(
+    store: dict[str, Any],
+) -> None:
+    runtime._hold_admission("m")  # a transition this process is draining for
+    _commit(store, _setup("gemini"))
+    await runtime.load_active_configuration()
+    assert store["gate"].closed and runtime.refused_configuration()
+    accepted = _setup("compatible", "https://gateway.example/v1").model_copy(
+        update={"expected_version": "100"}
+    )
+    result = await activation.save_configuration(accepted)
+    await runtime.load_active_configuration()  # the queued save takes the hold from m
+    assert result.state == "queued" and runtime._maintenance_config_id == result.config_id
+
+
+@pytest.mark.asyncio
+async def test_a_second_refusal_after_the_first_hold_ended_holds_again(
+    store: dict[str, Any],
+) -> None:
+    _commit(store, _setup("gemini"))
+    await runtime.load_active_configuration()
+    await _reset_without_rebuild(store)
+    second = _commit(store, _setup("compatible", "https://10.0.0.5/v1"), version=10**20)
+    await runtime.load_active_configuration()
+    assert store["gate"].closed and runtime._maintenance_config_id == second
