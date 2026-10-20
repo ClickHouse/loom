@@ -18,6 +18,7 @@ from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
+from server.llm import customer
 from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
@@ -218,6 +219,8 @@ async def _set_resolve_type(input: MemorySetInput) -> tuple[MemorySetInput, str,
                     )
                 if classified:
                     input = input.model_copy(update={"memory_type": classified})
+        except customer.Unattributed:
+            raise  # a missed path, not a classifier fault
         except Exception as e:  # noqa: BLE001 — classify failure keeps the caller-supplied type
             log.warning("classify failed (non-fatal); using caller-supplied type: %s", e)
     resolved_memory_type = input.memory_type

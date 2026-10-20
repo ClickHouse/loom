@@ -10,6 +10,7 @@ from typing import Any
 from server.code.app.spans import code_span
 from server.code.domain.units import CodeUnit
 from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,8 @@ async def _rerank_units(
             candidates=candidates,
             excerpt_chars=excerpt_chars,
         )
+    except customer.Unattributed:
+        raise  # a missed path, not a provider fault
     except Exception as e:  # noqa: BLE001 — fail-open keeps fused order
         logger.warning("code.search rerank failed (%s); fused order kept", e)
         return units, False

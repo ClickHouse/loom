@@ -26,7 +26,7 @@ from server.insights.api.models_provider_setup import (
     ProviderSetupInput,
     ProviderValidation,
 )
-from server.llm import gateway
+from server.llm import customer, gateway
 from server.llm.anthropic import AnthropicLLMClient
 from server.llm.openai import OpenAILLMClient
 from server.observability import provider_health
@@ -39,7 +39,7 @@ async def _probe_llm(provider: str, model: str, key: str) -> None:
         if provider == "anthropic"
         else OpenAILLMClient(model, api_key=key)
     )
-    with llm_stage("provider_validation"):
+    with llm_stage("provider_validation"), customer.system():
         result = await client.complete(
             "This is a connection check. Reply with OK.", "Connection check.", max_tokens=128
         )
@@ -72,7 +72,8 @@ async def _probe_embedding(
     )
     # Bypass the vector cache: a cache hit would falsely validate an invalid key.
     # Also do not insert a validation-only vector into any data-plane table.
-    vector = await client._embed_one_raw("Loom provider connection check.")
+    with customer.system():
+        vector = await client._embed_one_raw("Loom provider connection check.")
     if len(vector) != dimensions or not all(math.isfinite(v) for v in vector):
         raise ValueError("invalid embedding dimensions or values")
     if not any(vector):

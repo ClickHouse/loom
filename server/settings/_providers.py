@@ -69,6 +69,27 @@ def is_builtin_cohere(name: str) -> bool:
 RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 
+# RFC 9110 token characters: what an HTTP header name may hold.
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# What a customer or feature header value carries unencoded (`customer.headers`).
+_HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
+# A customer or feature name sent as a header value: the same characters, at least one.
+_HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
+# Headers the model-call senders set themselves, or the HTTP client does: a customer or
+# feature header of that name would overwrite them (the provider key, the body's type).
+_SENDER_HEADERS = frozenset(
+    {
+        "authorization",
+        "x-api-key",
+        "x-goog-api-key",
+        "anthropic-version",
+        "content-type",
+        "content-length",
+        "host",
+    }
+)
+
+
 class ProviderSettings(ModelSettings):
     # Inherits ModelSettings for `llm_model`, which the provider resolution below
     # reads and fills.
@@ -118,6 +139,24 @@ class ProviderSettings(ModelSettings):
     # Comma-separated hostnames (exact, any case) of the gateway; required, and
     # the only hosts sent to, while the gateway is required.
     inference_gateway_hosts: str = ""
+    # Header naming the customer (the org) on every model call, for a gateway that
+    # meters by it; set, a call naming no customer is refused (server/llm/customer.py).
+    inference_customer_header: str = ""
+    # Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...),
+    # with inference_customer_header only; "" sends none.
+    inference_feature_header: str = ""
+    # The customer named on calls made for the deployment itself (startup probe, the
+    # recalibration worker's fixed pairs, provider checks), which belong to no org.
+    inference_system_customer: str = "loom"
+    # True (a cell serving several customers): refuse to start without
+    # inference_customer_header, so no model call goes out unattributed.
+    inference_customer_required: bool = False
+    # How the customer header names an org, as the gateway knows it: `{org}` is the
+    # org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is).
+    inference_customer_format: str = "{org}"
+    # JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...)
+    # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
+    inference_feature_map_json: Annotated[str, JsonObject] = ""
     # Shared query-embedding cache in loom.embedding_cache behind the per-process LRU,
     # rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside
     # a request skips both tiers. Only single-text (query) embeds up to
@@ -174,6 +213,62 @@ class ProviderSettings(ModelSettings):
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
             self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    def feature_map(self) -> dict[str, str]:
+        """`inference_feature_map_json` parsed: Loom feature -> the gateway's."""
+        raw = self.inference_feature_map_json.strip()
+        if not raw:
+            return {}
+        return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
+
+    @model_validator(mode="after")
+    def _check_customer_headers(self) -> ProviderSettings:
+        """Refuses a configuration under which a call could not name its customer
+        as the gateway reads it."""
+        for field in ("inference_customer_header", "inference_feature_header"):
+            name = getattr(self, field)
+            if name and not _HEADER_NAME.fullmatch(name):
+                raise ValueError(f"LOOM_{field.upper()} must be an HTTP header name, got {name!r}")
+            if name.lower() in _SENDER_HEADERS:
+                raise ValueError(
+                    f"LOOM_{field.upper()} must not be {name!r}, a header the model-call "
+                    "senders set themselves"
+                )
+        customer, feature = self.inference_customer_header, self.inference_feature_header
+        if feature and not customer:
+            raise ValueError(
+                "LOOM_INFERENCE_FEATURE_HEADER needs LOOM_INFERENCE_CUSTOMER_HEADER: "
+                "without it no metering header is sent"
+            )
+        if customer and feature and customer.lower() == feature.lower():
+            raise ValueError(
+                "LOOM_INFERENCE_FEATURE_HEADER must differ from LOOM_INFERENCE_CUSTOMER_HEADER, "
+                "or the feature overwrites the customer"
+            )
+        if self.inference_customer_required and not customer:
+            raise ValueError(
+                "LOOM_INFERENCE_CUSTOMER_REQUIRED needs LOOM_INFERENCE_CUSTOMER_HEADER: "
+                "the header the gateway meters customers by"
+            )
+        fmt = self.inference_customer_format
+        if "{org}" not in fmt or not _HEADER_TEXT.fullmatch(fmt.replace("{org}", "")):
+            raise ValueError(
+                "LOOM_INFERENCE_CUSTOMER_FORMAT must contain {org}, and around it only "
+                "letters, digits and . _ ~ : @ -, which a header carries as they are"
+            )
+        if not all(_HEADER_VALUE.fullmatch(v) for v in self.feature_map().values()):
+            raise ValueError(
+                "LOOM_INFERENCE_FEATURE_MAP_JSON: each gateway feature name is letters, digits "
+                "and . _ ~ : @ -, which a header carries as they are"
+            )
+        if self.inference_customer_header and not _HEADER_VALUE.fullmatch(
+            self.inference_system_customer
+        ):
+            raise ValueError(
+                "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "
+                "LOOM_INFERENCE_CUSTOMER_HEADER is set: letters, digits and . _ ~ : @ -"
+            )
         return self
 
     @model_validator(mode="after")

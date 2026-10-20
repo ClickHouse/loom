@@ -24,6 +24,7 @@ from server.code.domain.index.card_selection import (
     split_csv,
     twin_rows,
 )
+from server.llm import customer
 from server.observability.genai import staged
 from server.settings import settings
 from server.workers import pass_context
@@ -90,7 +91,10 @@ async def _run(result: CodeSummaryResult) -> None:
             break
         share = max(1, -(-left // (len(repos) - i)))
         try:
-            await _summarize_repo(cfg.org, cfg.namespace, result, cap=result.cards_written + share)
+            with customer.for_org(cfg.org):
+                await _summarize_repo(
+                    cfg.org, cfg.namespace, result, cap=result.cards_written + share
+                )
         except Exception as e:  # one repository's failed read never skips the rest
             logger.exception("code_summary: %s/%s failed", cfg.org, cfg.namespace)
             result.errors.append(f"{cfg.namespace}: {type(e).__name__}: {e}")

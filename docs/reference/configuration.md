@@ -1073,6 +1073,12 @@ Source: `server/settings/_providers.py`
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` | The scope sent with that exchange; "" sends none. |
 | `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` | True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set. |
 | `LOOM_INFERENCE_GATEWAY_HOSTS` | `str` | `''` | Comma-separated hostnames (exact, any case) of the gateway; required, and the only hosts sent to, while the gateway is required. |
+| `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
+| `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` | Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...), with inference_customer_header only; "" sends none. |
+| `LOOM_INFERENCE_SYSTEM_CUSTOMER` | `str` | `'loom'` | The customer named on calls made for the deployment itself (startup probe, the recalibration worker's fixed pairs, provider checks), which belong to no org. |
+| `LOOM_INFERENCE_CUSTOMER_REQUIRED` | `bool` | `False` | True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed. |
+| `LOOM_INFERENCE_CUSTOMER_FORMAT` | `str` | `'{org}'` | How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is). |
+| `LOOM_INFERENCE_FEATURE_MAP_JSON` | `str` | `''` | JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...) to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's. |
 | `LOOM_EMBEDDING_CACHE_SHARED` | `bool` | `True` | Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside a request skips both tiers. Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only. |
 | `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS` | `int` | `2000` | Longest query text, characters, that uses the shared cache; 0 = no cap. |
 | `LOOM_EMBEDDING_CACHE_SIZE` | `int` | `10000` | The per-process query-embedding LRU: entries held (0 = cache nothing) and seconds each lives. |

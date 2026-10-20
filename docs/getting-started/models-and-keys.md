@@ -281,6 +281,40 @@ gateway's audience; the gateway must trust the cluster's OIDC issuer and match
 Loom's service account (`system:serviceaccount:<namespace>:<name>`), not just
 the issuer, since every pod of the cluster can get a token from it.
 
+#### Naming the customer on every call
+
+A gateway that meters or budgets per customer reads the customer from a header.
+Name the headers, and every chat, embedding, rerank and classify request carries
+the org whose data it holds, and the feature that made it:
+
+```bash
+LOOM_INFERENCE_CUSTOMER_HEADER=X-Customer-Id   # the org
+LOOM_INFERENCE_FEATURE_HEADER=X-Feature        # optional, with the customer header: hyde, memory.search, worker.embedding
+LOOM_INFERENCE_SYSTEM_CUSTOMER=loom            # calls that belong to no org
+LOOM_INFERENCE_CUSTOMER_REQUIRED=true          # a cell serving several customers: refuse to start without the header
+LOOM_INFERENCE_CUSTOMER_FORMAT='cloud:{org}'   # the gateway's customer id for an org; default the org id
+LOOM_INFERENCE_FEATURE_MAP_JSON='{"hyde": "search", "*": "memory"}'  # Loom's feature names to the gateway's
+```
+
+- A request names the org it addresses, as authorized for its token; a caller
+  cannot name an org its token does not reach.
+- A background job names the org of the rows it works on, and makes one call
+  per org: the embedding worker, `loom reembed` and a model rebuild split their
+  batches by org.
+- The deployment's own calls (the startup check of the embedder, the
+  recalibration worker's fixed pairs, the dashboard's provider check) name
+  `LOOM_INFERENCE_SYSTEM_CUSTOMER`.
+- The sampled retrieval judge (`LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE`) sends the
+  judged org's query and memories, so each judged search adds a call that
+  names that org.
+- With the customer header set, a model call that names no org is refused
+  (`MODEL_CALL_UNATTRIBUTED`) instead of being sent: it is a call path that
+  forgot its org, and the gateway would bill it to no one.
+- An org id is sent percent-encoded where it needs to be.
+
+Cached answers make no call: an embedding or a model answer served from Loom's
+cache is not metered again.
+
 #### Without a workload token
 
 Where the platform gives Loom no token (a VM, a container host), Loom signs
