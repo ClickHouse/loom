@@ -305,3 +305,43 @@ async def test_update_announces_its_row_when_supersession_fails(
         )
     [(event, row)] = announced
     assert event == "memory.revised" and row["memory_id"] == _ID_A
+
+
+@pytest.mark.asyncio
+async def test_update_announces_its_row_when_the_high_fence_fails(
+    wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The version row is in before the fence: a fence that fails answers an error, and
+    the memory.revised event is already in the outbox."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    ch = wired([_cand(_ID_A)], _row())
+    announced: list[Any] = []
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    async def _fence(*_: Any, **__: Any) -> None:
+        raise RuntimeError("fence insert failed")
+
+    async def _retire(*_: Any, **__: Any) -> int:
+        return 1
+
+    from server.memory.store import embeddings as embeddings_store
+
+    monkeypatch.setattr(embeddings_store, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    monkeypatch.setattr(update_mod, "fence_high", _fence)
+    with pytest.raises(RuntimeError, match="fence"):
+        await update_mod.handle_memory_update(
+            MemoryUpdateInput(
+                org="test",
+                namespace="personal",
+                memory_key="deploy_day",
+                value="deploy key sk-proj-test-ABCDEFGHIJKLMNOPQRSTUVWX0123",
+            )
+        )
+    assert [t for t, _ in ch.inserts].count("loom.memory") == 1
+    [(event, row)] = announced
+    assert event == "memory.revised" and row["sensitivity"] == "high"

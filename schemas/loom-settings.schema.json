@@ -4328,7 +4328,7 @@
           "default": 20.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds of a memory webhook delivery pass kept for the reads before its POSTs and the one insert after them; less than memory_webhook_deliver_max_pass_seconds. Raise it when the due-event read grows with the outbox backlog."
+          "description": "Seconds before the pass deadline a memory webhook delivery pass stops starting POSTs, kept for the one insert after them; less than memory_webhook_deliver_max_pass_seconds."
         },
         "memory_webhook_failures_before_cooldown": {
           "default": 5,
@@ -4346,7 +4346,7 @@
           "default": 60,
           "minimum": 1,
           "type": "integer",
-          "description": "POSTs per memory webhook event before it is marked dead (listed by webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3 days. The 2.75-day deadline marks any event still undelivered dead whatever this is, so a lower value only gives up sooner."
+          "description": "POSTs per memory webhook event before it is marked dead; the 2.75-day delivery deadline marks it dead sooner whatever this is."
         },
         "memory_webhook_max_backoff_seconds": {
           "default": 3600.0,

@@ -251,9 +251,9 @@ async def _lift_after_insert(
 async def _announce_set(w: _SetWrite) -> None:
     """The row just inserted, to the namespace's webhooks: a new key is written, a new
     value of one is revised, and the same value said again (a reinforcement) is no
-    change to announce. Called straight after the insert, before the post-insert tail,
-    so a failure there does not lose the event: a retry of the same value is a
-    restatement and announces nothing."""
+    change to announce. Called once the row is in, even when the rest of the write
+    fails, so the event is not lost: a retry of the same value is a restatement and
+    announces nothing."""
     if w.restated:
         return
     event: EventType = "memory.revised" if w.had_existing_row else "memory.written"
@@ -292,8 +292,10 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     await _lift_above_deletes(w, ch)
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
-    version = await _lift_after_insert(w, ch)
-    await _announce_set(w)
+    try:
+        version = await _lift_after_insert(w, ch)
+    finally:
+        await _announce_set(w)  # the row is in, whatever failed after it
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     try:
         await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
@@ -678,9 +680,17 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
             await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
     with traced("ch.insert.dual_write", concurrent=2):
-        await asyncio.gather(_insert_memory(), _insert_embedding())
-    await _lift_after_insert(w, ch, [embedding_row])
-    await _announce_set(w)
+        memory_done, embedding_done = await asyncio.gather(
+            _insert_memory(), _insert_embedding(), return_exceptions=True
+        )
+    if isinstance(memory_done, BaseException):
+        raise memory_done
+    try:
+        if isinstance(embedding_done, BaseException):
+            raise embedding_done
+        await _lift_after_insert(w, ch, [embedding_row])
+    finally:
+        await _announce_set(w)  # the row is in, whatever failed after it
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
     _cd.schedule_settle(

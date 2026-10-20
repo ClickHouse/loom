@@ -300,7 +300,7 @@ entity backfills, typed records (`memory.record.*`) and saved chat messages
   "memory_key": "user/pref/tea",
   "memory_id": "0b7e…",
   "version": 1790000000000000000,
-  "actor": "user:alice",
+  "actor": "human:alice",
   "request_id": "r-91c2…",
   "erasure_id": "",
   "occurred_at": "2026-09-20T12:00:00.000Z"
@@ -365,8 +365,10 @@ sweep, the `delete_version` check).
   POST could have waited its whole ack deadline (40 / 4 × 10 s = 100 s after the pass
   starts), and at the latest `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` (20 s) before
   its deadline (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); the reserve covers
-  the reads before the POSTs and the insert after them. What it did not send goes next
-  pass. One webhook gets at most
+  the one insert after the POSTs. The reads before the POSTs come out of the POST budget,
+  which counts from the start of the pass, so when the due-event read grows with the
+  outbox backlog, raise `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`. What it did not
+  send goes next pass. One webhook gets at most
   `LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK` POSTs per pass, one after another, so a receiver
   that answers in 1 s takes about 10 events per pass with the defaults. With fast receivers the ceiling is about 40 events per pass, a pass every 5 s
   while there is work: some 8 events a second per deployment with the defaults. A

@@ -65,7 +65,8 @@ async def vet_host(
         try:
             public = _is_public(a)
         except ValueError:
-            return f"{h} resolved to {a!r}, not an address", ""
+            what = repr(a) if name_address else "something"
+            return f"{h} resolved to {what}, not an address", ""
         if not public:
             named = f" to {a}," if name_address else " to"
             return (

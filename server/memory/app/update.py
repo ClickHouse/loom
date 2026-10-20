@@ -686,24 +686,30 @@ async def _write_revision(
         if embedder is not None
         else []
     )
+    # Every insert runs to its end, so the fence below comes after the retire.
+    memory_done, *others_done = await asyncio.gather(
+        insert_memory_versions([memory_row], ch=ch),
+        *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
+        *(
+            []
+            if searchable
+            else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
+        ),
+        return_exceptions=True,
+    )
+    if not isinstance(memory_done, BaseException):
+        # The row is in: announce it even when the rest of the write fails, since a
+        # retry of the same value is a restatement and announces nothing.
+        await webhooks.announce([("memory.revised", memory_row)])
     try:
-        await asyncio.gather(
-            insert_memory_versions([memory_row], ch=ch),
-            *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
-            *(
-                []
-                if searchable
-                else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
-            ),
-        )
+        for done in [memory_done, *others_done]:
+            if isinstance(done, BaseException):
+                raise done
     finally:
         if sensitivity == "high":
             # After the retire (at the same version, the later insert wins the tie),
-            # and even when the gather failed: the version row may be in.
+            # and even when an insert failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
-    # The row is in: announce it before the tail below, so a failure there does not lose
-    # the event (a retry of the same value is a restatement and announces nothing).
-    await webhooks.announce([("memory.revised", memory_row)])
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task

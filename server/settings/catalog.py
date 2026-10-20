@@ -3115,9 +3115,8 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds a memory webhook delivery pass may run before the supervisor abandons it; it
     # stops starting POSTs memory_webhook_deliver_reserve_seconds before. At least 30.
     memory_webhook_deliver_max_pass_seconds: float = Field(default=120.0, ge=30)
-    # Seconds of a memory webhook delivery pass kept for the reads before its POSTs and the
-    # one insert after them; less than memory_webhook_deliver_max_pass_seconds. Raise it when
-    # the due-event read grows with the outbox backlog.
+    # Seconds before the pass deadline a memory webhook delivery pass stops starting POSTs,
+    # kept for the one insert after them; less than memory_webhook_deliver_max_pass_seconds.
     memory_webhook_deliver_reserve_seconds: float = Field(default=20.0, gt=0)
     # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
     # leased stays passed over by other passes, so a crashed pass's events come back after it.
@@ -3135,10 +3134,8 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds a failed memory webhook event waits at most before its next try: the retries
     # back off 5 s, 30 s, 2 min, 10 min and 30 min, then wait this long, never longer.
     memory_webhook_max_backoff_seconds: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
-    # POSTs per memory webhook event before it is marked dead (listed by
-    # webhook.deliveries). With the default backoff ceiling of an hour, 60 span about 2.3
-    # days. The 2.75-day deadline marks any event still undelivered dead whatever this is,
-    # so a lower value only gives up sooner.
+    # POSTs per memory webhook event before it is marked dead; the 2.75-day delivery
+    # deadline marks it dead sooner whatever this is.
     memory_webhook_max_attempts: Annotated[int, LIVE] = Field(default=60, ge=1)
     # Failed POSTs in a row after which the delivery worker passes a memory webhook over
     # for a cooldown (kept per process; a 2xx resets it).

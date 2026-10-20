@@ -66,8 +66,10 @@ USER_AGENT = "loom-memory-webhook/1"
 def _post_budget_seconds() -> float:
     """How long after it starts a pass may still be POSTing: every POST waiting its whole
     ack deadline, memory_webhook_deliver_concurrency at a time, cut short of the pass
-    deadline by the reserve, which covers the reads before the POSTs and the insert
-    after them, so the pass records what it sent; the rest go next pass."""
+    deadline by the reserve, which covers the one insert after the POSTs, so the pass
+    records what it sent; the rest go next pass. The reads before the POSTs come out of
+    this budget, which counts from the start of the pass: when the due-event read grows,
+    raise memory_webhook_deliver_max_pass_seconds."""
     every_post_waits = (
         settings.memory_webhook_max_posts_per_pass
         / settings.memory_webhook_deliver_concurrency

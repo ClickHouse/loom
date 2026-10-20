@@ -593,6 +593,28 @@ async def test_memory_set_announces_its_row_when_supersession_fails(
     assert event == "memory.written" and row["memory_key"] == _KEY
 
 
+@pytest.mark.asyncio
+async def test_memory_set_announces_its_row_when_the_embedding_insert_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dual write's memory row lands while its embedding row fails: the write answers
+    an error, and the event is already in the outbox (a retry is a restatement)."""
+    ch = _CH()
+    ch.fail_inserts_into = ("loom.memory_embeddings",)
+    _wire_set(monkeypatch, ch, _BatchEmbedder())
+    announced: list[Any] = []
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    with pytest.raises(RuntimeError, match="memory_embeddings"):
+        await write_mod.handle_memory_set(_input("Deploys happen on Thursday"))
+    assert len(ch.rows_for("loom.memory")) == 1
+    [(event, row)] = announced
+    assert event == "memory.written" and row["memory_key"] == _KEY
+
+
 def test_write_outcome_label_precedence() -> None:
     assert set_commit._set_write_outcome("dup-id", "conflict", True) == "duplicate"
     assert set_commit._set_write_outcome("", "conflict", True) == "conflicted"
