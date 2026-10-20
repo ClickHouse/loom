@@ -24,7 +24,8 @@ from server.core.ch import get_client
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
 # The most bytes an agent's token spends on the namespaces it names, its own and
-# its trust's included: fifteen of the longest names. Base64 adds a third, and the
+# its trust's included (an agent trust's roles are refused at registration past
+# it, `account_admin.bot_from`): fifteen of the longest names. Base64 adds a third, and the
 # other claims, the header and a 4096-bit signature leave this much of a proxy's
 # default 8 KB header limit (test_an_agents_token_stays_under_a_proxys_header_limit).
 TOKEN_NAMESPACE_BYTES = 4096

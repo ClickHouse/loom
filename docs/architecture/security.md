@@ -434,7 +434,8 @@ cannot pass on admin over a namespace it was lent. They are added by name until 
 take all the token's namespaces, its own and the trust's included, past
 `agents.TOKEN_NAMESPACE_BYTES` (4,096 bytes, each name counted as it is written in `namespaces`
 and `ns_roles`), so the token stays within a proxy's 8 KB header limit with a 4096-bit signing
-key, at the longest and the shortest names alike. A grant reaches an agent's next token; a
+key, at the longest and the shortest names alike. An agent trust whose shared namespaces would
+not leave room for an agent's own is refused at registration. A grant reaches an agent's next token; a
 lower or revoked one caps its claim at once (`authz.claim_cap`), on other servers within
 `grant_cache_ttl_seconds`. Agents lend to each other through `grants.share_agent` and
 `grants.unshare_agent` (`server/identity/app/agent_shares.py`): the caller must be an agent, the

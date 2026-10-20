@@ -85,7 +85,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
         )
     # Counted as the grantee's token counts them (`agents.with_grants`).
     m = await machines.get(trust)
-    roles = {agents.home_of(subject): "writer", **dict(m["ns_roles"] if m else [])}
+    roles = {agents.home_of(subject): "writer", **dict(await machines.live_roles(m) if m else [])}
     extra = agents.lent(roles, await agents.granted(input.org, subject))
     # A namespace the token names already (the trust's, or lent before) costs
     # nothing more: the share only raises its role.
@@ -94,8 +94,8 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
         sum(map(agents.token_bytes, [*named, input.namespace])) > agents.TOKEN_NAMESPACE_BYTES
     ):
         raise PreconditionFailedError(
-            f"agent {input.agent} holds as many lent namespaces as its token names; "
-            "a namespace must be taken back first"
+            f"agent {input.agent}'s token has no room for {input.namespace}: its namespaces "
+            f"fill {agents.TOKEN_NAMESPACE_BYTES} bytes"
         )
     # Never lowering and never over someone else's grant: an agent lowers its
     # own share by taking it back first.

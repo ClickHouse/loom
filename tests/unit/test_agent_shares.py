@@ -222,7 +222,7 @@ def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world)
     assert _share(role="writer").role == "writer"
     del world["ranks"][next(iter(full))]
     del world["ranks"]["fleet-a"]
-    assert _share().role == "viewer"  # fleet-a now fits; its own namespace never counts
+    assert _share().role == "viewer"  # fleet-a fits; b's own namespace is charged once, not again
 
 
 @pytest.mark.parametrize(
