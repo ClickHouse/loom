@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from server.core import llm_free
-from server.core.errors import PreconditionFailedError
+from server.core.errors import ReadsLlmFreeError
 from server.operations.registry import ALL_OPERATIONS
 from tests.unit import test_memory_search_handler_gates as _gates
 from tests.unit.ch_fake import RecordingCH
@@ -136,9 +136,7 @@ async def _serve(op: Any) -> None:
     before its model step makes no LLM call, which the walk counts as covered)."""
     try:
         await op.handler(op.input_model(**(_body(op.input_model) or {})))
-    except PreconditionFailedError as e:
-        if "LOOM_READS_LLM_FREE" not in str(e):
-            return
+    except ReadsLlmFreeError:
         assert op.name in _REFUSING, f"{op.name} refused under the setting"
     except Exception:  # noqa: BLE001 — the fake data, not the setting, failed it
         pass
@@ -187,10 +185,10 @@ async def test_an_asks_synthesis_answers_409_naming_the_setting(monkeypatch) -> 
         ("code.ask", CodeAskInput(org="o", namespace="ns", question=_QUESTION)),
     ):
         op = _op(name)
-        with _serving(op, monkeypatch), pytest.raises(PreconditionFailedError) as e:
+        with _serving(op, monkeypatch), pytest.raises(ReadsLlmFreeError) as e:
             await op.handler(body)
         assert "LOOM_READS_LLM_FREE" in str(e.value)
-        assert e.value.status_code == 409
+        assert e.value.code == "READS_LLM_FREE" and e.value.status_code == 409
 
 
 async def test_a_brief_returns_its_evidence_without_an_answer(

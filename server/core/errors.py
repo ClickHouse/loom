@@ -70,15 +70,22 @@ class NotFoundError(LoomServerError):
 
 class PreconditionFailedError(LoomServerError):
     """409 — `if_match_sha256` mismatch. Returns the live hash so the caller
-    can retry without a separate read. Also `memory.ask` or `code.ask` asking
-    for an answer while `LOOM_READS_LLM_FREE` is on: `current_sha256` is
-    empty, and the retrieval-only flag the message names returns the evidence."""
+    can retry without a separate read."""
 
     code = "PRECONDITION_FAILED"
     status_code = 409
 
     def __init__(self, message: str = "", *, current_sha256: str = "") -> None:
         super().__init__(message, current_sha256=current_sha256)
+
+
+class ReadsLlmFreeError(LoomServerError):
+    """409 — `memory.ask` or `code.ask` asked for a model's answer while
+    `LOOM_READS_LLM_FREE` is on. Resending the same request never succeeds;
+    the retrieval-only flag the message names returns the recalled evidence."""
+
+    code = "READS_LLM_FREE"
+    status_code = 409
 
 
 class GrantWouldDowngradeError(LoomServerError):
