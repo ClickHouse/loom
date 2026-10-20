@@ -64,8 +64,8 @@ async def find_candidate(
     and the candidate side of `memory.lineage`'s provenance chain.
 
     `seeded_from_*` is surfaced so lineage can point at the originating
-    conversation turn; `supporter_count`, `confidence_avg`, `proposed_at`, `agent` and
-    `filed_by_user` so a review's new version carries them forward.
+    conversation turn; `supporter_count`, `confidence_avg`, `proposed_at` and `agent`
+    so a review's new version carries them forward.
     """
     ch = ch or _default_client()
     return await ch.query_one(
@@ -74,7 +74,7 @@ async def find_candidate(
                status, supporters, rationale, source_kind,
                seeded_from_thread_id, seeded_from_msg_id,
                supporter_count, confidence_avg, proposed_at,
-               agent, filed_by_user
+               agent
         FROM loom.learnings_queue FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND candidate_id = {cid:UUID}
@@ -125,16 +125,44 @@ async def insert_supporter(
     )
 
 
+async def supporter_exists(
+    org: str,
+    namespace: str,
+    candidate_id: str,
+    user_id: str,
+    session_id: str,
+    *,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Whether this (user, session) already backs the candidate."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT count() AS n FROM loom.learnings_supporters
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND candidate_id = {cid:UUID}
+          AND user_id = {uid:String} AND session_id = {sid:String}
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "cid": candidate_id,
+            "uid": user_id,
+            "sid": session_id,
+        },
+    )
+    return bool(row and int(row["n"]))
+
+
 async def supporter_stats(
     org: str,
     namespace: str,
     candidate_ids: list[str],
     *,
-    limit: int = 50,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Per candidate: distinct users, distinct sessions, the mean confidence and the
-    first `limit` (user_id, session_id) pairs by time."""
+    first 50 (user_id, session_id) pairs by time."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -142,12 +170,11 @@ async def supporter_stats(
                uniqExact(user_id) AS users,
                uniqExact(user_id, session_id) AS sessions,
                avg(confidence) AS confidence,
-               arraySlice(arraySort(groupArray((created_at, user_id, session_id))),
-                          1, {lim:UInt32}) AS pairs
+               groupArraySorted(50)((created_at, user_id, session_id)) AS pairs
         FROM loom.learnings_supporters FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND candidate_id IN {ids:Array(UUID)}
         GROUP BY candidate_id
         """,
-        params={"org": org, "ns": namespace, "ids": candidate_ids, "lim": int(limit)},
+        params={"org": org, "ns": namespace, "ids": candidate_ids},
     )

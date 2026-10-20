@@ -36,7 +36,7 @@ Per-namespace approve-ratio rollup of the learnings queue.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str \| None` | `None` | None = org-wide rollup |
-| `source_kind` | `str \| None` | `'conversation_seeder'` | Only candidates from this producer; the default counts the conversation seeder, the extraction quality the Health panel reports. |
+| `source_kind` | `str \| None` | `'conversation_seeder'` | Only candidates from this producer; None counts every producer. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

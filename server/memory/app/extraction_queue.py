@@ -72,9 +72,9 @@ ENQUEUED_BY_KEY = "enqueued_by"
 # The request's resolved read scope, so the replay's lookups stay inside it as
 # the inline call's would. Stamped by the server like `enqueued_by`.
 READ_SCOPE_KEY = "read_filters"
-# What the enqueuing token decided about assistant-turn learnings (bound to one
-# end user, the agent it was signed for), so the replay files as the inline call would.
-LEARNINGS_PIN_KEY = "learnings_pin"
+# The agent a filed assistant rule is for, resolved from the enqueuing token
+# (`assistant_learnings.learning_agent`), so the replay files as the inline call would.
+LEARNING_AGENT_KEY = "learning_agent"
 
 
 def payload_for(
@@ -84,7 +84,7 @@ def payload_for(
     `defer` (the replay must run inline), plus the enqueuing principal
     (`enqueued_by`, else the current request's `writer_actor()`) and the
     request's resolved read `scope`. Returns (json, messages, chars)."""
-    from server.memory.app.assistant_learnings import request_pin
+    from server.memory.app.assistant_learnings import learning_agent
     from server.memory.app.provenance import writer_actor
 
     data = input.model_dump(mode="json", exclude={"defer"})
@@ -93,8 +93,7 @@ def payload_for(
     actor = writer_actor() if enqueued_by is None else str(enqueued_by)
     if actor:
         data[ENQUEUED_BY_KEY] = actor
-    pin = request_pin()
-    data[LEARNINGS_PIN_KEY] = {"pinned": pin.pinned, "agent": pin.agent}
+    data[LEARNING_AGENT_KEY] = learning_agent(input.agent)
     data[READ_SCOPE_KEY] = {
         "scope": scope.scope,
         "user_id": scope.user_id,
@@ -430,7 +429,7 @@ async def list_status(
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
-    "LEARNINGS_PIN_KEY",
+    "LEARNING_AGENT_KEY",
     "READ_SCOPE_KEY",
     "STATUS_DONE",
     "STATUS_FAILED",
@@ -454,7 +453,7 @@ def rebuild_input(row: dict[str, Any]) -> Any:
     data["defer"] = False
     data.pop(ENQUEUED_BY_KEY, None)  # server stamps, not request fields
     data.pop(READ_SCOPE_KEY, None)
-    data.pop(LEARNINGS_PIN_KEY, None)
+    data.pop(LEARNING_AGENT_KEY, None)
     return MemorySetFromMessagesInput.model_validate(data)
 
 
@@ -490,23 +489,26 @@ def replay_actor(row: dict[str, Any]) -> str:
     return enqueued_actor(row) or _prov.EXTRACTION_WORKER_ACTOR
 
 
+def queued_learning_agent(row: dict[str, Any]) -> str | None:
+    """The learning agent stored at enqueue time; None for a row queued before it
+    was stored (the replay then files for the body's agent, as it did)."""
+    stored = json.loads(row["payload"]).get(LEARNING_AGENT_KEY)
+    return None if stored is None else str(stored)
+
+
 async def replay_row(row: dict[str, Any]) -> int:
     """Run one queued request through the inline handler under the enqueuer's
     principal and read scope; returns memories written."""
     from server.identity.domain.read_scope import read_filters_bound
-    from server.memory.app.assistant_learnings import LearningsPin, replay_pin
+    from server.memory.app.assistant_learnings import replay_learning_agent
     from server.memory.app.extract.handler import handle_memory_set_from_messages
     from server.memory.domain import provenance as _prov
 
-    stored_pin = json.loads(row["payload"]).get(LEARNINGS_PIN_KEY) or {}
-    pin = LearningsPin(
-        pinned=bool(stored_pin.get("pinned")), agent=str(stored_pin.get("agent") or "")
-    )
     # The worker has no auth bound, so the scope is bound for "no auth".
     with (
         _prov.pipeline_actor(replay_actor(row)),
         read_filters_bound(None, replay_scope(row)),
-        replay_pin(pin),
+        replay_learning_agent(queued_learning_agent(row)),
         customer.for_org(str(row.get("org") or "")),
     ):
         out = await handle_memory_set_from_messages(rebuild_input(row))

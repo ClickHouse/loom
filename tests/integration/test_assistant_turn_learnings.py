@@ -103,7 +103,9 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
     assert cand["proposed_value"] == f"Assistant rule: {_RULE}"
     assert _support(cand) == (1, 1, 1)
     assert cand["supporters"] == [f"{org}/{ns}/{_AGENT}/alice/s1/{cand['memory_key']}"]
-    assert cand["rationale"] == f'Stated in an assistant turn: "{_RULE}"'
+    assert cand["rationale"] == (
+        f'User: "Please refund my order of $800 today."\nAssistant: "{_RULE}"'
+    )
 
     # Not a memory: the user's search does not find it.
     hits = _call(
@@ -236,12 +238,29 @@ async def test_a_user_erasure_removes_the_users_support_and_filings(
             ],
             settings={"async_insert": 0, "wait_for_async_insert": 1},
         )
+        # Merged away: only the review row, which carries nothing of the filer.
+        await ch.execute("OPTIMIZE TABLE loom.learnings_queue FINAL")
         before = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert before["loom.learnings_queue"] > 0 and before["loom.learnings_supporters"] > 0
         await steps_ledgers.delete_learnings_queue_by_user(org, "alice", ch=ch)
         after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
         assert after["loom.learnings_queue"] == 0
         assert after["loom.learnings_supporters"] == 0
+        # Not one physical row of alice's candidate is left in either table.
+        for table in ("loom.learnings_queue", "loom.learnings_supporters"):
+            row = await ch.query_one(
+                f"SELECT count() AS n FROM {table} "
+                "WHERE org = {org:String} AND candidate_id = {cid:UUID}",
+                params={"org": org, "cid": filed["candidate_id"]},
+            )
+            assert row is not None and int(row["n"]) == 0, table
+        # Nor of alice's support of bob's candidate.
+        row = await ch.query_one(
+            "SELECT count() AS n FROM loom.learnings_supporters "
+            "WHERE org = {org:String} AND user_id = 'alice'",
+            params={"org": org},
+        )
+        assert row is not None and int(row["n"]) == 0
     finally:
         await ch.disconnect()
 

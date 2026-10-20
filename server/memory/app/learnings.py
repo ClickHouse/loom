@@ -209,13 +209,19 @@ async def handle_learnings_review(
     promoted_to_knowledge = False
     knowledge_source_uri = ""
     if input.decision == "promote":
+        # A bot rule is promoted with the confidence the reviewer saw: the mean over
+        # its supporters, not the filing session's own. Only the promotion reads it;
+        # the status row below keeps the candidate's own columns.
+        support = await _assistant_turn_support(input.org, input.namespace, [row])
+        confidence = support.get(str(row["candidate_id"]), {}).get("confidence_avg")
+        promoted = row if confidence is None else {**row, "confidence_avg": confidence}
         wants_memory = input.destination in ("memory", "both")
         wants_knowledge = input.destination in ("knowledge", "both")
         if wants_memory:
             await _do_promote(
                 input.org,
                 input.namespace,
-                row,
+                promoted,
                 input.approver,
                 input.reason,
             )
@@ -248,7 +254,6 @@ async def handle_learnings_review(
             "rationale": row["rationale"],
             "source_kind": row.get("source_kind", "memory_supporters"),
             "agent": str(row.get("agent") or ""),
-            "filed_by_user": str(row.get("filed_by_user") or ""),
             "seeded_from_thread_id": row.get("seeded_from_thread_id"),
             "seeded_from_msg_id": row.get("seeded_from_msg_id"),
             "status": target_status,
@@ -361,24 +366,24 @@ async def _promote_via_memory_set(
     except (ValueError, TypeError):
         deserialized = raw_value
 
-    # Seeder supporters encode the originating thread, not a memory row.
-    # Sentinel "-" puts the row at namespace scope; approver lands as
-    # user_id so audit retains accountability. A rule an assistant stated about
-    # itself becomes its agent's memory for every user (user_id "-"); the
-    # approver is the row's `actor`, stamped from the review's token, and the
-    # source_trace names the candidate, not one supporter's session.
-    # Persist the originating conversation on the durable memory row's
-    # source_trace (the seeded_from link otherwise lives only on the
-    # learnings_queue candidate, which ages out) — so a promoted fact keeps a
-    # path back to the thread that produced it, for audit + "memories from this
-    # thread".
-    seeded_thread = candidate_row.get("seeded_from_thread_id")
-    agent_rule = candidate_row.get("source_kind") == ASSISTANT_TURN
+    # In both cases the approver is the row's `actor`, stamped from the review's token.
+    if candidate_row.get("source_kind") == ASSISTANT_TURN:
+        # A bot's rule about itself: its agent's memory, for every user of the bot.
+        agent, user_id = str(candidate_row.get("agent") or "-"), "-"
+        # The candidate, not one supporter's session, is where it came from.
+        source_trace = f"learning:{candidate_row['candidate_id']}"
+    else:
+        # A seeder candidate: namespace scope, under the approver's user_id.
+        agent, user_id = "-", approver or "-"
+        # The originating conversation, so the row keeps a path back to its thread
+        # once the candidate ages out.
+        seeded_thread = candidate_row.get("seeded_from_thread_id")
+        source_trace = f"conversation:{seeded_thread}" if seeded_thread else ""
     set_input = MemorySetInput(
         org=org,
         namespace=namespace,
-        agent=str(candidate_row.get("agent") or "-") if agent_rule else "-",
-        user_id="-" if agent_rule else (approver or "-"),
+        agent=agent,
+        user_id=user_id,
         session_id="-",
         memory_key=candidate_row["memory_key"],
         memory_type=candidate_row.get("memory_type") or "semantic",
@@ -388,11 +393,7 @@ async def _promote_via_memory_set(
             f"candidate-id:{candidate_row['candidate_id']}",
         ],
         confidence=float(candidate_row.get("confidence_avg") or 1.0),
-        source_trace=(
-            f"learning:{candidate_row['candidate_id']}"
-            if agent_rule
-            else (f"conversation:{seeded_thread}" if seeded_thread else "")
-        ),
+        source_trace=source_trace,
     )
     # 409 PINNED_CONFLICT bubbles up through learnings.review.
     await handle_memory_set(set_input)

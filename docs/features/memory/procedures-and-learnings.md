@@ -201,8 +201,9 @@ counted from `loom.learnings_supporters` when it is listed: `supporter_count` an
 `supporter_users` are the distinct end users, `supporter_sessions` the distinct sessions,
 and support never promotes it. Promoting it writes the rule as the agent's memory for
 every user. A user erasure deletes that user's supporter rows, and every candidate the
-user filed (its rationale quotes their conversation) with all its supporters. Any other
-candidate is written by your own process to `loom.learnings_queue`.
+user filed (the user on its earliest supporter row, whose conversation its rationale
+quotes) with all its supporters. Any other candidate is written by your own process to
+`loom.learnings_queue`.
 
 `learnings.quality` counts the conversation seeder by default, since it reports
 extraction quality; pass `source_kind="assistant_turn"` for the bot rules.

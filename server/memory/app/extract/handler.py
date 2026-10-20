@@ -486,12 +486,12 @@ async def handle_memory_set_from_messages(
     to one end user cannot turn assistant-turn learnings on: its
     `agent_learnings=true` is dropped and named in `ignored_args` unless the
     deployment has them on."""
-    from server.memory.app.assistant_learnings import request_pin
+    from server.memory.app.assistant_learnings import token_pinned
     from server.settings import settings as _settings
 
     refused = (
         bool(input.agent_learnings)
-        and request_pin().pinned
+        and token_pinned()
         and not _settings.memory_extract_agent_learnings
     )
     if refused:
@@ -738,15 +738,17 @@ __all__ = [
 
 
 def _extract_request_pins(input: Any) -> dict[str, Any]:
-    """The per-call A/B pins the pipeline state carries: the coverage sweep and the
-    extractor's response cache; None = the namespace's or the deployment's setting."""
-    from server.memory.app.assistant_learnings import request_pin
+    """The per-call pins the pipeline state carries: the coverage sweep, the
+    extractor's response cache and assistant-turn learnings (None = the namespace's or
+    the deployment's setting), the agent a filed rule is for (the token decides; ''
+    files nothing), and the session's served keys and tool values for the echo filters."""
+    from server.memory.app.assistant_learnings import learning_agent
 
     return {
         "coverage_sweep": getattr(input, "coverage_sweep", None),
         "llm_cache": getattr(input, "llm_cache", None),
         "agent_learnings": getattr(input, "agent_learnings", None),
-        "learning_agent": request_pin().agent,
+        "learning_agent": learning_agent(str(getattr(input, "agent", "") or "")),
         # The keys the session's tools served ride into the workflow state so the echo filter
         # can judge against them.
         "recalled_keys": list(getattr(input, "recalled_keys", None) or []),

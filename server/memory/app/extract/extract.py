@@ -603,6 +603,10 @@ async def extract_from_messages(
         if relations_backfilled:
             log.info("relation backfill gave %d fact(s) a typed relation", relations_backfilled)
 
+    # Off, a fact the model still marks as the assistant's rule is the user's, and
+    # gets every pass a user fact gets.
+    if not agent_learnings:
+        facts = [replace(f, about="user") if f.about == "agent" else f for f in facts]
     facts = _settle_facts(
         facts,
         messages,
@@ -610,8 +614,6 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
     )
-    if not agent_learnings:
-        facts = [replace(f, about="user") if f.about == "agent" else f for f in facts]
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date
     # lets the judge verify temporal resolutions instead of flagging them

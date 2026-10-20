@@ -666,10 +666,11 @@ describe("ReviewQueue", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
     await screen.findByText("assistant_rule_refunds", {}, WAIT);
     expect(screen.getByText(/2 users, 3 sessions/)).toBeTruthy();
-    expect(screen.getByText(/agent support-bot/)).toBeTruthy();
-    expect(screen.getByText(/part of support-bot for every user it serves/)).toBeTruthy();
+    expect(screen.getAllByText(/A bot's rule about itself/)).toHaveLength(2);
+    expect(screen.getByText(/apply to every user of agent support-bot/)).toBeTruthy();
     expect(screen.getByText(/1 supporter ·/)).toBeTruthy();
-    expect(screen.getByText(/part of the agent for every user it serves/)).toBeTruthy();
+    // A rule filed with no agent applies namespace-wide, and says so.
+    expect(screen.getByText(/apply to every user of every agent in this namespace/)).toBeTruthy();
   });
 
   it("says what a learning is when the queue is empty", async () => {

@@ -105,7 +105,7 @@ class _CandidatesCH(_StubCH):
         self.ids = ids
 
     async def query_all(self, sql, params=None):
-        if "SELECT DISTINCT candidate_id" in sql:
+        if "argMin(user_id, created_at)" in sql:
             self.counts.append((sql, params or {}))
             return [{"candidate_id": i} for i in self.ids]
         return await super().query_all(sql, params)
@@ -115,9 +115,13 @@ def test_the_learnings_user_step_deletes_the_users_support_and_filings() -> None
     ch = _CandidatesCH(["c1", "c2"], count=3)
     assert asyncio.run(ledger_steps.delete_learnings_queue_by_user("o", "alice", ch=ch)) == 6
     read_sql, read_params = ch.counts[0]
-    assert "filed_by_user = {uid:String}" in read_sql and read_params["uid"] == "alice"
-    assert _tables(ch) == ["loom.learnings_supporters", "loom.learnings_queue"]
-    (support_sql, params), (queue_sql, _) = ch.commands
+    # The filer is read from the earliest supporter row, not from any queue column.
+    assert "FROM loom.learnings_supporters" in read_sql
+    assert "HAVING argMin(user_id, created_at) = {uid:String}" in read_sql
+    assert read_params["uid"] == "alice"
+    # The candidates go first, then the supporter rows that name their filer.
+    assert _tables(ch) == ["loom.learnings_queue", "loom.learnings_supporters"]
+    (queue_sql, params), (support_sql, _) = ch.commands
     # The user's own support, and every supporter of a candidate the user filed.
     assert "(user_id = {uid:String} OR candidate_id IN {cids:Array(UUID)})" in support_sql
     assert "candidate_id IN {cids:Array(UUID)}" in queue_sql and params["cids"] == ["c1", "c2"]

@@ -74,21 +74,25 @@ becomes a pending `assistant_turn` candidate in the
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue) for the
 request's `(org, namespace, agent)`:
 
-- A candidate is keyed by the agent, the rule's memory key and its text (case and
-  spacing folded). A different rule under the same key is a separate candidate, so a
-  first wording never collects the support of a later one. The extractor's key rewrites
-  leave a rule's key alone.
+- A candidate is keyed by the agent, the rule's memory key and its text, with only
+  case and spacing folded. A different rule under the same key is a separate candidate,
+  so a first wording never collects the support of a later one. The same rule worded
+  differently in another session is a separate candidate too, so wording drift splits
+  its support. The extractor's key rewrites leave a rule's key alone.
 - The end user and session are recorded as a supporter in `loom.learnings_supporters`,
-  one row per session. A supporter never rewrites the candidate's row, so a review is
-  never undone by a late supporter. A decided candidate takes no new supporters.
-- The `rationale` quotes the evidence span the extractor cited, or the assistant turn
-  when it cited none.
+  one row per session, written once. A supporter never rewrites the candidate's row, so
+  a review is never undone by a late supporter. A decided candidate takes no new
+  supporters. The earliest supporter row names the user who filed the candidate.
+- The `rationale` quotes the filer's user turn before the rule (up to 200 characters),
+  then the evidence span the extractor cited, or the assistant turn when it cited none
+  (up to 400).
 - Support never promotes a candidate. An admin's `learnings.review` does, and the rule
   becomes the agent's memory (`user_id` `-`) for every user of the bot, with
   `source_trace` `learning:<candidate_id>`.
 - A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
-  files for the agent its issuer signed, not the body's `agent`. It cannot turn filing
-  on: its `agent_learnings=true` is dropped and named in `ignored_args` unless the
+  files for the agent its issuer signed, never the body's `agent`, and files nothing
+  when it names no agent. It cannot turn filing on: its `agent_learnings=true` is
+  dropped and named in `ignored_args` (and the `X-Loom-Ignored-Args` header) unless the
   deployment setting is on.
 
 `learning_candidates` in the response counts the rules routed to the queue. A failed queue

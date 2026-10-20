@@ -99,12 +99,12 @@ LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
 
 # A learnings queue candidate belongs to the end user whose conversation its
-# rationale quotes (`filed_by_user`). Every version of it is in scope: a review's
-# status row written by a build that does not carry the column included.
-USER_FILED_LEARNINGS = "filed_by_user = {uid:String}"
-USER_LEARNINGS = (
-    "candidate_id IN (SELECT candidate_id FROM loom.learnings_queue "
-    f"WHERE org = {{org:String}} AND {USER_FILED_LEARNINGS})"
+# rationale quotes: the one on its earliest supporter row. Every version of it is in
+# scope, a review's status row included, whatever columns that row carries.
+USER_FILED_LEARNING_IDS = (
+    "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String} "
+    "GROUP BY candidate_id HAVING argMin(user_id, created_at) = {uid:String})"
 )
+USER_LEARNINGS = f"candidate_id IN {USER_FILED_LEARNING_IDS}"
 # The user's own support rows, and every supporter of a candidate the user filed.
 USER_LEARNING_SUPPORT = f"(user_id = {{uid:String}} OR {USER_LEARNINGS})"

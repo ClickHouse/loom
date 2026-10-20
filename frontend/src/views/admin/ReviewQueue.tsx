@@ -542,6 +542,18 @@ const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 // A rule a bot stated about itself in conversations (`assistant_turn`).
 const isAgentRule = (r: LearningEntry) => r.source_kind === "assistant_turn";
 
+// What filed a candidate, in words; an unknown producer shows its own name.
+const SOURCE_LABEL: Record<string, string> = {
+  assistant_turn: "A bot's rule about itself",
+  conversation_seeder: "Seen in conversations",
+  memory_supporters: "Backed by several writers",
+};
+const sourceLabel = (r: LearningEntry) => SOURCE_LABEL[r.source_kind || "memory_supporters"] ?? r.source_kind;
+
+// Who a promoted rule applies to: its agent, or the namespace when it names none.
+const agentLabel = (r: LearningEntry) =>
+  r.agent && r.agent !== "-" ? `agent ${r.agent}` : "every agent in this namespace";
+
 // A bot's rule is backed by distinct users, its sessions beside them; every other
 // candidate by its supporters. A server a release behind sends no user count.
 function supportLabel(r: LearningEntry): string {
@@ -660,16 +672,19 @@ function LearningsPanel({
                 </span>
               </div>
               <div className="text-xs text-text-muted mb-2">
-                {r.source_kind || "memory_supporters"}
-                {r.agent && <> · agent {r.agent}</>}
+                {sourceLabel(r)}
+                {isAgentRule(r) && <> · {agentLabel(r)}</>}
               </div>
               <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
-              {r.rationale && <div className="text-sm text-text-muted mb-2 italic">{r.rationale}</div>}
+              {/* A bot rule's rationale quotes the user turn, then the rule, one per line. */}
+              {r.rationale && (
+                <div className="text-sm text-text-muted mb-2 italic whitespace-pre-line">{r.rationale}</div>
+              )}
               {status === "pending" && (
                 <>
                   {isAgentRule(r) && (
                     <div className="text-sm text-text-muted mb-2">
-                      Promote makes this rule part of {r.agent || "the agent"} for every user it serves.
+                      Promote makes this rule apply to every user of {agentLabel(r)}.
                     </div>
                   )}
                   <TextAreaField

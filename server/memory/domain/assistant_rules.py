@@ -1,6 +1,6 @@
 """Learnings queue candidates from rules an assistant states about itself.
 
-Pure: the candidate's id and the rationale that quotes the assistant turn.
+Pure: the candidate's id and the rationale that quotes the conversation.
 """
 
 from __future__ import annotations
@@ -10,8 +10,9 @@ from typing import Any
 
 SOURCE_KIND = "assistant_turn"
 
-# The rationale quotes this much of the assistant turn.
-_QUOTE_CHARS = 400
+# The rationale quotes this much of the assistant's rule and of the user turn before it.
+_RULE_CHARS = 400
+_USER_CHARS = 200
 
 
 def normalized_value(value: str) -> str:
@@ -27,16 +28,30 @@ def candidate_id(org: str, namespace: str, agent: str, memory_key: str, value: s
     return str(uuid.uuid5(uuid.NAMESPACE_URL, name))
 
 
+def _quote(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 def rationale(fact: dict[str, Any], messages: list[dict[str, Any]]) -> str:
-    """Why the candidate exists: the span the extractor cited as evidence, else the
-    first assistant turn the fact cites, else the rule itself."""
-    quote = str(fact.get("evidence") or "")
-    if not quote:
-        for idx in fact.get("source_message_indices") or []:
-            if 0 <= idx < len(messages) and messages[idx].get("role") == "assistant":
-                quote = str(messages[idx].get("content") or "")
-                break
-    quote = " ".join((quote or str(fact.get("value") or "")).split())
-    if len(quote) > _QUOTE_CHARS:
-        quote = quote[: _QUOTE_CHARS - 1] + "…"
-    return f'Stated in an assistant turn: "{quote}"'
+    """What the reviewer reads: the user turn before the rule, so the prompt that
+    drew it is in view, then the rule as said (the span the extractor cited as
+    evidence, else the cited assistant turn, else the rule itself)."""
+    cited = [
+        i
+        for i in fact.get("source_message_indices") or []
+        if 0 <= i < len(messages) and messages[i].get("role") == "assistant"
+    ]
+    at = cited[0] if cited else len(messages)
+    said = str(fact.get("evidence") or "")
+    if not said and cited:
+        said = str(messages[at].get("content") or "")
+    lines = []
+    asked = next(
+        (str(m.get("content") or "") for m in reversed(messages[:at]) if m.get("role") == "user"),
+        "",
+    )
+    if asked:
+        lines.append(f'User: "{_quote(asked, _USER_CHARS)}"')
+    lines.append(f'Assistant: "{_quote(said or str(fact.get("value") or ""), _RULE_CHARS)}"')
+    return "\n".join(lines)

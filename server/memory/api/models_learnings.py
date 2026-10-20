@@ -91,9 +91,9 @@ class LearningsReviewOutput(BaseModel):
 class LearningsQualityInput(BaseModel):
     org: str
     namespace: str | None = None  # None = org-wide rollup
-    # Only candidates from this producer; the default counts the conversation
-    # seeder, the extraction quality the Health panel reports. `assistant_turn`
-    # is a bot's rules about itself, not extraction quality; None counts every producer.
+    # Only candidates from this producer; None counts every producer. The default
+    # counts the conversation seeder, the extraction quality the Health panel reports;
+    # `assistant_turn` is a bot's rules about itself, not extraction quality.
     source_kind: str | None = "conversation_seeder"
 
 

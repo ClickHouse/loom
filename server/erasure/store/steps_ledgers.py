@@ -11,7 +11,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, NS_IN, UID, USER_FILED_LEARNINGS
+from server.erasure.store.predicates import NS_EQ, NS_IN, UID, USER_FILED_LEARNING_IDS
 
 log = logging.getLogger(__name__)
 
@@ -266,27 +266,28 @@ async def delete_learnings_queue_by_user(
 ) -> int:
     """The user's support rows, and every version of each candidate the user filed
     with all its supporters (`predicates.USER_LEARNING_SUPPORT`, `USER_LEARNINGS`).
-    The ids are read first, so no delete reads a table it mutates."""
+    The ids are read first, so no delete reads a table it mutates; the candidates go
+    before the supporter rows that name their filer, so a step that fails between
+    the two still finds them when it runs again."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        "SELECT DISTINCT candidate_id FROM loom.learnings_queue "
-        f"WHERE org = {{org:String}} AND {USER_FILED_LEARNINGS}",
+        f"SELECT candidate_id FROM {USER_FILED_LEARNING_IDS}",
         params={"org": org, "uid": user_id},
     )
     params: dict[str, Any] = {"uid": user_id, "cids": [str(r["candidate_id"]) for r in rows]}
     filed = "candidate_id IN {cids:Array(UUID)}"
-    n = await delete_scoped(
+    n = 0
+    if params["cids"]:
+        n += await delete_scoped(
+            "loom.learnings_queue", org=org, scope_where=filed, params=params, ch=ch
+        )
+    return n + await delete_scoped(
         "loom.learnings_supporters",
         org=org,
         scope_where=f"(user_id = {{uid:String}} OR {filed})",
         params=params,
         ch=ch,
     )
-    if params["cids"]:
-        n += await delete_scoped(
-            "loom.learnings_queue", org=org, scope_where=filed, params=params, ch=ch
-        )
-    return n
 
 
 async def _delete_run_claims(
