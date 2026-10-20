@@ -74,8 +74,8 @@ async def test_explicit_run_filter_on_search_is_preserved(agent: Agent) -> None:
 
 
 async def test_search_trace_is_labelled_like_search(agent: Agent) -> None:
-    # search_trace explains search's ranking, so it must see the same candidates:
-    # the run labels the read, it does not filter the trace to the run's rows.
+    # search_trace reads the same scope as search: the run labels the read, it does
+    # not filter the trace to the run's rows.
     cap: Any = agent.transport._post_once
     async with agent.run_scope(goal="g"):
         await agent.memory.search_trace("q")

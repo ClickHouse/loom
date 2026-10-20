@@ -1,11 +1,12 @@
 """Pluggable per-namespace reranker.
 
 When a namespace sets `rerank_endpoint` (or a request sets `rerank`),
-`memory.search` POSTs its candidate pool to the endpoint of that NAME and
-orders results by the response. Names map to URLs only in the operator's
-LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies the URL, and a value that
-is not a configured name (a URL included) reranks nothing. Loom owns the data
-plane, not the model.
+`memory.search` POSTs its candidate pool to the endpoint of that NAME and orders
+results by the response. Rows an exact identifier match pins keep their place
+and are not sent; with fewer than two rows left, no call is made. Names map to
+URLs only in the operator's LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies
+the URL, and a value that is not a configured name (a URL included) reranks
+nothing. Loom owns the data plane, not the model.
 
 Built-in rerankers (no separate service to run): `builtin:openai` (or
 `builtin:openai:gpt-4o-mini`) routes through Loom's LLM client;
@@ -32,7 +33,8 @@ Contract — response body:
 
 Order of `ranked` is the new order; entries omitted from `ranked` get
 appended after in their original order so a flaky reranker can't
-silently drop hits.
+silently drop hits. A key can name several candidates (one per session): each
+entry naming it takes that key's next candidate in input order.
 
 If the endpoint times out / errors / returns malformed JSON, the
 candidate pool is returned in its original order — fail-open. Rerank
@@ -198,11 +200,12 @@ async def rerank(
         _degradations.note("rerank", "input_order_kept", "malformed payload")
         return candidates
 
-    by_key: dict[tuple[str, str], RerankCandidate] = {
-        (c.namespace, c.memory_key): c for c in candidates
-    }
+    # The endpoint names a candidate by (namespace, key), and a key can name several (one per
+    # session): each entry takes the key's next candidate in input order.
+    by_key: dict[tuple[str, str], list[RerankCandidate]] = {}
+    for c in candidates:
+        by_key.setdefault((c.namespace, c.memory_key), []).append(c)
     ordered: list[RerankCandidate] = []
-    seen: set[tuple[str, str]] = set()
     for entry in ranked:
         if not isinstance(entry, dict):
             continue
@@ -210,15 +213,11 @@ async def rerank(
         key = entry.get("memory_key")
         if not key:
             continue
-        cand = by_key.get((ns, key))
-        if cand is None:
-            continue
-        ordered.append(cand)
-        seen.add((ns, key))
-
-    for c in candidates:
-        if (c.namespace, c.memory_key) not in seen:
-            ordered.append(c)
+        queue = by_key.get((ns, key))
+        if queue:
+            ordered.append(queue.pop(0))
+    taken = {id(c) for c in ordered}
+    ordered.extend(c for c in candidates if id(c) not in taken)
     return ordered
 
 

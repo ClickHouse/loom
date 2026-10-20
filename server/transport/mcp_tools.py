@@ -448,8 +448,7 @@ def _emit_mcp_event(
     )
 
 
-# The `why` note names a hit's ranking terms in the agent's
-# words. `rank_score_raw` / `rank_score` are the base, not a reason.
+# The `why` note names a hit's ranking terms in the agent's words.
 _WHY_LABELS: dict[str, str] = {
     "key_match_boost_effective": "key_match",
     "key_match": "key_match",
@@ -460,24 +459,31 @@ _WHY_LABELS: dict[str, str] = {
     "set_expansion": "set_expansion",
     "foreign": "foreign",
 }
-_WHY_SKIP = {"rank_score_raw", "rank_score"}
+# Base scores, not reasons (a reranked row's own fused score among them).
+_WHY_SKIP = {"rank_score_raw", "rank_score", "rank_score_pre_rerank"}
 
 
 def why_note(hit: dict[str, Any]) -> str:
-    """`key_match, date+0.12` — the server's provenance note first, then every
-    non-zero score component by magnitude, signed. "" when nothing explains."""
+    """`key_match, reranked+3, date+0.12` — the server's provenance note first, then a
+    reranker's move in places, then every non-zero score component by magnitude, signed.
+    "" when nothing explains."""
     parts: list[str] = []
     expl = str(hit.get("explanation") or "").replace("\n", " ").strip()
     if expl:
         parts.append(expl[:80])
     comps = hit.get("score_components") or {}
     if isinstance(comps, dict):
+        # A rerank's trail (`rerank_*`) is positions, not lifts; the places it moved the
+        # row are the reason the row holds its rank.
+        moved = comps.get("rerank_delta")
+        if isinstance(moved, int | float) and moved:
+            parts.append(f"reranked{int(moved):+d}")
         ranked = sorted(
             ((str(k), float(v)) for k, v in comps.items() if isinstance(v, int | float)),
             key=lambda kv: -abs(kv[1]),
         )
         for name, v in ranked:
-            if name in _WHY_SKIP or abs(v) < 0.005:
+            if name in _WHY_SKIP or name.startswith("rerank_") or abs(v) < 0.005:
                 continue
             parts.append(f"{_WHY_LABELS.get(name, name)}{v:+.2f}")
     return ", ".join(parts)

@@ -5,10 +5,9 @@ import { installApi } from "./fixtures";
 // Library previews it on the dashboard's own origin, where the bearer token sits in
 // localStorage. Each fixture below tries to run script: set a global on the parent, read
 // the token and send it to /exfil, and alert. The mocked server answers with the uploaded
-// type as-is (inline), so what is tested is the dashboard's own allowlist: text in an
-// empty-sandbox iframe as text/plain, raster images as <img>, everything else downloads.
-// Opening a preview on its own — its blob: URL, or the download URL — must not run
-// script either.
+// type as-is (inline), so what is tested is the dashboard's own allowlist: text as a text
+// node, raster images as <img>, everything else downloads. Opening a preview on its own —
+// an image's blob: URL, or the download URL — must not run script either.
 
 const PAYLOAD =
   "<script>" +
@@ -47,7 +46,7 @@ const DASHBOARD_CSP =
   "style-src 'self' 'unsafe-inline'; " +
   "font-src 'self' data:; " +
   "img-src 'self' data: blob:; " +
-  "frame-src blob:; " +
+  "frame-src 'none'; " +
   "connect-src 'self'; " +
   "object-src 'none'; " +
   "base-uri 'none'; " +
@@ -135,10 +134,11 @@ async function setup(page: Page): Promise<Probe> {
   return probe;
 }
 
+// Each caller waits for what its pane shows, so no check runs before the preview loads.
 async function openPreview(page: Page, f: Fixture) {
   await page.getByRole("button", { name: `Preview ${f.title}`, exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog.getByText("Loading thread")).toHaveCount(0);
+  await expect(dialog).toBeVisible();
   return dialog;
 }
 
@@ -162,39 +162,28 @@ test("active and mismatched uploads never run script in the preview", async ({ p
   // HTML and SVG: no frame, no image, a download prompt.
   for (const f of FIXTURES.slice(0, 2)) {
     const dialog = await openPreview(page, f);
-    await expectNothingRan(page, probe);
     await expect(dialog.getByText("No preview for this file type")).toBeVisible();
+    await expectNothingRan(page, probe);
     await expect(dialog.locator("iframe")).toHaveCount(0);
     await expect(dialog.locator("img")).toHaveCount(0);
     await closePreview(page);
   }
 
-  // HTML bytes labelled text/plain: shown as text, in a frame that grants nothing.
+  // HTML bytes labelled text/plain: shown as text, a text node that nothing parses.
   const text = FIXTURES[2];
   let dialog = await openPreview(page, text);
-  const frame = dialog.locator("iframe");
-  await expect(frame).toHaveCount(1);
-  expect(await frame.getAttribute("sandbox")).toBe("");
-  const body = page.frameLocator("[role=dialog] iframe").locator("body");
-  await expect(body).toContainText("<script>");
+  await expect(dialog.locator("pre")).toContainText("<script>");
+  await expect(dialog.locator("iframe")).toHaveCount(0);
+  await expect(dialog.locator("pre script, pre img")).toHaveCount(0);
   await expectNothingRan(page, probe);
-  const textUrl = (await frame.getAttribute("src")) ?? "";
-  expect(textUrl.startsWith("blob:")).toBe(true);
-
-  // Opening that blob: URL on its own is a plain-text page.
-  const standalone = await page.context().newPage();
-  await standalone.goto(textUrl);
-  await expect(standalone.locator("body")).toContainText("<script>");
-  await expectNothingRan(standalone, probe);
-  await standalone.close();
   await closePreview(page);
 
   // HTML bytes labelled image/png: an <img>, which never runs script.
   const png = FIXTURES[3];
   dialog = await openPreview(page, png);
-  await expect(dialog.locator("iframe")).toHaveCount(0);
   const imgUrl = (await dialog.locator("img").getAttribute("src")) ?? "";
   expect(imgUrl.startsWith("blob:")).toBe(true);
+  await expect(dialog.locator("iframe")).toHaveCount(0);
   await expectNothingRan(page, probe);
   const asPage = await page.context().newPage();
   await asPage.goto(imgUrl);
