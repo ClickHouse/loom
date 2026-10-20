@@ -1267,7 +1267,9 @@ Memory webhooks: their delivery worker and the URLs they may reach.
 | `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` |  | Deliver the signed memory-change events of loom.memory_webhook_outbox to each namespace's registered webhooks (the memory_webhook_deliver worker). |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_INTERVAL_SECONDS` | `int` | `5` |  | Seconds between memory webhook delivery passes while events are going out. |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_IDLE_INTERVAL_SECONDS` | `int` | `30` |  | Seconds between memory webhook delivery passes that found nothing due. |
-| `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a memory webhook delivery pass may run before the supervisor abandons it; it stops starting POSTs 20 s before, which leaves the reads before them and the insert after them their time. At least 30. |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a memory webhook delivery pass may run before the supervisor abandons it; it stops starting POSTs memory_webhook_deliver_reserve_seconds before. At least 30. |
+| `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` | `float` | `20.0` |  | Seconds of a memory webhook delivery pass kept for the reads before its POSTs and the one insert after them; less than memory_webhook_deliver_max_pass_seconds. Raise it when the due-event read grows with the outbox backlog. |
+| `LOOM_MEMORY_WEBHOOK_LEASE_MARGIN_SECONDS` | `float` | `60.0` | live | Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass leased stays passed over by other passes, so a crashed pass's events come back after it. |
 | `LOOM_MEMORY_WEBHOOK_MAX_POSTS_PER_PASS` | `int` | `40` | live | Due memory webhook events one delivery pass POSTs at most; the rest go next pass. |
 | `LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK` | `int` | `10` | live | Events of one memory webhook a delivery pass POSTs at most, so every webhook with work gets its turn. |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_CONCURRENCY` | `int` | `4` | live | Memory webhook POSTs one delivery pass has in flight at once (one per webhook at most). |

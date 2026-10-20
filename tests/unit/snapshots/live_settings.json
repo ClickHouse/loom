@@ -261,6 +261,7 @@
  "memory_webhook_cooldown_seconds",
  "memory_webhook_deliver_concurrency",
  "memory_webhook_failures_before_cooldown",
+ "memory_webhook_lease_margin_seconds",
  "memory_webhook_max_attempts",
  "memory_webhook_max_backoff_seconds",
  "memory_webhook_max_cooldown_seconds",

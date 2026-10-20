@@ -7,7 +7,7 @@ tombstone cascades.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -254,14 +254,20 @@ async def downgrade_consolidated_dependents(
     return len(to_tomb), len(to_down)
 
 
+# Tombstoned rows one page of `bulk_tombstone_scope`'s callback carries.
+# not a setting: an in-process buffer, the rows one page holds and one outbox insert takes
+CLEAR_PAGE_ROWS = 1000
+
+
 async def bulk_tombstone_scope(
     *,
     org: str,
     namespace: str,
     user_id: str | None = None,
     agent: str | None = None,
+    on_tombstoned: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     ch: _CHClient | None = None,
-) -> tuple[dict[str, int], list[dict[str, Any]]]:
+) -> dict[str, int]:
     """`memory.clear`: bulk-tombstone every live memory row matching
     (org, namespace, user_id?, agent?), plus the loom.memory_embeddings rows.
 
@@ -269,21 +275,23 @@ async def bulk_tombstone_scope(
     repo runs the query as-given (a scope-less call would clear the whole
     namespace — that's `erasure.request_namespace`'s job).
 
-    Returns ({table_name: rows_tombstoned}, the memory rows tombstoned), each
-    row its identity tuple, memory_key, memory_id and version, for the
-    handler's webhook events.
+    `on_tombstoned`, when given, is called after the mutation with each page of
+    the memory rows it tombstoned (identity tuple, memory_key, memory_id and
+    version), for the handler's webhook events; without it no row is read.
+
+    Returns {table_name: rows_tombstoned}.
     """
     ch = ch or _default_client()
 
-    where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
+    scope = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
     if user_id is not None:
-        where.append("user_id = {uid:String}")
+        scope.append("user_id = {uid:String}")
         params["uid"] = user_id
     if agent is not None:
-        where.append("agent = {agent:String}")
+        scope.append("agent = {agent:String}")
         params["agent"] = agent
-    scope_sql = " AND ".join(where)
+    scope_sql = " AND ".join([*scope, "tombstoned_at IS NULL"])
     # Locked rows survive a clear: the memory table filters
     # on the lock in force; memory_embeddings has no lock columns, so it
     # excludes the locked keys by subquery. What was left behind is reported
@@ -305,38 +313,72 @@ async def bulk_tombstone_scope(
             f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
             f"WHERE {scope_sql} AND {locked_predicate()})"
         )
-    # The memory rows the mutation tombstones, read before it while they are live.
-    tombstoned = await ch.query_all(
-        f"""
-        SELECT org, namespace, agent, user_id, session_id, memory_key, memory_id, version
-        FROM loom.memory FINAL
-        WHERE {where_by_table["loom.memory"]}
-        """,
-        params=params,
-    )
-    vectors_row = await ch.query_one(
-        f"SELECT count() AS n FROM loom.memory_embeddings FINAL "
-        f"WHERE {where_by_table['loom.memory_embeddings']}",
-        params=params,
-    )
-    counts = {
-        "loom.memory": len(tombstoned),
-        "loom.memory_embeddings": int((vectors_row or {}).get("n", 0) or 0),
-    }
-    for table, where_sql in where_by_table.items():
-        if counts[table] == 0:
+    # One timestamp for the whole clear, so the rows it tombstoned can be read back.
+    params["at"] = naive_utc_now().replace(microsecond=0)
+    counts: dict[str, int] = {}
+    for table in ("loom.memory", "loom.memory_embeddings"):
+        where_sql = where_by_table[table]
+        count_row = await ch.query_one(
+            f"SELECT count() AS n FROM {table} FINAL WHERE {where_sql}",
+            params=params,
+        )
+        n = int((count_row or {}).get("n", 0) or 0)
+        counts[table] = n
+        if n == 0:
             continue
         await ch.execute(
             f"""
             ALTER TABLE {table}
-            UPDATE tombstoned_at = now()
+            UPDATE tombstoned_at = {{at:DateTime}}
             WHERE {where_sql}
             SETTINGS mutations_sync = 2
             """,
             params=params,
         )
+    if on_tombstoned is not None and counts["loom.memory"]:
+        await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
     counts["locked_skipped"] = locked_n
-    return counts, tombstoned
+    return counts
+
+
+async def _page_tombstoned(
+    scope_sql: str,
+    params: dict[str, Any],
+    on_page: Callable[[list[dict[str, Any]]], Awaitable[None]],
+    *,
+    ch: _CHClient,
+) -> None:
+    """Hand `on_page` the memory rows in scope tombstoned at `params["at"]`, a page
+    at a time in sort-key order. A row a concurrent delete tombstoned in the same
+    second comes too, at the version that delete announced, so its event repeats
+    that one's id."""
+    after: tuple[str, str, str, str] = ("", "", "", "")
+    while True:
+        rows = await ch.query_all(
+            f"""
+            SELECT org, namespace, agent, user_id, session_id, memory_key, memory_id, version
+            FROM loom.memory FINAL
+            WHERE {scope_sql} AND tombstoned_at = {{at:DateTime}}
+              AND (agent, user_id, session_id, memory_key)
+                  > ({{a_agent:String}}, {{a_uid:String}}, {{a_sid:String}}, {{a_key:String}})
+            ORDER BY agent, user_id, session_id, memory_key
+            LIMIT {{limit:UInt32}}
+            """,
+            params={
+                **params,
+                "a_agent": after[0],
+                "a_uid": after[1],
+                "a_sid": after[2],
+                "a_key": after[3],
+                "limit": CLEAR_PAGE_ROWS,
+            },
+        )
+        if rows:
+            await on_page(rows)
+        if len(rows) < CLEAR_PAGE_ROWS:
+            return
+        last = rows[-1]
+        after = (last["agent"], last["user_id"], last["session_id"], last["memory_key"])
 
 
 async def tombstone_cascade_by_ids(

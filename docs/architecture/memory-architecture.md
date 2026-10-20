@@ -487,7 +487,9 @@ census). For each webhook of the namespace that takes the event it inserts one
 nothing rewrites it. Which namespaces have webhooks is a per-process copy of
 `loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
 namespace with no webhook pays no insert, and the first write after each interval waits
-for one registry read.
+for one registry read. `memory.clear` tombstones with one mutation per table and, only
+when a webhook of the namespace takes `memory.tombstoned`, reads back the rows that
+mutation stamped, 1000 at a time in sort-key order, one outbox insert per page.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
 the events of removed webhooks, those that waited 2.5 days for a secret, and those a

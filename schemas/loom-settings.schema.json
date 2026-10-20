@@ -4322,13 +4322,25 @@
           "default": 120.0,
           "minimum": 30,
           "type": "number",
-          "description": "Seconds a memory webhook delivery pass may run before the supervisor abandons it; it stops starting POSTs 20 s before, which leaves the reads before them and the insert after them their time. At least 30."
+          "description": "Seconds a memory webhook delivery pass may run before the supervisor abandons it; it stops starting POSTs memory_webhook_deliver_reserve_seconds before. At least 30."
+        },
+        "memory_webhook_deliver_reserve_seconds": {
+          "default": 20.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds of a memory webhook delivery pass kept for the reads before its POSTs and the one insert after them; less than memory_webhook_deliver_max_pass_seconds. Raise it when the due-event read grows with the outbox backlog."
         },
         "memory_webhook_failures_before_cooldown": {
           "default": 5,
           "minimum": 1,
           "type": "integer",
           "description": "Failed POSTs in a row after which the delivery worker passes a memory webhook over for a cooldown (kept per process; a 2xx resets it)."
+        },
+        "memory_webhook_lease_margin_seconds": {
+          "default": 60.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass leased stays passed over by other passes, so a crashed pass's events come back after it."
         },
         "memory_webhook_max_attempts": {
           "default": 60,

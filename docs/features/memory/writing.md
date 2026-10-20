@@ -363,7 +363,8 @@ sweep, the `delete_version` check).
   webhook with work therefore gets its first POST of a pass before any webhook gets a
   second, while fewer than 40 webhooks have work. A pass stops starting POSTs once every
   POST could have waited its whole ack deadline (40 / 4 × 10 s = 100 s), and at the latest
-  20 s before its deadline (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); what it
+  `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` (20 s) before its deadline
+  (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); what it
   did not send goes next pass. One webhook gets at most 10 POSTs per
   pass, one after another, so a receiver that answers in 1 s takes about 10 events per
   pass. With fast receivers the ceiling is about 40 events per pass, a pass every 5 s

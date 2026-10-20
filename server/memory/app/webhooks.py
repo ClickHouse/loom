@@ -68,7 +68,7 @@ _hooks: Registry = {}  # this process's copy of the registry
 _loaded = False  # a read has landed; until one has, callers wait for it
 _reads = 0  # reads finished, so a caller queued behind one does not repeat it
 _changes = 0  # registry changes made here, so a read they overlap is not trusted
-_next_read = 0.0
+_last_read = float("-inf")  # when the last trusted read ended
 _lock = asyncio.Lock()
 
 
@@ -102,7 +102,7 @@ async def url_refusal(url: str) -> str:
 async def _read() -> None:
     """Read the registry; the next read is due an interval after this one ends,
     or at once when a change made here overlapped it."""
-    global _hooks, _loaded, _next_read, _reads
+    global _hooks, _loaded, _last_read, _reads
     changes = _changes
     try:
         rows = await store.live_webhooks()
@@ -117,15 +117,15 @@ async def _read() -> None:
             hooks.setdefault(key, []).append((str(r["webhook_id"]), frozenset(r["events"])))
         _hooks, _loaded = {k: tuple(v) for k, v in hooks.items()}, True
     if _changes == changes:
-        _next_read = time.monotonic() + settings.memory_webhook_refresh_seconds
+        _last_read = time.monotonic()
     _reads += 1
 
 
 def forget_registry() -> None:
     """Read the registry again on the next write, for a change made here."""
-    global _changes, _next_read
+    global _changes, _last_read
     _changes += 1
-    _next_read = 0.0
+    _last_read = float("-inf")
 
 
 async def _fresh_hooks() -> Registry:
@@ -133,13 +133,18 @@ async def _fresh_hooks() -> Registry:
     Once a copy is loaded, a caller that finds a read under way takes the copy
     it has. Before then callers wait for the read, and one queued behind a read
     takes its result, even a failed one, rather than repeating it."""
-    if _loaded and (time.monotonic() < _next_read or _lock.locked()):
+    if _loaded and (_is_fresh() or _lock.locked()):
         return _hooks
     seen = _reads
     async with _lock:
-        if _reads == seen and (not _loaded or time.monotonic() >= _next_read):
+        if _reads == seen and (not _loaded or not _is_fresh()):
             await _read()
     return _hooks
+
+
+def _is_fresh() -> bool:
+    """The last read is inside the refresh interval, read now so a change applies at once."""
+    return time.monotonic() - _last_read < settings.memory_webhook_refresh_seconds
 
 
 async def subscribers(org: str, namespace: str, event: str) -> list[str]:

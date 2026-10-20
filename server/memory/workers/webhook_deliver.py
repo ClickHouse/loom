@@ -53,10 +53,6 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# Seconds of the pass deadline (memory_webhook_deliver_max_pass_seconds) kept for the
-# reads before the POSTs and the one insert after them.
-# not a setting: a few statements' time, and the max-pass setting's floor is above it
-READS_AND_INSERT_SECONDS = 20.0
 # Events still waiting this long are marked dead before the outbox's TTL drops them, so
 # webhook.deliveries says why: for a usable secret, and for a receiver to take them (a
 # receiver that is down, or one whose backlog never reached its turn).
@@ -65,8 +61,6 @@ READS_AND_INSERT_SECONDS = 20.0
 SECRET_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=12)
 DELIVERY_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=6)
 USER_AGENT = "loom-memory-webhook/1"
-# not a setting: a margin past the pass deadline so a crashed pass's leases outlive it
-LEASE_MARGIN_SECONDS = 60.0
 
 
 def _post_budget_seconds() -> float:
@@ -79,13 +73,16 @@ def _post_budget_seconds() -> float:
         * settings.memory_webhook_ack_timeout_seconds
     )
     max_pass = settings.memory_webhook_deliver_max_pass_seconds
-    return min(every_post_waits, max_pass - READS_AND_INSERT_SECONDS)
+    return min(every_post_waits, max_pass - settings.memory_webhook_deliver_reserve_seconds)
 
 
 def _lease_seconds() -> float:
     """How long a leased event is passed over by another copy of the pass: past the
     pass deadline, so a crashed pass's events come back."""
-    return settings.memory_webhook_deliver_max_pass_seconds + LEASE_MARGIN_SECONDS
+    return (
+        settings.memory_webhook_deliver_max_pass_seconds
+        + settings.memory_webhook_lease_margin_seconds
+    )
 
 
 @dataclass

@@ -1154,13 +1154,18 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             },
         )
 
-    counts, tombstoned = await memory_repo.bulk_tombstone_scope(
+    async def announce_page(rows: list[dict[str, Any]]) -> None:
+        await webhooks.announce([("memory.tombstoned", row) for row in rows])
+
+    # The tombstoned rows are read back only for a namespace with a webhook that takes them.
+    subscribed = await webhooks.subscribers(input.org, input.namespace, "memory.tombstoned")
+    counts = await memory_repo.bulk_tombstone_scope(
         org=input.org,
         namespace=input.namespace,
         user_id=input.user_id,
         agent=input.agent,
+        on_tombstoned=announce_page if subscribed else None,
     )
-    await webhooks.announce([("memory.tombstoned", row) for row in tombstoned])
     locked_skipped = int(counts.pop("locked_skipped", 0) or 0)
     return MemoryClearOutput(
         cleared_at=naive_utc_now(),

@@ -3113,9 +3113,15 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds between memory webhook delivery passes that found nothing due.
     memory_webhook_deliver_idle_interval_seconds: int = Field(default=30, ge=1)
     # Seconds a memory webhook delivery pass may run before the supervisor abandons it; it
-    # stops starting POSTs 20 s before, which leaves the reads before them and the insert
-    # after them their time. At least 30.
+    # stops starting POSTs memory_webhook_deliver_reserve_seconds before. At least 30.
     memory_webhook_deliver_max_pass_seconds: float = Field(default=120.0, ge=30)
+    # Seconds of a memory webhook delivery pass kept for the reads before its POSTs and the
+    # one insert after them; less than memory_webhook_deliver_max_pass_seconds. Raise it when
+    # the due-event read grows with the outbox backlog.
+    memory_webhook_deliver_reserve_seconds: float = Field(default=20.0, gt=0)
+    # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
+    # leased stays passed over by other passes, so a crashed pass's events come back after it.
+    memory_webhook_lease_margin_seconds: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
     memory_webhook_max_posts_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Events of one memory webhook a delivery pass POSTs at most, so every webhook with
@@ -3151,6 +3157,19 @@ class MemoryWebhookSettings(BaseModel):
     # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
     # reach although they resolve to a private, loopback or link-local address; "" = none.
     memory_webhook_private_hosts: str = ""
+
+    @model_validator(mode="after")
+    def _check_delivery_reserve(self) -> MemoryWebhookSettings:
+        """A reserve at or over the pass deadline leaves a pass no time to POST."""
+        if (
+            self.memory_webhook_deliver_reserve_seconds
+            >= self.memory_webhook_deliver_max_pass_seconds
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS must be less than "
+                "LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS"
+            )
+        return self
 
     def memory_webhook_private_host_set(self) -> frozenset[str]:
         return frozenset(

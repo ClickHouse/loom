@@ -144,7 +144,7 @@ def registry(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], Any]:
     hooks: dict[tuple[str, str], Any] = {}
     monkeypatch.setattr(app, "_hooks", hooks)
     monkeypatch.setattr(app, "_loaded", True)
-    monkeypatch.setattr(app, "_next_read", float("inf"))
+    monkeypatch.setattr(app, "_last_read", float("inf"))
     return hooks
 
 
@@ -180,11 +180,11 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
     monkeypatch.setattr(store, "live_webhooks", live)
     monkeypatch.setattr(app, "_hooks", {})
     monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(app, "_last_read", float("-inf"))
     monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
     # The next read is due an interval after this one landed.
-    assert 25 < app._next_read - time.monotonic() <= 30
+    assert 0 <= time.monotonic() - app._last_read < 5
     # Within the interval the copy serves without a read.
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
     assert len(reads) == 1
@@ -198,6 +198,28 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
     app.forget_registry()
     assert await app.subscribers("acme", "chat", "memory.written") == []
     assert await app.namespaces_with_hooks("acme") == []
+
+
+@pytest.mark.asyncio
+async def test_a_lowered_refresh_interval_applies_to_the_next_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory_webhook_refresh_seconds is read on every write, not when the last read ended."""
+    reads: list[int] = []
+
+    async def live() -> list[dict[str, Any]]:
+        reads.append(1)
+        return [_registration("wh1")]
+
+    monkeypatch.setattr(store, "live_webhooks", live)
+    monkeypatch.setattr(app, "_loaded", True)
+    monkeypatch.setattr(app, "_last_read", time.monotonic() - 60)
+    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 3600.0)
+    await app.subscribers("acme", "chat", "memory.written")
+    assert reads == []
+    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 10.0)
+    assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
+    assert reads == [1]
 
 
 @pytest.mark.asyncio
@@ -216,7 +238,7 @@ async def test_writes_on_a_cold_copy_wait_for_the_first_read(
     monkeypatch.setattr(store, "live_webhooks", slow_live)
     monkeypatch.setattr(app, "_hooks", {})
     monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(app, "_last_read", float("-inf"))
     both = await asyncio.gather(
         app.subscribers("acme", "chat", "memory.written"),
         app.subscribers("acme", "chat", "memory.written"),
@@ -239,7 +261,7 @@ async def test_a_cold_read_that_fails_announces_nothing_and_the_next_write_reads
     monkeypatch.setattr(store, "live_webhooks", slow_failing)
     monkeypatch.setattr(app, "_hooks", {})
     monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(app, "_last_read", float("-inf"))
     monkeypatch.setattr(app.degradations, "note", lambda p, e, r="": notes.append((p, e)))
     ch = RecordingCH().install(monkeypatch)
     # Two writes at once: the second takes the first's failed read, not a second one.
@@ -271,12 +293,12 @@ async def test_a_change_made_during_a_read_reads_the_registry_again_on_the_next_
     monkeypatch.setattr(store, "live_webhooks", live)
     monkeypatch.setattr(app, "_hooks", {})
     monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_next_read", 0.0)
+    monkeypatch.setattr(app, "_last_read", float("-inf"))
     monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
     assert await app.subscribers("acme", "chat", "memory.written") == []
-    assert app._next_read == 0.0
+    assert app._last_read == float("-inf")
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
-    assert 25 < app._next_read - time.monotonic() <= 30
+    assert 0 <= time.monotonic() - app._last_read < 5
 
 
 @pytest.mark.asyncio
@@ -285,7 +307,7 @@ async def test_a_loaded_copy_serves_while_a_refresh_is_under_way(
 ) -> None:
     monkeypatch.setattr(app, "_hooks", {("acme", "chat"): (("wh1", frozenset(EVENT_TYPES)),)})
     monkeypatch.setattr(app, "_loaded", True)
-    monkeypatch.setattr(app, "_next_read", 0.0)  # due again
+    monkeypatch.setattr(app, "_last_read", float("-inf"))  # due again
     async with app._lock:  # another write is refreshing
         got = await asyncio.wait_for(app.subscribers("acme", "chat", "memory.written"), 1)
     assert got == ["wh1"]

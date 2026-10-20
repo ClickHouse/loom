@@ -3735,9 +3735,19 @@ settings:
   # memory_webhook_deliver_idle_interval_seconds: 30
 
   # Seconds a memory webhook delivery pass may run before the supervisor abandons it; it
-  # stops starting POSTs 20 s before, which leaves the reads before them and the insert
-  # after them their time. At least 30. [restart]
+  # stops starting POSTs memory_webhook_deliver_reserve_seconds before. At least 30.
+  # [restart]
   # memory_webhook_deliver_max_pass_seconds: 120.0
+
+  # Seconds of a memory webhook delivery pass kept for the reads before its POSTs and
+  # the one insert after them; less than memory_webhook_deliver_max_pass_seconds. Raise
+  # it when the due-event read grows with the outbox backlog. [restart]
+  # memory_webhook_deliver_reserve_seconds: 20.0
+
+  # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
+  # leased stays passed over by other passes, so a crashed pass's events come back after
+  # it. [live]
+  # memory_webhook_lease_margin_seconds: 60.0
 
   # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
   # [live]

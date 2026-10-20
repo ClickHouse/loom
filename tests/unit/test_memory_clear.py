@@ -16,7 +16,7 @@ async def test_clear_with_user_id_tombstones_across_tables(
 
     captured: dict[str, object] = {}
 
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
+    async def fake_bulk(*, org, namespace, user_id=None, agent=None, on_tombstoned=None, ch=None):
         captured.update(
             org=org,
             namespace=namespace,
@@ -26,7 +26,7 @@ async def test_clear_with_user_id_tombstones_across_tables(
         return {
             "loom.memory": 47,
             "loom.memory_embeddings": 42,
-        }, []
+        }
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -53,8 +53,8 @@ async def test_clear_with_agent_only(
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
-        return {"loom.memory": 3, "loom.memory_embeddings": 0}, []
+    async def fake_bulk(*, org, namespace, user_id=None, agent=None, on_tombstoned=None, ch=None):
+        return {"loom.memory": 3, "loom.memory_embeddings": 0}
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -116,7 +116,7 @@ async def test_clear_both_scope_args_accepts_either_confirm(
     from server.memory.app.handlers import handle_memory_clear
 
     async def fake_bulk(**_kw):
-        return {"loom.memory": 0, "loom.memory_embeddings": 0}, []
+        return {"loom.memory": 0, "loom.memory_embeddings": 0}
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -164,7 +164,7 @@ async def test_clear_zero_rows_is_well_formed(
     from server.memory.app.handlers import handle_memory_clear
 
     async def fake_bulk(**_kw):
-        return {"loom.memory": 0, "loom.memory_embeddings": 0}, []
+        return {"loom.memory": 0, "loom.memory_embeddings": 0}
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
 
@@ -178,3 +178,71 @@ async def test_clear_zero_rows_is_well_formed(
     )
     assert out.total == 0
     assert all(v == 0 for v in out.rows_affected.values())
+
+
+def _clear_ch(monkeypatch: pytest.MonkeyPatch, pages: list[list[dict]]):
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 0}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 2}])
+    for page in pages:
+        ch.on("ORDER BY agent, user_id, session_id, memory_key", page, times=1)
+    return ch.install(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_clear_with_no_subscribers_reads_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A namespace with no webhook pays the counts and the mutations, never a row read."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    out = await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert out.rows_affected == {"loom.memory": 2, "loom.memory_embeddings": 2}
+    assert ch.statements("memory_id") == []
+    assert len(ch.statements("ALTER TABLE", kind="execute")) == 2
+
+
+@pytest.mark.asyncio
+async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+    from server.memory.store import lifecycle
+
+    def row(key: str) -> dict:
+        return {
+            "org": "acme",
+            "namespace": "chat",
+            "agent": "bot",
+            "user_id": "u1",
+            "session_id": "-",
+            "memory_key": key,
+            "memory_id": f"id-{key}",
+            "version": 7,
+        }
+
+    monkeypatch.setattr(
+        webhooks, "_hooks", {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)}
+    )
+    monkeypatch.setattr(lifecycle, "CLEAR_PAGE_ROWS", 2)
+    ch = _clear_ch(monkeypatch, [[row("a"), row("b")], [row("c")]])
+    announced: list[list[str]] = []
+
+    async def announce(changes) -> None:
+        announced.append([c["memory_key"] for _, c in changes])
+
+    monkeypatch.setattr(webhooks, "announce", announce)
+    await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert announced == [["a", "b"], ["c"]]
+    first, second = ch.statements("ORDER BY agent, user_id, session_id, memory_key")
+    assert first.params["a_key"] == "" and second.params["a_key"] == "b"
+    # The pages read back exactly the rows this clear's mutation stamped.
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert first.params["at"] == memory_alter.params["at"]
