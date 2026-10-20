@@ -483,6 +483,55 @@ async def test_a_fast_read_makes_no_llm_call(
     assert out.results  # still answered, from the vector query alone
 
 
+_PACK_QUESTIONS = [
+    "what is my favorite color",  # plain
+    "how many model kits have I bought?",  # a count
+    "how much did I spend on books in total?",  # a sum
+    # A date difference the parser gives no aggregate intent for.
+    "how many days passed between the day I got my binoculars and the day I "
+    "noticed the goldfinches?",
+    "what changed about my job since last year?",  # a change over time
+    # Multi-hop: two clauses, compared.
+    "which city did my sister move to, and how far is it from where my brother lives?",
+]
+
+
+@pytest.mark.parametrize("query", _PACK_QUESTIONS)
+@pytest.mark.parametrize("mode", ["task", "startup", "debug", "handoff"])
+@pytest.mark.parametrize("reranker", ["", "builtin:openai"], ids=["no-rerank", "llm-rerank"])
+async def test_a_context_pack_makes_no_llm_call(
+    search_env,
+    llm_attempts,
+    monkeypatch: pytest.MonkeyPatch,
+    query: str,
+    mode: str,
+    reranker: str,
+) -> None:
+    # A chat client packs context on every turn in the default task mode, whose
+    # balanced recipe (and debug's quality recipe) would otherwise spend LLM calls.
+    import server.memory.app.rerank as rerank_mod
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    async def namespace_rerank(org: str, ns: str) -> tuple[str, str]:
+        return (reranker, "")  # builtin:openai is an LLM
+
+    monkeypatch.setattr(rerank_mod, "get_namespace_rerank_config", namespace_rerank)
+    out = await handle_context_pack(
+        ContextPackInput(
+            org="o",
+            namespace="ns",
+            agent="a",
+            query=query,
+            mode=mode,
+            include_knowledge=True,
+            include_conversations=True,
+        )
+    )
+    assert llm_attempts == []
+    assert "memories" in out.sections  # answered from the vector query alone
+
+
 async def test_the_standard_budget_still_asks_the_llm_for_a_count_intent(
     search_env, llm_attempts
 ) -> None:

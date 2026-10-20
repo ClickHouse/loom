@@ -41,7 +41,7 @@ def _ctx(inp: MemorySearchInput) -> Any:
         stated_value_update=False,
         parser_derived_intent={"op": "sum", "subject": "user", "predicate": "spent"},
         search_budget=SimpleNamespace(note_llm_call=lambda *_a: None),
-        fast_posture=False,
+        llm_free=False,
     )
 
 

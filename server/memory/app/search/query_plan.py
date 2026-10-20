@@ -198,3 +198,9 @@ def _is_fast_posture(input: MemorySearchInput) -> bool:
     vector query, not an LLM round-trip.
     """
     return input.recipe == "fast" or input.retrieval_budget == "fast"
+
+
+def _is_llm_free(input: MemorySearchInput) -> bool:
+    """True when the read makes no LLM call: under the fast posture, or when the
+    caller asked for an LLM-free read (context.pack) whatever its recipe."""
+    return _is_fast_posture(input) or bool(getattr(input, "_llm_free", False))

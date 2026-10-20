@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from server.core.errors import EmbedTimeoutError
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget
-from server.memory.app.search.query_plan import _is_fast_posture
+from server.memory.app.search.query_plan import _is_llm_free
 from server.memory.app.search.query_spelling import embed_query
 from server.memory.domain.search_prompts import _HYDE_PROMPT
 from server.observability.genai import llm_stage
@@ -98,8 +98,8 @@ async def _embed_search_query(
     from server.observability.otel import traced
 
     # HyDE is the planner's call, made before the first pass; nothing re-spends it after.
-    # The fast posture makes no LLM call, whichever field turned HyDE on.
-    hyde_active = bool(input.hyde) and not _is_fast_posture(input)
+    # An LLM-free read makes no LLM call, whichever field turned HyDE on.
+    hyde_active = bool(input.hyde) and not _is_llm_free(input)
     if hyde_active:
         actual_work["hyde_initial_used"] = True
         actual_work["llm_hyde_calls"] = 1

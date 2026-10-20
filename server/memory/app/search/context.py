@@ -37,6 +37,8 @@ class SearchContext:
     search_budget: SearchBudget
     embedder: Embedder
     fast_posture: bool
+    # No LLM call on this read: the fast posture, or an LLM-free caller (context.pack).
+    llm_free: bool
 
     # --- enrichment / intent signals (settled before any leg runs) ---
     obs_date: str | None

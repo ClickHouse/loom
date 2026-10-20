@@ -33,8 +33,8 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
         and not ctx.chronological_intent
         # One level of re-entry: a re-entered pass never retries again.
         and getattr(input, "_pass_depth", 0) == 0
-        # Fast posture buys no LLM-judge latency.
-        and not ctx.fast_posture
+        # An LLM-free read (the fast posture, context.pack) buys no LLM-judge latency.
+        and not ctx.llm_free
         # The judge's call is paid only when the round it could lead to is affordable: a
         # judge whose "retry" the budget would refuse is an LLM call for nothing.
         and ctx.search_budget.fallback_affordable(

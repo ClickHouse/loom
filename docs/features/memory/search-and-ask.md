@@ -91,7 +91,8 @@ weak-result fallback calls for them. `fast`, like the `fast` recipe, makes no LL
 whichever field asks for one: no HyDE, query rewriting, graph triples, retry judge or
 `builtin:openai` rerank. A count or sum question still gets its computed answer when the
 query parser reads its intent, matched on the predicate without LLM synonyms; when the
-parser cannot, the search answers from recall alone.
+parser cannot, the search answers from recall alone. `context.pack` runs its memory search the
+same way in every mode, keeping its recipe's planes.
 
 ### Filters and scope
 

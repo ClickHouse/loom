@@ -449,6 +449,9 @@ class MemorySearchInput(BaseModel):
     # context.pack's per-section token budget, threaded down to govern the assembler
     # instead of the module default. 0 = default. Private attr; not on the wire.
     _context_pack_block_tokens: int = 0
+    # Internal: the read makes no LLM call whatever its recipe (context.pack's
+    # search), as the fast posture does, but keeps the recipe's recall width.
+    _llm_free: bool = False
 
 
 # The hit fields that ride only under `include_usage`.

@@ -38,7 +38,7 @@ from server.memory.app.search.plan import (
     _resolve_rerank_endpoint,
     _size_candidate_pool,
 )
-from server.memory.app.search.query_plan import _is_fast_posture
+from server.memory.app.search.query_plan import _is_fast_posture, _is_llm_free
 from server.memory.app.search.ranking import (
     _apply_chronological_sort,
     _apply_global_fusion,
@@ -251,6 +251,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             search_budget=search_budget,
             embedder=embedder,
             fast_posture=fast_posture,
+            llm_free=_is_llm_free(input),
             obs_date=obs_date,
             parsed_intent=parsed_intent,
             resolved_dates=resolved_dates,

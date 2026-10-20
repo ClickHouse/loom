@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import (
     _enrichment_parser_gate_active,
-    _is_fast_posture,
+    _is_llm_free,
     _should_run_query_enrichment,
 )
 from server.memory.app.search.scope import _SearchRun
@@ -134,8 +134,8 @@ async def _resolve_rerank_endpoint(
         prompt_template = ""
     else:
         endpoint, prompt_template = await run.rerank_cfg_task
-    if endpoint.startswith(BUILTIN_OPENAI) and _is_fast_posture(input):
-        # The built-in reranker is an LLM call, which the fast posture never makes.
+    if endpoint.startswith(BUILTIN_OPENAI) and _is_llm_free(input):
+        # The built-in reranker is an LLM call, which an LLM-free read never makes.
         endpoint, prompt_template = "", ""
     external_rerank_enabled = bool(endpoint)
     if search_plan.include_top_n_unmatched > 0 and not external_rerank_enabled:
