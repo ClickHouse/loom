@@ -259,7 +259,9 @@ def _seed(ch: Any, prefix: str, rnd: random.Random) -> None:
 
 
 def _row(ch: Any, sql: str) -> dict[str, int]:
-    res = ch.query(sql)
+    from server.observability.otel_probe_client import database_parameters
+
+    res = ch.query(sql, parameters=database_parameters())
     return {k: int(v or 0) for k, v in zip(res.column_names, res.result_rows[0], strict=True)}
 
 

@@ -349,7 +349,9 @@ def test_rows_committed_after_the_mark_passed_them_are_counted_as_missed(ch_clie
 
 def test_the_view_refresh_gauges_name_the_rollup_with_its_database(ch_client) -> None:
     """`loom.ch.view_refresh.*` covers the rollup's refresh, named outside `loom`."""
+    from server.observability.otel_probe_client import database_parameters
     from server.observability.otel_probes import _VIEW_REFRESH_SQL
 
-    views = {row[0] for row in ch_client.query(_VIEW_REFRESH_SQL).result_rows}
+    rows = ch_client.query(_VIEW_REFRESH_SQL, parameters=database_parameters()).result_rows
+    views = {row[0] for row in rows}
     assert "loom_telemetry.sli_minute_refresh" in views
