@@ -1,8 +1,8 @@
 """Finish the checks memory.delete_version owes after its tombstone.
 
 A delete records its check before the tombstone and marks it done once it ran. One left
-open (the delete did not finish: its check record, an insert that failed but committed
-anyway, its tombstone's insert, the check after it, or a retry's run failed) is run
+open (the delete did not finish: its check record (an insert that failed but committed
+anyway), its tombstone's insert, the check after it, or a retry's run failed) is run
 here, under the key lock, as the delete would have run it: a tombstone missing from the
 key's history is written first (at a new version) when nothing came after the removed
 version, a write that landed between the version check and the tombstone is written back

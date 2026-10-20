@@ -97,7 +97,10 @@ row: its `memory_id` changes. `memory.restore` brings back the original row inst
 
 ## What a run costs
 
-A run that finds nothing to change sends only reads. For a namespace of N rows:
+A run that finds nothing to change sends only reads. Each key read of a `sensitivity: high`
+row is audited (`memory.sensitive_read`), so with high rows under the import's identity a
+quiet run still adds one audit row per high row on each side that reads it by key. For a
+namespace of N rows:
 
 | Side                 | Requests                                                                                                                                                                                                                                                                                                                          |
 | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -843,6 +843,8 @@ async def _live_rows(
                 },
             )
             for key, g in (got.get("results") or {}).items():
+                if g.get("resolved_from"):
+                    continue  # another row answered (the listed one is gone): not its fields
                 rows[(sid, key)].update({f: g.get(f) for f in _BULK_FIELDS})
     return rows
 

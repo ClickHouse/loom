@@ -76,6 +76,9 @@ class _FakeLoom:
         # A delete reaches a replica still on the older build, which has no
         # memory.delete_version (a rolling upgrade).
         self.older_server = False
+        # Keys bulk_get answers with another row (`resolved_from`), as for a chunk id whose
+        # row is gone.
+        self.answered_by_another: set[str] = set()
 
     def put(self, agent: str, key: str, session_id: str = "-", **row: Any) -> None:
         self.version += 1
@@ -129,6 +132,8 @@ class _FakeLoom:
                 and body["agent"] in ("*", a)
                 and s == body["session_id"]
             }
+            for k in self.answered_by_another & set(got):
+                got[k]["resolved_from"] = k
             return {"results": got}
         if op == "memory.verify":
             return {"found": True}
@@ -254,6 +259,19 @@ def test_a_second_import_of_the_same_bundle_writes_nothing(tmp_path: Path, loom:
     loom.calls.clear()
     assert _run(root) == 0
     assert loom.writes() == []
+
+
+def test_a_row_bulk_get_answers_with_another_is_written_again(
+    tmp_path: Path, loom: _FakeLoom
+) -> None:
+    # The listed row went away before the key read, and bulk_get answered with another row:
+    # its fields are not the listed row's, so the concept is written, not skipped.
+    root = _bundle(tmp_path, [_entry("a")])
+    assert _run(root) == 0
+    loom.answered_by_another = {"a"}
+    loom.calls.clear()
+    assert _run(root) == 0
+    assert loom.writes() == ["memory.set"]
 
 
 def test_a_second_import_of_a_high_concept_writes_nothing(tmp_path: Path, loom: _FakeLoom):
