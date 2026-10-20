@@ -448,8 +448,7 @@ def _emit_mcp_event(
     )
 
 
-# The `why` note names a hit's ranking terms in the agent's
-# words. `rank_score_raw` / `rank_score` are the base, not a reason.
+# The `why` note names a hit's ranking terms in the agent's words.
 _WHY_LABELS: dict[str, str] = {
     "key_match_boost_effective": "key_match",
     "key_match": "key_match",
