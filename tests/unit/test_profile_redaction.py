@@ -2,7 +2,8 @@
 
 A profile version names the memories it was built from in its trace
 (`profile.fold:<label>:<memory ids>`); redacting one of them scrubs every
-version that names it, and leaves the versions built without it.
+version that names it, and leaves the versions built without it. A lock on
+the profile key refuses the redact before anything is scrubbed.
 """
 
 from __future__ import annotations
@@ -57,8 +58,21 @@ def _profile_version(table: str, version: int, value: str, sources: list[str]) -
     )
 
 
+_TARGET_KW: dict[str, Any] = {
+    "namespace": "n",
+    "agent": "a",
+    "user_id": "u1",
+    "session_id": "-",
+    "memory_key": "user_timezone",
+    "version": 1,
+    "tombstoned_at": None,
+}
+
+
 class _Head:
     version = 2
+    lock_mode = ""
+    lock_until = None
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -97,18 +111,10 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
 
     monkeypatch.setattr(memory_repo, "get_by_key", head)
     monkeypatch.setattr(curation, "_live_link_inputs", no_links)
-    target = HistoryTarget(
-        namespace="n",
-        agent="a",
-        user_id="u1",
-        session_id="-",
-        memory_key="user_timezone",
-        version=1,
-        tombstoned_at=None,
-    )
-
-    await curation._redact_profiles_built_from(
-        "o", target, _SECRET, when=datetime(2026, 1, 1), reason_blob="r|admin"
+    target = HistoryTarget(**_TARGET_KW)
+    profiles = await curation._profiles_built_from("o", target, _SECRET)
+    await curation._redact_profiles(
+        "o", target, profiles, when=datetime(2026, 1, 1), reason_blob="r|admin"
     )
 
     for table in ("memory", "memory_versions"):
@@ -121,3 +127,40 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
         assert values[1]["value"] == built_without
     # A second redaction finds nothing left to scrub.
     assert await memory_repo.profile_versions_built_from("o", "n", "u1", _SECRET) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["read_only", "no_delete"])
+async def test_a_locked_profile_refuses_the_redact_before_any_scrub(monkeypatch, mode) -> None:
+    from fastapi import HTTPException
+
+    import server.memory.store as memory_repo
+    from server.memory.app import curation
+    from server.memory.store.history import HistoryTarget
+
+    async def versions(*_a: Any) -> list[dict[str, Any]]:
+        return [
+            {
+                "memory_id": _PROFILE,
+                "version": 1,
+                "agent": "-",
+                "session_id": "-",
+                "memory_key": "structured_profile",
+            }
+        ]
+
+    class _Locked(_Head):
+        lock_mode = mode
+
+    async def head(*_a: Any, **_k: Any) -> _Locked:
+        return _Locked()
+
+    async def no_scrub(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("nothing is scrubbed under a lock")
+
+    monkeypatch.setattr(memory_repo, "profile_versions_built_from", versions)
+    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(memory_repo, "redact_row", no_scrub)
+    with pytest.raises(HTTPException) as e:
+        await curation._profiles_built_from("o", HistoryTarget(**_TARGET_KW), _SECRET)
+    assert e.value.status_code == 423

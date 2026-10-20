@@ -284,16 +284,23 @@ def test_a_pinned_or_locked_profile_refuses_a_write() -> None:
 
 
 def _one_user(
-    monkeypatch: pytest.MonkeyPatch, live_after: set[str], existing: dict[str, Any] | None = None
+    monkeypatch: pytest.MonkeyPatch,
+    live_after: set[str],
+    existing: dict[str, Any] | None = None,
+    head: dict[str, Any] | None = None,
 ) -> list[Any]:
     """A build of one user who has facts m1 and m2, of which `live_after` are still
-    current once the model has answered; returns what was written."""
+    current once the model has answered; `head` is the key's head when it is not the
+    live row (redacted or expired). Returns what was written."""
 
     async def sources_digest(**kw: Any) -> tuple[str, int]:
         return ("d1", 2)
 
     async def profile_row(**kw: Any) -> dict[str, Any] | None:
         return existing
+
+    async def profile_head_hold(**kw: Any) -> dict[str, Any] | None:
+        return existing or head
 
     async def user_facts(**kw: Any) -> list[dict[str, Any]]:
         return [
@@ -314,6 +321,7 @@ def _one_user(
 
     monkeypatch.setattr(profile_sources, "sources_digest", sources_digest)
     monkeypatch.setattr(profile_sources, "profile_row", profile_row)
+    monkeypatch.setattr(profile_sources, "profile_head_hold", profile_head_hold)
     monkeypatch.setattr(profile_sources, "user_facts", user_facts)
     monkeypatch.setattr(profile_sources, "live_ids", live_ids)
     monkeypatch.setattr(schema_app, "write_structured_profile", write)
@@ -389,6 +397,23 @@ async def test_a_pinned_profile_is_refused_before_the_model_call(
     with pytest.raises(w.Refused) as e:
         await w.build_profile(_ONE, "u1")
     assert (e.value.digest, e.value.profile_version) == ("d1", 7) and written == []
+
+
+@pytest.mark.asyncio
+async def test_a_pin_on_a_redacted_head_is_refused_before_the_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A redacted head reads as no profile, but its pin still refuses the write.
+    pinned = {"pinned": 1, "lock_mode": "", "lock_until": None}
+    written = _one_user(monkeypatch, {"m1", "m2"}, head=pinned)
+
+    async def no_call(*a: Any) -> dict[str, Any]:
+        raise AssertionError("no model call for a refused build")
+
+    monkeypatch.setattr(w, "_ask", no_call)
+    with pytest.raises(w.Refused) as e:
+        await w.build_profile(_ONE, "u1")
+    assert (e.value.digest, e.value.profile_version) == ("d1", 0) and written == []
 
 
 @pytest.mark.asyncio

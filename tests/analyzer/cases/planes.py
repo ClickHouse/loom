@@ -777,7 +777,7 @@ async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
 async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The profile schema reads and the structured profile's source reads: a
     user's facts (with and without the fold's key rule), their digest, the
-    profile row, and the users whose profile is behind, each unbounded and under
+    profile row, its head's pin and lock, and the users whose profile is behind, each unbounded and under
     an `own_user` scope."""
     from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.memory.store import profile_schemas, profile_sources
@@ -813,6 +813,9 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         await profile_sources.profile_row(
             org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
         )
+    await profile_sources.profile_head_hold(
+        org=ORG, namespace=NS, user_id="u1", label="structured_profile", ch=ch
+    )
     await profile_sources.users_behind(
         org=ORG,
         namespace=NS,

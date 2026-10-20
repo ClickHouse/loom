@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -561,7 +562,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     derived copy of it (see `memory_repo.redaction` for the columns).
 
     Refuses the live head — the caller must memory.delete first, so this
-    audit-time op can't silently lose live data.
+    audit-time op can't silently lose live data. A lock on the memory's key, or
+    on a profile key built from it, refuses the whole redact.
     """
     import server.memory.store as memory_repo
 
@@ -600,6 +602,9 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         from server.memory.domain import lock as _lock
 
         _lock.assert_unlocked(head, "delete", op="memory.redact")
+    # The same holds for a profile built from this memory: a lock on it refuses the
+    # redact before anything is scrubbed.
+    profiles = await _profiles_built_from(input.org, target, input.memory_id)
 
     now = naive_utc_now()
     reason_blob = (input.reason or "")[:512]
@@ -624,8 +629,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         live_link_inputs=await _live_link_inputs(input.org, head),
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
-    await _redact_profiles_built_from(
-        input.org, target, input.memory_id, when=now, reason_blob=f"{reason_blob}|{by_blob}"
+    await _redact_profiles(
+        input.org, target, profiles, when=now, reason_blob=f"{reason_blob}|{by_blob}"
     )
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
@@ -641,48 +646,82 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     )
 
 
-async def _redact_profiles_built_from(
-    org: str, target: HistoryTarget, memory_id: str, *, when: datetime, reason_blob: str
-) -> None:
-    """Scrub every version of the user's profiles built from the redacted memory,
-    and each profile key's derived rows: a model wrote them from its text. The
-    worker rebuilds a scrubbed head from the user's current facts."""
-    import server.memory.store as memory_repo
+@dataclass
+class _ProfileScrub:
+    """One profile key built from a redacted memory: the versions to scrub and its head."""
 
-    versions = await memory_repo.profile_versions_built_from(
+    agent: str
+    session_id: str
+    memory_key: str
+    versions: list[tuple[str, int]]
+    head: MemoryRow | None = None
+
+
+async def _profiles_built_from(
+    org: str, target: HistoryTarget, memory_id: str
+) -> list[_ProfileScrub]:
+    """The user's profile keys with a version built from the memory, each with its
+    head; raises 423 LOCKED when a key's lock refuses a delete."""
+    import server.memory.store as memory_repo
+    from server.memory.domain import lock as _lock
+
+    by_key: dict[tuple[str, str, str], _ProfileScrub] = {}
+    for v in await memory_repo.profile_versions_built_from(
         org, target.namespace, target.user_id, memory_id
-    )
-    scrubbed: dict[tuple[str, str, str], set[int]] = {}
-    for v in versions:
-        await memory_repo.redact_row(
-            org, v["memory_id"], int(v["version"]), when=when, reason_blob=reason_blob
-        )
-        key = (str(v["agent"]), str(v["session_id"]), str(v["memory_key"]))
-        scrubbed.setdefault(key, set()).add(int(v["version"]))
-    for (agent, session_id, memory_key), done in sorted(scrubbed.items()):
-        head = await memory_repo.get_by_key(
+    ):
+        agent, session_id, memory_key = str(v["agent"]), str(v["session_id"]), str(v["memory_key"])
+        key = (agent, session_id, memory_key)
+        if key not in by_key:
+            by_key[key] = _ProfileScrub(agent, session_id, memory_key, versions=[])
+        by_key[key].versions.append((str(v["memory_id"]), int(v["version"])))
+    profiles = [by_key[k] for k in sorted(by_key)]
+    for p in profiles:
+        p.head = await memory_repo.get_by_key(
             memory_repo.Identity(
                 org=org,
                 namespace=target.namespace,
-                agent=agent,
+                agent=p.agent,
                 user_id=target.user_id,
-                session_id=session_id,
+                session_id=p.session_id,
             ),
-            memory_key,
+            p.memory_key,
             fresh=True,
             strong=True,
             scope=WHOLE_NAMESPACE,
         )
+        _lock.assert_unlocked(p.head, "delete", op="memory.redact")
+    return profiles
+
+
+async def _redact_profiles(
+    org: str,
+    target: HistoryTarget,
+    profiles: list[_ProfileScrub],
+    *,
+    when: datetime,
+    reason_blob: str,
+) -> None:
+    """Scrub every listed profile version, the live one included, and each profile
+    key's derived rows: a model wrote them from the redacted text. The worker
+    rebuilds a scrubbed head from the user's current facts."""
+    import server.memory.store as memory_repo
+
+    for p in profiles:
+        for memory_id, version in p.versions:
+            await memory_repo.redact_row(
+                org, memory_id, version, when=when, reason_blob=reason_blob
+            )
         # A scrubbed head keeps no text, so none of the key's derived rows is live.
-        if head is not None and head.version in done:
+        head = p.head
+        if head is not None and head.version in {v for _, v in p.versions}:
             head = None
         scrubs = await memory_repo.key_derivative_scrubs(
             org,
             target.namespace,
-            agent,
+            p.agent,
             target.user_id,
-            session_id,
-            memory_key,
+            p.session_id,
+            p.memory_key,
             head_live=head is not None,
             live_link_inputs=await _live_link_inputs(org, head),
         )

@@ -213,6 +213,26 @@ async def profile_row(
     return row
 
 
+async def profile_head_hold(
+    *, org: str, namespace: str, user_id: str, label: str, ch: _CHClient | None = None
+) -> dict[str, Any] | None:
+    """The pin and lock of the user's structured profile key's head, redacted or
+    expired: a write to the key checks its head, not the row a reader is served."""
+    ch = ch or _default_client()
+    row: dict[str, Any] | None = await ch.query_one(
+        """
+        SELECT pinned, lock_mode, lock_until
+        FROM loom.memory FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {uid:String}
+          AND agent = '-' AND session_id = '-' AND memory_key = {label:String}
+          AND memory_type = 'profile' AND tombstoned_at IS NULL
+        LIMIT 1
+        """,
+        params={"org": org, "ns": namespace, "uid": user_id, "label": label},
+    )
+    return row
+
+
 @dataclass(frozen=True)
 class Behind:
     """A user whose profile is behind, with what a refusal is keyed on."""

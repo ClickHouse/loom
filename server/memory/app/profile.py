@@ -373,6 +373,8 @@ async def handle_profile_render(input: ProfileRenderInput) -> ProfileRenderOutpu
               {user_clause}
               AND memory_type = 'profile'
               AND tombstoned_at IS NULL
+              -- a head scrubbed by memory.redact reads as no section, not as its marker
+              AND redacted_at IS NULL
               -- rendered into packs and prompts; a high section is readable by key only
               AND sensitivity != 'high'
               AND (expires_at IS NULL OR expires_at > now())

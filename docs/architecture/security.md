@@ -745,13 +745,20 @@ unlabelled row that holds a credential is embedded like any other, so search ser
 `memory.ask` and the conflict judge can send it to their models.
 
 A redaction (`memory.redact`) scrubs the version it names, that key's derived rows, and
-every version of the user's profiles built from the memory: the structured profile and the
-free-text fold's `consolidated_profile` name the memories they read in their trace
+every version of the user's profiles whose trace names the memory: the structured profile
+and the free-text fold's `consolidated_profile` name the memories they read in their trace
 (`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
 memory is scrubbed with its key's derived rows, the live one included. The trace names
 the memory and not its version, so a profile built from another version of it is scrubbed
-too. A scrubbed live profile reads as no profile until the worker rebuilds it from the
-user's current facts.
+too. A profile version whose trace names no memory ids is not reached: that is every fold
+version written by a build before traces carried ids, and every one an older build writes
+during a rolling upgrade, whose `memory.redact` also scrubs no profile. Such a version keeps
+the text until the user is erased. A lock on a profile key reached refuses the redaction
+before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
+profile is left out of `profile.render`, `profile.structured` and profile search, and so
+of every pack and primer, until the worker rebuilds it from the user's current facts; the
+fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
+its minimum memory count or in a namespace that has turned the fold off.
 
 ## Audit log
 

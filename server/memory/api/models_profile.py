@@ -140,7 +140,8 @@ class ProfileSchemaSetInput(BaseModel):
     org: str
     namespace: str
     # A JSON Schema object of 1-64 `properties`, each with a `type` and a `description`
-    # (at most 16 KiB), replacing the namespace's schema and making every profile stale.
+    # (at most 16 KiB); replaces the namespace's schema, and a change to its properties
+    # makes every profile stale.
     json_schema: dict[str, Any]
 
 

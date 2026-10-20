@@ -478,8 +478,13 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     profile_version = int(existing["version"]) if existing else 0
     if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
         return None  # built since the scan listed the user (another pass, another replica)
-    if _refuses_a_write(existing):
-        raise Refused(digest, profile_version, 0)  # checked before paying for the model call
+    # A pin or lock still holds on a head that was redacted or expired, which reads as
+    # no profile; checked before paying for the model call.
+    hold = existing or await profile_sources.profile_head_hold(
+        org=org, namespace=ns, user_id=user_id, label=settings.structured_profile_label
+    )
+    if _refuses_a_write(hold):
+        raise Refused(digest, profile_version, 0)
     rows = await profile_sources.user_facts(
         org=org,
         namespace=ns,

@@ -56,7 +56,7 @@ Set the namespace's profile schema.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `json_schema` | `dict[str, Any]` | required | A JSON Schema object of 1-64 `properties`, each with a `type` and a `description` (at most 16 KiB), replacing the namespace's schema and making every profile stale. |
+| `json_schema` | `dict[str, Any]` | required | A JSON Schema object of 1-64 `properties`, each with a `type` and a `description` (at most 16 KiB); replaces the namespace's schema, and a change to its properties makes every profile stale. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

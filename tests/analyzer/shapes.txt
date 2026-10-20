@@ -1627,6 +1627,7 @@ e97326cd7e11	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.
 e9abb55d334a	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 e9b336a3f2e3	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 e9bc797f59c7	SELECT org, namespace, agent, user_id, session_id, memory_key, argMax(status, version) AS status, argMax(duplicate_of, version) AS duplicate_of, argMax(tombstoned_at IS NULL, version) AS live, argMax(
+e9bc816a187b	SELECT pinned, lock_mode, lock_until FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {uid:String} AND agent = ? AND session_id = ? AND memory_key = {label:Str
 e9dddc21ebf5	SELECT count() AS n FROM loom.entity_triple_memories WHERE org = {org:String} AND namespace = {ns:String} AND ?
 ea347177e068	SELECT concat(?, toString(c.session_id), ?, toString(c.chunk_index)) AS memory_key, ? AS memory_type, substring(c.content, ?, ?) AS content_excerpt, c.content AS content_full, c.session_id AS session_
 ea49543b4032	ALTER TABLE loom.learnings_queue DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
