@@ -772,6 +772,16 @@ async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores
     )
     assert out.tombstoned is False and out.found is False
     assert await _read_back(ch) is None
+    # Run again (its done mark lost), the check answers the same and copies nothing twice.
+    rows_before = await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
+    (done,) = await _recorded_checks(ch)
+    check = {**_ID, "memory_key": _KEY, "checked": done["checked"], "tombstone": done["tombstone"]}
+    again = await hm.rerun_delete_check(check)
+    assert again is not None and (again.tombstoned, again.found) == (False, False)
+    assert (
+        await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
+        == rows_before
+    )
     # The key's head is the plain delete's tombstone again, so a restore brings back the row
     # it removed, not the one delete_version checked.
     from server.memory.api.models_crud import MemoryRestoreInput
@@ -1497,6 +1507,57 @@ async def test_a_check_whose_tombstone_is_missing_finishes_the_delete(
         {"k": _KEY},
     )
     assert int(check["tombstone"]) in [int(v["version"]) for v in versions]
+
+
+@pytest.mark.asyncio
+async def test_a_check_whose_tombstone_is_missing_leaves_a_later_set_alone(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The caller sets the key after the 503 of a failed tombstone insert. The worker finds
+    # the key moved on: it writes no tombstone, and the set stays the head.
+    from server.memory.workers import delete_version_check
+    from server.settings import settings
+
+    _head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
+    w = _in_flight_set(time.time_ns())
+    await set_commit._set_plain_insert(w, ch)
+    rows_before = await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
+    monkeypatch.setattr(settings, "delete_version_check_grace_seconds", 0)
+    assert await delete_version_check.run_pass() == 1
+    assert [c["done"] for c in await _recorded_checks(ch)] == [1]
+    assert (
+        await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
+        == rows_before
+    )
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays" and got.version == w.version
+
+
+@pytest.mark.asyncio
+async def test_a_set_under_a_late_tombstone_of_the_same_delete_is_written_back(
+    ch: _StatefulCH, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The SDK retries the 503 of a timed-out tombstone insert. While the retry writes its
+    # own tombstone, a plain set drawn before the first commits, and then the first
+    # tombstone commits above it. The retry's check looks past both of its tombstones: the
+    # set is written back above them.
+    head, commit_late = await _tombstone_held_back(ch, monkeypatch)
+    (check,) = await _recorded_checks(ch)
+    w = _in_flight_set(int(check["tombstone"]) - 1_000)
+    write_row = hm._write_tombstone_row
+
+    async def set_then_late_commit(existing: Any, **kw: Any) -> None:
+        await set_commit._set_plain_insert(w, ch)
+        await commit_late()
+        await write_row(existing, **kw)
+
+    monkeypatch.setattr(hm, "_write_tombstone_row", set_then_late_commit)
+    out = await hm.handle_memory_delete_version(
+        MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
+    )
+    assert out.tombstoned is False and out.reason == "version_changed"
+    got = await _read_back(ch)
+    assert got is not None and got.value == "Thursdays"
 
 
 @pytest.mark.asyncio

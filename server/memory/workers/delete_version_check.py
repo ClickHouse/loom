@@ -3,9 +3,10 @@
 A delete records its check before the tombstone and marks it done once it ran. One
 left open (the tombstone's insert or the read after it failed) is run here, under the
 key lock, as the delete would have run it: a tombstone missing from the key's history is
-written at its recorded version first, a write that landed between the version check
-and the tombstone is written back above it, and what the removed version derived
-retires only when the delete stands. Running a check twice is harmless.
+written first (at a new version) when nothing came after the removed version, a write
+that landed between the version check and the tombstone is written back above it, and
+what the removed version derived retires only when the delete stands. Running a check
+twice is harmless.
 """
 
 from __future__ import annotations

@@ -738,10 +738,11 @@ async def finish_delete_check(
 async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput | None:
     """Run an owed check (the caller holds the key lock) and answer as its delete would
     have, or close it and answer None when the removed version was erased since. A
-    tombstone missing from the key's history (its insert failed) is written first, at a
-    new version above the recorded one so the namespace's watermark moves, and the check
-    then runs as after any tombstone. An insert that timed out can still commit: it lands
-    below, aimed at the same version, and counts as this same delete (`_key_moved_on`)."""
+    tombstone missing from the key's history (its insert failed) is written first when
+    nothing came after the removed version, at a new version so the namespace's watermark
+    moves; otherwise the check runs against the recorded one and answers how the key moved
+    on. An insert that timed out can still commit: it lands aimed at the same version and
+    counts as this same delete (`_key_moved_on`)."""
     import server.memory.store as memory_repo
 
     checked, tombstone = int(check["checked"]), int(check["tombstone"])
@@ -758,8 +759,16 @@ async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput
         await memory_repo.record_delete_check(check, done=True)
         return None
     if tombstone not in mine:
-        tombstone = max(next_version(), tombstone + 1)
-        await _write_tombstone_row(removed, version=tombstone, trace=delete_version_trace(checked))
+        copies, others = await _after_checked(removed, checked=checked, tombstone=tombstone)
+        if not copies and not others:
+            # Nothing came after the removed version: the delete is still owed, at a version
+            # above any write a fence lifted over a late commit of the original.
+            from server.memory.app import write_fence
+
+            tombstone = max(next_version(), tombstone + write_fence.LIFT_BAND_NS + 1)
+            await _write_tombstone_row(
+                removed, version=tombstone, trace=delete_version_trace(checked)
+            )
     return await finish_delete_check(removed, check, tombstone=tombstone)
 
 
@@ -774,20 +783,19 @@ async def _key_moved_on(
     removed the key, not this one (`found=False`); one below this tombstone is written again
     above it, stamped as this delete's own, so the key's head is the row it removed. A
     write still in flight lifts itself when it lands (`write_fence.lift_after_insert`)."""
-    row = await _newest_after(existing, version=checked, tombstone=tombstone)
-    if row is None:
+    copies, others = await _after_checked(existing, checked=checked, tombstone=tombstone)
+    if not others:
         return None
+    row = await _version_row(existing, max(others))
     gone = row.tombstoned_at is not None  # another delete or a sweep removed it
-    if gone and row.source_trace == delete_version_trace(checked):
-        # A delete of this same version: an insert of this one that timed out and committed
-        # late, a retry's, or a copy one of them wrote back. The key did not move on.
-        return None
-    if row.version < tombstone:
-        # Written again above this tombstone. A tombstone's copy is this delete's own, aimed
-        # at `checked`: a write after it lifts over it as over this tombstone (a sweep's
-        # marker stays on the sweep's tombstone, which keeps the writes it caught).
+    top = max([tombstone, *copies])
+    if row.version < top and not (gone and copies):
+        # Written again above this delete's tombstones. A tombstone's copy is this delete's
+        # own, aimed at `checked`: a write after it lifts over it as over this tombstone (a
+        # sweep's marker stays on the sweep's tombstone, which keeps the writes it caught).
+        # One already copied is not copied twice.
         trace = delete_version_trace(checked) if gone else None
-        await _write_above(row, tombstone=tombstone, source_trace=trace)
+        await _write_above(row, tombstone=top, source_trace=trace)
     if gone:
         return MemoryDeleteVersionOutput(tombstoned=False, found=False)
     return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
@@ -817,16 +825,25 @@ async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
         shared = removed & await _served_chunks(existing, tombstone=tombstone)
         if not await _set_chunks.restore_set_chunks(identities=shared, ch=ch, **key_chunks):
             return
-        try:
-            stale = shared - await _served_chunks(existing, tombstone=tombstone)
-        except Exception as e:  # noqa: BLE001 — unread, the restored chunks retire again
-            log.warning("memory.delete_version: head of %s unread: %s", existing.memory_key, e)
-            stale = shared
-        if stale:
-            await _set_chunks.tombstone_set_chunks(only=stale, strong=True, ch=ch, **key_chunks)
     except Exception as e:  # noqa: BLE001 — the newer row stands; its chunks only aid search
         log.warning(
             "memory.delete_version: shared chunks of %s not restored: %s", existing.memory_key, e
+        )
+        return
+    try:
+        stale = shared - await _served_chunks(existing, tombstone=tombstone)
+    except Exception as e:  # noqa: BLE001 — unread, the restored chunks retire again
+        log.warning("memory.delete_version: head of %s unread: %s", existing.memory_key, e)
+        stale = shared
+    if not stale:
+        return
+    try:
+        await _set_chunks.tombstone_set_chunks(only=stale, strong=True, ch=ch, **key_chunks)
+    except Exception as e:  # noqa: BLE001 — the delete stands; the chunks only aid search
+        log.warning(
+            "memory.delete_version: restored chunks of %s not retired again: %s",
+            existing.memory_key,
+            e,
         )
 
 
@@ -836,40 +853,56 @@ async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[in
     chunks stay retired); none otherwise."""
     from server.memory.app import set_chunks as _set_chunks
 
-    newer = await _newest_after(existing, version=int(existing.version), tombstone=tombstone)
-    if newer is None or newer.tombstoned_at is not None:
+    copies, others = await _after_checked(
+        existing, checked=int(existing.version), tombstone=tombstone
+    )
+    if not others or max(copies, default=0) > max(others):
+        return frozenset()  # nothing after it, or this delete's own tombstone on top
+    newer = await _version_row(existing, max(others))
+    if newer.tombstoned_at is not None:
         return frozenset()
     if not is_embedded(newer.memory_type, newer.sensitivity):
         return frozenset()
     return _set_chunks.set_chunk_identities(newer.value, newer.memory_type)
 
 
-async def _newest_after(existing: Any, *, version: int, tombstone: int) -> Any | None:
-    """The key's newest row above `version` under the identity of `existing`, other than
-    the delete's own `tombstone`, read with sequential consistency; None when there is
-    none."""
+async def _after_checked(
+    existing: Any, *, checked: int, tombstone: int
+) -> tuple[list[int], list[int]]:
+    """The key's committed versions above `checked` under the identity of `existing`, read
+    with sequential consistency, other than the delete's own `tombstone`: this delete's
+    other tombstones (aimed at `checked`: a late or retried insert of it, or a copy it
+    wrote back), and the rest."""
     import server.memory.store as memory_repo
 
-    ident = (existing.agent, existing.user_id, existing.session_id)
     key = {
         "agent": existing.agent,
         "user_id": existing.user_id,
         "session_id": existing.session_id,
         "memory_key": existing.memory_key,
-        "version": version,
+        "version": checked,
     }
     committed = await memory_repo.versions_above(existing.org, existing.namespace, [key])
-    above = committed.get((*ident, existing.memory_key), [])
-    others = [v for v, _deleted, _target in above if v != tombstone]
-    if not others:
-        return None
-    newest = max(others)
+    above = committed.get(
+        (existing.agent, existing.user_id, existing.session_id, existing.memory_key), []
+    )
+    copies = [v for v, deleted, target in above if v != tombstone and deleted and target == checked]
+    others = [v for v, _deleted, _target in above if v != tombstone and v not in copies]
+    return copies, others
+
+
+async def _version_row(existing: Any, version: int) -> Any:
+    """Version `version` of the key under the identity of `existing`, which a listing just
+    saw committed, read with sequential consistency."""
+    import server.memory.store as memory_repo
+
+    ident = (existing.agent, existing.user_id, existing.session_id)
     rows = await memory_repo.fetch_version_rows(
-        existing.org, existing.namespace, [(existing.memory_key, newest)], sequential=True
+        existing.org, existing.namespace, [(existing.memory_key, version)], sequential=True
     )
     row = next((r for r in rows if (r.agent, r.user_id, r.session_id) == ident), None)
     if row is None:
-        raise RuntimeError(f"version {newest} of {existing.memory_key!r} was listed, not read")
+        raise RuntimeError(f"version {version} of {existing.memory_key!r} was listed, not read")
     return row
 
 
