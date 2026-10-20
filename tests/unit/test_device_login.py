@@ -1738,8 +1738,9 @@ _FORM_SUBMIT = {
 
 
 def _sign_in_routes_behind_the_gate(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """The sign-in routes behind the cross-site gate, with auth on, posted to as a
-    browser posts a form from this server's own page."""
+    """The sign-in routes behind the cross-site gate, with auth on. Every request carries
+    the headers of a form submitted from this server's own page, the CLI's calls included;
+    those pass the gate either way, and originless CLI calls are covered elsewhere."""
     from server.main import attach_web_gate
 
     monkeypatch.setattr(oauth.settings, "auth_required", True)
