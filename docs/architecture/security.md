@@ -743,8 +743,9 @@ in scope fails the saga. The saga, the census registry and the rule for new tabl
 [retention and erasure](../features/memory/retention-and-erasure.md). Erasure and audit
 hashing are engineering primitives, not a compliance guarantee.
 
-The [analytics export](../operations/analytics-export.md) is the one path that copies rows
-to a store erasure does not reach (an S3 bucket a warehouse loads). It is therefore an
+The [analytics export](../operations/analytics-export.md) copies rows to a store erasure
+does not reach (an S3 bucket a warehouse loads), as `loom export-okf --out` does with a
+namespace's memory ([copying a namespace](../operations/okf-sync.md)). It is therefore an
 allowlist of aggregate and registry columns with no memory content and no stored person
 identifier: users and sessions leave as distinct counts only, and
 `tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.

@@ -86,9 +86,14 @@ class _Session:
     """boto3.Session: records each session's arguments and the STS call."""
 
     assumed: list[dict[str, Any]] = []
+    identified: list[dict[str, Any]] = []
 
     def __init__(self, **kw: Any) -> None:
         self.kw = kw
+
+    def get_caller_identity(self) -> dict[str, Any]:
+        _Session.identified.append(self.kw)
+        return {"Arn": "arn:aws:sts::123456789012:assumed-role/export/pod"}
 
     def client(self, service: str) -> Any:
         if service == "sts":
@@ -120,6 +125,19 @@ def test_the_s3_client_writes_under_the_assumed_role(monkeypatch: pytest.MonkeyP
         },
     )
     assert s3_client() == ("s3", {"region_name": None}) and len(_Session.assumed) == 1
+
+
+def test_credentials_are_checked_with_or_without_a_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.insights.app.analytics_export import check_credentials
+
+    monkeypatch.setattr(boto3, "Session", _Session)
+    monkeypatch.setattr(_Session, "assumed", [])
+    monkeypatch.setattr(_Session, "identified", [])
+    check_credentials(role_arn="arn:aws:iam::123456789012:role/w", region="us-east-2")
+    assert len(_Session.assumed) == 1 and _Session.identified == []
+    # The pod's own credentials (IRSA with no writer role): STS says whose they are.
+    check_credentials(region="us-east-2")
+    assert len(_Session.assumed) == 1 and _Session.identified == [{"region_name": "us-east-2"}]
 
 
 def test_each_upload_gets_a_fresh_client() -> None:
@@ -236,6 +254,7 @@ def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_th
     fake = _ConnectingCh()
     monkeypatch.setattr(ch_module, "get_client", lambda: fake)
     monkeypatch.setattr(app, "s3_client", lambda **kw: None)
+    monkeypatch.setattr(app, "check_credentials", lambda **kw: None)
     monkeypatch.setattr(app, "s3_put", lambda client, bucket, **kw: lambda key, body: True)
     assert cli._cmd_export(_args()) == 0
     assert fake.read_timeout_at_connect >= app.STATEMENT_TIMEOUT_S and fake.disconnected

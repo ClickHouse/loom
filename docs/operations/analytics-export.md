@@ -93,9 +93,11 @@ same personal namespace in two orgs.
 
 ## Credentials
 
-The command uses the default AWS credentials of its process. With `--role-arn` it assumes
-that role with them once before reading, so a role it cannot assume fails before any
-ClickHouse work, and again before each upload, and writes under the role's credentials.
+The command uses the default AWS credentials of its process, and checks them once before
+any ClickHouse work: with `--role-arn` by assuming the role, without one by asking STS whose
+they are (`GetCallerIdentity`). Credentials it cannot use fail there, not after the read.
+With `--role-arn` it assumes the role again before each upload and writes under its
+credentials.
 That fits a bucket in another account: the bucket's account grants `s3:PutObject` to a
 writer role, and the writer role trusts only the export's own identity. The export needs no
 read, list or delete permission on the bucket. `--expected-bucket-owner` makes S3 refuse

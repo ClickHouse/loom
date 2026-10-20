@@ -83,6 +83,18 @@ def s3_client(*, role_arn: str = "", region: str = "") -> Any:
     return session.client("s3")
 
 
+def check_credentials(*, role_arn: str = "", region: str = "") -> None:
+    """Raise now, before any read, when the export could not upload: assume
+    `role_arn`, or without one ask STS whose the default credentials are (a call
+    no IAM policy can deny)."""
+    if role_arn:
+        s3_client(role_arn=role_arn, region=region)
+        return
+    import boto3
+
+    boto3.Session(region_name=region or None).client("sts").get_caller_identity()
+
+
 def s3_put(new_client: Callable[[], Any], bucket: str, *, expected_owner: str = "") -> Put:
     """A conditional upload to `bucket`: an existing key is kept, not replaced.
     Each upload gets a fresh `new_client()`, so an assumed role's credentials,

@@ -95,8 +95,8 @@ ROW_ORDER = {"usage": USAGE_KEY, "namespaces": "org, namespace"}
 
 
 # Pinned whatever the server's profile says: the analyzer (from 26.9 the only
-# one; on 26.4-26.8 a profile can still turn it off, and FULL JOIN USING and
-# alias resolution differ without it), sums that are never Nullable, strings as
+# one; on 26.4-26.8 a profile can still turn it off, and the statements are
+# checked on the analyzer only), sums that are never Nullable, strings as
 # Parquet STRING, not BINARY (a warehouse joins the hashes as strings), and
 # dates as DATE, not UInt16.
 STATEMENT_SETTINGS = (

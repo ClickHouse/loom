@@ -61,6 +61,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     from server.insights.app.analytics_export import (
         STATEMENT_TIMEOUT_S,
         Exported,
+        check_credentials,
         export_day,
         name_hash_key,
         s3_client,
@@ -78,10 +79,8 @@ def _cmd_export(args: argparse.Namespace) -> int:
     def new_client() -> Any:
         return s3_client(role_arn=args.role_arn, region=args.region)
 
-    # With --role-arn, assume the role once before any read: a role that cannot
-    # be assumed fails here, not after the month's read.
-    if args.role_arn:
-        new_client()
+    # Credentials that cannot upload fail here, not after the month's read.
+    check_credentials(role_arn=args.role_arn, region=args.region)
     put = s3_put(new_client, args.bucket, expected_owner=args.expected_bucket_owner)
 
     # No model calls and no writes to ClickHouse: a plain connection, outside
