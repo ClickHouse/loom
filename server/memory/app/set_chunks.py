@@ -236,8 +236,8 @@ async def tombstone_set_chunks_fail_open(
     ch: Any = None,
     only: frozenset[tuple[int, str]] | None = None,
 ) -> int:
-    """`tombstone_set_chunks` for a delete, a move or a consolidation: the fact's tombstone
-    is the record of it; a chunk failure is logged, never raised."""
+    """`tombstone_set_chunks` for a delete, a move or a consolidation: the fact's own new
+    version is the record of it; a chunk failure is logged, never raised."""
     try:
         # Read with sequential consistency: a chunk another call just put back is retired.
         return await tombstone_set_chunks(
@@ -249,7 +249,7 @@ async def tombstone_set_chunks_fail_open(
             only=only,
             strong=True,
         )
-    except Exception as e:  # noqa: BLE001 — the fact's tombstone stands
+    except Exception as e:  # noqa: BLE001 — the fact's own new version stands
         log.warning("chunk tombstones failed for %s (non-fatal): %s", memory_key, e)
         return 0
 
