@@ -530,7 +530,7 @@ def test_an_agents_token_names_lent_namespaces_by_name_until_the_next_would_not_
     bots["active"].update({"fleet-a1", *lent, "zz"})
     bots["grants"]["sa:fleet:a1"] = {ns: 1 for ns in lent} | {"docs": 2, "zz": 1}
     roles = _agent_roles(bots)
-    own = agents.token_bytes("fleet-a1") + agents.token_bytes("docs")  # its own and the trust's
+    own = agents.names_bytes(["fleet-a1", "docs"])  # its own and the trust's
     fit = (agents.TOKEN_NAMESPACE_BYTES - own) // 143
     assert [ns for ns in roles if ns.startswith("ns-")] == lent[:fit]  # first by name
     assert "zz" not in roles  # short, but after the first that did not fit
