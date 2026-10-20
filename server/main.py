@@ -317,30 +317,6 @@ from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-# CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins).
-if settings.cors_origins:
-    from fastapi.middleware.cors import CORSMiddleware
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cors_origin_list(settings.cors_origins),
-        allow_credentials=True,
-        allow_methods=["GET", "POST"],
-        allow_headers=["*"],
-        expose_headers=[
-            "X-Request-Id",
-            "X-Schema-Version",
-            "Server-Timing",
-            "X-RateLimit-Limit",
-            "X-RateLimit-Remaining",
-            "X-RateLimit-Reset",
-            "X-Loom-Traffic-Class",
-            "Retry-After",
-            "Link",
-        ],
-    )
-
-
 def _refused(status: int, *, code: str, message: str) -> Response:
     from fastapi.responses import JSONResponse
 
@@ -434,8 +410,36 @@ async def _cache_and_security_headers(request: Request, call_next: Any) -> Respo
     return response
 
 
+def _attach_cors(target: FastAPI) -> None:
+    """CORS, opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins)."""
+    if not settings.cors_origins:
+        return
+    from fastapi.middleware.cors import CORSMiddleware
+
+    target.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origin_list(settings.cors_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+        expose_headers=[
+            "X-Request-Id",
+            "X-Schema-Version",
+            "Server-Timing",
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset",
+            "X-Loom-Traffic-Class",
+            "Retry-After",
+            "Link",
+        ],
+    )
+
+
 def attach_browser_middleware(target: FastAPI) -> None:
-    """The web gate, then the header middleware outside it and CORS, so refusals get headers."""
+    """CORS, then the web gate, then the header middleware; each added one wraps the last,
+    so the gate's refusals and CORS preflights carry the headers."""
+    _attach_cors(target)
     target.middleware("http")(_web_gate)
     target.middleware("http")(_cache_and_security_headers)
 

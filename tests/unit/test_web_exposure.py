@@ -77,32 +77,26 @@ def test_cors_star_is_refused() -> None:
     ]
 
 
-# Built as server.main is (CORS inside the gate, both inside the header middleware); auth
-# off, so the gate checks the preflight's Origin too.
+# Through attach_browser_middleware, as server.main builds it; auth off, so the gate
+# checks the preflight's Origin too.
 @pytest.mark.usefixtures("auth_off")
 def test_a_cors_preflight_carries_the_security_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    from fastapi import FastAPI
-    from fastapi.middleware.cors import CORSMiddleware
-
-    from server.auth.public_url import cors_origin_list
-    from server.main import attach_browser_middleware
-
     monkeypatch.setattr(settings, "cors_origins", "https://app.example")
-    app = FastAPI()
-    app.post("/v1/memory.list")(lambda: {"ok": True})
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cors_origin_list(settings.cors_origins),
-        allow_methods=["GET", "POST"],
-    )
-    attach_browser_middleware(app)
-    r = TestClient(app, base_url="http://localhost").options(
+    r = _gated_client("http://localhost").options(
         "/v1/memory.list",
         headers={"origin": "https://app.example", "access-control-request-method": "POST"},
     )
     assert r.status_code == 200
     assert r.headers["access-control-allow-origin"] == "https://app.example"
     assert_security_headers(r)
+
+
+def test_server_main_wraps_the_web_gate_in_the_header_middleware() -> None:
+    from server.main import _cache_and_security_headers, _web_gate, app
+
+    # user_middleware[0] is the outermost layer.
+    dispatches = [m.kwargs.get("dispatch") for m in app.user_middleware]
+    assert dispatches.index(_cache_and_security_headers) < dispatches.index(_web_gate)
 
 
 # ---- Host allowlist while auth is off ----
