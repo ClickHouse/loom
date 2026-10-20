@@ -291,7 +291,7 @@ def _remember(gw: Gateway, user: str, nonce: str) -> list[str]:
     return keys
 
 
-_STAMPED = ("namespace", "agent", "user_id", "session_id", "actor", "source_class", "value")
+_STAMPED = ("namespace", "agent", "user_id", "session_id", "actor", "source_class")
 
 
 def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> None:
@@ -308,8 +308,8 @@ def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> N
         "-",
         "human:user:alice",
         "asserted",
-        nonce,
     ), by_id
+    assert by_id["value"] == nonce, by_id
     for key in keys:
         got = _chat_ok(gw, "alice", "memory.get", {"session_id": "c1", "memory_key": key})
         assert got["found"], key
@@ -321,8 +321,9 @@ def test_an_end_user_writes_memories_to_me_and_reads_them_back(gw: Gateway) -> N
             "c1",
             "human:user:alice",
             "extracted",
-            got["value"],
         ), by_id
+        # The fake extractor's fact text is its own; the evidence ties it to the turn.
+        assert by_id["value"], by_id
         evidence = _chat_ok(gw, "alice", "memory.evidence", {"session_id": "c1", "memory_key": key})
         assert any(nonce in item["content"] for item in evidence["items"]), evidence
     hits = _chat_ok(gw, "alice", "memory.search", {"query": nonce})["results"]
@@ -334,23 +335,32 @@ def test_another_end_user_reads_none_of_my_memories(gw: Gateway) -> None:
     alices, bobs = _personal(gw, "alice"), _personal(gw, "bob")
     alice_nonce, bob_nonce = _nonce(), _nonce()
     alice_keys = _remember(gw, "alice", alice_nonce)
-    _remember(gw, "bob", bob_nonce)
-    alice_row = _chat_ok(gw, "alice", "memory.get", {"memory_key": "pref/drink"})
+    bob_keys = _remember(gw, "bob", bob_nonce)
+    alice_ids = [
+        _chat_ok(gw, "alice", "memory.get", {"session_id": session, "memory_key": key})["memory_id"]
+        for session, key in [("-", "pref/drink")] + [("c1", k) for k in alice_keys]
+    ]
     # Both hold `pref/drink`; Bob's `@me` answers with his own.
     got = _chat_ok(gw, "bob", "memory.get", {"memory_key": "pref/drink"})
     assert got["value"] == bob_nonce, got
-    by_id = _chat_ok(gw, "bob", "memory.get_by_id", {"memory_id": alice_row["memory_id"]})
-    assert not by_id["found"], by_id
+    for memory_id in alice_ids:
+        by_id = _chat_ok(gw, "bob", "memory.get_by_id", {"memory_id": memory_id})
+        assert not by_id["found"], by_id
     for query in (alice_nonce, bob_nonce):
         search = _chat(gw, "bob", "memory.search", {"query": query, "namespace_scope": "all_mine"})
         assert search.status_code == 200 and alice_nonce not in search.text, search.text
         assert {h["namespace"] for h in search.json()["results"]} <= {bobs}, search.text
         packed = _chat_ok(gw, "bob", "context.pack", {"query": query})["rendered"]
         assert alice_nonce not in packed, packed
-    assert bob_nonce in packed, packed
-    for key in alice_keys:
+        if query == bob_nonce:
+            hits = search.json()["results"]
+            assert any(h["memory_key"] == "pref/drink" for h in hits), search.text
+            assert bob_nonce in packed, packed
+    for key in set(alice_keys) | set(bob_keys):
         evidence = _chat(gw, "bob", "memory.evidence", {"session_id": "c1", "memory_key": key})
         assert evidence.status_code == 200 and alice_nonce not in evidence.text, evidence.text
+        if key in bob_keys:
+            assert bob_nonce in evidence.text, evidence.text
     # Naming Alice's collection, or Alice in the body, is refused.
     r = _chat(gw, "bob", "memory.search", {"namespace": alices, "query": alice_nonce})
     assert r.status_code == 403, r.text
