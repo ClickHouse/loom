@@ -3,7 +3,8 @@
 The code plane keeps small per-process answers (a namespace's `as_of` block, a
 mirror's lag, a repository map, a probe's verdict) for seconds to minutes so a
 burst of calls reads once. Each is a `TtlCache`: an entry lives `ttl_s` after it
-is stored (a `put` may name its own TTL, e.g. a shorter one for a failed read),
+is stored (a `put` may name its own TTL, e.g. a shorter one for a failed read;
+a cache whose TTL is a setting takes a callable that reads it at each `put`),
 and past `maxsize` entries the least recently used one is dropped, so no cache
 grows without bound.
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any, overload
 
 _CACHES: list[TtlCache[Any, Any]] = []
@@ -24,11 +26,16 @@ _MISS = object()
 class TtlCache[K, V]:
     """A bounded LRU map whose entries expire `ttl_s` seconds after their `put`."""
 
-    def __init__(self, ttl_s: float, *, maxsize: int = 1024) -> None:
-        self.ttl_s = float(ttl_s)
+    def __init__(self, ttl_s: float | Callable[[], float], *, maxsize: int = 1024) -> None:
+        self._ttl = ttl_s
         self.maxsize = max(1, int(maxsize))
         self._items: OrderedDict[K, tuple[float, V]] = OrderedDict()
         _CACHES.append(self)
+
+    @property
+    def ttl_s(self) -> float:
+        """The TTL a `put` gives its entry by default, read now."""
+        return float(self._ttl() if callable(self._ttl) else self._ttl)
 
     @overload
     def get(self, key: K) -> V | None: ...

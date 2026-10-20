@@ -32,6 +32,7 @@ from server.memory.domain.extraction_prompts import (
 from server.memory.domain.extraction_prompts import (
     DURABILITY_VERIFIER_SYSTEM_PROMPT as VERIFIER_SYSTEM_PROMPT,
 )
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 __all__ = [
@@ -41,10 +42,6 @@ __all__ = [
     "parse_verdicts",
     "verify",
 ]
-
-# One call judges at most this many facts; a longer capture is judged in
-# slices (groups never span slices — a missed fold only keeps a paraphrase).
-MAX_FACTS_PER_CALL = 60
 
 
 @dataclass
@@ -257,8 +254,8 @@ async def verify(
     dropped: list[dict[str, Any]] = []
     t_in = t_out = 0
     answered = False
-    for start in range(0, len(facts), MAX_FACTS_PER_CALL):
-        chunk = facts[start : start + MAX_FACTS_PER_CALL]
+    for start in range(0, len(facts), settings.memory_durability_verifier_max_facts_per_call):
+        chunk = facts[start : start + settings.memory_durability_verifier_max_facts_per_call]
         answers = list(await asyncio.gather(*(_ask(c, chunk, timeout_s, context) for c in clients)))
         t_in += sum(a.tokens_in for a in answers)
         t_out += sum(a.tokens_out for a in answers)

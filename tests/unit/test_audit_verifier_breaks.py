@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.insights.workers import audit_verifier as mod
+from server.settings import settings
 
 T0 = datetime(2026, 9, 28, 10, 0, 0)
 
@@ -89,7 +90,7 @@ async def test_the_window_is_read_in_pages_by_keyset(log: _Log, monkeypatch) -> 
 @pytest.mark.asyncio
 async def test_a_window_past_the_cap_is_reported_truncated(log: _Log, monkeypatch) -> None:
     monkeypatch.setattr(mod, "VERIFY_PAGE_ROWS", 2)
-    monkeypatch.setattr(mod, "VERIFY_MAX_ROWS", 4)
+    monkeypatch.setattr(settings, "audit_verify_max_rows_per_pass", 4)
     log.rows = [_row(i) for i in range(9)]
     res = await mod.run_pass(_cfg())
     assert res.rows_checked == 4 and res.truncated and len(log.pages) == 2

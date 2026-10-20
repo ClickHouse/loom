@@ -19,9 +19,10 @@ import logging
 import time
 from typing import Any
 
+from server.settings import settings
+
 log = logging.getLogger(__name__)
 
-_TTL_S = 60.0
 _MAX_ENTRIES = 5000
 _cache: dict[tuple[str, str], tuple[float, bool | None]] = {}
 
@@ -62,7 +63,7 @@ async def resolve(org: str, namespace: str) -> bool | None:
     override = await _load(org, namespace)
     if len(_cache) >= _MAX_ENTRIES:
         _cache.clear()
-    _cache[key] = (now + _TTL_S, override)
+    _cache[key] = (now + settings.memory_coverage_sweep_gate_ttl_s, override)
     return override
 
 

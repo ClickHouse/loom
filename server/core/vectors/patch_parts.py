@@ -19,6 +19,8 @@ import logging
 import time
 from typing import Any
 
+from server.core.ch_names import split_table
+
 log = logging.getLogger(__name__)
 
 TABLE = "loom.memory_embeddings"
@@ -52,9 +54,9 @@ def set_reading(value: int | None, table: str = TABLE) -> None:
 
 async def probe_patch_parts(ch: Any, table: str = TABLE) -> int | None:
     """Active patch parts of `table`; None when the read fails."""
-    db, _, name = table.rpartition(".")
+    db, name = split_table(table)
     try:
-        rows = await ch.query_all(PATCH_PARTS_SQL, params={"db": db or "loom", "t": name})
+        rows = await ch.query_all(PATCH_PARTS_SQL, params={"db": db, "t": name})
         value = int(rows[0].get("patch_parts") or 0) if rows else 0
     except Exception as e:  # noqa: BLE001 — the probe is advisory; a failure reads as "not patch-free"
         log.info("patch-part probe failed for %s: %s", table, str(e)[:160])

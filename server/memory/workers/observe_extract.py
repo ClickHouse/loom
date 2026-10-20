@@ -25,6 +25,7 @@ from server.memory.domain.observation_tags import (
 )
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.rows import next_version
+from server.settings import settings
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -308,7 +309,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
                 "uid": session["user_id"],
                 "sid": session["session_id"],
                 "obs_tag": OBSERVATION_TAG,
-                "lim": int(_SESSION_CONTEXT_LIMIT),
+                "lim": int(settings.memory_observe_extract_session_context_limit),
             },
         )
     except Exception as e:  # noqa: BLE001 — the session distills without context
@@ -325,11 +326,6 @@ def _sendable(sensitivity: str, value: Any) -> bool:
     """Whether an observation may go to the model: neither labelled 'high' nor reading as a
     credential."""
     return sensitivity != "high" and not value_reads_high(value)
-
-
-# The most observations a session's notes read: the notes
-# prompt is bounded by characters anyway; this bounds the read.
-_SESSION_CONTEXT_LIMIT = 400
 
 
 async def _distill_extras(

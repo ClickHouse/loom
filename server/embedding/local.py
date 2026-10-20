@@ -19,7 +19,7 @@ from collections.abc import Iterable
 from functools import lru_cache
 from typing import Protocol
 
-from server.settings._models import DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODELS
+from server.settings.catalog import DEFAULT_LOCAL_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODELS
 
 log = logging.getLogger(__name__)
 

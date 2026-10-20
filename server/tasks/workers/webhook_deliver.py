@@ -31,6 +31,7 @@ import httpx
 from server.core import webhooks
 from server.core.datetimes import to_naive_utc as _naive
 from server.core.webhook_secrets import webhook_secret_org_prefix
+from server.settings import settings
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import TaskEventRow, WebhookCursorRow, WebhookInboxRow
@@ -43,11 +44,12 @@ log = logging.getLogger(__name__)
 # ends within the 10 s ack deadline, DNS lookup included, so ten fit; inboxes
 # past the cap go first next pass (they are ordered by their cursor's
 # next_try_at, and a delivered inbox's moves to now).
-MAX_POSTS_PER_PASS = 10
+MAX_POSTS_PER_PASS = 10  # not a setting: with the ack deadline, fills the pass deadline
+# The pass deadline: every POST waiting its whole ack window, plus room for the reads.
+MAX_PASS_SECONDS = 120.0  # not a setting: the ack deadline x MAX_POSTS_PER_PASS + headroom
 # The wait before the next try after the n-th consecutive failure: the next
 # pass, then 5 s, 5 min, and 30 min for every failure after that.
 BACKOFF_SECONDS: tuple[int, ...] = (0, 5, 300, 1800)
-BATCH_LIMIT = 200
 NOTICE_TYPE = "task.inbox.events"
 USER_AGENT = "loom-task-webhook/1"
 
@@ -168,7 +170,7 @@ async def _deliver_inbox(
         since_seq=last_seq,
         lag_s=task_cursors.LAG_SECONDS,
         inbox=inbox,
-        limit=BATCH_LIMIT,
+        limit=settings.task_webhook_batch_limit,
     )
     if not rows:
         return "skipped"

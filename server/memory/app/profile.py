@@ -26,8 +26,7 @@ from server.memory.api.models_profile import (
     ProfileSetInput,
 )
 from server.memory.domain.context_layout import escape_data
-
-_CAS_MAX_RETRIES = 3
+from server.settings import settings
 
 
 def _canonical_json_str(s: str) -> str:
@@ -160,7 +159,7 @@ async def handle_profile_append(input: ProfileAppendInput) -> ProfileMutationOut
     )
 
     last_err: Exception | None = None
-    for _ in range(_CAS_MAX_RETRIES):
+    for _ in range(settings.memory_profile_cas_max_retries):
         existing = await handle_memory_get(get_input)
         if not existing.found:
             return await handle_profile_set(
@@ -244,7 +243,7 @@ async def handle_profile_replace(input: ProfileReplaceInput) -> ProfileMutationO
     )
 
     last_err: Exception | None = None
-    for _ in range(_CAS_MAX_RETRIES):
+    for _ in range(settings.memory_profile_cas_max_retries):
         existing = await handle_memory_get(get_input)
         if not existing.found:
             raise HTTPException(

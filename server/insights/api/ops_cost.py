@@ -26,7 +26,6 @@ cost_summary = Operation(
     output_model=CostSummaryOutput,
     handler=handle_cost_summary,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -38,7 +37,6 @@ cost_budget_status = Operation(
     output_model=BudgetStatusOutput,
     handler=handle_budget_status,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -51,7 +49,6 @@ cost_record_turns = Operation(
     output_model=CostRecordTurnsOutput,
     handler=handle_cost_record_turns,
     idempotent=True,  # same (session, message_id) rows overwrite
-    budget_p99_ms=150,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -63,7 +60,6 @@ cost_agent_summary = Operation(
     output_model=CostAgentSummaryOutput,
     handler=handle_cost_agent_summary,
     idempotent=True,
-    budget_p99_ms=250,
     required_role=Role.VIEWER,
     audit=False,
 )

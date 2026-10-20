@@ -14,9 +14,10 @@ import logging
 import time
 from typing import Any
 
+from server.settings import settings
+
 log = logging.getLogger(__name__)
 
-_TTL_SECONDS = 5.0
 _cache: dict[tuple[str, str, str, str], tuple[float, int]] = {}
 _MAX_KEYS = 4096
 
@@ -47,7 +48,7 @@ async def pending_extraction(
         n = 0
     if len(_cache) >= _MAX_KEYS:
         _cache.clear()
-    _cache[key] = (now + _TTL_SECONDS, n)
+    _cache[key] = (now + settings.memory_pending_disclosure_ttl_s, n)
     return n
 
 

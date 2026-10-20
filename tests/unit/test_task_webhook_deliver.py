@@ -172,6 +172,26 @@ async def test_a_2xx_advances_the_cursor_and_resets_attempts(fake: FakeRepo, cap
 
 
 @pytest.mark.asyncio
+async def test_a_notice_carries_at_most_the_batch_limit(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "task_webhook_batch_limit", 1)
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(204)
+
+    async with _client(handler) as client:
+        await wd.deliver_once(
+            transport=client, now=NOW, env={"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": SECRET}
+        )
+    assert [(b["since_seq"], b["last_seq"], b["count"]) for b in bodies] == [(0, 101, 1)]
+
+
+@pytest.mark.asyncio
 async def test_a_5xx_keeps_the_cursor_and_backs_off(fake: FakeRepo) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)

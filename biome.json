@@ -16,6 +16,7 @@
       "!bench",
       "!var",
       "!scripts/**/*.json",
+      "!schemas/loom-settings.schema.json",
       "!dev/seccomp",
       "!scripts/scip_harness/vendor",
       "!**/package-lock.json",

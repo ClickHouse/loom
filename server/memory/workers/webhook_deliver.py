@@ -53,17 +53,19 @@ from server.workers.status import record_pass
 log = logging.getLogger(__name__)
 
 # POSTs per pass, CONCURRENCY at a time, each ended by the ack deadline: together they
-# fill POST_BUDGET_SECONDS, inside the worker's 120 s pass deadline, and the pass records
-# what it sent; the rest go next pass.
+# fill POST_BUDGET_SECONDS, inside MAX_PASS_SECONDS, and the pass records what it sent;
+# the rest go next pass.
 MAX_POSTS_PER_PASS = 40  # not a setting: with CONCURRENCY and the ack deadline, fills the budget
 CONCURRENCY = 4  # not a setting: with MAX_POSTS_PER_PASS and the ack deadline, fills the budget
 # not a setting: derived from the three values it is made of
 POST_BUDGET_SECONDS = MAX_POSTS_PER_PASS / CONCURRENCY * signed.ACK_TIMEOUT_SECONDS
+# The pass deadline: the POST budget plus room for the reads before and the insert after.
+MAX_PASS_SECONDS = POST_BUDGET_SECONDS + 20  # not a setting: derived from POST_BUDGET_SECONDS
 # Events of one webhook per pass, so every webhook with work gets its turn.
 PER_WEBHOOK = 10  # not a setting: a webhook's share of MAX_POSTS_PER_PASS
 # How long a leased event is passed over by another copy of the pass: past the
 # pass deadline, so a crashed pass's events come back.
-LEASE_SECONDS = 180  # not a setting: derived from the worker's 120 s pass deadline
+LEASE_SECONDS = MAX_PASS_SECONDS + 60  # not a setting: derived from MAX_PASS_SECONDS
 # Events still waiting this long are marked dead before the outbox's 3-day TTL drops
 # them, so webhook.deliveries says why: for a usable secret, and for a receiver to take
 # them (a receiver that is down, or one whose backlog never reached its turn).

@@ -38,7 +38,6 @@ memory_promote = Operation(
     output_model=MemoryPromoteOutput,
     handler=handle_memory_promote,
     idempotent=False,  # state transition + audit
-    budget_p99_ms=100,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -50,7 +49,6 @@ memory_demote = Operation(
     output_model=MemoryDemoteOutput,
     handler=handle_memory_demote,
     idempotent=True,  # demoting a tombstoned row is a no-op
-    budget_p99_ms=100,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -62,7 +60,6 @@ memory_reject = Operation(
     output_model=MemoryRejectOutput,
     handler=handle_memory_reject,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -74,7 +71,6 @@ memory_cross_promote = Operation(
     output_model=MemoryCrossPromoteOutput,
     handler=handle_memory_cross_promote,
     idempotent=False,
-    budget_p99_ms=400,
     required_role=Role.VIEWER,
     audit=True,
     # Operates ACROSS namespaces; the handler enforces ADMIN on both ends. The
@@ -89,7 +85,6 @@ memory_copy_to = Operation(
     output_model=MemoryCopyToOutput,
     handler=handle_memory_copy_to,
     idempotent=False,
-    budget_p99_ms=400,
     required_role=Role.WRITER,
     audit=True,
     # Spans namespaces; the handler enforces READ-on-source + WRITE-on-target
@@ -104,7 +99,6 @@ memory_evidence = Operation(
     output_model=MemoryEvidenceOutput,
     handler=handle_memory_evidence,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
 )
 
@@ -114,7 +108,6 @@ memory_provenance = Operation(
     output_model=MemoryProvenanceOutput,
     handler=handle_memory_provenance,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -126,9 +119,6 @@ memory_stack = Operation(
     output_model=MemoryStackOutput,
     handler=handle_memory_stack,
     idempotent=True,
-    # Profile + pinned + score-ordered recall (+ optional knowledge.search),
-    # each identity-scoped point-lookups.
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )

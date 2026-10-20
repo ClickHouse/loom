@@ -39,6 +39,7 @@ from server.core.llm_free import reads_llm_free
 from server.llm import customer
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -363,7 +364,10 @@ async def _judge_one(item: dict[str, Any]) -> None:
         # metered to it and refused while its model calls are off.
         with llm_stage("retrieval_judge"), customer.for_org(item["org"]):
             out = await client.complete(
-                _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
+                _JUDGE_SYSTEM,
+                user,
+                max_tokens=llm_max_tokens("retrieval_judge"),
+                response_format={"type": "json_object"},
             )
     except customer.HOLDS:
         return  # a sample, not owed work: an org off, or maybe off, sends none of its text

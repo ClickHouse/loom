@@ -16,12 +16,11 @@ from server.tracker.store.source.rows import split_source, upstream_dt
 
 # Error name → code, per (org, namespace)
 _ERROR_NAMES: dict[tuple[str, str], tuple[float, dict[str, int]]] = {}
-_ERROR_NAMES_TTL_S = 6 * 3600.0
 # a ClickHouse server error line: `Code: 9. DB::Exception: … (SIZES_OF_COLUMNS_DOESNT_MATCH)`
 _ERROR_LINE_PAT = r"Code: (\d{1,4})\. DB::Exception:[^\n]{0,400}?\(([A-Z][A-Z0-9_]{3,})\)"
 
 # The window-keys read's cap; a read that returns this many is incomplete.
-WINDOW_KEYS_LIMIT = 200_000
+WINDOW_KEYS_LIMIT = 200_000  # not a setting: the tombstone check must use the read's cap
 
 
 class EmbedReads(SourceBase):
@@ -248,12 +247,12 @@ class EmbedReads(SourceBase):
         the record's own bodies (`Code: 9. DB::Exception: … (NAME)`, the most
         frequent code per name). A draft that quotes `SIZES_OF_COLUMNS_DOESNT_MATCH`
         without `Code: 9` then matches the issues carrying code 9. Cached per
-        source for `_ERROR_NAMES_TTL_S`; {} without repositories, and a failed
+        source for `tracker_error_names_ttl_s`; {} without repositories, and a failed
         read raises `TrackerUnavailable`."""
         key = (self.org, self.namespace)
         hit = _ERROR_NAMES.get(key)
         now = time.monotonic()
-        if hit is not None and now - hit[0] < _ERROR_NAMES_TTL_S:
+        if hit is not None and now - hit[0] < settings.tracker_error_names_ttl_s:
             return hit[1]
         repos = self.repos()
         if not repos:

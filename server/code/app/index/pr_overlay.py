@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.app.ttl_cache import TtlCache
+from server.settings import settings
 
 logger = logging.getLogger("loom.code_index.pr_overlay")
 
@@ -43,7 +44,6 @@ MAX_FILE_BYTES = 1_000_000
 MAX_DIFF_BYTES = 1_500_000
 MAX_NAMES = 8000
 NAME_CHUNK = 2000
-_CACHE_TTL_S = 60.0
 _CACHE_MAX = 16
 _HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
@@ -363,7 +363,7 @@ def parsable_paths(
 # (mirror, PR) -> (head sha, overlay): a pushed head misses at once. A posted
 # post-image keys on ("posted:<org>/<ns>", PR) with its digest as the head.
 _CACHE: TtlCache[tuple[str, int], tuple[str, PrOverlay]] = TtlCache(
-    _CACHE_TTL_S, maxsize=_CACHE_MAX
+    lambda: settings.code_pr_overlay_cache_ttl_s, maxsize=_CACHE_MAX
 )
 
 
@@ -467,21 +467,20 @@ async def load_posted_overlay(
     return ov
 
 
-# Per file, so a push that changes one file of a PR re-parses that file alone: an
-# hour, as a PR's next review follows its next push. Only small results are kept
-# (a parsed file holds its tree and source).
-_FILE_TTL_S = 3600.0
+# Per file, so a push that changes one file of a PR re-parses that file alone, for
+# `code_pr_overlay_file_ttl_s`. Only small results are kept (a parsed file holds its
+# tree and source).
 # (path, content digest) -> (the file's symbols, the names it defines or calls).
 _FILE_FACTS: TtlCache[tuple[str, str], tuple[tuple[Any, ...], frozenset[str]]] = TtlCache(
-    _FILE_TTL_S, maxsize=512
+    lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
 )
 # (path, content digest, digest of the name-table rows its names bind to) -> edges.
 _FILE_EDGES: TtlCache[tuple[str, str, str], tuple[OverlayEdge, ...]] = TtlCache(
-    _FILE_TTL_S, maxsize=512
+    lambda: settings.code_pr_overlay_file_ttl_s, maxsize=512
 )
 # (org, ns, index head, name) -> the index's definitions of that name.
 _NAMES: TtlCache[tuple[str, str, str, str], tuple[tuple[str, str, str], ...]] = TtlCache(
-    _FILE_TTL_S, maxsize=200_000
+    lambda: settings.code_pr_overlay_file_ttl_s, maxsize=200_000
 )
 
 

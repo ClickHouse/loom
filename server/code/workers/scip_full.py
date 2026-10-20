@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("loom.workers.code_scip_full")
 
 PRODUCER = "clang"
-_RETRY_S = 6 * 3600
 
 
 @dataclass
@@ -60,12 +59,12 @@ async def run_pass() -> CodeScipFullResult:
 
 
 async def _due(repo: CodeRepo, cfg: RepoConfig) -> bool:
-    """No attempt within `_RETRY_S` (`FULL_AT` is a run's start, moved to its end
+    """No attempt within `code_scip_full_retry_s` (`FULL_AT` is a run's start, moved to its end
     when it fails; a run killed with its pod counts from its start), and
     unseeded or last applied `every_hours` ago (0 = seed only)."""
     now = time.time()
     started = await repo.get_state(cfg.org, cfg.namespace, FULL_AT)
-    if now - float(started or 0) < _RETRY_S:
+    if now - float(started or 0) < settings.code_scip_full_retry_s:
         return False
     if not await repo.get_state(cfg.org, cfg.namespace, WATERMARK):
         return True

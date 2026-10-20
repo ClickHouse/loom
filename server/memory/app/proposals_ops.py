@@ -16,13 +16,9 @@ from server.memory.api.models_proposals import (
     MemoryProposalsInput,
     MemoryProposalsOutput,
 )
+from server.settings import settings
 
 log = logging.getLogger(__name__)
-
-# A listing reads at most this many proposals before `only` / `limit` — the
-# graded counts are one statement over them; a namespace holding more on
-# trial than this is a queue nobody is deciding, not a page.
-_SCAN_CAP = 2000
 
 
 async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposalsOutput:
@@ -35,7 +31,11 @@ async def handle_memory_proposals(input: MemoryProposalsInput) -> MemoryProposal
         "tombstoned_at IS NULL",
         "status = 'proposed'",
     ]
-    params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "cap": _SCAN_CAP}
+    params: dict[str, Any] = {
+        "org": input.org,
+        "ns": input.namespace,
+        "cap": settings.memory_proposals_scan_cap,
+    }
     if input.prefix:
         where.append("startsWith(memory_key, {p:String})")
         params["p"] = input.prefix

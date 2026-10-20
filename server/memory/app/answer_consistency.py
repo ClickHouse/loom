@@ -35,6 +35,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from server.settings.budgets import llm_max_tokens
+
 log = logging.getLogger(__name__)
 
 ENTAILED = "entailed"
@@ -163,7 +165,7 @@ async def check(llm: Any, question: str, answer: str, cited: list[Any]) -> Verdi
             res = await llm.complete(
                 _SYSTEM,
                 build_user_prompt(question, answer, cited),
-                max_tokens=200,
+                max_tokens=llm_max_tokens("ask_consistency"),
                 response_format={"type": "json_object"},
             )
         return parse_verdict(str(getattr(res, "text", "") or ""))
@@ -303,7 +305,7 @@ async def premise_check(
                 res = await llm.complete(
                     _PREMISE_SYSTEM,
                     build_premise_prompt(question, [m], [row]),
-                    max_tokens=200,
+                    max_tokens=llm_max_tokens("ask_premise"),
                     response_format={"type": "json_object"},
                 )
             v = parse_premise(str(getattr(res, "text", "") or ""))

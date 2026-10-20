@@ -15,6 +15,7 @@ from server.memory.app import durability_verifier as dv
 from server.memory.app import pipeline as mp
 from server.memory.app import pipeline_state as pipeline_state
 from server.memory.domain import durable_facts as df
+from server.settings import settings
 
 
 class _Scripted:
@@ -133,7 +134,7 @@ async def test_any_failure_keeps_every_fact() -> None:
 
 @pytest.mark.asyncio
 async def test_a_long_capture_is_judged_in_slices(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(dv, "MAX_FACTS_PER_CALL", 3)
+    monkeypatch.setattr(settings, "memory_durability_verifier_max_facts_per_call", 3)
     client = _Scripted({"verdicts": []})
     await dv.verify(_facts(*"abcdefg"), [client])
     assert len(client.calls) == 3

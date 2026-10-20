@@ -3,8 +3,8 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Modal } from "../components/ui/Modal";
 import { useStore, viewHref, type View } from "../lib/state";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { hasOrgAdminClaim, isNamespaceAdmin } from "../lib/role";
-import { ADMIN_BASE, ADMIN_OPERATOR_ONLY, MAIN, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
+import { isNamespaceAdmin } from "../lib/role";
+import { ADMIN_BASE, MAIN, operatorItems, RAIL_GROUPS, SETTINGS_ITEM, type NavItem } from "./Sidebar";
 
 /**
  * Phone navigation (below `md`): two primary tabs and a "More" dialog (Click UI's dialog
@@ -47,7 +47,7 @@ export function mobileMoreItems(
   if (carry.length > 0) groups.push({ group: "Main", items: carry });
   groups.push({ group: "Settings", items: [SETTINGS_ITEM] });
   if (isNamespaceAdmin(whoami, mine, namespace)) {
-    const admin = hasOrgAdminClaim(whoami) ? [...ADMIN_BASE, ...ADMIN_OPERATOR_ONLY] : ADMIN_BASE;
+    const admin = [...ADMIN_BASE, ...operatorItems(whoami)];
     groups.push({ group: "Admin", items: admin });
   }
   return groups;

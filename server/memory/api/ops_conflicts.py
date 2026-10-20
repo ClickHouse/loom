@@ -29,7 +29,6 @@ conflicts_list = Operation(
     output_model=ConflictsListOutput,
     handler=handle_conflicts_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -40,7 +39,6 @@ conflicts_resolve = Operation(
     output_model=ConflictsResolveOutput,
     handler=handle_conflicts_resolve,
     idempotent=True,
-    budget_p99_ms=500,  # fans ALTER UPDATE across all peers
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -53,7 +51,6 @@ conflicts_propose_revision = Operation(
     output_model=ConflictsProposeRevisionOutput,
     handler=handle_conflicts_propose_revision,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -66,7 +63,6 @@ conflicts_allowlist_list = Operation(
     output_model=ConflictsAllowlistListOutput,
     handler=handle_conflicts_allowlist_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -78,7 +74,6 @@ conflicts_allowlist_remove = Operation(
     output_model=ConflictsAllowlistRemoveOutput,
     handler=handle_conflicts_allowlist_remove,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.ADMIN,
     audit=True,
 )

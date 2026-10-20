@@ -31,7 +31,6 @@ working_memory_get = Operation(
     output_model=WorkingMemoryGetOutput,
     handler=handle_working_memory_get,
     idempotent=True,
-    budget_p99_ms=40,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -42,7 +41,6 @@ working_memory_set = Operation(
     output_model=WorkingMemoryMutationOutput,
     handler=handle_working_memory_set,
     idempotent=True,
-    budget_p99_ms=40,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -54,7 +52,6 @@ working_memory_append = Operation(
     output_model=WorkingMemoryMutationOutput,
     handler=handle_working_memory_append,
     idempotent=False,
-    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -66,7 +63,6 @@ working_memory_replace = Operation(
     output_model=WorkingMemoryMutationOutput,
     handler=handle_working_memory_replace,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -78,7 +74,6 @@ working_memory_delete = Operation(
     output_model=WorkingMemoryDeleteOutput,
     handler=handle_working_memory_delete,
     idempotent=True,
-    budget_p99_ms=40,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -89,7 +84,6 @@ working_memory_render = Operation(
     output_model=WorkingMemoryRenderOutput,
     handler=handle_working_memory_render,
     idempotent=True,
-    budget_p99_ms=60,
     required_role=Role.VIEWER,
     audit=False,
 )

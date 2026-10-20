@@ -210,7 +210,7 @@ curl -s localhost:7777/v1/knowledge.search -H "Authorization: Bearer $LOOM_API_K
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES`                                     | How many of the caller's namespaces an `all_mine` search reads besides the addressed one ([MemorySearch](../reference/configuration.md#memorysearch)).                              |
 | `LOOM_MCP_LOOM_SEARCH_KNOWLEDGE_MIN_SIMILARITY`                                | The floor for knowledge hits in `loom_search` ([Mcp](../reference/configuration.md#mcp)).                                                                                           |
 | `LOOM_MEMORY_ASK_KNOWLEDGE_TOP_K`, `LOOM_MEMORY_ASK_SYNTHESIZE_ROUTE_MAX_DOCS` | Whether and how `memory.ask` reads knowledge ([MemoryAsk](../reference/configuration.md#memoryask)).                                                                                |
-| `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                  | Opt-in table TTLs; 0 keeps rows forever ([Retention and tiering](../reference/configuration.md#retention-and-tiering)).                                                             |
+| `LOOM_RETENTION_CHUNKS_DAYS`, `LOOM_RETENTION_DOCUMENTS_DAYS`                  | Opt-in table TTLs; 0 keeps rows forever ([Retention](../reference/configuration.md#retention)).                                                                                     |
 
 ## Limits
 

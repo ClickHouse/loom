@@ -15,6 +15,7 @@ import pytest
 
 from server.memory.workers import usage_fold
 from server.memory.workers.usage_fold import UsageFoldConfig, run_pass
+from server.settings import settings
 from server.workers.status import get_registry
 
 
@@ -678,10 +679,10 @@ async def test_pending_mutation_cap_skips_the_pass_and_holds_the_watermark() -> 
     _seed_active_pass(ch, totals=[_totals_row(recall=1)], idents=[_ident_row()])
     # the backpressure probe (loom.memory, the one mutation target left) is
     # the query_one after the watermark probes
-    ch.query_one_returns.append({"n": usage_fold.MAX_PENDING_MUTATIONS + 1})
+    ch.query_one_returns.append({"n": settings.memory_usage_fold_max_pending_mutations + 1})
     before = usage_fold._watermark
     result = await run_pass(ch=ch)
-    assert result.skipped_pending_mutations == usage_fold.MAX_PENDING_MUTATIONS + 1
+    assert result.skipped_pending_mutations == settings.memory_usage_fold_max_pending_mutations + 1
     assert result.folded == 0 and result.statements == 0
     assert not [sql for sql, _ in ch.execute_calls if sql.startswith(("UPDATE ", "ALTER "))]
     assert ch.insert_calls == []

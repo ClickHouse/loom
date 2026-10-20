@@ -1458,7 +1458,7 @@ def test_the_worker_is_registered_on_its_settings() -> None:
     ],
 )
 def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str) -> None:
-    from server.settings._webhooks import WebhookSettings
+    from server.settings.catalog import WebhookSettings
 
     with pytest.raises(PydanticValidationError):
         WebhookSettings(**{field: 0})
