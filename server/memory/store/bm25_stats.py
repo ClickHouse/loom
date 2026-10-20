@@ -92,13 +92,13 @@ async def index_late_rows(rows: list[dict[str, Any]], *, ch: _CHClient | None = 
         }
     )
     ch = ch or _default_client()
+
+    async def _run(sql: str) -> None:
+        await ch.execute(sql, params={"keys": keys})
+
     # Independent statements, one round trip; both end before this returns, so shutdown's
     # drain never closes the client under one of them.
-    results = await asyncio.gather(
-        ch.execute(_DOC_STATS, params={"keys": keys}),
-        ch.execute(_TERM_FREQ, params={"keys": keys}),
-        return_exceptions=True,
-    )
+    results = await asyncio.gather(_run(_DOC_STATS), _run(_TERM_FREQ), return_exceptions=True)
     failed = [
         (table, r)
         for table, r in zip(_TABLES, results, strict=True)

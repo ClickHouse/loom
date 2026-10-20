@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from server.memory.store import bm25_stats
+from tests.unit.test_memory_update_conflict import wired  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -64,7 +65,7 @@ async def test_late_rows_are_folded_with_both_views_statements_and_errors_are_lo
 
 
 @pytest.mark.asyncio
-async def test_both_statements_run_at_once_and_one_failing_waits_for_the_other() -> None:
+async def test_both_statements_run_at_once_and_one_failing_waits_for_the_other(caplog) -> None:
     """One round trip, and the call ends only after both have: shutdown's drain must not
     close the client under the statement that is still running."""
     import asyncio
@@ -85,40 +86,68 @@ async def test_both_statements_run_at_once_and_one_failing_waits_for_the_other()
             await asyncio.sleep(0.05)
             finished.append(table)
 
-    assert await bm25_stats.index_late_rows([_row(version=1)], ch=_CH()) == 0
+    with caplog.at_level("WARNING", logger=bm25_stats._log.name):
+        assert await bm25_stats.index_late_rows([_row(version=1)], ch=_CH()) == 0
     assert sorted(started) == ["doc_stats", "term_freq"]
     assert finished == ["term_freq"]
+    (warning,) = [r.getMessage() for r in caplog.records]
+    assert "memory_doc_stats" in warning and "memory limit" in warning
 
 
-def test_request_paths_hand_late_rows_to_after_write() -> None:
-    """memory.set, memory.bulk_set and memory.update_by_id never await the statements:
-    each hands its rows to `after_write.index_late_rows`."""
-    import ast
-    from pathlib import Path
+def _late_and_blocked(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[str]]:
+    """Every row late, and the statements held until released: a path that awaited them
+    would not return."""
+    import asyncio
 
-    root = Path(__file__).resolve().parents[2] / "server/memory/app"
-    for name in ("set_commit.py", "bulk_set.py", "update.py"):
-        tree = ast.parse((root / name).read_text())
-        calls = [
-            n
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Attribute)
-            and n.func.attr == "index_late_rows"
-        ]
-        assert calls, name
-        for call in calls:
-            assert isinstance(call.func.value, ast.Name) and call.func.value.id == "after_write", (
-                name
-            )
-        awaited = [
-            n
-            for n in ast.walk(tree)
-            if isinstance(n, ast.Await)
-            and isinstance(n.value, ast.Call)
-            and getattr(n.value.func, "attr", "") == "index_late_rows"
-        ]
-        assert not awaited, name
+    import server.memory.store as memory_repo
+
+    release = asyncio.Event()
+    indexed: list[str] = []
+
+    async def _index(rows: Any, **_k: Any) -> int:
+        await release.wait()
+        indexed.extend(str(r.get("memory_key")) for r in rows)
+        return len(rows)
+
+    monkeypatch.setattr(memory_repo, "late_rows", lambda rows, **_k: list(rows))
+    monkeypatch.setattr(memory_repo, "index_late_rows", _index)
+    return release, indexed
+
+
+@pytest.mark.asyncio
+async def test_memory_set_answers_before_its_late_row_is_indexed(monkeypatch) -> None:
+    import asyncio
+
+    from server.memory.app import after_write
+    from server.memory.app import write as write_mod
+    from server.memory.domain.conflicts import ConflictResult
+    from tests.unit.test_conflict_judge_deferred import _input, _wire
+
+    _wire(monkeypatch, ConflictResult(verdict="clear", peers=[]))
+    release, indexed = _late_and_blocked(monkeypatch)
+    out = await asyncio.wait_for(write_mod.handle_memory_set(_input()), timeout=5)
+    assert out.version > 0 and indexed == []
+    release.set()
+    await after_write.drain()
+    assert indexed == ["release_day"]
+
+
+@pytest.mark.asyncio
+async def test_memory_update_answers_before_its_late_row_is_indexed(wired, monkeypatch) -> None:  # noqa: F811
+    import asyncio
+
+    from server.memory.app import after_write
+    from server.memory.app import update as update_mod
+    from server.memory.domain.conflicts import ConflictResult
+    from tests.unit.test_memory_update_conflict import _input
+
+    wired(ConflictResult(verdict="clear", peers=[]))
+    release, indexed = _late_and_blocked(monkeypatch)
+    out = await asyncio.wait_for(update_mod.handle_memory_update(_input()), timeout=5)
+    assert out.updated and indexed == []
+    release.set()
+    await after_write.drain()
+    assert indexed
 
 
 @pytest.mark.asyncio
@@ -201,15 +230,10 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_a_write_with_no_late_row_schedules_nothing(monkeypatch) -> None:
+async def test_a_write_with_no_late_row_schedules_nothing() -> None:
     """The common write lands inside the lag: no task, no statement."""
-    import server.memory.store as memory_repo
     from server.memory.app import after_write
 
-    async def _index(*_a: Any, **_k: Any) -> int:
-        raise AssertionError("no late row to index")
-
-    monkeypatch.setattr(memory_repo, "index_late_rows", _index)
     assert after_write.index_late_rows([_row(version=10**30)], ch=object()) is None
     assert after_write.index_late_rows([], ch=object()) is None
 
