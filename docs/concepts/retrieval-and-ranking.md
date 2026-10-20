@@ -189,8 +189,8 @@ absence.
 
 `explain=true` on `memory.search` attaches `score_components` to each served hit: the
 ranking signals, the RRF score and weight when that mode ran, and after a reranker each
-row's move (`rerank_from`, `rerank_pos`, `rerank_delta`) and its own fused score
-(`rank_score_pre_rerank`). `memory.search_trace` takes the same request and scores the
+row's move (`rerank_from`, `rerank_pos`, `rerank_delta`) and, when it changed the order,
+its own fused score (`rank_score_pre_rerank`). `memory.search_trace` takes the same request and scores the
 vector leg alone (no fusion, assembly or reranker): every candidate with its
 `similarity`, `entity_boost`, `rank_score`, `rank` and the plane it came from (`source`:
 `fact` or `chunk`). With `LOOM_SEARCH_TRACE_LOG_ENABLED=true` every search also

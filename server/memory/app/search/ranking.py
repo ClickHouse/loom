@@ -153,10 +153,9 @@ def _apply_chronological_sort(ctx: SearchContext) -> None:
 
 
 async def _run_external_rerank(ctx: SearchContext) -> None:
-    """Pluggable rerank: if the request or namespace names a reranker, send the pool's
-    rows that no identifier pin holds to it; it returns a permutation of them (the
-    input order when it fails). Yields to
-    chronological_intent (the date-sort above owns the final order)."""
+    """Pluggable rerank: if the request or namespace names a reranker, send the pool's rows
+    that no identifier pin holds to it; it returns a permutation of them (the input order
+    when it fails). Yields to chronological_intent (the date-sort above owns the order)."""
     from server.memory.app.rerank import RerankCandidate, rerank
 
     input = ctx.input

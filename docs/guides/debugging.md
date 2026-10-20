@@ -74,7 +74,8 @@ OTLP endpoint. With Langfuse configured they also go to
 
 **Why did this rank here?** `memory.search` with `explain=true` attaches `score_components`
 to each served hit: the ranking signals and, after a reranker, its move (`rerank_from`,
-`rerank_pos`, `rerank_delta`) and own fused score (`rank_score_pre_rerank`).
+`rerank_pos`, `rerank_delta`) and, when it changed the order, own fused score
+(`rank_score_pre_rerank`).
 
 ```python
 out = await agent.call("memory.search", {"query": "refund window", "explain": True})

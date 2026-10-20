@@ -282,7 +282,8 @@ module each. The SQL is in `server/memory/app/retrieval/` and
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the
-fallback. `memory.search_trace` runs the same SQL with extra columns. The caller's view
+fallback. `memory.search_trace` runs the vector leg's SQL with extra columns (no fusion, assembly or
+reranker). The caller's view
 of ranking is in [retrieval and ranking](../concepts/retrieval-and-ranking.md).
 
 **Why the priors are capped.** Real embedders produce a narrow cosine band. A confidence

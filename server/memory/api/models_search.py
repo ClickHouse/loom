@@ -557,8 +557,9 @@ class _MemorySearchHit(BaseModel):
     # served order follows, not a similarity. Under `rrf` it is the fused
     # 1/(k+rank) sum (≈ 0.03); under the cosine modes it is `similarity` plus
     # the itemised boosts, bounded to the pool (the identifier lift does not
-    # add a flat 1.0). After an external reranker it is the pool's score for
-    # the rank the row now holds; its own is score_components.rank_score_pre_rerank.
+    # add a flat 1.0). After an external reranker that changed the order it is
+    # the pool's score for the rank the row now holds, its own in
+    # score_components.rank_score_pre_rerank; a kept order changes no score.
     # For the per-component decomposition read score_components (explain=true).
     rank_score: float = 0.0
     # ISO datetime the fact is ABOUT (distinct from valid_at = when it became
