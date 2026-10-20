@@ -29,7 +29,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth import agents, claims, machines, scim, shielded, sso_links
-from server.auth.attempts import Attempts, address_key, client_address
+from server.auth.attempts import Attempts, address_key, allow_all, client_address
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
     PENDING_TTL,
@@ -1485,6 +1485,8 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
             m, proof = await machines.verify_any_workload(token)
         if m["agent_claim"]:
             agent = agents.agent_of(m, proof)
+        await _admit_exchange(m["name"], agent or str(proof["sub"]))
+        if agent:
             own = await agents.ensure_namespace(m, agent)
     except machines.Refused as e:
         raise _refused(e) from None
@@ -1497,6 +1499,45 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
     )
     return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
+
+
+_EXCHANGE_WINDOW_S = 600
+
+
+async def _admit_exchange(trust: str, workload: str) -> None:
+    """Count one exchange against its trust and its workload, or refuse it
+    with 429. Only a token the trust's issuer signed gets here, so a caller
+    without one cannot spend a trust's budget."""
+    gates = [
+        (
+            Attempts("oauth.exchange", settings.workload_exchanges_per_trust, _EXCHANGE_WINDOW_S),
+            trust,
+        ),
+        (
+            Attempts(
+                "oauth.exchange.workload",
+                settings.workload_exchanges_per_workload,
+                _EXCHANGE_WINDOW_S,
+            ),
+            f"{trust}:{workload}",
+        ),
+    ]
+    if await allow_all(gates):
+        return
+    # Once a minute per trust, so a flood shows up without filling the log.
+    if time.monotonic() - _refused_logged_at.get(f"exchange:{trust}", -60.0) > 60:
+        _refused_logged_at[f"exchange:{trust}"] = time.monotonic()
+        log.warning(
+            "oauth: exchange for trust %s (%s) refused: over its limit, or too busy to count",
+            trust,
+            workload,
+        )
+    raise OAuthError(
+        "temporarily_unavailable",
+        429,
+        description="too many token exchanges for this trust; retry later",
+        headers={"Retry-After": "60"},
+    )
 
 
 async def _machine_tokens(

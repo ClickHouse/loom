@@ -182,6 +182,12 @@ class AuthSettings(BaseModel):
     # statements and a password hash); past it a caller waits up to a second,
     # then gets 429, so a burst cannot take the shared connection pool.
     auth_attempts_concurrency: int = Field(default=8, ge=1)
+    # Workload-token exchanges (RFC 8693) one trust may make in 10 minutes,
+    # deployment-wide; past it /oauth/token answers 429 until older ones age out.
+    workload_exchanges_per_trust: int = Field(default=20000, ge=1)
+    # The same for one workload of a trust: one agent, or one workload token
+    # `sub` of a trust without agents, so one hot loop cannot spend the trust's.
+    workload_exchanges_per_workload: int = Field(default=300, ge=1)
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).

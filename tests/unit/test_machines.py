@@ -23,7 +23,7 @@ CI = "https://ci.example"
 
 
 @pytest.fixture
-def bots(monkeypatch) -> dict[str, Any]:
+def bots(monkeypatch, auth_attempts) -> dict[str, Any]:
     monkeypatch.setattr(oauth, "store", MemoryOAuthStore())
     monkeypatch.setattr(oauth.settings, "oauth_issuer", "http://testserver")
     private, public = machines.generate_key()
@@ -99,6 +99,7 @@ def bots(monkeypatch) -> dict[str, Any]:
         "registered": registered,
         "active": active,
         "made": made,
+        "attempts": auth_attempts,
     }
 
 
@@ -727,3 +728,44 @@ def test_a_token_no_trust_takes_learns_nothing_of_the_trusts(bots, monkeypatch) 
     r = exchange(_ci_token(bots, repository="acme/elsewhere"))
     assert r.status_code == 400
     assert r.json()["error_description"] == "no trust of this issuer takes the subject token"
+
+
+def test_one_workload_over_its_exchange_limit_is_refused_alone(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_workload", 2)
+    c, token = TestClient(oauth_app()), _ci_token(bots, agent_id="a1")
+    assert [_exchange(c, token, "fleet").status_code for _ in range(2)] == [200, 200]
+    r = _exchange(c, token, "fleet")
+    assert r.status_code == 429 and r.json()["error"] == "temporarily_unavailable"
+    assert r.headers["Retry-After"] == "60"
+    assert bots["made"] == [("fleet", "a1")] * 2  # the refused one made nothing
+    # Another agent of the same trust, and a CI trust's workload, go on.
+    assert _exchange(c, _ci_token(bots, agent_id="a2"), "fleet").status_code == 200
+    assert _exchange(c, _ci_token(bots)).status_code == 200
+
+
+def test_a_trust_over_its_exchange_limit_refuses_every_workload(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 2)
+    c = TestClient(oauth_app())
+    codes = [_exchange(c, _ci_token(bots, agent_id=f"a{i}"), "fleet").status_code for i in range(3)]
+    assert codes == [200, 200, 429]
+    assert _exchange(c, _ci_token(bots)).status_code == 200  # another trust counts its own
+
+
+def test_exchanges_age_out_of_the_limit(bots, monkeypatch) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_workload", 1)
+    c = TestClient(oauth_app())
+    assert [_exchange(c, _ci_token(bots)).status_code for _ in range(2)] == [200, 429]
+    bots["attempts"].now += oauth._EXCHANGE_WINDOW_S + 1
+    assert _exchange(c, _ci_token(bots)).status_code == 200
+
+
+def test_a_refused_subject_token_spends_no_exchange(bots, monkeypatch) -> None:
+    # Anyone can send a token naming a trust; only one its issuer signed counts.
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 1)
+    c = TestClient(oauth_app())
+    stranger = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    claims = pyjwt.decode(_ci_token(bots), options={"verify_signature": False})
+    forged = pyjwt.encode(claims, stranger, algorithm="RS256")
+    for token in [forged, _ci_token(bots, repository="evil/app")] * 3:
+        assert _exchange(c, token).status_code == 400
+    assert _exchange(c, _ci_token(bots)).status_code == 200

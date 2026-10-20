@@ -213,6 +213,14 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   issuer that a single token could meet, one of them telling agents apart, are
   refused at registration: an exchange naming no client could take neither.
   The signing algorithm follows each published key's type (RS256 or ES256).
+  Exchanges are limited per 10 minutes, across every replica: 20,000 for one
+  trust (`LOOM_WORKLOAD_EXCHANGES_PER_TRUST`) and 300 for one workload of it,
+  an agent or one token `sub` (`LOOM_WORKLOAD_EXCHANGES_PER_WORKLOAD`). Past
+  either, `/oauth/token` answers 429, and the SDKs and the plugins keep a
+  token they still hold and try again 30 s later. Only a token the issuer signed
+  counts, so nobody without the issuer's key can use up a trust's budget.
+  Raise the trust's limit for a fleet whose agents renew often: an agent
+  renews halfway through its workload token's life, in each process.
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
