@@ -563,9 +563,9 @@ is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 `/oauth/` run no script, may not be framed, and send `Referrer-Policy: same-origin`: their
 URLs can carry a user code or an authorization request, so no other site receives them as a
 referrer, and their form POSTs carry the page's own `Origin`. Under `no-referrer` a browser
-sends `Origin: null` on those POSTs, which the cross-site check above refuses. The dashboard page carries a
-Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot
-snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
+sends `Origin: null` on those POSTs, which the cross-site check above refuses. The
+dashboard page carries a Content-Security-Policy whose `script-src` admits the bundle's
+origin and the one boot snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
 attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
 inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and
 PNG, JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
