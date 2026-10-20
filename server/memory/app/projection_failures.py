@@ -588,7 +588,7 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
         if head is None or head.status != "superseded" or str(head.superseded_by) != winner:
             continue
         await clear_retired_flag(failure.org, failure.namespace, winner, loser)
-        found = await ch.query_all(
+        found = await ch.query_one(
             "SELECT count() AS n FROM loom.audit_log"
             " WHERE org = {org:String} AND namespace = {ns:String} AND event_type = {e:String}"
             # The record names its intent (request_id): an earlier, undone retirement
@@ -603,7 +603,7 @@ async def _record_owed_retirements(failure: ProjectionFailureRow, *, ch: Any) ->
                 "loser": loser,
             },
         )
-        if found and int(found[0]["n"]):
+        if found and int(found["n"]):
             continue
         if not await record_auto_supersessions(
             org=failure.org,
