@@ -240,7 +240,6 @@ _WIRE_NAMES = {
     "scip_checkout_dir",
     "synth_model",
     "top_k",
-    "weight_mention",
     "world_knowledge",
 }
 
@@ -266,6 +265,8 @@ def test_no_description_names_a_sibling_setting_by_its_suffix() -> None:
                 for word in token.findall(text):
                     if word in Settings.model_fields or word in _WIRE_NAMES:
                         continue
+                    if st.target.id.endswith("_" + word):  # the field naming itself
+                        continue
                     if any(n.endswith("_" + word) for n in names):
                         found.append(f"{st.target.id}: {word}")
     assert not found, f"spell the full setting name: {sorted(set(found))}"
@@ -276,7 +277,7 @@ def test_no_description_points_at_a_neighbouring_field() -> None:
     neighbour names nothing there. A heuristic over the pointing phrasings: "above" or
     "below" ending a clause, "the X above/below", "that budget"-style demonstratives, and
     openings that lean on the previous field ("The same", "The soft"). Sibling names
-    given by suffix are the next test's."""
+    given by suffix: test_no_description_names_a_sibling_setting_by_its_suffix."""
     pointing = re.compile(
         r"\b(?:above|below)(?=\s*(?:[).,;:]|$))"
         r"|\b(?:the|that|those|every)\s+[\w-]+(?:\s+[\w-]+)?\s+(?:above|below)\b(?!\s+(?:which|it|this))"

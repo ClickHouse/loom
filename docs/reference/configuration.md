@@ -960,7 +960,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_NAMESPACE_HEALTH_TTL_SECONDS` | `int` | `3600` |  | Seconds a namespace's health summary is cached per process (a failed lookup at most 300 s). 0 disables the summary and its pack section. |
+| `LOOM_NAMESPACE_HEALTH_TTL_SECONDS` | `int` | `3600` |  | Seconds a namespace's health summary is cached per process (a failed lookup at most `memory_namespace_health_failure_ttl_s`). 0 disables the summary and its pack section. |
 | `LOOM_ENTITY_COMMUNITIES_ENABLED` | `bool` | `False` |  | Label-propagation communities over the entity co-occurrence graph, per namespace, into loom.entity_communities (read by namespace.taxonomy and graph-mode expansion). A CPU pass over every namespace's edges. |
 | `LOOM_ENTITY_COMMUNITIES_INTERVAL_SECONDS` | `int` | `21600` |  | Seconds between community partition passes. |
 | `LOOM_ENTITY_COMMUNITIES_MAX_EDGES` | `int` | `200000` |  | Entity pairs read per namespace, strongest first; past it the rest are dropped and the namespace is reported truncated. |
@@ -1477,7 +1477,7 @@ Storage: document originals, per-table retention and warm-tier moves.
 
 ### Retention
 
-Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: a retention_*_days setting deletes a table's rows older than N days.
+Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/retention_overrides.py: a retention_*_days setting deletes a table's rows older than that many days.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |

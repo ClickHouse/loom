@@ -2051,8 +2051,9 @@ class MemorySettings(BaseModel):
     memory_expiry_demote_floor: float = 0.05
 
     # ---- namespace health, knowledge graph, communities ----
-    # Seconds a namespace's health summary is cached per process (a failed
-    # lookup at most 300 s). 0 disables the summary and its pack section.
+    # Seconds a namespace's health summary is cached per process (a failed lookup at
+    # most `memory_namespace_health_failure_ttl_s`). 0 disables the summary and its pack
+    # section.
     namespace_health_ttl_seconds: int = 3600
     # Label-propagation communities over the entity co-occurrence graph, per
     # namespace, into loom.entity_communities (read by namespace.taxonomy and
@@ -3668,7 +3669,7 @@ class StorageSettings(BaseModel):
 
     # Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by
     # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
-    # rows older than N days.
+    # rows older than that many days.
     # ---- retention ----
     # Days `loom.audit_log` rows are kept; 0 = forever.
     retention_audit_log_days: int = 0

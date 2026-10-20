@@ -2599,7 +2599,8 @@ settings:
   # --- namespace health, knowledge graph, communities ---
 
   # Seconds a namespace's health summary is cached per process (a failed lookup at most
-  # 300 s). 0 disables the summary and its pack section. [restart]
+  # `memory_namespace_health_failure_ttl_s`). 0 disables the summary and its pack
+  # section. [restart]
   # namespace_health_ttl_seconds: 3600
 
   # Label-propagation communities over the entity co-occurrence graph, per namespace,
@@ -4020,7 +4021,7 @@ settings:
   # --- retention ---
   # Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by
   # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
-  # rows older than N days.
+  # rows older than that many days.
 
   # Days `loom.audit_log` rows are kept; 0 = forever. [restart]
   # retention_audit_log_days: 0

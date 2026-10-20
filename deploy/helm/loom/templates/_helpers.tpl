@@ -64,31 +64,32 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{/* The env every Loom process of the release shares. It is written into each
-pod template rather than a ConfigMap, so a pod of the previous ReplicaSet that
-restarts mid-rollout keeps its own config instead of booting with the new one. */}}
 {{- /* Where a setting the chart guards is set instead: the root secret and its previous
-value through secrets.* (or the existingSecret, which then holds them), the embedding
-space through embedding.*. Takes (dict "key" <env or settings-file name> "root" $). */}}
+value through secrets.* (or the existingSecret, which then holds them, unchecked by the
+chart), the embedding space through embedding.*. Takes (dict "key" <env or
+settings-file name> "root" $). */}}
 {{- define "loom.guardedThrough" -}}
 {{- $key := upper .key | trimPrefix "LOOM_" -}}
 {{- $values := dict "JWT_SECRET" "secrets.jwtSecret" "JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious" -}}
-{{- if not (hasKey $values $key) -}}embedding.*
+{{- if not (hasKey $values $key) -}}embedding.*, which the chart guards
 {{- else if .root.Values.secrets.existingSecret -}}the Secret {{ .root.Values.secrets.existingSecret }} (secrets.existingSecret)
-{{- else -}}{{ get $values $key }}
+{{- else -}}{{ get $values $key }}, which the chart guards
 {{- end -}}
 {{- end -}}
 
+{{/* The env every Loom process of the release shares. It is written into each
+pod template rather than a ConfigMap, so a pod of the previous ReplicaSet that
+restarts mid-rollout keeps its own config instead of booting with the new one. */}}
 {{- define "loom.config" -}}
 {{- $dev := .Values.devClickhouse.enabled -}}
 {{- range $k, $_ := .Values.env }}
 {{- if has $k (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
-{{- fail (printf "set %s through %s, which the chart guards, not env" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}
+{{- fail (printf "set %s through %s, not env" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}
 {{- end }}
 {{- end }}
 {{- range .Values.extraEnv }}
 {{- if has .name (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
-{{- fail (printf "set %s through %s, which the chart guards, not extraEnv" .name (include "loom.guardedThrough" (dict "key" .name "root" $))) }}
+{{- fail (printf "set %s through %s, not extraEnv" .name (include "loom.guardedThrough" (dict "key" .name "root" $))) }}
 {{- end }}
 {{- end }}
 {{- range list "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}

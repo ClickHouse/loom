@@ -4176,7 +4176,7 @@
         "namespace_health_ttl_seconds": {
           "default": 3600,
           "type": "integer",
-          "description": "Seconds a namespace's health summary is cached per process (a failed lookup at most 300 s). 0 disables the summary and its pack section."
+          "description": "Seconds a namespace's health summary is cached per process (a failed lookup at most `memory_namespace_health_failure_ttl_s`). 0 disables the summary and its pack section."
         },
         "namespace_ontology_cardinality_ttl_s": {
           "default": 60.0,
