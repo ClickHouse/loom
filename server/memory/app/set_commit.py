@@ -32,6 +32,7 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
+from server.memory.app import after_write
 from server.memory.app import conflict_deferred as _cd
 from server.memory.app.drops import record_drop
 from server.memory.app.entity_projections import declared_entities
@@ -665,7 +666,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         await asyncio.gather(_insert_memory(), _insert_embedding())
     await _lift_after_insert(w, ch, [embedding_row])
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
-    await memory_repo.index_late_rows([embedding_row], ch=ch)
+    after_write.index_late_rows([embedding_row], ch=ch)
     _cd.schedule_settle(
         input,
         conflict_result,
@@ -786,7 +787,6 @@ async def _set_post_insert(
     entity_extractor worker re-projects a row it missed): it is written beside the response
     instead of in it, because its canonical read + insert + edge inserts would be the serial
     tail of every set (5–6 s when inserts are slow)."""
-    from server.memory.app import after_write
     from server.memory.app.key_supersession import supersede_same_key_rows
     from server.observability import audit as _audit_mod
     from server.observability.otel import traced

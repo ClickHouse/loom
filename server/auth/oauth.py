@@ -171,7 +171,9 @@ _PAGE_HEADERS = {
         "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
     ),
     "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
+    # same-origin, not no-referrer: under no-referrer a form POST carries `Origin: null`,
+    # which web_refusal refuses. No other site receives this URL.
+    "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
 
