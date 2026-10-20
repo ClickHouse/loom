@@ -153,7 +153,13 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
     async def under_cap(org: str, ns: str) -> bool:
         return False
 
-    monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
+    from server.code.store import index as code_index
+
+    class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers
+        def __new__(cls) -> Any:
+            return _Repo()
+
+    monkeypatch.setattr(code_index, "CodeRepo", _CodeRepo)
     monkeypatch.setattr("server.observability.budget.namespace_over_cap", under_cap)
     monkeypatch.setattr(
         "server.embedding.embedder.get_embedder", lambda: SimpleNamespace(model_name="m")
@@ -174,7 +180,14 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
 
 
 @held
-def test_no_card_task_outlives_a_held_file(error) -> None:
+@pytest.mark.parametrize(
+    "paths, queued",
+    [
+        (["slow.py", "held.py", "later.py"], 3),  # under the queue's limit: the final gather
+        (["a.py", "b.py", "c.py", "held.py", "later.py"], 4),  # at the limit: the wait
+    ],
+)
+def test_no_card_task_outlives_a_held_file(error, paths, queued) -> None:
     from server.code.workers import summary as w
 
     started: list[asyncio.Task[Any]] = []
@@ -187,10 +200,8 @@ def test_no_card_task_outlives_a_held_file(error) -> None:
 
     async def run() -> None:
         with pytest.raises(type(error)):
-            # Two workers queue four files, so the hold is raised from the wait.
-            paths = ["a.py", "b.py", "c.py", "held.py", "later.py"]
             await w._run_cards(paths, one, 2, lambda: False)
-        assert len(started) == 4 and all(t.done() for t in started)  # stopped before the raise
+        assert len(started) == queued and all(t.done() for t in started)
 
     asyncio.run(run())
 
