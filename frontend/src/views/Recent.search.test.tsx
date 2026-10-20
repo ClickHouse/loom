@@ -8,9 +8,9 @@ import { Recent } from "./Recent";
 import { must } from "../test/must";
 
 // While a search is active the Memories view asks memory.search with `explain: true` (so
-// the per-hit evidence rides above the excerpt k) and puts a "Why this result" button in
-// each ranked row's meta slot, whose popover holds the scoring. The count
-// is the toolbar's alone: no summary line, no "Results" heading.
+// the per-hit evidence rides above the excerpt k) and puts each ranked hit's similarity and
+// score in its row's meta line and a "Why this result" button after it, whose popover holds
+// the breakdown. The count is the toolbar's alone: no summary line, no "Results" heading.
 
 const entry = (memory_key: string): MemoryListEntry => ({
   memory_key,
@@ -108,11 +108,20 @@ describe("Recent search why-line", () => {
     expect(query).toBe("milk");
     expect(opts).toMatchObject({ top_k: 50, explain: true, legs: ["memory"] }); // Memory legs only
 
-    // The hit that did not match carries no button; the scoring stays out of the row.
+    // The hit that did not match carries no button and no score; the ranked one shows its
+    // scores inside its open button, so they open the row and are read with it.
     const button = await screen.findByRole("button", { name: "Why this result" });
     expect(screen.getAllByRole("button", { name: "Why this result" })).toHaveLength(1);
     expect(screen.queryByTestId("search-why")).toBeNull();
     expect(button.closest("[data-memory-key]")).toHaveAttribute("data-memory-key", "coffee_pref");
+    const scores = screen.getAllByTestId("search-score");
+    expect(scores).toHaveLength(1);
+    expect(scores[0]).toHaveTextContent("similarity 0.70 · score 0.80");
+    const open = screen.getByRole("button", { name: "coffee_pref" });
+    expect(open).toContainElement(scores[0]);
+    // jsdom drops the space that ends the similarity's own span; list-pages.spec.ts checks the
+    // description a browser gives.
+    expect(open).toHaveAccessibleDescription(/similarity 0\.70 · ?score 0\.80/);
     await userEvent.click(button);
     const why = await screen.findByTestId("search-why");
     expect(why).toHaveTextContent("#1");
@@ -689,6 +698,20 @@ describe("Recent search finds every row that names the word", () => {
         ? { entries: [entry("azure_new"), entry("coffee_pref")], total: 146, today: 1, truncated: false }
         : { entries: [entry("coffee_pref"), entry("tea_pref")], total: 2, today: 2, truncated: false },
     );
+    // tea_pref is ranked and holds no "Azure": the one row that shows a score.
+    const ranked = (key: string, similarity: number) => ({
+      memory_key: key,
+      memory_type: "semantic",
+      content_excerpt: "",
+      distance: 0.3,
+      similarity,
+      rank_score: similarity + 0.1,
+      confidence: 0.9,
+    });
+    vi.mocked(searchMemory).mockImplementation(async () => ({
+      results: [ranked("coffee_pref", 0.7), ranked("tea_pref", 0.6)],
+      embedding_model: "fake",
+    }));
     render(<Recent />);
     await screen.findByText("coffee_pref");
 
@@ -700,7 +723,12 @@ describe("Recent search finds every row that names the word", () => {
       "keyword list call",
     );
     expect(kw[2]).toMatchObject({ contains: "Azure" });
-    expect(await screen.findAllByRole("button", { name: "Why this result" })).toHaveLength(2);
+    // A keyword row shows no score, a ranked hit that holds the text (coffee_pref) included;
+    // the ranked-only row does.
+    const scores = await screen.findAllByTestId("search-score", undefined, { timeout: 3000 });
+    expect(scores).toHaveLength(1);
+    expect(scores[0].closest("[data-memory-key]")).toHaveAttribute("data-memory-key", "tea_pref");
+    expect(screen.getAllByRole("button", { name: "Why this result" })).toHaveLength(3);
     await userEvent.click(screen.getAllByRole("button", { name: "Why this result" })[0]);
     expect(await screen.findByTestId("search-why")).toHaveTextContent('Contains "Azure"');
     // The toolbar's count says the keyword rows are the newest of more.
