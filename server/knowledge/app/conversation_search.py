@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
+from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
 
 # Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
@@ -36,6 +37,8 @@ class ConversationVectorQuery:
     embedding_model: str
     query_vec: list[float]
     top_k: int
+    # The request's read scope; its predicates ride every statement.
+    scope: ReadFilters
     thread_id: str | None = None
     role: str | None = None
     run_id: str | None = None
@@ -102,6 +105,7 @@ async def vector_search(
     if q.user_id is not None:
         where.append("user_id = {user_id:String}")
         params["user_id"] = q.user_id
+    where.extend(scope_where(q.scope, params))
     if q.saved_only:
         where.append("is_saved")
 
