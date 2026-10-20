@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -32,6 +31,8 @@ RERANK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 
 # RFC 9110 token characters: what an HTTP header name may hold.
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# What a customer or feature header value carries unencoded (`customer.headers`).
+_HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
 
 
 class ProviderSettings(ModelSettings):
@@ -94,7 +95,7 @@ class ProviderSettings(ModelSettings):
     # JSON object from Loom's feature names (hyde, extract_typed, memory.search,
     # worker.embedding, ...) to the gateway's; "*" names the one for any other.
     # "" = Loom's own names.
-    inference_feature_map_json: str = ""
+    inference_feature_map_json: Annotated[str, JsonObject] = ""
     # Shared query-embedding cache in loom.embedding_cache behind the
     # per-process LRU, keyed (model, sha1 of normalised text). Only single-text
     # (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use
@@ -155,14 +156,10 @@ class ProviderSettings(ModelSettings):
 
     def feature_map(self) -> dict[str, str]:
         """`inference_feature_map_json` parsed: Loom feature -> the gateway's."""
-        if not self.inference_feature_map_json.strip():
+        raw = self.inference_feature_map_json.strip()
+        if not raw:
             return {}
-        raw = json.loads(self.inference_feature_map_json)
-        if not isinstance(raw, dict) or not all(
-            isinstance(k, str) and isinstance(v, str) and v for k, v in raw.items()
-        ):
-            raise ValueError("LOOM_INFERENCE_FEATURE_MAP_JSON must map feature names to names")
-        return raw
+        return dict(json_map_items(raw, "inference_feature_map_json"))
 
     @model_validator(mode="after")
     def _check_customer_headers(self) -> ProviderSettings:
@@ -184,9 +181,17 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_CUSTOMER_REQUIRED needs LOOM_INFERENCE_CUSTOMER_HEADER: "
                 "the header the gateway meters customers by"
             )
-        if "{org}" not in self.inference_customer_format:
-            raise ValueError("LOOM_INFERENCE_CUSTOMER_FORMAT must contain {org}")
-        self.feature_map()  # a malformed map fails at load, not at the first call
+        fmt = self.inference_customer_format
+        if "{org}" not in fmt or not _HEADER_TEXT.fullmatch(fmt.replace("{org}", "")):
+            raise ValueError(
+                "LOOM_INFERENCE_CUSTOMER_FORMAT must contain {org}, and around it only "
+                "letters, digits and . _ ~ : @ -, which a header carries as they are"
+            )
+        if not all(_HEADER_TEXT.fullmatch(v) for v in self.feature_map().values()):
+            raise ValueError(
+                "inference_feature_map_json: each gateway feature name is letters, digits "
+                "and . _ ~ : @ -, which a header carries as they are"
+            )
         if self.inference_customer_header and not self.inference_system_customer.strip():
             raise ValueError(
                 "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "
