@@ -1762,24 +1762,32 @@ def _authorize_params(c: TestClient) -> dict[str, str]:
     }
 
 
-def _form_page(c: TestClient, page: str, request: pytest.FixtureRequest) -> httpx.Response:
-    """One server-rendered page that holds a sign-in form."""
-    if page == "device code":
-        return c.get("/oauth/device", params={"user_code": _start(c)["user_code"]})
-    if page == "device approval":
-        return _sign_in(c, _start(c)["user_code"])
-    if page == "connect sign-in":
-        return c.get("/oauth/authorize", params=_authorize_params(c))
-    if page == "connect approval":
-        request.getfixturevalue("sso")
-        r = c.get("/oauth/authorize", params=_authorize_params(c), follow_redirects=False)
-        state = r.headers["location"].split("state=")[1]
-        return c.get("/oauth/callback", params={"code": "idp-code", "state": state})
-    if page == "account link":
-        request.getfixturevalue("bobs_password_account")
-        return _sso_round_trip(c, _start(c)["user_code"])
-    assert page == "set password"
+# Each opens one server-rendered page that holds a sign-in form.
+def _device_code_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return c.get("/oauth/device", params={"user_code": _start(c)["user_code"]})
 
+
+def _device_approval_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return _sign_in(c, _start(c)["user_code"])
+
+
+def _connect_sign_in_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return c.get("/oauth/authorize", params=_authorize_params(c))
+
+
+def _connect_approval_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    request.getfixturevalue("sso")
+    r = c.get("/oauth/authorize", params=_authorize_params(c), follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    return c.get("/oauth/callback", params={"code": "idp-code", "state": state})
+
+
+def _account_link_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    request.getfixturevalue("bobs_password_account")
+    return _sso_round_trip(c, _start(c)["user_code"])
+
+
+def _set_password_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
     async def held(code: str) -> dict[str, Any]:
         return {"kind": "set_password"}
 
@@ -1788,23 +1796,23 @@ def _form_page(c: TestClient, page: str, request: pytest.FixtureRequest) -> http
 
 
 @pytest.mark.parametrize(
-    ("page", "action"),
+    ("open_page", "action"),
     [
-        ("device code", "/oauth/device"),
-        ("device approval", "/oauth/device/approve"),
-        ("connect sign-in", "/oauth/authorize"),
-        ("connect approval", "/oauth/authorize/approve"),
-        ("account link", "/oauth/link"),
-        ("set password", "/oauth/set-password"),
+        (_device_code_page, "/oauth/device"),
+        (_device_approval_page, "/oauth/device/approve"),
+        (_connect_sign_in_page, "/oauth/authorize"),
+        (_connect_approval_page, "/oauth/authorize/approve"),
+        (_account_link_page, "/oauth/link"),
+        (_set_password_page, "/oauth/set-password"),
     ],
 )
 def test_a_sign_in_form_posts_with_its_pages_own_origin(
-    monkeypatch, request, page: str, action: str
+    monkeypatch, request, open_page: Any, action: str
 ) -> None:
     # A browser serializes a POST's Origin as `null` when the page's policy is no-referrer,
     # and the gate refuses that; under same-origin it sends the server's own.
     c = _sign_in_routes_behind_the_gate(monkeypatch)
-    r = _form_page(c, page, request)
+    r = open_page(c, request)
     assert r.status_code == 200, r.text
     assert f'<form method="post" action="{action}">' in r.text
     assert r.headers["referrer-policy"] == "same-origin"
