@@ -29,7 +29,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth import agents, claims, machines, scim, shielded, sso_links
-from server.auth.attempts import Attempts, Busy, address_key, allow_all, client_address
+from server.auth.attempts import Attempts, Busy, address_key, admit, client_address, slot
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
     PENDING_TTL,
@@ -1524,8 +1524,12 @@ async def _admit_exchange(trust: str, agent: str) -> None:
             "oauth.exchange.agent", settings.workload_exchanges_per_agent, _EXCHANGE_WINDOW_S
         )
         gates.append((per_agent, f"{trust}:{agent}"))
+    # Counted as `admit` counts a sign-in, never released once admitted: one
+    # refused at its recount (renewals of one agent racing) is released under
+    # both gates, so it spends none of the trust's room.
     try:
-        admitted = await allow_all(gates)
+        async with slot():
+            admitted = await admit(gates) is not None
     except Busy:
         _warn_once_a_minute(
             "exchange.busy", "oauth: too busy to count an exchange for trust %s; 503", trust

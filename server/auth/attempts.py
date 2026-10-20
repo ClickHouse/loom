@@ -64,7 +64,8 @@ class Attempts:
         refused at the recount (it raced others past the first count) stays
         recorded. A process too busy to check refuses."""
         try:
-            return await allow_all([(self, key)])
+            async with slot():
+                return await _admit([(self, key)], released=False) is not None
         except Busy:
             return False
 
@@ -98,20 +99,13 @@ class Admission:
     at: datetime
 
 
-async def allow_all(gates: list[tuple[Attempts, str]]) -> bool:
-    """`Attempts.allow` for one attempt counted under every (limit, key):
-    admitted only while each has room, recorded under all of them. Raises
-    Busy when no check slot frees, which a caller answers as busy, not over."""
-    async with slot():
-        return await _admit(gates, released=False) is not None
-
-
 async def admit(gates: list[tuple[Attempts, str]]) -> Admission | None:
     """Record one attempt that counts as a failure until `release`d (a
     sign-in) under every (limit, key) and say whether it may go on. As in
     `Attempts.allow`, the recount after the record bounds a concurrent
-    burst. One refused at the recount is released, so a burst that raced
-    past the first count does not lock the key longer. Run it in a `slot`."""
+    burst. One refused at the recount is released under every gate, so a
+    burst that raced past the first count does not lock a key longer, nor
+    spend another gate's room. Run it in a `slot`."""
     return await _admit(gates, released=True)
 
 

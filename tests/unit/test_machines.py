@@ -791,3 +791,51 @@ def test_a_refused_subject_token_spends_no_exchange(bots, monkeypatch) -> None:
     for token in [forged, _ci_token(bots, repository="evil/app")] * 3:
         assert _exchange(c, token).status_code == 400
     assert _exchange(c, _ci_token(bots)).status_code == 200
+
+
+def test_overlapping_exchanges_refused_at_the_recount_spend_none_of_the_trusts(
+    auth_attempts, monkeypatch
+) -> None:
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_trust", 3)
+    monkeypatch.setattr(oauth.settings, "workload_exchanges_per_agent", 1)
+    count = auth_attempts.query_all
+
+    async def overlapping() -> list[Any]:
+        # Three renewals of a1: each first count is read before any of them
+        # records, and each recount after all three have, so all three find
+        # room, all three record, and every recount finds a1 over its limit.
+        together, calls = asyncio.Barrier(3), 0
+
+        async def held(sql: str, params: Any = None) -> list[dict[str, Any]]:
+            nonlocal calls
+            calls += 1
+            if calls <= 3:  # a first count
+                rows = await count(sql, params)
+                await together.wait()
+                return rows
+            if calls <= 6:  # a recount
+                await together.wait()
+            return await count(sql, params)
+
+        monkeypatch.setattr(auth_attempts, "query_all", held)
+        try:
+            renewals = [oauth._admit_exchange("fleet", "a1") for _ in range(3)]
+            return await asyncio.gather(*renewals, return_exceptions=True)
+        finally:
+            monkeypatch.setattr(auth_attempts, "query_all", count)
+
+    answers = [getattr(e, "status_code", 200) for e in asyncio.run(overlapping())]
+    # Every recount found a1 over; each one refused releases its rows, so the
+    # last to recount finds room. The refused ones are charged to no gate.
+    assert answers == [429, 429, 200]
+
+    def admitted(agent: str) -> bool:
+        try:
+            asyncio.run(oauth._admit_exchange("fleet", agent))
+        except oauth.OAuthError as e:
+            assert e.status_code == 429
+            return False
+        return True
+
+    # The trust's budget, less a1's one admitted renewal, is left for the others.
+    assert [admitted(a) for a in ("a2", "a3", "a4")] == [True, True, False]
