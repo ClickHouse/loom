@@ -7,6 +7,7 @@ import asyncio
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -1807,7 +1808,10 @@ def _set_password_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.R
     ],
 )
 def test_a_sign_in_form_posts_with_its_pages_own_origin(
-    monkeypatch, request, open_page: Any, action: str
+    monkeypatch,
+    request,
+    open_page: Callable[[TestClient, pytest.FixtureRequest], httpx.Response],
+    action: str,
 ) -> None:
     # A browser serializes a POST's Origin as `null` when the page's policy is no-referrer,
     # and the gate refuses that; under same-origin it sends the server's own.
