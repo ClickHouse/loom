@@ -1294,6 +1294,57 @@ async def test_a_link_written_inside_a_drop_keeps_its_edge_and_survives(
     assert ("alice smith", "carol king") in {(r["entity_a"], r["entity_b"]) for r in linked}
 
 
+async def test_a_high_re_set_naming_more_inside_a_drop_keeps_those_links(
+    ch, org, monkeypatch
+) -> None:
+    """A row made high naming Alice and Bob; its drop reads its links, then the row is
+    re-set high naming Carol King too, before the drop deletes: the DELETE goes by the
+    entities the row names then, so the Alice-Carol link stays."""
+    from server.memory.app import after_write, edge_links, projections
+    from server.memory.app.projection_errors import ProjectionScope
+
+    value = "Alice Smith met Bob Lane and Carol King in Berlin"
+    await _high_set(org, "s1", "contact", value)
+
+    async def nothing(*a: Any, **kw: Any) -> None:
+        return None
+
+    with monkeypatch.context() as m:
+        m.setattr(edge_links, "drop_undeclared_links", nothing)  # the drop runs below
+        out = await _high_set(
+            org, "s1", "contact", value, sensitivity="high", entities=["Alice Smith", "Bob Lane"]
+        )
+    head = await ch.query_one(
+        "SELECT version FROM loom.memory FINAL WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    real = projections.end_edges
+
+    async def named_more_first(*a: Any, **kw: Any) -> None:
+        monkeypatch.setattr(projections, "end_edges", real)
+        await _high_set(
+            org,
+            "s1",
+            "contact",
+            value,
+            sensitivity="high",
+            entities=["Alice Smith", "Bob Lane", "Carol King"],
+        )
+        await real(*a, **kw)
+
+    monkeypatch.setattr(projections, "end_edges", named_more_first)
+    scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
+    await edge_links.drop_undeclared_links(scope, {str(out.memory_id): int(head["version"])}, ch=ch)
+    await after_write.drain()
+    linked = await ch.query_all(
+        "SELECT entity_a, entity_b FROM loom.entity_edge_rows WHERE org = {org:String}"
+        " SETTINGS select_sequential_consistency = 1",
+        params={"org": org},
+    )
+    assert ("alice smith", "carol king") in {(r["entity_a"], r["entity_b"]) for r in linked}
+
+
 async def test_values_whose_edges_stay_open_do_not_block_a_value_less_close(
     ch, org, monkeypatch
 ) -> None:

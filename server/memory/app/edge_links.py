@@ -194,10 +194,19 @@ async def _drop_links_of(
         skip_versions=sorted({(memory_id, sha) for memory_id, sha, _, _ in drop}),
     )
     # Read again right before the DELETE: a row re-set plain since the first read (its
-    # value maybe the same) keeps its links. Parameters only: a mutation with a
-    # subquery is refused on a replicated table.
+    # value maybe the same), or re-set high naming more entities, keeps those links. No
+    # key lock: one drop spans many keys, and a write may own the drop while holding its
+    # own. So a same-value plain re-set landing between this read and the DELETE loses
+    # its links. Parameters only: a mutation with a subquery is refused on a replicated
+    # table.
+    if not drop:
+        return
     high = await _rows_still_high(input, sorted({memory_id for memory_id, *_ in drop}), ch=ch)
-    drop = [link for link in drop if link[0] in high]
+    drop = [
+        (memory_id, sha, a, b)
+        for memory_id, sha, a, b in drop
+        if memory_id in high and not {a, b} <= high[memory_id]
+    ]
     for part in param_slices(drop):
         await ch.execute(
             """
