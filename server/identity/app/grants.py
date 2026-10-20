@@ -611,6 +611,7 @@ async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
     from server.observability import audit
 
     revoked = 0
+    attempted = False  # a write that landed but whose reply was lost still announces
     try:
         for _ in range(_REVOKE_TRIES):
             listed = await grants_repo.live_rows_of(org, subject)
@@ -621,6 +622,7 @@ async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
                     row = await grants_repo.newest_row(org, namespace, subject)
                     if row is None or row["revoked_at"] is not None:
                         continue  # revoked meanwhile
+                    attempted = True
                     await grants_repo.insert_row(
                         {**row, "revoked_at": _now(), "version": _above(row)}, announce=False
                     )
@@ -639,7 +641,7 @@ async def revoke_subject(org: str, subject: str, *, actor: str) -> int:
             operation="grants.revoke",
         )
     finally:
-        if revoked:
+        if attempted:
             await grant_cache.changed(org, [subject])
 
 
@@ -650,6 +652,7 @@ async def forget_granter(org: str, granter: str) -> int:
     themselves stay: they are the grantees'. Moves the watermark once. Returns
     how many rows it rewrote."""
     rewritten: list[str] = []
+    attempted: set[str] = set()  # announced even when a write's reply was lost
     try:
         for listed in await grants_repo.rows_granted_by(org, granter):
             namespace, subject = str(listed["namespace"]), str(listed["subject"])
@@ -657,13 +660,14 @@ async def forget_granter(org: str, granter: str) -> int:
                 row = await grants_repo.newest_row(org, namespace, subject)
                 if row is None or row["granted_by"] != granter:
                     continue  # rewritten meanwhile by someone else's grant
+                attempted.add(subject)
                 await grants_repo.insert_row(
                     {**row, "granted_by": "", "version": _above(row)}, announce=False
                 )
             rewritten.append(subject)
     finally:
-        if rewritten:
-            await grant_cache.changed(org, rewritten)
+        if attempted:
+            await grant_cache.changed(org, sorted(attempted))
     return len(rewritten)
 
 

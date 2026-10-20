@@ -22,11 +22,10 @@ flowchart LR
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, and `collection.delete` takes one
-  out of the directory and the tree (its children become top-level) once a purging
-  erasure of it has taken what it holds off disk (`namespace.delete` refuses a
-  collection). A deleted collection's name is never used again, and no grant reaches it
-  any more. A document lives in
-  one collection and follows its grants from the moment it is written.
+  out of the directory and the tree (its children become top-level) once a purging erasure
+  of it has taken what it holds off disk (`namespace.delete` refuses a collection). A
+  deleted collection's name is never used again, and no grant reaches it any more. A
+  document lives in one collection and follows its grants from the moment it is written.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
   its name (`col-…`; the prefix is reserved), so `check_authorized` hands it to

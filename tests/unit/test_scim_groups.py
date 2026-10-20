@@ -118,6 +118,35 @@ def test_members_are_replaced_patched_and_removed(store: _Store) -> None:
     assert len(store.watermarks) == 6, "every change moves the watermark"
 
 
+def test_a_patch_s_names_match_in_any_case(store: _Store) -> None:
+    """RFC 7643 §2.1: a provider that spells them in lower case still removes
+    the member, rather than getting a 200 for a change never made."""
+    c = _client()
+    c.post("/scim/v2/Groups", json={"externalId": "ops", "members": [{"value": "bob"}]})
+    patch = {"operations": [{"OP": "remove", "Path": 'members[value eq "bob"]'}]}
+    assert c.patch("/scim/v2/Groups/ops", json=patch).status_code == 200
+    assert store.rows[(ORG, "ops")]["members"] == []
+    patch = {"Operations": [{"op": "replace", "value": {"DISPLAYNAME": "Ops", "Members": []}}]}
+    assert c.patch("/scim/v2/Groups/ops", json=patch).status_code == 200
+    assert store.rows[(ORG, "ops")]["display_name"] == "Ops"
+
+
+@pytest.mark.parametrize(
+    "body", [{}, {"Operations": "remove"}, {"Operations": ["remove"]}], ids=["none", "str", "item"]
+)
+def test_a_patch_with_no_operations_it_can_read_is_refused(
+    store: _Store, body: dict[str, Any]
+) -> None:
+    """400, not a 200 that changed nothing nor a 503 retried forever."""
+    c = _client()
+    c.post("/scim/v2/Groups", json={"externalId": "ops", "members": [{"value": "bob"}]})
+    watermarks = len(store.watermarks)
+    r = c.patch("/scim/v2/Groups/ops", json=body)
+    assert r.status_code == 400 and r.json()["scimType"] == "invalidSyntax"
+    assert store.rows[(ORG, "ops")]["members"] == ["user:bob"]
+    assert len(store.watermarks) == watermarks, "nothing written"
+
+
 def test_a_member_is_a_user_id_not_a_group(store: _Store) -> None:
     r = _client().post("/scim/v2/Groups", json={"externalId": "g", "members": [{"value": "a b"}]})
     assert r.status_code == 400

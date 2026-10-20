@@ -233,13 +233,12 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 
 - **A claim goes no further than the grant.** Where the subject holds a grant row on a
   namespace the token names, of any status, the claim is capped at that grant: a
-  `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or a
-  restore ends every older token's claim there at once in the server process that made it
-  and within `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s) in every other process, on that server
-  or another, and a pending or rejected
-  request caps it at no access. A scoped token keeps its own role there, capped at the
-  grant. A namespace an operator named at mint that was never granted to the subject keeps
-  its claim; revoke the token for that.
+  `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or
+  a restore ends every older token's claim there at once in the server process that made
+  it and within `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s) in every other process, on that
+  server or another, and a pending or rejected request caps it at no access. A scoped
+  token keeps its own role there, capped at the grant. A namespace an operator named at
+  mint that was never granted to the subject keeps its claim; revoke the token for that.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
@@ -501,8 +500,8 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
   list it, the agent the token names, and `everyone`. A token with any other claim
   (namespaces, roles, a read scope), an org its issuer does not list, no `jti` or a longer
   life is refused, and the key verifies its own issuer's end-user tokens and nothing else.
-  Until an issuer's JWKS is first fetched, its tokens are answered 503 (retry). MCP, `/v1/me/*` and the admin routes
-  refuse an end-user token.
+  Until an issuer's JWKS is first fetched, its tokens are answered 503 (retry). MCP,
+  `/v1/me/*` and the admin routes refuse an end-user token.
 - Grants name these principals as subjects: `grants.create` with `subject: "user:u-42"`,
   `"group:finance"`, `"agent:helper"` or `"everyone"`. Groups, agents and `everyone` hold
   grants on collections only.

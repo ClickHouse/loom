@@ -117,12 +117,12 @@ longer open.
 **Expiry.** Tokens have no `exp` unless minted with a TTL (`--ttl-days`). Every token
 Loom mints carries a `jti`; an outside token without one is identified by its digest.
 
-**Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti`
-or `sub` values, optionally with an issued-before cutoff. An end user's tokens are revoked
-by subject under their org, `<org>/user:<id>`
+**Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti` or
+`sub` values, optionally with an issued-before cutoff. An end user's tokens are revoked by
+subject under their org, `<org>/user:<id>`
 (`server.core.principals.end_user_revocation_subject`), since `user:<id>` names one person
-per org. Each process loads a snapshot at
-boot and refreshes it on its own loop every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
+per org. Each process loads a snapshot at boot and refreshes it on its own loop every
+`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
 - After that, a ClickHouse outage keeps the last good snapshot for at most

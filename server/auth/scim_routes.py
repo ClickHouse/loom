@@ -182,6 +182,17 @@ def _every(attrs: dict[str, Any], name: str) -> list[Any]:
     return [v for k, v in attrs.items() if str(k).lower() == name]
 
 
+def patch_operations(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """A PatchOp's operations, each with its names lower-cased (RFC 7644: they
+    match in any case); 400 unless `Operations` is a list of objects."""
+    ops = _operations(body)
+    if not isinstance(ops, list):
+        raise ScimError(400, "a PatchOp needs Operations", "invalidSyntax")
+    if not all(isinstance(op, dict) for op in ops):
+        raise ScimError(400, "each operation must be an object", "invalidSyntax")
+    return ops
+
+
 def _operations(body: dict[str, Any]) -> Any:
     ops = _lowered(body).get("operations")
     return (

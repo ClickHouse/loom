@@ -39,6 +39,7 @@ from server.auth.scim_routes import (
     ScimError,
     ScimRoute,
     int_param,
+    patch_operations,
     read_body,
 )
 from server.core import grant_cache
@@ -319,8 +320,11 @@ async def replace_group(group_id: str, request: Request, caller: _Caller = _CALL
     return _answer(_resource(request, row))
 
 
-def _patched(name: str, members: set[str], operations: list[Any]) -> tuple[str, set[str]]:
-    """The group's name and members once `operations` (RFC 7644 §3.5.2) apply."""
+def _patched(
+    name: str, members: set[str], operations: list[dict[str, Any]]
+) -> tuple[str, set[str]]:
+    """The group's name and members once `operations` (RFC 7644 §3.5.2, names
+    lower-cased by `patch_operations`) apply."""
     for op in operations:
         kind = str(op.get("op") or "").lower()
         path = str(op.get("path") or "")
@@ -335,7 +339,8 @@ def _patched(name: str, members: set[str], operations: list[Any]) -> tuple[str, 
         elif (filtered := _MEMBER_FILTER.fullmatch(path)) and kind == "remove":
             members = members - {USER + filtered.group(1)}
         elif not path and kind == "replace" and isinstance(value, dict):
-            name = str(value.get("displayName") or name)
+            value = {str(k).lower(): v for k, v in value.items()}
+            name = str(value.get("displayname") or name)
             if "members" in value:
                 members = set(_members(value["members"]))
         else:
@@ -351,7 +356,7 @@ async def patch_group(group_id: str, request: Request, caller: _Caller = _CALLER
     async with group_change(org, group_id):
         current = await _existing(org, group_id)
         name, members = _patched(
-            current["display_name"], set(current["members"]), body.get("Operations") or []
+            current["display_name"], set(current["members"]), patch_operations(body)
         )
         row = group_row(
             org,

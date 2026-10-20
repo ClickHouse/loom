@@ -828,6 +828,29 @@ def test_a_grant_that_stays_live_after_its_revoke_fails_the_call(grant_rows: Any
         asyncio.run(revoke_subject(ORG, "user:bob", actor="ops"))
 
 
+@pytest.mark.parametrize("call", ["revoke", "forget"])
+def test_a_write_whose_reply_is_lost_still_moves_the_watermark(
+    grant_rows: Any, monkeypatch: pytest.MonkeyPatch, call: str
+) -> None:
+    """The row may have landed; a retry finds nothing left to do and would
+    announce nothing, so the failed call announces it."""
+    from server.identity.app import grants
+
+    store = grant_rows(_grant_row("user:bob", granted_by="user:bob"))
+
+    async def _lost(row: dict[str, Any], **_k: Any) -> None:
+        store.written.append(row)
+        raise TimeoutError("reply lost")
+
+    monkeypatch.setattr(grants.grants_repo, "insert_row", _lost)
+    with pytest.raises(TimeoutError):
+        if call == "revoke":
+            asyncio.run(grants.revoke_subject(ORG, "user:bob", actor="ops"))
+        else:
+            asyncio.run(grants.forget_granter(ORG, "user:bob"))
+    assert len(store.written) == 1 and store.moved == [["user:bob"]]
+
+
 def test_an_erased_user_is_blanked_as_the_issuer_of_grants_others_hold(grant_rows: Any) -> None:
     from server.identity.app import grants
 
