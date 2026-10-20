@@ -165,11 +165,14 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   edit is read as the newest statement.
 - **Staleness.** Each profile carries the hash of its schema's properties (a `title` or
   the properties' order changes none), a digest of its sources (each one's id, content
-  hash, confidence and date) and their count. A new or edited fact, a revert, a restore,
-  a deleted fact, a changed confidence or date, and a change that moves a row into or out
-  of the sources (it turns `high`, changes type, gains or loses an `about:other`,
-  `attribute:` or `forget` tag, expires or passes its `valid_to`) changes the digest; a
-  recall, a reinforcement or a restatement does not. The digest covers every source,
+  hash, confidence, and the date a build reads and orders by: `valid_at`, else the last
+  change) and their count. A new or edited fact, a revert, a restore, a deleted fact, a
+  changed confidence or date, and a change that moves a row into or out of the sources
+  (it turns `high`, changes type, gains or loses an `about:other`, `attribute:` or
+  `forget` tag, expires or passes its `valid_to`) changes the digest. A restatement or a
+  reinforcement does too, since it moves the fact to the newest place in what the model
+  reads: it costs one rebuild after the cooldown. A recall or a backfill, which keeps the
+  row's last change, does not. The digest covers every source,
   while a build reads only the `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` (100) most confident
   and newest: for a user with more facts than that, a change to one outside that set still
   costs a model call that cannot change the answer. A schema change or a deletion
@@ -185,8 +188,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   stopped, and each gets an equal share; what a namespace leaves goes to those with more
   users behind. One scan of a namespace lists up to ten times its share, and the next
   passes take from that list until it is drained, the schema changes, or it is ten
-  minutes old. A namespace whose scan or stored schema fails is counted and passed over
-  until the rotation comes back to it. A user whose build failed (a model error, an
+  minutes old; a scan that found every user behind (fewer than it asked for) is not
+  repeated for ten minutes once drained, so a namespace is scanned at most once per ten
+  minutes while nobody else is behind. A namespace whose scan or stored schema fails is
+  counted and backs off as a failing user does (5 minutes, doubling up to 6 hours). A user whose build failed (a model error, an
   answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
   tried again after. A build the profile row refuses (locked, pinned, over its size cap,
   blacklisted) is not retried until the user's memories or the profile row change (an

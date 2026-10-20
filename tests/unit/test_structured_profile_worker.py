@@ -199,6 +199,7 @@ async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
     w._backoff[key] = (0.0, w._backoff[key][1])
     world["fail"] = set()
     world["built"].clear()
+    w._scans.clear()  # and the last scan is old enough to run again
     await w.run_pass(_cfg(10, ("o2", "a")))
     assert key in world["built"] and key not in w._backoff
 
@@ -221,6 +222,7 @@ async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses
     assert key not in world["built"]
     digest, version, _ = w._refused[key]
     w._refused[key] = (digest, version, 0.0)
+    w._scans.clear()  # and the last scan is old enough to run again
     await w.run_pass(_cfg(10, ("o2", "a")))
     assert key in world["built"] and key not in w._refused
 
@@ -403,18 +405,28 @@ async def test_the_configured_model_answers(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_a_conflict_or_a_rate_limit_is_a_failure_not_a_refusal(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("status", "code", "refused"),
+    [
+        (409, "PINNED_CONFLICT", True),
+        (423, "LOCKED", True),
+        (422, "CHAR_LIMIT_EXCEEDED", True),
+        (422, "BLACKLISTED", True),
+        (500, "INTERNAL", False),
+        (503, "BACKEND_UNAVAILABLE", False),
+    ],
+)
+async def test_what_the_write_answers_decides_refusal_or_failure(
+    monkeypatch: pytest.MonkeyPatch, status: int, code: str, refused: bool
 ) -> None:
     _one_user(monkeypatch, {"m1", "m2"})
-    for status in (409, 429):
 
-        async def transient(**kw: Any) -> None:
-            raise HTTPException(status_code=status, detail={"code": "BUSY"})  # noqa: B023
+    async def answer(**kw: Any) -> None:
+        raise HTTPException(status_code=status, detail={"code": code})
 
-        monkeypatch.setattr(schema_app, "write_structured_profile", transient)
-        with pytest.raises(HTTPException):
-            await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
+    monkeypatch.setattr(schema_app, "write_structured_profile", answer)
+    with pytest.raises(w.Refused if refused else HTTPException):
+        await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
 
 
 @pytest.mark.asyncio
@@ -424,7 +436,45 @@ async def test_one_scan_serves_the_passes_after_it(world: dict[str, Any]) -> Non
         await w.run_pass(cfg)
     # The first scan found up to SCAN_FACTOR users; the next four passes took from it.
     assert world["scans"] == 1 and len(world["built"]) == 5
-    await w.run_pass(cfg)  # drained: scanned again
+    # It found every user behind (5 of the 10 it asked for): drained, it is not
+    # scanned again until it is SCAN_MAX_AGE_SECONDS old.
+    await w.run_pass(cfg)
+    assert world["scans"] == 1
+    w._scans[("o2", "a")].scanned_at -= w.SCAN_MAX_AGE_SECONDS + 1
+    await w.run_pass(cfg)
+    assert world["scans"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_drained_incomplete_scan_is_scanned_again_at_once(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(w, "SCAN_FACTOR", 1)  # the scan finds as many as it asks for
+    cfg = _cfg(1, ("o2", "a"))
+    await w.run_pass(cfg)
+    await w.run_pass(cfg)
+    assert world["scans"] == 2 and len(world["built"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def failing(**kw: Any) -> list[Behind]:
+        world["scans"] += 1
+        raise RuntimeError("the scan failed")
+
+    monkeypatch.setattr(profile_sources, "users_behind", failing)
+    cfg = _cfg(10, ("o2", "a"))
+    assert (await w.run_pass(cfg)).errors == 1
+    # Backing off, the namespace is not scanned and the pass is idle.
+    ctx = pass_context.begin("structured_profile")
+    result = await w.run_pass(cfg)
+    assert world["scans"] == 1 and result.errors == 0 and ctx.idle
+    # Once its wait is over it is scanned again.
+    until, wait = w._backoff[("o2", "a", "")]
+    w._backoff[("o2", "a", "")] = (0.0, wait)
+    await w.run_pass(cfg)
     assert world["scans"] == 2
 
 
@@ -466,3 +516,4 @@ async def test_a_schema_that_does_not_parse_is_counted_and_passed_over(
     result = await w.run_pass(_cfg(3))
     assert result.errors == 1 and ctx.count == 1
     assert ("o1", "a") not in _spaces_built(world["built"])
+    assert ("o1", "a", "") in w._backoff  # it backs off like a failing scan

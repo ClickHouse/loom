@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -67,17 +68,18 @@ BACKOFF_CAP_SECONDS = 6 * 3600.0
 REFUSAL_RETRY_SECONDS = 6 * 3600.0
 # One scan of a namespace finds up to this many times the users a pass builds there,
 # and the next passes take from that list, so a namespace's whole set of facts is read
-# once per SCAN_FACTOR builds, not on every pass.
+# at most once per SCAN_FACTOR passes, not on every pass.
 SCAN_FACTOR = 10
-# A list older than this is scanned again: a user who fell behind since waits at most
-# this long on top of the cooldown. Ten minutes is five passes at the default interval.
+# A list older than this is scanned again, and a complete list (the scan found fewer
+# users than it asked for) that drained waits this long before the next scan: a user
+# who fell behind since waits at most this long on top of the cooldown, and a
+# namespace is scanned at most once per this long while nobody else is behind. Ten
+# minutes is five passes at the default interval.
 SCAN_MAX_AGE_SECONDS = 600.0
-# 4xx refusals that clear on their own (a conflicting concurrent write, a rate limit):
-# a failure that backs off, not a refusal that waits for the user's memories to change.
-_TRANSIENT_4XX = frozenset({409, 429})
 
 # Both kept in this process only, so they start over when the worker lease moves.
-# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
+# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait); a
+# user_id of '' backs off the whole namespace (its scan failed, or its schema).
 _backoff: dict[tuple[str, str, str], tuple[float, float]] = {}
 # (org, namespace, user_id) -> (digest, profile row version, monotonic time it lapses):
 # what a refused build saw.
@@ -90,7 +92,9 @@ class _Scanned:
 
     schema_sha256: str
     scanned_at: float
-    behind: list[Behind]
+    behind: deque[Behind]
+    # The scan found fewer users than it asked for: every user behind is in the list.
+    complete: bool
 
 
 # (org, namespace) -> the namespace's last scan, in this process only.
@@ -209,9 +213,14 @@ def backing_off(org: str, namespace: str) -> tuple[str, ...]:
     waiting = [
         u
         for (o, n, u), (until, _) in _backoff.items()
-        if (o, n) == (org, namespace) and until > now
+        if (o, n) == (org, namespace) and u and until > now
     ]
     return tuple(sorted(waiting))
+
+
+def _namespace_waiting(org: str, namespace: str) -> bool:
+    until, _ = _backoff.get((org, namespace, ""), (0.0, 0.0))
+    return until > time.monotonic()
 
 
 def refused_at(org: str, namespace: str) -> dict[str, tuple[str, int]]:
@@ -267,21 +276,22 @@ async def _build_users(
 
 def _take(schema: ActiveSchema, limit: int) -> list[str] | None:
     """Up to `limit` users from the namespace's last scan, leaving out those backing
-    off and those still at a refusal; None when the list is gone, drained, built
-    under another schema or too old, so the caller scans again."""
+    off and those still at a refusal; None when the caller should scan again: no
+    list, one built under another schema or too old, or an incomplete one drained.
+    A complete list that drained answers [] until it is too old."""
     scanned = _scans.get((schema.org, schema.namespace))
     if (
         scanned is None
-        or not scanned.behind
         or scanned.schema_sha256 != schema.sha256
         or time.monotonic() - scanned.scanned_at > SCAN_MAX_AGE_SECONDS
+        or (not scanned.behind and not scanned.complete)
     ):
         return None
     waiting = set(backing_off(schema.org, schema.namespace))
     refused = refused_at(schema.org, schema.namespace)
     out: list[str] = []
     while scanned.behind and len(out) < limit:
-        b = scanned.behind.pop(0)
+        b = scanned.behind.popleft()
         if b.user_id not in waiting and refused.get(b.user_id) != (b.digest, b.profile_version):
             out.append(b.user_id)
     return out
@@ -300,6 +310,7 @@ async def _scan(
     users = _take(schema, limit)
     if users is not None:
         return users
+    asked = limit * SCAN_FACTOR
     try:
         behind = await profile_sources.users_behind(
             org=schema.org,
@@ -307,16 +318,20 @@ async def _scan(
             label=cfg.label,
             schema_sha256=schema.sha256,
             cooldown_seconds=cfg.cooldown_seconds,
-            limit=limit * SCAN_FACTOR,
+            limit=asked,
             skip=backing_off(schema.org, schema.namespace),
             refused=refused_at(schema.org, schema.namespace),
         )
     except Exception as e:  # one namespace's failure never stops the pass
         result.errors += 1
+        _note_failure((schema.org, schema.namespace, ""))
         log.exception("structured profile scan failed for %s/%s", schema.org, schema.namespace)
         pass_context.note_failure(e, schema.namespace)
         return None
-    _scans[(schema.org, schema.namespace)] = _Scanned(schema.sha256, time.monotonic(), behind)
+    _backoff.pop((schema.org, schema.namespace, ""), None)
+    _scans[(schema.org, schema.namespace)] = _Scanned(
+        schema.sha256, time.monotonic(), deque(behind), complete=len(behind) < asked
+    )
     return _take(schema, limit) or []
 
 
@@ -326,6 +341,7 @@ def _parse(row: dict[str, Any], result: StructuredProfileResult) -> ActiveSchema
         props = profile_schema.parse(json.loads(row["schema_json"]))
     except (ValueError, ValidationError) as e:
         result.errors += 1
+        _note_failure((row["org"], row["namespace"], ""))
         log.warning("profile schema of %s/%s does not parse: %s", row["org"], row["namespace"], e)
         pass_context.note_failure(e, row["namespace"])
         return None
@@ -343,6 +359,8 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         rows = await profile_schemas.list_active(
             exclude_orgs=off, after=_cursor(), limit=budget, only=cfg.only
         )
+        # A namespace backing off (its scan or its schema failed) waits like a user does.
+        rows = [r for r in rows if not _namespace_waiting(r["org"], r["namespace"])]
         spaces = [s for s in (_parse(r, result) for r in rows) if s is not None]
         share = math.ceil(budget / len(spaces)) if spaces else 0
         # Namespaces that used their whole share: the budget others left goes to them,
@@ -449,11 +467,10 @@ async def build_profile(
                 memory_ids=used,
             )
         except (HTTPException, LoomServerError) as e:
-            # A 4xx (a lock or pin set since the check, the char limit, the blacklist)
-            # refuses the same build again; a transient one or anything else is a
+            # A 4xx from memory.set (a lock or pin set since the check, the char
+            # limit, the blacklist) refuses the same build again; anything else is a
             # failure to retry.
-            status = getattr(e, "status_code", 500)
-            if 400 <= status < 500 and status not in _TRANSIENT_4XX:
+            if 400 <= getattr(e, "status_code", 500) < 500:
                 raise Refused(digest, profile_version) from e
             raise
     return dropped

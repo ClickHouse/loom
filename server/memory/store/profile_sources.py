@@ -1,17 +1,17 @@
 """The memories a user's profile is built from, and whether a profile is behind them.
 
 Both profile builders read the same rows: the user's current facts, nothing
-superseded, rejected, proposed, past its stated end or TTL, nothing about
+superseded, rejected, proposed, a duplicate, past its stated end or TTL, nothing about
 someone else, no stored request to forget, and never a `high` row (readable by
 key only, never folded into a profile). The free-text fold also keeps to
 facts the extractor keyed on the user (`user_…`).
 
 A structured profile carries its tags (`profile_tags`): the hash of the schema
 it was built under, the digest of the rows it was built from (`SOURCES_DIGEST`,
-over each row's id, content hash, confidence and date) and their count. An edit, a revert, a
-restore, a deletion or a new fact changes the digest; a recall or a
-reinforcement, which change neither, does not. Its `valid_at` is when its
-sources were read.
+over each row's id, content hash, confidence and date) and their count. An
+edit, a revert, a restore, a deletion, a new fact or a restatement changes the
+digest; a recall or a backfill, which keep the row's `updated_at`, does not.
+Its `valid_at` is when its sources were read.
 
 Every reader takes the request's read scope (`server.identity.domain.read_scope`):
 a worker passes `WHOLE_NAMESPACE`.
@@ -22,8 +22,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from server.core.ch import statement_timeout
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.settings import settings
 
 # `{types:Array(String)}` is the caller's parameter.
 CURRENT_FACTS = """
@@ -44,17 +46,16 @@ CURRENT_FACTS = """
 STRUCTURED_TYPES = ["semantic", "preference", "decision"]
 
 # The aggregate that digests a user's source rows: an XOR of each row's hash over
-# what a build reads and ranks by (the row, its content, its confidence, its date), so
-# it is fixed in size and the order of rows does not matter. `hex` drops leading
-# zeros, so it is padded to 16 hex characters.
+# what a build reads and ranks by (the row, its content, its confidence, and the date
+# the build reads and orders by, `valid_at` else `updated_at`), so it is fixed in size
+# and the order of rows does not matter. A restatement writes a new `updated_at`, so it
+# changes the digest and costs one rebuild after the cooldown; a recall or a backfill
+# carries `updated_at` forward and changes nothing. `hex` drops leading zeros, so it
+# is padded to 16 hex characters.
 SOURCES_DIGEST = (
     "leftPad(lower(hex(groupBitXor(sipHash64(memory_id, content_sha256, confidence, "
-    "coalesce(valid_at, toDateTime(0)))))), 16, '0')"
+    "coalesce(valid_at, updated_at))))), 16, '0')"
 )
-# The scan reads a whole namespace's current facts: a statement that runs past these
-# fails the scan (counted, retried on the next rotation) instead of holding the pass.
-SCAN_MAX_EXECUTION_S = 60
-SCAN_MAX_MEMORY_BYTES = 4 * 1024**3
 
 # A live structured profile row: not deleted, expired or redacted.
 _LIVE_PROFILE = """
@@ -253,12 +254,16 @@ async def users_behind(
     first, then the oldest; refused users last.
 
     One aggregate digests every user's current facts, so the answer is exact: a
-    restatement or a recall changes no digest, and an edit, a revert, a restore,
-    a deletion, an expiry or a passed `valid_to` does. A rebuild waits out the
+    recall or a backfill changes no digest, and an edit, a revert, a restore, a
+    restatement (a new `updated_at`), a deletion, an expiry or a passed `valid_to`
+    does. A rebuild waits out the
     cooldown, except when the user has fewer sources than the profile was built
     from (a deletion), and a user whose sources are all gone is behind too."""
     ch = ch or _default_client()
     refused = refused or {}
+    # The scan reads a whole namespace's current facts: one that runs past these caps
+    # fails (the worker counts it and backs the namespace off) instead of holding the pass.
+    max_memory = int(settings.structured_profile_scan_max_memory_bytes)
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -272,8 +277,9 @@ async def users_behind(
     }
     # join_use_nulls = 0: a user missing from one side reads '' / 0 / [], so
     # `NOT has(p.tags, ...)` is true for a user with no profile, never NULL.
-    rows = await ch.query_all(
-        f"""
+    with statement_timeout(settings.structured_profile_scan_timeout_seconds):
+        rows = await ch.query_all(
+            f"""
         SELECT if(s.user_id != '', s.user_id, p.user_id) AS who, s.digest AS digest,
                p.version AS profile_version
         FROM (
@@ -300,11 +306,10 @@ async def users_behind(
         ORDER BY has({{refused:Array(String)}}, who), has(p.tags, {{schema_tag:String}}),
                  p.updated_at, who
         LIMIT {{lim:UInt32}}
-        SETTINGS join_use_nulls = 0, max_execution_time = {SCAN_MAX_EXECUTION_S},
-                 max_memory_usage = {SCAN_MAX_MEMORY_BYTES}
+        SETTINGS join_use_nulls = 0, max_memory_usage = {max_memory}
         """,
-        params=params,
-    )
+            params=params,
+        )
     behind = [Behind(r["who"], r["digest"], int(r["profile_version"])) for r in rows]
     # A refused user comes back once their digest or their profile row moved on
     # (an unpin, an unlock, an edit).

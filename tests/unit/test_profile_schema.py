@@ -4,6 +4,7 @@ to it, and when a built profile is behind its user's memories."""
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
@@ -192,9 +193,16 @@ class _LocalCH:
         return rows[0] if rows else None
 
 
+# Fixed times: each check replays its setup, so a `now()` there would move between runs.
+_T0 = "toDateTime('2026-01-01 00:00:00')"
+_DAY1, _DAY2, _DAY3 = (f"toDateTime('2026-01-0{d} 00:00:00')" for d in (2, 3, 4))
+
+
 def _fact(mid: str, user: str, key: str, sha: str, version: int = 1, **cols: str) -> str:
     """One version of a fact; `cols` are SQL literals."""
-    cols = {"memory_type": "'semantic'", **cols}
+    # Written at _T0 unless `updated_at` says otherwise: a later version with the same
+    # `updated_at` is a recall or a backfill, one with `now()` a restatement.
+    cols = {"memory_type": "'semantic'", "updated_at": _T0, **cols}
     extra = "".join(f", {k}" for k in cols)
     vals = "".join(f", {v}" for v in cols.values())
     return (
@@ -279,9 +287,12 @@ async def test_a_profile_is_behind_its_users_memories_until_rebuilt() -> None:
     digest, count = await _digest(_LocalCH(*built), "u1")
     assert len(digest) == 16 and count == 1
     assert await _behind(_LocalCH(*built)) == ["u2"]
-    # A recall or a reinforcement writes a new version with the same content: still current.
+    # A recall or a backfill writes a new version that keeps `updated_at`: still current.
     touched = [*built, _fact(_A, "u1", "tz", "a", version=2)]
     assert await _behind(_LocalCH(*touched)) == ["u2"]
+    # A restatement moves the fact to the newest place the model reads: one rebuild.
+    restated = [*built, _fact(_A, "u1", "tz", "a", version=2, updated_at="now()")]
+    assert await _behind(_LocalCH(*restated)) == ["u2", "u1"]
     # An edit puts it behind, after the user with no profile; within the cooldown it waits.
     edited = [*built, _fact(_A, "u1", "tz", "c", version=2)]
     assert await _behind(_LocalCH(*edited)) == ["u2", "u1"]
@@ -364,7 +375,7 @@ async def test_writes_that_are_no_source_never_crowd_out_an_edit() -> None:
                 memory_type="'profile'",
             )
         )
-        noise.append(_fact(m, u, "tz", "a", version=2))
+        noise.append(_fact(m, u, "tz", "a", version=2))  # a recall
     edited = _fact(_A, "u1", "tz", "c", version=2)
     ch = _LocalCH(*setup, *profiles, *noise, edited)
     assert await _behind(ch, limit=5) == ["u1"]
@@ -626,9 +637,9 @@ async def test_a_fact_edited_last_is_read_last() -> None:
 
     ch = _LocalCH(
         ddl("memory"),
-        _dated(_A, "My timezone is Berlin.", "now() - 3 * 86400", "now() - 3 * 86400"),
-        _dated(_B, "My timezone is Tokyo.", "now() - 2 * 86400", "now() - 2 * 86400"),
-        _dated(_A, "My timezone is Paris.", "now() - 3 * 86400", "now() - 86400", version=2),
+        _dated(_A, "My timezone is Berlin.", _DAY1, _DAY1),
+        _dated(_B, "My timezone is Tokyo.", _DAY2, _DAY2),
+        _dated(_A, "My timezone is Paris.", _DAY1, _DAY3, version=2),
     )
     rows = await src.user_facts(
         org="o",
@@ -703,8 +714,8 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
 
     local_store(
         ddl("memory"),
-        _dated(_A, "My timezone is Berlin.", "now() - 3 * 86400", "now() - 3 * 86400"),
-        _dated(_B, "My timezone is Tokyo.", "now() - 2 * 86400", "now() - 2 * 86400"),
+        _dated(_A, "My timezone is Berlin.", _DAY1, _DAY1),
+        _dated(_B, "My timezone is Tokyo.", _DAY2, _DAY2),
     )
     monkeypatch.setattr(settings, "structured_profile_memory_limit", 1)
     read: list[str] = []
@@ -720,4 +731,70 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
     monkeypatch.setattr(schema_app, "write_structured_profile", write)
     schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
     assert await w.build_profile(schema, "u1", w.StructuredProfileConfig()) == 0
-    assert read == ["- [" + read[0][3:13] + "] My timezone is Tokyo."]
+    (line,) = read[0].splitlines()
+    assert re.fullmatch(r"- \[\d{4}-\d{2}-\d{2}\] My timezone is Tokyo\.", line)
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_restating_an_older_fact_makes_it_the_latest_the_build_reads() -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import profile_sources as src
+    from server.memory.workers.structured_profile import render_facts
+
+    berlin = _dated(_A, "My timezone is Berlin.", _DAY1, _DAY1)
+    tokyo = _dated(_B, "My timezone is Tokyo.", _DAY2, _DAY2)
+    built = [*await _built(berlin, tokyo)]
+    assert await _behind(_LocalCH(*built)) == []
+    restated = _dated(_A, "My timezone is Berlin.", _DAY1, "now()", version=2)
+    ch = _LocalCH(*built, restated)
+    assert await _behind(ch) == ["u1"]
+    rows = await src.user_facts(
+        org="o",
+        namespace="n",
+        user_id="u1",
+        types=["semantic"],
+        limit=10,
+        scope=WHOLE_NAMESPACE,
+        ch=ch,
+    )
+    assert render_facts(rows).splitlines()[-1].endswith("My timezone is Berlin.")
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_the_scan_runs_under_the_configured_memory_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.settings import settings
+
+    built = await _built(_fact(_A, "u1", "tz", "a"))
+    monkeypatch.setattr(settings, "structured_profile_scan_max_memory_bytes", 1024)
+    with pytest.raises(AssertionError, match="MEMORY_LIMIT_EXCEEDED"):
+        await _behind(_LocalCH(*built))
+
+
+@pytest.mark.asyncio
+async def test_the_scan_runs_under_the_configured_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import ch as core_ch
+    from server.memory.store import profile_sources as src
+    from server.settings import settings
+
+    seen: list[float | None] = []
+
+    class _Timed:
+        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
+            seen.append(core_ch.statement_timeout_var.get())
+            return []
+
+    monkeypatch.setattr(settings, "structured_profile_scan_timeout_seconds", 7)
+    await src.users_behind(
+        org="o",
+        namespace="n",
+        label="structured_profile",
+        schema_sha256=_SHA,
+        cooldown_seconds=0,
+        limit=1,
+        ch=_Timed(),
+    )
+    assert seen == [7]
