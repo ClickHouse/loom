@@ -787,6 +787,8 @@ export interface InstallOptions {
   memoryRows?: number;
   /** The first memory row's tags, in place of the fixture's three. */
   firstMemoryTags?: string[];
+  /** The first memory row's agent, in place of the fixture's. */
+  firstMemoryAgent?: string;
   /** Answer `knowledge.list` with this many rows. */
   knowledgeRows?: number;
   /** Answer `run.list` with this many runs, every field a run carries, projected by the
@@ -968,7 +970,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           // a longer value is cut to `preview_chars`, ends in "…" and is flagged `value_truncated`.
           const from = Number(body.offset ?? 0);
           const cut = typeof body.preview_chars === "number" ? body.preview_chars : Infinity;
-          const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags)
+          const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags, options.firstMemoryAgent)
             .slice(from, from + Number(body.limit ?? 100))
             .map((r) =>
               typeof r.value === "string" && r.value.length > cut
@@ -988,7 +990,7 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
         // The inspector's one read on open answers from the same fixture rows, so a card
         // open can be measured end to end.
         if (!options.memoryRows) break;
-        const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags);
+        const rows = memoryRowsFixture(options.memoryRows, ns, options.firstMemoryTags, options.firstMemoryAgent);
         const hit = rows.find((r) => r.memory_key === body.memory_key);
         if (!hit) return json({ found: false });
         return json({
@@ -1263,7 +1265,12 @@ function runGetFixture(runs: Record<string, unknown>[], runId: string): Record<s
 /** `n` memory rows the way `memory.list` returns them — a bounded string preview per row
  *  (the server caps `value` for a list), tags, an agent, alternating pins and a verified
  *  row here and there, so the card renders every chip it has. */
-function memoryRowsFixture(n: number, namespace: string, firstTags?: string[]): Record<string, unknown>[] {
+function memoryRowsFixture(
+  n: number,
+  namespace: string,
+  firstTags?: string[],
+  firstAgent?: string,
+): Record<string, unknown>[] {
   const preview =
     "Alert fired on the ingest lane: consumer lag over 30 s for 4 minutes; root cause a stalled partition. ";
   return Array.from({ length: n }, (_, i) => ({
@@ -1276,7 +1283,7 @@ function memoryRowsFixture(n: number, namespace: string, firstTags?: string[]): 
     expires_at: null,
     pinned: i % 17 === 0,
     tags: i === 0 && firstTags ? firstTags : ["alerts", i % 2 ? "ingest" : "storage", `lane-${i % 5}`],
-    agent: i % 4 ? "alert-bot" : "oncall",
+    agent: i === 0 && firstAgent ? firstAgent : i % 4 ? "alert-bot" : "oncall",
     namespace,
     org: "acme",
     verification: i % 11 === 0 ? "human" : "none",
