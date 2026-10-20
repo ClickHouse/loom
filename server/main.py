@@ -318,16 +318,32 @@ from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+def _set_security_headers(response: Response) -> None:
+    """No response is ever sniffed into a type it was not served as, framed by
+    another page, or named in a Referer sent to another origin. A route that sets
+    its own value (the dashboard's full CSP) keeps it. `same-origin`, not
+    `no-referrer`: under no-referrer a browser sends `Origin: null` on a
+    same-origin form POST, which web_refusal refuses as foreign."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
+    if settings.hsts_max_age_seconds > 0:
+        response.headers.setdefault(
+            "Strict-Transport-Security", f"max-age={settings.hsts_max_age_seconds}"
+        )
+
+
 @app.middleware("http")
-async def _cache_and_nosniff_headers(request: Request, call_next: Any) -> Response:
+async def _cache_and_security_headers(request: Request, call_next: Any) -> Response:
     response: Response = await call_next(request)
     path = request.url.path
     if path.startswith("/assets/") and response.status_code == 200:
         from server.storage.frontend_assets import cache_control_for
 
         response.headers["Cache-Control"] = cache_control_for(path)
-    # No response is ever sniffed into a type it was not served as.
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    _set_security_headers(response)
     # Draining: the balancer's kept-alive connections close one response at a
     # time, so none is still pooled here when the port closes.
     if _readiness.draining():
@@ -362,11 +378,12 @@ if settings.cors_origins:
 def _refused(status: int, *, code: str, message: str) -> Response:
     from fastapi.responses import JSONResponse
 
-    return JSONResponse(
-        status_code=status,
-        content={"detail": {"code": code, "message": message}},
-        headers={"X-Content-Type-Options": "nosniff"},
+    response = JSONResponse(
+        status_code=status, content={"detail": {"code": code, "message": message}}
     )
+    # The web gate runs outside the header middleware.
+    _set_security_headers(response)
+    return response
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})

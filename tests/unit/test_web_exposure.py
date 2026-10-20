@@ -110,6 +110,8 @@ def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
     assert r.status_code == 421
     assert r.json()["detail"]["code"] == "MISDIRECTED_REQUEST"
     assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["x-frame-options"] == "DENY"  # a refusal carries every security header
+    assert r.headers["strict-transport-security"] == "max-age=31536000"
 
 
 @pytest.mark.usefixtures("auth_off")

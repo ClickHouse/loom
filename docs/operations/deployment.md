@@ -592,6 +592,12 @@ ledger row.
 
 The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
 
+- Loom sends `Strict-Transport-Security: max-age=31536000` on every response itself, so
+  the terminator need not add it; a browser honours it only over HTTPS. Change the
+  max-age with `LOOM_HSTS_MAX_AGE_SECONDS`, or set it to `0` and let the terminator send
+  its own (with `includeSubDomains` or `preload` if the domain wants them). Frame denial and
+  `Referrer-Policy` come from Loom too ([response headers](../architecture/security.md#response-headers)).
+
 - uvicorn honours `X-Forwarded-For` and `X-Forwarded-Proto` only from the peers in
   `LOOM_TRUSTED_PROXIES` (default `127.0.0.1`); set it to your proxy's address or
   network. `X-Forwarded-Host` is never read: client-facing URLs come from

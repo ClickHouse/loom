@@ -559,7 +559,23 @@ host and port) when it is set; otherwise an `Origin` whose host and port match t
 request's `Host` counts, whatever its scheme, so a TLS proxy whose `X-Forwarded-Proto`
 is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 
-**Browser.** Every response is `X-Content-Type-Options: nosniff`. The dashboard page carries a
+## Response headers
+
+Every response, refusals included, carries:
+
+| Header                                 | Why                                                                                                                                                                                                                                                         |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `X-Content-Type-Options: nosniff`      | No body is sniffed into a type it was not served as.                                                                                                                                                                                                        |
+| `X-Frame-Options: DENY`                | No other page frames the dashboard or an API answer (clickjacking).                                                                                                                                                                                         |
+| `Content-Security-Policy`              | `frame-ancestors 'none'` when the route sets no policy of its own; the dashboard page and downloads send their own (below), the dashboard's with `frame-ancestors 'none'`.                                                                                  |
+| `Referrer-Policy: same-origin`         | A dashboard URL, which can name a record, is never sent to another origin. Not `no-referrer`: under it a browser sends `Origin: null` on a same-origin form POST, which the cross-site check refuses.                                                       |
+| `Strict-Transport-Security: max-age=N` | `N` is `LOOM_HSTS_MAX_AGE_SECONDS` (one year by default, `0` sends none), without `includeSubDomains` or `preload`. Loom serves plain HTTP behind a TLS terminator; a browser ignores the header over plain HTTP and honours it once it arrives over HTTPS. |
+
+A route that sets one of these itself keeps its value. Nothing in Loom frames the dashboard;
+its own document preview is a `blob:` frame inside the page, which `frame-ancestors` and
+`X-Frame-Options` do not govern.
+
+**Browser.** The dashboard page carries a
 Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot
 snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
 attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews

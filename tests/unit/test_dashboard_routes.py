@@ -165,3 +165,28 @@ def test_a_missing_build_answers_503_on_pages(client, tmp_path, monkeypatch) -> 
     monkeypatch.setattr(_assets_mount(app).app, "all_directories", [tmp_path / "absent/assets"])
     assert client.get("/memories").status_code == 503
     assert client.get("/assets/index-deadbeef.js").status_code == 404
+
+
+@pytest.mark.parametrize("path", ["/v1/whoami", "/", "/assets/index-deadbeef.js"])
+def test_api_page_and_asset_answers_carry_the_browser_security_headers(client, path: str) -> None:
+    r = client.get(path)
+    assert r.status_code == 200
+    assert r.headers["strict-transport-security"] == "max-age=31536000"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+    assert r.headers["referrer-policy"] == "same-origin"
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_the_dashboard_keeps_its_own_csp(client) -> None:
+    csp = client.get("/").headers["content-security-policy"]
+    assert "nonce-" in csp and csp != "frame-ancestors 'none'"
+
+
+def test_hsts_max_age_zero_sends_no_hsts(client, monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "hsts_max_age_seconds", 0)
+    r = client.get("/v1/whoami")
+    assert "strict-transport-security" not in r.headers
+    assert r.headers["x-frame-options"] == "DENY"

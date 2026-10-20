@@ -426,6 +426,9 @@ class AuthSettings(BaseModel):
     # Request-body cap, bytes, enforced by ASGI middleware before any parser
     # (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables.
     max_request_bytes: int = 32 * 1024 * 1024
+    # Strict-Transport-Security max-age, seconds, sent on every response (browsers
+    # ignore it over plain HTTP). 0 sends no header.
+    hsts_max_age_seconds: int = Field(default=31_536_000, ge=0)
 
     # History policy over the agent trace: "off" reads/writes nothing;
     # "shadow" records verdicts in loom.policy_decisions without blocking;

@@ -58,6 +58,7 @@ Source: `server/settings/_auth.py`
 | `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` | Commit the `namespace.restricted_access` audit row every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the seconds the awaited insert adds. |
 | `LOOM_CORS_ORIGINS` | `str` | `''` | Comma-separated origin list. "*" allows all (acceptable when auth_required=True). Empty disables CORS entirely. |
 | `LOOM_MAX_REQUEST_BYTES` | `int` | `33554432` | Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables. |
+| `LOOM_HSTS_MAX_AGE_SECONDS` | `int` | `31536000` | Strict-Transport-Security max-age, seconds, sent on every response (browsers ignore it over plain HTTP). 0 sends no header. |
 | `LOOM_POLICY_MODE` | `'off' \| 'shadow' \| 'enforce'` | `'off'` | History policy over the agent trace: "off" reads/writes nothing; "shadow" records verdicts in loom.policy_decisions without blocking; "enforce" denies (403 POLICY_FORBIDDEN) and records them too. In enforce, writes fail closed on evaluation errors; reads never do. |
 | `LOOM_POLICY_MAX_WINDOW_SECONDS` | `int` | `86400` | Cap on any rule's look-back window, in seconds. |
 | `LOOM_POLICY_CACHE_TTL_SECONDS` | `int` | `30` | Per-(org, namespace) rule cache TTL, seconds; other replicas see a rule change within it. |
