@@ -9847,7 +9847,7 @@ class LearningsReviewInput(TypedDict, total=False):
     candidate_id: Required[str]
     decision: Required[Literal["promote", "reject"]]
     reason: NotRequired[str]
-    destination: NotRequired[Literal["memory", "knowledge", "both"]]
+    destination: NotRequired[Optional[Literal["memory", "knowledge", "both"]]]
     approver: NotRequired[str]
 
 
@@ -9857,7 +9857,7 @@ class LearningsReviewBody(TypedDict, total=False):
     candidate_id: Required[str]
     decision: Required[Literal["promote", "reject"]]
     reason: NotRequired[str]
-    destination: NotRequired[Literal["memory", "knowledge", "both"]]
+    destination: NotRequired[Optional[Literal["memory", "knowledge", "both"]]]
     approver: NotRequired[str]
 
 

@@ -10,7 +10,7 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 ## `learnings.list`
 
-List candidate learnings (memories the auto-promote worker flagged as worth promoting to shared).
+List candidate learnings waiting for review: memories several writers back (promoted to shared), and rules a bot stated about itself in conversations (source_kind=assistant_turn).
 
 `POST /v1/learnings.list` · MCP `loom_learnings_list` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -55,7 +55,7 @@ Approve or reject a pending learning.
 | `candidate_id` | `str` | required | The queued candidate to decide; one unknown in `namespace` answers 404. |
 | `decision` | `Literal['promote', 'reject']` | required | `promote` writes it to `destination` and marks it promoted; `reject` only marks it rejected. |
 | `reason` | `str` | `''` | Why; stored as `decision_reason` and carried into the promoted row's provenance. |
-| `destination` | `Literal['memory', 'knowledge', 'both']` | `'memory'` | On 'promote': 'memory' → loom.shared, 'knowledge' → knowledge.upsert, 'both' → both in sequence. |
+| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | On 'promote': 'memory' → loom.shared (a supporters candidate) or a namespace memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence. |
 | `approver` | `str` | `'learnings-reviewer'` | Captured into the audit subject + shared.promoted_by. |
 
 | Output field | Type | Meaning |

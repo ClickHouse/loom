@@ -1162,13 +1162,16 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Learnings (high-confidence promotions) ----
     "learnings.list": (
-        "List candidate learnings (memories the auto-promote worker "
-        "flagged as worth promoting to shared). Use when the user wants "
+        "List candidate learnings waiting for review: memories several writers "
+        "back (promoted to shared), and rules a bot stated about itself in "
+        "conversations (source_kind=assistant_turn). Use when the user wants "
         "to review the promotion queue."
     ),
     "learnings.review": (
-        "Approve or reject a pending learning. Approving promotes the "
-        "memory to scope=shared; rejecting tombstones the candidate."
+        "Approve or reject a pending learning. Approving promotes a memory "
+        "candidate to scope=shared, and a bot's rule to the namespace's "
+        "knowledge, where every user's reads find it; rejecting keeps the "
+        "candidate as rejected."
     ),
     # ---- Conflicts (contradicting memories) ----
     "conflicts.list": (

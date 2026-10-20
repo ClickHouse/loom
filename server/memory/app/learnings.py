@@ -189,9 +189,12 @@ async def handle_learnings_review(
     # A bot rule with no supporter left (blanked once decided, deleted once pending
     # by the erasure that took its last supporter): there is no rule left to review,
     # so it answers as a missing candidate does.
-    support: dict[str, dict[str, Any]] = {}
-    if row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND:
-        support = await _assistant_turn_support(input.org, input.namespace, [row])
+    agent_rule = row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND
+    support: list[dict[str, Any]] = []
+    if row is not None and agent_rule:
+        support = await learnings_repo.supporter_stats(
+            input.org, input.namespace, [str(row["candidate_id"])]
+        )
         if not row.get("proposed_value") or not support:
             row = None
     if row is None:
@@ -224,10 +227,10 @@ async def handle_learnings_review(
         # A bot rule is promoted with the confidence the reviewer saw: the mean over
         # its supporters, not the filing session's own. Only the promotion reads it;
         # the status row below keeps the candidate's own columns.
-        confidence = support.get(str(row["candidate_id"]), {}).get("confidence_avg")
-        promoted = row if confidence is None else {**row, "confidence_avg": confidence}
-        wants_memory = input.destination in ("memory", "both")
-        wants_knowledge = input.destination in ("knowledge", "both")
+        promoted = {**row, "confidence_avg": float(support[0]["confidence"])} if support else row
+        destination = input.destination or ("knowledge" if agent_rule else "memory")
+        wants_memory = destination in ("memory", "both")
+        wants_knowledge = destination in ("knowledge", "both")
         if wants_memory:
             await _do_promote(
                 input.org,
@@ -241,7 +244,7 @@ async def handle_learnings_review(
             knowledge_source_uri = await _do_promote_to_knowledge(
                 input.org,
                 input.namespace,
-                row,
+                promoted,
                 input.approver,
                 input.reason,
             )
@@ -444,6 +447,14 @@ async def _do_promote_to_knowledge(
     source_uri = f"learning://{candidate_row['candidate_id']}"
     title = candidate_row.get("memory_key", "") or "promoted-learning"
     source_kind = candidate_row.get("source_kind", "") or "memory_supporters"
+    tags = ["promoted-from-learning", f"source-kind:{source_kind}"]
+    # A bot's rule names its agent, as the document's author and as a tag a bot
+    # filters its own rules by (knowledge.search(tags=["agent:<id>"])).
+    agent = (
+        str(candidate_row.get("agent") or "") if source_kind == assistant_rules.SOURCE_KIND else ""
+    )
+    if agent:
+        tags.append(f"agent:{agent}")
     rationale = f"reviewed-and-promoted-to-knowledge by {approver}" + (
         f": {reason}" if reason else ""
     )
@@ -455,7 +466,8 @@ async def _do_promote_to_knowledge(
             content=content,
             source_uri=source_uri,
             title=title,
-            tags=["promoted-from-learning", f"source-kind:{source_kind}"],
+            tags=tags,
+            agent=agent,
             metadata={
                 "promoted_from_candidate_id": str(candidate_row["candidate_id"]),
                 "rationale": rationale,

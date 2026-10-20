@@ -62,9 +62,11 @@ class LearningsReviewInput(BaseModel):
     decision: ReviewDecision
     # Why; stored as `decision_reason` and carried into the promoted row's provenance.
     reason: str = ""
-    # On 'promote': 'memory' → loom.shared, 'knowledge' → knowledge.upsert,
-    # 'both' → both in sequence.
-    destination: PromotionDestination = "memory"
+    # On 'promote': 'memory' → loom.shared (a supporters candidate) or a namespace
+    # memory row, 'knowledge' → knowledge.upsert, 'both' → both in sequence. Unset:
+    # 'knowledge' for an `assistant_turn` rule (knowledge is what every user's reads
+    # of the namespace serve), 'memory' otherwise.
+    destination: PromotionDestination | None = None
     # Captured into the audit subject + shared.promoted_by.
     approver: str = "learnings-reviewer"
 

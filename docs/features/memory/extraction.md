@@ -97,9 +97,14 @@ request's `(org, namespace, agent)`:
   A user erasure deletes that user's supporter rows, so the next supporter's quotes
   show. A candidate left with none is deleted when pending; when decided, it keeps its
   decision with the rule blanked.
-- Support never promotes a candidate. An admin's `learnings.review` does, and the rule
-  becomes the agent's memory (`user_id` `-`) for every user of the bot, with
-  `source_trace` `learning:<candidate_id>`.
+- Support never promotes a candidate. An admin's `learnings.review` does. By default
+  the rule is published to the namespace's knowledge (`learning://<candidate_id>`,
+  tagged `agent:<agent>`), which every user's reads serve: `context.pack` with
+  `include_knowledge`, `knowledge.search` and `loom_search`, a user bounded to their own
+  rows included. Knowledge is not filtered by agent; a bot reads only its own rules
+  with `knowledge.search(tags=["agent:<agent>"])`. `destination="memory"` writes the
+  agent's memory row instead (`user_id` `-`, `source_trace` `learning:<candidate_id>`),
+  which namespace-wide reads find and a read bounded to one user does not.
 - A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
   files for the agent its issuer signed, never the body's `agent`, and files nothing
   when it names no agent.

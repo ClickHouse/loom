@@ -668,11 +668,11 @@ describe("ReviewQueue", () => {
     await screen.findByText("assistant_rule_refunds", {}, WAIT);
     expect(screen.getByText(/2 users, 3 sessions/)).toBeTruthy();
     expect(screen.getAllByText(/A bot's rule about itself/)).toHaveLength(3);
-    expect(screen.getByText(/apply to every user of agent support-bot/)).toBeTruthy();
+    expect(screen.getByText(/agent support-bot/)).toBeTruthy();
     expect(screen.getAllByText(/1 supporter ·/)).toHaveLength(2);
-    expect(screen.getAllByText(/apply to every user of every agent in this namespace/)).toHaveLength(1);
-    expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(2); // its line and its warning
-    expect(screen.getAllByText(/Promote makes this rule apply/)).toHaveLength(2);
+    expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(1);
+    // The rows that name an agent ("-" included) say what Promote does; the old one does not.
+    expect(screen.getAllByText(/Promote publishes this rule to this namespace's knowledge/)).toHaveLength(2);
   });
 
   it("says a bot rule's text went with a user erasure and its decision stands", async () => {

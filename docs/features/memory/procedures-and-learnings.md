@@ -202,7 +202,8 @@ row holds the rule and no user's words. Each session that states the rule adds a
 `loom.learnings_supporters` with that user's own quotes. When the candidate is listed,
 `supporter_count` is the distinct end users, `supporter_sessions` the distinct
 sessions, and the `rationale` the earliest remaining supporter's quotes. Support never
-promotes it; promoting it writes the rule as the agent's memory for every user.
+promotes it; promoting it publishes the rule to the namespace's knowledge, tagged
+`agent:<agent>`, where every user's reads find it.
 
 A user erasure deletes that user's supporter rows, and their quotes with them. A
 candidate left with no supporter is deleted when pending. When decided, it keeps its
@@ -211,11 +212,11 @@ status row with the rule blanked, so a rejected rule never comes back as pending
 `learnings.quality` counts the conversation seeder by default, since it reports
 extraction quality; pass `source_kind="assistant_turn"` for the bot rules.
 
-| Op                  | Role   | Does                                                                                                               |
-| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                           |
-| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone), `knowledge` or `both`. |
-| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                          |
+| Op                  | Role   | Does                                                                                                                                                                           |
+| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                                                                                       |
+| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone), `knowledge` or `both`; unset, `knowledge` for a bot's rule and `memory` otherwise. |
+| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                                                                                      |
 
 `learnings.list` and `learnings.review` are HTTP and SDK only (`bot.learnings`). A
 promotion to `memory` goes through the `memory.promote` path, so

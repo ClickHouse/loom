@@ -716,9 +716,13 @@ async def test_a_decided_rule_with_no_supporters_lists_no_users_and_no_confidenc
 
 
 @pytest.mark.asyncio
-async def test_promoting_a_rule_writes_the_agents_memory_with_the_supporters_confidence(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("destination", [None, "memory"])
+async def test_promoting_a_rule_publishes_it_where_every_users_reads_find_it(
+    monkeypatch: pytest.MonkeyPatch, destination: str | None
 ) -> None:
+    """Unset, a bot's rule goes to the namespace's knowledge, tagged with its agent;
+    `destination="memory"` writes the agent's memory row (read by the namespace-wide
+    reads, not by one user's)."""
     from server.memory.api.models_learnings import LearningsReviewInput
     from server.memory.app import learnings as h
     from server.memory.domain.provenance import class_from_trace
@@ -764,23 +768,39 @@ async def test_promoting_a_rule_writes_the_agents_memory_with_the_supporters_con
     async def fake_set(set_input: Any) -> None:
         calls.append(set_input)
 
+    async def fake_upsert(doc: Any) -> None:
+        calls.append(doc)
+
+    monkeypatch.setattr("server.knowledge.app.writes.handle_knowledge_upsert", fake_upsert)
     monkeypatch.setattr(learnings_repo, "find_candidate", fake_find)
     monkeypatch.setattr(learnings_repo, "insert_row", fake_insert)
     monkeypatch.setattr(learnings_repo, "supporter_stats", fake_stats)
     monkeypatch.setattr("server.memory.app.write.handle_memory_set", fake_set)
-    await h.handle_learnings_review(
+    out = await h.handle_learnings_review(
         LearningsReviewInput(
-            org="o", namespace="ns", candidate_id=_cid(), decision="promote", approver="admin"
+            org="o",
+            namespace="ns",
+            candidate_id=_cid(),
+            decision="promote",
+            approver="admin",
+            destination=destination,
         )
     )
 
-    (set_input,) = calls
-    assert (set_input.agent, set_input.user_id, set_input.session_id) == ("support-bot", "-", "-")
-    assert set_input.value == _VALUE
-    assert set_input.confidence == 0.9  # what the reviewer saw
-    assert set_input.source_trace == f"learning:{_cid()}"
-    assert class_from_trace(set_input.source_trace) == "extracted"
-    assert "source-kind:assistant_turn" in set_input.tags
+    (written,) = calls
+    if destination is None:
+        assert (out.promoted_to_knowledge, out.promoted_to_shared) == (True, False)
+        assert written.content == _VALUE and written.source_uri == f"learning://{_cid()}"
+        assert written.agent == "support-bot"
+        assert "agent:support-bot" in written.tags and "source-kind:assistant_turn" in written.tags
+    else:
+        assert (out.promoted_to_knowledge, out.promoted_to_shared) == (False, True)
+        assert (written.agent, written.user_id, written.session_id) == ("support-bot", "-", "-")
+        assert written.value == _VALUE
+        assert written.confidence == 0.9  # what the reviewer saw
+        assert written.source_trace == f"learning:{_cid()}"
+        assert class_from_trace(written.source_trace) == "extracted"
+        assert "source-kind:assistant_turn" in written.tags
     # The status row keeps the candidate's own columns: no supporter names on it.
     (status,) = status_rows
     assert status["status"] == "promoted" and status["supporters"] == []
@@ -791,3 +811,47 @@ def test_a_supporter_row_carries_every_column_of_loom_learnings_supporters() -> 
     from tests.unit.schema_ddl import column_names
 
     assert column_names("learnings_supporters") == list(learnings_repo.SUPPORTER_COLUMNS)
+
+
+@pytest.mark.asyncio
+async def test_the_lineage_of_a_promoted_rule_names_its_approver_and_its_users(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_graph import MemoryLineageInput
+    from server.memory.app import dedup
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH().on(
+        "FROM loom.memory FINAL",
+        [
+            {
+                "tags": ["source-kind:assistant_turn", f"candidate-id:{_cid()}"],
+                "created_at": datetime(2026, 1, 3),
+                "user_id": "-",
+                "agent": "support-bot",
+                "actor": "human:admin@example.com",
+                "source_trace": f"learning:{_cid()}",
+                "source_resource_id": "",
+            }
+        ],
+    )
+    ch.install(monkeypatch)
+
+    async def fake_find(*_a: Any) -> dict[str, Any]:
+        return {"candidate_id": _cid(), "source_kind": "assistant_turn", "supporters": []}
+
+    async def fake_stats(*_a: Any) -> list[dict[str, Any]]:
+        return [{"candidate_id": _cid(), "users": 2, "sessions": 3, "confidence": 0.9}]
+
+    monkeypatch.setattr(learnings_repo, "find_candidate", fake_find)
+    monkeypatch.setattr(learnings_repo, "supporter_stats", fake_stats)
+    out = await dedup._lineage_from_memory_tags(
+        MemoryLineageInput(
+            org="o",
+            namespace="ns",
+            agent="support-bot",
+            memory_key="assistant_rule_refund_escalation",
+        )
+    )
+    assert out.promoted_by == "human:admin@example.com"
+    assert out.candidate is not None and out.candidate.supporter_count == 2

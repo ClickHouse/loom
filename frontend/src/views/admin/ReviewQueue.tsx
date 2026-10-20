@@ -689,7 +689,7 @@ function LearningsPanel({
                 <>
                   {isAgentRule(r) && r.agent !== undefined && (
                     <div className="text-sm text-text-muted mb-2">
-                      Promote makes this rule apply to every user of {agentLabel(r)}.
+                      Promote publishes this rule to this namespace's knowledge, where every user's reads find it.
                     </div>
                   )}
                   <TextAreaField

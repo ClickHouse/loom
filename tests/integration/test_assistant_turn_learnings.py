@@ -197,29 +197,45 @@ def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(
         },
     )
     assert review["new_status"] == "promoted"
-    assert review["promoted_to_shared"] is True
+    assert review["promoted_to_knowledge"] is True
     assert _listed(base_url, tok, org, ns) == []
     # A supporter after the decision does not reopen it.
     _converse(base_url, tok, org, ns, "carol", "s3")
     assert _listed(base_url, tok, org, ns) == []
 
-    # The agent's memory now, for every user of the bot.
-    got = _call(
-        base_url,
-        tok,
-        "memory.get",
-        {
-            "org": org,
-            "namespace": ns,
-            "agent": _AGENT,
-            "user_id": "-",
-            "session_id": "-",
-            "memory_key": cand["memory_key"],
-        },
-    )
-    assert got["found"] is True
-    assert got["value"] == f"Assistant rule: {_RULE}"
-    assert "source-kind:assistant_turn" in got["tags"]
+    # Published to the namespace's knowledge: every user's reads find it, a user
+    # bounded to their own rows (read_scope=own_user) included, and a bot reads its
+    # own rules by the agent tag.
+    rule = f"Assistant rule: {_RULE}"
+    query = "escalate any refund over $500 to a human"
+    for user_id, read_scope in (("alice", "own_user"), ("dave", "namespace")):
+        pack = _call(
+            base_url,
+            tok,
+            "context.pack",
+            {
+                "org": org,
+                "namespace": ns,
+                "agent": _AGENT,
+                "user_id": user_id,
+                "query": query,
+                "read_scope": read_scope,
+                "include_knowledge": True,
+            },
+        )
+        assert rule in pack["sections"].get("knowledge", ""), (user_id, pack["sections"])
+
+    def by_tag(agent: str) -> list[str]:
+        out = _call(
+            base_url,
+            tok,
+            "knowledge.search",
+            {"org": org, "namespace": ns, "query": query, "tags": [f"agent:{agent}"]},
+        )
+        return [h["content"] for h in out["results"]]
+
+    assert by_tag(_AGENT) == [rule]
+    assert by_tag("other-bot") == []
 
 
 def test_a_different_rule_under_one_key_is_its_own_candidate(

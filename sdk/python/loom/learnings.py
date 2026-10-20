@@ -56,16 +56,17 @@ class LearningsClient:
         candidate_id: str,
         decision: Decision,
         *,
-        destination: str = "memory",
+        destination: str | None = None,
         reason: str = "",
         approver: str = "learnings-reviewer",
     ) -> dict[str, Any]:
         """Promote or reject one candidate.
 
         On 'promote', `destination` chooses where it lands:
-          - 'memory'    → loom.shared (default)
+          - 'memory'    → loom.shared, or a memory row for a bot's rule
           - 'knowledge' → a document, knowledge.upsert(source_uri='learning://<cid>')
           - 'both'      → both, memory first
+          - None        → 'knowledge' for a bot's rule (assistant_turn), else 'memory'
 
         On 'reject' the queue row's status flips and nothing else runs.
         Idempotent: re-reviewing a decided candidate returns its state.
@@ -77,7 +78,7 @@ class LearningsClient:
                 "namespace": self._agent.namespace,
                 "candidate_id": candidate_id,
                 "decision": decision,
-                "destination": destination,
+                **({"destination": destination} if destination is not None else {}),
                 "reason": reason,
                 "approver": approver,
             },

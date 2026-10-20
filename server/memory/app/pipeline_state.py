@@ -58,7 +58,7 @@ class WorkflowState:
     # The agent a filed rule is for (`assistant_learnings.request_rule_agent`):
     # a pinned token's signed agent, else the body's; '' files nothing.
     rule_agent: str = ""
-    # Assistant rules routed to the learnings queue.
+    # Rules that wrote a new candidate or this session's support of one.
     learning_candidates: int = 0
     segments: int = 1
     # Facts written as time-bounded foresight.

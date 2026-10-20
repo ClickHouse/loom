@@ -3513,7 +3513,7 @@ export interface LearningsReviewInput {
   candidate_id: string;
   decision: "promote" | "reject";
   reason?: string;
-  destination?: "memory" | "knowledge" | "both";
+  destination?: "memory" | "knowledge" | "both" | null;
   approver?: string;
 }
 
