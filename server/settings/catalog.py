@@ -1857,9 +1857,9 @@ class KnowledgeSettings(BaseModel):
     # conversation.search cosine floor; without it the top_k nearest threads
     # return however far. Stricter than memory recall: chat excerpts are noisy.
     conversation_search_min_similarity: Annotated[float, LIVE] = 0.30
-    # Characters of a turn a conversation.search or conversation.search_saved_messages
-    # hit shows; the embedding row keeps the whole embedded text, so this changes no
-    # stored row. At most 2048, the most a row stores (EMBEDDED_EXCERPT_CHARS).
+    # Characters of a turn a conversation search hit or a saved-message listing shows;
+    # it changes no stored row. At most 2048, the most an embedding row stores
+    # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it.
     conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled

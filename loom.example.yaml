@@ -2286,9 +2286,9 @@ settings:
   # however far. Stricter than memory recall: chat excerpts are noisy. [live]
   # conversation_search_min_similarity: 0.3
 
-  # Characters of a turn a conversation.search or conversation.search_saved_messages hit
-  # shows; the embedding row keeps the whole embedded text, so this changes no stored
-  # row. At most 2048, the most a row stores (EMBEDDED_EXCERPT_CHARS). [live]
+  # Characters of a turn a conversation search hit or a saved-message listing shows; it
+  # changes no stored row. At most 2048, the most an embedding row stores
+  # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. [live]
   # conversation_search_excerpt_chars: 240
 
   # LLM-title untitled threads in namespaces with conversation_logging_enabled (the

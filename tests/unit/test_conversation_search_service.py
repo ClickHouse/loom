@@ -240,7 +240,7 @@ async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
         scope=WHOLE_NAMESPACE,
         saved_only=False,
     )
-    assert out.hits[0].content_excerpt.removesuffix("…") == content[:12]
+    assert out.hits[0].content_excerpt == content[:12]
 
 
 def test_the_excerpt_setting_is_bounded_by_what_a_row_stores() -> None:
