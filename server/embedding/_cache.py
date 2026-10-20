@@ -97,9 +97,9 @@ async def cached_embed(
     width: a shared-tier row of another width (the same model before a
     `LOOM_EMBEDDING_DIM` change) is not this embedder's vector.
 
-    Checks the call's customer first (`server.llm.customer.require`): a hit
-    or a joined flight must not hide a path that names none, and one caller's
-    refusal must never reach another's waiter.
+    Checks the call's customer first (`server.llm.customer.require`), as
+    every model call does before anything is cached: a refused call gets no
+    hit and joins no flight.
 
     The hit flag is returned rather than inferred from the `hits`/`misses`
     counters: those are process-wide, so diffing them across an `await` races

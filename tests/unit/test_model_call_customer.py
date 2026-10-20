@@ -310,9 +310,7 @@ def test_a_refusal_is_logged_once_a_minute_by_its_code(metered, monkeypatch, cap
     assert len(logged) == 2
 
 
-def test_a_refusal_comes_before_the_gateway_the_cache_and_provider_health(
-    metered, monkeypatch
-) -> None:
+def test_a_refusal_comes_before_the_gateway_and_provider_health(metered, monkeypatch) -> None:
     from server.embedding import openai as embed_mod
     from server.llm import gateway
 
@@ -326,6 +324,25 @@ def test_a_refusal_comes_before_the_gateway_the_cache_and_provider_health(
         asyncio.run(embedder._embed_one_raw("text"))
     # A call naming no customer has no request org either, so it reads no cache
     # (test_model_cache_per_org) and reaches the refusal above.
+
+
+def test_a_refused_call_gets_no_cached_vector(monkeypatch) -> None:
+    # The one refusal a request org can carry here: required set after load
+    # without its header.
+    from server.embedding import _cache
+    from server.embedding import openai as embed_mod
+
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    monkeypatch.setattr(settings, "inference_customer_required", True)
+    monkeypatch.setattr(_cache, "_cache", _cache._LRU(max_size=8, ttl_s=60.0))
+    embedder = embed_mod.OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
+    _request("acme")
+    try:
+        _cache._cache.put(_cache._key(embedder.model_name, "cached", "acme"), [1.0] * 8)
+        with pytest.raises(customer.Unattributed, match="REQUIRED"):
+            asyncio.run(embedder.embed("cached"))
+    finally:
+        genai._identity.set(None)
 
 
 def test_the_fakes_check_the_customer_as_a_metered_provider_would(metered) -> None:
