@@ -152,9 +152,9 @@ class ProfileSchemaInput(BaseModel):
 class ProfileSchemaOutput(BaseModel):
     # False when the namespace has no profile schema.
     found: bool
-    # The schema as stored (canonical JSON key order); {} when not found.
+    # The schema as the admin set it, in their key order; {} when not found.
     json_schema: dict[str, Any] = {}
-    # SHA-256 of the canonical schema; each built profile names the hash it was built under.
+    # SHA-256 of the schema's properties (not its titles or order), which each profile names.
     schema_sha256: str = ""
     # The subject that set it; empty when not found.
     updated_by: str = ""

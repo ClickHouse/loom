@@ -714,6 +714,14 @@ counting as `credential` for its default shape filter: a new version per row and
 unlabelled row that holds a credential is embedded like any other, so search serves it, and
 `memory.ask` and the conflict judge can send it to their models.
 
+A redaction (`memory.redact`) scrubs the version it names and that key's derived rows; it
+does not reach the profiles built from the text. The structured profile is rebuilt from
+the user's current facts on the next pass once a source changes, is deleted or is erased,
+but its earlier versions (`structured_profile`, and the free-text fold's
+`consolidated_profile`) keep what the model wrote from the redacted text until they are
+redacted too: `memory.history` on the profile key lists them, and `memory.redact` takes
+each one. A user's erasure removes every version.
+
 ## Audit log
 
 `emit` in `server/observability/audit.py` writes `loom.audit_log` rows. `row_hash` is

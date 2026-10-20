@@ -309,16 +309,13 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 `structured_profile` reads only namespaces with a row in `loom.profile_schemas`
 (`profile_schema.set`, one ReplacingMergeTree row per namespace, holding no memory
 content). A profile is a `profile` memory row, so its history, erasure and read scope are
-memory's own. It carries two tags, the schema's hash and a digest of its sources'
-`(memory_id, content_sha256)` pairs, and `valid_at`, when the sources were read.
-`profile.structured` recomputes the digest to answer `stale` without a model call. The
-worker finds the users behind in two statements. The first reads
-`loom.memory_versions`, which keeps every version: a row's change time is the first time
-each of its states was written (content, live or deleted, status, sensitivity, type, the
-tags that exclude a fact), or the expiry or `valid_to` that passed, so a restatement never
-looks new. It lists users with a change since their profile's `valid_at` or no profile
-under the schema, at most `LOOM_STRUCTURED_PROFILE_CANDIDATES_PER_NAMESPACE`; the digest of
-only those decides who is rebuilt ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
+memory's own. It carries three tags: the hash of the schema's properties, a digest of its
+sources' `(memory_id, content_sha256)` pairs, and their count. The worker finds the users
+behind in one aggregate over `loom.memory FINAL` that digests every user's current facts,
+so the answer is exact: an edit, a revert, a restore, a deletion, an expiry or a passed
+`valid_to` changes a digest, and a restatement or a recall does not. Its cost follows the
+namespace's live rows, not their history. `profile.structured` recomputes one user's
+digest to answer `stale` without a model call ([structured profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes

@@ -157,20 +157,25 @@ def test_a_pinned_or_locked_profile_refuses_a_write() -> None:
     assert not w._refuses_a_write({"pinned": 0, "lock_mode": "no_delete", "lock_until": None})
 
 
-def _one_user(monkeypatch: pytest.MonkeyPatch, digests: list[str]) -> list[Any]:
-    """A build of one user whose digest reads `digests` in turn; returns what was written."""
+def _one_user(monkeypatch: pytest.MonkeyPatch, live_after: set[str]) -> list[Any]:
+    """A build of one user who has facts m1 and m2, of which `live_after` are still
+    current once the model has answered; returns what was written."""
     from server.memory.app import profile_schema as app
 
-    seq = iter(digests)
-
-    async def sources_digest(**kw: Any) -> str:
-        return next(seq)
+    async def sources_digest(**kw: Any) -> tuple[str, int]:
+        return ("d1", 2)
 
     async def profile_row(**kw: Any) -> None:
         return None
 
     async def user_facts(**kw: Any) -> list[dict[str, Any]]:
-        return [{"memory_id": "m1", "value": '"My tz is UTC."', "since": "2026-01-01"}]
+        return [
+            {"memory_id": "m1", "value": '"My tz is UTC."', "since": "2026-01-01"},
+            {"memory_id": "m2", "value": '"I speak en."', "since": "2026-01-02"},
+        ]
+
+    async def live_ids(**kw: Any) -> set[str]:
+        return set(live_after)
 
     async def ask(*a: Any) -> dict[str, Any]:
         return {"tz": "UTC"}
@@ -183,6 +188,7 @@ def _one_user(monkeypatch: pytest.MonkeyPatch, digests: list[str]) -> list[Any]:
     monkeypatch.setattr(profile_sources, "sources_digest", sources_digest)
     monkeypatch.setattr(profile_sources, "profile_row", profile_row)
     monkeypatch.setattr(profile_sources, "user_facts", user_facts)
+    monkeypatch.setattr(profile_sources, "live_ids", live_ids)
     monkeypatch.setattr(app, "write_structured_profile", write)
     monkeypatch.setattr(w, "_ask", ask)
     return written
@@ -192,12 +198,26 @@ _ONE = {"org": "o", "namespace": "n", "schema_json": _SCHEMA, "schema_sha256": "
 
 
 @pytest.mark.asyncio
-async def test_a_user_erased_while_the_model_ran_gets_no_profile(
+async def test_a_fact_erased_while_the_model_ran_stops_the_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    written = _one_user(monkeypatch, ["d1", ""])  # before the model call, then after the erasure
+    written = _one_user(monkeypatch, {"m1"})  # m2 erased during the model call
     assert await w.build_profile(_ONE, "u1", w.StructuredProfileConfig()) is None
     assert written == []
+
+
+@pytest.mark.asyncio
+async def test_a_build_writes_its_label_tags_and_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    written = _one_user(monkeypatch, {"m1", "m2"})
+    cfg = w.StructuredProfileConfig(label="my_profile")
+    assert await w.build_profile(_ONE, "u1", cfg) == 0
+    (row,) = written
+    assert (row["label"], row["value"], row["memory_ids"]) == (
+        "my_profile",
+        {"tz": "UTC"},
+        ["m1", "m2"],
+    )
+    assert (row["sources_digest"], row["source_count"]) == ("d1", 2)
 
 
 @pytest.mark.asyncio
@@ -206,7 +226,7 @@ async def test_a_write_the_row_refuses_is_a_refusal_carrying_the_digest(
 ) -> None:
     from server.memory.app import profile_schema as app
 
-    _one_user(monkeypatch, ["d1", "d1"])
+    _one_user(monkeypatch, {"m1", "m2"})
 
     async def refuse(**kw: Any) -> None:
         raise HTTPException(status_code=422, detail={"code": "CHAR_LIMIT_EXCEEDED"})
@@ -224,7 +244,6 @@ def test_the_config_reads_its_settings_at_each_pass(monkeypatch: pytest.MonkeyPa
         "structured_profile_max_users_per_pass": 7,
         "structured_profile_memory_limit": 30,
         "structured_profile_cooldown_seconds": 60,
-        "structured_profile_candidates_per_namespace": 50,
         "structured_profile_label": "my_profile",
         "structured_profile_model": "m",
     }
@@ -232,7 +251,7 @@ def test_the_config_reads_its_settings_at_each_pass(monkeypatch: pytest.MonkeyPa
         monkeypatch.setattr(settings, name, value)
     cfg = w.StructuredProfileConfig()
     assert (cfg.max_users_per_pass, cfg.memory_limit, cfg.cooldown_seconds) == (7, 30, 60)
-    assert (cfg.candidates, cfg.label, cfg.model) == (50, "my_profile", "m")
+    assert (cfg.label, cfg.model) == ("my_profile", "m")
 
 
 def test_the_worker_is_registered_on_its_switch_and_interval() -> None:
@@ -243,3 +262,40 @@ def test_the_worker_is_registered_on_its_switch_and_interval() -> None:
         "structured_profile_enabled",
         "structured_profile_interval_seconds",
     )
+
+
+@pytest.mark.asyncio
+async def test_a_failing_namespace_is_counted_and_the_pass_moves_on(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fine = profile_sources.users_behind
+
+    async def users_behind(**kw: Any) -> list[str]:
+        if (kw["org"], kw["namespace"]) == ("o1", "a"):
+            raise RuntimeError("the scan failed")
+        return await fine(**kw)
+
+    monkeypatch.setattr(profile_sources, "users_behind", users_behind)
+    ctx = pass_context.begin("structured_profile")
+    result = await w.run_pass(_cfg(3))
+    assert result.errors == 1 and ctx.count == 1
+    assert _spaces_built(world["built"]) == [("o1", "b"), ("o2", "a")]
+    # The cursor moved past it: the next pass starts after, and comes back to it on the wrap.
+    assert json.loads(ctx.cursor) == ["o2", "a"]
+
+
+@pytest.mark.asyncio
+async def test_the_budget_a_namespace_leaves_goes_to_one_still_behind(
+    world: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def users_behind(**kw: Any) -> list[str]:
+        # o1/a has one user behind; o1/b has many; o2/a none.
+        behind = {("o1", "a"): ["u0"], ("o1", "b"): _USERS, ("o2", "a"): []}
+        users = [u for u in behind[(kw["org"], kw["namespace"])] if u not in kw["skip"]]
+        return users[: kw["limit"]]
+
+    monkeypatch.setattr(profile_sources, "users_behind", users_behind)
+    await w.run_pass(_cfg(6))
+    per_space = {k: sum(1 for b in world["built"] if b[:2] == k) for k in _SPACES}
+    # Shares of 2: o1/a builds 1 and o2/a none, so o1/b gets the 3 left over too.
+    assert per_space == {("o1", "a"): 1, ("o1", "b"): 5, ("o2", "a"): 0}

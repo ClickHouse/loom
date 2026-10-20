@@ -16,6 +16,7 @@ a stored profile to the schema as it now is.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import math
@@ -70,13 +71,17 @@ class ProfileProperty:
         return self.item_type or self.type
 
 
-def canonical(schema: dict[str, Any]) -> str:
-    """The stored form: sorted keys, no whitespace, so one schema has one hash."""
-    return json.dumps(schema, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def stored_form(schema: dict[str, Any]) -> str:
+    """The schema as stored: the admin's own key order, no whitespace."""
+    return json.dumps(schema, separators=(",", ":"), ensure_ascii=False)
 
 
-def schema_sha256(schema: dict[str, Any]) -> str:
-    return hashlib.sha256(canonical(schema).encode()).hexdigest()
+def schema_sha256(props: list[ProfileProperty]) -> str:
+    """A hash of what a profile depends on: the properties, by name, with their
+    types, descriptions and constraints. A `title` or the properties' order
+    changes no profile, so it changes no hash."""
+    shape = sorted((dataclasses.asdict(p) for p in props), key=lambda d: d["name"])
+    return hashlib.sha256(json.dumps(shape, sort_keys=True).encode()).hexdigest()
 
 
 def _bad(message: str) -> ValidationError:
@@ -118,7 +123,7 @@ def parse(schema: Any) -> list[ProfileProperty]:
     the first thing wrong with it."""
     if not isinstance(schema, dict):
         raise _bad("must be a JSON object")
-    if len(canonical(schema).encode()) > MAX_SCHEMA_BYTES:
+    if len(stored_form(schema).encode()) > MAX_SCHEMA_BYTES:
         raise _bad(f"larger than {MAX_SCHEMA_BYTES} bytes")
     unknown = sorted(set(schema) - _SCHEMA_KEYS)
     if unknown:

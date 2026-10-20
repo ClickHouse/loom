@@ -3,6 +3,7 @@ to it, and when a built profile is behind its user's memories."""
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -77,11 +78,23 @@ def test_the_property_and_size_caps() -> None:
         ps.parse(_schema(**{f"p{i}": long for i in range(45)}))
 
 
-def test_one_schema_has_one_hash_whatever_its_key_order() -> None:
+def test_the_hash_follows_what_a_profile_depends_on() -> None:
+    def sha(schema: dict[str, Any]) -> str:
+        return ps.schema_sha256(ps.parse(schema))
+
     a = {"type": "object", "properties": {"x": _TZ, "y": _AGE}}
+    # Key order, property order and titles change no profile.
     b = {"properties": {"y": dict(reversed(list(_AGE.items()))), "x": _TZ}, "type": "object"}
-    assert ps.schema_sha256(a) == ps.schema_sha256(b)
-    assert ps.schema_sha256(a) != ps.schema_sha256(_schema(x=_TZ))
+    titled = {**a, "title": "P", "properties": {"x": {**_TZ, "title": "Zone"}, "y": _AGE}}
+    assert sha(a) == sha(b) == sha(titled)
+    # A description, a type or a property does.
+    assert sha(a) != sha(_schema(x=_TZ))
+    assert sha(a) != sha(_schema(x={**_TZ, "description": "the zone"}, y=_AGE))
+
+
+def test_the_stored_schema_keeps_the_admins_order() -> None:
+    schema = _schema(zone=_TZ, age=_AGE)
+    assert list(json.loads(ps.stored_form(schema))["properties"]) == ["zone", "age"]
 
 
 def test_an_answer_is_held_to_the_schema() -> None:
@@ -180,23 +193,20 @@ class _LocalCH:
 
 
 def _fact(mid: str, user: str, key: str, sha: str, version: int = 1, **cols: str) -> str:
-    """One version of a fact, in loom.memory and in loom.memory_versions (the view that
-    copies it is not in the test's tables); written two hours ago unless `updated_at`
-    says otherwise. `cols` are SQL literals."""
-    cols = {"memory_type": "'semantic'", "updated_at": "now() - 7200", **cols}
+    """One version of a fact; `cols` are SQL literals."""
+    cols = {"memory_type": "'semantic'", **cols}
     extra = "".join(f", {k}" for k in cols)
     vals = "".join(f", {v}" for v in cols.values())
-    return ";\n".join(
-        f"INSERT INTO loom.{table} (org, namespace, agent, user_id, session_id, memory_key, "
+    return (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
         f"value, memory_id, content_sha256, version{extra}) VALUES ('o', 'n', 'a', "
         f"'{user}', '-', '{key}', 'v', '{mid}', '{sha * 64}', {version}{vals})"
-        for table in ("memory", "memory_versions")
     )
 
 
 def _profile(user: str, tags: list[str], **cols: str) -> str:
-    """A profile whose sources were read an hour ago; `cols` are SQL literals."""
-    cols = {"valid_at": "now() - 3600", "updated_at": "now() - 3600", **cols}
+    """A profile built an hour ago; `cols` are SQL literals."""
+    cols = {"updated_at": "now() - 3600", **cols}
     extra = "".join(f", {k}" for k in cols)
     vals = "".join(f", {v}" for v in cols.values())
     return (
@@ -214,7 +224,7 @@ async def _behind(
     ch: _LocalCH,
     sha: str = _SHA,
     cool: int = 0,
-    candidates: int = 10,
+    limit: int = 10,
     refused: dict[str, str] | None = None,
 ) -> list[str]:
     from server.memory.store import profile_sources as src
@@ -225,14 +235,13 @@ async def _behind(
         label="structured_profile",
         schema_sha256=sha,
         cooldown_seconds=cool,
-        limit=10,
-        candidates=candidates,
+        limit=limit,
         refused=refused,
         ch=ch,
     )
 
 
-async def _digest(ch: _LocalCH, user: str) -> str:
+async def _digest(ch: _LocalCH, user: str) -> tuple[str, int]:
     from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import profile_sources as src
 
@@ -241,13 +250,21 @@ async def _digest(ch: _LocalCH, user: str) -> str:
     )
 
 
-async def _built(*facts: str, user: str = "u1", **cols: str) -> list[str]:
-    """The setup with `user`'s profile built from `facts`, current."""
+async def _profiles_for(setup: list[str], users: list[str], **cols: str) -> list[str]:
+    """Each of `users`' profile, built from `setup` and current."""
     from server.memory.store.profile_sources import profile_tags
 
-    setup = [ddl("memory"), ddl("memory_versions"), *facts]
-    digest = await _digest(_LocalCH(*setup), user)
-    return [*setup, _profile(user, profile_tags(_SHA, digest), **cols)]
+    out = []
+    for user in users:
+        digest, count = await _digest(_LocalCH(*setup), user)
+        out.append(_profile(user, profile_tags(_SHA, digest, count), **cols))
+    return out
+
+
+async def _built(*facts: str, user: str = "u1", **cols: str) -> list[str]:
+    """The setup with `user`'s profile built from `facts`, current."""
+    setup = [ddl("memory"), *facts]
+    return [*setup, *await _profiles_for(setup, [user], **cols)]
 
 
 @_needs_ch
@@ -255,29 +272,24 @@ async def _built(*facts: str, user: str = "u1", **cols: str) -> list[str]:
 async def test_a_profile_is_behind_its_users_memories_until_rebuilt() -> None:
     facts = [_fact(_A, "u1", "tz", "a"), _fact(_B, "u2", "tz", "b")]
     # No profile yet: both users are behind.
-    assert await _behind(_LocalCH(ddl("memory"), ddl("memory_versions"), *facts)) == [
-        "u1",
-        "u2",
-    ]
+    assert await _behind(_LocalCH(ddl("memory"), *facts)) == ["u1", "u2"]
 
     built = await _built(*facts)
-    assert len(await _digest(_LocalCH(*built), "u1")) == 16
+    digest, count = await _digest(_LocalCH(*built), "u1")
+    assert len(digest) == 16 and count == 1
     assert await _behind(_LocalCH(*built)) == ["u2"]
     # A recall or a reinforcement writes a new version with the same content: still current.
-    touched = [*built, _fact(_A, "u1", "tz", "a", version=2, updated_at="now()")]
+    touched = [*built, _fact(_A, "u1", "tz", "a", version=2)]
     assert await _behind(_LocalCH(*touched)) == ["u2"]
     # An edit puts it behind, after the user with no profile; within the cooldown it waits.
-    edited = [*built, _fact(_A, "u1", "tz", "c", version=2, updated_at="now()")]
+    edited = [*built, _fact(_A, "u1", "tz", "c", version=2)]
     assert await _behind(_LocalCH(*edited)) == ["u2", "u1"]
     assert await _behind(_LocalCH(*edited), cool=7200) == ["u2"]
-    # A deletion does not wait.
-    deleted = [
-        *built,
-        _fact(_A, "u1", "tz", "a", version=2, tombstoned_at="now()", updated_at="now()"),
-    ]
+    # A deletion (fewer sources than the build read) does not wait.
+    deleted = [*built, _fact(_A, "u1", "tz", "a", version=2, tombstoned_at="now()")]
     assert await _behind(_LocalCH(*deleted), cool=7200) == ["u2", "u1"]
     # A schema change puts every profile behind at once, cooldown or not.
-    assert await _behind(_LocalCH(*built), sha="t" * 64, cool=7200) == ["u1", "u2"]
+    assert await _behind(_LocalCH(*built), sha="t" * 64, cool=7200) == ["u2", "u1"]
 
 
 @_needs_ch
@@ -285,64 +297,88 @@ async def test_a_profile_is_behind_its_users_memories_until_rebuilt() -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        {"sensitivity": "'high'", "updated_at": "now()"},
-        {"memory_type": "'episodic'", "updated_at": "now()"},
-        {"tags": "['about:other']", "updated_at": "now()"},
-        # The expiry sweep's tombstone, then an expiry and a validity end that passed
-        # with no write at all.
-        {"tombstoned_at": "now()", "updated_at": "now()"},
+        {"sensitivity": "'high'"},
+        {"memory_type": "'episodic'"},
+        {"tags": "['about:other']"},
+        {"tombstoned_at": "now()"},
         {"expires_at": "now() - 60"},
         {"valid_to": "now() - 60"},
+        {"status": "'superseded'"},
     ],
 )
 async def test_a_source_that_stops_being_one_brings_the_user_back(change: dict[str, str]) -> None:
     built = await _built(_fact(_A, "u1", "tz", "a"))
     assert await _behind(_LocalCH(*built)) == []
-    row = _fact(_A, "u1", "tz", "a", version=2, **change)
-    assert await _behind(_LocalCH(*built, row)) == ["u1"]
+    assert await _behind(_LocalCH(*built, _fact(_A, "u1", "tz", "a", version=2, **change))) == [
+        "u1"
+    ]
 
 
 @_needs_ch
 @pytest.mark.asyncio
-async def test_restated_users_never_crowd_out_an_edited_one() -> None:
-    from server.memory.store.profile_sources import profile_tags
+async def test_a_revert_after_a_rebuild_brings_the_user_back() -> None:
+    # A -> B, rebuilt under B, then back to A.
+    a = _fact(_A, "u1", "tz", "a")
+    b = _fact(_A, "u1", "tz", "b", version=2)
+    built = await _built(a, b)
+    assert await _behind(_LocalCH(*built)) == []
+    assert await _behind(_LocalCH(*built, _fact(_A, "u1", "tz", "a", version=3))) == ["u1"]
 
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_a_restored_fact_brings_the_user_back() -> None:
+    live = _fact(_A, "u1", "tz", "a")
+    deleted = _fact(_A, "u1", "tz", "a", version=2, tombstoned_at="now() - 7200")
+    built = await _built(live, deleted, _fact(_B, "u1", "lang", "b"))
+    assert await _behind(_LocalCH(*built)) == []
+    restored = _fact(_A, "u1", "tz", "a", version=3)
+    assert await _behind(_LocalCH(*built, restored)) == ["u1"]
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_writes_that_are_no_source_never_crowd_out_an_edit() -> None:
     users = [f"r{i:02d}" for i in range(15)]
-    facts = [
-        _fact(f"00000000-0000-0000-0001-0000000000{i:02d}", u, "tz", "a")
-        for i, u in enumerate(users)
-    ]
-    facts.append(_fact(_A, "u1", "tz", "b"))
-    setup = [ddl("memory"), ddl("memory_versions"), *facts]
-    profiles = [
-        _profile(u, profile_tags(_SHA, await _digest(_LocalCH(*setup), u))) for u in [*users, "u1"]
-    ]
-    # Every restated user wrote the same value again since the build; u1 edited.
-    restated = [
-        _fact(
-            f"00000000-0000-0000-0001-0000000000{i:02d}",
-            u,
-            "tz",
-            "a",
-            version=2,
-            updated_at="now()",
+    mids = [f"00000000-0000-0000-0001-0000000000{i:02d}" for i in range(15)]
+    facts = [_fact(m, u, "tz", "a") for m, u in zip(mids, users, strict=True)]
+    setup = [ddl("memory"), *facts, _fact(_A, "u1", "tz", "b")]
+    profiles = await _profiles_for(setup, [*users, "u1"])
+    # Since the build: episodic rows, a profile section, a status change on a
+    # non-source row, a restatement; and one real edit by u1.
+    noise = []
+    for i, (m, u) in enumerate(zip(mids, users, strict=True)):
+        noise.append(
+            _fact(
+                f"00000000-0000-0000-0002-0000000000{i:02d}", u, "ep", "e", memory_type="'episodic'"
+            )
         )
-        for i, u in enumerate(users)
-    ]
-    edited = _fact(_A, "u1", "tz", "c", version=2, updated_at="now() - 60")
-    ch = _LocalCH(*setup, *profiles, *restated, edited)
-    assert await _behind(ch, candidates=5) == ["u1"]
+        noise.append(
+            _fact(
+                f"00000000-0000-0000-0003-0000000000{i:02d}",
+                u,
+                "persona",
+                "p",
+                memory_type="'profile'",
+            )
+        )
+        noise.append(_fact(m, u, "tz", "a", version=2))
+    edited = _fact(_A, "u1", "tz", "c", version=2)
+    ch = _LocalCH(*setup, *profiles, *noise, edited)
+    assert await _behind(ch, limit=5) == ["u1"]
 
 
 @_needs_ch
 @pytest.mark.asyncio
-async def test_a_refused_user_waits_until_their_digest_changes() -> None:
-    built = await _built(_fact(_A, "u1", "tz", "a"))
-    edited = [*built, _fact(_A, "u1", "tz", "c", version=2, updated_at="now()")]
-    digest = await _digest(_LocalCH(*edited), "u1")
-    assert await _behind(_LocalCH(*edited), refused={"u1": digest}) == []
-    again = [*edited, _fact(_A, "u1", "tz", "d", version=3, updated_at="now()")]
-    assert await _behind(_LocalCH(*again), refused={"u1": digest}) == ["u1"]
+async def test_a_refused_user_sorts_last_and_waits_until_their_digest_changes() -> None:
+    facts = [_fact(_A, "u1", "tz", "a"), _fact(_B, "u2", "tz", "b")]
+    built = [ddl("memory"), *facts, *await _profiles_for([ddl("memory"), *facts], ["u1", "u2"])]
+    edited = [*built, _fact(_A, "u1", "tz", "c", version=2), _fact(_B, "u2", "tz", "d", version=2)]
+    digest, _ = await _digest(_LocalCH(*edited), "u1")
+    assert await _behind(_LocalCH(*edited), limit=1, refused={"u1": digest}) == ["u2"]
+    assert await _behind(_LocalCH(*edited), refused={"u1": digest}) == ["u2"]
+    again = [*edited, _fact(_A, "u1", "tz", "e", version=3)]
+    assert await _behind(_LocalCH(*again), refused={"u1": digest}) == ["u2", "u1"]
 
 
 @_needs_ch
@@ -369,7 +405,7 @@ async def test_an_expired_or_redacted_profile_is_no_profile(gone: dict[str, str]
 @_needs_ch
 @pytest.mark.asyncio
 async def test_a_high_row_or_a_fact_about_someone_else_is_no_source() -> None:
-    base = [ddl("memory"), ddl("memory_versions"), _fact(_A, "u1", "tz", "a")]
+    base = [ddl("memory"), _fact(_A, "u1", "tz", "a")]
     digest = await _digest(_LocalCH(*base), "u1")
     high = [*base, _fact(_B, "u1", "door", "b", sensitivity="'high'")]
     other = [*base, _fact(_C, "u1", "boss_tz", "c", tags="['about:other']")]
@@ -382,26 +418,30 @@ async def test_a_high_row_or_a_fact_about_someone_else_is_no_source() -> None:
 async def test_a_user_whose_memories_are_gone_is_rebuilt_empty() -> None:
     from server.memory.store.profile_sources import profile_tags
 
-    # The fact's delete is a version written after the profile was built.
-    deleted = _fact(_A, "u1", "tz", "a", tombstoned_at="now()", updated_at="now()")
-    tables = [ddl("memory"), ddl("memory_versions")]
-    built = [*tables, deleted, _profile("u1", profile_tags(_SHA, "0123456789abcdef"))]
-    assert await _digest(_LocalCH(*built), "u1") == ""
-    assert await _behind(_LocalCH(*built)) == ["u1"]
-    emptied = [*tables, deleted, _profile("u1", profile_tags(_SHA, ""))]
+    deleted = _fact(_A, "u1", "tz", "a", tombstoned_at="now()")
+    built = [ddl("memory"), deleted, _profile("u1", profile_tags(_SHA, "0123456789abcdef", 1))]
+    assert await _digest(_LocalCH(*built), "u1") == ("", 0)
+    assert await _behind(_LocalCH(*built), cool=7200) == ["u1"]
+    emptied = [ddl("memory"), deleted, _profile("u1", profile_tags(_SHA, "", 0))]
     assert await _behind(_LocalCH(*emptied)) == []
 
 
 @_needs_ch
 @pytest.mark.asyncio
-async def test_a_fact_written_while_the_profile_was_built_puts_it_behind() -> None:
-    facts = [_fact(_A, "u1", "tz", "a")]
-    # The sources were read an hour ago and the row written ten minutes ago; the fact
-    # landed between.
-    built = await _built(*facts, updated_at="now() - 600")
-    late = _fact(_B, "u1", "lang", "b", updated_at="now() - 1800")
-    assert await _behind(_LocalCH(*built)) == []
-    assert await _behind(_LocalCH(*built, late)) == ["u1"]
+async def test_only_the_named_facts_that_are_still_current_are_live() -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import profile_sources as src
+
+    ch = _LocalCH(
+        ddl("memory"),
+        _fact(_A, "u1", "tz", "a"),
+        _fact(_B, "u1", "lang", "b"),
+        _fact(_B, "u1", "lang", "b", version=2, tombstoned_at="now()"),
+    )
+    live = await src.live_ids(
+        org="o", namespace="n", user_id="u1", memory_ids=[_A, _B], scope=WHOLE_NAMESPACE, ch=ch
+    )
+    assert live == {_A}
 
 
 def test_a_number_that_is_not_finite_or_exact_reads_null() -> None:

@@ -6,11 +6,10 @@ from server.memory.workers import profile_consolidation as pc
 
 
 def test_profile_fold_leaves_out_facts_about_others() -> None:
-    import inspect
 
     from server.memory.store import profile_sources
 
-    assert "profile_sources import user_facts" in inspect.getsource(pc._consolidate_identity)
+    assert pc.user_facts is profile_sources.user_facts  # the fold reads the shared predicate
     assert "NOT has(tags, 'about:other')" in profile_sources.CURRENT_FACTS
 
 

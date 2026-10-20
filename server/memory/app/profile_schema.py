@@ -40,13 +40,13 @@ def _now() -> datetime:
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:
     """Set the namespace's profile schema. A changed schema leaves every
     profile built under the old one `stale` until the worker rebuilds it."""
-    profile_schema.parse(input.json_schema)
+    props = profile_schema.parse(input.json_schema)
     now = _now()
     row = {
         "org": input.org,
         "namespace": input.namespace,
-        "schema_json": profile_schema.canonical(input.json_schema),
-        "schema_sha256": profile_schema.schema_sha256(input.json_schema),
+        "schema_json": profile_schema.stored_form(input.json_schema),
+        "schema_sha256": profile_schema.schema_sha256(props),
         "updated_by": writer_actor(),
         "updated_at": now,
         "tombstoned_at": None,
@@ -106,9 +106,11 @@ async def write_structured_profile(
     org: str,
     namespace: str,
     user_id: str,
+    label: str,
     value: dict[str, Any],
     schema_sha256: str,
     sources_digest: str,
+    source_count: int,
     sources_read_at: datetime,
     memory_ids: list[str],
 ) -> None:
@@ -117,7 +119,6 @@ async def write_structured_profile(
     `valid_at` is when those memories were read, the point the profile is true as of."""
     from server.memory.app.profile import write_section
 
-    label = settings.structured_profile_label
     await write_section(
         MemorySetInput(
             org=org,
@@ -127,7 +128,7 @@ async def write_structured_profile(
             memory_key=label,
             memory_type="profile",
             value=value,
-            tags=profile_sources.profile_tags(schema_sha256, sources_digest),
+            tags=profile_sources.profile_tags(schema_sha256, sources_digest, source_count),
             valid_at=sources_read_at,
             char_limit=STRUCTURED_CHAR_LIMIT,
             source_trace=f"profile.fold:{label}:" + ",".join(memory_ids),
@@ -174,7 +175,7 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
             return ProfileStructuredOutput(
                 status="pending", profile=profile_schema.project(props, {}), schema_sha256=sha
             )
-        digest = await profile_sources.sources_digest(
+        digest, _ = await profile_sources.sources_digest(
             org=input.org, namespace=input.namespace, user_id=uid, scope=rf
         )
     current = profile_sources.is_current(list(row.get("tags") or []), sha, digest)

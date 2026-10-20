@@ -187,9 +187,6 @@ class MemorySettings(BaseModel):
     structured_profile_interval_seconds: int = 120
     # Profiles one pass builds; each namespace the pass reaches gets an equal share.
     structured_profile_max_users_per_pass: int = 20
-    # Users with newer memories than their profile whose sources one pass digests
-    # per namespace, to find those really behind (a restatement changes nothing).
-    structured_profile_candidates_per_namespace: int = 200
     # Memories read into one build, highest confidence then newest first.
     structured_profile_memory_limit: int = 100
     # Seconds after a profile is built before new memories rebuild it; a schema

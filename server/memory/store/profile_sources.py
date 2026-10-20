@@ -6,11 +6,12 @@ someone else, no stored request to forget, and never a `high` row (readable by
 key only, never folded into a profile). The free-text fold also keeps to
 facts the extractor keyed on the user (`user_…`).
 
-A structured profile carries two tags (`profile_tags`): the hash of the schema
-it was built under and the digest of the rows it was built from
-(`SOURCES_DIGEST`), the user's (memory_id, content hash) pairs. An edit, a
-deletion or a new fact changes the digest; a recall or a reinforcement, which
-change neither, does not. Its `valid_at` is when its sources were read.
+A structured profile carries its tags (`profile_tags`): the hash of the schema
+it was built under, the digest of the rows it was built from (`SOURCES_DIGEST`,
+the user's (memory_id, content hash) pairs) and their count. An edit, a revert, a
+restore, a deletion or a new fact changes the digest; a recall or a
+reinforcement, which change neither, does not. Its `valid_at` is when its
+sources were read.
 
 Every reader takes the request's read scope (`server.identity.domain.read_scope`):
 a worker passes `WHOLE_NAMESPACE`.
@@ -21,7 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, scope_and
+from server.identity.domain.read_scope import ReadFilters, scope_and
 
 # `{types:Array(String)}` is the caller's parameter.
 CURRENT_FACTS = """
@@ -58,13 +59,22 @@ def schema_tag(schema_sha256: str) -> str:
     return "profile_schema:" + schema_sha256[:16]
 
 
-def profile_tags(schema_sha256: str, sources_digest: str) -> list[str]:
-    """The tags a profile built under this schema from these sources carries."""
-    return [schema_tag(schema_sha256), "profile_sources:" + sources_digest]
+def sources_tag(sources_digest: str) -> str:
+    return "profile_sources:" + sources_digest
+
+
+def profile_tags(schema_sha256: str, sources_digest: str, source_count: int) -> list[str]:
+    """The tags a profile built under this schema from these sources carries; the
+    count lets a deletion skip the rebuild cooldown."""
+    return [
+        schema_tag(schema_sha256),
+        sources_tag(sources_digest),
+        f"profile_count:{source_count}",
+    ]
 
 
 def is_current(tags: list[str], schema_sha256: str, sources_digest: str) -> bool:
-    return set(profile_tags(schema_sha256, sources_digest)) <= set(tags)
+    return {schema_tag(schema_sha256), sources_tag(sources_digest)} <= set(tags)
 
 
 async def user_facts(
@@ -112,8 +122,8 @@ async def digests(
     user_ids: list[str],
     scope: ReadFilters,
     ch: _CHClient | None = None,
-) -> dict[str, str]:
-    """The digest of each of `user_ids` that has sources, in one statement."""
+) -> dict[str, tuple[str, int]]:
+    """(digest, source count) of each of `user_ids` that has sources, in one statement."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -123,7 +133,7 @@ async def digests(
     }
     rows = await ch.query_all(
         f"""
-        SELECT user_id, {SOURCES_DIGEST} AS digest
+        SELECT user_id, {SOURCES_DIGEST} AS digest, count() AS n
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND user_id IN {{uids:Array(String)}} AND {CURRENT_FACTS}{scope_and(scope, params)}
@@ -131,7 +141,7 @@ async def digests(
         """,
         params=params,
     )
-    return {str(r["user_id"]): str(r["digest"]) for r in rows}
+    return {str(r["user_id"]): (str(r["digest"]), int(r["n"])) for r in rows}
 
 
 async def sources_digest(
@@ -141,10 +151,41 @@ async def sources_digest(
     user_id: str,
     scope: ReadFilters,
     ch: _CHClient | None = None,
-) -> str:
-    """The digest of the user's structured-profile sources now; '' when there are none."""
+) -> tuple[str, int]:
+    """The user's sources digest and count now; ('', 0) when there are none."""
     found = await digests(org=org, namespace=namespace, user_ids=[user_id], scope=scope, ch=ch)
-    return found.get(user_id, "")
+    return found.get(user_id, ("", 0))
+
+
+async def live_ids(
+    *,
+    org: str,
+    namespace: str,
+    user_id: str,
+    memory_ids: list[str],
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """Which of `memory_ids` are still current facts of the user."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "ids": memory_ids,
+        "types": STRUCTURED_TYPES,
+    }
+    rows = await ch.query_all(
+        f"""
+        SELECT toString(memory_id) AS memory_id
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}
+          AND toString(memory_id) IN {{ids:Array(String)}} AND {CURRENT_FACTS}
+          {scope_and(scope, params)}
+        """,
+        params=params,
+    )
+    return {str(r["memory_id"]) for r in rows}
 
 
 async def profile_row(
@@ -182,82 +223,67 @@ async def users_behind(
     schema_sha256: str,
     cooldown_seconds: int,
     limit: int,
-    candidates: int,
     skip: tuple[str, ...] = (),
     refused: dict[str, str] | None = None,
     ch: _CHClient | None = None,
 ) -> list[str]:
     """Users of the namespace whose structured profile is missing, built under
-    another schema, or behind their memories; at most `limit`, none of `skip`, and
-    none whose digest is still the one `refused` holds for them. Those with no
-    profile under this schema come first, then the most recently changed.
+    another schema, or built from other sources than they have now; at most
+    `limit`, none of `skip`, and none whose digest is still the one `refused`
+    holds for them. Those with no profile under this schema come first, then the
+    oldest; refused users last.
 
-    Two statements. The first lists at most `candidates` users with a row that
-    changed since their profile's sources were read. A row's change time is the
-    first time each of its states was written (value, live or deleted, status,
-    sensitivity, type, the tags that exclude a fact), read from
-    `loom.memory_versions`, which keeps every version where `loom.memory`'s merges
-    keep only the newest, so a restatement, a recall or a backfill never looks new;
-    an expiry or a `valid_to` that passed counts as a change too. Older than the
-    cooldown only, except a deletion, which rebuilds at once. The second digests
-    only those candidates."""
+    One aggregate digests every user's current facts, so the answer is exact: a
+    restatement or a recall changes no digest, and an edit, a revert, a restore,
+    a deletion, an expiry or a passed `valid_to` does. A rebuild waits out the
+    cooldown, except when the user has fewer sources than the profile was built
+    from (a deletion), and a user whose sources are all gone is behind too."""
     ch = ch or _default_client()
+    refused = refused or {}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "types": STRUCTURED_TYPES,
+        "skip": list(skip),
+        "refused": sorted(refused),
+        "label": label,
+        "schema_tag": schema_tag(schema_sha256),
+        "cool": int(max(0, cooldown_seconds)),
+        "lim": int(max(1, limit)) + len(refused),
+    }
+    # join_use_nulls = 0: a user missing from one side reads '' / 0 / [], so
+    # `NOT has(p.tags, ...)` is true for a user with no profile, never NULL.
     rows = await ch.query_all(
         f"""
-        SELECT a.user_id AS uid, p.tags AS tags
+        SELECT if(s.user_id != '', s.user_id, p.user_id) AS who, s.digest AS digest
         FROM (
-            SELECT user_id, max(changed) AS last, max(deleted) AS last_deleted
-            FROM (
-                SELECT user_id,
-                       greatest(
-                           min(updated_at),
-                           coalesce(maxIf(expires_at, expires_at <= now()), toDateTime(0)),
-                           coalesce(maxIf(valid_to, valid_to <= now()), toDateTime(0))
-                       ) AS changed,
-                       if(live, toDateTime(0), min(updated_at)) AS deleted
-                FROM loom.memory_versions
-                WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
-                  AND memory_key != {{label:String}} AND user_id NOT IN {{skip:Array(String)}}
-                GROUP BY user_id, memory_id, content_sha256, isNull(tombstoned_at) AS live,
-                         status, sensitivity, memory_type,
-                         arrayExists(
-                             t -> startsWith(t, 'attribute:') OR t IN ('about:other', 'forget'),
-                             tags
-                         )
-            )
+            SELECT user_id, {SOURCES_DIGEST} AS digest, count() AS n
+            FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
+              AND {CURRENT_FACTS}
             GROUP BY user_id
-        ) AS a
-        LEFT JOIN (
-            SELECT user_id, tags, updated_at, coalesce(valid_at, updated_at) AS read_at
+        ) AS s
+        FULL JOIN (
+            SELECT user_id, tags, updated_at,
+                   toUInt32OrZero(substring(
+                       arrayFirst(t -> startsWith(t, 'profile_count:'), tags), 15
+                   )) AS built_from
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
               AND {_LIVE_PROFILE}
-        ) AS p ON p.user_id = a.user_id
-        WHERE NOT has(p.tags, {{schema_tag:String}})
-           OR a.last_deleted >= p.read_at
-           OR (a.last >= p.read_at AND p.updated_at <= now() - toIntervalSecond({{cool:UInt32}}))
-        ORDER BY has(p.tags, {{schema_tag:String}}), a.last DESC, uid
-        LIMIT {{cand:UInt32}}
+        ) AS p ON p.user_id = s.user_id
+        WHERE if(s.user_id != '', s.user_id, p.user_id) NOT IN {{skip:Array(String)}}
+          AND (NOT has(p.tags, {{schema_tag:String}})
+               OR (NOT has(p.tags, concat('profile_sources:', s.digest))
+                   AND (s.n < p.built_from
+                        OR p.updated_at <= now() - toIntervalSecond({{cool:UInt32}}))))
+        ORDER BY has({{refused:Array(String)}}, who), has(p.tags, {{schema_tag:String}}),
+                 p.updated_at, who
+        LIMIT {{lim:UInt32}}
+        SETTINGS join_use_nulls = 0
         """,
-        params={
-            "org": org,
-            "ns": namespace,
-            "skip": list(skip),
-            "label": label,
-            "schema_tag": schema_tag(schema_sha256),
-            "cool": int(max(0, cooldown_seconds)),
-            "cand": int(max(1, candidates)),
-        },
+        params=params,
     )
-    if not rows:
-        return []
-    uids = [str(r["uid"]) for r in rows]
-    now = await digests(org=org, namespace=namespace, user_ids=uids, scope=WHOLE_NAMESPACE, ch=ch)
-    refused = refused or {}
-    behind = [
-        str(r["uid"])
-        for r in rows
-        if not is_current(list(r["tags"] or []), schema_sha256, now.get(str(r["uid"]), ""))
-        and refused.get(str(r["uid"])) != now.get(str(r["uid"]), "")
-    ]
+    # A refused user comes back once their digest moves on from the refused one.
+    behind = [str(r["who"]) for r in rows if refused.get(str(r["who"])) != str(r["digest"])]
     return behind[: max(1, limit)]

@@ -36,7 +36,10 @@ from fastapi import HTTPException
 
 from server.core.errors import LoomServerError
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.llm import client as llm_client
 from server.llm import customer
+from server.llm.json_text import strip_code_fence
+from server.memory.app import profile_schema as schema_app
 from server.memory.domain import lock, profile_schema
 from server.memory.domain.profile_facts import fact_text, render_fold_input
 from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
@@ -90,9 +93,6 @@ class StructuredProfileConfig:
     cooldown_seconds: int = field(
         default_factory=lambda: settings.structured_profile_cooldown_seconds
     )
-    candidates: int = field(
-        default_factory=lambda: settings.structured_profile_candidates_per_namespace
-    )
     label: str = field(default_factory=lambda: settings.structured_profile_label)
     model: str = field(default_factory=lambda: settings.structured_profile_model)
     # (org, namespace): build only there (a test's own namespace); None reaches every one.
@@ -129,8 +129,6 @@ def render_facts(rows: list[dict[str, Any]]) -> str:
 
 def parse_answer(text: str) -> Any:
     """The model's JSON object; None when the answer is not one."""
-    from server.llm.json_text import strip_code_fence
-
     try:
         return json.loads(strip_code_fence(text or ""))
     except ValueError:
@@ -168,6 +166,54 @@ def _cursor() -> tuple[str, str] | None:
     return (str(cursor[0]), str(cursor[1])) if len(cursor) == 2 else None
 
 
+async def _build_users(
+    schema: dict[str, Any],
+    users: list[str],
+    cfg: StructuredProfileConfig,
+    result: StructuredProfileResult,
+) -> None:
+    org, ns = str(schema["org"]), str(schema["namespace"])
+    for user_id in users:
+        key = (org, ns, user_id)
+        try:
+            dropped = await build_profile(schema, user_id, cfg)
+        except customer.HOLDS:
+            continue  # a held call is no failure: the user is built once the org is back
+        except Refused as e:
+            result.refused += 1
+            _refused[key] = str(e)
+            continue
+        except Exception as e:  # one user's build never stops the pass
+            result.errors += 1
+            _note_failure(key)
+            log.exception("structured profile failed for %s/%s", ns, user_id)
+            pass_context.note_failure(e, ns)
+            continue
+        _backoff.pop(key, None)
+        _refused.pop(key, None)
+        if dropped is None:
+            result.skipped += 1
+        else:
+            result.profiles_written += 1
+            result.values_dropped += dropped
+
+
+async def _behind(
+    schema: dict[str, Any], cfg: StructuredProfileConfig, limit: int, tried: set[str]
+) -> list[str]:
+    org, ns = str(schema["org"]), str(schema["namespace"])
+    return await profile_sources.users_behind(
+        org=org,
+        namespace=ns,
+        label=cfg.label,
+        schema_sha256=str(schema["schema_sha256"]),
+        cooldown_seconds=int(cfg.cooldown_seconds),
+        limit=limit,
+        skip=tuple(sorted(set(backing_off(org, ns)) | tried)),
+        refused=refused_digests(org, ns),
+    )
+
+
 async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProfileResult:
     cfg = cfg or StructuredProfileConfig()
     result = StructuredProfileResult()
@@ -179,6 +225,9 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             exclude_orgs=off, after=_cursor(), limit=budget, only=cfg.only
         )
         share = math.ceil(budget / len(spaces)) if spaces else 0
+        tried: dict[tuple[str, str], set[str]] = {}
+        # Namespaces that used their whole share: the budget others left goes to them.
+        hungry: list[dict[str, Any]] = []
         for schema in spaces:
             if budget <= 0:
                 break
@@ -186,42 +235,36 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             org, ns = str(schema["org"]), str(schema["namespace"])
             result.namespaces_scanned += 1
             pass_context.set_namespace(ns)
+            # The cursor moves on before the namespace's work, so one that keeps failing
+            # is tried again when the rotation comes back to it, never on every pass.
             pass_context.set_cursor(json.dumps([org, ns]))
-            users = await profile_sources.users_behind(
-                org=org,
-                namespace=ns,
-                label=cfg.label,
-                schema_sha256=str(schema["schema_sha256"]),
-                cooldown_seconds=int(cfg.cooldown_seconds),
-                limit=min(share, budget),
-                candidates=int(cfg.candidates),
-                skip=backing_off(org, ns),
-                refused=refused_digests(org, ns),
-            )
-            for user_id in users:
-                budget -= 1
-                key = (org, ns, user_id)
-                try:
-                    dropped = await build_profile(schema, user_id, cfg)
-                except customer.HOLDS:
-                    continue  # a held call is no failure: the user is built once the org is back
-                except Refused as e:
-                    result.refused += 1
-                    _refused[key] = str(e)
-                    continue
-                except Exception as e:  # one user's build never stops the pass
-                    result.errors += 1
-                    _note_failure(key)
-                    log.exception("structured profile failed for %s/%s", ns, user_id)
-                    pass_context.note_failure(e, ns)
-                    continue
-                _backoff.pop(key, None)
-                _refused.pop(key, None)
-                if dropped is None:
-                    result.skipped += 1
-                else:
-                    result.profiles_written += 1
-                    result.values_dropped += dropped
+            limit = min(share, budget)
+            try:
+                users = await _behind(schema, cfg, limit, set())
+            except Exception as e:  # one namespace's failure never stops the pass
+                result.errors += 1
+                log.exception("structured profile scan failed for %s/%s", org, ns)
+                pass_context.note_failure(e, ns)
+                continue
+            budget -= len(users)
+            tried[(org, ns)] = set(users)
+            if len(users) == limit:
+                hungry.append(schema)
+            await _build_users(schema, users, cfg, result)
+        for schema in hungry:
+            if budget <= 0:
+                break
+            pass_context.check_stop()
+            key = (str(schema["org"]), str(schema["namespace"]))
+            try:
+                users = await _behind(schema, cfg, budget, tried[key])
+            except Exception as e:  # as above
+                result.errors += 1
+                log.exception("structured profile scan failed for %s/%s", *key)
+                pass_context.note_failure(e, key[1])
+                continue
+            budget -= len(users)
+            await _build_users(schema, users, cfg, result)
         if not result.profiles_written and not result.errors:
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
@@ -240,17 +283,16 @@ async def build_profile(
     schema: dict[str, Any], user_id: str, cfg: StructuredProfileConfig
 ) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
-    broke the schema and were stored as null, or None when the user's facts were
-    erased while the model ran and nothing was written. Raises `Refused`, carrying
-    the sources digest, when the profile row will not take the write."""
-    from server.memory.app.profile_schema import write_structured_profile
-
+    broke the schema and were stored as null, or None when a fact the build read
+    was erased or changed while the model ran and nothing was written. Raises
+    `Refused`, carrying the sources digest, when the profile row will not take the
+    write."""
     org, ns = str(schema["org"]), str(schema["namespace"])
     props = profile_schema.parse(json.loads(schema["schema_json"]))
     # The digest and its time first: a fact written while the model runs leaves the
     # profile behind it, and the next pass rebuilds it.
     read_at = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
-    digest = await profile_sources.sources_digest(
+    digest, count = await profile_sources.sources_digest(
         org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
     )
     existing = await profile_sources.profile_row(
@@ -268,28 +310,34 @@ async def build_profile(
     )
     # An unlabelled row holding a credential is never sent to the model either.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
+    used = [str(r["memory_id"]) for r in rows]
     facts = render_facts(rows)
     answer: Any = {}
     with customer.for_org(org), pipeline_actor(WORKER_ACTOR):
         if facts:
             answer = await _ask(org, ns, props, facts, cfg)
-        # The user's facts erased while the model ran: writing now would bring their
-        # content back in a profile row above the erasure.
-        if digest and not await profile_sources.sources_digest(
-            org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
-        ):
+        # A fact the model read that is no longer a current fact (erased, deleted,
+        # redacted from the head): writing now would put its content back in a
+        # profile row above the erasure. The next pass builds from what is left.
+        if used and len(
+            await profile_sources.live_ids(
+                org=org, namespace=ns, user_id=user_id, memory_ids=used, scope=WHOLE_NAMESPACE
+            )
+        ) < len(used):
             return None
         profile, dropped = profile_schema.conform(props, answer)
         try:
-            await write_structured_profile(
+            await schema_app.write_structured_profile(
                 org=org,
                 namespace=ns,
                 user_id=user_id,
+                label=cfg.label,
                 value=profile,
                 schema_sha256=str(schema["schema_sha256"]),
                 sources_digest=digest,
+                source_count=count,
                 sources_read_at=read_at,
-                memory_ids=[str(r["memory_id"]) for r in rows],
+                memory_ids=used,
             )
         except (HTTPException, LoomServerError) as e:
             # A 4xx (a lock or pin set since the check, the char limit, the blacklist)
@@ -307,14 +355,16 @@ async def _ask(
     facts: str,
     cfg: StructuredProfileConfig,
 ) -> Any:
-    from server.llm.client import get_llm_client, get_llm_client_for_model
-
     started = time.monotonic()
     # Bind an accumulator so this worker's spend is visible.
     cost_accumulator.begin_op()
     try:
         with llm_stage("structured_profile"):
-            client = get_llm_client_for_model(cfg.model) if cfg.model else get_llm_client()
+            client = (
+                llm_client.get_llm_client_for_model(cfg.model)
+                if cfg.model
+                else llm_client.get_llm_client()
+            )
             out = await client.complete(
                 system=system_prompt(props),
                 # The facts are what agents wrote: data, never instructions.

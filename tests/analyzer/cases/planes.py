@@ -801,6 +801,9 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         await profile_sources.digests(
             org=ORG, namespace=NS, user_ids=["u1", "u2"], scope=scope, ch=ch
         )
+        await profile_sources.live_ids(
+            org=ORG, namespace=NS, user_id="u1", memory_ids=["m1"], scope=scope, ch=ch
+        )
         await profile_sources.profile_row(
             org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
         )
@@ -811,7 +814,6 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         schema_sha256="0" * 64,
         cooldown_seconds=600,
         limit=10,
-        candidates=40,
         skip=("u2",),
         refused={"u3": "0" * 16},
         ch=ch,

@@ -160,11 +160,13 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
 - **Sources.** The user's current `semantic`, `preference` and `decision` facts, the rows
   the free-text fold reads: never a `high` row, a fact about someone else
   (`about:other`), a protected attribute or a stored request to forget.
-- **Staleness.** Each profile carries the hash of its schema and a digest of its sources'
-  ids and content hashes. A new or edited fact, a deleted one, one that turned `high`,
-  changed type or tags, expired or passed its `valid_to` changes the digest; a recall, a
-  reinforcement or a restatement does not. A schema change or a deletion is rebuilt on the
-  next pass; other changes after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
+- **Staleness.** Each profile carries the hash of its schema's properties (a `title` or
+  the properties' order changes none), a digest of its sources' ids and content hashes,
+  and their count. A new or edited fact, a revert, a restore, a deleted fact, one that
+  turned `high`, changed type or tags, expired or passed its `valid_to` changes the digest;
+  a recall, a reinforcement or a restatement does not. A schema change or a deletion
+  (fewer sources than the profile was built from) is rebuilt on the next pass; other
+  changes after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
   whose facts are all gone gets an all-`null` profile without a model call. An expired or
   redacted profile row reads as no profile (`pending`) and is rebuilt.
 - **Validation.** The model's answer is held to the schema before it is written: a value
@@ -172,13 +174,17 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   integer past 2^53), or a property the schema does not declare is dropped (`null`).
 - **Passes.** A pass builds at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` (20)
   profiles. It reaches the namespaces with a schema in order from where the last pass
-  stopped, and each gets an equal share. A user whose build failed (a model error, an
+  stopped, and each gets an equal share; what a namespace leaves goes to those with more
+  users behind. A namespace whose scan fails is counted and passed over until the rotation
+  comes back to it. A user whose build failed (a model error, an
   answer that is not a JSON object) is skipped for 5 minutes, doubling up to 6 hours, and
   tried again after. A build the profile row refuses (locked, pinned, over its size cap,
   blacklisted) is not retried until the user's memories change. Both waits are kept by the
   worker's process and start over when another process takes the worker lease.
-- **Erasure.** A build whose user's facts are erased while its model call runs writes
-  nothing, so the profile cannot come back above the erasure.
+- **Erasure.** A build writes nothing when a fact it read is no longer current once the
+  model has answered (erased, deleted), so the profile cannot come back above an erasure.
+  `memory.redact` does not scrub earlier profile versions built from the redacted text;
+  see [security](../../architecture/security.md#sensitivity).
 - **Scope.** The read is always for one `user_id`. A token pinned to a user
   (`read_user_id`, an end user's token) reads only that user's profile, with or without
   `user_id` in the body; another user is 403. A token bounded to one session

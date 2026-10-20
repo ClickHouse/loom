@@ -22,8 +22,8 @@ Clear the schema: no profile is built or rebuilt for the namespace, and reads an
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `found` | `bool` | False when the namespace has no profile schema. |
-| `json_schema` | `dict[str, Any]` | The schema as stored (canonical JSON key order); {} when not found. |
-| `schema_sha256` | `str` | SHA-256 of the canonical schema; each built profile names the hash it was built under. |
+| `json_schema` | `dict[str, Any]` | The schema as the admin set it, in their key order; {} when not found. |
+| `schema_sha256` | `str` | SHA-256 of the schema's properties (not its titles or order), which each profile names. |
 | `updated_by` | `str` | The subject that set it; empty when not found. |
 | `updated_at` | `datetime \| None` | When it was set; None when not found. |
 
@@ -41,8 +41,8 @@ The namespace's profile schema, its hash, and who set it when.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `found` | `bool` | False when the namespace has no profile schema. |
-| `json_schema` | `dict[str, Any]` | The schema as stored (canonical JSON key order); {} when not found. |
-| `schema_sha256` | `str` | SHA-256 of the canonical schema; each built profile names the hash it was built under. |
+| `json_schema` | `dict[str, Any]` | The schema as the admin set it, in their key order; {} when not found. |
+| `schema_sha256` | `str` | SHA-256 of the schema's properties (not its titles or order), which each profile names. |
 | `updated_by` | `str` | The subject that set it; empty when not found. |
 | `updated_at` | `datetime \| None` | When it was set; None when not found. |
 
@@ -61,8 +61,8 @@ Set the namespace's profile schema.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `found` | `bool` | False when the namespace has no profile schema. |
-| `json_schema` | `dict[str, Any]` | The schema as stored (canonical JSON key order); {} when not found. |
-| `schema_sha256` | `str` | SHA-256 of the canonical schema; each built profile names the hash it was built under. |
+| `json_schema` | `dict[str, Any]` | The schema as the admin set it, in their key order; {} when not found. |
+| `schema_sha256` | `str` | SHA-256 of the schema's properties (not its titles or order), which each profile names. |
 | `updated_by` | `str` | The subject that set it; empty when not found. |
 | `updated_at` | `datetime \| None` | When it was set; None when not found. |
 
