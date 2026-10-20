@@ -436,7 +436,8 @@ next token; a lower or revoked one caps its claim at once (`authz.claim_cap`), o
 within `grant_cache_ttl_seconds`. Agents lend to each other through `grants.share_agent` and
 `grants.unshare_agent` (`server/identity/app/agent_shares.py`): the caller must be an agent, the
 namespace its own and the grantee an agent of its trust, at viewer or writer, and the grantee
-below `MAX_LENT` namespaces. A share gives the grantee only what the lender already reads, so a
+below `MAX_LENT` namespaces (two shares at once can both pass it; the token then names the
+first `MAX_LENT` by name). A share gives the grantee only what the lender already reads, so a
 compromised agent gains nothing by it; which agent may read which is the control plane's
 decision, made by calling as the lending agent. A share never lowers a grant nor writes over
 one someone else made, and an unshare revokes only a grant the calling agent made, each checked
