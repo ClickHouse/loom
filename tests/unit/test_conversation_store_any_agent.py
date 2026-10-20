@@ -4,12 +4,15 @@ agent's turns."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pytest
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.knowledge.store import conversations as conversation_repo
+
+_AT = datetime(2026, 6, 1, 9, 0)
 
 
 class StubCH:
@@ -129,6 +132,30 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     assert ch.calls[1][1]["tids"] == ["t-1", "t-2"]
     assert [(r["thread_id"], r["msg_count"]) for r in rows] == [("t-1", 4), ("t-2", 2)]
     assert rows[0]["last_agent"] == "bot" and rows[0]["last_content"] == "hi"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("fields", "statements"), [(["title"], 1), (["last_role"], 2)])
+async def test_a_thread_list_reads_the_last_turn_only_when_asked(
+    monkeypatch, fields, statements
+) -> None:
+    """`fields` without the agent, role, excerpt or count is one statement over the
+    transcript; asking for any of them adds the keyed read."""
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app.conversations import handle_conversation_threads
+
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}],
+            [{"thread_id": "t-1", "n": 1, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
+    monkeypatch.setattr(conversation_repo, "_default_client", lambda: ch)
+    await handle_conversation_threads(
+        ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=fields)
+    )
+    transcript = [sql for sql, _ in ch.calls if "FROM loom.conversations\n" in sql]
+    assert len(transcript) == statements
 
 
 @pytest.mark.asyncio

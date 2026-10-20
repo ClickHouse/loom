@@ -1,12 +1,27 @@
 """Embedding raw passages (conversation chunks, chunks of a long value, session digests):
 a passage that reads as a credential is stored as written and never sent to the embedder.
-The read-side helpers live beside `reads_high` (`server/memory/domain/sensitivity.py`)."""
+`Embedded` is what a writer stores per passage; the read-side helpers (`HELD_MARGIN`,
+`without_credentials`) live beside `reads_high` in `server/memory/domain/sensitivity.py`."""
 
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import NamedTuple
 
-from server.memory.domain.sensitivity import Embedded, reads_high
+from server.memory.domain.sensitivity import reads_high
+
+
+class Embedded(NamedTuple):
+    """One raw passage's vector, [] when it has none; `held` when it reads as a credential
+    and so is stored with no vector."""
+
+    vector: list[float]
+    held: bool
+
+    @property
+    def written(self) -> bool:
+        """Stored: with its vector, or held without one. A failed embed is not."""
+        return self.held or bool(self.vector)
 
 
 async def embed_plain(
@@ -16,5 +31,10 @@ async def embed_plain(
     held = [reads_high(text) for text in texts]
     plain = [text for text, h in zip(texts, held, strict=True) if not h]
     produced = await embed(plain) if plain else []
-    vectors = iter([v for _text, v in zip(plain, produced, strict=True)])
-    return [Embedded([], True) if h else Embedded(list(next(vectors)), False) for h in held]
+    if len(produced) != len(plain):
+        raise ValueError(f"embedder returned {len(produced)} vectors for {len(plain)} texts")
+    vectors = iter(produced)
+    return [
+        Embedded(vector=[], held=True) if h else Embedded(vector=list(next(vectors)), held=False)
+        for h in held
+    ]

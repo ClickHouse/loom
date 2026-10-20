@@ -1115,17 +1115,17 @@ async def recent_threads(
     by_thread = {r["thread_id"]: r for r in counted}
     out = []
     for r in rows:
-        page = by_thread.get(r["thread_id"])
-        if page is None:
+        keyed = by_thread.get(r["thread_id"])
+        if keyed is None:
             continue  # its last live turn was deleted between the two statements
-        agent_of, role, content = page["last_turn"] if last_turn else ("", "", "")
+        last_agent, last_role, last_content = keyed["last_turn"] if last_turn else ("", "", "")
         out.append(
             {
                 **r,
-                "msg_count": page["n"] if count_turns else r["msg_count"],
-                "last_agent": agent_of,
-                "last_role": role,
-                "last_content": content,
+                "msg_count": keyed["n"] if count_turns else r["msg_count"],
+                "last_agent": last_agent,
+                "last_role": last_role,
+                "last_content": last_content,
             }
         )
     return out

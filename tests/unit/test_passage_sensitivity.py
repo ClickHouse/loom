@@ -304,3 +304,14 @@ async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
     assert draft is not None
     assert draft.embedding == [] and emb.seen == []
     assert _OPENAI_KEY in draft.summary_text  # stored as written
+
+
+@pytest.mark.asyncio
+async def test_embed_plain_refuses_a_short_answer_from_the_embedder() -> None:
+    from server.memory.app.credential_passages import embed_plain
+
+    async def short(texts: list[str]) -> list[list[float]]:
+        return [[1.0]]  # one vector for two texts
+
+    with pytest.raises(ValueError, match="embedder returned 1 vectors for 2 texts"):
+        await embed_plain(["plain one", f"key {_OPENAI_KEY}", "plain two"], short)

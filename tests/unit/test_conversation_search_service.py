@@ -312,31 +312,3 @@ async def test_a_bounded_scope_rides_the_vector_statement() -> None:
     sql, params = ch.query_all_calls[0]
     assert "user_id = {scope_uid:String}" in sql
     assert params["scope_uid"] == "u-1"
-
-
-@pytest.mark.asyncio
-async def test_a_thread_list_that_asks_no_last_turn_does_not_read_one(monkeypatch) -> None:
-    """`fields` without the agent, role, excerpt or count skips the keyed read."""
-    from server.knowledge.api.models_conversations import ConversationThreadsInput
-    from server.knowledge.app import conversations as h
-    from server.knowledge.store import conversations as conversation_repo
-
-    asked: dict[str, Any] = {}
-
-    async def recent(*a, **k):
-        asked.update(k)
-        return []
-
-    async def titles(*a, **k):
-        return {}
-
-    monkeypatch.setattr(conversation_repo, "recent_threads", recent)
-    monkeypatch.setattr(conversation_repo, "thread_titles", titles)
-    await h.handle_conversation_threads(
-        ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=["title"])
-    )
-    assert (asked["count_turns"], asked["last_turn"]) == (False, False)
-    await h.handle_conversation_threads(
-        ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=["last_role"])
-    )
-    assert (asked["count_turns"], asked["last_turn"]) == (False, True)

@@ -50,34 +50,35 @@ def _emptied(schema: SourceSchema, columns: list[str]) -> str:
     )
 
 
-# Snapshot rows a page of the emptied-text read returns.
+# Target ordinals a page of the emptied read covers.
 _EMPTIED_PAGE = 1000
 
 
-async def _plain_emptied(
+async def _holds_plain_emptied(
     names: StagingNames,
     schema: SourceSchema,
     columns: list[str],
     passage_text: str,
     client: _CHClient,
-) -> int:
-    """How many of the rows the rebuild left empty hold text that does not read as a
-    credential. A page of the target's empty ordinals, then the snapshot's text for those
-    ordinals only: neither table is joined, and no page reads past its own ordinals."""
+) -> bool:
+    """Whether a row the rebuild left empty holds text that does not read as a credential.
+    A page of the target's empty ordinals, then the snapshot's text for those ordinals
+    only: neither table is joined, and no page reads past its own ordinals."""
     # The `size0` subcolumn: the page reads the arrays' lengths, never the vectors.
-    empty = ", ".join(f"{_identifier(c)}.size0 = 0" for c in columns)
+    flags = [f"{_identifier(c)}.size0 = 0" for c in columns]
     real = ", ".join(f"arrayExists(x -> x != 0, {_identifier(c)})" for c in columns)
     live = "isNull(tombstoned_at)" if "tombstoned_at" in schema.columns else "1"
-    plain, after = 0, 0
+    after = 0
     while True:
         page = await client.query_all(
-            f"SELECT {_ORDINAL} AS ordinal, [{empty}] AS empty FROM loom.{names.target} FINAL"
-            f" WHERE {_ORDINAL} > {{after:UInt64}} AND has([{empty}], true)"
+            f"SELECT {_ORDINAL} AS ordinal, [{', '.join(flags)}] AS emptied"
+            f" FROM loom.{names.target} FINAL"
+            f" WHERE {_ORDINAL} > {{after:UInt64}} AND ({' OR '.join(flags)})"
             f" ORDER BY {_ORDINAL} LIMIT {{page:UInt32}}",
             {"after": after, "page": _EMPTIED_PAGE},
         )
         if page:
-            emptied = {int(r["ordinal"]): r["empty"] for r in page}
+            emptied = {int(r["ordinal"]): r["emptied"] for r in page}
             sources = await client.query_all(
                 f"SELECT {_ORDINAL} AS ordinal, {_identifier(passage_text)} AS text,"
                 f" [{real}] AS real, {live} AS live FROM loom.{names.snapshot}"
@@ -85,13 +86,12 @@ async def _plain_emptied(
                 {"ordinals": sorted(emptied)},
             )
             for r in sources:
-                lost = any(
-                    e and v for e, v in zip(emptied[int(r["ordinal"])], r["real"], strict=True)
-                )
-                if lost and r["live"] and not reads_high(str(r["text"])):
-                    plain += 1
+                pairs = zip(emptied[int(r["ordinal"])], r["real"], strict=True)
+                lost_vector = any(empty and real for empty, real in pairs)
+                if lost_vector and r["live"] and not reads_high(str(r["text"])):
+                    return True
         if len(page) < _EMPTIED_PAGE:
-            return plain
+            return False
         after = int(page[-1]["ordinal"])
 
 
@@ -175,13 +175,15 @@ async def verify_reembedded_target(
         raise ValueError("Cannot establish rebuild verification result")
     # A raw-passage row the rebuild left empty is accepted when its text reads as a
     # credential, as its write path leaves it.
-    lost = result["emptied"]
-    if lost and passage_text:
-        lost = await _plain_emptied(names, schema, vectors, passage_text, client)
+    vector_lost = bool(result["emptied"])
+    if vector_lost and passage_text:
+        vector_lost = await _holds_plain_emptied(names, schema, vectors, passage_text, client)
     if (
         result["source_rows"] != result["target_rows"]
-        or any(result[name] for name in fields[2:-1])
-        or lost
+        or result["missing"]
+        or result["metadata_errors"]
+        or result["vector_errors"]
+        or vector_lost
     ):
         raise ValueError("Staged rebuild failed verification")
     await verify_live_key_uniqueness(names, schema, client)

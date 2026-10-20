@@ -703,20 +703,19 @@ it. Chunks, digests and turn embeddings that an earlier build embedded keep thei
 so the reads that serve passages check their text too:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
-  its model and the context pack built from search), the chunks `memory.ask` injects for an
-  identifier or a session date, the neighbours `memory.get` stitches around a `chunk:`
+  its model and the context pack built from search), the chunks `memory.ask` injects for
+  an identifier or a session date, the neighbours `memory.get` stitches around a `chunk:`
   key, `conversation.search`'s hits (the vector ranking, checked on the text the vector
   was built from, and the substring fallback the search takes when the embedder is down),
   and `conversation.search_saved_messages`'s hits (its vector leg and its BM25 keyword leg
-  over the whole text).
-  Each read asks for a few spare rows, so a held-back passage does not leave it short.
+  over the whole text). Each read asks for a few spare rows, so a held-back passage does
+  not leave it short.
 - Listed without the text: `conversation.list_saved_messages` shows an empty
   `content_excerpt` for a saved message that reads as a credential (one an earlier build
-  saved), and `conversation.threads` shows an empty `last_content_excerpt`
-  for a thread whose last turn reads as a credential (the whole turn is checked, not the
-  excerpt), and an empty `title` for a title that reads as one. The conversation titler
-  never sends a turn that reads as a credential to its model and never stores a title that
-  reads as one.
+  saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
+  whose last turn reads as a credential (the whole turn is checked, not the excerpt), and
+  an empty `title` for a title that reads as one. The conversation titler never sends a
+  turn that reads as a credential to its model and never stores a title that reads as one.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
   credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
@@ -728,14 +727,14 @@ Other raw text is served to readers of the namespace, or sent to a model, as it 
 caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
 its own text, not by the rows it holds), the session digests `memory.digests` lists (their
 summary text; key facts that read as a credential are left out) and the digest lines of
-the runs manifest, what the session-summary
-draft (the conversation turns), the period-digest draft and the outcome judge (session
-digest text) send their model, `memory.recall`'s raw turns, a title a caller set with
-`conversation.create` or `conversation.update` as `conversation.get` serves it, and a
-thread's own turns as `conversation.get` and `conversation.list` serve them. Those two read
-one thread by its id under the caller's read scope, as the thread's participants read their
-transcript, so they serve each turn as written. Raw text is stored as written, and erasure
-removes the chunk, digest, message and embedding rows whole.
+the runs manifest, what the session-summary draft (the conversation turns), the
+period-digest draft and the outcome judge (session digest text) send their model,
+`memory.recall`'s raw turns, a title a caller set with `conversation.create` or
+`conversation.update` as `conversation.get` serves it, and a thread's own turns as
+`conversation.get` and `conversation.list` serve them. Those two read one thread by its id
+under the caller's read scope, as the thread's participants read their transcript, so they
+serve each turn as written. Raw text is stored as written, and erasure removes the chunk,
+digest, message and embedding rows whole.
 
 Search demotes labelled rows on questions that did not ask for a contact detail
 (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).

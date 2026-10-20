@@ -278,7 +278,13 @@ def test_a_conversation_turn_holding_a_credential_is_never_a_search_hit(
 
 
 def _insert_turns(
-    ch_client, ns: str, thread: str, turns: list[tuple[str, str, bool]], *, role_of=None
+    ch_client,
+    ns: str,
+    thread: str,
+    turns: list[tuple[str, str, bool]],
+    *,
+    role_of=None,
+    agent_of=None,
 ) -> None:
     """Transcript rows as an earlier build wrote them, all at one `ts`."""
     from datetime import UTC, datetime
@@ -287,7 +293,7 @@ def _insert_turns(
     for msg_id, content, saved in turns:
         ch_client.command(
             "INSERT INTO loom.conversations (org, namespace, agent, thread_id, msg_id, role, "
-            "content, user_id, is_saved, ts) VALUES ({o:String}, {n:String}, 'a', {t:String}, "
+            "content, user_id, is_saved, ts) VALUES ({o:String}, {n:String}, {a:String}, {t:String}, "
             "{m:String}, {r:String}, {c:String}, 'u-1', {saved:Bool}, {ts:DateTime64(3)})",
             parameters={
                 "o": ORG,
@@ -295,6 +301,7 @@ def _insert_turns(
                 "t": thread,
                 "m": msg_id,
                 "r": (role_of or {}).get(msg_id, "user"),
+                "a": (agent_of or {}).get(msg_id, "a"),
                 "c": content,
                 "saved": saved,
                 "ts": ts,
@@ -349,6 +356,7 @@ def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
         thread,
         [("m-a", "a plain last turn", False), ("m-b", f"key {_API_KEY}", False)],
         role_of={"m-a": "assistant"},
+        agent_of={"m-a": "b"},
     )
     r = _post(
         control_plane_url,

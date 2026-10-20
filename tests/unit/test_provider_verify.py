@@ -66,7 +66,7 @@ def _emptied_rows(texts: list[str]) -> list[list[dict]]:
     The fixture's table has two vector columns; the first is the one left empty."""
     ordinals = [4 + i for i in range(len(texts))]
     return [
-        [{"ordinal": o, "empty": [True, False]} for o in ordinals],
+        [{"ordinal": o, "emptied": [True, False]} for o in ordinals],
         [
             {"ordinal": o, "text": t, "real": [True, True], "live": True}
             for o, t in zip(ordinals, texts, strict=True)
@@ -86,6 +86,8 @@ async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verificati
     target_sql, source_sql = (c.args[0] for c in client.query_all.await_args_list)
     # A page of the target's empty ordinals, then the snapshot text of those only.
     assert "_loom_rebuild_ordinal > {after:UInt64}" in target_sql and "LIMIT" in target_sql
+    assert "(`embedding`.size0 = 0 OR `memory_key_embedding`.size0 = 0)" in target_sql
+    assert "AS emptied" in target_sql
     assert "IN {ordinals:Array(UInt64)}" in source_sql and "`content` AS text" in source_sql
     assert "JOIN" not in target_sql + source_sql
     assert client.query_all.await_args_list[1].args[1] == {"ordinals": [4, 5]}
@@ -103,6 +105,29 @@ async def test_an_emptied_plain_passage_fails_verification(verification):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source",
+    [
+        {"real": [False, True], "live": True},  # an all-zero placeholder, which rebuilds empty
+        {"real": [True, True], "live": False},  # a tombstoned row, which rebuilds empty
+    ],
+)
+async def test_an_emptied_row_that_lost_no_vector_is_not_counted(verification, source):
+    """Plain text, yet accepted: the row's source held no real vector in the emptied
+    column, or the row is tombstoned."""
+    args, client, result = verification
+    result["emptied"] = 1
+    client.query_all.side_effect = [
+        [{"ordinal": 4, "emptied": [True, False]}],
+        [{"ordinal": 4, "text": "a plain turn", **source}],
+    ]
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, passage_text="content", ch=client
+    )
+    assert count == 3
+
+
+@pytest.mark.asyncio
 async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monkeypatch):
     from server.insights.store import provider_verify
 
@@ -113,7 +138,7 @@ async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monk
     client.query_all.side_effect = [
         first,
         first_text,
-        [{"ordinal": 12, "empty": [True, False]}],
+        [{"ordinal": 12, "emptied": [True, False]}],
         [{"ordinal": 12, "text": f"key {_KEY}", "real": [True, True], "live": True}],
     ]
     count = await verify_reembedded_target(
