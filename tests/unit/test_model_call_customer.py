@@ -616,7 +616,7 @@ def test_the_gateway_names_the_customer_and_feature_its_own_way(metered, monkeyp
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": "{not json"}, "inference_feature_map_json"),
         ({"LOOM_INFERENCE_CUSTOMER_FORMAT": "cloud/{org}"}, "as they are"),
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": "search/expand"}'}, "as they are"),
-        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": null}'}, "map names to strings"),
+        ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": null}'}, "LOOM_INFERENCE_FEATURE_MAP_JSON"),
         ({"LOOM_INFERENCE_FEATURE_MAP_JSON": '{"hyde": ""}'}, "as they are"),
     ],
 )
@@ -638,3 +638,21 @@ def test_the_system_customer_is_named_as_configured_not_formatted(metered, monke
         assert _headers()["X-Customer"] == "cloud:acme"
     with customer.system(), customer.for_org("loom-deployment"):  # an org named like it
         assert _headers()["X-Customer"] == "cloud:loom-deployment"
+
+
+def test_a_required_cell_without_its_header_refuses_rather_than_sends(monkeypatch) -> None:
+    # Load refuses this pairing; were it reached, no call goes out unmetered.
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    monkeypatch.setattr(settings, "inference_customer_required", True)
+    with customer.for_org("acme"), pytest.raises(customer.Unattributed, match="REQUIRED"):
+        asyncio.run(customer.require())
+
+
+def test_a_jwt_key_map_with_a_non_string_key_refuses_to_start(monkeypatch) -> None:
+    # json_map_items refuses a non-string value for every map setting; this one used
+    # to load and fail only the tokens of that kid.
+    from server.settings import Settings
+
+    monkeypatch.setenv("LOOM_JWT_PUBLIC_KEYS_JSON", '{"kid-1": null}')
+    with pytest.raises(ValueError, match="map names to strings"):
+        Settings()

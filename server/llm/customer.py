@@ -117,13 +117,16 @@ async def require() -> str:
     """The customer the current model call is for, checked before anything is
     sent, cached or recorded: "" with no customer header configured. Raises
     ModelCallsDisabled when the call's org is switched off (header or not),
-    and Unattributed, logged, when a header is configured (or required) and
-    the call names no org."""
+    and Unattributed, logged, when a header is configured and the call names
+    no org."""
     org = current()
     if org and await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
-    # Load refuses a required cell without the header; never treat one as unmetered.
-    if not (settings.inference_customer_header or settings.inference_customer_required):
+    if not settings.inference_customer_header:
+        if settings.inference_customer_required:  # load refuses this; never send unmetered
+            raise Unattributed(
+                "LOOM_INFERENCE_CUSTOMER_REQUIRED is set without LOOM_INFERENCE_CUSTOMER_HEADER"
+            )
         return ""
     if org:
         return org
