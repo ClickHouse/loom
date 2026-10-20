@@ -29,7 +29,9 @@ def _hit(key: str, score: float, session: str = "s1") -> _MemorySearchHit:
 
 def _ctx(hits: list[_MemorySearchHit]) -> Any:
     return SimpleNamespace(
-        input=SimpleNamespace(query="where does the user live now?", namespace="n"),
+        input=SimpleNamespace(
+            query="where does the user live now?", namespace="n", search_mode="semantic"
+        ),
         endpoint="builtin:openai",
         prompt_template="",
         all_hits=hits,
@@ -107,7 +109,7 @@ async def test_the_confidence_gates_read_the_fused_order(monkeypatch: pytest.Mon
     block = assemble_context_block(ctx.all_hits, top_k=10)
     assert [h.memory_key for h in block] == ["user_location", "user_name"]
     assert [h.memory_key for h in gate_order(block)] == ["user_name", "user_location"]
-    assert _gate_top_sim(block) == pytest.approx(0.40)
+    assert _gate_top_sim(gate_order(block)) == pytest.approx(0.40)
 
 
 def test_an_unreranked_block_is_gated_as_served() -> None:
@@ -132,7 +134,7 @@ async def test_a_score_tie_still_gates_on_the_fused_rank_one(
     await ranking._run_external_rerank(ctx)
     block = assemble_context_block(ctx.all_hits, top_k=10)
     assert [h.memory_key for h in block] == ["far", "near"]
-    assert _gate_top_sim(block) == pytest.approx(0.7)
+    assert _gate_top_sim(gate_order(block)) == pytest.approx(0.7)
     gated = gate_order(block)
     assert 1.0 - gated[1].distance == pytest.approx(0.4)
 
@@ -255,7 +257,7 @@ async def test_a_reranker_that_moved_nothing_leaves_the_floors_order(
     weak.score_components["below_floor"] = 1.0
     floored = [strong, weak]  # the floor's readmit order: kept rows, then fillers
     assert gate_order(floored) is floored
-    assert _gate_top_sim(floored) == pytest.approx(0.6)
+    assert _gate_top_sim(gate_order(floored)) == pytest.approx(0.6)
 
 
 @pytest.mark.asyncio
@@ -273,7 +275,7 @@ async def test_a_row_under_the_floor_stays_last_after_a_real_rerank(
     weak.score_components["below_floor"] = 1.0
     floored = [b, a, weak]
     assert [h.memory_key for h in gate_order(floored)] == ["a", "b", "lexical"]
-    assert _gate_top_sim(floored) == pytest.approx(0.6)
+    assert _gate_top_sim(gate_order(floored)) == pytest.approx(0.6)
 
 
 @pytest.mark.asyncio
@@ -307,3 +309,42 @@ async def test_the_calibrator_reads_the_fused_top_and_margin(
     assert seen["top_similarity"] == pytest.approx(0.6)
     assert seen["second_similarity"] == pytest.approx(0.5)
     assert abstain is False
+
+
+@pytest.mark.asyncio
+async def test_an_identifier_match_keeps_the_head(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pinned exact match is the answer, and the reranker never reads the key it may
+    have matched on: it orders only the rows behind the pin."""
+    pinned, a, b = _hit("finding_pr116016", 0.9), _hit("a", 0.5), _hit("b", 0.4)
+    pinned.score_components["identifier_match"] = 1.0
+    seen: list[str] = []
+
+    async def _reverse(*, candidates: list[Any], **_k: Any) -> list[Any]:
+        seen.extend(c.memory_key for c in candidates)
+        return list(reversed(candidates))
+
+    ctx = _ctx([pinned, a, b])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reverse)
+    await ranking._run_external_rerank(ctx)
+    assert seen == ["a", "b"]
+    assert [h.memory_key for h in assemble_context_block(ctx.all_hits, top_k=10)] == [
+        "finding_pr116016",
+        "b",
+        "a",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_promoted_fact_never_inherits_a_boosted_chunks_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chunk's parent boost can put it above 1.0; it is bounded before the scores are
+    handed out, so the fact the reranker puts first stays on the pool's scale."""
+    chunk, fact, other = _hit("chunk", 1.2), _hit("fact", 0.6), _hit("other", 0.5)
+    chunk.score_components["chunk_parent_boost"] = 0.4
+    order = ["other in s1", "fact in s1", "chunk in s1"]
+    ctx = _ctx([chunk, fact, other])
+    monkeypatch.setattr("server.memory.app.rerank.rerank", _reranker(order))
+    await ranking._run_external_rerank(ctx)
+    assert [h.memory_key for h in ctx.all_hits] == ["other", "fact", "chunk"]
+    assert max(h.rank_score for h in ctx.all_hits) < 0.61

@@ -32,16 +32,11 @@ def gate_order(hits: list[Any]) -> list[Any]:
     return out
 
 
-def _gate_top_sim(hits: list[Any]) -> float | None:
-    """The cosine the below-threshold gate reads: the fused rank-1 row's by default, or the
-    best cosine among the returned rows when memory_search_abstain_top_sim_scope == "window" —
-    under rrf a lexical-only match can hold rank 1 while the relevant row sits at rank 2 with
-    0.36."""
-    return _top_sim(gate_order(hits))
-
-
-def _top_sim(gated: list[Any]) -> float | None:
-    """`_gate_top_sim` over rows already in the gates' order (`gate_order`)."""
+def _gate_top_sim(gated: list[Any]) -> float | None:
+    """The cosine the below-threshold gate reads, over rows in the gates' order
+    (`gate_order`): the first row's by default, or the best cosine among them when
+    memory_search_abstain_top_sim_scope == "window" — under rrf a lexical-only match can
+    hold rank 1 while the relevant row sits at rank 2 with 0.36."""
     if not gated:
         return None
     from server.settings import settings as _s_gate
@@ -146,7 +141,7 @@ def _finalize_abstain(
     if flagged and work is not None:
         work["below_threshold_hits"] = flagged
     return finalize_abstain(
-        top_similarity=_top_sim(hits),
+        top_similarity=_gate_top_sim(hits),
         calibration=calibration,
         abstain_threshold=abstain_threshold,
         no_match_reason="no memories matched the query above the noise floor",
@@ -191,11 +186,12 @@ def _calibrate_final_hits(
     # 0.327/"abstain"); (c) the iterative judge reads the same first row, and would disagree
     # with the verdict about what the top hit is.
     # A real fix needs the hit model to distinguish cosine from synthesized distances.
-    # One list for every gate below: the served rows, a reranker's moves undone.
+    # One list for every gate below: the served rows in fused order (a reranker's moves
+    # undone among them).
     gated = gate_order(final_hits)
     second_similarity = 1.0 - gated[1].distance if len(gated) > 1 else 0.0
     calibration = calibrate_retrieval(
-        top_similarity=_top_sim(gated) or 0.0,
+        top_similarity=_gate_top_sim(gated) or 0.0,
         second_similarity=second_similarity,
         result_count=len(final_hits),
         graph_seeds=run.graph_seeds,

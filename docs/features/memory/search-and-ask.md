@@ -17,7 +17,7 @@ and conversations in one call. `memory.search` is not an MCP tool of its own. Se
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `memory.search`           | Ranked hits with scores, abstain and risk.                                                                                           |
 | `memory.ask`              | A synthesised, cited answer, or an abstain.                                                                                          |
-| `memory.search_trace`     | The same pool as `memory.search`, with a per-hit scoring breakdown.                                                                  |
+| `memory.search_trace`     | The vector leg of `memory.search`, with a per-hit scoring breakdown (no fusion, assembly or reranker).                               |
 | `memory.search_trace_log` | Past searches of the namespace: keys and scores returned, abstain, risk, latency.                                                    |
 | `memory.get`              | One row by exact key.                                                                                                                |
 | `memory.bulk_get`         | Up to 1,000 keys in one round trip, each as `memory.get` answers it (without `conflict_verdict` and `code`); `missing` lists misses. |
@@ -222,9 +222,11 @@ as attributes. Over HTTP it is `POST /v1/memory.search`; from a terminal,
 ## `memory.search_trace`
 
 `memory.search_trace` takes the same fields as `memory.search` and returns, per hit, the
-cosine `distance` and `similarity`, `entity_boost`, `rank_score` and `rank`. Use it when a
-hit you expected ranks below one you did not. `explain=true` on a normal search returns a
-lighter `score_components` map.
+cosine `distance` and `similarity`, `entity_boost`, `rank_score` and `rank`. It scores the
+vector leg alone: no fusion, assembly or reranker. Use it when a hit you expected ranks
+below one you did not. `explain=true` on a normal search returns a lighter
+`score_components` map, which after a reranker carries each row's move (`rerank_from`,
+`rerank_pos`, `rerank_delta`) and its own fused score (`rank_score_pre_rerank`).
 
 With `LOOM_SEARCH_TRACE_LOG_ENABLED=true`, every search appends a row to
 `loom.search_trace_log` (keys and scores returned, abstain, risk, latency, run id,

@@ -10,13 +10,11 @@ import asyncio
 import logging
 
 from server.memory.app.search.context import SearchContext
+from server.memory.app.search.scoring import drop_rerank_trail
 from server.memory.app.search.verdict import gate_order
 from server.memory.domain.search_types import hit_sort_key
 
 log = logging.getLogger(__package__)
-
-# The score_components an external rerank stamps (`scoring._record_rerank_trail`).
-_RERANK_TRAIL = ("rerank_from", "rerank_pos", "rerank_delta", "rerank_external")
 
 
 async def _maybe_iterative_retry(ctx: SearchContext) -> None:
@@ -104,8 +102,7 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                     # A retry row's rerank trail describes the retry's own pool: it joins
                     # after this pool's rerank, so it carries none and the gates leave it
                     # where it lands.
-                    for trail in _RERANK_TRAIL:
-                        rh.score_components.pop(trail, None)
+                    drop_rerank_trail(rh.score_components)
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)
             ctx.final_hits = final_hits[: input.top_k]

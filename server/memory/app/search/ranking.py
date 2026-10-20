@@ -163,6 +163,21 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     if not (ctx.endpoint and ctx.all_hits and not ctx.chronological_intent):
         return
     ctx.actual_work["external_rerank_used"] = True
+    before = list(ctx.all_hits)
+    # Bound the chunk-parent lifts first, as the block does: the scores handed out below go
+    # to whichever row the reranker puts there, and an inflated one would put a plain fact
+    # above the pool's scale. (Not under rrf, whose fused value never carried the boost.)
+    if input.search_mode != "rrf":
+        from server.memory.domain.query_planner import bound_component_lift
+
+        bound_component_lift(ctx.all_hits)
+    # An exact identifier match is the answer (`pin_identifier_hits`) and the reranker never
+    # reads the key it may have matched on: pinned rows keep the head, the reranker orders
+    # the rest. With every row pinned there is nothing to pin over.
+    pinned = [h for h in ctx.all_hits if (h.score_components or {}).get("identifier_match")]
+    rest = [h for h in ctx.all_hits if not (h.score_components or {}).get("identifier_match")]
+    if not rest:
+        pinned, rest = [], list(ctx.all_hits)
     candidates = [
         RerankCandidate(
             memory_key=h.memory_key,
@@ -171,7 +186,7 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
             memory_type=h.memory_type,
             similarity=h.similarity,
         )
-        for h in ctx.all_hits
+        for h in rest
     ]
     reranked = await rerank(
         endpoint=ctx.endpoint,
@@ -182,12 +197,11 @@ async def _run_external_rerank(ctx: SearchContext) -> None:
     # Order-only reranker (cohere / openai / operator HTTP endpoint): no per-candidate
     # score to blend, so honor its ordering directly. Candidates map back to their hits
     # by identity: extraction writes a key once per session, so a key names several hits.
-    hit_of = {id(c): h for c, h in zip(candidates, ctx.all_hits, strict=True)}
-    before = list(ctx.all_hits)
+    hit_of = {id(c): h for c, h in zip(candidates, rest, strict=True)}
     # Every reranker returns a permutation of its candidates.
-    ordered = [hit_of[id(c)] for c in reranked]
-    # The block sorts by rank_score: the pool's own scores, handed out in the reranker's
-    # order, make that sort keep it without changing the scores' spread.
+    ordered = pinned + [hit_of[id(c)] for c in reranked]
+    # The block sorts by rank_score: the pool's own scores, handed out in this order, make
+    # that sort keep it without changing the scores' spread.
     for h, score in zip(
         ordered, sorted((o.rank_score for o in ordered), reverse=True), strict=True
     ):
