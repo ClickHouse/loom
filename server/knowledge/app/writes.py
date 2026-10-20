@@ -110,7 +110,7 @@ def _original_of(prior: DocumentRow | None, author: dict[str, str]) -> DocumentR
 
 
 async def _resolve_blob(
-    input: KnowledgeAddInput, prior: DocumentRow | None
+    input: KnowledgeAddInput, prior: DocumentRow | None, *, uploader: str
 ) -> tuple[str, int, str, str]:
     """Resolve the blob columns for a knowledge write. Fresh bytes win (the
     prior original stays until the sweep finds no live document naming it, so a
@@ -118,7 +118,8 @@ async def _resolve_blob(
     carries forward so a metadata-only edit doesn't drop the user's download.
     Only a live, unerased prior carries: a deleted one's original is the sweep's
     and an erased one's is gone (carrying it would answer 410 or be residue).
-    Returns (blob_path, blob_size, blob_content_type, original_filename)."""
+    `uploader` is the writing user's id (`_authorship`), recorded with fresh
+    bytes. Returns (blob_path, blob_size, blob_content_type, original_filename)."""
     from server.knowledge.store.documents import serves_original
 
     blob_path = ""
@@ -133,11 +134,8 @@ async def _resolve_blob(
             from server.core.errors import ValidationError
 
             raise ValidationError(f"original_bytes_b64 is not valid base64: {e}") from e
-        from server.auth.context import current_auth
         from server.knowledge.store import blobs
 
-        auth = current_auth()
-        uploader = (auth.read_user_id if auth is not None else "") or "-"
         blob_path = await blobs.put(input.org, input.namespace, raw, uploader=uploader)
         blob_size = len(raw)
     elif prior is not None and serves_original(prior):
@@ -255,7 +253,7 @@ async def handle_knowledge_upsert(input: KnowledgeUpsertInput) -> KnowledgeUpser
     )
     author = _author_for(prior, input.content, author, _fresh_sha(input))
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author)
+        input, _original_of(prior, author), uploader=_authorship(input)["user_id"]
     )
 
     from server.knowledge.store import documents as documents_repo
@@ -353,7 +351,7 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
     )
     author = _author_for(prior, input.content, author, _fresh_sha(input))
     blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author)
+        input, _original_of(prior, author), uploader=_authorship(input)["user_id"]
     )
 
     # The builder sets every loom.documents column, content_sha256 included

@@ -40,16 +40,6 @@ class Shown:
             params["shown_collections"] = list(self.collections)
         return sql, params
 
-    def admits(self, namespace: str) -> bool:
-        """`clause()` for one namespace."""
-        if namespace in self.hidden:
-            return False
-        return (
-            self.collections is None
-            or not namespace.startswith(self.collection_prefix)
-            or namespace in self.collections
-        )
-
 
 _EVERY = Shown()
 

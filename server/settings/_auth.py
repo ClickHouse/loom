@@ -329,7 +329,7 @@ class AuthSettings(BaseModel):
             )
         # A federated key verifies any token of a trusted `iss`, Loom-shaped ones
         # included, so an end-user service's key is never one.
-        federated = {_public_numbers(pem) for pem in self.jwt_public_key_map().values()} - {None}
+        federated = self.federated_key_numbers()
         for issuer, spec in issuers.items():
             same = sorted(k for k, pem in spec.keys.items() if _public_numbers(pem) in federated)
             if same:
@@ -398,6 +398,11 @@ class AuthSettings(BaseModel):
                 "LOOM_JWT_KEYRING_REFRESH_SECONDS"
             )
         return self
+
+    def federated_key_numbers(self) -> set[object]:
+        """The public numbers of every federated key that loads: a key is told
+        apart by these, whatever kid it goes under."""
+        return {_public_numbers(pem) for pem in self.jwt_public_key_map().values()} - {None}
 
     def jwt_public_key_map(self) -> dict[str, str]:
         """For RS256 verifiers: kid → PEM public key. Empty when none set."""

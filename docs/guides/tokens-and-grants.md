@@ -517,7 +517,8 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
   those alone. A search that names neither `namespaces` nor `namespace_scope` reads its
   `namespace` alone (`this`) for an end user; `namespace_scope: "all_mine"` widens it to
   every collection the user reaches. A document's `agent`, `session_id` and `source_class` come back on each hit.
-- To cut off one user, revoke their tokens (`loom revoke-token --subject user:<id>`) and
+- To cut off one user, revoke their tokens (`loom revoke-token --subject <org>/user:<id>`: an end user's
+  tokens are revoked by org, since `user:<id>` names one person per org) and
   grants and take them out of their groups, or erase them (`erasure.request` with
   `scope_type: user_id`, and `purge: true` to take the rows off disk). Collections, their
   tree and the read cost are in [Sharing knowledge](../architecture/sharing.md).

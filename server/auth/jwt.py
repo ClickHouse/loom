@@ -494,7 +494,7 @@ def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: A
     request). It runs as that user alone: an org member with no claim, whose
     reads are pinned to the user's rows (`own_user`) and who reaches what
     grants give the user, the user's groups and the agent."""
-    from server.core.principals import AGENT, USER, principal_id
+    from server.core.principals import AGENT, USER, end_user_revocation_subject, principal_id
 
     try:
         decoded = _decode(token, [public_key], "RS256")
@@ -527,7 +527,10 @@ def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: A
     carried = [c for c in _NOT_FOR_END_USERS if c in decoded]
     if carried:
         raise TokenError(f"an end-user token carries no {', '.join(carried)} claim")
-    _check_not_revoked(decoded)
+    # `user:<id>` names one person per org, so a subject revocation of an end
+    # user names its org (`loom revoke-token --subject <org>/user:<id>`): one
+    # tenant's never reaches the same id at another.
+    _check_not_revoked({**decoded, "sub": end_user_revocation_subject(org, USER + user)})
     return AuthInfo(
         subject=USER + user,
         org=org,

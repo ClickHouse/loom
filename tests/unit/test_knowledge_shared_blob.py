@@ -80,7 +80,7 @@ def _prior(**over: object) -> SimpleNamespace:
 
 
 def test_replacing_bytes_leaves_the_prior_original_to_the_sweep(store) -> None:
-    path, *_ = asyncio.run(kh._resolve_blob(_add(), _prior()))
+    path, *_ = asyncio.run(kh._resolve_blob(_add(), _prior(), uploader="-"))
     assert path == "new" and store.put_calls == 1
 
 
@@ -124,7 +124,9 @@ def test_a_text_only_write_carries_a_blob_only_from_a_live_document(
     store, prior_state, carried
 ) -> None:
     text_only = KnowledgeAddInput(org="o", namespace="n", source_uri="doc-a", content="x")
-    path, size, _ctype, _name = asyncio.run(kh._resolve_blob(text_only, _prior(**prior_state)))
+    path, size, _ctype, _name = asyncio.run(
+        kh._resolve_blob(text_only, _prior(**prior_state), uploader="-")
+    )
     assert path == carried and size == (7 if carried else 0)
 
 
@@ -186,4 +188,25 @@ def test_bad_base64_is_a_validation_error(store) -> None:
         org="o", namespace="n", source_uri="doc-a", content="x", original_bytes_b64="not base64!"
     )
     with pytest.raises(ValidationError):
-        asyncio.run(kh._resolve_blob(bad, None))
+        asyncio.run(kh._resolve_blob(bad, None, uploader="-"))
+
+
+def test_an_end_user_s_upload_is_recorded_before_its_bytes() -> None:
+    """Erasure finds the user's originals by this record; a write with no end
+    user records none."""
+    from server.knowledge.store import blobs
+
+    class _CH:
+        def __init__(self) -> None:
+            self.inserts: list[tuple[str, list[dict[str, object]]]] = []
+
+        async def insert(self, table: str, rows: list[dict[str, object]], **_k: object) -> None:
+            self.inserts.append((table, rows))
+
+    ch = _CH()
+    sha = asyncio.run(blobs.put("o", "n", b"bytes", uploader="u-1", ch=ch))  # type: ignore[arg-type]
+    assert [t for t, _ in ch.inserts] == [blobs.UPLOADS, blobs.TABLE]
+    assert ch.inserts[0][1] == [{"org": "o", "namespace": "n", "sha256": sha, "user_id": "u-1"}]
+    ch = _CH()
+    asyncio.run(blobs.put("o", "n", b"bytes", uploader="-", ch=ch))  # type: ignore[arg-type]
+    assert [t for t, _ in ch.inserts] == [blobs.TABLE]

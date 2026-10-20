@@ -51,3 +51,10 @@ PERSONAL_PREFIX = "col-me-"
 def personal_name(org: str, subject: str) -> str:
     """The personal collection of the end user `subject` in `org`."""
     return PERSONAL_PREFIX + hashlib.sha256(f"{org}\0{subject}".encode()).hexdigest()[:24]
+
+
+def end_user_revocation_subject(org: str, subject: str) -> str:
+    """The subject an end user's tokens are revoked by: `<org>/user:<id>`. A
+    user id holds no `/`, so the last `/` ends the org: no other org's user
+    spells the same key."""
+    return f"{org}/{subject}"

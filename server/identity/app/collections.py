@@ -78,6 +78,10 @@ async def handle_collection_create(input: CollectionCreateInput) -> CollectionCr
     org, namespace, parent = input.org, input.namespace, input.parent
     _check_name(namespace)
     caller = resolve_subject()
+    auth = current_auth()
+    if auth is not None and auth.write_namespaces and not auth.can_write(org, namespace):
+        # A token that writes only its `ns_write` set creates nothing outside it.
+        raise AuthInsufficientError(f"this token may not write {org}/{namespace}")
     if parent and not await _may(Role.WRITER, org, parent):
         raise AuthInsufficientError(f"{caller!r} cannot add a collection to {org}/{parent}")
     taken = PreconditionFailedError(f"the name {namespace!r} is taken in {org}")

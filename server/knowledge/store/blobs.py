@@ -95,27 +95,31 @@ async def delete(
     min_age_s: int = 0,
     ch: _CHClient | None = None,
 ) -> int:
-    """Delete the originals `shas` of the namespace in one statement and return
-    how many are gone; with `min_age_s`, only rows written at least that long ago
-    (on the ClickHouse clock), so an original a concurrent write just stored
-    again survives."""
+    """Delete the originals `shas` of the namespace in one statement, and the
+    record of who uploaded the ones now gone, and return how many are gone; with
+    `min_age_s`, only rows written at least that long ago (on the ClickHouse
+    clock), so an original a concurrent write just stored again survives."""
     shas = sorted(set(shas))
     if not shas:
         return 0
     ch = ch or _default_client()
-    sql = f"DELETE FROM {TABLE} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-    sql += "AND sha256 IN {shas:Array(String)}"
+    where = "org = {org:String} AND namespace = {ns:String} AND sha256 IN {shas:Array(String)}"
     params: dict[str, object] = {"org": org, "ns": namespace, "shas": shas}
     if min_age_s > 0:
-        sql += " AND created_at < now64(3) - INTERVAL {age:UInt32} SECOND"
+        where += " AND created_at < now64(3) - INTERVAL {age:UInt32} SECOND"
         params["age"] = int(min_age_s)
-    await ch.execute(sql, params=params)
-    left = await ch.query_one(
-        f"SELECT uniqExact(sha256) AS n FROM {TABLE} "
+    await ch.execute(f"DELETE FROM {TABLE} WHERE {where}", params=params)
+    rows = await ch.query_all(
+        f"SELECT DISTINCT toString(sha256) AS sha FROM {TABLE} "
         "WHERE org = {org:String} AND namespace = {ns:String} AND sha256 IN {shas:Array(String)}",
         params={"org": org, "ns": namespace, "shas": shas},
     )
-    return len(shas) - int((left or {}).get("n") or 0)
+    gone = sorted(set(shas) - {str(r["sha"]) for r in rows})
+    if gone:
+        # Who uploaded them goes with them; a record younger than `min_age_s`
+        # may be a re-upload's, written just before its bytes.
+        await ch.execute(f"DELETE FROM {UPLOADS} WHERE {where}", params={**params, "shas": gone})
+    return len(gone)
 
 
 async def namespaces(

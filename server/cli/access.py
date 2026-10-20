@@ -420,6 +420,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
                     "(in every org; a token minted after that stays valid)",
                     end="",
                 )
+            elif kind == "subject" and "/user:" in token_id:
+                print(" (that org's end user: every token its issuer signs for them)", end="")
             elif kind == "subject":
                 print(" (every token whose sub is this principal, in every org)", end="")
             print(

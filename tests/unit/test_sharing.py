@@ -1415,3 +1415,84 @@ def test_a_fetched_key_that_is_a_federated_one_is_dropped_and_issuers_fetch_side
         assert end_user_keys.loaded("second")
     finally:
         end_user_keys.clear()
+
+
+def test_an_issuer_that_never_loads_leaves_the_others_on_their_period(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead `jwks_url` is retried every 2 s, and every issuer still gets its
+    full fetch each period, so one that rotates keeps working."""
+    import json
+
+    from server.auth import end_user_keys
+    from server.settings import settings
+
+    issuers = json.loads(
+        end_user_issuer.issuers_setting(_PUBLIC, keys={}, jwks_url="https://a.example/jwks")
+    )
+    issuers["dead"] = {"orgs": ["zeta"], "jwks_url": "https://dead.example/jwks"}
+    monkeypatch.setattr(settings, "jwt_end_user_issuers_json", json.dumps(issuers))
+    monkeypatch.setattr(settings, "jwt_end_user_jwks_refresh_seconds", 10.0)
+    clock = [0.0]
+    asked: list[dict[str, Any]] = []
+
+    class _Done(Exception):
+        pass
+
+    async def _sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    async def _refresh(**kw: Any) -> None:
+        asked.append(kw)
+        end_user_keys._keys[end_user_issuer.ISSUER] = {}  # the live one is loaded
+        if len(asked) == 6:
+            raise _Done
+
+    monkeypatch.setattr(end_user_keys, "_now", lambda: clock[0])
+    monkeypatch.setattr(end_user_keys.asyncio, "sleep", _sleep)
+    monkeypatch.setattr(end_user_keys, "refresh", _refresh)
+    end_user_keys.clear()
+    end_user_keys._keys[end_user_issuer.ISSUER] = {}
+
+    async def _run() -> None:
+        with pytest.raises(_Done):
+            await end_user_keys.start_refresh_loop()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        end_user_keys.clear()
+    fast = {"unloaded_only": True}
+    assert asked == [fast, fast, fast, fast, {}, fast], "a full fetch every 10 s"
+
+
+def test_an_end_user_s_subject_revocation_names_its_org(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`user:<id>` names one person per org: revoking acme's user:u-1 leaves
+    globex's user:u-1 working, and the bare id revokes neither."""
+    from server.auth import revocation
+
+    def _revoke(*keys: str) -> None:
+        monkeypatch.setattr(revocation, "_revoked_jtis", frozenset(keys))
+
+    _revoke("user:u-1")
+    assert verify_token(_token(org="acme")).org == "acme"
+    _revoke("acme/user:u-1")
+    with pytest.raises(TokenError, match="revoked"):
+        verify_token(_token(org="acme"))
+    assert verify_token(_token(org="globex")).org == "globex"
+
+
+def test_a_token_with_ns_write_creates_no_collection_outside_it() -> None:
+    from server.auth import context
+    from server.core.errors import AuthInsufficientError
+    from server.identity.api.models_collections import CollectionCreateInput
+    from server.identity.app.collections import handle_collection_create
+
+    context.set_current_auth(
+        _person(namespaces=("*",), roles=(Role.WRITER,), write_namespaces=("ns-b",))
+    )
+    try:
+        with pytest.raises(AuthInsufficientError, match="may not write"):
+            asyncio.run(handle_collection_create(CollectionCreateInput(org=ORG, namespace="col-x")))
+    finally:
+        context.set_current_auth(None)

@@ -58,11 +58,11 @@ flowchart LR
 A service in front of Loom (a chat app) signs a short-lived token for each request it
 makes for one of its users, with a key registered for it as an end-user issuer
 (`LOOM_JWT_END_USER_ISSUERS_JSON`: issuer → the orgs it may sign for, and its RS256 keys,
-fetched from its `jwks_url` or listed by kid). The token names the user
-(`sub: user:<id>`), one of those orgs, its own id (`jti`), and, when the request runs
-inside one of its agents, that agent (`agent: agent:<id>`). `server.auth.jwt` verifies it into the request's
-identity: subject `user:<id>`, the `viewer` role of an org member with no claim, and
-reads pinned to that user's rows (`read_scope = own_user`). There is no long-lived
+fetched from its `jwks_url` or listed by kid). The token names the user (`sub:
+user:<id>`), one of those orgs, its own id (`jti`), and, when the request runs inside one
+of its agents, that agent (`agent: agent:<id>`). `server.auth.jwt` verifies it into the
+request's identity: subject `user:<id>`, the `viewer` role of an org member with no claim,
+and reads pinned to that user's rows (`read_scope = own_user`). There is no long-lived
 secret per customer, and no header can name a different user.
 
 | An end-user token may name              | It may not                                                   |
@@ -80,12 +80,12 @@ decides who may use which agent before it signs one in, so Loom keeps no copy of
 
 An issuer's `orgs` are exact names or `prefix*` patterns, never `*`: one issuer serves the
 orgs of its own deployment, and a stolen key reaches no other. A `jwks_url` is fetched by
-every process at boot and every `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` (5 min); a
-failed fetch keeps the last keys, and until the first fetch lands the issuer's tokens are
+every process at boot and every `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` (5 min); a failed
+fetch keeps the last keys, and until the first fetch lands the issuer's tokens are
 answered 503, never admitted, and its fetch is retried every 2 s. A key is never both an
-end user's and a federated one (`LOOM_JWT_PUBLIC_KEYS_JSON`), compared by key, not kid:
-a federated key verifies Loom-shaped tokens. An issuer rotates by publishing the new key one refresh
-before it signs with it.
+end user's and a federated one (`LOOM_JWT_PUBLIC_KEYS_JSON`), compared by key, not kid: a
+federated key verifies Loom-shaped tokens. An issuer rotates by publishing the new key one
+refresh before it signs with it.
 
 Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
 SCIM member is the service's own lowercase user id, not an identity provider's. Of the
@@ -93,12 +93,12 @@ org-level ops (those that name no namespace to gate), an end user may call only
 `collection.create`, `collection.list`, `namespace.list_mine` and `grants.pending_for_me`.
 An end-user token is served by the op endpoint and `knowledge.download`; MCP, `/v1/me/*`,
 the admin routes and the task watch refuse it (403). A trusted caller
-(`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a `user:`,
-`group:` or `agent:` principal. One user is cut off by revoking their tokens
-(`loom revoke-token --subject user:<id>`) and grants, or by erasing them. `/oauth/revoke`
-revokes nothing for an end-user token: its `jti` is its issuer's to choose, and the
-revocation list spans the deployment, so revoking it there could name another org's token
-or subject.
+(`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a `user:`, `group:`
+or `agent:` principal. One user is cut off by revoking their tokens (`loom revoke-token
+--subject <org>/user:<id>`, the org named: `user:<id>` names one person per org, so a bare
+id revokes no end user's token) and grants, or by erasing them. `/oauth/revoke` revokes
+nothing for an end-user token: its `jti` is its issuer's to choose, and the revocation
+list spans the deployment, so revoking it there could name another org's token or subject.
 
 **Everyone** is a built-in principal every request acting in the org holds: a grant to
 `everyone` on a collection opens it to the whole org (a chat app's "public"), with no
@@ -200,18 +200,18 @@ wrote in any namespace of the org (an end-user token, or a token minted with
 `--read-user-id`, stamps its `user_id`), or, with `purge` (a GDPR deletion), deletes every
 version of them from disk, after superseding another writer's versions that one of theirs
 replaced, so none reads as live again. It deletes their uploaded originals that no other
-writer's document shares (each upload by an end user is recorded in `loom.blob_uploads`,
-since the document version that named it may since have been replaced and merged away), revokes and then deletes every grant naming `user:<id>`, blanks
-their id as the issuer of the grants they gave others (those grants stay), removes them
-from every group, and retires their personal
-collection's directory row (`namespace.delete` and `collection.delete` refuse a personal
-collection: it goes only with its user's erasure). The request ledger keeps the user's
-calls for cost with their `user:<id>` subject scrubbed, and the user's newest-call row is
-deleted. Deleting a SCIM group revokes the grants that named it, so a group made later
-under the same id starts with none. Collections that hold other writers' documents stay:
-Loom deletes only what its writer asked to delete. `collection.delete` purges what its
-collection held (a namespace erasure that takes the rows off disk) before the collection
-leaves the tree. A user-scope
+writer's live document shares (each upload by an end user is recorded in
+`loom.blob_uploads`, because the document version that named it may have been replaced and
+merged away since), revokes and then deletes every grant naming `user:<id>`, blanks their
+id as the issuer of the grants they gave others (those grants stay), removes them from
+every group, and retires their personal collection's directory row (`namespace.delete` and
+`collection.delete` refuse a personal collection: it goes only with its user's erasure).
+The request ledger keeps the user's calls for cost with their `user:<id>` subject
+scrubbed, and the user's newest-call row is deleted. Deleting a SCIM group revokes the
+grants that named it, so a group made later under the same id starts with none.
+Collections that hold other writers' documents stay: Loom deletes only what its writer
+asked to delete. `collection.delete` purges what its collection held (a namespace erasure
+that takes the rows off disk) before the collection leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
 read, and in the user's own personal collection. An org admin may erase a collection's
 rows without reading them; a platform admin sees every collection. Each section's read
