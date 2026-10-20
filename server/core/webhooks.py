@@ -21,6 +21,7 @@ import functools
 import hashlib
 import hmac
 import logging
+import os
 import ssl
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ from server.core.webhook_secrets import webhook_secret_ref_ok
 log = logging.getLogger(__name__)
 
 # How long a receiver has to answer before the delivery counts as failed.
+# not a setting: with each worker's MAX_POSTS_PER_PASS, fills its pass deadline
 ACK_TIMEOUT_SECONDS = 10.0
 
 
@@ -48,11 +50,15 @@ def _tls() -> ssl.SSLContext:
 _warned_unusable: set[str] = set()
 
 
-def read_secret(org: str, ref: str, env: Mapping[str, str], *, warn: bool = True) -> bytes | None:
-    """The signing key `ref` names in `env` (surrounding whitespace, such as a
-    trailing newline, dropped), or None when the name is not one of `org`'s own,
-    the variable is unset, or its `whsec_` value is not base64. `warn=False`
-    for a caller that says so itself."""
+def read_secret(
+    org: str, ref: str, env: Mapping[str, str] | None = None, *, warn: bool = True
+) -> bytes | None:
+    """The signing key `ref` names in `env`, the process environment when None
+    (surrounding whitespace, such as a trailing newline, dropped), or None when
+    the name is not one of `org`'s own, the variable is unset, or its `whsec_`
+    value is not base64. `warn=False` for a caller that says so itself."""
+    if env is None:
+        env = os.environ  # each secret is a variable a registration names, not a setting
     raw = env.get(ref, "").strip() if webhook_secret_ref_ok(org, ref) else ""
     if not raw:
         return None

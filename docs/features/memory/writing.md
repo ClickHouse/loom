@@ -263,14 +263,14 @@ per change. The event names the change and never its content: the receiver reads
 memory back with its own token (`memory.get_by_id`), so what it may read is decided when
 it reads, as for any other read.
 
-| Event               | Sent after                                                                                                                                                                                                       |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row                                                                                                                                             |
-| `memory.revised`    | a new value of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes |
+| Event               | Sent after                                                                                                                                                                                                                         |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row                                                                                                                                                               |
+| `memory.revised`    | a new value of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes                   |
 | `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` for the side it tombstones, `namespace.rollback` back to a tombstone or removing a key born later, an expiry that tombstones |
-| `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                  |
-| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                      |
-| `memory.erased`     | an `erasure.request` saga completes                                                                                                                                                                              |
+| `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                                    |
+| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                                        |
+| `memory.erased`     | an `erasure.request` saga completes                                                                                                                                                                                                |
 
 Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
 events. The same value said again (a restatement, which only reinforces the row) sends
@@ -350,9 +350,11 @@ sweep, the `delete_version` check).
 - **Fairness.** A pass takes events in turns: every webhook's oldest due event, then
   every webhook's second, at most 10 of one webhook and 40 in all. It sends 4 at a time
   and one at a time per webhook, so a slow receiver holds at most one of the 4. A webhook
-  whose last 5 POSTs failed is passed over for a cooldown that starts at a minute and
-  doubles up to an hour, checked before each POST; a 2xx ends it. The cooldown is kept
-  per server process, so a restart or a new worker leader starts it afresh. Every
+  whose last 5 POSTs failed (`LOOM_MEMORY_WEBHOOK_FAILURES_BEFORE_COOLDOWN`) is passed
+  over for a cooldown that starts at a minute (`LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS`) and
+  doubles up to an hour (`LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS`), checked before each
+  POST; a 2xx ends it. The cooldown is kept per server process, so a restart or a new
+  worker leader starts it afresh. Every
   webhook with work therefore gets its first POST of a pass before any webhook gets a
   second, while fewer than 40 webhooks have work; a pass stops starting POSTs after
   100 s, and what it did not send goes next pass. One webhook gets at most 10 POSTs per

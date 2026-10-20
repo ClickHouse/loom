@@ -22,10 +22,10 @@ OUTBOX = "loom.memory_webhook_outbox"
 ATTEMPTS = "loom.memory_webhook_attempts"
 
 # Days an outbox row and an attempt row are kept (the tables' TTL).
-KEEP_DAYS = 3
+KEEP_DAYS = 3  # not a setting: the TTL migration 064 gives the tables
 # The most registrations a registry read returns: far above any deployment's count
 # (10 per namespace), a bound on a read nothing else bounds.
-REGISTRY_LIMIT = 100_000
+REGISTRY_LIMIT = 100_000  # not a setting: a safety bound, not a page size
 
 WEBHOOK_COLS: tuple[str, ...] = (
     "org",

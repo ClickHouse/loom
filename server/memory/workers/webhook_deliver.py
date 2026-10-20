@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -53,27 +52,24 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# POSTs per pass, CONCURRENCY at a time, each ended by the 10 s ack deadline. The
-# pass stops sending at POST_BUDGET_SECONDS, inside its 120 s deadline, and records
+# POSTs per pass, CONCURRENCY at a time, each ended by the ack deadline: together they
+# fill POST_BUDGET_SECONDS, inside the worker's 120 s pass deadline, and the pass records
 # what it sent; the rest go next pass.
-MAX_POSTS_PER_PASS = 40
-CONCURRENCY = 4
-POST_BUDGET_SECONDS = 100.0
+MAX_POSTS_PER_PASS = 40  # not a setting: with CONCURRENCY and the ack deadline, fills the budget
+CONCURRENCY = 4  # not a setting: with MAX_POSTS_PER_PASS and the ack deadline, fills the budget
+# not a setting: derived from the three values it is made of
+POST_BUDGET_SECONDS = MAX_POSTS_PER_PASS / CONCURRENCY * signed.ACK_TIMEOUT_SECONDS
 # Events of one webhook per pass, so every webhook with work gets its turn.
-PER_WEBHOOK = 10
+PER_WEBHOOK = 10  # not a setting: a webhook's share of MAX_POSTS_PER_PASS
 # How long a leased event is passed over by another copy of the pass: past the
 # pass deadline, so a crashed pass's events come back.
-LEASE_SECONDS = 180
+LEASE_SECONDS = 180  # not a setting: derived from the worker's 120 s pass deadline
 # Events still waiting this long are marked dead before the outbox's 3-day TTL drops
 # them, so webhook.deliveries says why: for a usable secret, and for a receiver to take
 # them (a receiver that is down, or one whose backlog never reached its turn).
-SECRET_DEADLINE = timedelta(days=2, hours=12)
-DELIVERY_DEADLINE = timedelta(days=2, hours=18)
-# After this many failed POSTs in a row a webhook is passed over for a cooldown
-# that doubles from COOLDOWN_SECONDS up to MAX_COOLDOWN_SECONDS, reset by a 2xx.
-FAILURES_BEFORE_COOLDOWN = 5
-COOLDOWN_SECONDS = 60
-MAX_COOLDOWN_SECONDS = 3600
+# memory_webhook_max_attempts lets an operator give up sooner.
+SECRET_DEADLINE = timedelta(days=2, hours=12)  # not a setting: ends before store.KEEP_DAYS
+DELIVERY_DEADLINE = timedelta(days=2, hours=18)  # not a setting: ends before store.KEEP_DAYS
 USER_AGENT = "loom-memory-webhook/1"
 
 
@@ -103,8 +99,11 @@ def _note_post(webhook_id: str, ok: bool) -> None:
         return
     h = _health.setdefault(webhook_id, _Health())
     h.failures += 1
-    if h.failures >= FAILURES_BEFORE_COOLDOWN:
-        h.cooldown = min(h.cooldown * 2 or COOLDOWN_SECONDS, MAX_COOLDOWN_SECONDS)
+    if h.failures >= settings.memory_webhook_failures_before_cooldown:
+        h.cooldown = min(
+            h.cooldown * 2 or settings.memory_webhook_cooldown_seconds,
+            settings.memory_webhook_max_cooldown_seconds,
+        )
         h.until = naive_utc_now() + timedelta(seconds=h.cooldown)
 
 
@@ -296,11 +295,11 @@ async def deliver_once(
     org: str = "",
     namespace: str = "",
 ) -> DeliverResult:
-    """One pass over the due events. `transport` replaces the network and
-    `org` / `namespace` narrow the pass (tests). Every time comes from
+    """One pass over the due events. `transport` replaces the network, `env`
+    the environment the secrets are read from, and `org` / `namespace` narrow
+    the pass (tests). Every time comes from
     `naive_utc_now()`, read when it is needed."""
     now = naive_utc_now()
-    env = os.environ if env is None else env
     since = now - timedelta(days=store.KEEP_DAYS)
 
     def mine(hook: store.Hook) -> bool:

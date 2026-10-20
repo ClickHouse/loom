@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
@@ -60,7 +59,7 @@ from server.workers import pass_context
 log = logging.getLogger(__name__)
 
 # Live webhooks a namespace may hold.
-MAX_PER_NAMESPACE = 10
+MAX_PER_NAMESPACE = 10  # not a setting: the cap webhook.register documents
 
 # (org, namespace) → ((webhook_id, its event types), ...).
 Registry = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
@@ -297,7 +296,7 @@ def _info(row: Mapping[str, Any]) -> WebhookInfo:
         events=list(row["events"]),
         created_by=str(row["created_by"]),
         created_at=row["created_at"],
-        secret_present=signed.read_secret(str(row["org"]), ref, os.environ) is not None,
+        secret_present=signed.read_secret(str(row["org"]), ref) is not None,
     )
 
 

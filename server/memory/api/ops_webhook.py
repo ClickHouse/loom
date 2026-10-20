@@ -30,7 +30,7 @@ webhook_register = Operation(
     output_model=WebhookRegisterOutput,
     handler=handle_webhook_register,
     idempotent=True,
-    budget_p99_ms=800,
+    budget_p99_ms=800,  # the URL's name lookup, then a registry read and one insert
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -43,7 +43,7 @@ webhook_list = Operation(
     output_model=WebhookListOutput,
     handler=handle_webhook_list,
     idempotent=True,
-    budget_p99_ms=200,
+    budget_p99_ms=200,  # one registry read of the namespace
     required_role=Role.ADMIN,
     audit=False,
 )
@@ -55,7 +55,7 @@ webhook_remove = Operation(
     output_model=WebhookRemoveOutput,
     handler=handle_webhook_remove,
     idempotent=True,
-    budget_p99_ms=400,
+    budget_p99_ms=400,  # a registry read of the namespace and one insert
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -68,7 +68,7 @@ webhook_deliveries = Operation(
     output_model=WebhookDeliveriesOutput,
     handler=handle_webhook_deliveries,
     idempotent=True,
-    budget_p99_ms=400,
+    budget_p99_ms=400,  # the namespace's events and an attempts scan, 62 ms at 1M events
     required_role=Role.ADMIN,
     audit=False,
 )

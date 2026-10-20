@@ -923,7 +923,7 @@ async def test_one_webhooks_backlog_never_delays_another_namespaces_event(
     first = await _pass(handler)
     assert fake.last("ok-1")["status"] == "delivered"
     # wh-down failed five POSTs in a row: its other events wait out the cooldown.
-    assert first.delivered == 1 and first.failed == worker.FAILURES_BEFORE_COOLDOWN
+    assert first.delivered == 1 and first.failed == settings.memory_webhook_failures_before_cooldown
     second = await _pass(handler, now=NOW + timedelta(seconds=10))
     assert second.total == 0 and second.waiting == 2
 
@@ -992,7 +992,7 @@ async def test_the_receivers_last_status_survives_a_lease_and_a_cooldown_wait(
 
     # A cooldown wait keeps it too, with its reason as the error: an older event fails
     # first and cools the webhook down, then ev-1 waits.
-    monkeypatch.setattr(worker, "FAILURES_BEFORE_COOLDOWN", 1)
+    monkeypatch.setattr(settings, "memory_webhook_failures_before_cooldown", 1)
     fake.outbox.append(_outbox_row(event_id="ev-0", occurred_at=NOW - timedelta(minutes=1)))
     await _pass(lambda r: httpx.Response(502), now=NOW + timedelta(minutes=10))
     assert fake.last("ev-0")["last_status"] == 502
@@ -1443,3 +1443,22 @@ def test_the_worker_is_registered_on_its_settings() -> None:
     assert worker_meta()["memory_webhook_deliver"]["enabled"] is (
         settings.memory_webhook_deliver_enabled
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "memory_webhook_deliver_interval_seconds",
+        "memory_webhook_deliver_idle_interval_seconds",
+        "memory_webhook_max_attempts",
+        "memory_webhook_failures_before_cooldown",
+        "memory_webhook_cooldown_seconds",
+        "memory_webhook_max_cooldown_seconds",
+        "memory_webhook_refresh_seconds",
+    ],
+)
+def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str) -> None:
+    from server.settings._webhooks import WebhookSettings
+
+    with pytest.raises(PydanticValidationError):
+        WebhookSettings(**{field: 0})
