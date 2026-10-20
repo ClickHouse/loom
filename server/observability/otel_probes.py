@@ -673,7 +673,7 @@ def _probe_storage() -> dict[str, list[tuple[float, dict[str, str]]]]:
 # as `server.auth.agents._made` counts them for the cap: every namespace in
 # the trust's org carrying its mark (`agents.tag`), released ones too. One
 # row per trust and per marked namespace, so the census is small.
-_AGENT_TRUSTS_SQL = """
+_AGENT_TRUSTS_SQL = f"""
         SELECT t.org AS org, t.name AS trust, t.max_agents AS max_agents,
                countIf(n.namespace != '') AS made
         FROM (
@@ -688,6 +688,7 @@ _AGENT_TRUSTS_SQL = """
             WHERE startsWith(mark, 'machine:')
         ) AS n ON n.org = t.org AND n.mark = t.mark
         GROUP BY t.org, t.name, t.max_agents
+        SETTINGS {_FINAL_SINGLE_PASS}
 """
 
 

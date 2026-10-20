@@ -300,7 +300,7 @@ caller.
 | `loom.code.tier_lag_seconds` above 1800 for 10 minutes                                                                   | a compiler tier is stuck (the "code tier lag" alert in `deploy/dashboards/code_plane.json`; set the threshold above the slowest tier's normal cycle) |
 | `loom.auth.agents_provisioned{outcome=made}` per trust above its control plane's normal rate (start at 50 in 10 minutes) | a trust is naming new agents faster than its fleet grows: a leaked issuer key or a runaway control plane                                             |
 | `loom.auth.trust_agents_used_ratio` above 0.8                                                                            | the trust nears `--max-agents`                                                                                                                       |
-| `loom.auth.agents_provisioned{outcome=at_cap}` above 0                                                                   | new agents of the trust are refused                                                                                                                  |
+| `loom.auth.agents_provisioned{outcome=at_cap}` increase above 0 over 10 minutes                                          | new agents of the trust are refused                                                                                                                  |
 
 With HyperDX, an empty result is read as 0, so a minimum-sample guard must return a value
 inside the healthy range rather than no rows.

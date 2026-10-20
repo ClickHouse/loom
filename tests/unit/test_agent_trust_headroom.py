@@ -52,7 +52,7 @@ def test_the_census_counts_what_the_cap_counts() -> None:
             _namespace("fleet-x", ["machine:fleetwood"]),
             _namespace("team", ["x"]),
         ],
-        otel_probes._AGENT_TRUSTS_SQL + " ORDER BY trust",
+        f"SELECT * FROM ({otel_probes._AGENT_TRUSTS_SQL}) ORDER BY trust",
     )
     assert rows == [
         {"org": "acme", "trust": "fleet", "max_agents": 4, "made": 3},
