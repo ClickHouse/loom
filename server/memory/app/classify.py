@@ -30,10 +30,15 @@ import logging
 
 import httpx
 
+from server.memory.app.log_once import LogOnce
+from server.memory.domain.classify_endpoints import classify_refusal
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
 
 log = logging.getLogger(__name__)
+
+# Namespaces whose stored classify_endpoint is refused, logged once per process.
+_OFF_GATEWAY_LOGGED = LogOnce()
 
 _TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
 
@@ -49,7 +54,8 @@ async def classify(
     when the response's memory_type isn't in valid_types (when
     valid_types is non-empty).
     """
-    if not endpoint:
+    if not endpoint or classify_refusal(endpoint):
+        # Off the gateway: no call; the caller's type stays.
         return ""
     body = {
         "value": value,
@@ -109,7 +115,18 @@ async def get_namespace_classify_config(
         return "", ""
     if not row:
         return "", ""
-    return (
-        row.get("classify_endpoint") or "",
-        row.get("classify_prompt_template") or "",
-    )
+    endpoint = row.get("classify_endpoint") or ""
+    refusal = classify_refusal(endpoint)
+    if refusal:
+        # Stored before the gateway was required: memory content never goes
+        # there, and the namespace has no classifier until it is changed.
+        if _OFF_GATEWAY_LOGGED.first((org, namespace)):
+            log.warning(
+                "%s/%s: its classify_endpoint is refused while the gateway is required "
+                "(%s): not classified",
+                org,
+                namespace,
+                refusal,
+            )
+        return "", ""
+    return (endpoint, row.get("classify_prompt_template") or "")

@@ -31,6 +31,8 @@ const errorMessages: Record<string, string> = {
   invalid_output: "The model response did not match the expected format or dimensions.",
   unsupported_dimensions: "The vector tables need a dimension count that is a multiple of 8.",
   unsupported_provider: "This provider is not supported for this job.",
+  gateway_required:
+    "Model calls must go through the inference gateway: use a base URL at a host in LOOM_INFERENCE_GATEWAY_HOSTS, or an OpenAI-compatible provider at the gateway.",
   provider_error: "The provider check failed. Check the model and provider availability.",
 };
 

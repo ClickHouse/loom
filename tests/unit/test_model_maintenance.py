@@ -153,3 +153,47 @@ async def test_agreeing_process_is_not_refused(monkeypatch):
         {"type": "http", "method": "POST", "path": "/v1/memory.set"}, AsyncMock(), AsyncMock()
     )
     app.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_gate_held_for_a_refused_configuration_answers_a_code_not_retried():
+    # Nothing is rebuilding and only an operator ends it: no Retry-After, and
+    # GATEWAY_REQUIRED, which neither SDK retries (test_sdk_retry_logging,
+    # sdk/typescript/src/transport.test.ts).
+    gate = ModelWorkGate()
+    gate.close(
+        "refused", refusal="LOOM_INFERENCE_GATEWAY_REQUIRED refuses the saved Gemini embedder"
+    )
+    app, send = AsyncMock(), AsyncMock()
+    middleware = ModelMaintenanceMiddleware(app, gate)
+    await middleware(
+        {"type": "http", "method": "POST", "path": "/v1/memory.search"}, AsyncMock(), send
+    )
+    app.assert_not_awaited()
+    response = send.await_args_list[0].args[0]
+    assert response["status"] == 503
+    assert not [name for name, _ in response["headers"] if name == b"retry-after"]
+    body = send.await_args_list[1].args[0]["body"]
+    assert b"GATEWAY_REQUIRED" in body and b"model_configuration_refused" in body
+    assert b"Gemini" not in body  # the reason is the operator's, in /v1/health
+
+
+def test_resuming_a_gate_clears_its_refusal() -> None:
+    gate = ModelWorkGate()
+    gate.close("refused", refusal="refused")
+    gate.resume("refused")
+    assert not gate.closed and gate.refusal == ""
+
+
+def test_a_gate_held_for_a_refused_configuration_is_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core import model_work_gate
+
+    gate = ModelWorkGate()
+    monkeypatch.setattr(model_work_gate, "_gate", gate)
+    gate.close("refused", refusal="refused")
+    check = model_work_gate.readiness_check()
+    assert not check.ok and "model configuration refused" in str(check)
+    gate.transfer("refused", "rebuild")  # a replacement takes the hold
+    assert "model change in progress" in str(model_work_gate.readiness_check())
