@@ -431,15 +431,17 @@ only as any namespace's: granted by its admin, or by joining.
 An agent's token also names every active namespace of the trust's org that its subject holds a
 live grant on (`agents.with_grants`), at the grant's role but never above writer, so an agent
 cannot pass on admin over a namespace it was lent. They are added by name until the next would
-take the token's lent entries past `agents.LENT_TOKEN_BYTES` (3,328 bytes, each name counted as
-it is written in `namespaces` and `ns_roles`), so the token stays within a proxy's 8 KB header
-limit at the longest and the shortest names alike. A grant reaches an agent's next token; a
+take all the token's namespaces, its own and the trust's included, past
+`agents.TOKEN_NAMESPACE_BYTES` (4,096 bytes, each name counted as it is written in `namespaces`
+and `ns_roles`), so the token stays within a proxy's 8 KB header limit with a 4096-bit signing
+key, at the longest and the shortest names alike. A grant reaches an agent's next token; a
 lower or revoked one caps its claim at once (`authz.claim_cap`), on other servers within
 `grant_cache_ttl_seconds`. Agents lend to each other through `grants.share_agent` and
 `grants.unshare_agent` (`server/identity/app/agent_shares.py`): the caller must be an agent, the
-namespace its own and the grantee an agent of its trust, at viewer or writer, and the grantee's
-lent entries within that budget (two shares at once can both pass it; the token then names
-those that fit, by name). A share gives the grantee only what the lender already reads, so a
+namespace its own and the grantee an agent of its trust, at viewer or writer, and a namespace
+the grantee's token does not name yet within that budget (one it names already, the trust's or
+lent before, only has its role raised; two shares at once can both pass it, and the token then
+names those that fit, by name). A share gives the grantee only what the lender already reads, so a
 compromised agent gains nothing by it; which agent may read which is the control plane's
 decision, made by calling as the lending agent. A share never lowers a grant nor writes over
 one someone else made, and an unshare revokes only a grant the calling agent made, each checked

@@ -530,31 +530,42 @@ def test_an_agents_token_names_lent_namespaces_by_name_until_the_next_would_not_
     bots["active"].update({"fleet-a1", *lent, "zz"})
     bots["grants"]["sa:fleet:a1"] = {ns: 1 for ns in lent} | {"docs": 2, "zz": 1}
     roles = _agent_roles(bots)
-    fit = agents.LENT_TOKEN_BYTES // 143
+    own = agents.token_bytes("fleet-a1") + agents.token_bytes("docs")  # its own and the trust's
+    fit = (agents.TOKEN_NAMESPACE_BYTES - own) // 143
     assert [ns for ns in roles if ns.startswith("ns-")] == lent[:fit]  # first by name
     assert "zz" not in roles  # short, but after the first that did not fit
     assert roles["docs"] == "writer"  # a raised role is never left out
 
 
+_LONGEST = [f"l{i:03}" + "x" * 124 for i in range(30)]  # the longest names a namespace may have
+
+
 @pytest.mark.parametrize(
-    "lent",
+    "trust, lent",
     [
-        [f"{i:03}" + "x" * 125 for i in range(30)],  # the longest names a namespace may have
-        [f"{i:03}" for i in range(600)],  # three-byte names: the per-name overhead dominates
+        ([], _LONGEST),
+        ([], [f"{i:03}" for i in range(600)]),  # three-byte names: the per-name overhead dominates
+        ([f"t{i:03}" + "x" * 124 for i in range(12)], _LONGEST),  # the trust's own fill most of it
     ],
-    ids=["longest", "short"],
+    ids=["longest", "short", "trust-and-lent"],
 )
-def test_an_agents_token_stays_under_a_proxys_header_limit(bots, lent: list[str]) -> None:
-    bots["active"].update({"fleet-a1", *lent})
+def test_an_agents_token_stays_under_a_proxys_header_limit(
+    bots, trust: list[str], lent: list[str]
+) -> None:
+    bots["registered"]["fleet"]["ns_roles"] = [(ns, "viewer") for ns in trust]
+    bots["active"].update({"fleet-a1", *trust, *lent})
     bots["grants"]["sa:fleet:a1"] = {ns: 2 for ns in lent}
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
     token = r.json()["access_token"]
     claims = pyjwt.decode(token, options={"verify_signature": False})
-    wanted = set(lent)
-    named = [ns for ns in claims["namespaces"] if ns in wanted]
+    named = claims["namespaces"]
+    kept = [ns for ns in named if ns in set(lent)]
     used = sum(map(agents.token_bytes, named))
-    assert used <= agents.LENT_TOKEN_BYTES < used + agents.token_bytes(lent[len(named)])  # full
-    assert len(f"Authorization: Bearer {token}") < 8192 - 1024  # room for the other headers
+    next_one = agents.token_bytes(lent[len(kept)])
+    assert used <= agents.TOKEN_NAMESPACE_BYTES < used + next_one  # the budget is full
+    # A 4096-bit key signs 683 base64 characters; the test key fewer, so count the difference.
+    signature = len(token.rsplit(".", 1)[1])
+    assert len(f"Authorization: Bearer {token}") + 683 - signature < 8192 - 1024
 
 
 @pytest.mark.parametrize("agent", [None, "", "A1", "a/b", "-a", "a" * 64])

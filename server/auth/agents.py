@@ -23,11 +23,11 @@ from server.core.ch import get_client
 # a namespace, so it is refused, never rewritten into another agent's name.
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
-# The most bytes an agent's token spends on namespaces lent to it, beyond its own
-# and its trust's: twelve of the longest names. Base64 adds a third, so this keeps
-# a token under a proxy's default 8 KB header limit
-# (test_an_agents_token_stays_under_a_proxys_header_limit).
-LENT_TOKEN_BYTES = 3328
+# The most bytes an agent's token spends on the namespaces it names, its own and
+# its trust's included: fifteen of the longest names. Base64 adds a third, and the
+# other claims, the header and a 4096-bit signature leave this much of a proxy's
+# default 8 KB header limit (test_an_agents_token_stays_under_a_proxys_header_limit).
+TOKEN_NAMESPACE_BYTES = 4096
 
 log = logging.getLogger(__name__)
 
@@ -86,9 +86,10 @@ async def with_grants(
     grant on (another agent's share, an admin's grant), as `granted` counts
     them. A grant raises a role `ns_roles` gives, and a lower or revoked one
     caps that role at the gate (`authz.claim_cap`). Namespaces are added by
-    name until the next would pass LENT_TOKEN_BYTES, so the token stays within
-    a proxy's header limit; `grants.share_agent` checks the same budget, but
-    two shares at once can both pass it."""
+    name until the next would take the token's namespaces, `ns_roles` included,
+    past TOKEN_NAMESPACE_BYTES, so the token stays within a proxy's header
+    limit; `grants.share_agent` checks the same budget, but two shares at once
+    can both pass it."""
     from server.operations.base import grant_rank
 
     held = await granted(m["org"], subject(m["name"], agent))
@@ -97,10 +98,11 @@ async def with_grants(
     for ns, role in held.items():
         if ns in roles and grant_rank(role) > grant_rank(roles[ns]):
             roles[ns] = role
-    used = kept = 0
+    used = sum(map(token_bytes, roles))
+    kept = 0
     for ns in extra:
         used += token_bytes(ns)
-        if used > LENT_TOKEN_BYTES:
+        if used > TOKEN_NAMESPACE_BYTES:
             break
         roles[ns] = held[ns]
         kept += 1

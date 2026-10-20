@@ -87,8 +87,11 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     m = await machines.get(trust)
     roles = {agents.home_of(subject): "writer", **dict(m["ns_roles"] if m else [])}
     extra = agents.lent(roles, await agents.granted(input.org, subject))
-    if input.namespace not in extra and (
-        sum(map(agents.token_bytes, [*extra, input.namespace])) > agents.LENT_TOKEN_BYTES
+    # A namespace the token names already (the trust's, or lent before) costs
+    # nothing more: the share only raises its role.
+    named = [*roles, *extra]
+    if input.namespace not in named and (
+        sum(map(agents.token_bytes, [*named, input.namespace])) > agents.TOKEN_NAMESPACE_BYTES
     ):
         raise PreconditionFailedError(
             f"agent {input.agent} holds as many lent namespaces as its token names; "

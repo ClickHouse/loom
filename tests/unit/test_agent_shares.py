@@ -182,18 +182,39 @@ def test_an_agent_raises_its_own_share(calls, world) -> None:
 
 def test_the_limit_counts_what_the_grantees_token_would_name(calls, world) -> None:
     _as("sa:fleet:a")
-    released = {f"gone-{i:03}" for i in range(agents.LENT_TOKEN_BYTES // 31)}  # 31 bytes each
+    released = {f"gone-{i:03}" for i in range(agents.TOKEN_NAMESPACE_BYTES // 31)}  # 31 bytes each
     world["ranks"] = {ns: 1 for ns in released} | {"docs": 1}
     world["inactive"] = released
     world["trust_roles"] = [("docs", "viewer")]  # its trust names it already
     assert _share().role == "viewer"
 
 
+def _filling(own: list[str]) -> dict[str, int]:
+    """Lent namespaces that leave the token less room than fleet-a's 29 bytes."""
+    full: dict[str, int] = {}
+    used = sum(map(agents.token_bytes, own))
+    i = 0
+    while used + agents.token_bytes("fleet-a") <= agents.TOKEN_NAMESPACE_BYTES:
+        ns = f"ns-{i:03}"
+        full[ns] = 1
+        used += agents.token_bytes(ns)
+        i += 1
+    return full
+
+
+def test_a_share_that_raises_a_role_the_trust_gives_costs_nothing(calls, world) -> None:
+    _as("sa:fleet:a")
+    world["trust_roles"] = [("fleet-a", "viewer")]  # the trust lends a's namespace to every agent
+    world["ranks"] = _filling(own=["fleet-b", "fleet-a"])
+    assert _share(role="writer").role == "writer"
+
+
 def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world) -> None:
     _as("sa:fleet:a")
-    full = {f"ns-{i:02}-" + "x" * 58: 1 for i in range(agents.LENT_TOKEN_BYTES // 143)}  # 143 each
-    full["filler1"] = 1  # what is left is less than fleet-a's 29 bytes
-    assert sum(map(agents.token_bytes, [*full, "fleet-a"])) > agents.LENT_TOKEN_BYTES
+    full = _filling(own=["fleet-b"])
+    assert (
+        sum(map(agents.token_bytes, ["fleet-b", *full, "fleet-a"])) > agents.TOKEN_NAMESPACE_BYTES
+    )
     world["ranks"] = full | {"fleet-b": 3}
     with pytest.raises(PreconditionFailedError):
         _share()
