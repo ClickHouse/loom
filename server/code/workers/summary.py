@@ -376,16 +376,20 @@ async def _run_cards(
             if len(pending) >= workers * 2:
                 done_set, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 pending = [t for t in pending if t not in done_set]
-                for task in done_set:
-                    task.result()  # re-raises what the file raised
+                # Every finished file's error is read, the first re-raised.
+                errors = [t.exception() for t in done_set if not t.cancelled()]
+                if first := next((e for e in errors if e is not None), None):
+                    raise first
         if pending:
             await asyncio.gather(*pending)
     finally:
         # `asyncio.wait` does not cancel its tasks when the pass is cancelled
-        # (deadline, shutdown): without this they keep calling the model and
-        # writing cards after the pass, and the next pass starts the same files.
+        # (deadline, shutdown) or a file raises: without this they keep calling
+        # the model and writing cards after the pass, and the next pass starts
+        # the same files. They are awaited, so none outlives the pass.
         for task in pending:
             task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def _file_excerpts(repo: Any, org: str, ns: str, path: str, model: str) -> str:

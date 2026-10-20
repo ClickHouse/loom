@@ -174,6 +174,26 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
 
 
 @held
+def test_no_card_task_outlives_a_held_file(error) -> None:
+    from server.code.workers import summary as w
+
+    started: list[asyncio.Task[Any]] = []
+
+    async def one(path: str) -> None:
+        started.append(asyncio.current_task())  # type: ignore[arg-type]
+        if path == "held.py":
+            raise error
+        await asyncio.sleep(60)
+
+    async def run() -> None:
+        with pytest.raises(type(error)):
+            await w._run_cards(["slow.py", "held.py", "later.py"], one, 1 + 1, lambda: False)
+        assert started and all(t.done() for t in started)  # each stopped before the raise
+
+    asyncio.run(run())
+
+
+@held
 def test_a_summary_card_whose_embed_is_held_is_a_stub_with_no_warning(error, caplog) -> None:
     from server.code.workers import summary as w
 

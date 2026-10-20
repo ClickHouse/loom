@@ -649,3 +649,48 @@ async def test_a_held_embed_answers_the_refusal_not_a_ranking_without_vectors(
     wired(_Down(_issue(), prs=_prs(), dirs=["src/Storages/MergeTree/"], stats=STATS))
     with pytest.raises(type(error)):  # 403 / 503 as memory.search answers, not a degraded rank
         await h.handle_code_bisect_candidates(_inp())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held", [True, False])
+async def test_the_wide_window_waits_for_its_embed_when_the_read_fails_first(
+    monkeypatch, held
+) -> None:
+    import asyncio
+
+    from server.code.app import bisect_fusion
+    from server.llm import customer
+
+    finished: list[bool] = []
+
+    async def slow_embed(text: str) -> list[float]:
+        await asyncio.sleep(0.01)  # ends after the read has failed
+        finished.append(True)
+        if held:
+            raise customer.SwitchUnread("the model-call switch could not be read")
+        return [0.5]
+
+    class _Down:
+        async def window_prs(self, *a: Any, **k: Any) -> list[dict[str, Any]]:
+            raise RuntimeError("window read down")
+
+    monkeypatch.setattr(bisect_fusion, "_embed", slow_embed)
+    call = bisect_fusion.wide_extras(
+        _Down(),
+        "o",
+        "t",
+        good="v1",
+        bad="v2",
+        master=False,
+        versions=[],
+        report_at=datetime(2026, 1, 1),
+        in_window=set(),
+        text="report",
+        paths=[],
+    )
+    if held:
+        with pytest.raises(customer.SwitchUnread):  # the request answers the hold
+            await call
+    else:
+        assert await call == ([], {})  # the first window stands
+    assert finished == [True]  # the embed ran to its end, none left behind

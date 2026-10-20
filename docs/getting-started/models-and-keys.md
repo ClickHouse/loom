@@ -344,9 +344,9 @@ curl -s -X POST "$LOOM_BASE_URL/v1/org.set_model_calls" -H "Authorization: Beare
   sends `"locked": false`. A platform admin's change that sends no `locked`
   keeps the lock. [`org.model_calls`](../reference/operations/org.md#orgmodel_calls)
   reads the setting, the lock and who set it.
-- **Offboarding an org** is manual: a platform admin sends `"enabled": false,
-"locked": true`. The org's cached query vectors expire after 30 days. No
-  Loom path switches an org off by itself yet; a customer-wide erasure will.
+- **Offboarding an org** is manual: a platform admin sends
+  `"enabled": false, "locked": true`. The org's cached query vectors expire
+  after 30 days. No Loom path switches an org off by itself.
 - Every server applies a change within `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`
   (default 10; the process that took it, on its next call). A server that
   cannot read the switch for longer than

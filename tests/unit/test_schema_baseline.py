@@ -104,9 +104,9 @@ def test_the_journal_files() -> None:
         "043_scim_users.sql",
         "044_service_account_lineage.sql",
         "045_request_sli.sql",
-        "053_org_model_calls.sql",
         "054_embedding_cache_org.sql",
         "055_delete_version_checks.sql",
+        "056_org_model_calls.sql",
     ]
 
 

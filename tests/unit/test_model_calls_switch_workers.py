@@ -550,7 +550,8 @@ def test_code_backfill_stops_on_a_switched_off_org_and_records_its_pass(monkeypa
 
 def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkeypatch) -> None:
     """The run's model calls are the org's: with no customer header the switch
-    still refuses them, and the run stops with its cursor where it was."""
+    still refuses them, and the run stops with its cursor where it was, its
+    pass compacted and recorded like its other exits."""
     import argparse
 
     from server.cli import code_backfill
@@ -608,6 +609,15 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     async def no_denylist(*a: Any) -> None:
         return None
 
+    recorded: list[dict[str, Any]] = []
+    compacted: list[Any] = []
+
+    async def record(*a: Any, **k: Any) -> None:
+        recorded.append(k)
+
+    async def compact(*a: Any) -> None:
+        compacted.append(a)
+
     repo = _Repo()
     cfg = SimpleNamespace(
         org="acme",
@@ -627,6 +637,8 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     monkeypatch.setattr("server.code.app.index.denylist.load_denylist", no_denylist)
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Embedder())
     monkeypatch.setattr(settings, "code_ingest_round_files", 0)
+    monkeypatch.setattr(code_backfill, "_record_manual_pass", record)
+    monkeypatch.setattr(code_backfill, "_compact_after_bulk", compact)
     assert settings.inference_customer_header == ""
     _off("acme")
     args = argparse.Namespace(
@@ -642,6 +654,7 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
     assert asyncio.run(code_backfill._backfill(args)) == 1
     assert sent == []  # nothing of the switched-off org's code went out
     assert "backfill_cursor:index" not in repo.state
+    assert len(compacted) == 1 and [r["phase"] for r in recorded] == ["index"]
 
 
 def test_a_switch_gone_stale_mid_reembed_stops_the_page_before_its_write() -> None:

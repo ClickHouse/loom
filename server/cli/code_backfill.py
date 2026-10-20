@@ -143,6 +143,16 @@ async def _backfill(args: argparse.Namespace) -> int:
         )
         if held:
             print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
+            # The batches written before the hold are compacted and recorded.
+            await _close_index(
+                counters,
+                org,
+                ns,
+                model_name,
+                started,
+                head,
+                "repair" if paths_file else "twin" if suffix else "backfill",
+            )
             return 1
         if not paths_file:
             await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
@@ -178,19 +188,14 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
-    await _record_manual_pass(
-        "code_ingest",
+    await _close_index(
+        counters,
         org,
         ns,
-        started=started,
-        done=counters["files"],
-        rows_written=counters["chunks"] + counters["symbols"] + counters["edges"],
-        errors=counters["errors"],
-        counters=counters,
-        phase="index",
-        head=head[:12],
-        mode="repair" if paths_file else "twin" if suffix else "backfill",
+        model_name,
+        started,
+        head,
+        "repair" if paths_file else "twin" if suffix else "backfill",
     )
     if paths_file:
         # a targeted repair proves nothing about the rest of the tree: the
@@ -381,6 +386,32 @@ async def _dialect_folder_pass(repo: Any, org: str, ns: str, head: str) -> dict[
         f"text, {len(undecided)} undecided, {len(assigned)} inherit their folder's {by_dialect}"
     )
     return {"undecided": len(undecided), "inherited": len(assigned)}
+
+
+async def _close_index(
+    counters: dict[str, int],
+    org: str,
+    ns: str,
+    model_name: str,
+    started: float,
+    head: str,
+    mode: str,
+) -> None:
+    """The index phase's end: compact what it wrote and record its pass."""
+    await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
+    await _record_manual_pass(
+        "code_ingest",
+        org,
+        ns,
+        started=started,
+        done=counters["files"],
+        rows_written=counters["chunks"] + counters["symbols"] + counters["edges"],
+        errors=counters["errors"],
+        counters=counters,
+        phase="index",
+        head=head[:12],
+        mode=mode,
+    )
 
 
 async def _held_batch(

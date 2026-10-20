@@ -503,7 +503,7 @@ closed: a process whose copy of the switch is older than
 `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` refuses every model call for an org until it
 reads it again. An org admin reaches only its own org's switch. A platform admin's lock
 (`"locked": true`, settable only by a platform admin) stops the org's admins from switching
-it back on or unlocking it, never from switching it off. Offboarding is manual today: a
+it back on or unlocking it, never from switching it off. Offboarding is manual: a
 platform admin switches the org off locked, and the org's cached query vectors expire after
 30 days. Changes to one org's switch are serialized, so an org admin's write never carries
 an old lock state over a new one.

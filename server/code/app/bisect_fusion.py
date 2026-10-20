@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -102,25 +103,39 @@ async def _read_window(
     report's nearest among them. Status "" when read."""
     wall, floor = bounds
 
-    async def window() -> list[dict[str, Any]]:
-        return list(await source.window_prs(org, tracker_ns, versions, before=wall, after=floor))
+    read = await _read_and_embed(
+        lambda: source.window_prs(org, tracker_ns, versions, before=wall, after=floor), text
+    )
+    if read is None:  # the scan's candidates stand
+        return {}, [], "window_unavailable"
+    rows, vector = read
+    by_number = {int(r["pr_number"]): r for r in rows if r.get("pr_number")}
+    if not by_number:
+        return {}, [], "empty_window"
+    return by_number, await _vector_order(org, tracker_ns, vector, list(by_number)), ""
 
-    # Both run to their end, so a held embed is the answer even when the read failed first.
+
+async def _read_and_embed(
+    read: Callable[[], Awaitable[Any]], text: str
+) -> tuple[list[dict[str, Any]], list[float]] | None:
+    """A window read and the report's embedding, both run to their end: a held
+    embed is raised even when the read failed first. None when either failed."""
+
+    async def rows_of() -> list[dict[str, Any]]:
+        return list(await read())
+
     rows, vector = await asyncio.gather(
-        window(),
+        rows_of(),
         _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
         return_exceptions=True,
     )
     if isinstance(vector, customer.HOLDS):
         raise vector  # the org's model calls are held: the request answers that
     for failed in (rows, vector):
-        if isinstance(failed, BaseException):  # the scan's candidates stand
+        if isinstance(failed, BaseException):
             logger.info("bisect fusion: window read failed: %s", failed)
-            return {}, [], "window_unavailable"
-    by_number = {int(r["pr_number"]): r for r in rows if r.get("pr_number")}
-    if not by_number:
-        return {}, [], "empty_window"
-    return by_number, await _vector_order(org, tracker_ns, vector, list(by_number)), ""
+            return None
+    return rows, vector
 
 
 def start_prefetch(
@@ -373,16 +388,12 @@ async def wide_extras(
     floor = None if wide else (report_at - timedelta(days=days) if report_at else None)
     if not wide and floor is None:
         return [], {}
-    try:
-        rows, vector = await asyncio.gather(
-            source.window_prs(org, tracker_ns, wide, before=report_at, after=floor),
-            _embed(text) if text.strip() else asyncio.sleep(0, result=[]),
-        )
-    except customer.HOLDS:
-        raise
-    except Exception as e:  # noqa: BLE001 — the first window stands
-        logger.info("bisect wide window read failed: %s", e)
+    read = await _read_and_embed(
+        lambda: source.window_prs(org, tracker_ns, wide, before=report_at, after=floor), text
+    )
+    if read is None:  # the first window stands
         return [], {}
+    rows, vector = read
     extra = {
         int(r["pr_number"]): r
         for r in rows
