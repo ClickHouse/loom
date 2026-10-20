@@ -29,7 +29,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from server.auth import agents, claims, machines, scim, shielded, sso_links
-from server.auth.attempts import Attempts, address_key, client_address
+from server.auth.attempts import Attempts, Busy, address_key, admit, client_address, slot
 from server.auth.jwt import AuthInfo, mint_token, new_jti
 from server.auth.oauth_store import (
     PENDING_TTL,
@@ -538,11 +538,15 @@ _refused_logged_at: dict[str, float] = {}
 
 
 def log_refused(what: str, address: str) -> None:
+    _warn_once_a_minute(what, "oauth: too many sign-in %ss from %s; refused", what, address)
+
+
+def _warn_once_a_minute(kind: str, message: str, *args: object) -> None:
     """At most once a minute per kind, so a flood shows up without filling
     the log."""
-    if time.monotonic() - _refused_logged_at.get(what, -60.0) > 60:
-        _refused_logged_at[what] = time.monotonic()
-        log.warning("oauth: too many sign-in %ss from %s; refused", what, address)
+    if time.monotonic() - _refused_logged_at.get(kind, -60.0) > 60:
+        _refused_logged_at[kind] = time.monotonic()
+        log.warning(message, *args)
 
 
 @router.get("/oauth/sso")
@@ -1485,6 +1489,8 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
             m, proof = await machines.verify_any_workload(token)
         if m["agent_claim"]:
             agent = agents.agent_of(m, proof)
+        await _admit_exchange(m["name"], agent)
+        if agent:
             own = await agents.ensure_namespace(m, agent)
     except machines.Refused as e:
         raise _refused(e) from None
@@ -1497,6 +1503,49 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
         m, since, ends, {"by": "workload", "workload_sub": str(proof["sub"])}, agent, own
     )
     return {**issued, "issued_token_type": "urn:ietf:params:oauth:token-type:access_token"}
+
+
+# Seconds both exchange limits count over (LOOM_WORKLOAD_EXCHANGES_PER_*).
+_EXCHANGE_WINDOW_S = 600  # not a setting: the window both limits are stated over
+
+
+async def _admit_exchange(trust: str, agent: str) -> None:
+    """Count a verified exchange against its trust and, if any, its agent;
+    refuse it with 429 over a limit, 503 when this process is saturated."""
+    per_trust = Attempts(
+        "oauth.exchange", settings.workload_exchanges_per_trust, _EXCHANGE_WINDOW_S
+    )
+    gates = [(per_trust, trust)]
+    if agent:
+        per_agent = Attempts(
+            "oauth.exchange.agent", settings.workload_exchanges_per_agent, _EXCHANGE_WINDOW_S
+        )
+        gates.append((per_agent, f"{trust}:{agent}"))
+    # Counted as `admit` counts a sign-in, never released once admitted: one
+    # refused at its recount (renewals of one agent racing) is released under
+    # every gate it was counted under, so it spends none of the trust's room.
+    try:
+        async with slot():
+            admitted = await admit(gates) is not None
+    except Busy:
+        _warn_once_a_minute(
+            "exchange.busy", "oauth: too busy to count an exchange for trust %s; 503", trust
+        )
+        raise _unavailable() from None
+    if admitted:
+        return
+    _warn_once_a_minute(
+        f"exchange:{trust}",
+        "oauth: exchange for trust %s%s over its limit; refused",
+        trust,
+        f" (agent {agent})" if agent else "",
+    )
+    raise OAuthError(
+        "temporarily_unavailable",
+        429,
+        description="too many token exchanges for this trust or agent; retry later",
+        headers={"Retry-After": "60"},
+    )
 
 
 async def _machine_tokens(

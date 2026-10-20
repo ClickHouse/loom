@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from server.observability import otel_probes
+from server.observability import metrics_gauges, otel_probes
 
 ROOT = Path(__file__).resolve().parents[2]
 OTEL = ROOT / "server" / "observability" / "otel_probes.py"
@@ -191,5 +191,154 @@ def test_census_scope_process_keeps_every_process_reading(monkeypatch: pytest.Mo
 def test_state_gauge_probes_wrap_the_censuses_and_not_the_fast_probe() -> None:
     probes = otel_probes._state_gauge_probes()
     assert probes["ch_probe"] is otel_probes._probe_state  # per-replica counters: every process
-    for name in ("code_probe", "retention_probe", "agent_labels_probe", "storage_probe"):
+    for name in (
+        "code_probe",
+        "retention_probe",
+        "agent_labels_probe",
+        "storage_probe",
+        "agent_trusts_probe",
+    ):
         assert getattr(probes[name], "__wrapped__", None) is not None, name
+
+
+def _census_cache(monkeypatch: pytest.MonkeyPatch, probe: Any) -> Any:
+    from server.settings import settings
+    from server.workers import leader
+
+    monkeypatch.setattr(settings, "otel_census_scope", "leader")
+    monkeypatch.setattr(leader, "_CURRENT", _lease(True))
+    return metrics_gauges._TTLCache(300.0, otel_probes._census_only(probe))
+
+
+def _observed(cache: Any, key: str) -> list[float]:
+    return [o.value for o in metrics_gauges._cached_series(cache, key)(None)]
+
+
+def test_a_refresh_off_the_lease_clears_the_holders_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.workers import leader
+
+    reading = {"agent_trust_used_ratio": [(0.9, {"loom.org": "acme", "loom.trust": "fleet"})]}
+    cache = _census_cache(monkeypatch, lambda: reading)
+    cache._refresh()
+    assert _observed(cache, "agent_trust_used_ratio") == [0.9]
+    # The lease moves to another process while a refresh is on its way: its None
+    # answer clears the reading, which a later read on the lease must not serve.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    cache._refresh()
+    assert cache._value is None
+
+
+def test_a_handoff_stops_the_old_holders_series_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.workers import leader
+
+    cache = _census_cache(monkeypatch, lambda: {"agent_trust_used_ratio": [(0.9, {})]})
+    cache._refresh()
+    assert _observed(cache, "agent_trust_used_ratio") == [0.9]
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    # Within the TTL and before any refresh: nothing from the old reading.
+    assert cache.get() is None
+    assert _observed(cache, "agent_trust_used_ratio") == []
+    assert not cache._refreshing
+
+
+def test_a_refresh_skipped_off_the_lease_leaves_the_next_census_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.workers import leader
+
+    calls: list[float] = []
+    now = [1000.0]
+    monkeypatch.setattr(metrics_gauges.time, "monotonic", lambda: now[0])
+
+    def probe() -> Any:
+        calls.append(now[0])
+        return {"agent_trust_agents": [(3.0, {})]}
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()  # the holder's census at t=1000
+    # A refresh started on the lease runs after it is lost; no read sees that state.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    now[0] = 1301.0
+    cache._refresh()
+    # The lease comes back: the census is taken at once, not at t=1601.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(True))
+    now[0] = 1320.0
+    cache.get()
+    _drain(cache)
+    assert calls == [1000.0, 1320.0]
+    assert _observed(cache, "agent_trust_agents") == [3.0]
+
+
+def test_a_failed_census_waits_out_the_ttl(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[float] = []
+    now = [1000.0]
+    monkeypatch.setattr(metrics_gauges.time, "monotonic", lambda: now[0])
+
+    def probe() -> Any:
+        calls.append(now[0])
+        raise RuntimeError("ClickHouse away")
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()
+    now[0] = 1010.0
+    cache.get()
+    assert not cache._refreshing and calls == [1000.0]
+
+
+def test_a_process_back_on_the_lease_takes_its_census_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.workers import leader
+
+    calls: list[float] = []
+    now = [1000.0]
+    monkeypatch.setattr(metrics_gauges.time, "monotonic", lambda: now[0])
+
+    def probe() -> Any:
+        calls.append(now[0])
+        return {"agent_trust_agents": [(3.0, {})]}
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()  # the holder's census at t=1000
+    monkeypatch.setattr(leader, "_CURRENT", _lease(False))
+    now[0] = 1010.0
+    assert cache.get() is None  # off the lease: nothing
+    # Back on the lease within the 300 s TTL: the census is taken now, not at t=1300.
+    monkeypatch.setattr(leader, "_CURRENT", _lease(True))
+    now[0] = 1020.0
+    cache.get()
+    _drain(cache)
+    assert calls == [1000.0, 1020.0]
+    assert _observed(cache, "agent_trust_agents") == [3.0]
+    # A census taken keeps its TTL.
+    now[0] = 1060.0
+    cache.get()
+    assert not cache._refreshing and calls == [1000.0, 1020.0]
+
+
+def _drain(cache: Any) -> None:
+    import time
+
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        with cache._lock:
+            if not cache._refreshing:
+                return
+        time.sleep(0.005)
+    raise AssertionError("background refresh never completed")
+
+
+def test_a_failed_census_keeps_its_last_reading(monkeypatch: pytest.MonkeyPatch) -> None:
+    answers: list[Any] = [{"agent_trust_agents": [(3.0, {})]}]
+
+    def probe() -> Any:
+        if not answers:
+            raise RuntimeError("ClickHouse away")
+        return answers.pop()
+
+    cache = _census_cache(monkeypatch, probe)
+    cache._refresh()
+    cache._refresh()  # the probe fails: the holder's last reading stands
+    assert _observed(cache, "agent_trust_agents") == [3.0]

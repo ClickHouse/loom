@@ -547,10 +547,21 @@ settings:
   # on other processes within this TTL (at once on the one that wrote it). [restart]
   # grant_cache_ttl_seconds: 10.0
 
-  # Sign-ins and sign-ups one process checks at once (each costs ClickHouse statements
-  # and a password hash); past it a caller waits up to a second, then gets 429, so a
-  # burst cannot take the shared connection pool. [restart]
+  # Sign-ins, sign-ups and workload-token exchanges one process counts at once (each
+  # costs ClickHouse statements, a sign-in a password hash); past it a caller waits up
+  # to a second, then gets 429 (an exchange 503), so a burst cannot take the shared
+  # connection pool. [restart]
   # auth_attempts_concurrency: 8
+
+  # Workload-token exchanges (RFC 8693) one trust may make in 10 minutes,
+  # deployment-wide; past it /oauth/token answers 429 until older ones age out.
+  # [restart]
+  # workload_exchanges_per_trust: 50000
+
+  # Workload-token exchanges one agent of a trust (a token with an agent claim) may make
+  # in 10 minutes, so one agent's loop cannot spend the trust's. A trust without agents
+  # has only `workload_exchanges_per_trust`. [restart]
+  # workload_exchanges_per_agent: 300
 
   # Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints
   # JWTs scoped to the requested namespace). [restart]

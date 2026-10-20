@@ -193,7 +193,8 @@ with more than one admin, registered first, in one org); its tokens are for
   condition, never as the only one). `--jwks-uri`
   names where the issuer publishes its keys when its discovery document is not
   reachable from Loom. A token that lives minutes is fine: Loom's never
-  outlives it, and the SDK and the coding-agent plugins renew halfway through.
+  outlives it, and the SDKs and the coding-agent plugins renew it before it
+  runs out (below).
   Instead of the agent holding its token, a proxy in front of it can make the
   same exchange and add the `Authorization` header itself. An exchange may
   leave out `client_id` (RFC 8693 does not require it): Loom then takes the one
@@ -213,6 +214,32 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   issuer that a single token could meet, one of them telling agents apart, are
   refused at registration: an exchange naming no client could take neither.
   The signing algorithm follows each published key's type (RS256 or ES256).
+  Exchanges are limited per 10 minutes, across every replica: 50,000 for one
+  trust (`LOOM_WORKLOAD_EXCHANGES_PER_TRUST`) and, in a trust with an agent
+  claim, 300 for one agent (`LOOM_WORKLOAD_EXCHANGES_PER_AGENT`). A trust
+  without agents is one workload and has only the trust's limit: every job of
+  a repository shares one `sub`. Past a limit, `/oauth/token` answers 429,
+  and the SDKs and the plugins keep a token they still hold and try again
+  30 s later. Only a token the issuer signed counts, so nobody without the
+  issuer's key can use up a trust's budget, and an agent refused at its own
+  limit spends none of the trust's. Raise the trust's limit for a fleet whose
+  agents renew often. The SDKs and the plugins renew five minutes before the
+  token runs out, or halfway through its life when that comes sooner; the
+  SDKs renew in each process, the plugins once per agent home and per new
+  workload token (hooks that fire together may each renew). When each
+  renewal presents a fresh workload token, a one-hour token renews after 55
+  minutes and a five-minute one every 2.5 minutes, four exchanges per 10
+  minutes. Loom's token lives only as long as the workload token has left, so
+  one the platform replaces partway through its life, or never, is renewed
+  more often: a five-minute token replaced every 4 minutes settles at about
+  three renewals per replacement, 7.5 exchanges per 10 minutes on average
+  (a ten-minute window can hold up to nine), and a token never replaced
+  renews ever sooner in its last five minutes.
+
+  A burst of new agents is the sign of a leaked issuer key or a runaway control
+  plane, and a trust at its cap refuses every new agent: alert on
+  `loom.auth.agents_provisioned` and `loom.auth.trust_agents_used_ratio`
+  ([what to alert on](./monitoring.md#what-to-alert-on)).
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`

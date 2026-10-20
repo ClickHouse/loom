@@ -1000,5 +1000,7 @@
  "worker_backoff_cap_s": 60.0,
  "worker_ledger_rows": true,
  "worker_partial_retry_s": 3600.0,
- "workers_process": "child"
+ "workers_process": "child",
+ "workload_exchanges_per_agent": 300,
+ "workload_exchanges_per_trust": 50000
 }
