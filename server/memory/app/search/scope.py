@@ -80,6 +80,7 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     """Phase 4: launch the config-plane reads (rerank config, calibration,
     fan-out namespaces) as tasks so they overlap the plan/LLM/embed phases,
     and note whether the token's namespace order is authoritative."""
+    from server.core.llm_free import reads_llm_free
     from server.memory.app.embedder_calibration import resolve_calibration
     from server.memory.app.rerank import get_namespace_rerank_config
 
@@ -87,7 +88,8 @@ def _launch_scope_reads(input: MemorySearchInput) -> _SearchRun:
     # concurrently with the plan/LLM/embed stages and are awaited at first use.
     request_rerank_override = (input.rerank or "").strip()
     _rerank_cfg_task: asyncio.Task[Any] | None = None
-    if not request_rerank_override:
+    # LLM-free reads run only a reranker the request names, never the namespace's.
+    if not request_rerank_override and not reads_llm_free():
         _rerank_cfg_task = create_deferred_task(
             get_namespace_rerank_config(input.org, input.namespace)
         )

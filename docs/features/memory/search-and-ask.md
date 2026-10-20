@@ -94,6 +94,12 @@ query parser reads its intent, matched on the predicate without LLM synonyms; wh
 parser cannot, the search answers from recall alone. `context.pack` runs its memory search the
 same way in every mode, keeping its recipe's planes.
 
+`LOOM_READS_LLM_FREE=true` applies the same rule to every search, whatever its recipe or budget, and
+to every other read: a search also skips the spelling-fix and set-expansion embeddings and reads no
+namespace reranker (only one the request names, never `builtin:openai`), and `memory.ask` answers 409
+naming the setting unless it asks with `allow_synthesis=false`
+([LLM-free reads](../../architecture/llm-architecture.md#llm-free-reads)).
+
 ### Filters and scope
 
 | Field                                                          | Effect                                                                                                                                   |

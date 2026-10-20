@@ -29,7 +29,7 @@ from server.auth.jwt import AuthInfo
 from server.code.app.common import (
     schedule_code_trace_validation_failure,
 )
-from server.core import idempotency
+from server.core import idempotency, llm_free
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, LoomServerError
 from server.observability.consumer import (
     bind_current_consumer,
@@ -544,7 +544,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
     request_id, raw_body, identity = call.request_id, call.raw_body, call.identity
     start = time.perf_counter()
     try:
-        with gates.tenant_slot(call.auth, call.target):
+        with gates.tenant_slot(call.auth, call.target), llm_free.serving(op):
             result = await op.handler(payload)
     except HTTPException as he:
         elapsed_ms = int((time.perf_counter() - start) * 1000)

@@ -218,9 +218,12 @@ def _ask_precedent(input: MemoryAskInput, llm: Any, settings: Any) -> tuple[str,
 
 
 async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
+    from server.core.llm_free import refuse_synthesis
     from server.memory.app.ask import ask
     from server.settings import settings
 
+    if input.allow_synthesis:
+        refuse_synthesis("memory.ask", "allow_synthesis=false")
     # A summary-shaped question over documents goes to the whole-document pass, not to
     # fifteen memories. Deterministic detector, then one knowledge.search to find which
     # documents; falls through when nothing concentrates or the flag is off.

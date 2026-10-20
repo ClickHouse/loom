@@ -53,9 +53,13 @@ def _lookup_key(
     input: MemorySearchInput, embedding_model: str
 ) -> tuple[SearchQuery, list[str], tuple[str, tuple[str, ...]]] | None:
     """The read bounds, the candidate words and the cache key of a lookup;
-    None when the query has no word to respell (or the feature is off)."""
+    None when the query has no word to respell, the feature is off, or reads
+    are LLM-free (`LOOM_READS_LLM_FREE`: one query embedding per read)."""
+    from server.core.llm_free import reads_llm_free
     from server.settings import settings
 
+    if reads_llm_free():
+        return None
     tokens = spelling_candidates(
         input.query, max_words=settings.memory_search_query_spelling_max_words
     )

@@ -73,13 +73,19 @@ _RERANK_MIN_MS = 500
 
 def _default_rerank(work: dict[str, Any]) -> tuple[str, int, int]:
     """(endpoint, top, excerpt_chars) of the deployment's default rerank for this
-    question's kind, or ("", 0, 0) when none applies."""
+    question's kind, or ("", 0, 0) when none applies. LLM-free reads run only a
+    reranker the request names."""
     from server.code.domain.index.question_kind import kind_allowed
+    from server.core.llm_free import reads_llm_free
 
     endpoint = str(settings.code_search_rerank_default).strip()
-    if not endpoint or not kind_allowed(
-        str(work.get("question_kind") or "other"),
-        settings.code_search_rerank_kinds,
+    if (
+        not endpoint
+        or reads_llm_free()
+        or not kind_allowed(
+            str(work.get("question_kind") or "other"),
+            settings.code_search_rerank_kinds,
+        )
     ):
         return "", 0, 0
     work["rerank_default"] = 1

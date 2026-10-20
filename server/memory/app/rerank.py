@@ -140,6 +140,10 @@ async def rerank(
     if not endpoint or endpoint == "none" or not candidates:
         return candidates
 
+    from server.core.llm_free import reads_llm_free
+
+    if endpoint.startswith(BUILTIN_OPENAI) and reads_llm_free():
+        return candidates  # an LLM reranker; LLM-free reads keep the fused order
     if endpoint.startswith(BUILTIN_OPENAI):
         return await _rerank_with_builtin_openai(
             endpoint,

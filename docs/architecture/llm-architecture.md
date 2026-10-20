@@ -298,6 +298,31 @@ from a contradiction, which is why the optional LLM conflict judge exists.
 Whether an agent calls `memory.set` at all is the client model's decision. The MCP tool
 descriptions (`server/transport/mcp_descriptions.py`) describe intent, not a syntax.
 
+### LLM-free reads
+
+`LOOM_READS_LLM_FREE=true` makes every read op (`Operation.read_only`) run with no LLM
+call, so a deployment can promise that reads never reach a model. The HTTP and MCP transports mark the
+request while the handler runs (`server/core/llm_free.py`); the memory search reads the mark through the
+same gate as the fast posture and `context.pack` (`_is_llm_free`), and every other read step that could
+call a model reads `reads_llm_free()`:
+
+- `memory.search`, `search.query` (the MCP `loom_search` tool), `context.pack` and every read built on
+  them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms, and no reranker but one
+  the request names (never `builtin:openai`); a namespace's `rerank_endpoint` is not read. The
+  spelling-fix and set-expansion embeddings are skipped, so a plain search or pack embeds its query once.
+- `code.search`: no HyDE, model-named concept expansion, query expansion or deployment-default rerank
+  (`LOOM_CODE_SEARCH_RERANK_DEFAULT`).
+- `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
+  no rerank. Each keeps the deterministic answer it already falls back to.
+- `memory.ask` and `code.ask` answer 409 `PRECONDITION_FAILED` naming the setting when they would
+  synthesize; `allow_synthesis=false` / `synthesize=false` return the recalled evidence with no LLM call.
+  A model's answer is the purpose of those calls, so the setting refuses it rather than answering
+  without one.
+- The sampled retrieval-quality judge queues nothing.
+
+Writes (`memory.set_from_messages` extraction, the conflict judge, `knowledge.synthesize`, session briefs)
+and the background workers still call models.
+
 ## Prompts
 
 Prompts are Python constants, versioned with the code:

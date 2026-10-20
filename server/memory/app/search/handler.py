@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
 from server.embedding import get_embedder
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
 from server.memory.app.search.anchor_pool import _run_anchor_pool
@@ -194,7 +195,9 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             ),
         ) = await _resolve_query_enrichment(input, actual_work)
 
-        set_expansion_phrases = _collect_set_expansion(input, fast_posture, actual_work)
+        set_expansion_phrases = _collect_set_expansion(
+            input, fast_posture or reads_llm_free(), actual_work
+        )
 
         (
             _derived_aggregate_cache,

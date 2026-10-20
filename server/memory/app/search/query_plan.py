@@ -198,6 +198,9 @@ def _is_fast_posture(input: MemorySearchInput) -> bool:
 
 
 def _is_llm_free(input: MemorySearchInput) -> bool:
-    """True when the read makes no LLM call: under the fast posture, or when the
-    caller asked for an LLM-free read (context.pack) whatever its recipe."""
-    return _is_fast_posture(input) or input._llm_free
+    """True when the read makes no LLM call: under the fast posture, when the
+    caller asked for an LLM-free read (context.pack) whatever its recipe, or
+    while reads are LLM-free (`LOOM_READS_LLM_FREE`)."""
+    from server.core.llm_free import reads_llm_free
+
+    return _is_fast_posture(input) or input._llm_free or reads_llm_free()

@@ -175,7 +175,12 @@ def parse_decomposition(text: str, question: str, *, max_parts: int = 4) -> list
 
 
 async def decompose_question(llm: Any, question: str, *, max_parts: int = 4) -> list[str]:
-    """One cheap-tier call; fail-open to [] on any error or a NONE reply."""
+    """One cheap-tier call; fail-open to [] on any error or a NONE reply, and []
+    with no call while reads are LLM-free."""
+    from server.core.llm_free import reads_llm_free
+
+    if reads_llm_free():
+        return []
     try:
         from server.observability.genai import llm_stage
 

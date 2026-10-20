@@ -265,8 +265,10 @@ async def rerank_stage(
     (default `code_bisect_rerank_timeout_s`). It runs when the caller asks (`rerank`) or
     when the fused top is weak (see `fu.WEAK_MARGIN` for the measured gain). The wider
     window's `extras` ride along, held back unless the model is confident and they share
-    evidence. Any failure keeps the fused order."""
-    if not (force or weak) or not pool or not text.strip():
+    evidence. Any failure keeps the fused order, and so do LLM-free reads."""
+    from server.core.llm_free import reads_llm_free
+
+    if not (force or weak) or not pool or not text.strip() or reads_llm_free():
         return pool, {}
     from server.llm.client import get_llm_client_for_model
 
