@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from server.core.repo_base import _default_client
+from server.insights.app.provider_rebuild_batch import TEXT_COLUMNS
 from server.insights.app.provider_rebuild_page import PAGE_SIZE, rebuild_snapshot_page
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.store.provider_prepared import prepare_live_table
@@ -584,9 +585,12 @@ async def test_a_credential_passage_is_staged_empty_and_verifies(table):
             await verify_reembedded_target(
                 *args, model=embedder.model_name, dimensions=8, ch=client
             )
-        text = "content" if table == "memory_chunks" else "content_excerpt"
         rows = await verify_reembedded_target(
-            *args, model=embedder.model_name, dimensions=8, passage_text=text, ch=client
+            *args,
+            model=embedder.model_name,
+            dimensions=8,
+            text_column=TEXT_COLUMNS[table],
+            ch=client,
         )
         assert rows == 2
     finally:

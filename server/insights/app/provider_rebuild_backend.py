@@ -113,7 +113,7 @@ class ClickHouseRebuildBackend:
             *args,
             model=self.target.model_name,
             dimensions=self.target.dim,
-            passage_text=TEXT_COLUMNS[table.table] if table.table in PASSAGE_TABLES else None,
+            text_column=TEXT_COLUMNS[table.table] if table.table in PASSAGE_TABLES else None,
             ch=self.ch,
         )
 

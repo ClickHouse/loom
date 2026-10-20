@@ -9,9 +9,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import reembed as rb
-
-# Split so the repository's secret scan does not read the fixture as a key.
-_KEY = "sk-" + "proj-" + "Ab3" * 12
+from tests.unit._fake_credentials import OPENAI_KEY
 
 
 class _Emb:
@@ -92,7 +90,7 @@ def test_a_bad_token_is_refused() -> None:
 async def test_a_row_whose_text_reads_as_a_credential_is_never_re_embedded() -> None:
     """It stays on the old model, which search does not read, and paging still moves past it."""
     ch, lines = _CH(3), []
-    ch.rows[1]["content_excerpt"] = "my key is " + _KEY
+    ch.rows[1]["content_excerpt"] = "my key is " + OPENAI_KEY
     sent: list[str] = []
 
     class _Recording(_Emb):
@@ -112,7 +110,7 @@ async def test_a_row_whose_text_reads_as_a_credential_is_never_re_embedded() -> 
 async def test_a_memory_row_is_re_embedded_whatever_its_text() -> None:
     """A memory row's vector follows its sensitivity label: a caller's `low` label on a
     value shaped like a credential wins, and its row has a vector to rebuild."""
-    excerpt = "the test fixture key is " + _KEY
+    excerpt = "the test fixture key is " + OPENAI_KEY
     row = {
         "org": "o",
         "namespace": "ns",

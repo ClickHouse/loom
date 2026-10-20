@@ -1192,8 +1192,9 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
         input.org, input.namespace, [str(r["thread_id"]) for r in rows]
     )
     # Listed across the namespace: a last turn or a title that reads as a credential is
-    # listed without its text, as memory.list lists a 'high' row. The whole last turn is
-    # checked, so a key that crosses the excerpt's cut is caught too.
+    # listed without its text, as memory.list lists a 'high' row. The turn's first
+    # LISTED_TEXT_CHARS characters are checked, so a key that crosses the excerpt's cut is
+    # caught too.
     threads = [
         ConversationThreadSummary(
             thread_id=str(r["thread_id"]),

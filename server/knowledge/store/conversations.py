@@ -18,7 +18,11 @@ from server.core.ch import sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.identity.domain.read_scope import ReadFilters, scope_where
-from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
+from server.knowledge.domain.conversations import (
+    EMBEDDED_EXCERPT_CHARS,
+    LISTED_TEXT_CHARS,
+    ConversationRole,
+)
 
 
 class MessageRow(BaseModel):
@@ -465,7 +469,8 @@ async def list_saved_messages(
     """One page of `user_id`'s live saved messages, newest first, keyed by
     (saved_at, thread_id, msg_id). Grouped per message: a save racing a
     transcript append can leave two rows of one turn, and a page lists it once.
-    `before` is the last key of the previous page."""
+    `before` is the last key of the previous page. `content` is the message's first
+    `LISTED_TEXT_CHARS` characters, what the listing checks and cuts."""
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -474,7 +479,13 @@ async def list_saved_messages(
         "tombstoned_at IS NULL",
         "user_id = {uid:String}",
     ]
-    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "lim": int(limit)}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "lim": int(limit),
+        "listed": LISTED_TEXT_CHARS,
+    }
     if agent not in ("*", "-"):
         where.append("agent = {agent:String}")
         params["agent"] = agent
@@ -492,7 +503,8 @@ async def list_saved_messages(
     return await ch.query_all(
         f"""
         SELECT thread_id, msg_id, any(role) AS role,
-               argMax(content, ts) AS content, max(ts) AS saved_at
+               argMax(substringUTF8(content, 1, {{listed:UInt32}}), ts) AS content,
+               max(ts) AS saved_at
         FROM loom.conversations
         WHERE {" AND ".join(where)}
         GROUP BY thread_id, msg_id
@@ -1053,9 +1065,10 @@ async def recent_threads(
     by thread_id; `offset` skips that many. Each carries its message count and first/last
     seen. `count_turns`: the message count is the thread's distinct turns, as an opened
     thread shows; off, the window's raw row count (for a caller that does not read the
-    count). `last_turn`: the latest message's agent (`last_agent`), role and whole content
-    (`last_content`, so the listing can check it for a credential before it cuts the
-    excerpt); off, they are empty. With both off the page is one statement."""
+    count). `last_turn`: the latest message's agent (`last_agent`), role and first
+    `LISTED_TEXT_CHARS` characters (`last_content`, so the listing can check them for a
+    credential before it cuts the excerpt); off, they are empty. With both off the page is
+    one statement."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -1095,13 +1108,17 @@ async def recent_threads(
     # or every thread's last turn, over the whole window would hold every turn's key or
     # text in memory to rank threads it then drops. The last turn's agent, role and text
     # come from one argMax, `msg_id` breaking a `ts` tie, so they name the same turn.
-    per_thread = "count()" if agent or not count_turns else f"uniqExact({TURN})"
-    turn = (
-        ", argMax((agent, toString(role), content), (ts, msg_id)) AS last_turn" if last_turn else ""
-    )
+    selected = ["thread_id"]
+    if count_turns:
+        selected.append(f"{'count()' if agent else f'uniqExact({TURN})'} AS n")
+    if last_turn:
+        selected.append(
+            "argMax((agent, toString(role), substringUTF8(content, 1, {listed:UInt32})),"
+            " (ts, msg_id)) AS last_turn"
+        )
     counted = await ch.query_all(
         f"""
-        SELECT thread_id, {per_thread} AS n{turn}
+        SELECT {", ".join(selected)}
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -1110,7 +1127,7 @@ async def recent_threads(
           {agent_clause}
         GROUP BY thread_id
         """,
-        params={**params, "tids": [r["thread_id"] for r in rows]},
+        params={**params, "tids": [r["thread_id"] for r in rows], "listed": LISTED_TEXT_CHARS},
     )
     by_thread = {r["thread_id"]: r for r in counted}
     out = []

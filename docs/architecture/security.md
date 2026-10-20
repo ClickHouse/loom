@@ -720,7 +720,8 @@ the reads that serve passages check their text too:
 - Listed without the text: `conversation.list_saved_messages` shows an empty
   `content_excerpt` for a saved message that reads as a credential (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
-  whose last turn reads as a credential (the whole turn is checked, not the excerpt), and
+  whose last turn reads as a credential (its first 1,024 characters are checked, not
+  only the 240-character excerpt), and
   an empty `title` for a title that reads as one. The conversation titler never sends a
   turn that reads as a credential to its model and never stores a title that reads as one.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a

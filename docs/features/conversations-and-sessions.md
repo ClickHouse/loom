@@ -50,7 +50,8 @@ up front.
   written but gets no embedding row, and its text is never sent to the embedder.
   `conversation.search` never returns it, by vector or by the substring fallback, and
   `conversation.threads` lists such a last turn with an empty excerpt (and a title that
-  reads as a credential as empty). The titler never sends such a turn to its model.
+  reads as a credential as empty); it checks a turn's first 1,024 characters, past the
+  240 its excerpt shows. The titler never sends such a turn to its model.
   `conversation.get` and `conversation.list` still serve the turn in its thread
   ([sensitivity](../architecture/security.md#sensitivity)).
 
@@ -89,7 +90,8 @@ namespace's transcripts. `conversation.save_message` (writer) is that opt-in, an
   credential is never embedded either: it answers `reason: "reads_as_credential"`, and a
   new one is not stored. One an earlier build saved is never a vector or keyword hit of
   `conversation.search_saved_messages`, and `conversation.list_saved_messages` lists it
-  with an empty excerpt. The checks also apply to a message that is already saved.
+  with an empty excerpt (it checks the first 1,024 characters, as `conversation.threads`
+  does). The checks also apply to a message that is already saved.
 
 The transcript row decides who owns a saved message. A save claims only rows that no
 user owns or that the caller owns, in the mutation itself, so of two users saving one

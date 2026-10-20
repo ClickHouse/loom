@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.unit._fake_credentials import OPENAI_KEY
+
 
 def _patch_append(monkeypatch, *, append, embed):
     from server.knowledge.app import conversations as h
@@ -109,10 +111,6 @@ async def test_a_failed_embed_stores_the_row_with_its_error(monkeypatch) -> None
     assert (row["content_excerpt"], row["embedding_model"]) == ("hi", "fake")
 
 
-# Split so the repository's secret scan does not read the fixture as a key.
-_KEY = "sk-" + "proj-" + "Ab3" * 12
-
-
 @pytest.mark.asyncio
 async def test_a_turn_holding_a_credential_is_stored_without_an_embedding_row(monkeypatch) -> None:
     """The message is stored as written; it gets no embedding row and its text never
@@ -126,7 +124,7 @@ async def test_a_turn_holding_a_credential_is_stored_without_an_embedding_row(mo
         raise AssertionError("a credential turn must not reach the embedder")
 
     h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
-    out = await h.handle_conversation_append(_turn(f"my key is {_KEY}, keep it safe"))
+    out = await h.handle_conversation_append(_turn(f"my key is {OPENAI_KEY}, keep it safe"))
     assert out.reason in ("", None)
-    assert [r.content for r in stored] == [f"my key is {_KEY}, keep it safe"]
+    assert [r.content for r in stored] == [f"my key is {OPENAI_KEY}, keep it safe"]
     assert rows == []

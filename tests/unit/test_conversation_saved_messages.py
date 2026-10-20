@@ -19,6 +19,7 @@ from server.knowledge.api.models_conversations import (
     ConversationUnsaveMessageInput,
 )
 from server.knowledge.store.conversations import StoredEmbedding, StoredMessage
+from tests.unit._fake_credentials import OPENAI_KEY
 
 _TS = datetime(2026, 1, 1)
 
@@ -474,9 +475,6 @@ def test_saved_message_ops_are_registered_with_their_roles() -> None:
     assert search.required_role is Role.VIEWER
 
 
-_KEY = "sk-" + "proj-" + "Ab3" * 12
-
-
 @pytest.mark.asyncio
 async def test_a_new_turn_that_reads_as_a_credential_is_refused_and_not_written(
     monkeypatch: pytest.MonkeyPatch,
@@ -485,7 +483,7 @@ async def test_a_new_turn_that_reads_as_a_credential_is_refused_and_not_written(
 
     store = _Store(monkeypatch, [None], _embedding(current=0))
     out = await conversations.handle_conversation_save_message(
-        _save_input().model_copy(update={"content": f"my key is {_KEY}"})
+        _save_input().model_copy(update={"content": f"my key is {OPENAI_KEY}"})
     )
     assert (out.indexed, out.reason) == (False, "reads_as_credential")
     assert store.appends == [] and store.embeddings == [] and store.marked == []
@@ -501,7 +499,7 @@ async def test_a_stored_turn_that_reads_as_a_credential_is_refused(
 
     stored = StoredMessage(
         role="assistant",
-        content=f"use {_KEY}",
+        content=f"use {OPENAI_KEY}",
         run_id="run-7",
         ts=_TS,
         owners=("-",),
@@ -715,7 +713,7 @@ async def test_the_keyword_leg_holds_back_a_saved_message_that_reads_as_a_creden
     async def fake_lexical(*_a: Any, limit: int, **_kw: Any) -> list[dict[str, Any]]:
         asked.append(limit)
         return [
-            row("m-key", f"deploy key {_KEY}"),
+            row("m-key", f"deploy key {OPENAI_KEY}"),
             row("m-1", "deploy notes"),
             row("m-2", "deploy"),
         ]
@@ -747,7 +745,13 @@ async def test_the_saved_list_shows_no_text_of_a_message_that_reads_as_a_credent
 
     async def fake_list(*_a: object, **_kw: object) -> list[dict[str, object]]:
         return [
-            {"thread_id": "c-1", "msg_id": "m-k", "role": "user", "content": _KEY, "saved_at": at},
+            {
+                "thread_id": "c-1",
+                "msg_id": "m-k",
+                "role": "user",
+                "content": OPENAI_KEY,
+                "saved_at": at,
+            },
             {"thread_id": "c-1", "msg_id": "m-1", "role": "user", "content": "a", "saved_at": at},
         ]
 

@@ -14,10 +14,7 @@ from server.knowledge.app.conversation_search import (
     vector_search,
 )
 from server.memory.domain.sensitivity import HELD_MARGIN
-
-# Split so the repository's secret scan does not read the fixtures as keys.
-_KEY = "sk-" + "proj-" + "Ab3" * 12
-_AWS = "AKIA" + "IOSFODNN7EXAMPLE"
+from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
 
 
 class StubCH:
@@ -214,7 +211,7 @@ async def test_vector_search_holds_back_a_row_whose_text_reads_as_a_credential()
             {
                 **_row(),
                 "msg_id": "m-key",
-                "embedded_text": "deploy soon? " + "x" * 300 + " " + _AWS,
+                "embedded_text": "deploy soon? " + "x" * 300 + " " + AWS_KEY_ID,
             },
             {**_row(), "msg_id": "m-plain"},
         ]
@@ -249,7 +246,7 @@ async def test_the_substring_fallback_holds_back_a_turn_that_reads_as_a_credenti
     async def fake_search_substring(*a, limit, **k):
         limits.append(limit)
         return [
-            turn("m-key", "deploy with " + _KEY),
+            turn("m-key", "deploy with " + OPENAI_KEY),
             turn("m2", "deploy"),
             turn("m3", "deploy again"),
         ]
@@ -286,15 +283,15 @@ async def test_the_thread_list_shows_no_text_of_a_last_turn_that_reads_as_a_cred
             "last_content": excerpt,
         }
 
-    # The key crosses the excerpt's 240-character cut: the whole turn is checked.
+    # The key crosses the excerpt's 240-character cut, within the checked characters.
     async def recent(*a, **k):
         return [
-            thread("t-key", "x " * 118 + "use " + _AWS),
+            thread("t-key", "x " * 118 + "use " + AWS_KEY_ID),
             thread("t2", "lunch? " * 50),
         ]
 
     async def titles(*a, **k):
-        return {"t2": "Deploy key " + _KEY}
+        return {"t2": "Deploy key " + OPENAI_KEY}
 
     monkeypatch.setattr(conversation_repo, "recent_threads", recent)
     monkeypatch.setattr(conversation_repo, "thread_titles", titles)

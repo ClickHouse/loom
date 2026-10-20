@@ -16,6 +16,7 @@ from server.insights.app.provider_rebuild_batch import (
     rebuild_batch,
 )
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
+from tests.unit._fake_credentials import AWS_KEY_ID
 
 
 @pytest.fixture
@@ -222,7 +223,7 @@ async def test_non_reembed_actions_cannot_accidentally_send_data(target, table):
 @pytest.mark.parametrize("table", sorted(PASSAGE_TABLES))
 async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(table, target):
     # Embedded by an earlier build; its text holds a key.
-    secret = {**row_for(table), TEXT_COLUMNS[table]: "key " + "AKIA" + "IOSFODNN7EXAMPLE"}
+    secret = {**row_for(table), TEXT_COLUMNS[table]: "key " + AWS_KEY_ID}
     result = await rebuild_batch(table, [row_for(table), secret], target)
     target.embed_many.assert_awaited_once_with(["source text"])
     assert [r["embedding_dim"] for r in result] == [2, 0]
@@ -231,6 +232,6 @@ async def test_a_passage_that_reads_as_a_credential_is_rebuilt_without_a_vector(
 @pytest.mark.asyncio
 async def test_a_memory_row_is_rebuilt_whatever_its_text(target):
     # Only raw passages are held; a memory row's vector follows its sensitivity label.
-    row = {**row_for("memory_embeddings"), "content_excerpt": "key " + "AKIA" + "IOSFODNN7EXAMPLE"}
+    row = {**row_for("memory_embeddings"), "content_excerpt": "key " + AWS_KEY_ID}
     result = await rebuild_batch("memory_embeddings", [row], target)
     assert result[0]["embedding_dim"] == 2

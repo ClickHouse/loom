@@ -212,8 +212,8 @@ async def test_a_read_across_agents_orders_two_turns_that_tie_on_time_and_id() -
 
 @pytest.mark.asyncio
 async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
-    # The keyed read still runs, for the whole last turn the listing checks for a
-    # credential, but counts raw rows and the page keeps the window's count.
+    # The keyed read still runs, for the last turn the listing checks for a credential,
+    # but selects no count: the page keeps the window's.
     ch = StubCH(
         [
             [{"thread_id": "t-1", "msg_count": 5}],
@@ -223,7 +223,10 @@ async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
     rows = await conversation_repo.recent_threads(
         "o", "ns", window_days=30, limit=10, count_turns=False, ch=ch
     )
-    assert len(ch.calls) == 2 and "uniqExact" not in ch.calls[1][0]
+    keyed, params = ch.calls[1]
+    # No count is selected, and the last turn is read only as far as the listing checks.
+    assert " AS n" not in keyed and "uniqExact" not in keyed
+    assert "substringUTF8(content, 1, {listed:UInt32})" in keyed and params["listed"] == 1024
     assert rows[0]["msg_count"] == 5
 
 

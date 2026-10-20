@@ -7,6 +7,7 @@ from datetime import datetime
 import pytest
 
 from server.knowledge.workers.conversation_titler import run_pass
+from tests.unit._fake_credentials import OPENAI_KEY
 
 
 class StubCH:
@@ -177,12 +178,9 @@ async def test_the_scan_excludes_titled_and_deleted_threads_before_its_limit(
     assert "tombstoned_at IS NOT NULL OR title != ''" in scan
 
 
-_KEY = "sk-" + "proj-" + "Ab3" * 12
-
-
 @pytest.mark.asyncio
 async def test_a_credential_turn_never_reaches_the_title_model(monkeypatch) -> None:
-    turns = [{"role": "user", "content": f"my key is {_KEY}"}, *_TURNS]
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}, *_TURNS]
     ch = StubCH([_CAND], turns, None)
     _patch(monkeypatch, ch)
     prompts: list[str] = []
@@ -202,7 +200,7 @@ async def test_a_credential_turn_never_reaches_the_title_model(monkeypatch) -> N
     monkeypatch.setattr(repo, "insert_thread", fake_insert)
     res = await run_pass()
     assert res.titled == 1
-    assert prompts and _KEY not in prompts[0] and "what engine?" in prompts[0]
+    assert prompts and OPENAI_KEY not in prompts[0] and "what engine?" in prompts[0]
 
 
 @pytest.mark.asyncio
@@ -211,7 +209,7 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored(monkeypatch) -> 
     _patch(monkeypatch, ch)
 
     class _KeyTitle:
-        text = f"Deploy key {_KEY}"
+        text = f"Deploy key {OPENAI_KEY}"
 
     class _KeyLLM:
         async def complete(self, system, user, max_tokens):

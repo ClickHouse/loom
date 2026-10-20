@@ -10,10 +10,8 @@ from typing import Any
 import pytest
 
 from server.memory.domain.search_types import SearchHit
+from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
 
-# Split so the repository's secret scan does not read the fixtures as keys.
-_OPENAI_KEY = "sk-" + "proj-" + "Ab3" * 12
-_AWS_KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
 _PLAIN = "We moved the standup to Thursday mornings and the deploy plan is unchanged."
 
 
@@ -21,8 +19,8 @@ _PLAIN = "We moved the standup to Thursday mornings and the deploy plan is uncha
 @pytest.mark.parametrize(
     "secret",
     [
-        f"my key is {_OPENAI_KEY}, can you check it?",
-        f"the staging account uses {_AWS_KEY_ID} for uploads",
+        f"my key is {OPENAI_KEY}, can you check it?",
+        f"the staging account uses {AWS_KEY_ID} for uploads",
         # A chunk of a JSON value: the token follows an escaped newline.
         '{"note": "rotate it\\npassword=' + "hunter2hunter2" + '"}',
     ],
@@ -61,14 +59,14 @@ async def test_embed_plain_makes_no_call_when_every_text_reads_as_a_credential(
     async def embed(texts: list[str]) -> list[list[float]]:
         raise AssertionError("no text may reach the embedder")
 
-    [e] = await embed_plain([f"key {_OPENAI_KEY}"], embed)
+    [e] = await embed_plain([f"key {OPENAI_KEY}"], embed)
     assert (e.vector, e.held) == ([], True)
 
 
 def test_without_credentials_keeps_order_and_fills_the_limit() -> None:
     from server.memory.domain.sensitivity import without_credentials
 
-    items = [f"key {_AWS_KEY_ID}", "one", f"key {_OPENAI_KEY}", "two", "three"]
+    items = [f"key {AWS_KEY_ID}", "one", f"key {OPENAI_KEY}", "two", "three"]
     assert without_credentials(items, str) == ["one", "two", "three"]
     assert without_credentials(items, str, 2) == ["one", "two"]
     assert without_credentials([], str, 2) == []
@@ -116,18 +114,18 @@ async def test_a_conversation_chunk_holding_a_key_is_stored_without_a_vector(
         org="o", namespace="n", agent="a", user_id="u", session_id="s", run_id="-"
     )
     # Two turns over the chunk size, so each lands in its own chunk.
-    secret_turn = f"here is the key {_OPENAI_KEY} " + "and some context. " * 40
+    secret_turn = f"here is the key {OPENAI_KEY} " + "and some context. " * 40
     plain_turn = _PLAIN + " " + "More notes on the plan. " * 40
     await write_memory_chunks(
         write, [{"role": "user", "content": plain_turn}, {"role": "user", "content": secret_turn}]
     )
     rows = ch.inserts["loom.memory_chunks"]
-    held = [r for r in rows if _OPENAI_KEY in r["content"]]
-    plain = [r for r in rows if _OPENAI_KEY not in r["content"]]
+    held = [r for r in rows if OPENAI_KEY in r["content"]]
+    plain = [r for r in rows if OPENAI_KEY not in r["content"]]
     assert held and plain
     assert all((r["embedding"], r["embedding_dim"]) == ([], 0) for r in held)
     assert all(r["embedding_dim"] == 2 for r in plain)
-    assert not any(_OPENAI_KEY in t for t in emb.seen)
+    assert not any(OPENAI_KEY in t for t in emb.seen)
 
 
 @pytest.mark.asyncio
@@ -141,7 +139,7 @@ async def test_a_long_value_chunk_holding_a_key_is_stored_without_a_vector(
 
     monkeypatch.setattr(set_chunks, "_head_still_embedded", head_still_embedded)
     ch, emb = _CH(), _Embedder()
-    value = ("Plain paragraph about the release. " * 30) + "\n\n" + (f"key {_AWS_KEY_ID} " * 30)
+    value = ("Plain paragraph about the release. " * 30) + "\n\n" + (f"key {AWS_KEY_ID} " * 30)
     write = SimpleNamespace(
         org="o", namespace="n", agent="a", user_id="u", memory_key="notes/release", value=value
     )
@@ -152,8 +150,8 @@ async def test_a_long_value_chunk_holding_a_key_is_stored_without_a_vector(
     assert written == len(rows)
     assert {r["embedding_dim"] == 0 for r in rows} == {True, False}
     for r in rows:
-        assert (r["embedding_dim"] == 0) == (_AWS_KEY_ID in r["content"])
-    assert not any(_AWS_KEY_ID in t for t in emb.seen)
+        assert (r["embedding_dim"] == 0) == (AWS_KEY_ID in r["content"])
+    assert not any(AWS_KEY_ID in t for t in emb.seen)
 
 
 @pytest.mark.asyncio
@@ -183,18 +181,18 @@ async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_ve
             agent="a",
             chunks=[
                 EvidenceChunk(session_id="s", chunk_index=0, content=_PLAIN),
-                EvidenceChunk(session_id="s", chunk_index=1, content=f"key {_OPENAI_KEY}"),
+                EvidenceChunk(session_id="s", chunk_index=1, content=f"key {OPENAI_KEY}"),
                 EvidenceChunk(session_id="s", chunk_index=2, content="   "),
             ],
-            digests=[EvidenceDigest(session_id="s", summary_text=f"Shared {_AWS_KEY_ID}.")],
+            digests=[EvidenceDigest(session_id="s", summary_text=f"Shared {AWS_KEY_ID}.")],
         )
     )
     chunks = {r["chunk_index"]: r for r in ch.inserts["loom.memory_chunks"]}
     assert set(chunks) == {0, 1}
     assert (chunks[0]["embedding_dim"], chunks[1]["embedding_dim"]) == (2, 0)
-    assert chunks[1]["content"] == f"key {_OPENAI_KEY}"  # stored as written
+    assert chunks[1]["content"] == f"key {OPENAI_KEY}"  # stored as written
     [digest] = ch.inserts["loom.session_summaries"]
-    assert digest["embedding_dim"] == 0 and digest["summary_text"] == f"Shared {_AWS_KEY_ID}."
+    assert digest["embedding_dim"] == 0 and digest["summary_text"] == f"Shared {AWS_KEY_ID}."
     assert (out.chunks_written, out.digests_written, out.skipped) == (2, 1, 1)
     assert out.embedding_dim == 2
     assert emb.seen == [_PLAIN]
@@ -221,7 +219,7 @@ def test_the_chunk_leg_serves_no_chunk_that_reads_as_a_credential() -> None:
         _hit("chunk:s:2", _PLAIN, 0.7),
     ]
     rows = [
-        {"memory_key": "chunk:s:0", "content_full": f"[user] here is the key {_OPENAI_KEY}"},
+        {"memory_key": "chunk:s:0", "content_full": f"[user] here is the key {OPENAI_KEY}"},
         {"memory_key": "chunk:s:1", "content_full": _PLAIN},
         {"memory_key": "chunk:s:2", "content_full": _PLAIN},
     ]
@@ -240,7 +238,7 @@ async def test_the_summary_leg_serves_no_digest_that_reads_as_a_credential() -> 
                 {
                     # The key straddles the served excerpt's 1200-character cut.
                     "session_id": "s1",
-                    "summary_text": "x" * 1195 + f" {_AWS_KEY_ID}.",
+                    "summary_text": "x" * 1195 + f" {AWS_KEY_ID}.",
                     "distance": 0.1,
                 },
                 {
@@ -272,7 +270,7 @@ async def test_the_ask_chunk_lookups_serve_no_chunk_that_reads_as_a_credential()
     async def find(*, limit: int, **_: Any) -> list[dict[str, Any]]:
         asked.append(limit)
         return [
-            {"memory_key": "chunk:s:0", "content_excerpt": f"deploy key {_OPENAI_KEY}"},
+            {"memory_key": "chunk:s:0", "content_excerpt": f"deploy key {OPENAI_KEY}"},
             {"memory_key": "chunk:s:1", "content_excerpt": f"deploy {_PLAIN}"},
             {"memory_key": "chunk:s:2", "content_excerpt": "deploy notes"},
         ]
@@ -291,9 +289,7 @@ async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
 
     class _LLM:
         async def complete(self, *_: Any, **__: Any) -> Any:
-            return SimpleNamespace(
-                text=f"The user pasted {_OPENAI_KEY}.", tokens_in=1, tokens_out=1
-            )
+            return SimpleNamespace(text=f"The user pasted {OPENAI_KEY}.", tokens_in=1, tokens_out=1)
 
     emb = _Embedder()
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
@@ -303,7 +299,7 @@ async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
     )
     assert draft is not None
     assert draft.embedding == [] and emb.seen == []
-    assert _OPENAI_KEY in draft.summary_text  # stored as written
+    assert OPENAI_KEY in draft.summary_text  # stored as written
 
 
 @pytest.mark.asyncio
@@ -314,4 +310,4 @@ async def test_embed_plain_refuses_a_short_answer_from_the_embedder() -> None:
         return [[1.0]]  # one vector for two texts
 
     with pytest.raises(ValueError, match="embedder returned 1 vectors for 2 texts"):
-        await embed_plain(["plain one", f"key {_OPENAI_KEY}", "plain two"], short)
+        await embed_plain(["plain one", f"key {OPENAI_KEY}", "plain two"], short)

@@ -11,6 +11,7 @@ from server.insights.store.provider_verify import (
     verify_live_key_uniqueness,
     verify_reembedded_target,
 )
+from tests.unit._fake_credentials import AWS_KEY_ID
 
 
 @pytest.fixture
@@ -58,9 +59,6 @@ async def test_complete_verified_target_returns_logical_count(verification):
     assert params == {"model": "target", "dim": 3}
 
 
-_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
-
-
 def _emptied_rows(texts: list[str]) -> list[list[dict]]:
     """The two reads of one page: the target's empty ordinals, then their snapshot text.
     The fixture's table has two vector columns; the first is the one left empty."""
@@ -78,9 +76,9 @@ def _emptied_rows(texts: list[str]) -> list[list[dict]]:
 async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verification):
     args, client, result = verification
     result["emptied"] = 2
-    client.query_all.side_effect = _emptied_rows([f"key {_KEY}", f"also {_KEY}"])
+    client.query_all.side_effect = _emptied_rows([f"key {AWS_KEY_ID}", f"also {AWS_KEY_ID}"])
     count = await verify_reembedded_target(
-        *args, model="target", dimensions=3, passage_text="content", ch=client
+        *args, model="target", dimensions=3, text_column="content", ch=client
     )
     assert count == 3
     target_sql, source_sql = (c.args[0] for c in client.query_all.await_args_list)
@@ -97,10 +95,10 @@ async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verificati
 async def test_an_emptied_plain_passage_fails_verification(verification):
     args, client, result = verification
     result["emptied"] = 2
-    client.query_all.side_effect = _emptied_rows([f"key {_KEY}", "a plain turn"])
+    client.query_all.side_effect = _emptied_rows([f"key {AWS_KEY_ID}", "a plain turn"])
     with pytest.raises(ValueError, match="failed verification"):
         await verify_reembedded_target(
-            *args, model="target", dimensions=3, passage_text="content", ch=client
+            *args, model="target", dimensions=3, text_column="content", ch=client
         )
 
 
@@ -124,7 +122,7 @@ async def test_an_emptied_row_that_lost_no_vector_is_not_counted(verification, s
         [{"ordinal": 4, "text": "a plain turn", **source}],
     ]
     count = await verify_reembedded_target(
-        *args, model="target", dimensions=3, passage_text="content", ch=client
+        *args, model="target", dimensions=3, text_column="content", ch=client
     )
     assert count == 3
 
@@ -136,15 +134,15 @@ async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monk
     monkeypatch.setattr(provider_verify, "_EMPTIED_PAGE", 2)
     args, client, result = verification
     result["emptied"] = 3
-    first, first_text = _emptied_rows([f"key {_KEY}", f"key {_KEY}"])
+    first, first_text = _emptied_rows([f"key {AWS_KEY_ID}", f"key {AWS_KEY_ID}"])
     client.query_all.side_effect = [
         first,
         first_text,
         [{"ordinal": 12, "emptied": [True, False]}],
-        [{"ordinal": 12, "text": f"key {_KEY}", "has_vector": [True, True], "live": True}],
+        [{"ordinal": 12, "text": f"key {AWS_KEY_ID}", "has_vector": [True, True], "live": True}],
     ]
     count = await verify_reembedded_target(
-        *args, model="target", dimensions=3, passage_text="content", ch=client
+        *args, model="target", dimensions=3, text_column="content", ch=client
     )
     assert count == 3
     afters = [c.args[1].get("after") for c in client.query_all.await_args_list]

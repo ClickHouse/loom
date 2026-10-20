@@ -58,7 +58,7 @@ async def _holds_plain_emptied(
     names: StagingNames,
     schema: SourceSchema,
     columns: list[str],
-    passage_text: str,
+    text_column: str,
     client: _CHClient,
 ) -> bool:
     """Whether a row the rebuild left empty holds text that does not read as a credential.
@@ -80,7 +80,7 @@ async def _holds_plain_emptied(
         if page:
             emptied = {int(r["ordinal"]): r["emptied"] for r in page}
             sources = await client.query_all(
-                f"SELECT {_ORDINAL} AS ordinal, {_identifier(passage_text)} AS text,"
+                f"SELECT {_ORDINAL} AS ordinal, {_identifier(text_column)} AS text,"
                 f" [{has_vector}] AS has_vector, {live} AS live FROM loom.{names.snapshot}"
                 f" WHERE {_ORDINAL} IN {{ordinals:Array(UInt64)}}",
                 {"ordinals": sorted(emptied)},
@@ -104,12 +104,12 @@ async def verify_reembedded_target(
     *,
     model: str,
     dimensions: int,
-    passage_text: str | None = None,
+    text_column: str | None = None,
     ch: _CHClient | None = None,
 ) -> int:
     """Verify exact row coverage, preserved metadata and the new vector space.
 
-    `passage_text` names the text column of a raw-passage table: a row there that the
+    `text_column` names the text column of a raw-passage table: a row there that the
     rebuild staged without a vector is accepted when that text reads as a credential,
     as its write path leaves it (`provider_rebuild_batch.PASSAGE_TABLES`).
 
@@ -176,8 +176,8 @@ async def verify_reembedded_target(
     # A raw-passage row the rebuild left empty is accepted when its text reads as a
     # credential, as its write path leaves it.
     vector_lost = bool(result["emptied"])
-    if vector_lost and passage_text:
-        vector_lost = await _holds_plain_emptied(names, schema, vectors, passage_text, client)
+    if vector_lost and text_column:
+        vector_lost = await _holds_plain_emptied(names, schema, vectors, text_column, client)
     if (
         result["source_rows"] != result["target_rows"]
         or result["missing"]

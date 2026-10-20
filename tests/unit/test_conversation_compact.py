@@ -13,22 +13,19 @@ import pytest
 from server.knowledge.api.models_conversations import ConversationCompactInput
 from server.knowledge.app import conversations as ch_mod
 from server.llm.client import LLMResult
+from tests.unit._fake_credentials import OPENAI_KEY
 
 T0 = datetime(2026, 9, 1, 12, 0, 0)
-
-
-# Split so the repository's secret scan does not read the fixture as a key.
-_KEY = "sk-" + "proj-" + "Ab3" * 12
 
 
 def _turn(
     i: int, *, secret: bool = False, saved: bool = False, run_id: str = "-"
 ) -> dict[str, Any]:
-    """Transcript row `m{i}`, `i` seconds after T0; `secret` puts `_KEY` in its text."""
+    """Transcript row `m{i}`, `i` seconds after T0; `secret` puts `OPENAI_KEY` in its text."""
     return {
         "msg_id": f"m{i}",
         "role": "user",
-        "content": f"my key is {_KEY}" if secret else f"turn {i}",
+        "content": f"my key is {OPENAI_KEY}" if secret else f"turn {i}",
         "ts": T0 + timedelta(seconds=i),
         "metadata": "{}",
         "user_id": "alice",
@@ -733,7 +730,7 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
 
 
 def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> None:
-    """A summary that repeats a _KEY pasted in one turn would have no vector, so search
+    """A summary that repeats a OPENAI_KEY pasted in one turn would have no vector, so search
     would lose the window for good: nothing is written and no turn is tombstoned."""
     import server.core.ch
     import server.llm.client
@@ -742,7 +739,7 @@ def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> N
         async def complete(self, **kw: Any) -> LLMResult:
             self.prompts.append(kw["user"])
             return LLMResult(
-                text=f"The user shared {_KEY} and planned the week.",
+                text=f"The user shared {OPENAI_KEY} and planned the week.",
                 tokens_in=1,
                 tokens_out=2,
                 provider="fake",
@@ -800,7 +797,7 @@ def test_a_credential_turn_is_left_out_of_the_window_and_stays_live(monkeypatch)
         )
     )
     assert out.compacted is True and out.messages_summarized == 4
-    assert all(_KEY not in prompt for prompt in llm.prompts)
+    assert all(OPENAI_KEY not in prompt for prompt in llm.prompts)
     [summary] = fake.inserted
     assert '"compacted_from": ["m0", "m2", "m3", "m4"]' in summary["metadata"]
     tombstoned = [
@@ -867,7 +864,7 @@ def test_a_saved_and_a_credential_turn_both_stay_live(monkeypatch) -> None:
         )
     )
     assert out.compacted is True and out.messages_summarized == 4
-    assert all(_KEY not in prompt and "turn 1" not in prompt for prompt in llm.prompts)
+    assert all(OPENAI_KEY not in prompt and "turn 1" not in prompt for prompt in llm.prompts)
     tombstoned = [
         params["ids"] for sql, params in fake.executed if "ALTER TABLE loom.conversations\n" in sql
     ]

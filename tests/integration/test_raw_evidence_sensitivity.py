@@ -349,7 +349,7 @@ def test_the_thread_list_names_one_last_turn_on_a_ts_tie(
     control_plane_url: str, ch_client, token: str
 ) -> None:
     """Two last turns at one `ts`: the listing's agent, role and excerpt come from the
-    same one (`msg_id` breaks the tie), and that one is checked whole."""
+    same one (`msg_id` breaks the tie), and that one is checked."""
     thread = f"t-{uuid.uuid4().hex[:8]}"
     _insert_turns(
         ch_client,
