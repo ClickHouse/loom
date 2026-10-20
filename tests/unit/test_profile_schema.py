@@ -485,3 +485,33 @@ async def test_the_schema_listing_skips_deactivated_namespaces_and_wraps_after_a
         ("o1", "a"),
     ]
     assert await names(exclude_orgs=[], after=None, limit=10, only=("o2", "a")) == [("o2", "a")]
+
+
+@pytest.mark.asyncio
+async def test_set_and_clear_write_every_column_of_profile_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rewrite under FINAL serves the newest row whole: each writer carries every column."""
+    from server.memory.api.models_profile import ProfileSchemaInput, ProfileSchemaSetInput
+    from server.memory.app import profile_schema as app
+    from server.memory.store import profile_schemas
+    from tests.unit.schema_ddl import column_names
+
+    written: list[dict[str, Any]] = []
+
+    async def insert_row(row: dict[str, Any], **kw: Any) -> None:
+        written.append(row)
+
+    async def get(org: str, namespace: str, **kw: Any) -> dict[str, Any]:
+        return written[-1]
+
+    monkeypatch.setattr(profile_schemas, "insert_row", insert_row)
+    monkeypatch.setattr(profile_schemas, "get", get)
+    await app.handle_profile_schema_set(
+        ProfileSchemaSetInput(org="o", namespace="n", json_schema=_schema(tz=_TZ))
+    )
+    cleared = await app.handle_profile_schema_clear(ProfileSchemaInput(org="o", namespace="n"))
+    assert cleared.found and cleared.json_schema == _schema(tz=_TZ)
+    assert written[1]["tombstoned_at"] == written[1]["updated_at"]
+    for row in written:
+        assert sorted(row) == sorted(column_names("profile_schemas"))

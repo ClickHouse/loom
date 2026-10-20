@@ -215,3 +215,31 @@ async def test_a_write_the_row_refuses_is_a_refusal_carrying_the_digest(
     with pytest.raises(w.Refused) as e:
         await w.build_profile(_ONE, "u1", w.StructuredProfileConfig())
     assert str(e.value) == "d1"
+
+
+def test_the_config_reads_its_settings_at_each_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.settings import settings
+
+    values = {
+        "structured_profile_max_users_per_pass": 7,
+        "structured_profile_memory_limit": 30,
+        "structured_profile_cooldown_seconds": 60,
+        "structured_profile_candidates_per_namespace": 50,
+        "structured_profile_label": "my_profile",
+        "structured_profile_model": "m",
+    }
+    for name, value in values.items():
+        monkeypatch.setattr(settings, name, value)
+    cfg = w.StructuredProfileConfig()
+    assert (cfg.max_users_per_pass, cfg.memory_limit, cfg.cooldown_seconds) == (7, 30, 60)
+    assert (cfg.candidates, cfg.label, cfg.model) == (50, "my_profile", "m")
+
+
+def test_the_worker_is_registered_on_its_switch_and_interval() -> None:
+    from server.workers.registry import _WORKERS
+
+    row = next(r for r in _WORKERS if r.name == "structured_profile")
+    assert (row.enabled, row.interval) == (
+        "structured_profile_enabled",
+        "structured_profile_interval_seconds",
+    )

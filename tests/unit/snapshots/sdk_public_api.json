@@ -1385,6 +1385,27 @@
             "set": [
               "body",
               "options"
+            ],
+            "structured": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "profile_schema": {
+          "class": "ProfileSchemaOps",
+          "methods": {
+            "clear": [
+              "body",
+              "options"
+            ],
+            "get": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
             ]
           }
         },
