@@ -27,7 +27,9 @@ const LABELS: Record<string, string> = {
   trust: "provenance",
 };
 
-const SKIP = new Set(["rank_score_raw", "rank_score"]);
+// Base scores, not reasons: the fused score before fusion boosts, the served one, and a
+// reranked row's own fused score.
+const SKIP = new Set(["rank_score_raw", "rank_score", "rank_score_pre_rerank"]);
 const MIN_ABS = 0.005;
 
 /** Non-zero score components ranked by magnitude, labelled for humans. */

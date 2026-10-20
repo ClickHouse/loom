@@ -13,7 +13,7 @@ flowchart TD
     B --> D["default.otel_traces<br/>loom.request_id"]
     B --> E["Langfuse trace metadata<br/>request_id"]
     B --> F["loom.audit_log<br/>writes only"]
-    G["memory.search_trace<br/>per-component scores"] -.-> B
+    G["memory.search explain=true<br/>per-component scores"] -.-> B
 ```
 
 ## 1. Capture the request's ids
