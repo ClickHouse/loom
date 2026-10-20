@@ -102,6 +102,12 @@ schema. These rules keep that safe. The operator procedure is in
     created (`collection.create`, which N-1 does not serve) and end-user issuers
     registered (`LOOM_JWT_END_USER_ISSUERS_JSON`) only once no N-1 replica serves.
 
+12. **Saved conversation messages:** older builds can compact concurrently saved
+    turns and rebuild embeddings without carrying their saved state. Clients use
+    `conversation.save_message` only once every serving replica runs the build that
+    preserves saved messages. A rollback pauses saved-message writes and compaction
+    until every replica supports that state again.
+
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,

@@ -15,6 +15,14 @@ from server.knowledge.app import conversations as ch_mod
 from server.llm.client import LLMResult
 from tests.unit.ch_fake import ConversationsCH
 
+
+@pytest.fixture(autouse=True)
+def _saved_write_leases(monkeypatch):
+    from tests.unit.claims_fake import held_leases
+
+    held_leases(monkeypatch)
+
+
 T0 = datetime(2026, 9, 1, 12, 0, 0)
 
 
