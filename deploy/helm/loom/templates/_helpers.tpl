@@ -84,6 +84,17 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- fail (printf "set %s through secrets.jwtSecret / secrets.jwtSecretPrevious, not secrets.extra" .) }}
 {{- end }}
 {{- end }}
+{{- /* The analytics export's name key reaches the export pod only. */}}
+{{- $nameKey := "LOOM_ANALYTICS_EXPORT_NAME_KEY" }}
+{{- $nameKeyRefused := printf "set %s through analyticsExport.nameKeySecret, which only the export pod reads, not env, extraEnv or secrets.extra" $nameKey }}
+{{- if or (hasKey .Values.env $nameKey) (hasKey .Values.secrets.extra $nameKey) }}
+{{- fail $nameKeyRefused }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if eq .name $nameKey }}
+{{- fail $nameKeyRefused }}
+{{- end }}
+{{- end }}
 LOOM_DEPLOYMENT: "1"
 LOOM_PUBLIC_BASE_URL: {{ required "publicBaseUrl is required" .Values.publicBaseUrl | quote }}
 {{- if not (hasKey .Values.env "LOOM_OAUTH_ISSUER") }}

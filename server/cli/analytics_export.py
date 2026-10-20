@@ -19,13 +19,13 @@ def _day(value: str) -> date:
         raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value!r}") from None
 
 
-def _refusal(args: argparse.Namespace, today: date) -> str:
-    """Why the export must not run, or ''."""
+def _refusal(day: date, today: date) -> str:
+    """Why the export of `day` must not run, or ''."""
     from server.insights.app.analytics_export import MIN_NAME_KEY_CHARS
     from server.settings import settings
 
-    if args.day >= today:
-        return f"{args.day} has not ended yet (UTC): export a past day"
+    if day >= today:
+        return f"{day} has not ended yet (UTC): export a past day"
     if len(settings.analytics_export_name_key) < MIN_NAME_KEY_CHARS:
         return (
             f"export-analytics needs LOOM_ANALYTICS_EXPORT_NAME_KEY: a random string of at "
@@ -51,8 +51,8 @@ def _cmd_export(args: argparse.Namespace) -> int:
     from server.settings import settings
 
     today = _now().date()
-    args.day = args.day or today - timedelta(days=1)
-    if refusal := _refusal(args, today):
+    day = args.day or today - timedelta(days=1)
+    if refusal := _refusal(day, today):
         print(f"  ✗ {refusal}", file=sys.stderr)
         return 2
     name_key = name_hash_key(settings.analytics_export_name_key)
@@ -70,9 +70,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
             ch = get_client()
             await ch.connect()
             try:
-                return await export_day(
-                    args.day, prefix=args.prefix, put=put, name_key=name_key, ch=ch
-                )
+                return await export_day(day, prefix=args.prefix, put=put, name_key=name_key, ch=ch)
             finally:
                 await ch.disconnect()
 

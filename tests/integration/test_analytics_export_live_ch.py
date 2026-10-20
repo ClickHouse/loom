@@ -24,6 +24,7 @@ from server.core.ch import CHClient, get_client
 from server.insights.app.analytics_export import name_hash_key
 from server.insights.store.analytics_export import (
     ENTITIES,
+    NAME_COLUMNS,
     NAMESPACES_SQL,
     ROW_ORDER,
     USAGE_SQL,
@@ -289,6 +290,23 @@ async def test_the_columns_that_leave_loom_are_exactly_the_allowlist(
     for sql in (ENTITIES[entity], _hashed(entity)):
         rows = await ch.query_all(f"DESCRIBE TABLE ({sql})", params)
         assert [r["name"] for r in rows] == COLUMNS[entity]
+
+
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+async def test_shipped_hashes_are_plain_strings_under_any_profile(
+    ch: CHClient, entity: str
+) -> None:
+    # Not LowCardinality (its dictionary encoding is the release's choice) and
+    # not Nullable, whichever way the profile resolves joins and aliases.
+    params = {"day": DAY, "k0": KEY[0], "k1": KEY[1]}
+    for join_use_nulls, prefer_column in itertools.product((0, 1), (0, 1)):
+        rows = await ch.query_all(
+            f"DESCRIBE TABLE ({_hashed(entity)}) SETTINGS join_use_nulls = {join_use_nulls}, "
+            f"prefer_column_name_to_alias = {prefer_column}",
+            params,
+        )
+        types = {r["name"]: r["type"] for r in rows}
+        assert all(types[c] == "String" for c in NAME_COLUMNS[entity]), types
 
 
 async def test_namespaces_lists_registered_and_unregistered_with_live_counts(

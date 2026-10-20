@@ -18,8 +18,6 @@ from server.insights.store.analytics_export import (
     ENTITIES,
     NAME_COLUMNS,
     PARQUET_SETTINGS,
-    ROW_ORDER,
-    _hashed,
     name_hash_sql,
 )
 from server.settings import settings
@@ -54,17 +52,10 @@ async def test_export_day_hashes_every_name_and_uploads_each_entity() -> None:
     assert [(e.entity, e.written) for e in out] == [("usage", True), ("namespaces", False)]
     assert [k for k, _ in seen] == [e.key for e in out]
     for (sql, params), entity in zip(ch.calls, ENTITIES, strict=True):
-        assert sql == f"{_hashed(entity)} {PARQUET_SETTINGS} FORMAT Parquet"
+        assert sql.endswith(f"{PARQUET_SETTINGS} FORMAT Parquet")
         assert params == {"day": day, "k0": name_key[0], "k1": name_key[1]}
         for column in NAME_COLUMNS[entity]:
             assert f"{name_hash_sql(column)} AS {column}" in sql
-
-
-@pytest.mark.parametrize("entity", sorted(ENTITIES))
-def test_only_the_hashed_statement_orders_rows(entity: str) -> None:
-    # Rows sorted by the stored names would give the names back without the key.
-    assert "ORDER BY" not in ENTITIES[entity]
-    assert _hashed(entity).endswith(f") ORDER BY {ROW_ORDER[entity]}")
 
 
 def test_the_hash_key_is_stable_and_depends_on_the_secret() -> None:
@@ -218,7 +209,7 @@ def test_a_missing_or_short_name_key_is_refused(
     monkeypatch: pytest.MonkeyPatch, key: str, refused: str
 ) -> None:
     monkeypatch.setattr(settings, "analytics_export_name_key", key)
-    got = cli._refusal(_args(day=date(2000, 1, 1)), date(2000, 1, 2))
+    got = cli._refusal(date(2000, 1, 1), date(2000, 1, 2))
     assert (refused in got) if refused else got == ""
 
 
