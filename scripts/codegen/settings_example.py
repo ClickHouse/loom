@@ -101,8 +101,8 @@ def _section(cls: ast.ClassDef, lines: list[str]) -> list[str]:
             opened = (heading, heading_note(lines, stmt.lineno))
         if is_secret_field(field):
             continue
-        if opened and opened != shown:
-            shown = opened
+        if opened and opened[0] != shown:
+            shown = opened[0]
             out += ["", f"  # --- {opened[0]} ---"]
             if opened[1]:
                 out += _comment(opened[1], "  ")

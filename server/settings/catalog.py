@@ -395,10 +395,11 @@ class ClickHouseSettings(BaseModel):
     # Seconds one caller-shaped read may run (the read class default); 0 = no
     # ceiling, so the loom_reader profile's cap applies.
     ch_caller_shaped_max_execution_s: float = 30.0
-    # Bytes of memory one caller-shaped read may use; 0 = no ceiling.
+    # Bytes of memory one caller-shaped read may use; 0 = no ceiling, so the
+    # loom_reader profile's cap applies.
     ch_caller_shaped_max_memory_bytes: int = 4_000_000_000
     # Rows one caller-shaped read may scan; past it the read fails (422), never a
-    # partial answer. 0 = no ceiling.
+    # partial answer. 0 = no ceiling, so the loom_reader profile's cap applies.
     ch_caller_shaped_max_rows_to_read: int = 500_000_000
     # ClickHouse user the caller-shaped reads run as, with `ch_password`; the
     # shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`.
@@ -549,7 +550,7 @@ class CodeSettings(BaseModel):
     # on a namespace collision.
     # Off = the operator's JSON is the only source.
     code_self_service_enabled: bool = True
-    # Where the worker clones a self-service entry's bare mirror (one per
+    # Where the code ingest worker clones a self-service entry's bare mirror (one per
     # GitHub repository, shared by its branches).
     code_repos_root: str = "var/code_repos/self"
     # Active self-service entries per org (branches count); past it the add
@@ -681,7 +682,7 @@ class CodeSettings(BaseModel):
     # --- JIT risk model ---
     # Seconds after which the weekly pass refits the jit-risk model.
     code_jit_risk_refit_interval_s: int = 7 * 24 * 3600
-    # Months of merged PRs the fit reads.
+    # Months of merged PRs the JIT risk model's fit reads.
     code_jit_risk_window_months: int = 12
     # Days after which a fit is served as `scored_stale` / `fit_stale`.
     code_jit_risk_max_age_days: int = 183
@@ -1026,9 +1027,9 @@ class CodeSettings(BaseModel):
     code_summary_max_scopes_per_pass: int = 200
     # Cards in flight per pass; 1 = sequential.
     code_summary_concurrency: int = 1
-    # A bounded card pass considers files by merged-PR count per path over
-    # these days (source tree), then by include-graph rank. Days of merged PRs
-    # the churn order counts.
+    # Days of merged PRs the summary cards' churn order counts: a bounded card pass
+    # considers files by merged-PR count per path over these days (source tree), then
+    # by include-graph rank.
     code_summary_churn_days: int = 365
     # CSV path prefixes the summary cards' churn order may propose; empty = any.
     code_summary_churn_prefixes: str = ""
@@ -1265,12 +1266,13 @@ class CodeSettings(BaseModel):
     code_search_pr_leg_max_files: int = 10
     # Chunk units a voted file contributes.
     code_search_pr_leg_units_per_file: int = 2
-    # A namespace with fewer live voting PRs than this skips the leg.
+    # A namespace with fewer live voting PRs than this skips code.search's PR leg.
     code_search_pr_leg_min_prs: int = 500
-    # Per-unit cap on the leg's contribution as a fraction of the top two-leg
-    # fusion score.
+    # Per-unit cap on code.search's PR leg contribution, as a fraction of the top
+    # two-leg fusion score.
     code_search_pr_leg_cap: float = 0.5
-    # Only files under these prefixes (CSV) receive votes; "" = every file.
+    # Only files under these prefixes (CSV) receive votes from code.search's PR leg;
+    # "" = every file.
     code_search_pr_leg_path_prefixes: str = ""
     # History intent: a question about a change is answered from the PR plane
     # as a `history` section. "off" | "number" (explicit issue/PR numbers,
@@ -1532,7 +1534,7 @@ class ExtractionSettings(BaseModel):
     # `detect_updates` overrides it.
     memory_extract_value_updates: Annotated[bool, LIVE] = False
     # Least cosine similarity a neighbour needs to be checked as the older value of a
-    # fresh memory; set below the conflict threshold.
+    # fresh memory; set below `conflict_threshold`.
     memory_extract_value_updates_min_cosine: Annotated[float, LIVE] = Field(
         default=0.75, gt=0.0, le=1.0
     )
@@ -1565,7 +1567,8 @@ class ExtractionSettings(BaseModel):
     memory_extract_verify_timeout_s: Annotated[float, LIVE] = 45.0
     # The coverage sweep gives the turns an extraction's first pass cited nowhere a
     # second reading of their own (one more call), when the namespace or the call turns
-    # it on or its `_auto_min_statements` / `_auto_min_uncovered` gates fire.
+    # it on or its `memory_extract_coverage_sweep_auto_min_statements` /
+    # `memory_extract_coverage_sweep_auto_min_uncovered` gates fire.
     # --- coverage sweep ---
     # Shortest turn, in characters, the coverage sweep reads; shorter "thanks!"-sized
     # turns are skipped.
@@ -2106,11 +2109,11 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_enabled: bool = True
     # Seconds between sensitivity sweep passes.
     sensitivity_sweep_interval_seconds: int = 86400
-    # Days back the sweep re-labels rows created in.
+    # Days back the sensitivity sweep re-labels rows created in.
     sensitivity_sweep_window_days: int = 2
     # Rows one sweep pass re-labels (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
-    # Shapes the sweep applies (comma-separated: credential, email, phone,
+    # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
     # other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label
     # demotes the row in ranking, so it is left to the operator's
     # `--only-shape phone`.
@@ -2129,8 +2132,9 @@ class MemorySettings(BaseModel):
     memory_code_links_max_pass_seconds: float = Field(default=600.0, gt=0)
     # Memory writes one pass links (at least 1).
     memory_code_links_batch: int = Field(default=500, ge=1)
-    # Seconds the pass stays behind the newest queued memory write, so inserts running at
-    # the same moment are visible before the cursor passes them (at least 10). A write
+    # Seconds the memory code-link pass stays behind the newest queued memory write, so
+    # inserts running at the same moment are visible before the cursor passes them (at
+    # least 10). A write
     # visible later than this is passed and stays unlinked until a backfill reads it; a
     # longer wait makes that rarer and links every write that much later.
     memory_code_links_settle_seconds: int = Field(default=60, ge=10)
@@ -3003,13 +3007,14 @@ class ObservabilitySettings(BaseModel):
     ops_op_mix_reads_per_write_warn: float = 20.0
     # Share of writes that are updates below which the check warns (append-only bank).
     ops_op_mix_update_share_warn: float = 0.01
-    # Writes in the window before the update-share warning can fire.
+    # Writes in the `op_mix` check's window before its update-share warning can fire.
     ops_op_mix_min_writes: int = 500
     # ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and
     # none showed a procedure while procedures exist, or when success retention
     # over ≥ `min_pairs` pairs is below `retention_warn`.
     ops_procedure_plane_window_days: int = 7
-    # Context packs in the window before "no pack showed a procedure" can warn.
+    # Context packs in the `procedure_plane` check's window before "no pack showed a
+    # procedure" can warn.
     ops_procedure_plane_min_packs: int = 50
     # Success retention (fraction) below which the `procedure_plane` check warns.
     ops_procedure_plane_retention_warn: float = 0.5
@@ -4008,7 +4013,8 @@ class TrackerSettings(BaseModel):
     tracker_test_signal_flip_rate: float = 0.02
     # Floor of K, the other failing tests an hour needs to be a storm hour.
     tracker_test_signal_cofail_k: int = 100
-    # K is at least this multiple of the window's median failing tests per hour.
+    # K, the other failing tests an hour needs to be a storm hour, is at least this
+    # multiple of the window's median failing tests per hour.
     tracker_test_signal_cofail_multiple: float = 5.0
     # A storm hour spans at least this many PRs; a test failing on this many
     # PRs in one hour is a shared cause by itself.

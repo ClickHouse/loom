@@ -179,12 +179,12 @@
         "ch_caller_shaped_max_memory_bytes": {
           "default": 4000000000,
           "type": "integer",
-          "description": "Bytes of memory one caller-shaped read may use; 0 = no ceiling."
+          "description": "Bytes of memory one caller-shaped read may use; 0 = no ceiling, so the loom_reader profile's cap applies."
         },
         "ch_caller_shaped_max_rows_to_read": {
           "default": 500000000,
           "type": "integer",
-          "description": "Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling."
+          "description": "Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling, so the loom_reader profile's cap applies."
         },
         "ch_capture_statements": {
           "default": "",
@@ -1096,7 +1096,7 @@
         "code_jit_risk_window_months": {
           "default": 12,
           "type": "integer",
-          "description": "Months of merged PRs the fit reads."
+          "description": "Months of merged PRs the JIT risk model's fit reads."
         },
         "code_link_revise_model": {
           "default": "",
@@ -1289,7 +1289,7 @@
         "code_repos_root": {
           "default": "var/code_repos/self",
           "type": "string",
-          "description": "Where the worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches)."
+          "description": "Where the code ingest worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches)."
         },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,
@@ -1735,7 +1735,7 @@
         "code_search_pr_leg_cap": {
           "default": 0.5,
           "type": "number",
-          "description": "Per-unit cap on the leg's contribution as a fraction of the top two-leg fusion score."
+          "description": "Per-unit cap on code.search's PR leg contribution, as a fraction of the top two-leg fusion score."
         },
         "code_search_pr_leg_max_files": {
           "default": 10,
@@ -1745,12 +1745,12 @@
         "code_search_pr_leg_min_prs": {
           "default": 500,
           "type": "integer",
-          "description": "A namespace with fewer live voting PRs than this skips the leg."
+          "description": "A namespace with fewer live voting PRs than this skips code.search's PR leg."
         },
         "code_search_pr_leg_path_prefixes": {
           "default": "",
           "type": "string",
-          "description": "Only files under these prefixes (CSV) receive votes; \"\" = every file."
+          "description": "Only files under these prefixes (CSV) receive votes from code.search's PR leg; \"\" = every file."
         },
         "code_search_pr_leg_pool": {
           "default": 30,
@@ -1898,7 +1898,7 @@
         "code_summary_churn_days": {
           "default": 365,
           "type": "integer",
-          "description": "A bounded card pass considers files by merged-PR count per path over these days (source tree), then by include-graph rank. Days of merged PRs the churn order counts."
+          "description": "Days of merged PRs the summary cards' churn order counts: a bounded card pass considers files by merged-PR count per path over these days (source tree), then by include-graph rank."
         },
         "code_summary_churn_exclude": {
           "default": "",
@@ -3273,7 +3273,7 @@
           "default": 60,
           "minimum": 10,
           "type": "integer",
-          "description": "Seconds the pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later."
+          "description": "Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later."
         },
         "memory_code_links_sweep_interval_s": {
           "default": 3600,
@@ -3463,7 +3463,7 @@
           "exclusiveMinimum": 0.0,
           "maximum": 1.0,
           "type": "number",
-          "description": "Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory; set below the conflict threshold."
+          "description": "Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory; set below `conflict_threshold`."
         },
         "memory_extract_verify_models": {
           "default": "claude-opus-5-5",
@@ -4302,7 +4302,7 @@
         "ops_op_mix_min_writes": {
           "default": 500,
           "type": "integer",
-          "description": "Writes in the window before the update-share warning can fire."
+          "description": "Writes in the `op_mix` check's window before its update-share warning can fire."
         },
         "ops_op_mix_reads_per_write_warn": {
           "default": 20.0,
@@ -4322,7 +4322,7 @@
         "ops_procedure_plane_min_packs": {
           "default": 50,
           "type": "integer",
-          "description": "Context packs in the window before \"no pack showed a procedure\" can warn."
+          "description": "Context packs in the `procedure_plane` check's window before \"no pack showed a procedure\" can warn."
         },
         "ops_procedure_plane_min_pairs": {
           "default": 20,
@@ -4764,12 +4764,12 @@
         "sensitivity_sweep_shapes": {
           "default": "credential,email",
           "type": "string",
-          "description": "Shapes the sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`."
+          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`."
         },
         "sensitivity_sweep_window_days": {
           "default": 2,
           "type": "integer",
-          "description": "Days back the sweep re-labels rows created in."
+          "description": "Days back the sensitivity sweep re-labels rows created in."
         },
         "serves_traffic": {
           "default": true,
@@ -5388,7 +5388,7 @@
         "tracker_test_signal_cofail_multiple": {
           "default": 5.0,
           "type": "number",
-          "description": "K is at least this multiple of the window's median failing tests per hour."
+          "description": "K, the other failing tests an hour needs to be a storm hour, is at least this multiple of the window's median failing tests per hour."
         },
         "tracker_test_signal_cofail_prs": {
           "default": 3,

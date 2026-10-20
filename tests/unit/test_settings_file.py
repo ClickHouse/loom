@@ -182,6 +182,14 @@ def test_every_setting_says_what_it_does() -> None:
     assert not bare, f"no comment above these fields in server/settings/catalog.py: {bare}"
 
 
+def test_a_group_shows_its_heading_and_note_even_when_a_secret_opens_it() -> None:
+    """`code_repos_json`, a secret the template leaves out, opens its group."""
+    text = settings_example.render()
+    assert "\n  # --- multi-repo and self-service ---\n" in text
+    heading = text.index("\n  # --- caller-shaped read ceilings ---\n")
+    assert text[heading:].split("\n")[2].startswith("  # Ceilings for the reads a caller shapes")
+
+
 def test_no_description_points_at_a_neighbouring_field() -> None:
     """settings.list and the schema show one field at a time, so "the bound above" names
     nothing there: a description names the other setting instead."""

@@ -131,8 +131,8 @@ Ceilings for the reads a caller shapes (code.grep, code.search with a pattern or
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CH_CALLER_SHAPED_MAX_EXECUTION_S` | `float` | `30.0` |  | Seconds one caller-shaped read may run (the read class default); 0 = no ceiling, so the loom_reader profile's cap applies. |
-| `LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES` | `int` | `4000000000` |  | Bytes of memory one caller-shaped read may use; 0 = no ceiling. |
-| `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` |  | Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling. |
+| `LOOM_CH_CALLER_SHAPED_MAX_MEMORY_BYTES` | `int` | `4000000000` |  | Bytes of memory one caller-shaped read may use; 0 = no ceiling, so the loom_reader profile's cap applies. |
+| `LOOM_CH_CALLER_SHAPED_MAX_ROWS_TO_READ` | `int` | `500000000` |  | Rows one caller-shaped read may scan; past it the read fails (422), never a partial answer. 0 = no ceiling, so the loom_reader profile's cap applies. |
 | `LOOM_CH_READER_USER` | `str` | `''` |  | ClickHouse user the caller-shaped reads run as, with `ch_password`; the shipped config defines `loom_reader` (SELECT only). Empty = `ch_user`. |
 
 ### Traffic classes
@@ -222,7 +222,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_REPOS_JSON` | `str` | *(unset)* |  | Multi-repo: JSON array of repo configs (code/domain/index/repos.py); empty = the scalar single-repo settings. Missing per-entry fields fall back to the scalars. |
 | `LOOM_CODE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); the environment wins on a namespace collision. Off = the operator's JSON is the only source. |
-| `LOOM_CODE_REPOS_ROOT` | `str` | `'var/code_repos/self'` |  | Where the worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches). |
+| `LOOM_CODE_REPOS_ROOT` | `str` | `'var/code_repos/self'` |  | Where the code ingest worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches). |
 | `LOOM_CODE_SELF_SERVICE_MAX_REPOS` | `int` | `20` |  | Active self-service entries per org (branches count); past it the add refuses with a message. |
 | `LOOM_CODE_BOOTSTRAP_FILES_PER_PASS` | `int` | `400` |  | Files indexed per pass while a new entry's initial index builds; the cursor persists in code_index_state (400 ≈ 1 min at the live rate). |
 | `LOOM_CODE_REPOS_REFRESH_SECONDS` | `int` | `30` |  | Seconds between re-reads of loom.code_repos. |
@@ -290,7 +290,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_JIT_RISK_REFIT_INTERVAL_S` | `int` | `604800` |  | Seconds after which the weekly pass refits the jit-risk model. |
-| `LOOM_CODE_JIT_RISK_WINDOW_MONTHS` | `int` | `12` |  | Months of merged PRs the fit reads. |
+| `LOOM_CODE_JIT_RISK_WINDOW_MONTHS` | `int` | `12` |  | Months of merged PRs the JIT risk model's fit reads. |
 | `LOOM_CODE_JIT_RISK_MAX_AGE_DAYS` | `int` | `183` |  | Days after which a fit is served as `scored_stale` / `fit_stale`. |
 
 ### Staleness (as_of.stale)
@@ -501,7 +501,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SUMMARY_INTERVAL_SECONDS` | `int` | `604800` |  | Seconds between card passes. |
 | `LOOM_CODE_SUMMARY_MAX_SCOPES_PER_PASS` | `int` | `200` |  | Cards written per pass across every repository, shared out evenly (a share one repository does not use rolls to the next). |
 | `LOOM_CODE_SUMMARY_CONCURRENCY` | `int` | `1` |  | Cards in flight per pass; 1 = sequential. |
-| `LOOM_CODE_SUMMARY_CHURN_DAYS` | `int` | `365` |  | A bounded card pass considers files by merged-PR count per path over these days (source tree), then by include-graph rank. Days of merged PRs the churn order counts. |
+| `LOOM_CODE_SUMMARY_CHURN_DAYS` | `int` | `365` |  | Days of merged PRs the summary cards' churn order counts: a bounded card pass considers files by merged-PR count per path over these days (source tree), then by include-graph rank. |
 | `LOOM_CODE_SUMMARY_CHURN_PREFIXES` | `str` | `''` |  | CSV path prefixes the summary cards' churn order may propose; empty = any. |
 | `LOOM_CODE_SUMMARY_CHURN_EXCLUDE` | `str` | `''` |  | CSV of path prefixes the summary cards' churn order never proposes, at any depth (vendored trees). |
 | `LOOM_CODE_SUMMARY_UPGRADE_FROM_MODELS` | `str` | `''` |  | CSV of summary models whose cards are rewritten when code_summary_model differs, even for an unchanged file. Empty = an unchanged file keeps its card. |
@@ -594,9 +594,9 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SEARCH_PR_LEG_POOL` | `int` | `30` |  | PRs code.search's PR leg reads per query. |
 | `LOOM_CODE_SEARCH_PR_LEG_MAX_FILES` | `int` | `10` |  | Files of those PRs that may vote per query in code.search's PR leg. |
 | `LOOM_CODE_SEARCH_PR_LEG_UNITS_PER_FILE` | `int` | `2` |  | Chunk units a voted file contributes. |
-| `LOOM_CODE_SEARCH_PR_LEG_MIN_PRS` | `int` | `500` |  | A namespace with fewer live voting PRs than this skips the leg. |
-| `LOOM_CODE_SEARCH_PR_LEG_CAP` | `float` | `0.5` |  | Per-unit cap on the leg's contribution as a fraction of the top two-leg fusion score. |
-| `LOOM_CODE_SEARCH_PR_LEG_PATH_PREFIXES` | `str` | `''` |  | Only files under these prefixes (CSV) receive votes; "" = every file. |
+| `LOOM_CODE_SEARCH_PR_LEG_MIN_PRS` | `int` | `500` |  | A namespace with fewer live voting PRs than this skips code.search's PR leg. |
+| `LOOM_CODE_SEARCH_PR_LEG_CAP` | `float` | `0.5` |  | Per-unit cap on code.search's PR leg contribution, as a fraction of the top two-leg fusion score. |
+| `LOOM_CODE_SEARCH_PR_LEG_PATH_PREFIXES` | `str` | `''` |  | Only files under these prefixes (CSV) receive votes from code.search's PR leg; "" = every file. |
 | `LOOM_CODE_SEARCH_HISTORY_ROUTE` | `'off' \| 'number' \| 'on'` | `'number'` |  | History intent: a question about a change is answered from the PR plane as a `history` section. "off" \| "number" (explicit issue/PR numbers, point reads) \| "on" (also why/when/who-changed phrasings). |
 | `LOOM_CODE_SEARCH_HISTORY_MAX_PRS` | `int` | `3` |  | PR rows served in the section (no bodies; inside the token budget). |
 | `LOOM_CODE_SEARCH_HISTORY_ANCHOR_MAX_FILES` | `int` | `5` |  | Max PR files of a number intent that anchor the ranking (present files stay, absent ones insert at rank 1); a phrase intent never anchors. |
@@ -715,7 +715,7 @@ Fact extraction from messages and observed events.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES` | `bool` | `False` | live | Value-update supersession on the extraction write path (memory.app.value_updates): a fresh memory restating an existing one with a different value token marks the older one superseded. Costs one ANN lookup per written row; a per-request `detect_updates` overrides it. |
-| `LOOM_MEMORY_EXTRACT_VALUE_UPDATES_MIN_COSINE` | `float` | `0.75` | live | Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory; set below the conflict threshold. |
+| `LOOM_MEMORY_EXTRACT_VALUE_UPDATES_MIN_COSINE` | `float` | `0.75` | live | Least cosine similarity a neighbour needs to be checked as the older value of a fresh memory; set below `conflict_threshold`. |
 | `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` | `'request_time' \| 'none'` | `'request_time'` | live | The observation date a write is anchored to when the caller sends none. "request_time" = today's UTC date, so valid_at is never NULL for a live agent; "none" = undated. |
 | `LOOM_MEMORY_CAPTURE_STRUCTURED_ANSWERS` | `bool` | `True` | live | Capture long / structured / enumerated assistant answers whole (not clipped at EXCERPT_LIMIT) so a positional follow-up resolves: at write time the prompt gains a structured-answer block and assistant-answer facts get a higher content_excerpt ceiling. The value column is untouched; takes effect only on (re-)ingest. |
 | `LOOM_MEMORY_EXTRACT_COMPACT_PROMPT_MAX_CHARS` | `int` | `1200` | live | Current messages totalling at most this many characters are extracted with the compact system prompt (every rule, the schema anchors a short statement can match, no structured-answer block); longer ones keep the full prompt. 0 turns it off. |
@@ -724,7 +724,7 @@ Fact extraction from messages and observed events.
 
 ### Coverage sweep
 
-The coverage sweep gives the turns an extraction's first pass cited nowhere a second reading of their own (one more call), when the namespace or the call turns it on or its `_auto_min_statements` / `_auto_min_uncovered` gates fire.
+The coverage sweep gives the turns an extraction's first pass cited nowhere a second reading of their own (one more call), when the namespace or the call turns it on or its `memory_extract_coverage_sweep_auto_min_statements` / `memory_extract_coverage_sweep_auto_min_uncovered` gates fire.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
@@ -974,9 +974,9 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_SENSITIVE_ON_EXPIRE` | `'tombstone' \| 'demote' \| 'anonymize'` | `'anonymize'` |  | `on_expire` given to a sensitive row whose caller set none. |
 | `LOOM_SENSITIVITY_SWEEP_ENABLED` | `bool` | `True` |  | Daily sweep: re-label live rows written `sensitivity = ''` by a path that skipped the detector, as a new version per row; `high` rows' embeddings are tombstoned, never ALTER UPDATE. Covers the trailing window; the backlog is `loom sensitivity-sweep --apply`. |
 | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | `int` | `86400` |  | Seconds between sensitivity sweep passes. |
-| `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` |  | Days back the sweep re-labels rows created in. |
+| `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` |  | Days back the sensitivity sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` |  | Rows one sweep pass re-labels (at least 1). |
-| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
+| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
 
 ### Code-linked memories
 
@@ -986,7 +986,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between link passes. |
 | `LOOM_MEMORY_CODE_LINKS_MAX_PASS_SECONDS` | `float` | `600.0` |  | Seconds a code-links pass may run before the supervisor abandons it. |
 | `LOOM_MEMORY_CODE_LINKS_BATCH` | `int` | `500` |  | Memory writes one pass links (at least 1). |
-| `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
+| `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
 | `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` |  | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
@@ -1295,9 +1295,9 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_OPS_OP_MIX_WINDOW_DAYS` | `int` | `7` |  | ops.health's create/read/update/delete mix over the window: warns when reads per write exceed the bar (polling load) or, after `min_writes`, the update share falls below its bar (append-only bank). |
 | `LOOM_OPS_OP_MIX_READS_PER_WRITE_WARN` | `float` | `20.0` |  | Reads per write above which the `op_mix` check warns (polling load). |
 | `LOOM_OPS_OP_MIX_UPDATE_SHARE_WARN` | `float` | `0.01` |  | Share of writes that are updates below which the check warns (append-only bank). |
-| `LOOM_OPS_OP_MIX_MIN_WRITES` | `int` | `500` |  | Writes in the window before the update-share warning can fire. |
+| `LOOM_OPS_OP_MIX_MIN_WRITES` | `int` | `500` |  | Writes in the `op_mix` check's window before its update-share warning can fire. |
 | `LOOM_OPS_PROCEDURE_PLANE_WINDOW_DAYS` | `int` | `7` |  | ops.health `procedure_plane`: warns when ≥ `min_packs` packs flowed and none showed a procedure while procedures exist, or when success retention over ≥ `min_pairs` pairs is below `retention_warn`. |
-| `LOOM_OPS_PROCEDURE_PLANE_MIN_PACKS` | `int` | `50` |  | Context packs in the window before "no pack showed a procedure" can warn. |
+| `LOOM_OPS_PROCEDURE_PLANE_MIN_PACKS` | `int` | `50` |  | Context packs in the `procedure_plane` check's window before "no pack showed a procedure" can warn. |
 | `LOOM_OPS_PROCEDURE_PLANE_RETENTION_WARN` | `float` | `0.5` |  | Success retention (fraction) below which the `procedure_plane` check warns. |
 | `LOOM_OPS_PROCEDURE_PLANE_MIN_PAIRS` | `int` | `20` |  | Pairs the retention is measured over before its warning can fire. |
 | `LOOM_AUDIT_VERIFIER_ENABLED` | `bool` | `True` |  | Periodic re-hash of audit rows; a mismatch writes `audit.tamper_detected`. Per-row detection, not a hash chain (see server/observability/audit.py). |
@@ -1645,7 +1645,7 @@ The tracker plane: records, duplicate checks, bisect.
 | `LOOM_TRACKER_TEST_SIGNAL_MIN_RUNS` | `int` | `5` |  | Runs of a test the history must hold before the test signal gives a verdict. |
 | `LOOM_TRACKER_TEST_SIGNAL_FLIP_RATE` | `float` | `0.02` |  | Status-change rate between consecutive runs of one PR/check sequence at or above which a test reads as flaky. |
 | `LOOM_TRACKER_TEST_SIGNAL_COFAIL_K` | `int` | `100` |  | Floor of K, the other failing tests an hour needs to be a storm hour. |
-| `LOOM_TRACKER_TEST_SIGNAL_COFAIL_MULTIPLE` | `float` | `5.0` |  | K is at least this multiple of the window's median failing tests per hour. |
+| `LOOM_TRACKER_TEST_SIGNAL_COFAIL_MULTIPLE` | `float` | `5.0` |  | K, the other failing tests an hour needs to be a storm hour, is at least this multiple of the window's median failing tests per hour. |
 | `LOOM_TRACKER_TEST_SIGNAL_COFAIL_PRS` | `int` | `3` |  | A storm hour spans at least this many PRs; a test failing on this many PRs in one hour is a shared cause by itself. |
 | `LOOM_TRACKER_TEST_SIGNAL_COFAIL_SHARE` | `float` | `0.5` |  | Share of the test's failing hours that must be storm hours for `infra_candidate`. |
 

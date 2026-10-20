@@ -25,6 +25,7 @@ _SECRET = "s3cr3t-canary-value"
         ("tracker_credentials_json", f'{{"src": {{"user": "u", "password": "{_SECRET}"}}}}'),
         ("code_repos_json", f'[{{"namespace": "n", "github_token": "{_SECRET}"}}]'),
         ("otel_exporter_otlp_headers", f"Authorization=Bearer {_SECRET}"),
+        ("rerank_endpoints_json", f'{{"gw": "https://user:{_SECRET}@rerank.example/v1"}}'),
     ],
 )
 def test_secret_fields_are_masked(field: str, value: str) -> None:
