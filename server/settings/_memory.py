@@ -326,7 +326,7 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_interval_seconds: int = 86400
     # Days back the sweep re-labels rows created in.
     sensitivity_sweep_window_days: int = 2
-    # Rows one sweep pass re-labels (at least 1).
+    # Rows one sweep pass re-labels, and the page size it scans in (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
     # Shapes the sweep applies (comma-separated: credential, email, phone,
     # other). Every high row is `credential`; an IBAN-only row is `other`.

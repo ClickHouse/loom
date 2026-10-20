@@ -25,14 +25,9 @@ do. Every pattern is a linear regex pass; the Luhn check runs on each 15- or 16-
 group and on at most sixteen grouped windows per run, and the mod-97 check on at most 55
 runs per match, so the work stays linear in the text.
 
-The detector is a deterministic lower bound: it reads the label forms and shapes listed
-here, not every way a person can phrase a secret. A PIN-like secret is read under these
-labels, alone or after a prefix (`badge_pin`, `CARD_CVV`): `pin`, `pin code`, `pin number`,
-`passcode` / `pass code`, `cvv`, `cvc`, `cvv2`, `cvc2`, `cvv code`, `cvv number`, `cvc code`,
-`cvc number` and `security code`, with `_` or a space inside a two-word label, followed
-by `is`, `was`, `:` or `=` (after an optional `for` and up to three words: "PIN for the
-front door is 4471") or, for every label but a bare `pin`, directly. The catch-all for
-extraction is an operator's extraction policy, not this module.
+The detector is a deterministic lower bound: it reads the label forms and shapes that
+docs/architecture/security.md lists, not every way a person can phrase a secret. The
+catch-all for extraction is an operator's extraction policy, not this module.
 """
 
 from __future__ import annotations
@@ -105,11 +100,9 @@ _CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
 # A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
 # area 000, 666 or 9xx, group 00, serial 0000.
 _SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
-# A PIN, passcode, CVV/CVC or security code stated with its value ("PIN is 4471",
-# "CVV 123", "BADGE_PIN=4471"). A connector pin written as an assignment or with `number`
-# ("GPIO pin: 115", "GPIO pin number 115") reads as a PIN, the price of reading
-# "PIN: 4471" and "PIN number 4471" as one. The label strings are plain regex that RE2
-# reads too: the sweep's prefilter is built from them.
+# A PIN, passcode, CVV/CVC or security code stated with its value (the forms are listed in
+# docs/architecture/security.md). The label strings are plain regex that RE2 reads too: the
+# sweep's prefilter is built from them.
 #
 # `pin` and `pin code`, whose 6-digit values are postal codes ("PIN: 560001"): they take
 # 3-5 digits. `pin code` is the one of them that takes its value directly.
@@ -123,22 +116,22 @@ _LABEL_START = r"(?<![A-Za-z0-9])"
 
 
 def pin_grammar(space: str) -> tuple[str, str]:
-    """The qualifier and the separator before a stated PIN's value, over the whitespace
-    class `space`: `\\s` here, an escape-aware class in the sweep's RE2 prefilter. The
-    qualifier is `for` and up to three words ("PIN for the front door is 4471"); the
-    separator is `is`, `was`, `:` or `=` with the whitespace around it. Each whitespace run
-    has its own anchor, so a long run of spaces is read once."""
+    """The `for ...` qualifier and the `is`/`:` separator before a stated PIN's value, over
+    the whitespace class `space`, so the detector and the sweep's RE2 prefilter share one
+    grammar. Each whitespace run has its own anchor, so a long run is read once."""
     qualifier = rf"(?:{space}+for(?:{space}+[A-Za-z]+){{1,3}})?"
     separator = rf"(?:{space}+(?:is|was)(?:{space}*[:=])?|{space}*[:=]){space}*"
     return qualifier, separator
 
 
 _PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(r"\s")
+# A value ends where its number does, so a version or a date (`pin is 2024.1`,
+# `pin is 2024-01-15`) is not read as one.
 _STATED_PIN = re.compile(
-    rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?!\d)"
-    rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}(?!\d)(?!\s+of\b)"
-    rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?!\d)"
-    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}(?!\d)(?!\s+of\b)",
+    rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}(?![-.]?\d)"
+    rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}(?![-.]?\d)(?!\s+of\b)"
+    rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}(?![-.]?\d)"
+    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}(?![-.]?\d)(?!\s+of\b)",
     re.ASCII,
 )
 # An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
@@ -334,14 +327,9 @@ def detect_sensitivity(text: str) -> str:
 # phone shape allows only one space, dot or dash between its groups.
 _SCALAR_SEP = "\n;\n"
 
-# The key words that name a PIN-like secret, as a key splits into words (`pass_code`,
-# `pin__code`, `pin/code`, `cvv_2`, `pinCode`: at any run of characters that are neither
-# letters nor digits, or at a change of case), and the label each is stated under:
-# `{"pin_code": "4471"}` reads as `pin is 4471`, so the free-text grammar decides the
-# value's length ("pin is 560001", a postal code, stays unlabelled). A key's last one or two
-# words (three for `social_security_number`) are compared as words, so `p_in` is not `pin`;
-# a label's words may also be written as one word (`pincode`, `cvv2`). The sweep's
-# prefilter is built from the same list.
+# Key words naming a PIN-like secret, and the label a value under them is stated with
+# (`{"pin_code": "4471"}` reads as `pin is 4471`), so the free-text grammar decides the
+# value's length. The sweep's prefilter is built from the same list.
 _KEYED_SECRET_PARTS: dict[tuple[str, ...], str] = {
     ("pin",): "pin",
     ("pin", "code"): "pin",
@@ -365,10 +353,9 @@ KEYED_SECRET_WORDS = _KEYED_SECRET_PARTS | {
 _SSN_KEY_PARTS = (("ssn",), ("ssn", "number"), ("ssn", "no"), ("social", "security", "number"))
 SSN_KEYS = _SSN_KEY_PARTS + tuple(("".join(w),) for w in _SSN_KEY_PARTS if len(w) > 1)
 _KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
-# A run of two or more capitals before a lowercase word is read both ways: `ATMPin` is
-# `ATM`, `Pin` above, and `PINcode` is `PIN`, `code` here (above it is `PI`, `Ncode`); the
-# two have the same shape, so one split cannot read both. A single capital starts its word
-# in both, so `Spin` is one word.
+# `ATMPin` and `PINcode` have the same shape, so one split cannot read both: the split
+# above reads `ATM`, `Pin`, this one `PIN`, `code`. Both start a word at a single capital,
+# so `Spin` is one word.
 _KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
 
 
@@ -397,11 +384,8 @@ def _keyed_secret(key: str, value: Any) -> str:
     return ""
 
 
-# A `"key": value` pair in raw JSON text (a chunk of an object value) whose value is
-# digits and dashes, for `reads_high`: a quoted value is the whole string, spaces around
-# the digits allowed (`"4471 abc"` is not one), and a bare number ends where the digits
-# do (`4471.5` and a 20-digit run are not read as a shorter number). The key is a quoted
-# string, escapes included (`"pin\""`, `"door\\pin"`); a key reads at most 200
+# A `"key": value` pair in raw JSON text, for `reads_high`. A quoted value must be the
+# whole string and a bare number must end at its digits; a key reads at most 200
 # characters, so the scan stays linear.
 _KEYED_PAIR = re.compile(
     r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'

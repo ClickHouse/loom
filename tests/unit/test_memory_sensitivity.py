@@ -445,6 +445,7 @@ def test_a_protected_attribute_after_a_newline_is_tagged(monkeypatch: pytest.Mon
         "the cvc was 987",
         "PIN number 123456",
         "my PIN is 4471 of course",
+        "My PIN is 4471.",
         # a label after a prefix, and two-word labels joined by `_`
         "BADGE_PIN=4471",
         "atm_pin: 4471",
@@ -516,6 +517,11 @@ def test_ibans_and_phone_numbers_are_medium(text: str) -> None:
         "spin: 4471",  # a word that ends in a label
         "PIN for the front door 4471",  # a bare pin takes no direct value
         "PIN for one two three four is 4471",  # more than three words
+        # a version or a date is not a PIN
+        "the tzdata pin is 2024.1",
+        "pytz pin: 2023.3",
+        "base image pin is 2024-01-15",
+        "PIN for certifi is 2024.2.2",
         "ports 3000 5432 6379 9200 4000 4001 4002 4003 4004",  # nine groups: a table
         "ship to MG Road, Bengaluru, PIN code 560001",  # a postal code
         "PIN code: 560001",
@@ -549,9 +555,8 @@ def test_a_keyed_value_reads_the_same_on_every_path(value: object) -> None:
     # The stored value and a raw chunk of it give one answer, and the sweep's prefilter
     # selects what reads as high; the whitespace stripped is the ASCII whitespace the
     # patterns read.
-    answers = {value_reads_high(value), reads_high(human_text(value))}
-    assert len(answers) == 1
-    if True in answers:  # the prefilter is a superset: what reads as high is selected
+    assert value_reads_high(value) == reads_high(human_text(value))
+    if value_reads_high(value):  # the prefilter is a superset: what reads as high is selected
         assert re.search(COARSE_SHAPE_RE, json.dumps(value))
 
 
@@ -671,7 +676,7 @@ def test_long_runs_are_read_in_linear_time() -> None:
 )
 def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
-    # select whatever the detector labels; Python's `re` reads this RE2 subset the same way.
+    # select whatever the detector labels.
     assert re.search(COARSE_SHAPE_RE, text)
     level = detect_sensitivity(text)
     assert _shapes(text, level) == (("credential",) if level == "high" else ("other",))
@@ -808,7 +813,7 @@ def test_a_dotted_security_code_key_is_not_selected_by_the_sweep() -> None:
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -> None:
     # RE2 `match()` on the text the scan reads: `toString(value_json)` for an object value,
-    # the raw `value` for a string. The prefilter is a superset: every case the detector
+    # the `json.dumps` text in `value` for any other. The prefilter is a superset: every case the detector
     # labels is selected, and the only unlabelled cases it selects are keys whose last word
     # ends in a label (documented in docs/architecture/security.md).
     sql = (
@@ -820,7 +825,7 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
     params = {
         "r": COARSE_SHAPE_RE,
         "js": [json.dumps(v) for v in _PREFILTER_OBJECTS],
-        "ts": _PREFILTER_TEXTS,
+        "ts": [json.dumps(t) for t in _PREFILTER_TEXTS],
     }
     rows = run([], sql, params)
     assert len(rows) == len(_PREFILTER_OBJECTS) + len(_PREFILTER_TEXTS)

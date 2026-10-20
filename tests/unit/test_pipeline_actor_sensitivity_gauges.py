@@ -267,6 +267,68 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
 
 
 @pytest.mark.asyncio
+class _LocalCH:
+    """Runs each query on clickhouse-local after the setup statements."""
+
+    def __init__(self, *setup: str) -> None:
+        self.setup = list(setup)
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        from tests.unit.clickhouse_local import run
+
+        return run(self.setup, sql, params)
+
+
+def _local_memory(rows: list[tuple[str, str, Any, int]]) -> _LocalCH:
+    """loom.memory on clickhouse-local holding (memory_id, memory_key, value, age seconds)."""
+    from tests.unit.clickhouse_local import ddl
+
+    values = ", ".join(
+        f"('o', 'n', 'a', '-', '-', '{mid}', '{key}', "
+        f"'{json.dumps(value).replace(chr(39), chr(39) * 2)}', now() - {age})"
+        for mid, key, value, age in rows
+    )
+    return _LocalCH(
+        ddl("memory"),
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        f"memory_key, value, created_at) VALUES {values}",
+    )
+
+
+def _uuid(i: int) -> str:
+    return f"00000000-0000-0000-0000-{i:012d}"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch) -> None:
+    # More selected-but-unlabelled rows than one page sit ahead of a PIN row: the pass reads
+    # on past them and labels the PIN row, instead of re-reading the same first page.
+    from server.memory.workers import sensitivity_sweep as w
+    from server.settings import settings
+    from tests.unit.clickhouse_local import CLICKHOUSE
+
+    if CLICKHOUSE is None:
+        pytest.skip("clickhouse binary not installed")
+    rows = [(_uuid(i), f"spin_{i}", {"spin": "4471"}, 600 - i) for i in range(5)]
+    rows.append((_uuid(9), "door", "badge PIN is 4471", 60))
+    ch = _local_memory(rows)
+    one_page = await sweep.scan(since_days=2, limit=2, ch=ch)  # type: ignore[arg-type]
+    assert one_page.truncated and one_page.candidates == []
+    applied: list[Any] = []
+
+    async def _apply(cands, *, ch=None):
+        applied.extend(cands)
+        return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
+
+    monkeypatch.setattr(sweep, "apply", _apply)
+    monkeypatch.setattr(settings, "sensitivity_sweep_window_days", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 2)
+    monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
+    out = await w.run_pass(ch=ch)  # type: ignore[arg-type]
+    assert [c.memory_key for c in applied] == ["door"] and applied[0].level == "high"
+    assert out["scanned"] == 6 and not out["truncated"]
+
+
 async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     from server.memory.workers import sensitivity_sweep as w
     from server.settings import settings
@@ -286,7 +348,7 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 500)
     monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
     out = await w.run_pass(ch=_CH())  # type: ignore[arg-type]
-    assert seen["since_days"] == 2 and seen["limit"] == 500
+    assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["pages"] == 10
     assert seen["only_shapes"] == ["credential", "email"]  # the phone shape is the operator's
     assert out["scanned"] == 3 and out["relabelled"] == 0
 

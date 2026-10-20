@@ -48,19 +48,12 @@ from server.memory.domain.sensitivity import (
     sensitivity_tags,
 )
 
-# The scan matches `toString(value_json)` for an object value: ClickHouse's JSON text,
-# where a control character is an escape (`\n`, `\u000B`), `/` is `\/` and a non-ASCII
-# character is kept raw. A string value is matched as written; a non-string value with no
-# `value_json` is matched on `value`, `json.dumps` text, where a non-ASCII character is
-# `\uXXXX`. For the PIN and IBAN shapes an escape or `_` counts as the start of a label
-# (the detector starts one after anything but a letter or digit), and `\f`, `\n`, `\r`,
-# `\t` and `\u000b` count as whitespace, as the detector's ASCII `\s` reads them decoded;
-# `\v` is listed beside `\s` because the detector's `\s` has it and RE2's does not.
+# The scan matches JSON text: `toString(value_json)` for an object value, the `json.dumps`
+# text in `value` for any other. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
+# or IBAN label, and a control escape counts as whitespace, as the detector reads it
+# decoded; `\v` is listed because RE2's `\s` lacks it.
 _JSON_BOUNDARY = r"(?:\b|_|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
 _JSON_SPACE = r"(?:[\s\v]|\\[fnrt]|\\u000[bB])"
-# A PIN label and its value in the detector's grammar, from the detector's own label
-# strings: every label after an optional `for` and up to three words, then `is`, `was`,
-# `:` or `=`; all but a bare `pin` directly.
 _PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(_JSON_SPACE)
 _COARSE_PIN = (
     rf"(?i:{_JSON_BOUNDARY}(?:{POSTCODE_LIKE_PIN_LABEL}|{PIN_LABEL})"
@@ -69,12 +62,9 @@ _COARSE_PIN = (
     rf"{_JSON_SPACE}+[0-9]{{3}})"
 )
 
-# What separates a key's words as the detector splits it: any run of characters that are
-# neither letters nor digits, read in JSON text, where one may be an escape (`\n`, `\/`,
-# `\"`, `\\`, `\u00e9`) and an unescaped quote ends the key.
+# What separates a key's words, in JSON text: non-alphanumerics and escapes, up to the
+# key's closing quote.
 _KEY_SEP = r'(?:[^A-Za-z0-9"\\]|\\(?:["bfnrt/\\]|u[0-9a-fA-F]{4}))*'
-# After a key's last word: a separator run (`"CVV:"`, `"pin "`, `"Security Code (CVV)"`,
-# `"pin\n"`), the closing quote, then the value.
 _KEY_VALUE = rf'{_KEY_SEP}"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'
 
 
@@ -85,12 +75,8 @@ def _key_words(keys: Iterable[tuple[str, ...]]) -> str:
 
 _PIN_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label == "pin")
 _OTHER_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label != "pin")
-# A key that ends in a PIN-like or SSN label, then its value: 3-5 digits under a `pin` key,
-# so a 6-digit postal code is not selected. This is a superset of the detector's key rule,
-# not a copy of it: the label may end any longer word (`spin`, `unpin`, `ATMPIN`), and the
-# detector, which compares whole key words, leaves such a row unlabelled; it costs a
-# re-check on each pass within the sweep's window. A dotted key is nested
-# (`security.code` is `code`) and is not selected.
+# A key that ends in a label, then its value (3-5 digits under a `pin` key, so a postal
+# code is not selected): a superset of the detector's key rule, as security.md describes.
 _COARSE_KEYED = (
     rf"(?i:(?:{_PIN_KEYS}){_KEY_VALUE}[0-9]{{3,5}}(?:[^0-9]|$)"
     rf"|(?:{_OTHER_KEYS}|{_key_words(SSN_KEYS)}){_KEY_VALUE}[0-9]{{3}})"
@@ -169,7 +155,9 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     return tuple(shapes) or ("other",)
 
 
-def scan_sql(*, org: str | None, namespace: str | None, since_days: int | None) -> str:
+def scan_sql(
+    *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
+) -> str:
     scope = ""
     if org:
         scope += " AND org = {org:String}"
@@ -177,15 +165,20 @@ def scan_sql(*, org: str | None, namespace: str | None, since_days: int | None) 
         scope += " AND namespace = {ns:String}"
     if since_days:
         scope += " AND created_at > now() - INTERVAL {days:UInt32} DAY"
+    if after:  # the next page, after the last row of the one before
+        scope += (
+            " AND (created_at, memory_key, memory_id)"
+            " > ({after_at:DateTime}, {after_key:String}, {after_id:UUID})"
+        )
     return f"""
-        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
+        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key, created_at,
                if(length(toString(value_json)) > 2, toString(value_json), value) AS value
         FROM loom.memory FINAL
         WHERE tombstoned_at IS NULL AND sensitivity = ''
           AND (expires_at IS NULL OR expires_at > now())
           AND match(value, {{shape:String}})
           {scope}
-        ORDER BY created_at, memory_key
+        ORDER BY created_at, memory_key, memory_id
         LIMIT {{lim:UInt32}}
     """
 
@@ -196,6 +189,7 @@ async def scan(
     namespace: str | None = None,
     since_days: int | None = None,
     limit: int = 20000,
+    pages: int = 1,
     only_shapes: Iterable[str] | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:
@@ -203,7 +197,12 @@ async def scan(
     path would have. Read-only. `only_shapes` keeps candidates carrying at
     least one of the named probe shapes (`credential`, `email`, `phone`,
     `other`) — the phone shape is a ten-digit run and the noisiest, so an
-    operator can apply the others first."""
+    operator can apply the others first.
+
+    Reads up to `pages` pages of `limit` rows, oldest first, until `limit` candidates are
+    found or the rows run out. A selected row the detector leaves unlabelled, or one outside
+    `only_shapes`, stays unlabelled and is selected again on the next pass; reading past it
+    keeps a run of them from hiding a later row that is high."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": int(limit)}
     if org:
@@ -212,11 +211,32 @@ async def scan(
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
-    rows = await ch.query_all(
-        scan_sql(org=org, namespace=namespace, since_days=since_days), params=params
-    )
-    report = SweepReport(scanned=len(rows), truncated=len(rows) >= int(limit))
+    report = SweepReport()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
+    last: dict[str, Any] | None = None
+    for _page in range(max(1, int(pages))):
+        page_params = dict(params)
+        if last is not None:
+            page_params |= {
+                "after_at": last["created_at"],
+                "after_key": last["memory_key"],
+                "after_id": last["memory_id"],
+            }
+        sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=last is not None)
+        rows = await ch.query_all(sql, params=page_params)
+        report.scanned += len(rows)
+        report.truncated = len(rows) >= int(limit)
+        _add_candidates(report, rows, keep)
+        if not report.truncated or len(report.candidates) >= int(limit) or not rows:
+            break
+        last = rows[-1]
+    if len(report.candidates) > int(limit):
+        report.candidates = report.candidates[: int(limit)]
+        report.truncated = True
+    return report
+
+
+def _add_candidates(report: SweepReport, rows: list[dict[str, Any]], keep: set[str]) -> None:
     for r in rows:
         # Decoded, as the write path reads it: in the stored JSON a token after a newline
         # follows `\\n`, and the detector's word boundary never matches there.
@@ -240,7 +260,6 @@ async def scan(
                 shapes=shapes,
             )
         )
-    return report
 
 
 @dataclass

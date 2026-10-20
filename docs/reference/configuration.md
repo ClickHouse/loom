@@ -757,7 +757,7 @@ Source: `server/settings/_memory.py`
 | `LOOM_SENSITIVITY_SWEEP_ENABLED` | `bool` | `True` | Daily sweep: re-label live rows written `sensitivity = ''` by a path that skipped the detector, as a new version per row; `high` rows' embeddings are tombstoned, never ALTER UPDATE. Covers the trailing window; the backlog is `loom sensitivity-sweep --apply`. |
 | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | `int` | `86400` | Seconds between sensitivity sweep passes. |
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` | Days back the sweep re-labels rows created in. |
-| `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` | Rows one sweep pass re-labels (at least 1). |
+| `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` | Rows one sweep pass re-labels, and the page size it scans in (at least 1). |
 | `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` | Shapes the sweep applies (comma-separated: credential, email, phone, other). Every high row is `credential`; an IBAN-only row is `other`. `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
 
 ### Code-linked memories

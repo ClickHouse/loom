@@ -672,9 +672,10 @@ The `high` shapes:
   13-digit phone number without its `+` do not. It has a card network's leading digits and
   length (Visa 4 at 16 or 19; Mastercard 51-55 and 2221-2720 at 16; Amex 34 and 37 at 15;
   Diners 300-305, 3095, 36, 38 and 39 at 14; JCB 3528-3589 and Discover/UnionPay 6011, 62,
-  644-649 and 65 at 16 or 19) and passes the Luhn check, so a 15-digit IMEI is not a card.
-  Groups joined by two spaces or by dots (`4111  1111  1111  1111`, `4111.1111.1111.1111`)
-  are not read.
+  644-649 and 65 at 16 or 19) and passes the Luhn check. A 15-digit IMEI passes Luhn by
+  design, but no network issues a 15-digit number starting with 4 or 35, so it is not a
+  card. Groups joined by two spaces or by dots (`4111  1111  1111  1111`,
+  `4111.1111.1111.1111`) are not read.
 - Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
   9xx; group 00; serial 0000).
 - Stated PIN: one of the labels `pin`, `pin code`, `pin number`, `passcode` /
@@ -810,9 +811,13 @@ facts when written, listed by `memory.digests` or read by the outcome judge. The
 filter: a new version per row and, for `high`, tombstoned embedding rows and entity vectors.
 An IBAN-only row is shape `other`, which `loom sensitivity-sweep --apply` labels. Until the
 sweep labels it, an unlabelled row that holds a credential is embedded like any other, so
-search serves it, and `memory.ask` and the conflict judge can send it to their models. The
-sweep reads unlabelled rows only: a row already labelled `medium` that also holds a `high`
-shape stays `medium` until it is set again with `sensitivity: "high"`.
+search serves it, and `memory.ask` and the conflict judge can send it to their models. A
+pass reads its window oldest first, in pages of `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS`
+rows, up to ten pages or until that many rows are labelled: a selected row the detector
+leaves unlabelled, or one outside the shape filter, is selected again on every pass, and
+paging past it keeps a run of them from hiding a later row that is high. The sweep reads
+unlabelled rows only: a row already labelled `medium` that also holds a `high` shape stays
+`medium` until it is set again with `sensitivity: "high"`.
 
 ## Audit log
 
