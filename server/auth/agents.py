@@ -23,11 +23,11 @@ from server.core.ch import get_client
 # a namespace, so it is refused, never rewritten into another agent's name.
 AGENT = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 
-# The most bytes of namespace names an agent's token adds beyond its own and
-# its trust's. Each name goes in twice (`namespaces`, `ns_roles`) and base64 adds
-# a third, so this keeps a token under a proxy's default 8 KB header limit
+# The most bytes an agent's token spends on namespaces lent to it, beyond its own
+# and its trust's: twelve of the longest names. Base64 adds a third, so this keeps
+# a token under a proxy's default 8 KB header limit
 # (test_an_agents_token_stays_under_a_proxys_header_limit).
-LENT_NAME_BYTES = 1536
+LENT_TOKEN_BYTES = 3328
 
 log = logging.getLogger(__name__)
 
@@ -73,8 +73,10 @@ def lent(roles: dict[str, str], held: dict[str, str]) -> list[str]:
     return [ns for ns in held if ns not in roles]
 
 
-def name_bytes(names: list[str]) -> int:
-    return sum(len(ns.encode()) for ns in names)
+def token_bytes(names: list[str]) -> int:
+    """What `names` cost in a token: each goes in `namespaces` ("ns",) and in
+    `ns_roles` ("ns":"viewer",)."""
+    return sum(2 * len(ns.encode()) + 15 for ns in names)
 
 
 async def with_grants(
@@ -84,9 +86,9 @@ async def with_grants(
     grant on (another agent's share, an admin's grant), as `granted` counts
     them. A grant raises a role `ns_roles` gives, and a lower or revoked one
     caps that role at the gate (`authz.claim_cap`). Namespaces are added by
-    name while their names fit LENT_NAME_BYTES, so the token stays within a
-    proxy's header limit; `grants.share_agent` checks the same budget, but two
-    shares at once can both pass it."""
+    name until the next would pass LENT_TOKEN_BYTES, so the token stays within
+    a proxy's header limit; `grants.share_agent` checks the same budget, but
+    two shares at once can both pass it."""
     from server.operations.base import grant_rank
 
     held = await granted(m["org"], subject(m["name"], agent))
@@ -95,13 +97,16 @@ async def with_grants(
     for ns, role in held.items():
         if ns in roles and grant_rank(role) > grant_rank(roles[ns]):
             roles[ns] = role
-    used = left_out = 0
-    for ns in extra:
-        if used + name_bytes([ns]) > LENT_NAME_BYTES:
-            left_out += 1
-            continue
+    used = 0
+    for kept, ns in enumerate(extra):
+        cost = token_bytes([ns])
+        if used + cost > LENT_TOKEN_BYTES:
+            left_out = len(extra) - kept
+            break
         roles[ns] = held[ns]
-        used += name_bytes([ns])
+        used += cost
+    else:
+        left_out = 0
     if left_out:
         log.warning(
             "agent %s of %s: %d granted namespaces left out of its token",

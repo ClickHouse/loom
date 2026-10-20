@@ -525,25 +525,33 @@ def test_a_lower_grant_leaves_the_trusts_role_for_the_gate_to_cap(bots) -> None:
     assert _agent_roles(bots)["docs"] == "writer"  # authz.claim_cap reads it as viewer
 
 
-def test_an_agents_token_names_lent_namespaces_while_their_names_fit(bots) -> None:
-    lent = [f"ns-{i:03}-" + "x" * 57 for i in range(30)]  # 64 bytes each
-    bots["active"].update({"fleet-a1", *lent})
-    bots["grants"]["sa:fleet:a1"] = {ns: 1 for ns in lent} | {"docs": 2}
+def test_an_agents_token_names_lent_namespaces_by_name_until_the_next_would_not_fit(bots) -> None:
+    lent = [f"ns-{i:03}-" + "x" * 57 for i in range(30)]  # 64 bytes: 143 in the token
+    bots["active"].update({"fleet-a1", *lent, "zz"})
+    bots["grants"]["sa:fleet:a1"] = {ns: 1 for ns in lent} | {"docs": 2, "zz": 1}
     roles = _agent_roles(bots)
-    fit = agents.LENT_NAME_BYTES // 64
+    fit = agents.LENT_TOKEN_BYTES // 143
     assert [ns for ns in roles if ns.startswith("ns-")] == lent[:fit]  # first by name
+    assert "zz" not in roles  # short, but after the first that did not fit
     assert roles["docs"] == "writer"  # a raised role is never left out
 
 
-def test_an_agents_token_stays_under_a_proxys_header_limit(bots) -> None:
-    # The longest names a namespace may have, as many as the budget takes.
-    lent = [f"{i:03}" + "x" * 125 for i in range(30)]
+@pytest.mark.parametrize(
+    "lent",
+    [
+        [f"{i:03}" + "x" * 125 for i in range(30)],  # the longest names a namespace may have
+        [f"{i:03}" for i in range(600)],  # the shortest: the overhead per name dominates
+    ],
+    ids=["longest", "shortest"],
+)
+def test_an_agents_token_stays_under_a_proxys_header_limit(bots, lent: list[str]) -> None:
     bots["active"].update({"fleet-a1", *lent})
     bots["grants"]["sa:fleet:a1"] = {ns: 2 for ns in lent}
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, agent_id="a1"), client_id="fleet")
     token = r.json()["access_token"]
     claims = pyjwt.decode(token, options={"verify_signature": False})
-    assert len([ns for ns in claims["namespaces"] if ns in lent]) == agents.LENT_NAME_BYTES // 128
+    named = [ns for ns in claims["namespaces"] if ns in set(lent)]
+    assert agents.token_bytes(named) <= agents.LENT_TOKEN_BYTES < agents.token_bytes(lent)
     assert len(f"Authorization: Bearer {token}") < 8192 - 1024  # room for the other headers
 
 

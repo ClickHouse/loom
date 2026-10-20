@@ -212,9 +212,10 @@ with more than one admin, registered first, in one org); its tokens are for
   grants or revokes `sa:fleet:b` with `grants.create` and `grants.revoke`; an
   agent's token takes any grant its subject holds in the org, as writer at
   most. Beyond its own and the trust's namespaces, a token names lent ones by
-  name while their names total 1,536 bytes, which keeps it under a proxy's
-  8 KB header limit; a share past that is refused (two shares at once can
-  pass it, and the token then names those that fit).
+  name while they fit 3,328 bytes of the token (twelve of the longest names,
+  more of shorter ones), which keeps it under a proxy's 8 KB header limit; a
+  share past that is refused (two shares at once can pass it, and the token
+  then names those that fit).
 
   An exact `tenant_id` keeps one trust to one tenant, so each tenant's agents
   land in their own org (a prefix of `sub` may be added as a further

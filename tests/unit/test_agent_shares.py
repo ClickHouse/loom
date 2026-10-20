@@ -182,7 +182,7 @@ def test_an_agent_raises_its_own_share(calls, world) -> None:
 
 def test_the_limit_counts_what_the_grantees_token_would_name(calls, world) -> None:
     _as("sa:fleet:a")
-    released = {f"gone-{i:03}" for i in range(agents.LENT_NAME_BYTES // 8)}  # 8 bytes each
+    released = {f"gone-{i:03}" for i in range(agents.LENT_TOKEN_BYTES // 31)}  # 31 bytes each
     world["ranks"] = {ns: 1 for ns in released} | {"docs": 1}
     world["inactive"] = released
     world["trust_roles"] = [("docs", "viewer")]  # its trust names it already
@@ -191,7 +191,9 @@ def test_the_limit_counts_what_the_grantees_token_would_name(calls, world) -> No
 
 def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world) -> None:
     _as("sa:fleet:a")
-    full = {f"ns-{i:02}-" + "x" * 58: 1 for i in range(agents.LENT_NAME_BYTES // 64)}  # 64 bytes
+    full = {f"ns-{i:02}-" + "x" * 58: 1 for i in range(agents.LENT_TOKEN_BYTES // 143)}  # 143 each
+    full["filler1"] = 1  # what is left is less than fleet-a's 29 bytes
+    assert agents.token_bytes([*full, "fleet-a"]) > agents.LENT_TOKEN_BYTES
     world["ranks"] = full | {"fleet-b": 3}
     with pytest.raises(PreconditionFailedError):
         _share()
@@ -199,7 +201,7 @@ def test_an_agent_whose_lent_names_fill_its_token_takes_no_new_one(calls, world)
     assert _share(role="writer").role == "writer"
     del world["ranks"][next(iter(full))]
     del world["ranks"]["fleet-a"]
-    assert _share().role == "viewer"  # 7 bytes now fit; its own namespace never counts
+    assert _share().role == "viewer"  # fleet-a now fits; its own namespace never counts
 
 
 @pytest.mark.parametrize(

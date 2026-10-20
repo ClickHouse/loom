@@ -9,7 +9,8 @@ which, and calls these as the lending agent. The grantee's next token names
 the namespace (`agents.with_grants`); a revoke caps the claim at once.
 
 An agent writes over and takes back only what it lent: a grant an admin made
-stays. A restricted namespace is never shared this way.
+stays. A share is refused while the namespace is restricted; one made before
+stays until revoked.
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ async def handle_grants_share_agent(input: GrantsShareAgentInput) -> GrantsShare
     roles = {agents.home_of(subject): "writer", **dict(m["ns_roles"] if m else [])}
     extra = agents.lent(roles, await agents.granted(input.org, subject))
     if input.namespace not in extra and (
-        agents.name_bytes([*extra, input.namespace]) > agents.LENT_NAME_BYTES
+        agents.token_bytes([*extra, input.namespace]) > agents.LENT_TOKEN_BYTES
     ):
         raise PreconditionFailedError(
             f"agent {input.agent} holds as many lent namespaces as its token names; "
