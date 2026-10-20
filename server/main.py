@@ -319,14 +319,11 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 def _set_security_headers(response: Response) -> None:
-    """No response is ever sniffed into a type it was not served as, framed by
-    another page, or named in a Referer sent to another origin. A route that sets
-    its own value (the dashboard's full CSP) keeps it. `same-origin`, not
-    `no-referrer`: under no-referrer a browser sends `Origin: null` on a
-    same-origin form POST, which web_refusal refuses as foreign."""
+    """Browser security headers for a route's or the web gate's answer; a route's own value wins."""
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    # Not no-referrer: a same-origin form POST would send `Origin: null`, which web_refusal refuses.
     response.headers.setdefault("Referrer-Policy", "same-origin")
     # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
     if settings.hsts_max_age_seconds > 0:

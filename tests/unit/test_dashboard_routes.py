@@ -180,7 +180,7 @@ def test_api_page_and_asset_answers_carry_the_browser_security_headers(client, p
 
 def test_the_dashboard_keeps_its_own_csp(client) -> None:
     csp = client.get("/").headers["content-security-policy"]
-    assert "nonce-" in csp and csp != "frame-ancestors 'none'"
+    assert "nonce-" in csp and "script-src" in csp
 
 
 def test_hsts_max_age_zero_sends_no_hsts(client, monkeypatch: pytest.MonkeyPatch) -> None:

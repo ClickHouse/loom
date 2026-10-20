@@ -111,6 +111,8 @@ def test_auth_off_refuses_a_foreign_host_before_routing() -> None:
     assert r.json()["detail"]["code"] == "MISDIRECTED_REQUEST"
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["x-frame-options"] == "DENY"  # a refusal carries every security header
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert r.headers["referrer-policy"] == "same-origin"
     assert r.headers["strict-transport-security"] == "max-age=31536000"
 
 
@@ -152,6 +154,10 @@ def test_auth_off_refuses_a_cross_site_text_plain_post(headers: dict[str, str]) 
     assert r.status_code == 403
     assert r.json()["detail"]["code"] == "CROSS_SITE_REQUEST"
     assert r.headers["x-content-type-options"] == "nosniff"
+    assert r.headers["x-frame-options"] == "DENY"
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert r.headers["referrer-policy"] == "same-origin"
+    assert r.headers["strict-transport-security"] == "max-age=31536000"
 
 
 @pytest.mark.usefixtures("auth_off")

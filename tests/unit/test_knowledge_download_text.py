@@ -386,4 +386,6 @@ def test_every_download_is_unsniffable_and_sandboxed(
         for qs in ("&inline=true", ""):
             r = client.get(URL + qs)
             assert r.headers["x-content-type-options"] == "nosniff"
-            assert r.headers["content-security-policy"] == "sandbox; default-src 'none'"
+            # its own policy, with no second frame-ancestors one beside it
+            assert r.headers.get_list("content-security-policy") == ["sandbox; default-src 'none'"]
+            assert r.headers["x-frame-options"] == "DENY"
