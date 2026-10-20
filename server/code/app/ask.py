@@ -19,6 +19,7 @@ from server.code.app.common import (
 )
 from server.code.app.spans import set_code_span_attributes
 from server.code.store.index import CodeRepo
+from server.core.llm_free import refuse_synthesis
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -44,8 +45,6 @@ def _ask_search_kwargs(
 async def handle_code_ask(input: CodeAskInput) -> CodeAskOutput:
     require_code_intel()
     if input.synthesize:
-        from server.core.llm_free import refuse_synthesis
-
         refuse_synthesis("code.ask", "synthesize=false")
     started = time.monotonic()
     org, ns = resolve_code_identity(input.org, input.namespace)

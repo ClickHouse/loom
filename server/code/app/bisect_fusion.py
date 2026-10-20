@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.core.llm_free import reads_llm_free
 from server.settings import settings
 from server.tracker.domain import bisect as bi
 from server.tracker.domain import bisect_fusion as fu
@@ -266,8 +267,6 @@ async def rerank_stage(
     when the fused top is weak (see `fu.WEAK_MARGIN` for the measured gain). The wider
     window's `extras` ride along, held back unless the model is confident and they share
     evidence. Any failure keeps the fused order, and so do LLM-free reads."""
-    from server.core.llm_free import reads_llm_free
-
     if not (force or weak) or not pool or not text.strip() or reads_llm_free():
         return pool, {}
     from server.llm.client import get_llm_client_for_model

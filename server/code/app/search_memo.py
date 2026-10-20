@@ -38,6 +38,7 @@ from typing import Any
 from server.code.api.models_search import CodeSearchInput
 from server.core.background import TaskSet
 from server.core.datetimes import naive_utc_now
+from server.core.llm_free import reads_llm_free
 
 logger = logging.getLogger("loom.code_search_memo")
 
@@ -115,6 +116,9 @@ def key_for(
     # `llm_legs="none"` is another pool; auto / unset keep the key
     if getattr(inp, "llm_legs", None) == "none":
         parts["llm_legs"] = "none"
+    # An LLM-free read also drops query expansion and the default rerank: its own pool
+    if reads_llm_free():
+        parts["llm_free"] = True
     parts.update(
         v=MEMO_VERSION,
         ranking=_ranking_fingerprint(),

@@ -47,6 +47,7 @@ from typing import Any
 
 import httpx
 
+from server.core.llm_free import reads_llm_free
 from server.llm.json_text import strip_code_fence
 from server.memory.domain.rerank_names import (
     BUILTIN_COHERE,
@@ -140,11 +141,9 @@ async def rerank(
     if not endpoint or endpoint == "none" or not candidates:
         return candidates
 
-    from server.core.llm_free import reads_llm_free
-
-    if endpoint.startswith(BUILTIN_OPENAI) and reads_llm_free():
-        return candidates  # an LLM reranker; LLM-free reads keep the fused order
     if endpoint.startswith(BUILTIN_OPENAI):
+        if reads_llm_free():
+            return candidates  # an LLM reranker; LLM-free reads keep the fused order
         return await _rerank_with_builtin_openai(
             endpoint,
             query,

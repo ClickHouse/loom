@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core.llm_free import refuse_synthesis
 from server.core.naming import SENTINEL
 from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
 from server.memory.api.models_common import run_next_hint
@@ -218,7 +219,6 @@ def _ask_precedent(input: MemoryAskInput, llm: Any, settings: Any) -> tuple[str,
 
 
 async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
-    from server.core.llm_free import refuse_synthesis
     from server.memory.app.ask import ask
     from server.settings import settings
 

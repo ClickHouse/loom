@@ -6,6 +6,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.query_plan import (
     _enrichment_parser_gate_active,
@@ -70,10 +71,11 @@ def _collect_set_expansion(
 ) -> list[str]:
     """Phase 6: the set-question instance phrases, de-duplicated — the parser's deterministic
     collective-noun phrases, no model call, which ride the sub-query fusion as extra vector
-    legs. None under fast posture."""
-    phrases = (
-        [] if fast_posture else list(dict.fromkeys(_set_expansion.collective_phrases(input.query)))
-    )
+    legs. None under fast posture or while reads are LLM-free (one query embedding per read)."""
+    if fast_posture or reads_llm_free():
+        phrases: list[str] = []
+    else:
+        phrases = list(dict.fromkeys(_set_expansion.collective_phrases(input.query)))
     actual_work["set_expansion_phrases"] = len(phrases)
     return phrases
 

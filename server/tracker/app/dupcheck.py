@@ -24,6 +24,7 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerDuplicateCheckInput,
@@ -534,7 +535,6 @@ async def _rerank_call(input: Any, cands: list[dict[str, Any]]) -> Any:
     while reads are LLM-free."""
     import asyncio as _aio
 
-    from server.core.llm_free import reads_llm_free
     from server.llm.client import get_llm_client_for_model
     from server.tracker.app import dup_rerank as dr
 

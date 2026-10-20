@@ -34,6 +34,7 @@ import time
 from collections.abc import Awaitable
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
 from server.settings import settings
 
 # The legs whose rows the answer cannot do without; the deadline waits for
@@ -75,8 +76,6 @@ def llm_legs_off(llm_legs: str | None) -> bool:
     legs off: `none` skips HyDE and a model-named concept expansion; the
     card-derived concept source (`cards:N`) calls no model and stays. Always
     True while reads are LLM-free (`LOOM_READS_LLM_FREE`)."""
-    from server.core.llm_free import reads_llm_free
-
     if reads_llm_free():
         return True
     mode = str(llm_legs or settings.code_search_llm_legs_default or "auto")

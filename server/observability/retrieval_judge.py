@@ -35,6 +35,7 @@ import logging
 import time
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
 
@@ -242,7 +243,6 @@ def submit(
     Synchronous and non-blocking: the caller is inside a request.
     """
     global _dropped
-    from server.core.llm_free import reads_llm_free
 
     if not enabled() or not trace_id or not query or reads_llm_free():
         return False

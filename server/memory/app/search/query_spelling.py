@@ -14,6 +14,7 @@ from typing import Any
 
 from server.core.ch import get_client, statement_timeout
 from server.core.errors import EmbedTimeoutError
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.filters import read_filters
 from server.memory.domain.query_spelling import apply_spellings, pick_spellings, spelling_candidates
@@ -55,7 +56,6 @@ def _lookup_key(
     """The read bounds, the candidate words and the cache key of a lookup;
     None when the query has no word to respell, the feature is off, or reads
     are LLM-free (`LOOM_READS_LLM_FREE`: one query embedding per read)."""
-    from server.core.llm_free import reads_llm_free
     from server.settings import settings
 
     if reads_llm_free():

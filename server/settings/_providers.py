@@ -58,10 +58,6 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
-    # True: no read op (read_only: memory.search, search.query, context.pack, code.search
-    # and the rest) calls an LLM, a namespace's reranker or a second embedding; an ask's
-    # synthesis answers 409. Writes and workers still call models. False: as each read asks.
-    reads_llm_free: bool = False
     # Model calls with no provider key: exchange an identity token (RFC 8693)
     # at this token endpoint of the gateway, and send the answer as the bearer
     # (server/llm/gateway.py). The gateway must trust the token's issuer. "" =

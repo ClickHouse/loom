@@ -307,18 +307,21 @@ same gate as the fast posture and `context.pack` (`_is_llm_free`), and every oth
 call a model reads `reads_llm_free()`:
 
 - `memory.search`, `search.query` (the MCP `loom_search` tool), `context.pack` and every read built on
-  them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms, and no reranker but one
-  the request names (never `builtin:openai`); a namespace's `rerank_endpoint` is not read. The
+  them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms. The
   spelling-fix and set-expansion embeddings are skipped, so a plain search or pack embeds its query once.
-- `code.search`: no HyDE, model-named concept expansion, query expansion or deployment-default rerank
-  (`LOOM_CODE_SEARCH_RERANK_DEFAULT`).
+- `code.search`: no HyDE, model-named concept expansion or query expansion; its memo keeps LLM-free
+  answers apart.
+- Reranking: a namespace's, a request's or code search's default reranker still runs when it is a
+  rerank service (`builtin:cohere`, a `LOOM_RERANK_ENDPOINTS_JSON` endpoint), which calls no LLM; a
+  `builtin:openai` one keeps the fused order.
 - `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
   no rerank. Each keeps the deterministic answer it already falls back to.
 - `memory.ask` and `code.ask` answer 409 `PRECONDITION_FAILED` naming the setting when they would
   synthesize; `allow_synthesis=false` / `synthesize=false` return the recalled evidence with no LLM call.
   A model's answer is the purpose of those calls, so the setting refuses it rather than answering
-  without one.
-- The sampled retrieval-quality judge queues nothing.
+  without one. `memory.brief` asks for the evidence alone and returns it with its unknowns, no answer.
+- The sampled retrieval-quality judge queues nothing: both transports record a search's quality inside
+  the same mark.
 
 Writes (`memory.set_from_messages` extraction, the conflict judge, `knowledge.synthesize`, session briefs)
 and the background workers still call models.

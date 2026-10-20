@@ -1,6 +1,6 @@
 """LOOM_READS_LLM_FREE: every read op (`Operation.read_only`) runs with no LLM
-call, no namespace or deployment reranker and one query embedding; an ask whose
-answer a model writes answers 409 naming the setting."""
+call (no `builtin:openai` rerank) and one query embedding; an ask whose answer a
+model writes answers 409 naming the setting."""
 
 from __future__ import annotations
 
@@ -126,13 +126,20 @@ def every_module_faked(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return attempts
 
 
+# The reads whose purpose is a model's answer: they refuse under the setting.
+_REFUSING = {"memory.ask", "code.ask"}
+
+
 async def _serve(op: Any) -> None:
-    """The op's handler on its minimal body; a refusal naming the setting is an
-    answer, and any other failure of the empty fake data is no LLM call."""
+    """The op's handler on its minimal body. Only an ask may refuse, naming the
+    setting; any other failure is the empty fake data's (a handler that fails
+    before its model step makes no LLM call, which the walk counts as covered)."""
     try:
         await op.handler(op.input_model(**(_body(op.input_model) or {})))
     except PreconditionFailedError as e:
-        assert "LOOM_READS_LLM_FREE" in str(e)
+        if "LOOM_READS_LLM_FREE" not in str(e):
+            return
+        assert op.name in _REFUSING, f"{op.name} refused under the setting"
     except Exception:  # noqa: BLE001 — the fake data, not the setting, failed it
         pass
 
@@ -144,7 +151,10 @@ _READS = [op for op in ALL_OPERATIONS if op.read_only and _body(op.input_model) 
 async def test_every_read_op_makes_no_llm_call(
     every_module_faked, monkeypatch: pytest.MonkeyPatch, op: Any
 ) -> None:
-    # Walks the registry: a read op added later is covered the day it is registered.
+    # Walks the registry, so a new read op is walked when it is registered. Over an
+    # empty ClickHouse it reaches only the model steps that need no rows (the memory
+    # search's legs, an ask's synthesis); the steps that need results (code search's
+    # legs, the tracker's rerank and judge, the bisect rerank) have their own tests below.
     with _serving(op, monkeypatch):
         await _serve(op)
     assert every_module_faked == []
@@ -181,6 +191,21 @@ async def test_an_asks_synthesis_answers_409_naming_the_setting(monkeypatch) -> 
             await op.handler(body)
         assert "LOOM_READS_LLM_FREE" in str(e.value)
         assert e.value.status_code == 409
+
+
+async def test_a_brief_returns_its_evidence_without_an_answer(
+    search_env, llm_attempts, monkeypatch
+) -> None:
+    from server.memory.api.models_brief import MemoryBriefInput
+
+    search_env.hits = [_svc_hit("kit_a", sim=0.80, rank=0.8)]
+    op = _op("memory.brief")
+    with _serving(op, monkeypatch):
+        out = await op.handler(
+            MemoryBriefInput(org="o", namespace="ns", agent="a", query=_QUESTION)
+        )
+    assert llm_attempts == []
+    assert out.answer == "" and [e.memory_key for e in out.evidence] == ["kit_a"]
 
 
 @pytest.mark.parametrize(
@@ -221,18 +246,20 @@ async def test_an_ask_for_the_evidence_alone_makes_no_llm_call(
     assert llm_attempts == []
 
 
-async def test_a_read_runs_no_namespace_reranker_but_one_the_request_names(
-    search_env, llm_attempts, monkeypatch
+@pytest.mark.parametrize("named", ["namespace", "request"])
+async def test_a_read_reranks_with_a_service_but_never_an_llm(
+    search_env, llm_attempts, monkeypatch, named: str
 ) -> None:
+    # builtin:cohere and LOOM_RERANK_ENDPOINTS_JSON endpoints call no LLM and still run;
+    # builtin:openai is an LLM and keeps the fused order.
     import server.memory.app.rerank as rerank_mod
 
-    looked_up: list[str] = []
     reranked: list[str] = []
     real_rerank = rerank_mod.rerank
+    configured = {"endpoint": ""}
 
     async def namespace_rerank(org: str, ns: str) -> tuple[str, str]:
-        looked_up.append(ns)
-        return ("builtin:cohere", "")
+        return (configured["endpoint"], "")
 
     async def recording_rerank(*, endpoint: str, **kw: Any) -> Any:
         reranked.append(endpoint)
@@ -240,13 +267,15 @@ async def test_a_read_runs_no_namespace_reranker_but_one_the_request_names(
 
     monkeypatch.setattr(rerank_mod, "get_namespace_rerank_config", namespace_rerank)
     monkeypatch.setattr(rerank_mod, "rerank", recording_rerank)
-    with _serving(_op("memory.search"), monkeypatch):
-        await _run(search_env)
-        assert looked_up == [] and reranked == []
-        await _run(search_env, rerank="builtin:cohere")
-    assert reranked == ["builtin:cohere"]
-    await _run(search_env)  # off the setting, the namespace's reranker runs
-    assert looked_up == ["ns"]
+    search_env.hits = [_svc_hit("a", sim=0.80, rank=0.8), _svc_hit("b", sim=0.70, rank=0.7)]
+    for endpoint in ("builtin:cohere", "builtin:openai"):
+        configured["endpoint"] = endpoint
+        request = {"rerank": endpoint} if named == "request" else {}
+        with _serving(_op("memory.search"), monkeypatch):
+            await _run(search_env, **request)
+    assert reranked == ["builtin:cohere"] and llm_attempts == []
+    await _run(search_env, rerank="builtin:openai")  # off the setting it reaches the model
+    assert llm_attempts
 
 
 async def test_a_read_embeds_its_query_once(search_env, monkeypatch) -> None:
@@ -316,3 +345,105 @@ async def test_the_tracker_and_bisect_model_steps_keep_their_deterministic_answe
         assert await dupcheck_answer.judge_uncertain(None, None, {}, out, object()) is out
         ranked, info = await bisect_fusion.rerank_stage(pool, text="crash", force=True)
         assert ranked is pool and info == {}
+
+
+def test_a_marked_code_search_has_its_own_memo_entry(monkeypatch) -> None:
+    from server.code.api.models_search import CodeSearchInput
+    from server.code.app import search_memo
+
+    search = CodeSearchInput(org="o", namespace="code-x", query="where are grants revoked")
+
+    def key() -> str:
+        return search_memo.key_for(
+            search, embedding_model="m", rerank="", token_budget=1000, recent_dirs=[]
+        )
+
+    unmarked = key()
+    with _serving(_op("code.search"), monkeypatch):
+        assert key() != unmarked
+
+
+class _Recorded(Exception):
+    """Stops a transport right after the funnel ran."""
+
+
+def _recording_funnel(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    import server.observability.metrics as metrics
+
+    marks: list[bool] = []
+
+    def funnel(*a: Any, **k: Any) -> None:
+        marks.append(llm_free.reads_llm_free())  # what the judge's submit() reads
+        raise _Recorded
+
+    monkeypatch.setattr(metrics, "record_search_quality", funnel)
+    return marks
+
+
+async def test_both_transports_record_search_quality_inside_the_reads_mark(monkeypatch) -> None:
+    # The sampled judge is queued from the funnel after the handler returned, so the
+    # transports run the funnel under the same mark: an LLM-free read queues no judge.
+    from types import SimpleNamespace
+
+    import server.observability.otel as otel
+    from server.transport import http, mcp_outcome
+
+    monkeypatch.setattr(http, "_emit_event", lambda *a, **k: None)
+    monkeypatch.setattr(otel, "record_op", lambda *a, **k: None)
+    monkeypatch.setattr(otel, "set_loom_attributes", lambda *a, **k: None)
+    monkeypatch.setattr(mcp_outcome, "_span_identity", lambda *a, **k: {})
+    op = _op("memory.search")
+    payload = SimpleNamespace(query=_QUESTION)
+    for on in (True, False):
+        marks = _recording_funnel(monkeypatch)
+        with _serving(op, monkeypatch, on=on):
+            pass  # the handler's own mark has ended, as at the funnel
+        from server.settings import settings
+
+        monkeypatch.setattr(settings, "reads_llm_free", on)
+        call = http._HttpCall(request_id="r", identity={"namespace": "ns", "org": "o"})
+        with pytest.raises(_Recorded):
+            await http._finish_success(op, call, payload, object(), 1, (None, None))
+        mcp_call = SimpleNamespace(
+            op=op,
+            input_obj=payload,
+            auth=None,
+            request_id="r",
+            mcp_session_id="",
+            rl_ns="ns",
+            rl_org="o",
+        )
+        mcp_outcome._record_success_telemetry(mcp_call, object(), 1)  # never raises
+        assert marks == [on, on]
+
+
+async def test_off_the_setting_the_model_steps_that_need_results_reach_the_model(
+    monkeypatch,
+) -> None:
+    # Positive controls for what the registry walk cannot reach over empty data: with the
+    # setting off, the tracker rerank, the tracker judge and the bisect rerank each ask
+    # for a model, and code search's model legs are on.
+    from types import SimpleNamespace
+
+    import server.llm.client as llm_client
+    from server.code.app import bisect_fusion
+    from server.code.app.search_legs import llm_legs_off
+    from server.tracker.app import dupcheck, dupcheck_answer
+
+    asked: list[str] = []
+
+    def client(*a: Any, **k: Any) -> Any:
+        asked.append("client")
+        raise _Recorded
+
+    monkeypatch.setattr(llm_client, "get_llm_client_for_model", client)
+    monkeypatch.setattr(dupcheck_answer.settings, "tracker_dupcheck_judge_enabled", True)
+    with _serving(_op("tracker.duplicate_check"), monkeypatch, on=False):
+        assert llm_legs_off("auto") is False
+        with pytest.raises(_Recorded):
+            await dupcheck._rerank_call(SimpleNamespace(title="t", body="b"), [{"k": 1}])
+        from server.tracker.domain.bisect import Candidate
+
+        pool = [Candidate(pr_number=1, title="t", author="a", merged_at="", minor_version="")]
+        await bisect_fusion.rerank_stage(pool, text="crash", force=True)
+    assert asked == ["client", "client"]
