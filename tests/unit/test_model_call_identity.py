@@ -588,3 +588,24 @@ def test_a_jobs_batch_groups_rows_by_the_identity_they_render(directory, monkeyp
     directory.writers[("acme", "shared", "a", "u1", "-", "k2")] = "process:sa:cell-t1:agent-8"
     asyncio.run(embedding._embed_rows(_Embedder(), rows))
     assert calls == [("agent-8", 2), ("agent-7", 1)]  # two namespaces, one identity: one call
+
+
+def test_a_loom_command_bills_its_namespaces_agent_and_one_naming_none_is_refused(
+    directory, caplog
+) -> None:
+    import argparse
+
+    from server.cli import app
+
+    seen: list[dict[str, str]] = []
+
+    def command(args: argparse.Namespace) -> int:
+        seen.append(_sent())
+        return 0
+
+    app._dispatch(argparse.Namespace(cmd="import", org="acme", namespace=AGENT_NS, func=command))
+    assert seen[0]["X-Agent"] == "agent-7"  # the agent whose namespace it writes into
+    with pytest.raises(customer.Unattributed, match="--namespace"):
+        # --org alone: no agent to name, and never the gateway's default agent
+        app._dispatch(argparse.Namespace(cmd="import", org="acme", func=command))
+    assert any("MODEL_CALL_UNATTRIBUTED" in r.getMessage() for r in caplog.records)

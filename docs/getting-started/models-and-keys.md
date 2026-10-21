@@ -355,7 +355,9 @@ LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} name
   naming `{agent}` or `{tenant}` go together or not at all, so an agent never goes without its
   tenant.
 - A call that names no org is refused (`MODEL_CALL_UNATTRIBUTED`) unless it is the deployment's
-  own: run `loom` commands that call models with `--org`.
+  own: run `loom` commands that call models with `--org`, and with `--namespace` while the
+  headers name the agent (one with no namespace is refused rather than billed to the
+  gateway's default agent).
 - Background jobs name the identity of the rows they work on: the writer of a memory or of a
   deferred extraction, else the agent whose own namespace the row is in. A job batching rows
   makes one call per identity.

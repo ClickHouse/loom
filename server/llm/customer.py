@@ -43,7 +43,7 @@ from urllib.parse import quote
 from server.core.errors import BackendUnavailableError, LoomServerError, ModelCallRefused
 from server.core.polled_copy import PolledCopy
 from server.llm.identity import Attribution as Attribution  # what a job's batch groups by
-from server.llm.identity import IdentityUnread, split_by, splits
+from server.llm.identity import IdentityUnread, names_agent, split_by, splits
 from server.llm.identity import render as render_identity
 from server.observability import genai
 from server.settings import settings
@@ -55,6 +55,8 @@ _attribution: contextvars.ContextVar[Attribution | None] = contextvars.ContextVa
 _system: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "loom_model_call_system", default=False
 )
+# Inside a `loom` command (server/cli/app.py), which names its namespace or none.
+_cli: contextvars.ContextVar[bool] = contextvars.ContextVar("loom_model_call_cli", default=False)
 
 # Not an org: the identity tuple's "none", and an org-wide token's wildcard.
 _NO_ORG = ("", "-", "*")
@@ -159,6 +161,18 @@ def attributed(a: Attribution) -> Iterator[None]:
 
 
 @contextlib.contextmanager
+def cli_command() -> Iterator[None]:
+    """Model calls made inside this block are a `loom` command's: one that names its
+    org but no namespace, where the identity headers name the agent, is refused
+    (`require`) rather than going out as the gateway's default agent."""
+    token = _cli.set(True)
+    try:
+        yield
+    finally:
+        _cli.reset(token)
+
+
+@contextlib.contextmanager
 def system() -> Iterator[None]:
     """Model calls made inside this block are the deployment's own."""
     token = _system.set(True)
@@ -216,6 +230,10 @@ async def require() -> Customer:
         # An identity header names whom a call is for: one that names no org would go
         # out as the gateway's default identity, billed to no one it names.
         _unattributed("names no org for its identity headers")
+    if _cli.get() and not (who.namespace or who.subject) and names_agent():
+        # A command run with --org and no --namespace knows no agent to bill: its call
+        # would go out as the gateway's default agent.
+        _unattributed("is a loom command naming no namespace: run it with --namespace")
     return Customer(name=_customer_named(org), identity=await render_identity(who))
 
 

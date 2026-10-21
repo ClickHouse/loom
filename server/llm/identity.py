@@ -103,6 +103,12 @@ def reads_writer() -> bool:
     return bool(_used() & _BY_SUBJECT)
 
 
+def names_agent() -> bool:
+    """Whether the identity headers name the agent (`{agent}`, `{tenant}`): a call that
+    renders none goes out as the gateway's default agent."""
+    return bool(_used() & _AGENT)
+
+
 async def render(a: Attribution) -> tuple[tuple[str, str], ...]:
     """The identity headers of a call made for `a`, in their configured order. The
     headers that name the agent (`{agent}`, `{tenant}`) go together or not at all:

@@ -347,7 +347,10 @@ gateway.
 - **No org, no call.** With identity headers set, a call that names no org is refused
   (`MODEL_CALL_UNATTRIBUTED`, logged), as it is with the customer header, unless it is the
   deployment's own (`customer.system()`): a `loom` command run without `--org` or a request
-  whose identity was not recorded never goes out as the gateway's default.
+  whose identity was not recorded never goes out as the gateway's default. A `loom` command
+  names its `--namespace` too, so its calls are for the agent whose namespace it is; while
+  the headers name the agent, a command's call with `--org` and no namespace is refused the
+  same way rather than billed to the gateway's default agent.
 - **Writer first.** A job's call is for the principal that wrote the row: the subject in its
   `actor` (`human:` or `process:` and a token's subject). A pipeline's own actor
   (`process:extraction-worker`, `process:cli:<command>`, `provenance.PIPELINE_ACTORS`) is no
