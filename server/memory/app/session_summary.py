@@ -138,7 +138,7 @@ async def _draft_session_summary(
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the
     embedder returns an empty vector (the read leg filters embedding_dim > 0);
-    a digest that reads as a credential is drafted with no vector. The digest is
+    a digest that reads as high is drafted with no vector. The digest is
     written from the raw turns, so it follows the operator's extraction policy as
     the extractor does."""
     from server.llm.client import get_llm_client
@@ -157,7 +157,7 @@ async def _draft_session_summary(
         log.info("session_summaries: empty digest for session=%r; skipping", input.session_id)
         return None
     embedder = get_embedder()
-    # A digest that reads as a credential is written without a vector: the summary leg
+    # A digest that reads as high is written without a vector: the summary leg
     # reads only digests that have one, and the text never reaches the embedder.
     embedding: list[float] = []
     if not reads_high(summary_text):

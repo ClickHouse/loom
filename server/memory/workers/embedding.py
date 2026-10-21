@@ -469,7 +469,7 @@ async def run_pass(
         # tz-aware: clickhouse-connect reads naive datetimes as client-local.
         now = datetime.now(UTC)
         # A stub whose head is now 'high' (or gone, on a sequential read) is never sent
-        # to the embedding provider: its excerpt may be the credential. It is retired.
+        # to the embedding provider: its excerpt may hold the high text. It is retired.
         rows, dropped = await _stubs_still_served(rows, stub_embedding, now)
         if dropped:
             await memory_repo.insert_embedding_rows(dropped)

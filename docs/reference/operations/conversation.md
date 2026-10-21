@@ -22,7 +22,7 @@ Log one chat turn (role + content) to the active thread.
 | `thread_id` | `str` | required | The thread to append to; it need not have been created first. |
 | `msg_id` | `str` | `''` | optional; server derives a content hash when omitted |
 | `role` | `Literal['user', 'assistant', 'system', 'tool']` | required | Who spoke: `user`, `assistant`, `system` or `tool`. |
-| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`, unless its text reads as a credential. |
+| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`, unless its text reads as high. |
 | `reasoning` | `str` | `''` | The model's reasoning for this turn, stored beside `content`; empty = none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), summary-reads-as-credential (do not retry: the same window gets the same summary). |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), summary-high-sensitivity (do not retry: the same window gets the same summary). |
 
 ## `conversation.create`
 
@@ -200,7 +200,7 @@ Save one chat message a user picked for search, whether or not the namespace rec
 | `conversation_id` | `str` |  |
 | `message_id` | `str` |  |
 | `indexed` | `bool` | True when the turn is saved and has a vector the saved search ranks: a new write, a re-save (finishing what an interrupted save left behind), and a transcript turn that is now flagged saved. |
-| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed', 'reads_as_credential']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
+| `reason` | `Literal['', 'duplicate', 'owner_mismatch', 'deleted', 'unsupported_role', 'embed_failed', 'high_sensitivity']` | "duplicate": already saved, nothing changed. "owner_mismatch": the stored turn belongs to another user. "deleted": the stored turn was tombstoned. "unsupported_role": the stored turn is a system or tool turn, which is not embedded.… |
 | `ts` | `datetime` | The stored turn's timestamp; the time of the refusal when one is refused. |
 
 ## `conversation.saved_status`
@@ -317,8 +317,8 @@ Withdraw one message from a user's saved-message search.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `conversation_id` | `str` | required | LibreChat's conversation id, as given to conversation.save_message. |
-| `message_id` | `str` | required | LibreChat's message id, as given to conversation.save_message. |
+| `conversation_id` | `str` | required | The client's conversation id, as given to conversation.save_message. |
+| `message_id` | `str` | required | The client's message id, as given to conversation.save_message. |
 | `user_id` | `str` | required | Only this user's saved row is withdrawn. |
 
 | Output field | Type | Meaning |

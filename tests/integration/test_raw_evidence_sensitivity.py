@@ -199,7 +199,7 @@ def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
     control_plane_url: str, ch_client, token: str
 ) -> None:
     """Imported so the digest's text is known: a plain digest is embedded and found, one
-    that reads as a credential is stored as written with no vector and never a hit."""
+    that reads as high is stored as written with no vector and never a hit."""
     plain, secret = f"s-{uuid.uuid4().hex[:8]}", f"s-{uuid.uuid4().hex[:8]}"
     r = _post(
         control_plane_url,
