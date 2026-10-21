@@ -145,7 +145,7 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 
 **Why publish the verified files.** A job that rebuilt its own artifact could ship unchecked bytes. Publishing what `verify` passed means the GitHub Release and the registries carry the same bytes.
 
-**Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The registry jobs need PyPI and npm trusted publishers registered for this repository (the `pypi` and `npm` GitHub environments).
+**Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The `pypi` and `npm` jobs need trusted publishers registered for this repository (their GitHub environments).
 
 **Why SDK publishing is manual.** A registry publish cannot be undone: PyPI never accepts
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.
@@ -181,7 +181,7 @@ Agents and people find Loom through these listings. Each reads files in this rep
 
 The `mcp-registry` job runs in the `mcp-registry` environment. Give it the same protection rules as `pypi` and `npm` before the first dispatch: GitHub creates a missing environment with none. Its login needs no secret.
 
-After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin`: it runs the directory's structural checks.
+After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin` for the plugin and `claude plugin validate .` for the marketplace: they run the directory's structural checks.
 
 ## After the release
 

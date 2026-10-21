@@ -2,6 +2,7 @@
 paths:
   - "integrations/**"
   - "skills/**"
+  - ".claude-plugin/**"
 ---
 
 # Integrations and coding-agent plugins

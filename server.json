@@ -30,14 +30,14 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "A writer token from the dashboard (Settings, Tokens) or `loom mint-token`; leave it empty when the server signs in through the browser",
+          "description": "A writer token from the dashboard (Settings, Tokens) or `loom mint-token`; leave the header out when the server signs in through the browser",
           "value": "Bearer {token}",
           "isRequired": false,
           "isSecret": true,
           "variables": {
             "token": {
               "description": "Loom writer token (JWT)",
-              "isRequired": false,
+              "isRequired": true,
               "isSecret": true
             }
           }
