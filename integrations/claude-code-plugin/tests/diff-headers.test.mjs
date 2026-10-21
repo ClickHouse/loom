@@ -29,7 +29,7 @@ const DIFF = [
 ].join("\n");
 
 test("file headers and hunk ranges are kept; no changed line is", () => {
-  const out = diffHeaders(DIFF, 200_000);
+  const out = diffHeaders(DIFF, 200_000, "");
   for (const line of [
     "diff --git a/src/k.cpp b/src/k.cpp",
     "+++ b/src/k.cpp",
@@ -62,14 +62,43 @@ test("only the function name the server reads is kept from a hunk's context", ()
   ];
   for (const [ctx, name] of cases) {
     assert.equal(hunkFunctionName(ctx), name, ctx);
-    const diff = ["diff --git a/x b/x", "+++ b/x", `@@ -1 +1 @@ ${ctx}`, "+x", ""].join("\n");
+    const diff = ["diff --git a/x.cpp b/x.cpp", "+++ b/x.cpp", `@@ -1 +1 @@ ${ctx}`, "+x", ""].join("\n");
     assert.ok(
-      diffHeaders(diff, 200_000)
+      diffHeaders(diff, 200_000, "")
         .split("\n")
         .includes(name ? `@@ -1 +1 @@ ${name}(` : "@@ -1 +1 @@"),
       ctx,
     );
   }
+});
+
+test("a file that is not code sends ranges and no name", () => {
+  const diff = [
+    "diff --git a/RUNBOOK.md b/RUNBOOK.md",
+    "+++ b/RUNBOOK.md",
+    "@@ -12 +12 @@ Staging password hunter2 (rotate monthly)",
+    "+x",
+    "",
+  ].join("\n");
+  assert.deepEqual(diffHeaders(diff, 200_000, "").split("\n"), [
+    "diff --git a/RUNBOOK.md b/RUNBOOK.md",
+    "+++ b/RUNBOOK.md",
+    "@@ -12 +12 @@",
+  ]);
+});
+
+test("a header-shaped text after a line end inside a changed line is not taken for a header", () => {
+  const diff = [
+    "diff --git a/p.cpp b/p.cpp",
+    "+++ b/p.cpp",
+    "@@ -1 +1,2 @@ void f(int)",
+    "+x\fdiff --git a/s b/s",
+    "+\f+++ b/secret-path password=hunter2",
+    "",
+  ].join("\n");
+  const out = diffHeaders(diff, 200_000, "");
+  assert.ok(!out.includes("hunter2") && !out.includes("secret-path"), out);
+  assert.deepEqual(out.split("\n"), ["diff --git a/p.cpp b/p.cpp", "+++ b/p.cpp", "@@ -1 +1,2 @@ f("]);
 });
 
 test("only diff --git, --- and +++ lines are kept from a file's header", () => {
@@ -83,20 +112,25 @@ test("only diff --git, --- and +++ lines are kept from a file's header", () => {
     "@@ -1 +1 @@",
     "",
   ].join("\n");
-  assert.deepEqual(diffHeaders(diff, 200_000).split("\n"), ["diff --git a/x b/x", "--- a/x", "+++ b/x", "@@ -1 +1 @@"]);
+  assert.deepEqual(diffHeaders(diff, 200_000, "").split("\n"), [
+    "diff --git a/x b/x",
+    "--- a/x",
+    "+++ b/x",
+    "@@ -1 +1 @@",
+  ]);
 });
 
 test("a cut never splits a line", () => {
   const diff = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n";
   for (let max = 0; max < diff.length + 2; max++) {
-    const out = diffHeaders(diff, max);
+    const out = diffHeaders(diff, max, "");
     assert.ok(out.length <= max, `${max}: ${out.length}`);
     for (const line of out.split("\n").filter(Boolean)) assert.ok(diff.split("\n").includes(line), `${max}: ${line}`);
   }
 });
 
 test("text before the first file header is not sent", () => {
-  const out = diffHeaders("password=hunter2\n\u001b[1mdiff --git a/x b/x\u001b[m\n", 200_000);
+  const out = diffHeaders("password=hunter2\n\u001b[1mdiff --git a/x b/x\u001b[m\n", 200_000, "");
   assert.equal(out, "");
 });
 
@@ -104,5 +138,5 @@ test("the result never exceeds the bound", () => {
   const hunks = Array.from({ length: 20_000 }, (_, i) => `@@ -${i} +${i} @@ void f${i}(int x)\n+x;`).join("\n");
   const big = `diff --git a/a b/a\n+++ b/a\n${hunks}\n`;
   assert.ok(big.length > 200_000);
-  assert.ok(diffHeaders(big, 200_000).length <= 200_000);
+  assert.ok(diffHeaders(big, 200_000, "").length <= 200_000);
 });

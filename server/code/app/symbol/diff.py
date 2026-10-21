@@ -12,7 +12,10 @@ from typing import Any
 def _hunk_context_name(ctx: str) -> str:
     """Function name from a hunk header's context (`@@ … @@ void
     BaseSettings<TTraits>::write(WriteBuffer & out)` → `BaseSettings::write`).
-    Empty for non-function context (`public:`, a comment, a bare `try`)."""
+    Empty for non-function context (`public:`, a comment, a bare `try`). The coding-agent
+    hooks compute the same name before sending a diff (`hunkFunctionName` in
+    integrations/claude-code-plugin/lib/loom-client.mjs; tests/unit/test_hook_diff_headers.py
+    holds the two together)."""
     ctx = ctx.strip()
     if not ctx or "(" not in ctx:
         return ""

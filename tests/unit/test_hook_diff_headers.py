@@ -5,6 +5,7 @@ diff (`_parse_unified_diff_full`), with no changed line in what is sent."""
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -51,22 +52,32 @@ def _diff() -> str:
     )
 
 
-def _headers(diff: str) -> str:
+def _headers(diff: str, home: Path) -> str:
     node = shutil.which("node")
     if node is None:
         pytest.skip("node is not installed")
     script = (
         f"import({json.dumps(CLIENT.as_uri())}).then((m) => "
-        "process.stdout.write(m.diffHeaders(require('fs').readFileSync(0, 'utf8'), 200000)))"
+        "process.stdout.write(m.diffHeaders(require('fs').readFileSync(0, 'utf8'), 200000, '')))"
     )
+    # No LOOM_* settings and an empty HOME: the helper must not read this machine's
+    # token or config.
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("LOOM_", "CLAUDE_"))}
+    env["HOME"] = str(home)
     return subprocess.run(
-        [node, "-e", script], input=diff, capture_output=True, text=True, check=True
+        [node, "-e", script],
+        input=diff,
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+        timeout=60,
     ).stdout
 
 
-def test_the_server_reads_the_same_ranges_and_names() -> None:
+def test_the_server_reads_the_same_ranges_and_names(tmp_path: Path) -> None:
     diff = _diff()
-    sent = _headers(diff)
+    sent = _headers(diff, tmp_path)
     assert _parse_unified_diff_full(sent) == _parse_unified_diff_full(diff)
     ranges, names = _parse_unified_diff_full(sent)
     assert {
@@ -82,8 +93,8 @@ def test_the_server_reads_the_same_ranges_and_names() -> None:
     } <= names["src/a.cpp"]
 
 
-def test_no_changed_line_is_sent() -> None:
-    sent = _headers(_diff())
+def test_no_changed_line_is_sent(tmp_path: Path) -> None:
+    sent = _headers(_diff(), tmp_path)
     assert "password" not in sent.lower() and "hunter2" not in sent
     assert not [line for line in sent.splitlines() if line.startswith("index ")]
     assert not [

@@ -140,7 +140,7 @@ async function main() {
       org: repo.org,
       namespace: repo.namespace,
       files: changed.slice(0, 50),
-      diff: diffHeaders(diff, 200_000),
+      diff: diffHeaders(diff, 200_000, token),
       depth: DEPTH,
       consumer: "claude-code-testgate",
     },

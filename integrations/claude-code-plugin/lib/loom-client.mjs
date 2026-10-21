@@ -767,22 +767,27 @@ export const DIFF_ARGS = [
 ];
 
 // A hunk header: its ranges, then the function context git appends to it.
-const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/s;
+const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
 const NOT_FUNCTION_NAMES = new Set(["if", "for", "while", "switch", "return", "catch", "sizeof", "decltype"]);
-// Python's whitespace (`str.split()`, `str.strip()`) and line ends (`str.splitlines()`),
-// so the client reads a header the way the server does.
-const PY_SPACE = String.raw`\t\n\v\f\r \x1c-\x1f\x85\xa0  - \u2028\u2029  　`;
+// Python's whitespace (`str.split()`, `str.strip()`) and line ends other than `\n`
+// (`str.splitlines()`), so the client reads a header the way the server does.
+const PY_SPACE = String.raw`\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000`;
 const PY_SPACE_RE = new RegExp(`[${PY_SPACE}]+`);
 const PY_TRIM_RE = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "g");
-const PY_LINE_END_RE = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+const PY_LINE_END_RE = /[\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+// Files whose hunk headers can name a function the code index holds. A hunk
+// header elsewhere (Markdown, YAML, `.env`) quotes whatever line came before the
+// change, so no name is sent for it. A language left out loses only the name.
+const FUNCTION_FILE_RE =
+  /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|py|pyi|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|go|java|vue|svelte|astro|sh|bash)$/i;
 
 /** The function name in a hunk header's context, as the server reads it
  *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
  *  the first `(`, template arguments dropped, when it is a (scope-qualified)
  *  identifier. Empty when there is none; when the word before it ends in a single
  *  `:` or in `=` (`Password: value (`, `x = getpass(`), which makes it a value; and
- *  when it has a credential's shape or holds the resolved token (`token ghp_… (`). */
-export function hunkFunctionName(context) {
+ *  when it has a credential's shape or holds `token` (`token ghp_… (`). */
+export function hunkFunctionName(context, token = "") {
   const ctx = String(context ?? "").replace(PY_TRIM_RE, "");
   if (!ctx.includes("(")) return "";
   // two passes drop one level of nested template arguments, as the server does
@@ -797,7 +802,6 @@ export function hunkFunctionName(context) {
   if (/(^|[^:]):$|=$/.test(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
   if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
-  const token = resolveToken();
   // only these shapes can be a bare identifier; an assignment cannot (no `=` or `:`)
   const credential = new RegExp(TOKEN_SHAPES_RE.source).test(name) || (token.length >= 8 && name.includes(token));
   return credential ? "" : name;
@@ -806,23 +810,26 @@ export function hunkFunctionName(context) {
 /** The part of a unified diff that code.impact and code.test_gate read, at most
  *  `max` chars of whole lines: each file's `diff --git`, `---` and `+++` lines, and
  *  each hunk header's ranges with only the function name the server would take
- *  from its context (`@@ -1 +1 @@ name(`). The changed lines, the rest of the
- *  context and the other header lines (an `index` line's blob hashes) are left
- *  out, so nothing in them is sent. */
-export function diffHeaders(diff, max) {
+ *  from its context (`@@ -1 +1 @@ name(`), for a code file. The changed lines, the
+ *  rest of the context and the other header lines (an `index` line's blob hashes)
+ *  are left out, so nothing in them is sent. */
+export function diffHeaders(diff, max, token = resolveToken()) {
   const out = [];
   let built = 0;
   let inFileHeader = false;
-  for (const line of String(diff ?? "").split(PY_LINE_END_RE)) {
+  let path = "";
+  for (const line of String(diff ?? "").split("\n")) {
     let kept = null;
     if (line.startsWith("diff --git ")) inFileHeader = true;
-    const hunk = HUNK_HEADER_RE.exec(line);
+    const end = line.search(PY_LINE_END_RE);
+    const hunk = HUNK_HEADER_RE.exec(end < 0 ? line : line.slice(0, end));
     if (hunk) {
       inFileHeader = false;
-      const name = hunkFunctionName(hunk[2]);
+      const name = FUNCTION_FILE_RE.test(path) ? hunkFunctionName(hunk[2], token) : "";
       kept = hunk[1] + (name ? ` ${name}(` : "");
-    } else if (inFileHeader && /^(diff --git |--- |\+\+\+ )/.test(line)) {
+    } else if (inFileHeader && end < 0 && /^(diff --git |--- |\+\+\+ )/.test(line)) {
       kept = line;
+      if (line.startsWith("+++ ")) path = line.slice(4).trim();
     }
     if (kept === null) continue;
     const cost = (out.length ? 1 : 0) + kept.length;

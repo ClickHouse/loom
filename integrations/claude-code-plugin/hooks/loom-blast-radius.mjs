@@ -100,7 +100,7 @@ async function main() {
     {
       org: repo.org,
       namespace: repo.namespace,
-      diff: diffHeaders(diff, 200_000),
+      diff: diffHeaders(diff, 200_000, token),
       depth: DEPTH,
       per_hop_limit: PER_HOP,
       consumer: "claude-code-blast",
