@@ -375,7 +375,8 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     run of its own that already exists; a new one gets a server-made id."""
     ch = get_client()
     supplied = (input.run_id or "").strip()
-    if not supplied:
+    # "-" is the identity sentinel the SDKs stamp when a call names no run.
+    if supplied in ("", SENTINEL):
         # A server-made id cannot collide: nothing to claim or check.
         return await _open_run(ch, input, uuid.uuid4().hex, None)
     if is_session_run_id(supplied):
@@ -459,10 +460,11 @@ async def _open_run(
         row["version"] = version
     await runs_store.insert_runs(ch, [row])
     next_step = (
-        f"run_id={run_id}. Pass it as run_id on memory.set, memory.ask, "
-        "memory.search and observe.record so the run's writes and recalls "
-        "join this ledger. When done, call run.complete with the memory_keys "
-        "you actually relied on in memories_used."
+        f"run_id={run_id}. Pass it as run_id on memory.set, observe.record, "
+        "working_memory.* and context.pack so the run's writes join this ledger. "
+        "Label reads (memory.search, memory.ask) with the X-Loom-Run-Id header: a "
+        "body run_id on a read filters to the run's own rows. When done, call "
+        "run.complete with the memory_keys you actually relied on in memories_used."
     )
     if dropped_usd:
         next_step += (

@@ -124,6 +124,31 @@ def test_begin_mints_a_run_id_and_inserts_an_active_row(env) -> None:
     assert set(r) == set(runs_store.RUN_COLUMNS)
 
 
+def test_begin_with_the_run_sentinel_gets_a_server_made_id(env) -> None:
+    """`Agent.call` stamps run_id "-" when the call names no run; it is not an id to claim."""
+    fake, _, h = env
+    out = asyncio.run(
+        h.handle_run_begin(
+            RunBeginInput(org="o", namespace="n", agent="claude", run_id="-", goal="fix CI")
+        )
+    )
+    assert len(out.run_id) == 32 and out.run_id != "-"
+    assert fake.inserted[0][1][0]["run_id"] == out.run_id
+    assert fake.calls == []  # nothing claimed, no prior row read
+
+
+def test_the_begin_hint_names_the_run_on_writes_and_the_header_on_reads(env) -> None:
+    fake, _, h = env
+    out = asyncio.run(
+        h.handle_run_begin(RunBeginInput(org="o", namespace="n", agent="claude", goal="fix CI"))
+    )
+    # A body run_id on a read filters to the run's rows, so the hint names writes for it.
+    as_body = next(s for s in out.next.split(". ") if "Pass it as run_id" in s)
+    assert "memory.set" in as_body and "context.pack" in as_body
+    assert "memory.search" not in as_body and "memory.ask" not in as_body
+    assert "X-Loom-Run-Id" in out.next
+
+
 def test_begin_with_an_existing_run_id_keeps_the_original_start(env) -> None:
     fake, _, h = env
     fake.one.append(_run_row(started_at=T0))

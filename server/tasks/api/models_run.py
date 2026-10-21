@@ -33,7 +33,7 @@ class RunBeginInput(BaseModel):
     # re-sent begin of the same run_id that names none.
     session_id: str = Field(default=SENTINEL)
     # Caller-supplied for end-to-end tracing (re-sending the same id is a
-    # replace, not a duplicate). Empty = the server mints one. The shape of an
+    # replace, not a duplicate). Empty or "-" = the server mints one. The shape of an
     # MCP session's implicit run (`mcp-` and 40 hex digits) is the transport's:
     # a begin naming one is answered with an id of its own.
     run_id: str = Field(default="", max_length=128)

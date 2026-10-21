@@ -5,7 +5,6 @@ resolves the key across the namespace. A named value still narrows."""
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import uuid
 from pathlib import Path
@@ -17,6 +16,7 @@ sys.path.insert(0, str(ROOT / "sdk" / "python"))
 sys.path.insert(0, str(ROOT))
 
 
+from tests.integration._eventually import eventually  # noqa: E402
 from tests.integration._resources import unique_org  # noqa: E402
 
 ORG = unique_org("id-sentinel")
@@ -50,20 +50,21 @@ async def test_search_with_the_run_sentinel_reads_rows_written_inside_a_run(
     async with Agent(
         org=ORG, namespace=ns, agent="r", base_url=control_plane_url, api_key=tok
     ) as a:
-        # Embeddings land a moment after the write: wait until both rows are searchable.
-        deadline = asyncio.get_running_loop().time() + 15.0
-        while True:
-            narrowed = await a.call("memory.search", body, run_id=run_id)
-            outside = await a.call("memory.search", {**body, "query": "Tuesday freeze"})
-            ready = {h["memory_key"] for h in narrowed["results"] + outside["results"]}
-            if {"deploy:window", "deploy:freeze"} <= ready:
-                break
-            assert asyncio.get_running_loop().time() < deadline, ready
-            await asyncio.sleep(0.25)
-        stamped = await a.call("memory.search", body)
 
-    assert {h["memory_key"] for h in stamped["results"]} == {"deploy:window", "deploy:freeze"}
-    assert [h["memory_key"] for h in narrowed["results"]] == ["deploy:window"]
+        async def keys(want: set[str], **scope: str) -> set[str]:
+            out = await a.call("memory.search", body, **scope)
+            found = {h["memory_key"] for h in out["results"]}
+            return found if found == want else set()
+
+        # Embeddings land a moment after the write, so each read is polled.
+        await eventually(
+            lambda: keys({"deploy:window"}, run_id=run_id),
+            description="a named run_id reads only that run's row",
+        )
+        await eventually(
+            lambda: keys({"deploy:window", "deploy:freeze"}),
+            description='the stamped run_id "-" reads every run\'s rows',
+        )
 
 
 @pytest.mark.asyncio
@@ -102,3 +103,24 @@ async def test_update_with_the_identity_sentinels_resolves_the_key_across_identi
     assert (own["updated"], own["reason"]) == (True, "")
     assert other["updated"] is True and other["new_version"] > own["new_version"]
     assert got is not None and got["value"] == "Thursday."
+
+
+@pytest.mark.asyncio
+async def test_run_begin_with_the_run_sentinel_opens_a_run_of_its_own(
+    control_plane_url: str, mint_test_token
+) -> None:
+    from loom import Agent
+
+    ns = f"rb-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG)
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=tok
+    ) as a:
+        # `Agent.call` stamps run_id "-": each begin gets a server-made id.
+        first = await a.call("run.begin", {"goal": "Pick the deploy window"})
+        second = await a.call("run.begin", {"goal": "Pick the deploy day"})
+        got = await a.call("run.get", {"run_id": first["run_id"]})
+
+    assert "-" not in (first["run_id"], second["run_id"])
+    assert first["run_id"] != second["run_id"]
+    assert got["run"]["goal"] == "Pick the deploy window"
