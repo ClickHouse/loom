@@ -4981,7 +4981,7 @@
         "sensitivity_sweep_shapes": {
           "default": "credential,email",
           "type": "string",
-          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`, and `phone` is left to `--only-shape phone`."
+          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are left to `loom sensitivity-sweep --only-shape`."
         },
         "sensitivity_sweep_window_days": {
           "default": 2,

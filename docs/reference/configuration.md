@@ -1050,7 +1050,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` |  | Days back the sensitivity sweep re-labels rows created in. |
 | `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` |  | Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least 1). |
 | `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` | `int` | `10` | live | Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). |
-| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`, and `phone` is left to `--only-shape phone`. |
+| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are left to `loom sensitivity-sweep --only-shape`. |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` |  | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
 
 ### Code-linked memories

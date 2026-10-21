@@ -25,7 +25,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core.repo_base import _CHClient
-from server.memory.store.sensitivity_sweep_sql import SORT_KEY
+from server.memory.store.sensitivity_sweep_sql import AGENT_KEY, SORT_KEY
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 
 # The sort key columns the cursor keeps. The rest name a user and a memory, which erasure
 # does not clear from `loom.worker_status`.
-CURSOR_KEY = SORT_KEY[:3]
+CURSOR_KEY = AGENT_KEY
 
 
 async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
@@ -105,7 +105,7 @@ def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
     """The agent of `key` as the pass's cursor: a JSON list of its org, namespace and agent,
     `[]` for the first key (never empty, which would keep the previous cursor).
 
-    With `past`, or when `key` holds the first columns of the sort key only (`past_key`),
+    With `past`, or when `key` holds the first columns of the sort key only (`past_agent`),
     or when the agent does not fit the cursor store, the cursor names the place just past
     the agent instead, `{"past": [org, namespace, agent]}`, or past the namespace or the
     org when the longer cursor does not fit, or the first key when none does. A cursor
@@ -128,7 +128,7 @@ def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
 def cursor_key(text: str) -> dict[str, Any] | None:
     """The sort key a pass starts after: the agent `cursor_text` wrote, with the user,
     session and memory key empty, which sorts before every key in that agent that has a
-    memory key; for a `past` cursor, its columns alone (`past_key`). None for `[]`, no
+    memory key; for a `past` cursor, its columns alone (`past_agent`). None for `[]`, no
     cursor or one it did not write."""
     try:
         parts = json.loads(text)

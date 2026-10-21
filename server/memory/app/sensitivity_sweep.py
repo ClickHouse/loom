@@ -50,7 +50,13 @@ from server.memory.domain.sensitivity import (
     pin_grammar,
     sensitivity_tags,
 )
-from server.memory.store.sensitivity_sweep_sql import SORT_KEY, keys_sql, past_key, scan_sql
+from server.memory.store.sensitivity_sweep_sql import (
+    AGENT_KEY,
+    SORT_KEY,
+    keys_sql,
+    past_agent,
+    scan_sql,
+)
 
 # The scan matches JSON text: the `json.dumps` text in `value`, and `toString(value_json)`
 # for an object value. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
@@ -168,7 +174,7 @@ class SweepReport:
     # `seconds` ran out), or the candidates were cut to `limit`.
     truncated: bool = False
     # The sort key the next pass starts after: the last key read, or the last candidate's
-    # when the candidates were cut to the limit, or its first columns alone (`past_key`)
+    # when the candidates were cut to the limit, or its first columns alone (`past_agent`)
     # when the scan moved past that agent. None when the next pass should start at the
     # first key: the scan read from the first key to the last, or it reached the last key
     # with no page left to read the keys before its start.
@@ -225,17 +231,16 @@ async def scan(
     seconds: float | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:
-    """Live unlabelled rows the detector would label, exactly as the write
-    path would have. Read-only. `only_shapes` keeps candidates carrying at
-    least one of the named probe shapes (`credential`, `email`, `phone`,
-    `other`) — the phone shape is a ten-digit run and the noisiest, so an
-    operator can apply the others first.
+    """Live unlabelled rows the detector labels, read from `value` and an object's
+    `value_json`. Read-only. `only_shapes` narrows the ClickHouse filter to those probe
+    shapes' alternatives (`credential`, `email`, `phone`, `other`) and keeps only candidates
+    that carry one of them.
 
     Reads pages of `page_size` keys in the table's sort key order, then the current version
     of each, until `limit` candidates are found, the rows run out, `pages` pages are read
     (`None`: no page cap) or `seconds` have passed (`None`: no time cap), starting after the
     sort key `start_after`, or past its columns when it holds the first ones only
-    (`past_key`), or at the first key when None. `skip_noisy_agents` is the scheduled
+    (`past_agent`), or at the first key when None. `skip_noisy_agents` is the scheduled
     pass's paging; its rules are in docs/architecture/security.md, "Sensitivity"."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
@@ -280,7 +285,7 @@ async def scan(
     # row behind more than a pass's pages of such keys in its agent waits until they leave
     # the window, or for the operator's run. The cursor stays where the reads above left it.
     for key in run.skipped:
-        ranges.append(await _read_range(run, after=key, stop=past_key(key, "agent"), skip=False))
+        ranges.append(await _read_range(run, after=key, stop=past_agent(key), skip=False))
     report.truncated = not all(r.reached_end for r in ranges)
     if len(report.candidates) > limit:
         report.candidates = report.candidates[:limit]
@@ -320,7 +325,7 @@ class _Range:
     """How one `_read_range` ended."""
 
     reached_end: bool  # the range's last key was read
-    last: dict[str, Any]  # the key (or `past_key` place) the next page would start after
+    last: dict[str, Any]  # the key (or `past_agent` place) the next page would start after
     # The range stopped before its end on a page with a stale key in its last key's agent:
     # one the FINAL read gave no current row for, because its only match is an older version.
     last_page_had_stale_key: bool = False
@@ -355,7 +360,9 @@ async def _read_range(
         # before the cursor and does not hold the next agent back.
         last = keys[-1]
         current = _sort_keys(rows)
-        stale = any(key not in current for key in _sort_keys(keys) if key[:3] == _agent(last))
+        stale = any(
+            k not in current for k in _sort_keys(keys) if k[: len(AGENT_KEY)] == _agent(last)
+        )
         if (
             skip
             and not stale
@@ -363,7 +370,7 @@ async def _read_range(
             and _agent(keys[0]) == _agent(last)
         ):
             run.skipped.append(last)
-            last = past_key(last, "agent")
+            last = past_agent(last)
     return _Range(reached_end=False, last=last, last_page_had_stale_key=stale)
 
 
@@ -392,8 +399,8 @@ async def _read_page(
     return keys, rows
 
 
-def _agent(key: dict[str, Any]) -> tuple[str, str, str]:
-    return key["org"], key["namespace"], key["agent"]
+def _agent(key: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(key[col] for col in AGENT_KEY)
 
 
 def _sort_keys(rows: list[dict[str, Any]]) -> set[tuple[str, ...]]:

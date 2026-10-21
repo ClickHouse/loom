@@ -11,11 +11,14 @@ from typing import Any
 SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
 
 
-def past_key(key: dict[str, Any], column: str) -> dict[str, Any]:
-    """The place past every key that shares `key`'s values up to `column`: those columns
-    alone. A read bounds on that shorter tuple, so it skips no stored value, whatever bytes
-    the value holds."""
-    return {col: key[col] for col in SORT_KEY[: SORT_KEY.index(column) + 1]}
+# The sort key's first columns, which name an agent.
+AGENT_KEY = SORT_KEY[:3]
+
+
+def past_agent(key: dict[str, Any]) -> dict[str, Any]:
+    """The place past every key in `key`'s agent: its agent columns alone. A read bounds on
+    that shorter tuple, so it skips no stored value, whatever bytes the value holds."""
+    return {col: key[col] for col in AGENT_KEY}
 
 
 # The texts the coarse filter matches: the bytes the writer stored in `value`, where a
@@ -111,4 +114,4 @@ def scan_sql(
     """
 
 
-__all__ = ["SORT_KEY", "keys_sql", "past_key", "scan_sql"]
+__all__ = ["AGENT_KEY", "SORT_KEY", "keys_sql", "past_agent", "scan_sql"]

@@ -2921,8 +2921,8 @@ settings:
   # sensitivity_sweep_pages_per_pass: 10
 
   # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
-  # other); every high row is `credential`, and `phone` is left to `--only-shape phone`.
-  # [restart]
+  # other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are
+  # left to `loom sensitivity-sweep --only-shape`. [restart]
   # sensitivity_sweep_shapes: "credential,email"
 
   # Tag rows mentioning a protected attribute or common proxy with `attribute:<class>`

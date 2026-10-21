@@ -847,7 +847,7 @@ async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> N
 
 
 def test_the_cursor_keeps_the_agent_or_names_the_place_past_it() -> None:
-    from server.memory.store.sensitivity_sweep_sql import past_key
+    from server.memory.store.sensitivity_sweep_sql import past_agent
     from server.memory.workers.sensitivity_sweep import cursor_key, cursor_text
     from server.workers.pass_context import MAX_CURSOR
 
@@ -855,13 +855,13 @@ def test_the_cursor_keeps_the_agent_or_names_the_place_past_it() -> None:
     start = {"org": "o", "namespace": "n", "agent": "a", "user_id": "", "session_id": ""}
     assert cursor_text(key | {"memory_key": "k"}) == '["o", "n", "a"]'
     assert cursor_key(cursor_text(key | {"memory_key": "k"})) == start | {"memory_key": ""}
-    # past the agent, asked for or as the scan's `past_key` place
-    past_agent = {"org": "o", "namespace": "n", "agent": "a"}
+    # past the agent, asked for or as the scan's `past_agent` place
+    past = {"org": "o", "namespace": "n", "agent": "a"}
     assert cursor_text(key | {"memory_key": "k"}, past=True) == '{"past": ["o", "n", "a"]}'
-    assert cursor_text(past_key(key | {"memory_key": "k"}, "agent")) == cursor_text(
+    assert cursor_text(past_agent(key | {"memory_key": "k"})) == cursor_text(
         key | {"memory_key": "k"}, past=True
     )
-    assert cursor_key('{"past": ["o", "n", "a"]}') == past_agent
+    assert cursor_key('{"past": ["o", "n", "a"]}') == past
     # past the namespace when the agent does not fit
     long_agent = key | {"agent": "a" * MAX_CURSOR, "memory_key": "k"}
     assert cursor_text(long_agent) == '{"past": ["o", "n"]}'
@@ -881,7 +881,7 @@ def test_a_read_past_an_agent_reaches_an_agent_named_after_it_with_any_byte() ->
     # An identity column takes any string, so `a\x00b` sorts after `a` and before every
     # other name that starts with `a`. A page past agent `a` bounds on the org, namespace
     # and agent alone, so it still reads that agent.
-    from server.memory.store.sensitivity_sweep_sql import keys_sql, past_key
+    from server.memory.store.sensitivity_sweep_sql import keys_sql, past_agent
 
     insert = (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
@@ -892,7 +892,7 @@ def test_a_read_past_an_agent_reaches_an_agent_named_after_it_with_any_byte() ->
     )
     last_in_a = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-"}
     last_in_a |= {"session_id": "-", "memory_key": "k_a"}
-    past_a = past_key(last_in_a, "agent")
+    past_a = past_agent(last_in_a)
     params = {"shape": sweep.coarse_shape_re(set()), "lim": 10}
     params |= {f"after_{col}": value for col, value in past_a.items()}
     sql = keys_sql(org=None, namespace=None, since_days=None, after=tuple(past_a))

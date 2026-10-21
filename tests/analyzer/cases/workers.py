@@ -29,7 +29,7 @@ async def _pure_builders(ch: RecordingCH, c: dict[str, Any]) -> None:
 
     scoped = c["scoped"]
     # a bound on no column, on one key, and past (or up to the end of) one agent
-    bounds = ((), sweep_sql.SORT_KEY, sweep_sql.SORT_KEY[:3])
+    bounds = ((), sweep_sql.SORT_KEY, sweep_sql.AGENT_KEY)
     for sql in (
         read_sql(),
         _read_schema_sql(),
