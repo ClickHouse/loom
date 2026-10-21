@@ -256,17 +256,19 @@ async def mark_dead(
         events += " AND occurred_at < {before:DateTime64(3)}"
         params["before"] = before
     events += f" {_EARLIEST}"
-    await ch.execute(
-        f"INSERT INTO {ATTEMPTS} ({', '.join(ATTEMPT_COLS)}) "
-        "SELECT o.event_id, 'dead', ifNull(a.attempts, 0), {now:DateTime64(3)}, "
-        "ifNull(a.last_status, 0), {reason:String}, {now:DateTime64(3)}, {version:UInt64} "
-        f"FROM ({events}) AS o "
-        f"LEFT JOIN ({_latest_attempts(f'SELECT event_id FROM ({events})')}) AS a "
-        "ON a.event_id = o.event_id "
-        "WHERE ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased')",
-        params=params,
-        settings=_COMMITTED,
-    )
+    # The dead row outranks what its SELECT missed: a delivery just written must be seen.
+    with own_write_reads():
+        await ch.execute(
+            f"INSERT INTO {ATTEMPTS} ({', '.join(ATTEMPT_COLS)}) "
+            "SELECT o.event_id, 'dead', ifNull(a.attempts, 0), {now:DateTime64(3)}, "
+            "ifNull(a.last_status, 0), {reason:String}, {now:DateTime64(3)}, {version:UInt64} "
+            f"FROM ({events}) AS o "
+            f"LEFT JOIN ({_latest_attempts(f'SELECT event_id FROM ({events})')}) AS a "
+            "ON a.event_id = o.event_id "
+            "WHERE ifNull(a.event_id, '') = '' OR a.status IN ('pending', 'leased')",
+            params=params,
+            settings=_COMMITTED,
+        )
 
 
 async def keys_with_history(

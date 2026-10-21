@@ -36,6 +36,10 @@ pytestmark = pytest.mark.asyncio
 ORG = unique_org("memhook")
 SECRET = "whsec_" + base64.b64encode(b"memory-webhook-test-secret-32by!").decode()
 REF = webhook_secret_org_prefix(ORG) + "CHAT"
+# Read before the receiver fixture patches these settings: what this process was started with.
+STARTED_WITH_ALLOWLIST = bool(
+    settings.memory_webhook_allow_http and settings.memory_webhook_private_hosts
+)
 
 
 class Receiver:
@@ -107,8 +111,7 @@ class Ops:
         )
         # A run configured as CI is (the allowlist in this process's environment, shared
         # with the server) fails on a refusal: it can only be a regression.
-        configured = settings.memory_webhook_allow_http and settings.memory_webhook_private_hosts
-        if r.status_code == 422 and "url refused" in r.text and not configured:
+        if r.status_code == 422 and "url refused" in r.text and not STARTED_WITH_ALLOWLIST:
             pytest.skip(
                 "the server refuses http to 127.0.0.1: start it and the tests with "
                 "LOOM_MEMORY_WEBHOOK_ALLOW_HTTP=true LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS=127.0.0.1"

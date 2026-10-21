@@ -1326,6 +1326,9 @@ class _SeqCH:
         self.sequential.append(bool(sequential_reads_var.get()))
         return []
 
+    async def execute(self, sql: str, params: Any = None, **_: Any) -> None:
+        self.sequential.append(bool(sequential_reads_var.get()))
+
 
 @pytest.mark.asyncio
 async def test_the_workers_reads_see_the_latest_writes() -> None:
@@ -1339,7 +1342,15 @@ async def test_the_workers_reads_see_the_latest_writes() -> None:
         limit=1,
         ch=ch,  # type: ignore[arg-type]
     )
-    assert ch.sequential == [True, True]
+    await store.mark_dead(
+        NOW,
+        since=NOW,
+        hooks=[("acme", "chat", "wh1")],
+        reason="the webhook was removed",
+        version=1,
+        ch=ch,  # type: ignore[arg-type]
+    )
+    assert ch.sequential == [True, True, True]
 
 
 # ------------------------------------------------------------ the POST
