@@ -383,7 +383,7 @@ async def handle_decision_outcome(input: DecisionOutcomeInput) -> DecisionOutcom
     # credit from the realized outcome — the feedback every decision log lacks.
     credited = 0
     run_id = str(payload.get("run_id") or "")
-    if input.success is not None and run_id and run_id != "-":
+    if input.success is not None and named(run_id):
         try:
             from server.memory.api.models_temporal import MemoryOutcomeRunInput
             from server.memory.app.ops import handle_memory_outcome_run

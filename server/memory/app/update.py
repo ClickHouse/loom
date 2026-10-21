@@ -544,10 +544,8 @@ def _status_columns(conflict_result: Any) -> tuple[str, dict[str, Any]]:
 def _revision_run_id(input: Any, existing: MemoryRow) -> str:
     """A revision made under a run carries that run on its version row (the `acted` fold joins
     the run's writes to what the run was shown); a caller naming no run keeps the row's own."""
-    revision_run_id = str(getattr(input, "run_id", "") or "").strip()
-    if revision_run_id in ("", "-"):
-        revision_run_id = str(getattr(existing, "run_id", "-") or "-")
-    return revision_run_id
+    revision_run_id = named(str(getattr(input, "run_id", "") or "").strip())
+    return revision_run_id or str(getattr(existing, "run_id", "-") or "-")
 
 
 async def _update_post_write(

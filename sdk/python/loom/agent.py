@@ -238,7 +238,8 @@ class Agent:
     def run_scope(self, **begin_kwargs: Any) -> Any:
         """One agent execution as an `async with` block:
         begins a run, credits the memories the block's recalls cited on
-        exit, stamps the run_id on memory calls inside. See loom.run.RunScope."""
+        exit, stamps the run_id on the writes inside and labels the reads with
+        it. See loom.run.RunScope."""
         return self.run.scope(**begin_kwargs)
 
     async def __aenter__(self) -> Agent:

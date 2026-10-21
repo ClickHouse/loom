@@ -1077,10 +1077,10 @@ async def recent_run_heads(
     `-`/empty drops the user predicate."""
     where: list[str] = []
     params: dict[str, Any] = {}
-    if agent and agent not in ("*", "-"):
+    if named(agent, wildcard=True):
         where.append("agent = {agent:String}")
         params["agent"] = agent
-    if user_id and user_id != "-":
+    if named(user_id):
         where.append("user_id = {uid:String}")
         params["uid"] = user_id
     return await runs_store.recent_run_heads(
