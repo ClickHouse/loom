@@ -24,6 +24,7 @@ from server.memory.app.drops import record_drop
 from server.memory.domain.entity_sentinels import NONE_SENTINEL, PARSE_FAILED_SENTINEL
 from server.memory.domain.graph_quality import canonical_entity_text
 from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.trust import subject_of
 from server.observability.budget import namespaces_over_cap
 from server.observability.genai import staged
 from server.settings import settings
@@ -352,7 +353,12 @@ async def run_pass(
             row_started = time.monotonic()
             cost_accumulator.begin_op()
             try:
-                with customer.for_org(str(r["org"])):
+                with customer.for_org(
+                    str(r["org"]),
+                    namespace=str(r["namespace"]),
+                    subject=subject_of(str(r.get("actor") or "")),
+                    user_id=str(r["user_id"]),
+                ):
                     entities = await _extract(value_str)
             except customer.HOLDS:
                 # Switched off since the scan, or the switch unread: left for later, no sentinel.

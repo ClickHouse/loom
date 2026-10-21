@@ -3572,6 +3572,11 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
 # A customer or feature name sent as a header value: the same characters, at least one.
 _HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
+# What an identity header template names, each as `{name}` (server/llm/identity.py).
+IDENTITY_PLACEHOLDERS = ("org", "namespace", "agent", "tenant", "subject", "user_id", "email")
+IDENTITY_PLACEHOLDER = re.compile(r"\{(" + "|".join(IDENTITY_PLACEHOLDERS) + r")\}")
+# The text around them: printable ASCII but braces, which a header carries as it is.
+_IDENTITY_TEXT = re.compile(r"[\x20-\x7a|~]*")
 # Headers the model-call senders set themselves, or the HTTP client does: a customer or
 # feature header of that name would overwrite them (the provider key, the body's type).
 _SENDER_HEADERS = frozenset(
@@ -3695,6 +3700,13 @@ class ProviderSettings(ModelSettings):
     # JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...)
     # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
     inference_feature_map_json: Annotated[str, JsonObject] = ""
+    # JSON object {header: template} every model call carries, naming whom it is for:
+    # {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token),
+    # {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header
+    # whose template renders empty is not sent; "" sends none (server/llm/identity.py).
+    inference_identity_headers_json: Annotated[str, JsonObject] = ""
+    # The workload trust claim {tenant} names: the value the trust requires of it, exactly.
+    inference_tenant_claim: str = "tenant_id"
     # Seconds between each process's reads of the orgs whose model calls are
     # switched off (loom.org_model_calls); a change reaches every process within it.
     model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
@@ -3774,6 +3786,13 @@ class ProviderSettings(ModelSettings):
             return {}
         return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
 
+    def identity_headers(self) -> tuple[tuple[str, str], ...]:
+        """`inference_identity_headers_json` parsed: (header, template) pairs."""
+        raw = self.inference_identity_headers_json.strip()
+        if not raw:
+            return ()
+        return json_map_items(raw, "LOOM_INFERENCE_IDENTITY_HEADERS_JSON", strings_only=True)
+
     @model_validator(mode="after")
     def _check_model_calls_refresh(self) -> ProviderSettings:
         """A process refuses every model call once its copy of the model-call
@@ -3833,6 +3852,26 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_SYSTEM_CUSTOMER must name a customer while "
                 "LOOM_INFERENCE_CUSTOMER_HEADER is set: letters, digits and . _ ~ : @ -"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_identity_headers(self) -> ProviderSettings:
+        """Every identity header is a header name, once, that neither a sender nor the
+        customer or feature header sets, with a template of known placeholders."""
+        taken = {h.lower() for h in (self.inference_customer_header, self.inference_feature_header)}
+        for name, template in self.identity_headers():
+            if not _HEADER_NAME.fullmatch(name) or name.lower() in _SENDER_HEADERS | taken:
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: {name[:64]!r} must be an HTTP header "
+                    "name, once, that no sender and neither metering header sets"
+                )
+            taken.add(name.lower())
+            if not _IDENTITY_TEXT.fullmatch(IDENTITY_PLACEHOLDER.sub("", template)):
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: the template of {name!r} may name "
+                    "only {org} {namespace} {agent} {tenant} {subject} {user_id} {email}, "
+                    "around them printable ASCII"
+                )
         return self
 
     @model_validator(mode="after")

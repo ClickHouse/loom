@@ -485,12 +485,19 @@ async def replay_row(row: dict[str, Any]) -> int:
     from server.identity.domain.read_scope import read_filters_bound
     from server.memory.app.extract.handler import handle_memory_set_from_messages
     from server.memory.domain import provenance as _prov
+    from server.memory.domain.trust import subject_of
 
-    # The worker has no auth bound, so the scope is bound for "no auth".
+    # The worker has no auth bound, so the scope is bound for "no auth". The
+    # replay's model calls are the enqueuer's.
     with (
         _prov.pipeline_actor(replay_actor(row)),
         read_filters_bound(None, replay_scope(row)),
-        customer.for_org(str(row.get("org") or "")),
+        customer.for_org(
+            str(row.get("org") or ""),
+            namespace=str(row.get("namespace") or ""),
+            subject=subject_of(enqueued_actor(row)),
+            user_id=str(row.get("user_id") or ""),
+        ),
     ):
         out = await handle_memory_set_from_messages(rebuild_input(row))
     return len(out.written)

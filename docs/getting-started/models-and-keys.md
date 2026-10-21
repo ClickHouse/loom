@@ -316,6 +316,26 @@ Cached answers make no call: an embedding or a model answer served from Loom's
 cache is not metered again. The customer is still checked before the cache, so a
 path that names none is refused even on a hit.
 
+#### Naming the agent on every call
+
+A gateway that bills or limits each agent reads whom a call is for from headers. Map each
+header to a template, and every chat, embedding, rerank and classify request carries it:
+
+```bash
+LOOM_INFERENCE_IDENTITY_HEADERS_JSON='{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}'
+LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} names (the default)
+```
+
+- The placeholders are `{org}`, `{namespace}`, `{subject}`, `{user_id}`, `{agent}` (the agent
+  of a workload trust's token, `sa:<trust>:<agent>`), `{tenant}` (the value that trust requires
+  of its `LOOM_INFERENCE_TENANT_CLAIM` claim) and `{email}` (a signed-in person's address).
+- A header whose template renders empty is not sent: with bare placeholders, a call with no
+  agent behind it (a person's, or the deployment's own) carries no agent header.
+- Background jobs name the identity of the rows they work on: the writer of a memory or of a
+  deferred extraction, else the agent whose own namespace the row is in. A job batching rows
+  makes one call per identity.
+- How each value is found: [identity headers](../architecture/llm-architecture.md#identity-headers).
+
 #### Switching an org's model calls off
 
 An org admin can stop every model call for the org's data, with or without a

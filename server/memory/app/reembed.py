@@ -328,14 +328,21 @@ async def _rewrite_page(
     model, dim = embedder.model_name, embedder.dim
     vecs: list[list[float]] | None = [[] for _ in chunk] if not key_only else None
     kvecs: list[list[float]] | None = [[] for _ in chunk] if cfg.get("key_text") else None
-    # A page can span two orgs (the keyset leads with org): one call per org,
-    # since a model call names a single customer.
+    # A page can span two orgs (the keyset leads with org): one call per org and
+    # identity, since a model call names a single customer and identity.
     left: set[int] = set()
     left_by_org: dict[str, int] = {}
-    groups = await customer.by_org(str(r.get("org") or "") for r in chunk)
-    for org, positions in groups.items():
+    groups = await customer.groups(
+        customer.Attribution(
+            str(r.get("org") or ""),
+            namespace=str(r.get("namespace") or ""),
+            user_id=str(r.get("user_id") or ""),
+        )
+        for r in chunk
+    )
+    for who, positions in groups.items():
         try:
-            with customer.for_org(org):
+            with customer.attributed(who):
                 if vecs is not None:
                     texts = [str(chunk[i].get(cfg["text"]) or "") for i in positions]
                     for i, v in zip(positions, await embedder.embed_many(texts), strict=True):
@@ -346,7 +353,7 @@ async def _rewrite_page(
                         kvecs[i] = v
         except customer.ModelCallsDisabled:
             left.update(positions)  # switched off since the run began: its rows wait
-            left_by_org[org] = len(positions)
+            left_by_org[who.org] = left_by_org.get(who.org, 0) + len(positions)
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
         for i, r in enumerate(chunk)

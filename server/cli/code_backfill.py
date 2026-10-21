@@ -405,7 +405,7 @@ async def _held_batch(
     """One cursor batch as the org's model calls, so its switch applies to them;
     "" once written, else why the switch held it (the cursor stays)."""
     try:
-        with customer.for_org(org):
+        with customer.for_org(org, namespace=ns):
             await _backfill_batch_rounds(
                 repo, org, ns, batch_paths, source=source, one=one, denylist=denylist
             )

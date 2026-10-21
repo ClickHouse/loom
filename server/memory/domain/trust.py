@@ -42,6 +42,14 @@ def actor_for(subject: str, *, is_service_account: bool) -> str:
     return f"{PROCESS_PREFIX if is_service_account else HUMAN_PREFIX}{subject}"
 
 
+def subject_of(actor: str) -> str:
+    """The subject of an actor string (`actor_for`); '' for one of neither kind."""
+    for prefix in (HUMAN_PREFIX, PROCESS_PREFIX):
+        if actor.startswith(prefix):
+            return actor[len(prefix) :]
+    return ""
+
+
 def hash_is_set(sha: str | None) -> bool:
     return (sha or "") not in _UNSET_HASHES
 

@@ -312,7 +312,7 @@ async def _embed_rows(
             texts = [clip_for_embedding(text_of(r), count_tokens=counter) for r in group]
             vectors: dict[int, list[float]]
             try:
-                with customer.for_org(org):
+                with customer.for_org(org, namespace=ns):
                     if not customer.names_one():
                         vectors = {}
                         failures = dict.fromkeys(range(len(group)), customer.NO_CUSTOMER)

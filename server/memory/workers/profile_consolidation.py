@@ -167,7 +167,12 @@ async def _consolidate_identity(
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("profile_fold"), customer.for_org(str(row["org"])):
+        with (
+            llm_stage("profile_fold"),
+            customer.for_org(
+                str(row["org"]), namespace=str(row["namespace"]), user_id=str(row["user_id"])
+            ),
+        ):
             client = (
                 llm_client.get_llm_client_for_model(cfg.model)
                 if cfg.model

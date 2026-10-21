@@ -239,6 +239,7 @@ async def settle(
     which stamps nothing, so the sweep judges it once the org is back). Never
     raises. Writes one `memory_drops` row and one ledger row
     (`memory.set.settle`, the write's `request_id`)."""
+    from server.auth.context import current_caller
     from server.memory.app import conflicts as cf
     from server.memory.app.drops import record_drop
     from server.observability import cost_accumulator
@@ -251,7 +252,13 @@ async def settle(
     verdict = "error"
     result: Any = None
     try:
-        with customer.for_org(str(ident.org)):
+        # The write's: this task runs in a copy of its request's context.
+        with customer.for_org(
+            str(ident.org),
+            namespace=str(ident.namespace),
+            subject=current_caller()[0],
+            user_id=str(getattr(ident, "user_id", "") or ""),
+        ):
             result = await cf.settle_deferred_judgement(pj)
         if await still_current(ident, content_sha256):
             verdict = await apply(

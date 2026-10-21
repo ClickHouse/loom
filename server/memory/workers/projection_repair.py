@@ -51,7 +51,7 @@ async def run_pass(
         )
         result.scanned = len(failures)
         for failure in failures:
-            with customer.for_org(str(failure.org)):
+            with customer.for_org(str(failure.org), namespace=str(failure.namespace)):
                 retry = await retry_projection_failure(failure)
             if retry.retried:
                 result.retried += 1

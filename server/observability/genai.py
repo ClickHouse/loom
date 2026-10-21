@@ -223,6 +223,12 @@ def request_org() -> str:
     return org
 
 
+def request_identity() -> dict[str, str]:
+    """The identity the transport recorded for the request this context serves
+    (its org, namespace and user_id), under `request_org`'s rule; {} outside one."""
+    return dict(_identity.get() or {}) if request_org() else {}
+
+
 def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> None:
     """Identity for a background pass: ``operation=worker.<name>`` plus tenant.
 

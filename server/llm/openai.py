@@ -145,7 +145,7 @@ class OpenAILLMClient:
     ) -> LLMResult:
         # Before the gateway token and outside `recording`: a call naming no
         # customer is the caller's to fix, not a provider failure.
-        org = await customer.require()
+        who = await customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
         payload = _payload(self.model, system, user, max_tokens, response_format, temperature)
@@ -165,7 +165,7 @@ class OpenAILLMClient:
                 headers = {
                     "Authorization": f"Bearer {bearer}",
                     "Content-Type": "application/json",
-                    **customer.headers(org),
+                    **customer.headers(who),
                 }
                 async for attempt in retrying():
                     with attempt:

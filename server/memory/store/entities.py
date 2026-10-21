@@ -92,7 +92,8 @@ async def find_unentitied_keys(
 async def read_unentitied_rows(
     keys: list[dict[str, Any]], *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """Phase two: type and value for the keys phase one found, under FINAL
+    """Phase two: type, value and writer (`actor`, whom the extraction's model
+    call is for) for the keys phase one found, under FINAL
     with the sort key in PREWHERE, the emptiness and liveness re-checked
     after the merge so a row entitied
     or tombstoned since the keys were read is not extracted again."""
@@ -113,7 +114,7 @@ async def read_unentitied_rows(
     rows = await ch.query_all(
         """
         SELECT org, namespace, agent, user_id, session_id, memory_key,
-               memory_type, value, created_at
+               memory_type, value, actor, created_at
         FROM loom.memory FINAL
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
                  IN {keys:Array(Tuple(String, String, String, String, String, String))}

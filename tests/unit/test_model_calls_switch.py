@@ -85,7 +85,7 @@ def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkey
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(customer.require())
     genai._identity.set(None)  # a dev call naming no org: nothing to check, no header to send
-    assert asyncio.run(customer.require()) == ""
+    assert customer.headers(asyncio.run(customer.require())) == {}
 
 
 @pytest.mark.parametrize("cmd", ["rechunk", "code"])
@@ -965,10 +965,11 @@ def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) 
 
 def test_without_a_header_a_batch_splits_by_org_only_when_one_is_switched_off() -> None:
     assert settings.inference_customer_header == ""
+    rows = [customer.Attribution(org) for org in ("acme", "beta", "acme")]
     switch_off()
-    assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"": [0, 1, 2]}
+    assert asyncio.run(customer.groups(rows)) == {customer.Attribution(): [0, 1, 2]}
     switch_off("acme")
-    assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"acme": [0, 2], "beta": [1]}
+    assert asyncio.run(customer.groups(rows)) == {rows[0]: [0, 2], rows[1]: [1]}
 
 
 def test_a_reembed_page_without_a_header_leaves_the_rows_of_an_org_switched_off_mid_run(

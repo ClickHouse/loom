@@ -395,6 +395,17 @@ settings:
   # [restart]
   # inference_feature_map_json: ""
 
+  # JSON object {header: template} every model call carries, naming whom it is for:
+  # {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token),
+  # {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header
+  # whose template renders empty is not sent; "" sends none (server/llm/identity.py).
+  # [restart]
+  # inference_identity_headers_json: ""
+
+  # The workload trust claim {tenant} names: the value the trust requires of it,
+  # exactly. [restart]
+  # inference_tenant_claim: "tenant_id"
+
   # Seconds between each process's reads of the orgs whose model calls are switched off
   # (loom.org_model_calls); a change reaches every process within it. [restart]
   # model_calls_policy_refresh_seconds: 10.0

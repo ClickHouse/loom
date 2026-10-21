@@ -12,6 +12,11 @@ probe, the recalibration worker's fixed pairs, a provider check) runs under
 is refused (`Unattributed`), never sent to be billed to no one: one call never
 carries two customers, so a job batching several orgs' rows splits them first.
 
+The identity headers (`LOOM_INFERENCE_IDENTITY_HEADERS_JSON`, server/llm/identity.py)
+name more of whom the call is for, from the same attribution: a request's token
+subject, namespace and user_id; what a job's `for_org` names from the row it works
+on. A job batching rows splits them by identity too (`groups`).
+
 An org an admin switched off (`org.set_model_calls`, loom.org_model_calls)
 gets no model call at all, header or not, and no cached vector or answer
 either: the switch is a kill switch. `require()`, at the top of every
@@ -31,15 +36,21 @@ import contextvars
 import logging
 import time
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from urllib.parse import quote
 
 from server.core.errors import BackendUnavailableError, LoomServerError
 from server.core.polled_copy import PolledCopy
+from server.llm.identity import Attribution as Attribution  # what a job's batch groups by
+from server.llm.identity import IdentityUnread, split_by, splits
+from server.llm.identity import render as render_identity
 from server.observability import genai
 from server.settings import settings
 
-# The org a background job is working for; a request's comes from its identity.
-_org: contextvars.ContextVar[str] = contextvars.ContextVar("loom_model_call_org", default="")
+# Whom a background job is working for; a request's comes from its identity.
+_attribution: contextvars.ContextVar[Attribution | None] = contextvars.ContextVar(
+    "loom_model_call_attribution", default=None
+)
 _system: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "loom_model_call_system", default=False
 )
@@ -73,11 +84,28 @@ class SwitchUnread(BackendUnavailableError):
     for an org until it is read, and a job leaves its rows as they are."""
 
 
-# What require() holds a call with: a refusal, or a switch it cannot read. None
-# is a provider fault, so a fail-open caller (a reranker, classify) lets these
-# through, and a job leaves its rows as they are to try again later; a queued
-# extraction request naming no customer still fails, since it never clears.
-HOLDS: tuple[type[LoomServerError], ...] = (Unattributed, ModelCallsDisabled, SwitchUnread)
+# What require() holds a call with: a refusal, or a switch or an identity it
+# cannot read. None is a provider fault, so a fail-open caller (a reranker,
+# classify) lets these through, and a job leaves its rows as they are to try
+# again later; a queued extraction request naming no customer still fails,
+# since it never clears.
+HOLDS: tuple[type[LoomServerError], ...] = (
+    Unattributed,
+    ModelCallsDisabled,
+    SwitchUnread,
+    IdentityUnread,
+)
+
+
+@dataclass(frozen=True)
+class Customer:
+    """Whom one model call is for, as `require()` resolved it before anything is sent."""
+
+    # The customer header's value (the org as the gateway names it, or the system
+    # customer); "" sends none.
+    name: str = ""
+    # The identity headers, rendered.
+    identity: tuple[tuple[str, str], ...] = ()
 
 
 async def _read() -> frozenset[str]:
@@ -98,13 +126,24 @@ _switch: PolledCopy[frozenset[str]] = PolledCopy("model-call switch", _read, log
 
 
 @contextlib.contextmanager
-def for_org(org: str) -> Iterator[None]:
-    """Model calls made inside this block are for `org`."""
-    token = _org.set(org)
+def for_org(
+    org: str, *, namespace: str = "", subject: str = "", user_id: str = ""
+) -> Iterator[None]:
+    """Model calls made inside this block are for `org`: a job names the org of
+    the row it works on, and its namespace, writer (`subject`) and user_id when
+    it has them, which the identity headers carry."""
+    with attributed(Attribution(org, namespace, subject, user_id)):
+        yield
+
+
+@contextlib.contextmanager
+def attributed(a: Attribution) -> Iterator[None]:
+    """Model calls made inside this block are for `a` (a group `groups` made)."""
+    token = _attribution.set(a)
     try:
         yield
     finally:
-        _org.reset(token)
+        _attribution.reset(token)
 
 
 @contextlib.contextmanager
@@ -120,19 +159,45 @@ def system() -> Iterator[None]:
 def current() -> str:
     """The org the current model call is for: `for_org`'s, else the
     request's (`genai.request_org`); "" when neither names one."""
-    org = _org.get()
-    return org if org not in _NO_ORG else genai.request_org()
+    return attribution().org
 
 
-async def require() -> str:
-    """The customer the current model call is for, checked before anything is
-    sent, cached or recorded: "" with no customer header configured. Raises
-    ModelCallsDisabled when the call's org is switched off (header or not),
-    and Unattributed, logged, when a header is configured and the call names
-    no org."""
-    org = current()
+def attribution() -> Attribution:
+    """Whom the current model call is for: what `for_org` names, else the
+    request's identity and its token's subject; empty when neither names an org."""
+    named = _attribution.get()
+    if named is not None and named.org not in _NO_ORG:
+        return named
+    org = genai.request_org()
+    if not org:
+        return Attribution()
+    from server.auth.context import current_auth
+
+    auth, ident = current_auth(), genai.request_identity()
+    return Attribution(
+        org=org,
+        namespace=ident.get("namespace", ""),
+        subject=(auth.subject or "") if auth is not None else "",
+        user_id=ident.get("user_id", ""),
+    )
+
+
+async def require() -> Customer:
+    """Whom the current model call is for, checked before anything is sent,
+    cached or recorded: no customer with no customer header configured, and the
+    identity headers rendered (`identity.render`). Raises ModelCallsDisabled
+    when the call's org is switched off (header or not), Unattributed, logged,
+    when a header is configured and the call names no org, and IdentityUnread
+    when what names its identity cannot be read."""
+    who = attribution()
+    org = who.org
     if org and await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
+    return Customer(name=_customer_named(org), identity=await render_identity(who))
+
+
+def _customer_named(org: str) -> str:
+    """The customer header's value for a call made for `org`; "" without the header."""
     if not settings.inference_customer_header:
         # Load refuses this pairing; a value set after load still never sends unmetered.
         if settings.inference_customer_required:
@@ -141,7 +206,8 @@ async def require() -> str:
             )
         return ""
     if org:
-        return org
+        # An org is named as the gateway knows it; the system customer as configured.
+        return settings.inference_customer_format.replace("{org}", org)
     if _system.get():
         return settings.inference_system_customer
     what = feature()
@@ -171,17 +237,16 @@ def names_one() -> bool:
 NO_CUSTOMER = "MODEL_CALL_UNATTRIBUTED: the row names no org to bill"
 
 
-def headers(org: str) -> dict[str, str]:
-    """The customer and feature headers for one model request, for the org
-    `require()` returned; {} when it returned none (no header configured)."""
-    if not org:
-        return {}
-    # An org is named as the gateway knows it; the system customer as configured.
-    named = settings.inference_customer_format.replace("{org}", org) if current() else org
-    # Header values are latin-1 with no line breaks: quote whatever the org adds.
-    out = {settings.inference_customer_header: quote(named, safe="-._~:@")}
-    if settings.inference_feature_header:
-        out[settings.inference_feature_header] = quote(gateway_feature(), safe="-._~:@")
+def headers(who: Customer) -> dict[str, str]:
+    """The customer, feature and identity headers for one model request, as
+    `require()` resolved them; {} when it resolved none."""
+    out: dict[str, str] = {}
+    if who.name:
+        # Header values are latin-1 with no line breaks: quote whatever the org adds.
+        out[settings.inference_customer_header] = quote(who.name, safe="-._~:@")
+        if settings.inference_feature_header:
+            out[settings.inference_feature_header] = quote(gateway_feature(), safe="-._~:@")
+    out.update(who.identity)
     return out
 
 
@@ -203,20 +268,25 @@ def feature() -> str:
     return genai.current_operation() or "other"
 
 
-async def by_org(orgs: Iterable[str]) -> dict[str, list[int]]:
-    """The positions of `orgs` grouped by org, in first-seen order: one model
-    call per group, since a call names a single customer. With no customer
-    header nothing reads the customer, so every position is one group, unless
-    an org among them is switched off: then each org is its own group, so the
-    switch refuses that org's call and the others go on."""
-    orgs = list(orgs)
-    if not orgs:
+async def groups(rows: Iterable[Attribution]) -> dict[Attribution, list[int]]:
+    """The positions of `rows` grouped by whom a call for them is, in first-seen
+    order: one model call per group (`attributed`), since a call names a single
+    customer and identity. With no customer or identity header nothing reads
+    whom a call is for, so every position is one group, unless an org among
+    them is switched off: then each org is its own group, so the switch refuses
+    that org's call and the others go on."""
+    rows = list(rows)
+    if not rows:
         return {}
-    if not settings.inference_customer_header and set(orgs).isdisjoint(await switched_off_orgs()):
-        return {"": list(range(len(orgs)))}
-    out: dict[str, list[int]] = {}
-    for i, org in enumerate(orgs):
-        out.setdefault(org, []).append(i)
+    if (
+        not settings.inference_customer_header
+        and not splits()
+        and {r.org for r in rows}.isdisjoint(await switched_off_orgs())
+    ):
+        return {Attribution(): list(range(len(rows)))}
+    out: dict[Attribution, list[int]] = {}
+    for i, r in enumerate(rows):
+        out.setdefault(split_by(r), []).append(i)
     return out
 
 

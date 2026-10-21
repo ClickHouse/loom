@@ -434,8 +434,9 @@ async def _write_period(
     ch: Any, llm: Any, embedder: Any, period: Period, result: PeriodDigestResult
 ) -> bool:
     system, user = build_period_prompt(period)
+    whose = {"namespace": period.namespace, "user_id": period.user_id}
     try:
-        with llm_stage("period_digest"), customer.for_org(period.org):
+        with llm_stage("period_digest"), customer.for_org(period.org, **whose):
             out = await llm.complete(
                 system=system, user=user, max_tokens=llm_max_tokens("period_digest")
             )
@@ -450,7 +451,7 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
-    with customer.for_org(period.org):
+    with customer.for_org(period.org, **whose):
         embedding = await embedder.embed(text)
     try:
         source_ids, source_entities = await _source_memories(ch, period)

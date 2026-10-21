@@ -268,7 +268,14 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
             system, user = judge_prompt(
                 str(r.get("summary_text") or ""), list(r.get("key_facts") or [])
             )
-            with llm_stage("session_judge"), customer.for_org(str(r["org"])):
+            with (
+                llm_stage("session_judge"),
+                customer.for_org(
+                    str(r["org"]),
+                    namespace=str(r["namespace"]),
+                    user_id=str(r.get("user_id") or ""),
+                ),
+            ):
                 res = await llm.complete(
                     system,
                     user,
@@ -419,8 +426,12 @@ async def distil_contrasts(
         sid = str(neg.get("session_id") or "")
         try:
             # The pair's LLM call and the reflection's write (which embeds) are
-            # both that org's.
-            with customer.for_org(str(neg["org"])):
+            # both that org's, and that session's identity's.
+            with customer.for_org(
+                str(neg["org"]),
+                namespace=str(neg["namespace"]),
+                user_id=str(neg.get("user_id") or ""),
+            ):
                 written = await _contrast_pair(ch, llm, cfg, neg, writer)
         except customer.HOLDS:
             continue  # a held call is no failure: the pair is distilled once the org is back

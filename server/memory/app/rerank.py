@@ -257,11 +257,11 @@ async def _rerank_with_builtin_cohere(
     }
     from server.observability.otel import traced
 
-    org = await customer.require()  # outside the fail-open: a refusal is an error, not a kept order
+    who = await customer.require()  # outside the fail-open: a refusal is an error, not a kept order
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        **customer.headers(org),
+        **customer.headers(who),
     }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):

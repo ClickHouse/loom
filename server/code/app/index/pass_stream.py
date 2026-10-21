@@ -266,7 +266,7 @@ async def ingest_oldest_first(
         # Attribution is ContextVar state, so each lane task tags its own entry.
         pass_context.set_namespace(stream.cfg.namespace)
         set_worker_identity("code_ingest", org=stream.cfg.org, namespace=stream.cfg.namespace)
-        with customer.for_org(stream.cfg.org):
+        with customer.for_org(stream.cfg.org, namespace=stream.cfg.namespace):
             landed = await stream.step(clock=clock)
         if landed is None:
             deferred.append(stream)  # sliced: continues next pass

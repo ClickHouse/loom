@@ -154,7 +154,7 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             # watermark unmoved, until the org's model calls are back on.
             continue
         try:
-            with customer.for_org(cfg.org):
+            with customer.for_org(cfg.org, namespace=cfg.namespace):
                 plan = await _run_repo(cfg, result, commit_budget)
         except customer.HOLDS:
             continue  # a held call is no failure: the repository waits, watermark unmoved
@@ -219,7 +219,7 @@ async def _run_leg(
         pass_context.set_namespace(plan.cfg.namespace)
         set_worker_identity("code_ingest", org=plan.cfg.org, namespace=plan.cfg.namespace)
         try:
-            with customer.for_org(plan.cfg.org):
+            with customer.for_org(plan.cfg.org, namespace=plan.cfg.namespace):
                 await run(plan, result, budget)
         except customer.HOLDS:
             pass  # a held call is no failure: the leg runs once the org is back

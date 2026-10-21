@@ -388,7 +388,11 @@ async def run_pass(
                 observations = await _load_session_observations(session, cfg, ch)
                 if not observations:
                     continue
-                with customer.for_org(str(session["org"])):
+                with customer.for_org(
+                    str(session["org"]),
+                    namespace=str(session["namespace"]),
+                    user_id=str(session.get("user_id") or ""),
+                ):
                     distilled = await _distill_session(session, observations)
                 result.distilled_sessions.append(distilled)
                 result.written_memories += distilled.written

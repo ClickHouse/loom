@@ -66,7 +66,9 @@ async def judge(
     the code now (`new`, `d` at `head`): a claim that holds re-anchors it; a
     contradicted one keeps it `changed` with the corrected claim as `suggestion`. None
     on an unsure verdict; `Malformed` when the reply is no verdict."""
-    with customer.for_org(link["org"]):
+    with customer.for_org(
+        link["org"], namespace=link.get("namespace", ""), user_id=link.get("user_id", "")
+    ):
         verdict, revised = await judge_claim(claim, old, new)
     if verdict == "malformed":
         raise Malformed("the judge's reply is no verdict")

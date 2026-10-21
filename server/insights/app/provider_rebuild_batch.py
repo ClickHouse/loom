@@ -157,18 +157,26 @@ async def rebuild_batch(
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
     texts, slots = _inputs(table, rows, source_texts or {})
-    # One call carries one org's texts: a model call names a single customer.
-    by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
+    # One call carries one org's texts, of one identity: a model call names a single
+    # customer and identity.
+    groups = await customer.groups(
+        customer.Attribution(
+            str(rows[index].get("org", "")),
+            namespace=str(rows[index].get("namespace") or ""),
+            user_id=str(rows[index].get("user_id") or ""),
+        )
+        for index, _ in slots
+    )
     vectors: list[list[float]] = [[] for _ in texts]
     left: set[int] = set()
-    for org, positions in by_org.items():
-        if await customer.switched_off(org):
+    for who, positions in groups.items():
+        if await customer.switched_off(who.org):
             left.update(positions)
             continue
         for start in range(0, len(positions), _CALL_BATCH):
             part = positions[start : start + _CALL_BATCH]
             try:
-                with customer.for_org(org):
+                with customer.attributed(who):
                     produced = await target.embed_many([texts[i] for i in part])
             except customer.ModelCallsDisabled:
                 left.update(positions)  # switched off during the batch

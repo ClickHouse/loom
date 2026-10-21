@@ -302,14 +302,53 @@ the shared HTTP client also carries non-model calls, which name no customer.
   whole code index. A conflict mark older than the sweep's hour when the org comes back is past
   the sweep, as a judge lost in an outage is: the write stands as made. The check runs in
   `require()`, before provider-health recording, so a refusal is never a provider failure. With
-  no customer header a job's batch of several orgs is one call, unless an org in it is switched
-  off: `customer.by_org` then splits it by org, so the switch refuses that org's call and the
-  others go on.
+  no customer or identity header a job's batch of several orgs is one call, unless an org in it
+  is switched off: `customer.groups` then splits it by org, so the switch refuses that org's
+  call and the others go on.
 
 **Why headers, not a token per customer.** The gateway already knows Loom as one service
 (its token); a credential per org would mean thousands to issue, rotate and revoke for no
 gain in what the gateway can check. The org in the header is the org the request addresses,
 as authorized for its token.
+
+### Identity headers
+
+`LOOM_INFERENCE_IDENTITY_HEADERS_JSON` names more of whom a call is for, for a gateway that
+bills or limits each agent or person (`server/llm/identity.py`). It maps header names to
+templates; `customer.require()` renders them from the call's attribution, and the senders add
+them beside the customer header on every chat, embedding, rerank and classify request.
+
+| Placeholder   | A request                                                                       | A job (`customer.for_org`)                                    |
+| ------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `{org}`       | the org it addresses                                                            | the row's org                                                 |
+| `{namespace}` | the namespace the transport recorded                                            | the row's namespace                                           |
+| `{subject}`   | the token's subject                                                             | the row's writer, else the agent whose own namespace it is in |
+| `{agent}`     | `<agent>` of an agent's subject, `sa:<trust>:<agent>`                           | the same, of that subject                                     |
+| `{tenant}`    | its trust's one required value of the claim `LOOM_INFERENCE_TENANT_CLAIM` names | the same                                                      |
+| `{email}`     | a person's address: the subject, or its directory spelling                      | the same                                                      |
+| `{user_id}`   | the request's `user_id`, else the subject                                       | the row's `user_id`, else the subject                         |
+
+- **Empty is left out.** A header whose template renders empty is not sent, so a bare
+  placeholder is left out when its value is unknown; text around a placeholder is sent as
+  written. A value is percent-encoded only where a header cannot carry it (a space, `%`,
+  anything outside printable ASCII). A prefix claim (`tenant_id=acme-*`) names no tenant.
+- **Where a job finds the writer.** A deferred `memory.set_from_messages` stores its enqueuer
+  on the queue row, and the entity extractor reads each memory's `actor`. The other jobs know
+  the namespace and user_id of their rows, and a row in an agent's own namespace (owned by
+  `sa:<trust>:<agent>`, the home its trust made on the agent's first token exchange) is that
+  agent's. Only the deployment's own calls (`customer.system()`) name no one.
+- **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
+  model rebuild) groups them by what the templates read (`customer.groups`), so one call never
+  carries two agents' texts.
+- **Reads.** A trust's claims (`loom.machine_identities`) and a namespace's owner are read at
+  most once a minute per process. A failed read serves the copy in hand; with none the call is
+  held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as
+  someone else's.
+
+**Why the namespace's owner.** Most rows a job works on record no writer (an embedding stub, a
+conversation turn), and an agent's token has its own namespace as its home, so the namespace
+names the agent the work is for. A row of a shared namespace that records no writer goes out
+with the headers that rendered and no agent.
 
 ## Fake providers
 

@@ -176,17 +176,24 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
 async def _embed_rows(
     embedder: Any, rows: list[dict[str, Any]]
 ) -> list[tuple[list[float] | None, str]]:
-    """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
-    org, and one model call names a single customer. An org switched off since
-    the stubs were picked gets `(None, SWITCHED_OFF)`: its rows are left as
-    they are, attempts untouched. A switch gone stale mid-pass (`SwitchUnread`)
-    stops the pass before its write."""
+    """`_embed_batch` per org and identity, in the rows' order: a pass picks
+    stubs of every org, and one model call names a single customer and identity.
+    An org switched off since the stubs were picked gets `(None, SWITCHED_OFF)`:
+    its rows are left as they are, attempts untouched. A switch gone stale
+    mid-pass (`SwitchUnread`) stops the pass before its write."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
-    groups = await customer.by_org(str(r.get("org") or "") for r in rows)
-    for org, positions in groups.items():
+    groups = await customer.groups(
+        customer.Attribution(
+            str(r.get("org") or ""),
+            namespace=str(r.get("namespace") or ""),
+            user_id=str(r.get("user_id") or ""),
+        )
+        for r in rows
+    )
+    for who, positions in groups.items():
         embedded: list[tuple[list[float] | None, str]]
         try:
-            with customer.for_org(org):
+            with customer.attributed(who):
                 if not customer.names_one():
                     embedded = [(None, customer.NO_CUSTOMER)] * len(positions)
                 else:
