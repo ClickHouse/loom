@@ -254,8 +254,9 @@ never takes a visible row's place on the page.
   would leak, and the column would not prune (it is not in the sort key), so a user's
   search would still read the whole tenant.
 - **A personal-documents table with `user_id` in the sort key.** It fixes the cost of
-  one feature by building a second document store: chunking, lexical statistics,
-  embedding retries and erasure twice, and documents that can never join a collection.
+  a user's own documents by building a second document store: chunking, lexical
+  statistics, embedding retries and erasure twice, and documents that can never join a
+  collection.
 - **Saved messages as documents in the personal collection**
   (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its
   own, but it serves only a chat that signs end-user tokens, so a chat that records its
