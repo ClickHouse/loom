@@ -8,14 +8,18 @@ from typing import Any
 import pytest
 
 from server.core.ch_writes import batched_insert_settings
+from server.core.vectors import codes_state
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.knowledge.store import conversations
 from server.knowledge.store.conversations import (
     MessageInsert,
     MessageRow,
     append,
+    embedding_insert_settings,
     list_thread,
     search_substring,
 )
+from server.settings import settings
 
 
 class StubCH:
@@ -92,6 +96,50 @@ async def test_an_append_once_per_identity_is_committed_with_the_identity_token(
     assert first["async_insert"] == 0 and first["wait_for_async_insert"] == 1
     assert first["insert_deduplication_token"].startswith("conversation-turn:")
     assert first == second
+
+
+COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
+EMBEDDING = "loom.conversation_embeddings.embedding"
+
+
+def test_an_embedding_row_is_batched_only_when_its_width_cannot_fail_the_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "embedding_dim", 4)
+    # Never probed: ClickHouse judges the width, so the row goes alone.
+    assert embedding_insert_settings([0.1] * 4) == COMMITTED
+    # A plain column takes any width.
+    codes_state.set_coded(set())
+    assert embedding_insert_settings([0.1] * 3) == batched_insert_settings()
+    # Coded at the served model's width: a full vector and an empty one (padded).
+    codes_state.set_coded({EMBEDDING})
+    monkeypatch.setattr(codes_state._state, "widths", {EMBEDDING: 4})
+    assert embedding_insert_settings([0.1] * 4) == batched_insert_settings()
+    assert embedding_insert_settings([]) == batched_insert_settings()
+    # A vector of another width, or a model change pending a rebuild.
+    assert embedding_insert_settings([0.1] * 3) == COMMITTED
+    monkeypatch.setattr(settings, "embedding_dim", 8)
+    assert embedding_insert_settings([0.1] * 4) == COMMITTED
+
+
+@pytest.mark.asyncio
+async def test_an_embedding_row_in_a_flush_another_width_failed_is_sent_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        conversations, "embedding_insert_settings", lambda _v: batched_insert_settings()
+    )
+
+    class FlushRefused(StubCH):
+        async def insert(self, table, rows, settings=None):
+            await super().insert(table, rows, settings)
+            if settings != COMMITTED:
+                raise RuntimeError("Code: 190. Elements of the vector have a different width")
+
+    ch = FlushRefused()
+    row: Any = {"org": "o", "msg_id": "m-1", "embedding": [0.1] * 4}
+    await conversations.insert_embedding(row, ch=ch)
+    assert [s for _, _, s in ch.insert_calls] == [batched_insert_settings(), COMMITTED]
 
 
 @pytest.mark.asyncio

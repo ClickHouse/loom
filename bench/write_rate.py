@@ -11,8 +11,8 @@ form ran. Free with the fake embedder and LLM.
 server (`--op`). `--target client` runs, in this process, the two inserts a
 `conversation.append` makes (`loom.conversations`, then
 `loom.conversation_embeddings`) with the settings the store sends (the turn
-batched with `batched_insert_settings()`, the embedding row committed), or with
-`--committed` as two committed inserts:
+batched with `batched_insert_settings()`, the embedding row with
+`embedding_insert_settings`), or with `--committed` as two committed inserts:
 the insert path alone, at rates one server process cannot serve. Both read the
 ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
 
@@ -49,6 +49,7 @@ import httpx
 
 from server.core.ch import get_client
 from server.core.ch_writes import batched_insert_settings
+from server.knowledge.store.conversations import embedding_insert_settings
 
 _COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
 _SERVER_OPS = {
@@ -146,7 +147,7 @@ async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
                 "embed_failed_at": ts,
             }
         ],
-        settings=dict(_COMMITTED),
+        settings=dict(_COMMITTED) if args.committed else embedding_insert_settings([]),
     )
 
 

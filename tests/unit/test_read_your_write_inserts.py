@@ -145,7 +145,6 @@ def test_tables_written_on_every_request_are_batched(rel_path: str, table: str) 
 COMMITTED_TABLES = [
     # A Quantized-coded vector: the codec refuses a row of another width (code 190).
     ("server/memory/app/chunk_projection.py", "loom.memory_chunks"),
-    ("server/knowledge/store/conversations.py", "loom.conversation_embeddings"),
     ("server/memory/app/projections.py", "loom.entity_vectors"),
     # PARTITION BY org: a flush across too many orgs exceeds max_partitions_per_insert_block.
     ("server/memory/app/entity_resolution.py", "loom.entity_canonical_map"),

@@ -114,7 +114,8 @@ A committed insert makes one part, so a table written on every request makes par
 the request rate, and merges fall behind ("too many parts"). The rows written on every
 request or by every process on a short interval are sent with `async_insert = 1,
 wait_for_async_insert = 1` (`server/core/ch_writes.py`, `batched_insert_settings`):
-`audit_log`, the `conversations` turns of `conversation.append`, the `agent_events`
+`audit_log`, the `conversations` turns and `conversation_embeddings` rows of
+`conversation.append` (the embedding row under the width rule below), the `agent_events`
 flush, the policy witness's `agent_events` and `memory_exposures` rows,
 `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
 `memory_belief_sources`, `auth_attempts`, `memory_projection_failures`, the graph Undo
@@ -143,9 +144,16 @@ These tables stay committed:
   upgrades](rolling-upgrades.md)) cannot be buffered.
 - **`entity_canonical_map`**: it is partitioned by `org`, so a shared flush that spans
   more than `max_partitions_per_insert_block` orgs would fail every insert waiting on it.
-- **Rows with a `Quantized`-coded vector** (`conversation_embeddings`, `entity_vectors`,
-  `memory_chunks`): the codec refuses a vector of another width when the part is written
-  (code 190), so one mis-sized row would fail every other insert in its flush.
+- **Rows with a `Quantized`-coded vector** (`entity_vectors`, `memory_chunks`): the codec
+  refuses a vector of another width when the part is written (code 190), so one
+  mis-sized row would fail every other insert in its flush.
+- **A `conversation_embeddings` row that could be mis-sized**
+  (`embedding_insert_settings`): the row is batched when the column is plain, or when it
+  is coded at the served model's `embedding_dim` and the vector has that width (an empty
+  vector is padded to it). Without a reading of the column, or while the width the
+  column was coded at differs from `embedding_dim` (a model change before its rebuild,
+  or a rebuild this process has not read yet), the row is committed. A batched row
+  whose flush another process's stale-width row failed is sent again, committed.
 - **A write whose token names the row's identity** (`conversation.save_message`): a
   replicated table keeps the tokens of committed and of buffered inserts apart, so every
   writer of one identity sends it the same way.

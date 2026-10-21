@@ -103,12 +103,14 @@ async def _usage_flush_loop() -> None:
             continue
 
 
-def _ensure_usage_flusher_started() -> None:
-    """Lazily start the background flush task on first use. Called from
-    record_usage_event so we don't need a server-startup hook."""
+def _ensure_usage_flusher_started() -> asyncio.Lock:
+    """Lazily start the background flush task on first use, and return the
+    buffer's lock. Called from record_usage_event so we don't need a
+    server-startup hook."""
     global _USAGE_FLUSH_TASK, _USAGE_BUFFER_LOCK
-    if _USAGE_BUFFER_LOCK is None:
-        _USAGE_BUFFER_LOCK = asyncio.Lock()
+    lock = _USAGE_BUFFER_LOCK
+    if lock is None:
+        lock = _USAGE_BUFFER_LOCK = asyncio.Lock()
     if _USAGE_FLUSH_TASK is None or _USAGE_FLUSH_TASK.done():
         try:
             # Started by whichever request first records usage; it must not
@@ -120,6 +122,7 @@ def _ensure_usage_flusher_started() -> None:
             # No running loop (sync caller); the periodic flush will
             # take over once a loop is running.
             pass
+    return lock
 
 
 def _reset_for_tests() -> None:
@@ -168,8 +171,7 @@ async def record_usage_event(
     ch: _CHClient | None = None,
 ) -> None:
     """Append a usage event for the AggregatingMergeTree totals. Buffered and
-    flushed by the background loop; falls back to a direct insert with no
-    running loop. Best-effort: never blocks the caller, drops after the bound.
+    flushed by the background loop. Best-effort: never blocks the caller, drops after the bound.
 
     `agent` carries which client triggered the event (for per-agent recall
     breakdown); empty string is valid for paths without a clear agent.
@@ -179,7 +181,7 @@ async def record_usage_event(
     '' is a path with no request (a worker, an import).
     """
 
-    _ensure_usage_flusher_started()
+    lock = _ensure_usage_flusher_started()
     event = {
         "memory_id": memory_id,
         "org": org,
@@ -190,19 +192,8 @@ async def record_usage_event(
         "consumer": _event_consumer(consumer),
         "ts": naive_utc_now(),
     }
-    if _USAGE_BUFFER_LOCK is None:
-        # Fall back to direct insert if we couldn't start the flusher
-        # (no running loop — sync callers, tests).
-        ch = ch or _default_client()
-        await ch.insert(
-            "loom.memory_usage_events",
-            [event],
-            settings=batched_insert_settings(),
-        )
-        return
-
     should_flush = False
-    async with _USAGE_BUFFER_LOCK:
+    async with lock:
         _USAGE_BUFFER.append(event)
         if len(_USAGE_BUFFER) >= _USAGE_BUFFER_MAX:
             should_flush = True

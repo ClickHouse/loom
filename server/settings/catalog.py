@@ -5049,9 +5049,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "context.fetch": 150,
     "context.offload": 300,
     "context.pack": 600,
-    # The message is a batched insert that waits up to ch_batched_insert_wait_max_ms
-    # (50) on top of the ~30 ms of writes; its embedding row is committed.
-    "conversation.append": 80,
+    # The message and its embedding row are batched inserts that each wait up to
+    # ch_batched_insert_wait_max_ms (50) on top of the ~30 ms of writes.
+    "conversation.append": 130,
     # Dominated by the LLM round-trip.
     "conversation.compact": 3500,
     "conversation.create": 30,
@@ -5156,10 +5156,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.dedup_list": 300,
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
-    "memory.delete": 30,
+    # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.delete": 80,
     # memory.delete's work plus two committed check inserts and the read after the
-    # tombstone: about 2.6x memory.delete's p99 on one server.
-    "memory.delete_version": 80,
+    # tombstone (80 before the batched wait), plus a batched audit row and outbox row
+    # that each wait up to ch_batched_insert_wait_max_ms (50).
+    "memory.delete_version": 180,
     "memory.demonstrate": 400,
     "memory.demote": 100,
     "memory.digests": 120,
@@ -5170,8 +5173,12 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # One FINAL scan filtered by array predicates;
     # it sits on the PreToolUse path, so the hook bounds it at 3 s anyway.
     "memory.for_file": 150,
-    "memory.get": 25,
-    "memory.get_by_id": 50,
+    # Its audit row (high-sensitivity rows) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.get": 75,
+    # Its audit row (high-sensitivity rows) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.get_by_id": 100,
     "memory.health": 400,
     "memory.history": 80,
     # ~50 sections × per-section memory.set; embed-on-write dominates.
@@ -5194,7 +5201,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.outcome_run": 500,
     "memory.outline": 250,
     "memory.owner_report": 800,
-    "memory.pin": 30,
+    # The memory.set write path: its evidence and outbox rows are batched inserts that
+    # wait up to ch_batched_insert_wait_max_ms (50).
+    "memory.pin": 80,
     "memory.promote": 100,
     "memory.proposal_decide": 800,
     "memory.proposals": 400,

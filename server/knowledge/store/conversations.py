@@ -18,9 +18,11 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core import bm25
 from server.core.ch import caller_shaped, own_write_reads, sequential_reads
+from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
 from server.core.ch_writes import batched_insert_settings
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.core.vectors import codes_state
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import (
     EMBEDDED_EXCERPT_CHARS,
@@ -29,6 +31,7 @@ from server.knowledge.domain.conversations import (
     TITLE_REFUSED,
     ConversationRole,
 )
+from server.settings import settings
 
 
 @asynccontextmanager
@@ -191,15 +194,15 @@ async def append(
         # Committed: a replicated table keeps the tokens of committed and of
         # buffered inserts apart, so every writer of an identity sends it alike.
         identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
-        settings: dict[str, Any] = {
+        insert_settings: dict[str, Any] = {
             "async_insert": 0,
             "wait_for_async_insert": 1,
             "insert_deduplication_token": "conversation-turn:"
             + hashlib.sha256(identity.encode()).hexdigest(),
         }
     else:
-        settings = batched_insert_settings()
-    await ch.insert("loom.conversations", [row], settings=settings)
+        insert_settings = batched_insert_settings()
+    await ch.insert("loom.conversations", [row], settings=insert_settings)
 
 
 async def message_exists(
@@ -823,13 +826,35 @@ async def insert_embedding(
     """Insert one loom.conversation_embeddings row: a turn conversation.append
     embeds, or the summary conversation.compact writes."""
     ch = ch or _default_client()
-    # Committed, not batched: a mis-sized vector fails the shared part of a
-    # batched flush, and with it every other insert in that flush.
-    await ch.insert(
-        "loom.conversation_embeddings",
-        [cast(dict[str, Any], row)],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
+    insert_settings = embedding_insert_settings(row["embedding"])
+    try:
+        await ch.insert(
+            "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=insert_settings
+        )
+    except Exception as e:
+        if insert_settings == _COMMITTED or error_code(e) != WIDTH_MISMATCH_CODE:
+            raise
+        # Another insert's vector failed the shared flush; this row is sent alone.
+        await ch.insert(
+            "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=_COMMITTED
+        )
+
+
+_COMMITTED: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+
+
+def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
+    """Batched when the column is plain, or when the vector fits the width the column
+    is coded at and the served model writes that width. Committed otherwise (never
+    probed, a model change or rebuild pending): a vector of another width fails the
+    whole flush it is in (code 190), so it is sent alone."""
+    table = "loom.conversation_embeddings"
+    if codes_state.is_coded(table, "embedding") is False:
+        return batched_insert_settings()
+    width = codes_state.stored_width(table, "embedding")
+    if width == int(settings.embedding_dim) and len(vector) in (0, width):
+        return batched_insert_settings()
+    return dict(_COMMITTED)
 
 
 async def tombstone_thread(
