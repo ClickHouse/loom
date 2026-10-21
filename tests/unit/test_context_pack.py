@@ -2,6 +2,7 @@ from typing import Any
 
 import pytest
 
+from server.knowledge.api.models_knowledge import _SearchHit
 from server.memory.domain.context_layout import _ordered_section_names
 
 
@@ -181,7 +182,20 @@ def test_context_pack_section_order_is_independent_of_completion_order(
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
         _stub(
             "knowledge",
-            NS(results=[NS(namespace="ns", source_uri="doc://1", content="kn", score=0.5)]),
+            NS(
+                results=[
+                    _SearchHit(
+                        namespace="ns",
+                        source_uri="doc://1",
+                        content="kn",
+                        score=0.5,
+                        chunk_idx=0,
+                        tags=[],
+                        distance=0.5,
+                        similarity=0.5,
+                    )
+                ]
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -239,15 +253,23 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
     async def _knowledge(*a: Any, **k: Any) -> Any:
         return NS(
             results=[
-                NS(
+                _SearchHit(
                     namespace="ns",
+                    chunk_idx=0,
+                    tags=[],
+                    distance=0.1,
+                    similarity=0.9,
                     source_uri="kb://handbook",
                     content="deploy on tuesdays",
                     score=0.9,
                     section="Ops > Deploys",
                 ),
-                NS(
+                _SearchHit(
                     namespace="ns",
+                    chunk_idx=0,
+                    tags=[],
+                    distance=0.5,
+                    similarity=0.5,
                     source_uri="kb://flat",
                     content="no headings here",
                     score=0.5,

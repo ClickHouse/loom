@@ -16,6 +16,7 @@ from server.llm import customer
 from server.observability import genai
 from server.settings import settings
 from tests.unit.model_client import through_the_model_client
+from tests.unit.test_conflict_resolver import row_env  # noqa: F401
 
 
 @pytest.fixture
@@ -1024,38 +1025,29 @@ def test_projection_repair_names_each_failures_org(metered, monkeypatch, caplog)
     _no_refusal_logged(caplog)
 
 
-def test_the_conflict_resolver_names_the_rows_org(metered, monkeypatch, caplog) -> None:
-    from types import SimpleNamespace
-
+def test_the_conflict_resolver_names_the_rows_org(
+    metered,
+    monkeypatch,
+    caplog,
+    row_env,  # noqa: F811
+) -> None:
     from server.memory.app import conflict_resolver as resolver
-    from server.memory.workers import conflict_resolver as w
+    from tests.unit.claims_fake import fake_key_locks
+    from tests.unit.test_conflict_resolver import _q
 
+    fake_key_locks(monkeypatch, wait_s=10.0)
     seen: list[str] = []
+    original = resolver.judge
 
-    async def resolve(r: Any, **k: Any) -> Any:
+    async def judge(new: Any, peers: Any) -> Any:
         await _model_call(seen)
-        return None
+        return await original(new, peers)
 
-    async def over_cap(*a: Any, **k: Any) -> bool:
-        return False
-
-    async def flush() -> None:
-        return None
-
-    monkeypatch.setattr(resolver, "resolve_row", resolve)
-    monkeypatch.setattr("server.observability.budget.namespace_over_cap", over_cap)
-    monkeypatch.setattr(
-        "server.observability.events.get_emitter", lambda: SimpleNamespace(flush_now=flush)
-    )
-    monkeypatch.setattr("server.workers.cost_event.emit_worker_cost_event_for", lambda **k: None)
-    row = {"org": "acme", "namespace": "ns", "agent": "a", "user_id": "-"}
-    row |= {"session_id": "-", "memory_key": "k", "content_sha256": "sha"}
-
-    async def one() -> None:
-        await w._resolve_one(w._Pass(), row, "manual")
-
-    asyncio.run(one())
+    monkeypatch.setattr(resolver, "judge", judge)
+    counts = resolver.Counts()
+    asyncio.run(resolver.resolve_row(_q(org="acme"), policy="manual_review", counts=counts))
     assert seen == ["acme"]
+    assert row_env.llm_calls == counts.judged == 1
     _no_refusal_logged(caplog)
 
 
