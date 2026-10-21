@@ -71,15 +71,18 @@ _EMBEDDINGS_PURGE = "DELETE FROM loom.memory_embeddings"
 _CHUNKS_PURGE = "DELETE FROM loom.memory_chunks"
 _LINKS_SCRUB = "ALTER TABLE loom.memory_code_links UPDATE suggestion = '', judged_hash = ''"
 _MARK_REDACTED = ", redacted_at = {ts:DateTime}, redaction_reason = {rb:String}"
-# The user's profile versions, not redacted yet, whose trace names the memory among
-# those they were built from (`profile.fold:<label>:<id>,<id>,...`).
+# The user's profile versions whose trace names the memory among those they were
+# built from (`profile.fold:<label>:<id>,<id>,...`). Redacted versions count too:
+# a retried redact must reach the same profile keys as the call that failed.
 _BUILT_FROM = """namespace = {ns:String} AND user_id = {u:String}
-  AND memory_type = 'profile' AND redacted_at IS NULL
+  AND memory_type = 'profile'
   AND startsWith(source_trace, 'profile.fold:')
   AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))"""
+# A profile version already redacted keeps its first redaction's time and reason.
 _REDACTED_ROWS = (
     "org = {org:String}\n"
-    "  AND ((memory_id = {mid:UUID} AND version = {v:UInt64}) OR (" + _BUILT_FROM + "))"
+    "  AND ((memory_id = {mid:UUID} AND version = {v:UInt64})"
+    " OR (redacted_at IS NULL AND " + _BUILT_FROM + "))"
 )
 
 
@@ -191,8 +194,8 @@ async def redact_versions(
 async def profile_keys_built_from(
     org: str, namespace: str, user_id: str, memory_id: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The user's profile keys with a version, not redacted yet, built from
-    `memory_id`, each with the newest such version."""
+    """The user's profile keys with a version built from `memory_id`, redacted or
+    not, each with the newest such version."""
     ch = ch or _default_client()
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""

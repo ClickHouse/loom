@@ -6,8 +6,8 @@ version that names it, and leaves the versions built without it. A lock on
 the profile key refuses the redact before anything is scrubbed. However many
 versions match, the named version and the profile versions are scrubbed in one
 statement per version table, and the cached answers and precedents whose window
-held a scrubbed profile key are deleted.
-A version that does not exist scrubs nothing.
+held a scrubbed profile key are deleted. A retry after a failure reaches the
+same profile keys. A version that does not exist scrubs nothing.
 """
 
 from __future__ import annotations
@@ -141,8 +141,9 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
         "WHERE memory_key = 'user_timezone'"
     )
     assert [r["redacted"] for r in fact] == [1]
-    # A second redaction finds nothing left to scrub.
-    assert await memory_repo.profile_keys_built_from("o", "n", "u1", _SECRET) == []
+    # A retried redaction reaches the same profile key.
+    keys = await memory_repo.profile_keys_built_from("o", "n", "u1", _SECRET)
+    assert [(r["memory_key"], int(r["newest"])) for r in keys] == [("structured_profile", 3)]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -290,6 +291,45 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
     cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
     assert [r["key"] for r in cached] == ["k2"]
     assert await ch.query_all("SELECT answer FROM loom.memory_ask_precedents") == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_retried_redact_scrubs_the_profile_rows_a_failed_one_left(monkeypatch) -> None:
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+
+    ch = _redact_setup(monkeypatch)
+    # The profile key's embedding rows: one of a version built from the secret memory,
+    # one of the live head.
+    ch.setup.append(
+        "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
+        "memory_key, memory_type, scope, content_excerpt, embedding_model, version) VALUES "
+        "('o', 'n', '-', 'u1', '-', 'structured_profile', 'profile', 'private', "
+        "'secret place', 'm', 1), "
+        "('o', 'n', '-', 'u1', '-', 'structured_profile', 'profile', 'private', "
+        "'{\"timezone\":null}', 'm', 2)"
+    )
+    scrub_profiles = curation._scrub_profile_derivatives
+
+    async def fails(*_a: Any) -> None:
+        raise TimeoutError("DELETE on memory_embeddings timed out")
+
+    monkeypatch.setattr(curation, "_scrub_profile_derivatives", fails)
+    redact = MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+    with pytest.raises(TimeoutError):
+        await curation.handle_memory_redact(redact)
+
+    monkeypatch.setattr(curation, "_scrub_profile_derivatives", scrub_profiles)
+    out = await curation.handle_memory_redact(redact)
+
+    assert out.redacted and out.cache_rows_deleted == 1 and out.precedent_rows_deleted == 1
+    excerpts = await ch.query_all(
+        "SELECT content_excerpt FROM loom.memory_embeddings WHERE memory_key = 'structured_profile'"
+    )
+    assert [r["content_excerpt"] for r in excerpts] == ['{"timezone":null}']
+    cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
+    assert [r["key"] for r in cached] == ["k2"]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

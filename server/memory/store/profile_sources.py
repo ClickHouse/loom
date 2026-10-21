@@ -63,10 +63,17 @@ _PROFILE_HEAD = """
     AND memory_type = 'profile' AND tombstoned_at IS NULL
 """
 
-# A live structured profile row: not deleted, expired or redacted. A 'high' row is
-# readable by key only, so profile.structured serves none; the worker reads the head
-# (`profile_head_hold`) and leaves a high one as it is.
+# The actor the structured profile worker writes as. No token maps to it: the server
+# stamps it from the worker's pipeline actor, never from a request.
+WORKER_ACTOR = "process:structured-profile-worker"
+
+# A live structured profile row: written by the worker, and not deleted, expired or
+# redacted. A row a caller wrote to the key is no profile, whatever its tags say. A
+# 'high' row is readable by key only, so profile.structured serves none; the worker
+# reads the head (`profile_head_hold`) and leaves a high one as it is.
+# `{actor:String}` is bound to WORKER_ACTOR.
 _LIVE_PROFILE = f"""{_PROFILE_HEAD}
+    AND actor = {{actor:String}}
     AND redacted_at IS NULL AND sensitivity != 'high'
     AND (expires_at IS NULL OR expires_at > now())
 """
@@ -172,10 +179,16 @@ async def profile_row(
     scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> dict[str, Any] | None:
-    """The user's live structured profile row; None when none is built, or it
-    expired or was redacted."""
+    """The user's live structured profile row; None when the worker built none, or
+    it expired or was redacted."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "label": label}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "label": label,
+        "actor": WORKER_ACTOR,
+    }
     row: dict[str, Any] | None = await ch.query_one(
         f"""
         SELECT toString(memory_id) AS memory_id, version, value, tags, updated_at,
@@ -263,6 +276,7 @@ async def users_behind(
         "skip": list(skip),
         "refused": sorted(refused),
         "label": label,
+        "actor": WORKER_ACTOR,
         "schema_tag": schema_tag(schema_sha256),
         "cool": cooldown_seconds,
         "lim": limit + len(refused),

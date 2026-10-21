@@ -156,7 +156,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   (`agent` `-`), so `profile.render` and `context.pack` carry it too, and
   [`memory.history`](./history-and-provenance.md#versions-memoryhistory) lists its versions.
   Its provenance is `derived`; `source_trace` is
-  `profile.fold:structured_profile:<memory ids>`, the memories it was built from.
+  `profile.fold:structured_profile:<memory ids>`, the memories it was built from. Only a
+  row the worker wrote (its `actor`) is served: a row a caller writes to the key reads as
+  no profile (`pending`), whatever its tags, and the worker rebuilds over it unless it is
+  pinned or locked.
 - **Sources.** The user's current `semantic`, `preference` and `decision` facts, under the
   same filter as the free-text fold: never a `high` row, a duplicate (its canonical row
   counts), a fact about someone else (`about:other`), a protected attribute or a stored
@@ -210,13 +213,13 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600). It is left out of the namespace
   scans made while it waits, so it is tried again at the first scan after the wait ends:
   at most the wait plus `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) after the
-  failure. A
-  namespace whose scan or stored schema fails is counted and backs off the same way until
-  the wait is over or its schema changes; a namespace that is waiting takes no place in
-  the pass. A build the profile row refuses (locked, pinned, labelled `high`,
-  blacklisted) is not retried until the user's memories or the profile row change (an
-  unpin, an unlock, of a redacted row too), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
-  a lock that lapses on its own is retried. Both waits are kept by the worker's process
+  failure. A namespace whose scan or stored schema fails is counted and backs off the
+  same way until the wait is over or its schema changes; a namespace that is waiting
+  takes no place in the pass. A build the profile row refuses (locked, pinned, labelled
+  `high`, blacklisted) is not retried until the user's memories or the profile row
+  change (an unpin or an unlock, also on a redacted row), or
+  `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so a lock that lapses on
+  its own is retried. These waits and the scan lists are kept in the worker's process
   and start over when another process takes the worker lease. A pass that reaches every
   namespace with a schema and finds no user behind waits
   `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next; one that reached
@@ -228,7 +231,7 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   check and the write: a row written there while the erasure saga runs is a live row its
   final census finds, and the saga fails closed on it. `memory.redact` of a source fact
   scrubs every profile version whose trace names it, and is refused when the profile key
-  is locked. A profile version whose trace names no memory ids (`profile.fold:<label>`
+  is locked. A redact retried after a failure reaches the same profile keys. A profile version whose trace names no memory ids (`profile.fold:<label>`
   alone, as a build that does not record its sources writes it, including an older build
   during a rolling upgrade) is not reached and keeps the text until the user is erased
   ([security](../../architecture/security.md#sensitivity)).

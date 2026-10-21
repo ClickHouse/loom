@@ -65,8 +65,6 @@ from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
 
-# The actor its writes carry: no request is in flight.
-WORKER_ACTOR = "process:structured-profile-worker"
 # One scan lists up to SCAN_FACTOR times the namespace's share; later passes take from
 # it until it drains or is `structured_profile_scan_max_age_seconds` old, whichever
 # comes first.
@@ -561,7 +559,7 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     used = [r["memory_id"] for r in rows]
     facts = render_facts(rows)
     answer: Any = {}
-    with customer.for_org(org), pipeline_actor(WORKER_ACTOR):
+    with customer.for_org(org), pipeline_actor(profile_sources.WORKER_ACTOR):
         if facts:
             answer = await _ask(org, ns, schema.props, facts)
         # Sources that moved while the model ran (a fact edited, redacted, erased,

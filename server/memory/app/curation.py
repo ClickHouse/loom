@@ -614,7 +614,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     reason_blob = (input.reason or "")[:512]
     by_blob = (input.redacted_by or "")[:128]
     # The named version and every profile version built from it go in one call: two
-    # mutations, and no failure between them leaves the fact scrubbed but not its profiles.
+    # mutations. A failure after them is reported, and a retry reaches the same profile
+    # keys, since the lookup above counts redacted versions too.
     await memory_repo.redact_versions(
         input.org,
         target.namespace,

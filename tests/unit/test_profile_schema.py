@@ -222,8 +222,10 @@ def _fact(mid: str, user: str, key: str, sha: str, version: int = 1, **cols: str
 
 
 def _profile(user: str, tags: list[str], **cols: str) -> str:
-    """A profile built an hour ago; `cols` are SQL literals."""
-    cols = {"updated_at": "now() - 3600", **cols}
+    """A profile the worker built an hour ago; `cols` are SQL literals."""
+    from server.memory.store.profile_sources import WORKER_ACTOR
+
+    cols = {"updated_at": "now() - 3600", "actor": f"'{WORKER_ACTOR}'", **cols}
     extra = "".join(f", {k}" for k in cols)
     vals = "".join(f", {v}" for v in cols.values())
     return (
@@ -474,6 +476,28 @@ async def test_an_expired_redacted_or_high_profile_is_no_profile(gone: dict[str,
     # writing over it (test_a_high_profile_keeps_its_label).
     head = await src.profile_head_hold(**key)
     assert head is not None and (head["sensitivity"] == "high") == ("sensitivity" in gone)
+
+
+@_needs_ch
+@pytest.mark.asyncio
+async def test_a_profile_row_a_caller_wrote_is_no_profile() -> None:
+    """A writer can put the worker's tags on its own row of the profile key; only a
+    row the worker wrote reads as the user's profile."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory.store import profile_sources as src
+
+    built = await _built(_fact(_A, "u1", "tz", "a"), actor="'human:alice'")
+    ch = _LocalCH(*built)
+    key = {
+        "org": "o",
+        "namespace": "n",
+        "user_id": "u1",
+        "label": "structured_profile",
+        "scope": WHOLE_NAMESPACE,
+        "ch": ch,
+    }
+    assert await src.profile_row(**key) is None
+    assert await _behind(ch) == ["u1"]
 
 
 @_needs_ch
