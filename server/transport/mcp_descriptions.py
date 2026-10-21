@@ -84,7 +84,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "short-keyed facts. Prefer over memory.set for unstructured "
         "input; memory.set when you hold one distilled fact. `defer=true` "
         "returns in ~50 ms and extracts in the background (search/ask "
-        "report `pending_extraction` until it lands). `recalled_keys`: keys "
+        "report `pending_extraction` until it lands). Poll its `queue_id` with "
+        "memory.extraction_status_mine and replay a failed one with "
+        "memory.extraction_retry_mine, via loom_op. `recalled_keys`: keys "
         "your reads served this session; restating one is an echo, skipped."
     ),
     "memory.get": (

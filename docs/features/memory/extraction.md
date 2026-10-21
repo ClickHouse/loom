@@ -207,19 +207,37 @@ last `--days` are left alone. It never deletes.
 
 The `extraction_queue` worker replays a deferred request through the same handler. A
 failed replay retries until `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS`, then becomes `failed`
-with `last_error`. `memory.extraction_status` reports the namespace's batches by
-`queue_id` or `status` (`pending`, `running`, `done`, `failed`); a token bounded to one
-user sees only that user's batches. It is an HTTP and SDK view, hidden from MCP.
-`memory.extraction_status_mine` answers the caller's own batches by the `queue_id`s its
-deferred calls returned, at most 20 a call, and an agent reaches it over MCP through
-`loom_op`. It answers only a batch the calling principal queued in that namespace,
-inside the token's read scope; every other id comes back in `unknown`, so an agent
-cannot learn whether another principal's batch exists. Once the cause of a failure is
-fixed, `memory.extraction_retry_mine` replays the caller's own `failed` batches once
-more, under the same ids and bounds: each goes back to `pending` with one attempt left,
-so a replay that fails again ends `failed` again, and a batch still waiting or done is
-left alone. Until a batch runs, `memory.search` and `memory.ask` report
+with `last_error`. Until a batch runs, `memory.search` and `memory.ask` report
 `pending_extraction`. With the worker off, deferred saves stay `pending`.
+
+`memory.extraction_status` reports the namespace's batches by `queue_id` or `status`
+(`pending`, `running`, `done`, `failed`); a token bounded to one user sees only that
+user's batches. It is an HTTP and SDK view, hidden from MCP. An agent follows up on its
+own batches over MCP, through `loom_op`, with two ops that take the `queue_id`s its
+deferred calls returned, at most 20 a call:
+
+- `memory.extraction_status_mine` reports each batch's state, attempts, sizes and last
+  error.
+- `memory.extraction_retry_mine` replays the caller's `failed` batches once more, once
+  the cause is fixed. Each goes back to `pending` with one attempt left, so a replay
+  that fails again ends `failed` again; a batch still waiting or done is left alone.
+  While the org's model calls are switched off nothing is put back (`model_calls_off`),
+  since the batch could only wait and be dropped again; once they are back on, a retry
+  buys the one replay, also for a batch the switched-off drop marked `failed`.
+
+Both answer only a batch the calling principal queued in that namespace, inside the
+token's read scope; every other id comes back in `unknown`, so an agent cannot learn
+whether another principal's batch exists:
+
+- **The principal is the token's `kind:subject`**, the enqueuer a deferred call stores.
+  Each token minted on the Setup page and each delegated token is its own principal: a
+  newly minted token, another client, or the token's creator does not see the batches
+  another one queued. Subjects compare as stored, so a human subject spelled
+  differently is another principal.
+- **The read scope.** A token pinned to a user (`read_user_id`) sees that user's
+  batches only. A token whose scope needs a session, or a user it does not pin, is
+  refused: these ops take no `user_id` or `session_id` to complete it.
+- **Auth off.** A call carries no principal and sees the batches queued without one.
 
 ## Operator extraction policy
 
