@@ -137,9 +137,9 @@ class ConversationUnsaveMessageInput(BaseModel):
     org: str
     namespace: str
     agent: str
-    # LibreChat's conversation id, as given to conversation.save_message.
+    # The client's conversation id, as given to conversation.save_message.
     conversation_id: str = Field(min_length=1, max_length=256)
-    # LibreChat's message id, as given to conversation.save_message.
+    # The client's message id, as given to conversation.save_message.
     message_id: str = Field(min_length=1, max_length=256)
     # Only this user's saved row is withdrawn.
     user_id: str = Field(min_length=1, max_length=256)
