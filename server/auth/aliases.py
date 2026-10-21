@@ -54,7 +54,7 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
         return list(hit[1])
     try:
-        out = await _read(org, subject, ch)
+        out = await read_aliases(org, subject, ch)
     except Exception:
         log.warning(
             "aliases: lookup failed for %r in %r; subject stands alone", subject, org, exc_info=True
@@ -78,7 +78,8 @@ async def _rows(org: str, subject: str, ch: object | None) -> list[dict[str, Any
         FROM loom.namespaces FINAL
         WHERE org = {org:String} AND ifNull(active, true) = true
           AND contact_email != ''
-          AND lower({sub:String}) IN (lower(owner_email), lower(contact_email))
+          AND (lower({sub:String}) = lower(owner_email)
+               OR lower({sub:String}) = lower(contact_email))
         LIMIT 8
         """,
         params={"org": org, "sub": subject},
@@ -86,7 +87,7 @@ async def _rows(org: str, subject: str, ch: object | None) -> list[dict[str, Any
     return rows
 
 
-async def _read(org: str, subject: str, ch: object | None) -> list[str]:
+async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
     rows = await _rows(org, subject, ch)
     out = [subject]
     for r in rows:
@@ -139,7 +140,7 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     if not has_aliases(subject) or "@" not in subject:
         return subject
     with own_write_reads():
-        spellings = await _read(org, subject, ch)
+        spellings = await read_aliases(org, subject, ch)
     for alias in spellings:
         if "@" not in alias:
             return alias

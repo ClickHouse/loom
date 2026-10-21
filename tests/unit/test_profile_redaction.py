@@ -67,6 +67,7 @@ def _profile_version(table: str, version: int, value: str, sources: list[str]) -
 
 
 _PROFILE_TABLES = (
+    "SET enable_quantized_codec = 1",
     ddl("memory"),
     ddl("memory_versions"),
     ddl("memory_embeddings"),
@@ -304,11 +305,14 @@ async def test_a_retried_redact_scrubs_the_profile_rows_a_failed_one_left(monkey
     # one of the live head.
     ch.setup.append(
         "INSERT INTO loom.memory_embeddings (org, namespace, agent, user_id, session_id, "
-        "memory_key, memory_type, scope, content_excerpt, embedding_model, version) VALUES "
+        "memory_key, memory_type, scope, content_excerpt, embedding_model, version, "
+        "embedding, memory_key_embedding) VALUES "
         "('o', 'n', '-', 'u1', '-', 'structured_profile', 'profile', 'private', "
-        "'secret place', 'm', 1), "
+        "'secret place', 'm', 1, arrayWithConstant(3072, toBFloat16(0)), "
+        "arrayWithConstant(3072, toBFloat16(0))), "
         "('o', 'n', '-', 'u1', '-', 'structured_profile', 'profile', 'private', "
-        "'{\"timezone\":null}', 'm', 2)"
+        "'{\"timezone\":null}', 'm', 2, arrayWithConstant(3072, toBFloat16(0)), "
+        "arrayWithConstant(3072, toBFloat16(0)))"
     )
     scrub_profiles = curation._scrub_profile_derivatives
 

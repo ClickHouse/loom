@@ -15,6 +15,13 @@ from server.auth import revocation
 from tests.unit.revocation_fakes import revocation_read
 
 
+@pytest.fixture(autouse=True)
+def _claims(monkeypatch) -> None:
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)
+
+
 class _Table:
     """loom.revoked_tokens: the newest row of each jti wins, as under FINAL."""
 

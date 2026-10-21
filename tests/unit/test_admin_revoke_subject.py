@@ -170,6 +170,85 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
+def test_a_busy_token_name_does_not_leave_the_login_subject_active(store: _Store) -> None:
+    store.accounts.append(
+        {"org": "acme", "owner_email": "account-id", "contact_email": "lee@example.com"}
+    )
+    store.tokens.append(_token("laptop", "lee@example.com"))
+    store.busy_names.add("laptop")
+    token = mint_token("account-id", "acme", ["ns"], ["platform_admin"])
+    with pytest.raises(GrantBusyError):
+        _client().post(
+            "/v1/admin/revoke_subject", json={"org": "acme", "subject": "lee@example.com"}
+        )
+    with pytest.raises(TokenError):
+        verify_token(token)
+    assert {row["subject"]["token_id"] for row in store.audits} == {"lee@example.com", "account-id"}
+
+
+def test_a_temporary_suspension_does_not_permanently_mark_newer_tokens(store: _Store) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    issued = now - timedelta(minutes=1)
+    store.tokens.append(_token("new", "lee", created_at=issued.replace(tzinfo=None)))
+    asyncio.run(revocation.revoke("lee", expires_at=now + timedelta(days=1)))
+    response = _client().post(
+        "/v1/admin/revoke_subject",
+        json={
+            "org": "acme",
+            "subject": "lee",
+            "issued_before": (now - timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 200
+    assert store.heads()["new"]["revoked_at"] is None
+    for row in store.revocations:
+        if row["jti"] == "lee":
+            row["expires_at"] = now.replace(tzinfo=None) - timedelta(seconds=1)
+    revocation._recent.clear()
+    asyncio.run(revocation.refresh())
+    assert not revocation.is_revoked("lee", issued_at=int(issued.timestamp()))
+
+
+def test_direct_cutoff_writers_cannot_be_overwritten_by_a_weaker_admin_cutoff(
+    store: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import subject_revocation
+
+    now = datetime.now(UTC).replace(microsecond=0)
+    weaker, stronger = now - timedelta(hours=1), now - timedelta(minutes=1)
+    stored = revocation.stored
+
+    async def interleave() -> None:
+        read, release = asyncio.Event(), asyncio.Event()
+
+        async def paused(key: str) -> Any:
+            snapshot = await stored(key)
+            if not read.is_set():
+                read.set()
+                await release.wait()
+            return snapshot
+
+        monkeypatch.setattr(revocation, "stored", paused)
+        admin = asyncio.create_task(subject_revocation.record("sa:bot", by="admin", at=weaker))
+        await read.wait()
+        replacement = asyncio.create_task(
+            revocation.cut_off(
+                "sa:bot", issued_before=stronger, reason="replacement", revoked_by="admin"
+            )
+        )
+        await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(admin, replacement)
+
+    asyncio.run(interleave())
+    revocation._recent.clear()
+    asyncio.run(revocation.refresh())
+    assert revocation.is_revoked("sa:bot", issued_at=int((now - timedelta(minutes=30)).timestamp()))
+    assert store.revoked()[revocation.CUTOFF_PREFIX + "sa:bot"][
+        "issued_before"
+    ] == stronger.replace(tzinfo=None)
+
+
 def _lee_with_tokens_and_sessions(store: _Store) -> None:
     """lee made `laptop`, whose token made `child`; kim made `ci`. lee has a
     live sign-in session, one a logout ended, and one whose refresh token ran

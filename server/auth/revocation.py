@@ -32,6 +32,9 @@ import asyncio
 import logging
 import math
 import time
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -50,6 +53,7 @@ _LATEST_EXPIRY = datetime(2105, 12, 31)
 # How far another replica's clock may run ahead of this one's: a token it
 # issues as of a later second than the cutoff would outlive the revocation.
 CLOCK_SKEW_S = 5
+_LEASE_NAMESPACE = uuid.UUID("0e3a7c52-41f9-4d6b-8a2e-5c9b17d4f603")
 
 
 def past_every_token_before(at: datetime) -> datetime:
@@ -346,32 +350,59 @@ async def _write(
     return row
 
 
+@asynccontextmanager
+async def subject_change(subject: str) -> AsyncIterator[None]:
+    """Serialize subject revocations across every writer and replica."""
+    from server.core import leases
+    from server.core.errors import GrantBusyError
+
+    name = f"subject-revocation:{uuid.uuid5(_LEASE_NAMESPACE, subject)}"
+    async with leases.holding(name, ttl_s=60.0, wait_s=10.0) as held:
+        if not held:
+            raise GrantBusyError("another revocation of this subject is running; retry shortly")
+        yield
+
+
 async def cut_off(
     subject: str, *, issued_before: datetime, reason: str, revoked_by: str
 ) -> dict[str, Any]:
-    """Revoke the tokens of `subject` issued before `issued_before`, leaving any
-    outright revocation of it as it is. Returns the row as written."""
-    from server.core.ch import get_client
-
-    now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
-    cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
-    version = await _next_version(CUTOFF_PREFIX + subject)
-    row: dict[str, Any] = {
-        "jti": CUTOFF_PREFIX + subject,
-        "revoked_at": now,
-        "expires_at": revocation_expiry(None),
-        "reason": reason,
-        "revoked_by": revoked_by,
-        "issued_before": cutoff,
-        "version": version,
-    }
-    await get_client().insert("loom.revoked_tokens", [row])
-    await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
-    global _cut_off
-    seconds = _cutoff_seconds(cutoff) or 0
-    _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
-    _remember("cut_off", subject, seconds, version)
+    """Advance the subject's cutoff, leaving its outright revocation intact."""
+    row, _ = await record_cutoff(
+        subject, issued_before=issued_before, reason=reason, revoked_by=revoked_by
+    )
     return row
+
+
+async def record_cutoff(
+    subject: str, *, issued_before: datetime, reason: str, revoked_by: str
+) -> tuple[dict[str, Any], bool]:
+    """Advance the cutoff atomically; return its row and whether it already covered the request."""
+    from server.core.ch import get_client
+    from server.core.datetimes import as_aware_utc
+
+    async with subject_change(subject):
+        current = await stored(CUTOFF_PREFIX + subject)
+        if current is not None and as_aware_utc(current["issued_before"]) >= issued_before:
+            return current, True
+        now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
+        cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
+        version = await _next_version(CUTOFF_PREFIX + subject)
+        row: dict[str, Any] = {
+            "jti": CUTOFF_PREFIX + subject,
+            "revoked_at": now,
+            "expires_at": revocation_expiry(None),
+            "reason": reason,
+            "revoked_by": revoked_by,
+            "issued_before": cutoff,
+            "version": version,
+        }
+        await get_client().insert("loom.revoked_tokens", [row])
+        await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
+        global _cut_off
+        seconds = _cutoff_seconds(cutoff) or 0
+        _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
+        _remember("cut_off", subject, seconds, version)
+        return row, False
 
 
 async def _next_version(jti: str) -> int:
@@ -473,14 +504,16 @@ async def subjects_revoked(subjects: list[str], *, issued_at: int) -> bool:
     return any(kills(c, issued_at) for c in (await cutoffs(subjects)).values())
 
 
-async def cutoffs(subjects: list[str]) -> dict[str, int | None]:
+async def cutoffs(subjects: list[str], *, permanent: bool = False) -> dict[str, int | None]:
     """Each of `subjects` that is revoked, read from ClickHouse as `refresh`
     reads it: None when outright, else the cutoff (unix seconds) a token must
-    be issued at or after to live. A subject not revoked is left out."""
+    be issued at or after to live. `permanent` excludes temporary suspensions."""
     found: dict[str, int | None] = {}
     if not subjects:
         return found
     for r in await _read_revocations(_keys_of(subjects)):
+        if permanent and not never_lapses(r):
+            continue
         key, cutoff = str(r["jti"]), _cutoff_seconds(r.get("issued_before"))
         subject = key.removeprefix(CUTOFF_PREFIX).removeprefix(SCIM_PREFIX)
         if cutoff is None and not key.startswith(CUTOFF_PREFIX):
@@ -513,7 +546,8 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
     with own_write_reads():
         return await get_client().query_all(
             """
-            SELECT jti, issued_before, revoked_by, revoked_at FROM loom.revoked_tokens FINAL
+            SELECT jti, issued_before, revoked_by, revoked_at, expires_at
+            FROM loom.revoked_tokens FINAL
             WHERE jti IN {keys:Array(String)} AND expires_at > now()
             """,
             params={"keys": keys},

@@ -239,7 +239,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> set[str]
                     params={"subs": chunk},
                 )
             # Read after the list, so it tells whether each token listed is dead.
-            revoked = await revocation.cutoffs(chunk)
+            revoked = await revocation.cutoffs(chunk, permanent=True)
             # Only those still dead: a row listed revoked is judged again, as the gate would.
             dead |= {
                 str(r["sa_subject"]) for r in rows if not r["live"] and _is_dead(r, revoked, dead)
@@ -315,7 +315,7 @@ async def _revoke_all(
             # A token made since the list may postdate `revoked` (a reactivation's).
             now_revoked = revoked
             if row["sa_subject"] not in listed:
-                now_revoked = await revocation.cutoffs(sorted(_above(row)))
+                now_revoked = await revocation.cutoffs(sorted(_above(row)), permanent=True)
             if not _is_dead(row, now_revoked, dead):
                 return None
             revoked_copy = revoked_row(

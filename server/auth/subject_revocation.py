@@ -19,16 +19,12 @@ wrote nothing, one in `finish` left the revocation in force.
 
 from __future__ import annotations
 
-import uuid
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from server.auth import revocation
 from server.core.datetimes import as_aware_utc
-from server.core.errors import GrantBusyError
 from server.core.principals import is_reserved_subject, org_of_end_user_revocation
 from server.observability import audit
 
@@ -36,8 +32,6 @@ NO_TOKEN = (
     "no token is revoked by that subject; revoke an end user as "
     "<org>/user:<id>, the id as its issuer signs it (lowercase)"
 )
-# Leases are named from a hash of the subject: the lease store is no place for an address.
-_LEASE_NAMESPACE = uuid.UUID("0e3a7c52-41f9-4d6b-8a2e-5c9b17d4f603")
 
 
 def refusal(subject: str) -> str | None:
@@ -109,19 +103,6 @@ class Revoked:
     tokens: int
 
 
-@asynccontextmanager
-async def _held(subject: str) -> AsyncIterator[None]:
-    """A revocation of the subject read and written as one step: two requests
-    never both find a row missing and write over each other."""
-    from server.core import leases
-
-    name = f"subject-revocation:{uuid.uuid5(_LEASE_NAMESPACE, subject)}"
-    async with leases.holding(name, ttl_s=60.0, wait_s=10.0) as held:
-        if not held:
-            raise GrantBusyError("another revocation of this subject is running; retry shortly")
-        yield
-
-
 async def record(
     subject: str, *, by: str, reason: str = "", at: datetime | None = None
 ) -> tuple[dict[str, Any], bool]:
@@ -133,21 +114,19 @@ async def record(
     in force for the request and whether it was there already. Raises, having
     written nothing that lands, when the revocation cannot be written."""
     subject = subject.strip()  # as `revocation.revoke` keys it
-    async with _held(subject):
-        if at is None:
-            current = await revocation.stored(subject)
-            if (
-                current is not None
-                and current["issued_before"] is None
-                and revocation.never_lapses(current)
-            ):
-                return current, True
-            return await revocation.revoke(subject, reason=reason, revoked_by=by), False
-        current = await revocation.stored(revocation.CUTOFF_PREFIX + subject)
-        if current is not None and as_aware_utc(current["issued_before"]) >= at:
+    if at is not None:
+        return await revocation.record_cutoff(
+            subject, issued_before=at, reason=reason, revoked_by=by
+        )
+    async with revocation.subject_change(subject):
+        current = await revocation.stored(subject)
+        if (
+            current is not None
+            and current["issued_before"] is None
+            and revocation.never_lapses(current)
+        ):
             return current, True
-        row = await revocation.cut_off(subject, issued_before=at, reason=reason, revoked_by=by)
-        return row, False
+        return await revocation.revoke(subject, reason=reason, revoked_by=by), False
 
 
 async def finish(subject: str, row: dict[str, Any], kept: bool, *, by: str, org: str) -> Revoked:
@@ -206,7 +185,17 @@ async def revoke_in_org(
     email. Raises, revoking nothing, when the directory cannot be read."""
     from server.auth.aliases import spellings
 
-    return [
-        (s, await revoke_subject(s, by=by, org=org, reason=reason, at=at))
+    recorded = [
+        (s, await record(s, by=by, reason=reason, at=at))
         for s in await spellings(org, subject.strip())
     ]
+    completed = []
+    errors = []
+    for s, (row, kept) in recorded:
+        try:
+            completed.append((s, await finish(s, row, kept, by=by, org=org)))
+        except Exception as e:  # noqa: BLE001 — audit every recorded spelling before raising
+            errors.append(e)
+    if errors:
+        raise errors[0]
+    return completed
