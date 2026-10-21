@@ -115,8 +115,10 @@ the request rate, and merges fall behind ("too many parts"). The rows written on
 request or by every process on a short interval are sent with `async_insert = 1,
 wait_for_async_insert = 1` (`server/core/ch_writes.py`, `batched_insert_settings` and
 `async_insert_settings`):
-`audit_log`, the `conversations` turns and `conversation_embeddings` rows of
-`conversation.append` (the embedding row under the width rule below), the `agent_events`
+`audit_log`, the `conversations` turns of `conversation.append` and the turn
+`conversation.save_message` rewrites when deduplication dropped its first write, the
+`conversation_embeddings` rows (`conversation.append`, `conversation.save_message`,
+`conversation.compact`; under the width rule below), the `agent_events`
 flush, the policy witness's `agent_events` and `memory_exposures` rows,
 `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
 `memory_belief_sources`, `auth_attempts`, `memory_projection_failures`, the graph Undo
@@ -154,10 +156,15 @@ rows or more per insert. These windows stay well short of it; they cut the part 
 from one per insert to the rate above. Batching trades latency for parts: each waited
 insert adds up to its window, and holds its pooled connection meanwhile. A sustained
 R_request request-path and R_background background batched inserts a second therefore
-hold about R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
+hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
 `ch_batched_insert_background_wait_max_ms` / 1000 connections: a delivery worker writing
-20 attempt batches a second holds about 4. Size the ClickHouse connection pool
-(`ch_pool_maxsize`) for that on top of the other statements.
+20 attempt batches a second holds at least 4. That is a lower bound: a waiting insert
+holds its connection for the window and then the flush and part write, which queue up
+and grow under load. One process taking 200 writes a second, two batched inserts each,
+exhausted 64 connections, where the formula gives 20. Size the ClickHouse connection
+pool (`ch_pool_maxsize`) well above the bound on top of the other statements, and when
+the pool still runs out, set `ch_batched_inserts = false` or lower
+`ch_batched_insert_wait_max_ms` ([troubleshooting](../operations/troubleshooting.md)).
 
 `ch_batched_inserts` (live, on by default) switches batching off for `audit_log`, the
 `conversation.append` rows, the `agent_events` flush, the outbox, webhook attempts,

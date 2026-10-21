@@ -12,7 +12,7 @@ from typing import Any
 
 from server.settings import settings
 
-# not a setting: above ClickHouse's 450 default so the time window decides the flush; measure first
+# not a setting: a ceiling above the wait windows' reach, so the live windows decide the flush
 _ASYNC_INSERT_MAX_QUERY_NUMBER = 10_000
 
 

@@ -9643,7 +9643,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.get", group: "conversation", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.list", group: "conversation", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conversation.list_saved_messages", group: "conversation", method: "listSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
-  { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
+  { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 350, audit: false, readOnly: false },
   { name: "conversation.saved_status", group: "conversation", method: "savedStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.search", group: "conversation", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },

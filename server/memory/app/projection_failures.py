@@ -81,7 +81,7 @@ FOLLOW_ROWS = "triples_follow_rows"
 # FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
 # that the loser is still retired, and leaves a name it does not know active.
 FOLLOW_OWED = "triples_follow_owed"
-# A FOLLOW_OWED intent is written (a waited batched insert) right before its supersede,
+# A FOLLOW_OWED intent is written (a waited async insert) right before its supersede,
 # and its writer records and follows the retirement itself: the repair leaves it this
 # long, so the two never write the record side by side.
 FOLLOW_OWED_GRACE_S = 600  # not a setting: protocol timing between writer and repair
@@ -144,8 +144,8 @@ def projection_failure_row(
 
 
 async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | None = None) -> None:
-    """Append `projection_failure_row`s in one batched insert, waited for before it
-    returns. Callers wrap this helper in their own fail-open guard."""
+    """Append `projection_failure_row`s in one waited async insert. Callers wrap this
+    helper in their own fail-open guard."""
     if not rows:
         return
     await (ch or get_client()).insert(

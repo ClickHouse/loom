@@ -5066,7 +5066,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "conversation.get": 100,
     "conversation.list": 80,
     "conversation.list_saved_messages": 150,
-    "conversation.save_message": 250,
+    # The embedding row, and the turn rewritten when deduplication dropped the
+    # first, are batched inserts that each wait up to ch_batched_insert_wait_max_ms (50).
+    "conversation.save_message": 350,
     "conversation.saved_status": 100,
     "conversation.search": 120,
     "conversation.search_saved_messages": 200,
