@@ -182,7 +182,6 @@ async def post(
                     content=body,
                     headers={**headers, **extra_headers},
                     timeout=ack_timeout_seconds,
-                    follow_redirects=False,
                     extensions=extensions,
                 ) as response,
             ):

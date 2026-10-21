@@ -100,7 +100,8 @@ async def _read_registry() -> Registry:
 
 
 # This process's copy of the registry. A failed read keeps the last copy for as
-# long as reads fail: an event goes to the webhooks last seen, never to none.
+# long as reads fail; before the first read lands there is no copy, and writes
+# announce nothing.
 _registry: PolledCopy[Registry] = PolledCopy("memory webhooks", _read_registry, log)
 
 
