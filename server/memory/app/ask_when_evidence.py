@@ -19,12 +19,13 @@ runs for any question; a when-question keeps its own note.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
-from server.memory.domain.sensitivity import reads_high
+from server.memory.domain.sensitivity import without_credentials
 
 log = logging.getLogger(__name__)
 
@@ -219,14 +220,15 @@ async def _recall_turns(kwargs: dict[str, Any]) -> list[DatedTurn]:
     turns: list[DatedTurn] = []
     for t in getattr(out, "turns", None) or []:
         content = str(getattr(t, "content", "") or "").strip()
-        # A turn that reads as a credential never reaches the synthesis prompt.
-        if not content or reads_high(content):
+        if not content:
             continue
         observed = str(getattr(t, "observed_at", "") or "")
         turns.append(
             DatedTurn(day=observed[:10], role=str(getattr(t, "role", "") or ""), content=content)
         )
-    return turns
+    # A turn that reads as a credential never reaches the synthesis prompt. A turn can be
+    # as long as the request cap allows, so the check runs in a worker thread.
+    return await asyncio.to_thread(without_credentials, turns, lambda t: t.content)
 
 
 _CUE_WINDOW_MAX_DAYS = 45

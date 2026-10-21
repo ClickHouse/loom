@@ -15,6 +15,7 @@ provider, so on-by-default is safe out of the box.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -97,13 +98,13 @@ async def _make_title(
         str(row["org"]), str(row["namespace"]), str(row["thread_id"]), limit=_OPENING_TURNS
     )
     # A turn that reads as a credential never reaches the model: the title is listed to
-    # every reader of the namespace.
+    # every reader of the namespace. A turn can be as long as the request cap allows, so
+    # the check runs in a worker thread.
     spoken = [r for r in turns if str(r.get("content") or "").strip()]
-    snippet = "\n".join(
-        f"{r['role']}: {str(r['content'])[:500]}"
-        for r in spoken
-        if not reads_high(str(r["content"]))
+    plain = await asyncio.to_thread(
+        lambda: [r for r in spoken if not reads_high(str(r["content"]))]
     )
+    snippet = "\n".join(f"{r['role']}: {str(r['content'])[:500]}" for r in plain)
     if not snippet:
         if spoken and len(turns) >= _OPENING_TURNS:
             # Every opening turn reads as a credential and no later turn can join them.

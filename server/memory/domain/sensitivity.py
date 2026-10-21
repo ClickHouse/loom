@@ -49,12 +49,14 @@ LEVELS: Final = ("", "low", "medium", "high")
 # after the header: the body runs past a chunk, and every chunk it covers is held. Prose
 # ends a block without a closing line, so a header quoted alone holds only its own chunk.
 # A body line can be any length: chunks joined whole can lose the line break between them.
+# The header lines come first among the alternatives: the character class would otherwise
+# take the `Proc` of `Proc-Type:` and end the block there.
 # The search for a closing line stops at the next header, so text of many headers without
 # one is read in linear time.
 _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----"
     r"(?:(?:(?!-----BEGIN ).)*?-----END \1PRIVATE KEY-----"
-    r"|(?:[A-Za-z0-9+/=\r\n]|Proc-Type:[^\n]*|DEK-Info:[^\n]*)*)",
+    r"|(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=\r\n])*)",
     re.S,
 )
 # The words a `password=…` style assignment starts with. The sweep's prefilter is built from

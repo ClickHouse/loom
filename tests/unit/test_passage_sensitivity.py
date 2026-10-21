@@ -445,6 +445,24 @@ def test_split_credentials_holds_every_chunk_of_a_private_key_block() -> None:
     assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
 
 
+def test_split_credentials_holds_an_encrypted_private_key_without_its_closing_line() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # A legacy encrypted key, pasted without its closing line: the Proc-Type and DEK-Info
+    # lines after the header are part of the block, so the body chunks are held too.
+    body = "\n".join(
+        "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2" for _ in range(8)
+    )
+    parts = [
+        "-----BEGIN RSA " + "PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n"
+        "DEK-Info: AES-128-CBC,0123456789ABCDEF0123456789ABCDEF\n\n",
+        body + "\n",
+        body,
+    ]
+    chunks = [("s", i, part) for i, part in enumerate(parts)]
+    assert split_credentials([*chunks, ("s", 3, " The build passed.")]) == [True] * 3 + [False]
+
+
 def test_a_private_key_header_without_a_body_holds_only_its_own_chunk() -> None:
     from server.memory.domain.sensitivity import split_credentials
 
