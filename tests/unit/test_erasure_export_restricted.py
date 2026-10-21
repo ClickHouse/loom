@@ -459,3 +459,37 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
         )
     )
     assert [(r["thread_id"], r["title"]) for r in got] == expected
+
+
+def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() -> None:
+    """A turn the size pass never measured is dropped, and the measured turn it pushed
+    out of the text read's page marks the section truncated."""
+    import asyncio
+    from datetime import datetime
+
+    from server.erasure.store import exports
+
+    def key(thread: str, second: int, msg: str) -> dict:
+        ts = datetime(2026, 1, 1, 0, 0, second)
+        return {"namespace": STD, "thread_id": thread, "ts": ts, "msg_id": msg}
+
+    class _Racing:
+        async def query_all(self, sql, params=None, **_k):
+            if "bytes_before_previous" in sql:
+                return [
+                    {**key("t1", 1, "m1"), "bytes_before": 0},
+                    {**key("t9", 1, "m9"), "bytes_before": 6},
+                ]
+            # A turn appended to t1 meanwhile sorts before t9's and takes its place.
+            assert params["kept"] == 2
+            return [
+                {**key("t1", 1, "m1"), "content": "a"},
+                {**key("t1", 2, "m-new"), "content": "huge"},
+            ]
+
+    got, left_out = asyncio.run(
+        exports.export_conversations(
+            ORG, "namespace", STD, include_tombstoned=True, limit=10, max_bytes=100, ch=_Racing()
+        )
+    )
+    assert [r["msg_id"] for r in got] == ["m1"] and left_out

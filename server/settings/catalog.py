@@ -1728,8 +1728,8 @@ class ErasureSettings(BaseModel):
     # mutations_sync=0, polled in system.mutations); past it the saga fails
     # naming the mutation.
     erasure_mutation_wait_s: int = 3600
-    # Most bytes of conversation text one `erasure.export` returns in its
-    # `conversations` section; past it the section stops and is marked `truncated`.
+    # Bytes of conversation text after which `erasure.export` stops its `conversations`
+    # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
     erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
 
     # ---- external erasure backends ----

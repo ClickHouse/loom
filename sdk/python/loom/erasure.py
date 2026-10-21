@@ -93,7 +93,8 @@ class ErasureClient:
 
         Returns a dict with `counts` and per-section payloads (memory, knowledge,
         conversations, conversation_threads, agent_events, audit_log). Each section
-        may carry `truncated=True` if it exceeded `section_limit`."""
+        may carry `truncated=True` if it exceeded `section_limit`, and `conversations`
+        also once its text passes the server's byte budget."""
         return await self._agent.transport.post(
             "/v1/erasure.export",
             {

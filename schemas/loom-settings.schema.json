@@ -2305,7 +2305,7 @@
           "default": 67108864,
           "minimum": 1,
           "type": "integer",
-          "description": "Most bytes of conversation text one `erasure.export` returns in its `conversations` section; past it the section stops and is marked `truncated`."
+          "description": "Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it."
         },
         "erasure_mutation_wait_s": {
           "default": 3600,

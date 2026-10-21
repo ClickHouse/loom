@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -138,7 +139,9 @@ async def export_conversations(
     `max_bytes`; the first row is always read. The first statement finds where
     they stop from the text lengths alone, so no text past the budget is read;
     it also returns the first row past the budget, which says more rows exist.
-    The second reads the text of the rows up to that point."""
+    The second reads the text of the rows up to that point; a turn written between
+    the two was never measured, so it is dropped, and a measured one it pushed out
+    of the page marks the section truncated."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     column = "user_id" if scope_type == "user_id" else "namespace"
@@ -189,7 +192,18 @@ async def export_conversations(
             "kept": len(kept),
         },
     )
-    return cast("list[ConversationExportRow]", rows), len(kept) < len(sizes)
+    measured = Counter(_turn_key(s) for s in kept)
+    served: list[dict[str, Any]] = []
+    for r in rows:
+        if measured[_turn_key(r)] > 0:
+            measured[_turn_key(r)] -= 1
+            served.append(r)
+    left_out = len(kept) < len(sizes) or measured.total() > 0
+    return cast("list[ConversationExportRow]", served), left_out
+
+
+def _turn_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    return (row["namespace"], row["thread_id"], row["ts"], row["msg_id"])
 
 
 async def export_conversation_threads(
