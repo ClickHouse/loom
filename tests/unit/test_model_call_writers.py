@@ -17,6 +17,7 @@ import pytest
 from server.llm import customer
 from server.memory.domain import provenance, trust
 from server.settings import settings
+from tests.unit.switch_state import switch_off
 from tests.unit.test_model_call_identity import AGENT_NS, _Directory, _stub, directory  # noqa: F401
 
 AGENT_8 = "sa:cell-t1:agent-8"
@@ -370,3 +371,82 @@ def test_a_deferred_extraction_by_a_member_is_the_members(writers: _Directory, m
         row = {"org": "acme", "namespace": AGENT_NS, "user_id": "u1", "payload": payload}
         asyncio.run(queue.replay_row(row))
     assert seen == [AS_ALICE, AS_AGENT_7]  # a pipeline enqueuer is no writer: the owner
+
+
+def test_code_refresh_runs_the_ingest_pass_as_its_caller(monkeypatch) -> None:
+    """The poller's ingest calls are the namespace's agent's; the same pass run by
+    `code.refresh` is the caller's, as any request's calls are."""
+    from server.auth.context import current_auth_var
+    from server.auth.jwt import AuthInfo
+    from server.code.app.index import ingest_pass as ip
+
+    seen: list[tuple[str, str]] = []
+
+    def record() -> None:
+        who = customer.attribution()
+        seen.append((who.namespace, who.subject))
+
+    async def run_repo(cfg: Any, result: Any, budget: Any) -> Any:
+        record()
+        return SimpleNamespace(cfg=cfg, bootstrap=True, walk=False)
+
+    async def leg(plan: Any, result: Any, budget: Any) -> None:
+        record()
+
+    async def nothing(*a: Any, **k: Any) -> Any:
+        return set()
+
+    repo = SimpleNamespace(org="acme", namespace="code-a", label="a")
+    monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", nothing)
+    monkeypatch.setattr(ip, "_inactive_namespaces", nothing)
+    monkeypatch.setattr(ip, "selected_repos", lambda org, ns: [repo])
+    monkeypatch.setattr(ip, "_without_unsandboxed", lambda repos, result: repos)
+    monkeypatch.setattr(ip, "prefetch_mirrors", nothing)
+    monkeypatch.setattr(ip, "ingest_oldest_first", nothing)
+    monkeypatch.setattr(ip, "_run_repo", run_repo)
+    monkeypatch.setattr(ip, "_bootstrap_leg", leg)
+    monkeypatch.setattr(ip, "_post_steps", nothing)
+    switch_off()
+    asyncio.run(ip._run(ip.CodeIngestResult()))  # the poller: no caller
+    caller = AuthInfo(
+        subject="sa:t:ci-agent",
+        org="acme",
+        namespaces=("code-a",),
+        roles=(),
+        is_service_account=True,
+    )
+    token = current_auth_var.set(caller)
+    try:
+        asyncio.run(ip._run(ip.CodeIngestResult(), "acme", "code-a"))  # code.refresh
+    finally:
+        current_auth_var.reset(token)
+    # each pass: the entry's commits, then its bootstrap leg
+    assert seen == [("code-a", "")] * 2 + [("code-a", caller.subject)] * 2
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "named"),
+    [
+        ("inference_identity_headers_json", '{"X-Agent": "{agent}"}', "IDENTITY_HEADERS"),
+        ("inference_customer_header", "X-Customer", "CUSTOMER_HEADER"),
+        ("inference_gateway_required", True, "GATEWAY_REQUIRED"),
+    ],
+)
+def test_reembed_in_database_is_refused_when_calls_must_name_whom_they_are_for(
+    monkeypatch, setting: str, value: Any, named: str
+) -> None:
+    from server.memory.app import reembed
+
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
+    for field in ("inference_identity_headers_json", "inference_customer_header"):
+        monkeypatch.setattr(settings, field, "")
+    monkeypatch.setattr(settings, "inference_gateway_required", False)
+    assert reembed.in_database_refusal() == ""
+    monkeypatch.setattr(settings, setting, value)
+
+    class _Embedder:
+        model_name, dim = "m", 2
+
+    with pytest.raises(ValueError, match=named) as refused:
+        asyncio.run(reembed.reembed_all(None, _Embedder(), in_database="ai_creds"))
+    assert "re-embed without --in-database" in str(refused.value)

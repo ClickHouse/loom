@@ -101,7 +101,9 @@ sorting key, so old and new rows coexist until `--delete-old`. `entity_vectors`
 (`ReplacingMergeTree(created_at)`) is replaced in place. Flags: `--org`, `--namespace`,
 `--batch-size`, `--dry-run`, `--key-only`, `--resume`, and `--in-database <named
 collection>`, which runs one `INSERT … SELECT` per table through ClickHouse's `aiEmbed`
-(it needs a ClickHouse release that ships it). See the [CLI reference](../reference/cli.md).
+(it needs a ClickHouse release that ships it, and is refused while a customer or identity
+header is set or the gateway is required, since those calls name no one and skip the
+gateway's check). See the [CLI reference](../reference/cli.md).
 
 `embedding_worker` covers the rest. It embeds `embedding_dim = 0` stubs newest first; a
 stub labelled with an older model is embedded under the served one and the old stub
@@ -276,7 +278,8 @@ the shared HTTP client also carries non-model calls, which name no customer.
   deployment's own calls (the startup embedder probe, the recalibration worker's fixed
   pairs, the provider checks) run under `customer.system()` and name
   `LOOM_INFERENCE_SYSTEM_CUSTOMER`. The sampled retrieval judge sends the judged org's query
-  and memory text, so it names that org.
+  and memory text, so it names that org. `code.refresh` runs the poller's ingest pass, and
+  its calls stay the caller's (its token's subject) where the poller's are the namespace's.
 - **One customer per call.** A job that batches several orgs' rows (the embedding worker,
   `loom reembed`, a model rebuild) splits its batches by org before calling.
 - **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's

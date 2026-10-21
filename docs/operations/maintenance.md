@@ -21,9 +21,11 @@ before ClickHouse applies it; watch `system.mutations`.
   old-model rows afterwards; `--key-only` rebuilds only the key-axis vector of each live
   row. `--in-database <named collection>` runs the embedding inside ClickHouse with
   `aiEmbed` (ClickHouse 26.7 or later) as one `INSERT … SELECT` per table instead of a
-  Python loop. The Python path reads `--batch-size` rows at a time in sort-key order and
-  prints a `resume:` token after each page; `--resume <token>` continues an interrupted
-  run there.
+  Python loop. It is refused while a customer or identity header is set or the inference
+  gateway is required: ClickHouse's own calls name no customer or identity and skip the
+  gateway's host check. The Python path reads `--batch-size` rows at a time in sort-key
+  order and prints a `resume:` token after each page; `--resume <token>` continues an
+  interrupted run there.
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`), and a coded column takes vectors of the width it was
   created with only. Change to a model of another width (a multiple of 8) in Settings → Models & keys, which

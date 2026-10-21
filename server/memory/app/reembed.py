@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.llm import customer
+from server.settings import settings
 
 # (text-source column, vector column) per table, plus an optional secondary
 # (key text -> key vector, key dim) embedding.
@@ -429,6 +430,28 @@ async def delete_off_model(
     await ch.execute(f"DELETE FROM loom.{table} WHERE {' AND '.join(where)}", params=params)
 
 
+def in_database_refusal() -> str:
+    """Why `--in-database` may not run here: ClickHouse then calls the embedding
+    provider itself, with none of the headers that name whom a call is for and
+    outside the gateway's host check. '' when it may."""
+    why = (
+        "LOOM_INFERENCE_IDENTITY_HEADERS_JSON is set"
+        if settings.identity_headers()
+        else "LOOM_INFERENCE_CUSTOMER_HEADER is set"
+        if settings.inference_customer_header
+        else f"{settings.gateway_required_by()} requires the gateway"
+        if settings.gateway_required()
+        else ""
+    )
+    if not why:
+        return ""
+    return (
+        f"--in-database calls the embedding provider from ClickHouse, which names no "
+        f"customer or identity and is outside the gateway check, and {why}: re-embed "
+        "without --in-database"
+    )
+
+
 async def reembed_all(
     ch: Any,
     embedder: Any,
@@ -445,13 +468,17 @@ async def reembed_all(
 ) -> dict[str, int]:
     """`in_database` names the ClickHouse named collection holding the
     embedding provider's endpoint and key; when given, every table is
-    re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop.
+    re-embedded by `aiEmbed` inside ClickHouse instead of a Python loop
+    (`in_database_refusal` says when it may not be).
     `resume`: a token a previous run printed; tables before its table are
     skipped and its table continues after the row it names.
     Raises CodedWidthMismatchError, before reading any row, when the embedder's
     width is not the one a coded vector table was created at."""
     from server.core.vectors import codes_state
 
+    refusal = in_database_refusal() if in_database else ""
+    if refusal:
+        raise ValueError(refusal)
     for table in _TABLES:
         await codes_state.refuse_width(table, embedder.dim)
     written: dict[str, int] = {}
