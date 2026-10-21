@@ -7404,6 +7404,45 @@ export interface ProfileSetInput {
   if_match_sha256?: string;
 }
 
+export interface ProfileStructuredInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  read_scope?: "namespace" | "own_user";
+}
+
+export interface ProfileStructuredOutput {
+  status: "ready" | "stale" | "pending" | "no_schema";
+  profile?: Record<string, unknown>;
+  built_at?: string | null;
+  memory_id?: string;
+  version?: number;
+  version_text?: string;
+  schema_sha256?: string;
+}
+
+export interface ProfileSchemaInput {
+  org: string;
+  namespace: string;
+}
+
+export interface ProfileSchemaOutput {
+  found: boolean;
+  json_schema?: Record<string, unknown>;
+  schema_sha256?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+}
+
+export interface ProfileSchemaSetInput {
+  org: string;
+  namespace: string;
+  json_schema: Record<string, unknown>;
+}
+
 export interface RunBeginInput {
   org: string;
   namespace: string;
@@ -8873,6 +8912,10 @@ export type OpName =
   | "profile.render"
   | "profile.replace"
   | "profile.set"
+  | "profile.structured"
+  | "profile_schema.clear"
+  | "profile_schema.get"
+  | "profile_schema.set"
   | "run.begin"
   | "run.complete"
   | "run.get"
@@ -9193,6 +9236,10 @@ export interface OpMap {
   "profile.render": { input: ProfileRenderInput; output: ProfileRenderOutput };
   "profile.replace": { input: ProfileReplaceInput; output: ProfileMutationOutput };
   "profile.set": { input: ProfileSetInput; output: ProfileMutationOutput };
+  "profile.structured": { input: ProfileStructuredInput; output: ProfileStructuredOutput };
+  "profile_schema.clear": { input: ProfileSchemaInput; output: ProfileSchemaOutput };
+  "profile_schema.get": { input: ProfileSchemaInput; output: ProfileSchemaOutput };
+  "profile_schema.set": { input: ProfileSchemaSetInput; output: ProfileSchemaOutput };
   "run.begin": { input: RunBeginInput; output: RunBeginOutput };
   "run.complete": { input: RunCompleteInput; output: RunCompleteOutput };
   "run.get": { input: RunGetInput; output: RunGetOutput };
@@ -9513,6 +9560,10 @@ export const OPS: readonly OpSpec[] = [
   { name: "profile.render", group: "profile", method: "render", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 60, audit: false, readOnly: true },
   { name: "profile.replace", group: "profile", method: "replace", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },
   { name: "profile.set", group: "profile", method: "set", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30, audit: false, readOnly: false },
+  { name: "profile.structured", group: "profile", method: "structured", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: true },
+  { name: "profile_schema.clear", group: "profile_schema", method: "clear", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
+  { name: "profile_schema.get", group: "profile_schema", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
+  { name: "profile_schema.set", group: "profile_schema", method: "set", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "run.begin", group: "run", method: "begin", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 150, audit: true, readOnly: false },
   { name: "run.complete", group: "run", method: "complete", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 800, audit: true, readOnly: false },
   { name: "run.get", group: "run", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: true },
@@ -9576,4 +9627,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 317;
+export const GENERATED_OP_COUNT = 321;

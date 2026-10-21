@@ -9,7 +9,8 @@ knowing memory.set with memory_type='profile' is the right call. Reads
 
 from __future__ import annotations
 
-from typing import Literal
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -33,7 +34,7 @@ class ProfileSetInput(_Identity):
     char_limit: int = DEFAULT_CHAR_LIMIT
     # Where the section came from; a trace starting with `memory.delete_version:` is
     # refused (that op's tombstone marker). A worker that folds facts with an LLM
-    # writes "profile.fold:<label>" so provenance classes the row `derived`;
+    # writes "profile.fold:<label>:<memory ids>" so provenance classes the row `derived`;
     # a client writing a persona leaves it empty (`asserted`).
     source_trace: str = ""
     # Write only if the section's current content hash equals this (409 otherwise);
@@ -123,8 +124,9 @@ class ProfileActivityEntry(BaseModel):
     last_activated_at: str  # ISO-8601 UTC
     event_count: int
     # Which read paths this agent used — loom_activate (a
-    # typed "use loom"), profile.render (the SDK), context.pack (the
-    # plugin's session start), mcp.initialize (the MCP handshake).
+    # typed "use loom"), profile.render (the SDK), profile.structured (a
+    # structured profile), context.pack (the plugin's session start),
+    # mcp.initialize (the MCP handshake).
     operations: list[str] = []
 
 
@@ -132,3 +134,62 @@ class ProfileActivityOutput(BaseModel):
     # Agents that read the profile in the window (at most 20), most recent first;
     # the dashboard's own reads are left out.
     entries: list[ProfileActivityEntry] = []
+
+
+class ProfileSchemaSetInput(BaseModel):
+    org: str
+    namespace: str
+    # A JSON Schema object of 1-64 `properties`, each with a `type` and a `description`
+    # (at most 16 KiB); replaces the namespace's schema, and a change to its properties
+    # makes every profile stale.
+    json_schema: dict[str, Any]
+
+
+class ProfileSchemaInput(BaseModel):
+    org: str
+    namespace: str
+
+
+class ProfileSchemaOutput(BaseModel):
+    # False when the namespace has no profile schema.
+    found: bool
+    # The schema as the admin set it, in their key order; {} when not found.
+    json_schema: dict[str, Any] = {}
+    # SHA-256 of the schema's properties (not its titles or order), which each profile names.
+    schema_sha256: str = ""
+    # The actor (`human:<subject>` or `process:<subject>`) that last set or cleared it;
+    # empty when not found, or for a token narrowed to one user.
+    updated_by: str = ""
+    # When it was last set or cleared; None when not found.
+    updated_at: datetime | None = None
+
+
+class ProfileStructuredInput(_Identity):
+    # The token's read_scope is the ceiling; the op always reads the one user_id named
+    # (or pinned), and own_session is refused.
+    read_scope: Literal["namespace", "own_user"] = "namespace"
+
+
+class ProfileStructuredOutput(BaseModel):
+    # ready: current, or all null for a user with no facts; stale: memories or schema
+    # changed since the build; pending: no live profile yet (unbuilt, expired, redacted
+    # or high); no_schema: none set or it no longer parses.
+    status: Literal["ready", "stale", "pending", "no_schema"]
+    # Every property of the schema, null where the memories do not settle it ({} under
+    # `no_schema`).
+    profile: dict[str, Any] = {}
+    # When the build read the profile's sources (a lock or unlock of the key keeps it);
+    # None when no row holds it (pending, or ready for a user with no facts).
+    built_at: datetime | None = None
+    # The memory row that holds the profile, whose history is the profile's history; empty
+    # when no row holds it (pending, or ready for a user with no facts).
+    memory_id: str = ""
+    # The row's version, higher for each rebuild; 0 when no row holds it (pending, or ready
+    # for a user with no facts).
+    version: int = 0
+    # The same version as a decimal string, exact for a JavaScript caller (the number is
+    # above 2^53, which JSON.parse rounds): send this one to memory.delete_version. Empty
+    # when no row holds it (pending, or ready for a user with no facts).
+    version_text: str = ""
+    # The hash of the schema the namespace has now.
+    schema_sha256: str = ""

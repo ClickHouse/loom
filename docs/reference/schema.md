@@ -275,6 +275,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `policy_decisions` | `MergeTree` | `(org, namespace, ts)` | `toYYYYMM(ts)` | `toDateTime(ts) + toIntervalDay(90)` |  |
 | `principal_groups` | `ReplacingMergeTree(version)` | `(org, group_id)` |  |  |  |
 | `procedure_runs` | `MergeTree` | `(org, namespace, memory_key, ts)` | `toYYYYMM(ts)` |  |  |
+| `profile_schemas` | `ReplacingMergeTree(version)` | `(org, namespace)` |  |  |  |
 | `provider_configuration` | `ReplacingMergeTree(version)` | `config_id` |  |  |  |
 | `qa_fail_hours` | `ReplacingMergeTree(version)` | `(org, qa_namespace, hour)` |  |  |  |
 | `qa_item_embeddings` | `ReplacingMergeTree(version)` | `(org, namespace, kind, number)` |  |  |  |

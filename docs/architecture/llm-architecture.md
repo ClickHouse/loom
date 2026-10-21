@@ -292,9 +292,11 @@ the shared HTTP client also carries non-model calls, which name no customer.
   a kill switch, so nothing model-made reaches the org. The copy is read at most every
   `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
   `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
-  refused (`customer.SwitchUnread`). A job treats that as it treats a switch-off
-  (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild step runs
-  again, and a fail-open reranker, classifier or judge lets it through. Every job leaves a
+  refused (`customer.SwitchUnread`). A job treats a SwitchUnread refusal as it treats a
+  switch-off (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild
+  step runs again, and a fail-open reranker, classifier or judge lets it through. A call made
+  during a read waits for it when the copy is too old or a change made in this process has
+  not been read yet; otherwise it is served the copy in hand. Every job leaves a
   switched-off org out when it selects work (in the query, so its rows neither spend attempts
   nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
   whole code index. A conflict mark older than the sweep's hour when the org comes back is past
@@ -348,6 +350,7 @@ from a contradiction, which is why the optional LLM conflict judge exists.
 | Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                                                                                                                                                                                |
 | Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                                                                                                                                                                                     |
 | Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                                                                                                                                                                               |
+| Structured profiles                           | Yes           | `structured_profile` worker (on; only for a namespace with a profile schema), `LOOM_STRUCTURED_PROFILE_MODEL`                                                                                                                                                                                                |
 | Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                                                                                                                                                                                                                       |
 | `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                                                                                                                                                                                                                    |
 | Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                                                                                                                                                                                                                                |
@@ -390,13 +393,13 @@ and the background workers still call models.
 
 Prompts are Python constants, versioned with the code:
 
-| Prompt family                                                                  | Where                                                                                                   |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`       |
-| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                |
-| Rerank                                                                         | `server/memory/app/rerank.py`                                                                           |
-| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                      |
-| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `entity_extractor`) |
+| Prompt family                                                                  | Where                                                                                                                         |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`                             |
+| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                                      |
+| Rerank                                                                         | `server/memory/app/rerank.py`                                                                                                 |
+| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                                            |
+| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `structured_profile`, `entity_extractor`) |
 
 Which model runs each job is set in one place, the `Models` section of `server/settings/catalog.py`
 ([models per job](../operations/deployment.md#models-per-job)). Recalled memory

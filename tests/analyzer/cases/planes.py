@@ -626,6 +626,8 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await L.delete_procedure_runs_by_key(ORG, NS, "k1", ch=ch)
     await R.delete_llm_response_cache_by_key(ORG, "k1", ch=ch)
     await R.delete_ask_precedents_by_key(ORG, "k1", ch=ch)
+    await R.profile_keys_built_from(ORG, NS, "u1", _UUID, ch=ch)
+    await R.redact_versions(ORG, NS, "u1", _UUID, 1, when=_DT, reason_blob="r|admin", ch=ch)
 
 
 async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -773,6 +775,61 @@ async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     await cost.recorded_turn_times(ORG, NS, "s1", ["m1"], ch=ch)
 
 
+async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The profile schema reads and the structured profile's source reads: a
+    user's facts (with and without the fold's key rule), their digest, the
+    profile row, its head's pin and lock, and the users whose profile is behind, each unbounded and under
+    an `own_user` scope."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+    from server.memory.store import profile_schemas, profile_sources
+
+    await profile_schemas.get(ORG, NS, ch=ch)
+    await profile_schemas.list_active(
+        exclude_orgs=["o2"],
+        after=("o1", "a"),
+        limit=10,
+        only=("o1", "b"),
+        waiting=[("o1", "c", "0" * 64)],
+        ch=ch,
+    )
+    own = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    for scope in (WHOLE_NAMESPACE, own):
+        for keys in (False, True):
+            await profile_sources.user_facts(
+                org=ORG,
+                namespace=NS,
+                user_id="u1",
+                types=["preference"],
+                limit=5,
+                scope=scope,
+                user_keys_only=keys,
+                ch=ch,
+            )
+        await profile_sources.sources_digest(
+            org=ORG, namespace=NS, user_id="u1", scope=scope, ch=ch
+        )
+        await profile_sources.profile_row(
+            org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
+        )
+        await profile_sources.profile_head_hold(
+            org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
+        )
+        await profile_sources.users_behind(
+            org=ORG,
+            namespace=NS,
+            label="structured_profile",
+            schema_sha256="0" * 64,
+            cooldown_seconds=600,
+            limit=10,
+            skip=("u2",),
+            refused={"u3": ("0" * 16, 1)},
+            timeout_seconds=60,
+            max_memory_bytes=4 * 1024**3,
+            scope=scope,
+            ch=ch,
+        )
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -785,6 +842,7 @@ def cases() -> list[Case]:
         for name, module in HANDLER_MODULES
     ]
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
+    out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(
         Case(
             "memory_list_score",

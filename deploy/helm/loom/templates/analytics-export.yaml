@@ -1,0 +1,157 @@
+{{- /* `loom export-analytics` once a day, under a service account of its own:
+the bucket's write role is bound to it alone, never to the web pods'. A second
+run of a day keeps the first run's files, so a retry is safe. */}}
+{{- with .Values.analyticsExport }}
+{{- if .enabled }}
+{{- if not .bucket }}
+{{- fail "analyticsExport.enabled needs analyticsExport.bucket" }}
+{{- end }}
+{{- if not (kindIs "string" .expectedBucketOwner) }}
+{{- fail "analyticsExport.expectedBucketOwner must be a quoted string: an unquoted account id renders as a float" }}
+{{- end }}
+{{- if not .nameKeySecret.name }}
+{{- fail "analyticsExport.enabled needs analyticsExport.nameKeySecret.name, the Secret holding the name hash key" }}
+{{- end }}
+{{- /* Every web and workers pod loads the release Secret and each envFrom Secret. */}}
+{{- $shared := list (include "loom.secretName" $) }}
+{{- range $.Values.envFrom }}
+{{- with .secretRef }}{{ $shared = append $shared .name }}{{ end }}
+{{- end }}
+{{- if has .nameKeySecret.name $shared }}
+{{- fail (printf "analyticsExport.nameKeySecret.name %q is a Secret every web and workers pod loads: give the name key a Secret of its own" .nameKeySecret.name) }}
+{{- end }}
+{{- /* 52: a Job created from the CronJob appends an 11-character suffix. */}}
+{{- $name := include "loom.suffixed" (dict "root" $ "suffix" "analytics-export" "max" 52) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+  {{- with .serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: analytics-export
+spec:
+  schedule: {{ .schedule | quote }}
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      # Over every attempt together. An attempt is two statements of up to 20
+      # minutes each, more when the client retries one; a slow day may get
+      # fewer than four attempts.
+      activeDeadlineSeconds: 10800
+      podFailurePolicy:
+        rules:
+          # A pod evicted by a drain or preemption is retried without using up an attempt.
+          - action: Ignore
+            onPodConditions:
+              - type: DisruptionTarget
+                status: "True"
+          # Exit 2 is a refusal (a day not ended, a missing, short or padded key,
+          # a missing boto3 or an old botocore, a bad flag): a retry would refuse
+          # the same way.
+          - action: FailJob
+            onExitCodes:
+              containerName: analytics-export
+              operator: In
+              values: [2]
+      template:
+        metadata:
+          # Not the web pods' podLabels, podAnnotations or affinity, as the hook
+          # Jobs: a mesh sidecar injected through them outlives the export and the
+          # Job never completes, and an affinity written for the web pods can
+          # leave this one unschedulable.
+          labels:
+            {{- include "loom.labels" $ | nindent 12 }}
+            app.kubernetes.io/component: analytics-export
+        spec:
+          restartPolicy: Never
+          {{- include "loom.podCommon" (dict "root" $ "leads" false "serviceAccount" $name) | nindent 10 }}
+          {{- include "loom.waitForDevClickhouse" $ | nindent 10 }}
+          containers:
+            - name: analytics-export
+              image: {{ include "loom.image" $ }}
+              imagePullPolicy: {{ $.Values.image.pullPolicy }}
+              command:
+                - loom
+                - export-analytics
+                - {{ printf "--bucket=%s" .bucket | quote }}
+                {{- with .prefix }}
+                - {{ printf "--prefix=%s" . | quote }}
+                {{- end }}
+                {{- with .roleArn }}
+                - {{ printf "--role-arn=%s" . | quote }}
+                {{- end }}
+                {{- with .region }}
+                - {{ printf "--region=%s" . | quote }}
+                {{- end }}
+                {{- with .expectedBucketOwner }}
+                - {{ printf "--expected-bucket-owner=%s" . | quote }}
+                {{- end }}
+              envFrom:
+                - secretRef:
+                    name: {{ include "loom.secretName" $ }}
+                {{- with $.Values.envFrom }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              env:
+                {{- range $k, $v := fromYaml (include "loom.config" $) }}
+                - name: {{ $k }}
+                  value: {{ $v | toString | quote }}
+                {{- end }}
+                - name: LOOM_SETTINGS_FILE
+                  value: /app/config/loom.yaml
+                - name: LOOM_ANALYTICS_EXPORT_NAME_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .nameKeySecret.name | quote }}
+                      key: {{ .nameKeySecret.key | quote }}
+                {{- with $.Values.extraEnv }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              resources:
+                {{- toYaml .resources | nindent 16 }}
+              securityContext:
+                {{- toYaml $.Values.securityContext | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: cache
+                  mountPath: /app/var
+                # The release's settings file, as every pod reads it.
+                - name: settings-file
+                  mountPath: /app/config
+                  readOnly: true
+                {{- with $.Values.extraVolumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: cache
+              emptyDir:
+                sizeLimit: 1Gi
+            - name: settings-file
+              configMap:
+                name: {{ include "loom.suffixed" (dict "root" $ "suffix" "settings") }}
+            {{- with $.Values.extraVolumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+{{- end }}
+{{- end }}

@@ -1013,7 +1013,7 @@ def test_the_profile_fold_names_the_identitys_org(metered, monkeypatch, caplog) 
 
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            return [{"value": "prefers tea", "since": "2026-01-01"}]
+            return [{"memory_id": "m1", "value": "prefers tea", "since": "2026-01-01"}]
 
     written: list[str] = []
 

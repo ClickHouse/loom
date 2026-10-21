@@ -86,8 +86,11 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
-   token; `source_class` is set by the server (`memory/domain/provenance.py`), and the body
-   may only request a downgrade.
+   token; a worker that sets `pipeline_actor` writes as it (the structured profile worker
+   writes `worker:structured-profile`); other workers with no auth context write an empty
+   actor.
+   `source_class` is set by the server (`memory/domain/provenance.py`), and the body may
+   only request a downgrade.
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
@@ -302,12 +305,34 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 | `memory_expiry_sweep`     | Rows past `expires_at`                                       | The `on_expire` action                                                             | No  |
 | `sensitivity_sweep`       | Recent rows from paths that skip detection                   | A labelled version; `high` rows' embedding rows tombstoned                         | No  |
 | `profile_consolidation`\* | A user's preference and decision memories (namespace opt-in) | One non-searchable `profile` section, loaded by `profile.render` / `context.pack`  | Yes |
+| `structured_profile`      | Users' facts in namespaces with a profile schema             | A new version of each user's `structured_profile` row, held to the schema          | Yes |
 | `reflection_distill`\*    | Recent sessions without an outcome                           | Outcome labels, then `reflection` memories hidden from unfiltered recall           | Yes |
 | `entity_communities`\*    | The co-occurrence graph                                      | `entity_communities`                                                               | No  |
 | `recalibration`           | The embedder's score distribution                            | Calibration thresholds                                                             | No  |
 
 \* Off by default (`LOOM_PROFILE_CONSOLIDATION_ENABLED`,
 `LOOM_REFLECTION_DISTILL_ENABLED`, `LOOM_ENTITY_COMMUNITIES_ENABLED`).
+
+`structured_profile` reads only namespaces with a row in `loom.profile_schemas`
+(`profile_schema.set`, one ReplacingMergeTree row per namespace, holding no memory
+content). A profile is a `profile` memory row, so its history, erasure and read scope are
+memory's own. It carries three tags: the hash of the schema's properties, a digest of its
+sources (an XOR of a hash of each one's id, content hash, confidence and `valid_at`
+else `updated_at`, fixed in size), and their count. The worker finds the users
+behind in one aggregate over `loom.memory FINAL` that digests every user's current facts,
+so the answer is exact: an edit, a revert, a restore, a deletion, an expiry or a passed
+`valid_to` changes a digest, a restatement (a new `updated_at`) costs one rebuild after
+the cooldown, and a recall or a backfill does not. Its cost follows the namespace's live
+rows, not their history, and it runs under `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS`
+and `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES`. Each scan lists up to ten times the
+namespace's share of a pass, kept in the worker's process; later passes take from that
+list until it is drained, the schema hash changes or it is
+`LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` old, and a complete list that drained is
+not rescanned before then, so a namespace is read at most once per that age in the
+steady state. A namespace whose scan fails backs off. A build
+skips a user whose profile is already current. `profile.structured` recomputes one user's
+digest to answer `stale` without a model call ([structured
+profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes
@@ -424,13 +449,13 @@ Table-level retention and tiering are operator TTLs, off by default
 
 ## History, snapshot, restore and rollback
 
-| Operation            | Reads                                           | Writes                                                                                                                                 |
-| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                               |
-| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place. Refuses the live head (delete it first).                                                       |
-| `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.          |
-| `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`. |
-| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default. |
+| Operation            | Reads                                           | Writes                                                                                                                                                                     |
+| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                                                                   |
+| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place, and every profile version whose trace names the memory, live heads included. Refuses the memory's own live head (delete it first). |
+| `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                              |
+| `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                     |
+| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                     |
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
 at T is the largest version at or before T. Triples, records, summaries and aggregates
@@ -503,6 +528,12 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
   (`server/memory/app/provenance.py` `writer_actor`, `server/memory/domain/provenance.py`
   `source_class_for`). A request may only
   downgrade to `derived`, `external` or `imported`.
+- A worker with no auth context writes as its pipeline actor (`pipeline_actor` in
+  `server/memory/domain/provenance.py`). `worker:<name>` is a kind no token maps to:
+  `trust.actor_for` yields only `human:` or `process:`. `profile.structured` and the
+  worker's `users_behind` trust a profile row only when its `actor` is
+  `worker:structured-profile`, so a caller who writes the profile key with `memory.set`
+  cannot forge a served profile or mark a user current.
 - A `high`-sensitivity row and a non-searchable type have no embedding row.
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM

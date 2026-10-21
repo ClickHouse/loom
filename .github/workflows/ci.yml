@@ -320,14 +320,39 @@ jobs:
           chart=deploy/helm/loom
           secret=$(openssl rand -hex 32)
           # Every optional object on, so each template renders at least once.
-          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3)
+          on=(--set analyticsExport.enabled=true --set analyticsExport.bucket=ci --set analyticsExport.nameKeySecret.name=ci)
+          all=(--set workers.enabled=true --set workers.replicaCount=2 --set autoscaling.enabled=true --set networkPolicy.enabled=true --set mustMatchChange.publish=ci --set settingsFile.memory_ask_recency_weight=0.3 "${on[@]}")
           for overlay in values-eks.yaml values-kind.yaml; do
             args=(-f "$chart/$overlay" --set secrets.jwtSecret="$secret")
             helm lint --strict "$chart" "${args[@]}"
+            helm lint --strict "$chart" "${args[@]}" "${all[@]}"
             helm template loom "$chart" "${args[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
             helm template loom "$chart" "${args[@]}" "${all[@]}" | kubeconform -strict -summary -kubernetes-version 1.30.0
           done
           kubeconform -strict -summary -kubernetes-version 1.30.0 deploy/okf-sync/cronjob.yaml
+          # Values the chart must refuse, each with its own message. A refused render
+          # exits non-zero, so the output is taken first and read after.
+          refused() {
+            local want=$1; shift
+            if out=$(helm template loom "$chart" -f "$chart/values-kind.yaml" --set secrets.jwtSecret="$secret" "$@" 2>&1); then
+              echo "the chart accepted $*"; exit 1
+            fi
+            grep -qF "$want" <<<"$out" || { echo "unexpected refusal for $*: $out"; exit 1; }
+            echo "refused as expected: $*"
+          }
+          # The analytics name key reaches the export pod only, never the web pods.
+          key="set LOOM_ANALYTICS_EXPORT_NAME_KEY through analyticsExport.nameKeySecret"
+          refused "$key" --set env.LOOM_ANALYTICS_EXPORT_NAME_KEY=x
+          refused "$key" --set secrets.extra.LOOM_ANALYTICS_EXPORT_NAME_KEY=x
+          refused "$key" --set "extraEnv[0].name=LOOM_ANALYTICS_EXPORT_NAME_KEY"
+          refused "$key" --set settingsFile.analytics_export_name_key=x
+          refused "needs analyticsExport.bucket" "${on[@]}" --set analyticsExport.bucket=
+          refused "needs analyticsExport.nameKeySecret.name" "${on[@]}" --set analyticsExport.nameKeySecret.name=
+          refused "expectedBucketOwner must be a quoted string" "${on[@]}" --set analyticsExport.expectedBucketOwner=123456789012
+          # The release Secret (named after the release here) and envFrom Secrets reach every pod.
+          shared="is a Secret every web and workers pod loads"
+          refused "$shared" "${on[@]}" --set analyticsExport.nameKeySecret.name=loom
+          refused "$shared" "${on[@]}" --set "envFrom[0].secretRef.name=ci"
 
   agent-plugins:
     name: coding-agent plugins (node --test)

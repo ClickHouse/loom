@@ -3020,6 +3020,22 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, memory_key, ts)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.profile_schemas
+CREATE TABLE IF NOT EXISTS loom.profile_schemas
+(
+    `org` LowCardinality(String),
+    `namespace` String,
+    `schema_json` String,
+    `schema_sha256` String,
+    `updated_by` String DEFAULT '',
+    `updated_at` DateTime64(3, 'UTC'),
+    `tombstoned_at` Nullable(DateTime64(3, 'UTC')) DEFAULT NULL,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.provider_configuration
 CREATE TABLE IF NOT EXISTS loom.provider_configuration
 (
