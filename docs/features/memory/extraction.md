@@ -207,11 +207,16 @@ last `--days` are left alone. It never deletes.
 
 The `extraction_queue` worker replays a deferred request through the same handler. A
 failed replay retries until `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS`, then becomes `failed`
-with `last_error`. `memory.extraction_status` reports batches by `queue_id` or `status`
-(`pending`, `running`, `done`, `failed`); a token bounded to one user sees only that
-user's batches. Until a batch runs, `memory.search` and
-`memory.ask` report `pending_extraction`. With the worker off, deferred saves stay
-`pending`.
+with `last_error`. `memory.extraction_status` reports the namespace's batches by
+`queue_id` or `status` (`pending`, `running`, `done`, `failed`); a token bounded to one
+user sees only that user's batches. It is an HTTP and SDK view, hidden from MCP.
+`memory.extraction_status_mine` answers the caller's own batches by the `queue_id`s its
+deferred calls returned, at most 20 a call, and an agent reaches it over MCP through
+`loom_op`. It answers only a batch the calling principal queued in that namespace,
+inside the token's read scope; every other id comes back in `unknown`, so an agent
+cannot learn whether another principal's batch exists. Until a batch runs,
+`memory.search` and `memory.ask` report `pending_extraction`. With the worker off,
+deferred saves stay `pending`.
 
 ## Operator extraction policy
 
@@ -308,17 +313,18 @@ the one model-written part, and they follow the policy). Pair it with the
 
 ## Operations
 
-| Op                         | Role      | Does                                                                             |
-| -------------------------- | --------- | -------------------------------------------------------------------------------- |
-| `memory.set_from_messages` | writer    | Extract facts (or one typed record) from `messages` and write them.              |
-| `memory.extraction_status` | viewer    | State of deferred batches. HTTP and SDK only.                                    |
-| `memory.recall`            | viewer    | Search the raw turns behind the namespace's memories by text, time and role.     |
-| `memory.evidence`          | viewer    | The source turns one memory was extracted from, with the supporting span.        |
-| `observe.record`           | writer    | Record one tool observation into the episodic plane; no model call.              |
-| `observe.crystallize`      | writer    | Mark a session's observations ready for the `observe_extract` worker.            |
-| `extraction_policy.set`    | org_admin | Set the org's or a namespace's [extraction policy](#operator-extraction-policy). |
-| `extraction_policy.get`    | org_admin | Read a scope's policy and the effective one.                                     |
-| `extraction_policy.clear`  | org_admin | Remove a scope's policy.                                                         |
+| Op                              | Role      | Does                                                                             |
+| ------------------------------- | --------- | -------------------------------------------------------------------------------- |
+| `memory.set_from_messages`      | writer    | Extract facts (or one typed record) from `messages` and write them.              |
+| `memory.extraction_status`      | viewer    | State of the namespace's deferred batches. HTTP and SDK only.                    |
+| `memory.extraction_status_mine` | viewer    | State of the caller's own deferred batches, by `queue_id`. Over MCP as well.     |
+| `memory.recall`                 | viewer    | Search the raw turns behind the namespace's memories by text, time and role.     |
+| `memory.evidence`               | viewer    | The source turns one memory was extracted from, with the supporting span.        |
+| `observe.record`                | writer    | Record one tool observation into the episodic plane; no model call.              |
+| `observe.crystallize`           | writer    | Mark a session's observations ready for the `observe_extract` worker.            |
+| `extraction_policy.set`         | org_admin | Set the org's or a namespace's [extraction policy](#operator-extraction-policy). |
+| `extraction_policy.get`         | org_admin | Read a scope's policy and the effective one.                                     |
+| `extraction_policy.clear`       | org_admin | Remove a scope's policy.                                                         |
 
 Field lists: [operations reference](../../reference/operations.md#memory),
 [observe](../../reference/operations.md#observe) and

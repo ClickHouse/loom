@@ -181,7 +181,12 @@ queues, snapshot and restore, policy administration, audit and cost
 dashboards, code-index ingest. A call to one answers `isError` with code
 `OP_NOT_ON_MCP` and what to use instead. They stay reachable over HTTP and the
 SDKs. The rule for hiding an op: would a typical end user, not an operator,
-reach for it in chat?
+reach for it in chat? A namespace-wide view can be hidden while a variant bounded
+to the caller stays on MCP: `namespace.list` is hidden and `namespace.list_mine`
+listed; `memory.extraction_status` (every batch queued in the namespace) is hidden
+and `memory.extraction_status_mine` (the batches the caller queued, by `queue_id`,
+at most 20 a call) is callable by name or through `loom_op` on every toolset,
+`readonly` included.
 
 ### Toolsets
 
