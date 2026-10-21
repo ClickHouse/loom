@@ -15,12 +15,12 @@ backlog is the operator's `loom sensitivity-sweep --apply`, not this worker's.
 A pass starts at the agent the previous one stopped in (the worker's cursor in
 `loom.worker_status`), and the next starts again at the first key once a pass reads the
 last row. Inside a pass, a full page of current unlabelled rows in one agent that gives
-nothing to label moves the scan past that agent, so selected rows the detector leaves unlabelled cannot fill every
-pass's pages ahead of another agent's rows. A pass whose candidates all fail in `apply`
-leaves the cursor past the agent it stopped in, so a row that fails every time is retried
-when the sweep comes back round to it rather than holding every pass there. The cursor is
-`(org, namespace, agent)` and no more: a user id or a memory key in `loom.worker_status`
-would outlive that user's erasure.
+nothing to label moves the scan past that agent, so selected rows the detector leaves
+unlabelled cannot fill every pass's pages ahead of another agent's rows. A pass whose
+candidates all fail in `apply` leaves the cursor past the agent it stopped in, so a row
+that fails every time is retried when the sweep comes back round to it rather than
+holding every pass there. The cursor is `(org, namespace, agent)` and no more: a user id
+or a memory key in `loom.worker_status` would outlive that user's erasure.
 """
 
 from __future__ import annotations
