@@ -5247,10 +5247,11 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "period_digest": 420,
     # profile consolidation: one identity's folded profile.
     "profile_fold": 320,
-    # the structured profile worker: one user's profile in the namespace's schema. An
-    # answer cut off here fails to parse and the user backs off; 64 short properties
-    # fit.
-    "structured_profile": 2048,
+    # the structured profile worker: the tokens per value of one user's profile, times
+    # the values a full answer to the namespace's schema holds (one per property,
+    # maxItems per array; at most 256, so at most 8,192 tokens). An answer cut off
+    # fails to parse and the user backs off.
+    "structured_profile": 32,
     # the reachability probe a provider configuration change runs.
     "provider_validation": 128,
     # the retrieval judge: one result's relevance grade.

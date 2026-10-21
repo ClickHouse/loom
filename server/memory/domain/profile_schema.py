@@ -35,6 +35,10 @@ MAX_DESCRIPTION_CHARS = 500  # not a setting: schema bound, each description is 
 MAX_ENUM_VALUES = 64  # not a setting: schema bound, each value is prompt text
 # An array property holds at most this many items unless it says fewer.
 MAX_ITEMS = 50  # not a setting: schema bound on a stored profile's arrays
+# A full answer holds at most this many values (a scalar property is one, an array its
+# maxItems), so the worker's output cap, an allowance per value, stays within what a
+# model writes in one answer.
+MAX_ANSWER_VALUES = 256  # not a setting: schema bound on the model's answer
 SCALAR_TYPES = ("string", "number", "integer", "boolean")
 MAX_SAFE_INTEGER = 2**53 - 1  # not a setting: JSON's exact-integer range
 
@@ -67,6 +71,11 @@ class ProfileProperty:
     @property
     def scalar_type(self) -> str:
         return self.item_type or self.type
+
+
+def answer_values(props: list[ProfileProperty]) -> int:
+    """How many values a full answer to these properties holds."""
+    return sum(p.max_items if p.type == "array" else 1 for p in props)
 
 
 def stored_form(schema: dict[str, Any]) -> str:
@@ -181,6 +190,11 @@ def parse(schema: Any) -> list[ProfileProperty]:
                     constraints=constraints,
                 )
             )
+    if answer_values(out) > MAX_ANSWER_VALUES:
+        raise _bad(
+            f"a full answer holds {answer_values(out)} values (one per property, maxItems"
+            f" per array), at most {MAX_ANSWER_VALUES}: lower maxItems"
+        )
     return out
 
 

@@ -24,8 +24,8 @@ Clear the schema: no profile is built or rebuilt for the namespace, and reads an
 | `found` | `bool` | False when the namespace has no profile schema. |
 | `json_schema` | `dict[str, Any]` | The schema as the admin set it, in their key order; {} when not found. |
 | `schema_sha256` | `str` | SHA-256 of the schema's properties (not its titles or order), which each profile names. |
-| `updated_by` | `str` | The subject that set it; empty when not found, or for a token narrowed to one user. |
-| `updated_at` | `datetime \| None` | When it was set; None when not found. |
+| `updated_by` | `str` | The actor (`human:<subject>` or `process:<subject>`) that last set or cleared it; empty when not found, or for a token narrowed to one user. |
+| `updated_at` | `datetime \| None` | When it was last set or cleared; None when not found. |
 
 ## `profile_schema.get`
 
@@ -43,8 +43,8 @@ The namespace's profile schema, its hash, and who set it when.
 | `found` | `bool` | False when the namespace has no profile schema. |
 | `json_schema` | `dict[str, Any]` | The schema as the admin set it, in their key order; {} when not found. |
 | `schema_sha256` | `str` | SHA-256 of the schema's properties (not its titles or order), which each profile names. |
-| `updated_by` | `str` | The subject that set it; empty when not found, or for a token narrowed to one user. |
-| `updated_at` | `datetime \| None` | When it was set; None when not found. |
+| `updated_by` | `str` | The actor (`human:<subject>` or `process:<subject>`) that last set or cleared it; empty when not found, or for a token narrowed to one user. |
+| `updated_at` | `datetime \| None` | When it was last set or cleared; None when not found. |
 
 ## `profile_schema.set`
 
@@ -63,7 +63,7 @@ Set the namespace's profile schema.
 | `found` | `bool` | False when the namespace has no profile schema. |
 | `json_schema` | `dict[str, Any]` | The schema as the admin set it, in their key order; {} when not found. |
 | `schema_sha256` | `str` | SHA-256 of the schema's properties (not its titles or order), which each profile names. |
-| `updated_by` | `str` | The subject that set it; empty when not found, or for a token narrowed to one user. |
-| `updated_at` | `datetime \| None` | When it was set; None when not found. |
+| `updated_by` | `str` | The actor (`human:<subject>` or `process:<subject>`) that last set or cleared it; empty when not found, or for a token narrowed to one user. |
+| `updated_at` | `datetime \| None` | When it was last set or cleared; None when not found. |
 
 <!-- prettier-ignore-end -->

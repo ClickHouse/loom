@@ -551,6 +551,44 @@ async def test_the_configured_model_answers(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_the_largest_accepted_schema_gets_room_for_a_full_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cap is an allowance per value times the values a full answer holds, so a
+    schema at the answer bound is not cut off at a fixed cap."""
+    from server.llm import customer
+    from server.llm.fake import FakeLLMClient
+    from server.settings.budgets import llm_max_tokens
+
+    caps: list[int] = []
+
+    class Recording(FakeLLMClient):
+        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any) -> Any:
+            caps.append(max_tokens)
+            return await super().complete(system, user, max_tokens, **kw)
+
+    tags = {"type": "array", "items": {"type": "string"}, "description": "tags"}
+    arrays = ps.MAX_ANSWER_VALUES // ps.MAX_ITEMS
+    singles = ps.MAX_ANSWER_VALUES - arrays * ps.MAX_ITEMS
+    props = ps.parse(
+        {
+            "type": "object",
+            "properties": {
+                **{f"a{i}": tags for i in range(arrays)},
+                **{f"s{i}": {"type": "string", "description": "s"} for i in range(singles)},
+            },
+        }
+    )
+    assert ps.answer_values(props) == ps.MAX_ANSWER_VALUES
+    monkeypatch.setattr(settings, "structured_profile_model", "")
+    monkeypatch.setattr(w.llm_client, "get_llm_client", Recording)
+    monkeypatch.setattr(w, "emit_worker_cost_event_for", lambda **kw: None)
+    with customer.for_org("o"):
+        await w._ask("o", "n", props, "- [2026-01-01] My tz is UTC.")
+    assert caps == [llm_max_tokens("structured_profile") * ps.MAX_ANSWER_VALUES]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("status", "code", "refused"),
     [

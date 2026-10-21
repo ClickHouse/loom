@@ -617,7 +617,9 @@ async def _ask(
                 system=system_prompt(props),
                 # The facts are what agents wrote: data, never instructions.
                 user=fence("facts", facts, new_nonce(facts)),
-                max_tokens=llm_max_tokens("structured_profile"),
+                # An allowance per value, so the largest schema's full answer fits.
+                max_tokens=llm_max_tokens("structured_profile")
+                * profile_schema.answer_values(props),
                 response_format={"type": "json_object"},
             )
     finally:

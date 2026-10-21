@@ -80,6 +80,20 @@ def test_the_property_and_size_caps() -> None:
         ps.parse(_schema(**{f"p{i}": long for i in range(45)}))
 
 
+def test_a_schema_whose_full_answer_is_too_long_is_refused() -> None:
+    """One value per property and maxItems per array: past the bound, the answer
+    would not fit the worker's output cap."""
+    tags = {"type": "array", "items": {"type": "string"}, "description": "tags"}
+    arrays = ps.MAX_ANSWER_VALUES // ps.MAX_ITEMS
+    fits = {f"a{i}": tags for i in range(arrays)}
+    fits.update({f"s{i}": _TZ for i in range(ps.MAX_ANSWER_VALUES - arrays * ps.MAX_ITEMS)})
+    assert ps.answer_values(ps.parse(_schema(**fits))) == ps.MAX_ANSWER_VALUES
+    with pytest.raises(ValidationError, match="lower maxItems"):
+        ps.parse(_schema(**fits, extra=_TZ))
+    with pytest.raises(ValidationError, match="lower maxItems"):
+        ps.parse(_schema(**{f"p{i}": tags for i in range(ps.MAX_PROPERTIES)}))
+
+
 def test_the_hash_follows_what_a_profile_depends_on() -> None:
     def sha(schema: dict[str, Any]) -> str:
         return ps.schema_sha256(ps.parse(schema))

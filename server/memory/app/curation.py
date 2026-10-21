@@ -606,8 +606,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # is scrubbed either.
     if not await memory_repo.version_exists(input.org, input.memory_id, input.version):
         return MemoryRedactOutput(redacted=False)
-    # The same holds for a profile built from this memory: a lock on it refuses the
-    # redact before anything is scrubbed.
+    # A lock on a profile key built from this memory refuses the redact before
+    # anything is scrubbed, as a lock on the memory's own key does.
     profiles = await _profiles_built_from(input.org, target, input.memory_id)
 
     now = naive_utc_now()

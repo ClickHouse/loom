@@ -117,7 +117,8 @@ calls a model.
 The schema is a JSON Schema object with 1 to 64 `properties`, at most 16 KiB. Each
 property has a `type` (`string`, `number`, `integer`, `boolean`, or `array` with `items`
 of one of those and an optional `maxItems` up to 50) and a `description`, which the
-model reads. Strings take `enum`, `pattern`, `minLength` and `maxLength`; numbers take
+model reads. A full answer holds at most 256 values, counting one per property and
+`maxItems` per array, so it fits the model's output cap. Strings take `enum`, `pattern`, `minLength` and `maxLength`; numbers take
 `minimum` and `maximum`, the constraints [typed records](./writing.md#typed-records) use.
 Every property is in every profile, `null` when the memories do not settle it, so the
 schema has no `required`; `additionalProperties` may only be `false`. A `title` is
@@ -207,8 +208,8 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   behind (fewer than it asked for) is not repeated before then once drained, so a
   namespace is scanned at most once per that age while nobody else is behind. A user
   whose build failed (a model error, an answer that is not a JSON object, including one
-  cut off at its 2048-token cap (the `structured_profile` entry of `LLM_MAX_TOKENS`,
-  changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`)) waits
+  cut off at its cap of 32 tokens per value of a full answer (the `structured_profile`
+  entry of `LLM_MAX_TOKENS`, changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`)) waits
   `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` (300), doubling up to
   `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600). It is left out of the namespace
   scans made while it waits, so it is tried again at the first scan after the wait ends:
