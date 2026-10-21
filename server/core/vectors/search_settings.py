@@ -52,8 +52,9 @@ def vector_search_settings(
     if not quantized:
         return ""
     if fetch_multiplier is None:
-        # Measured on synthetic 1536-dim vectors: x3 at LIMIT 10 kept 0.73-0.88
-        # of the exact top 10 on 1M- and 500k-row reads.
+        # Measured on synthetic 1536-dim vectors (bench/vector_index_vs_exact.py):
+        # x3 at LIMIT 10 kept 0.73-0.88 of the exact top 10 on 1M- and 500k-row
+        # reads. A leg whose top hits need more passes its own multiplier.
         fetch_multiplier = settings.vector_search_quantized_fetch_multiplier
     # With a `Quantized(...)` codec on the column this turns the scan into
     # codes-first + full-precision rescore of LIMIT x fetch_multiplier

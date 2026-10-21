@@ -58,7 +58,9 @@ async def test_lexical_union_and_trace_legs_carry_a_key_tie_breaker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_chunk_stage_two_carries_a_tie_breaker_and_stage_one_stays_index_shaped() -> None:
+async def test_chunk_stage_two_carries_a_tie_breaker_and_stage_one_stays_codes_first_shaped() -> (
+    None
+):
     from server.memory.app.retrieval.chunks import _search_memory_chunks
 
     ch = StubCH()

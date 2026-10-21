@@ -1,4 +1,4 @@
-"""The chunk leg is indexed and re-read like the fact leg.
+"""The chunk leg is a candidate read, then a re-read like the fact leg.
 
 Stage 1 must be the one query shape the codes-first read serves (bare ORDER BY
 cosineDistance LIMIT, no FINAL, no JOIN, identities only); stage 2 must be
@@ -139,7 +139,7 @@ async def test_stage_one_failure_is_logged_and_fails_open(caplog: pytest.LogCapt
 @pytest.mark.asyncio
 async def test_run_scope_reaches_both_chunk_stages() -> None:
     """A run-scoped search filters the chunk leg on run_id in
-    the index stage and the FINAL stage, mirroring the fact leg."""
+    the candidate stage and the FINAL stage, mirroring the fact leg."""
     from server.memory.app.retrieval.chunks import _search_memory_chunks
 
     ch = StubCH()
