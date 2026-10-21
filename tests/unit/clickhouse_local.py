@@ -43,8 +43,14 @@ def run(
     kept = ["--path", str(path)] if path else []
     # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
     out = subprocess.run(
-        [CLICKHOUSE or "clickhouse", "local", "--multiquery", "--session_timezone=UTC", *kept]
-        + binds,
+        [
+            CLICKHOUSE or "clickhouse",
+            "local",
+            "--multiquery",
+            "--session_timezone=UTC",
+            *kept,
+            *binds,
+        ],
         input=script + " FORMAT JSONEachRow",
         capture_output=True,
         text=True,

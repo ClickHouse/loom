@@ -198,12 +198,14 @@ async def test_a_user_export_carries_their_conversation_rows_and_audits_the_high
     the caller may not read is not, and each one whose text reads as high is
     labelled 'high' and audited as served."""
     key = "AKIA" + "ABCDEFGHIJKLMNOP"
+    seen_as_of: list[datetime] = []
 
     async def _conversations(
         org, scope_type, scope_value, *, include_tombstoned, limit, max_bytes, as_of, shown
     ):
         assert scope_type == "user_id" and scope_value == "u1" and include_tombstoned
         assert max_bytes == h.settings.erasure_export_conversation_max_bytes
+        seen_as_of.append(as_of)
         stored = [
             _turn(STD, "m-saved", "the renewal clause", saved=True),
             _turn(STD, "m-turn", f"my key is {key}"),
@@ -232,6 +234,8 @@ async def test_a_user_export_carries_their_conversation_rows_and_audits_the_high
     out = await h.handle_erasure_export(
         ErasureExportInput(org=ORG, scope_type="user_id", scope_value="u1", requester="ops@x")
     )
+    # Turns are read as of the moment the archive is stamped with.
+    assert seen_as_of == [out.exported_at]
     rows = out.conversations.rows
     assert [(r["msg_id"], r["is_saved"], r["sensitivity"]) for r in rows] == [
         ("m-saved", True, ""),
@@ -264,7 +268,7 @@ async def test_a_namespace_export_marks_conversations_truncated_past_the_byte_bu
     async def _conversations(
         org, scope_type, scope_value, *, include_tombstoned, limit, max_bytes, as_of, shown
     ):
-        assert (scope_type, scope_value, limit) == ("namespace", STD, 11)
+        assert (scope_type, scope_value, limit) == ("namespace", STD, 10)
         return [_turn(STD, "m-1", "first")], True
 
     monkeypatch.setattr(h.erasure_exports, "export_conversations", _conversations)
@@ -568,3 +572,36 @@ def test_two_measured_copies_of_one_turn_are_both_served() -> None:
         )
     )
     assert [r["is_saved"] for r in got] == [True, False] and not left_out
+
+
+def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() -> None:
+    """The size pass reads one row past `limit` to say more exist; the text read asks
+    only for the `limit` rows served."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    def turn(msg: str) -> dict:
+        return {"namespace": STD, "thread_id": "t1", "ts": datetime(2026, 1, 1), "msg_id": msg}
+
+    class _Full:
+        async def query_all(self, sql, params=None, **_k):
+            if "bytes_before_previous" in sql:
+                assert params["lim"] == 3
+                return [{**turn(m), "bytes_before": 0} for m in ("m1", "m2", "m3")]
+            assert params["kept"] == 2 and params["last_mid"] == "m2"
+            return [turn("m1"), turn("m2")]
+
+    got, left_out = asyncio.run(
+        exports.export_conversations(
+            ORG,
+            "namespace",
+            STD,
+            include_tombstoned=True,
+            limit=2,
+            max_bytes=100,
+            as_of=_AS_OF,
+            ch=_Full(),
+        )
+    )
+    assert [r["msg_id"] for r in got] == ["m1", "m2"] and left_out

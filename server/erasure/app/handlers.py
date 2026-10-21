@@ -270,20 +270,17 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit,
         shown=shown,
     )
-    turns, over_budget = await erasure_exports.export_conversations(
+    turns, conv_trunc = await erasure_exports.export_conversations(
         input.org,
         input.scope_type,
         input.scope_value,
         include_tombstoned=input.include_tombstoned,
-        limit=input.section_limit + 1,
+        limit=input.section_limit,
         max_bytes=settings.erasure_export_conversation_max_bytes,
         as_of=now,
         shown=shown,
     )
-    conv_rows, conv_count, conv_trunc = await _labelled_page(
-        turns, input.section_limit, _CONVERSATION_TEXT
-    )
-    conv_trunc = conv_trunc or over_budget
+    conv_rows, conv_count, _ = await _labelled_page(turns, input.section_limit, _CONVERSATION_TEXT)
     threads = await erasure_exports.export_conversation_threads(
         input.org,
         input.scope_type,

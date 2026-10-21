@@ -134,9 +134,9 @@ async def export_conversations(
     ch: _CHClient | None = None,
 ) -> tuple[list[ConversationExportRow], bool]:
     """Read loom.conversations rows (transcript turns and saved messages) in one
-    namespace, or the ones one user owns, oldest first per thread, and whether
-    rows past `max_bytes` of text were left out. Only turns stamped no later than
-    `as_of` (the export's start) are read.
+    namespace, or the ones one user owns, oldest first per thread: at most `limit`
+    of them, and whether rows past `limit` or past `max_bytes` of text were left
+    out. Only turns stamped no later than `as_of` (the export's start) are read.
 
     A turn has no size cap, so the rows stop once the text before a row reaches
     `max_bytes`. The first statement finds where they stop from the text lengths
@@ -182,9 +182,10 @@ async def export_conversations(
         WHERE bytes_before_previous < {{max_bytes:UInt64}}
         ORDER BY {_CONVERSATION_ORDER}
         """,
-        params={**params, "lim": int(limit), "max_bytes": int(max_bytes)},
+        # One row past `limit` says more exist; its text is never read.
+        params={**params, "lim": int(limit) + 1, "max_bytes": int(max_bytes)},
     )
-    kept = [s for s in sizes if int(s["bytes_before"]) < max_bytes]
+    kept = [s for s in sizes if int(s["bytes_before"]) < max_bytes][:limit]
     if not kept:
         return [], False
     last = kept[-1]
