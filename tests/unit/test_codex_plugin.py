@@ -265,8 +265,6 @@ def test_both_plugins_link_the_data_handling_section() -> None:
 def test_listing_links_into_the_repository_resolve() -> None:
     """The registry listing and both plugin manifests publish absolute links into this
     repository, which the doc-link check does not follow; a renamed file breaks them."""
-    import re
-
     text = "".join(
         (ROOT / f).read_text()
         for f in (
