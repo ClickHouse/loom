@@ -2020,7 +2020,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `last_messages` | `list[_Message]` | *(computed)* | Prior turns from the SAME session not being extracted this call — lets the extractor resolve pronouns/follow-ups/cross-turn references without re-extracting earlier facts. |
 | `extraction_instructions` | `str` | `''` | Per-request extraction-prompt suffix for workload-specific tuning. |
 | `coverage_sweep` | `bool \| None` | `None` | The coverage sweep (turn- and sentence-level second reading) per call — None = the namespace, then the density gates. |
-| `agent_learnings` | `bool \| None` | `None` | False turns off filing the assistant's rules about its own behaviour as learnings candidates for this call. |
+| `agent_learnings` | `bool \| None` | `None` | None follows the deployment setting memory_extract_agent_learnings (default off), which files the assistant's rules about its own behaviour as learnings candidates; false turns filing off for this call, and true while the setting is off… |
 | `pipeline_steps` | `list[dict[str, Any]]` | *(computed)* | Per-call workflow override. |
 | `valid_at` | `datetime \| None` | `None` | Fallback valid_at for facts the extractor didn't anchor itself. |
 | `defer` | `bool` | `False` | Capture now, extract later. |

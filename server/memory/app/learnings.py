@@ -192,7 +192,7 @@ async def handle_learnings_review(
     # so it answers as a missing candidate does.
     agent_rule = row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND
     support: list[dict[str, Any]] = []
-    if row is not None and agent_rule:
+    if agent_rule:
         support = await learnings_repo.supporter_stats(
             input.org, input.namespace, [str(row["candidate_id"])]
         )

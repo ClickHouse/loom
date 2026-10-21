@@ -94,7 +94,7 @@ request's `(org, namespace, agent)`:
   a row to `loom.learnings_supporters` with the end user, the session and that user's
   own quotes: the user turn before the cited assistant turn (up to 200 characters, blank
   when the extractor cites none) and the rule as said,
-  the span the extractor cited or the assistant turn (up to 400). A rule that matches a
+  the span the extractor cited, else the assistant turn, else the rule itself (up to 400). A rule that matches a
   blacklist pattern, or reads as a credential, is never filed, and a quote that does is
   stored blank. The supporter row is
   written first, then the candidate row again, at version 1, with every new supporter.
