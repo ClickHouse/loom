@@ -27,7 +27,8 @@ class ExtractionPolicySetInput(BaseModel):
     # `org` sets the org's own policy, which every namespace follows (`namespace` ignored);
     # `namespace` sets the rules that namespace adds to it.
     scope: Scope
-    # The namespace a `namespace`-scoped policy is for; ignored for scope `org`.
+    # The namespace a `namespace`-scoped policy is for; ignored for scope `org`. It covers
+    # that namespace only, not its child collections; a rule for a subtree goes in the org's.
     namespace: str = ""
     # The rules in plain language, at most 4,096 characters; replaces the scope's policy.
     policy: str = Field(..., min_length=1, max_length=MAX_CHARS)

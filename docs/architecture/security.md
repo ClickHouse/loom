@@ -670,10 +670,13 @@ addendum, in a delimited block that states it outranks them and the messages. Th
 deterministic passes that would add rows the model left out, or copy from the raw turns
 what the model did not write, do not run under a policy, and the response says so
 (`under_operator_policy`). The rule is given to the model, not checked against what it
-returns; verbatim evidence, chunks and observations are stored as sent. Passes that
-derive from memories already written under the policy, not from raw text (period
-digests, profile consolidation, contrast reflections and the structured profile worker
-in `server/memory/workers/structured_profile.py`), do not add it. The
+returns; verbatim evidence, chunks and observations are stored as sent. Model passes
+over rows already stored rather than over raw text do not add it, such as period
+digests, profile consolidation, contrast reflections, `memory.consolidate` merges, the
+structured profile worker (`server/memory/workers/structured_profile.py`) and the
+entity extractor (`server/memory/workers/entity_extractor.py`); those rows include
+`memory.set` values, which no policy filtered. A namespace policy covers that namespace
+only, not its child collections. The
 [extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists
 the paths.
 

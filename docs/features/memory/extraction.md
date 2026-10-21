@@ -119,6 +119,8 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   to the org's). An extraction in a namespace runs under both, the org's rules first.
   The namespace is the one the request resolves to: an end user's `@me` runs under the
   policy set for their personal collection's name, and `@me` itself is refused as a scope.
+  A namespace policy covers that namespace only: a child collection does not inherit its
+  parent's, so a rule for a whole subtree belongs in the org's policy.
   `extraction_policy.get` returns a scope's policy and the `effective` text its
   extractions run under; `extraction_policy.clear` removes one scope's policy (clearing a
   namespace's leaves the org's in force). A policy is at most 4,096 characters.
@@ -146,9 +148,11 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   `contextualize=true`, and the conversation titler. The block stays last, after any
   retry addendum. The code plane's model-written file cards and chunk descriptions
   describe indexed source, not a conversation, and do not follow it. Neither do the
-  passes that derive from memories already written under the policy rather than from
-  raw text: period digests, profile consolidation, contrast reflections and the
-  structured profile worker (`server/memory/workers/structured_profile.py`).
+  model passes over rows already stored rather than over raw text, such as period
+  digests, profile consolidation, contrast reflections, `memory.consolidate` merges,
+  the structured profile worker (`server/memory/workers/structured_profile.py`) and
+  the entity extractor (`server/memory/workers/entity_extractor.py`). Those rows
+  include `memory.set` values, which no policy filtered.
 - **The trade-off.** While a policy is in force, the deterministic passes that add rows
   the model left out, or copy from the raw turns what the model did not write, do not
   run: recovered preferences, costs and ages; facts an assistant turn states as the

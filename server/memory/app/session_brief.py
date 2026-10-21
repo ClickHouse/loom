@@ -198,8 +198,9 @@ async def _revise_from_events(
     switched off before the first window was revised) the answer is None and
     nothing is written. An org switched off later keeps the windows already
     revised and stops there, like a failed window. When every window's call
-    failed, was held by an unread switch or did not parse, the save is refused
-    (503) so the client sends the events again."""
+    failed, was held by an unread switch or did not parse, it raises
+    BackendUnavailableError: a save of events alone is refused (503) so the
+    client sends them again, and one with the agent's sections saves those."""
     budget = int(settings.session_brief_window_chars)
     windows = sb.split_windows(
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
@@ -365,7 +366,12 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     if inp.sections is not None:
         base = prev
         if inp.events:
-            revised = await _revise_from_events(inp, prev, policy)
+            # The agent's own sections are saved even when no window could be
+            # revised under the policy, as when there is no model to call.
+            try:
+                revised = await _revise_from_events(inp, prev, policy)
+            except BackendUnavailableError:
+                revised = None
             base = revised.sections if revised is not None else prev
         rev = _Revision(sections=sb.overlay_sections(base, inp.sections), author="model")
     else:

@@ -255,8 +255,10 @@ is skipped while the rest are revised. A save of events alone with no model to c
 configured, `use_llm: false`, or the org's model calls switched off before its first
 window was revised) writes nothing and answers `changed: false`, `reason: "not-revised"`;
 an org switched off after some windows were revised keeps those windows and revises no
-more. A save whose every model call failed, was held by an unread switch or did not
-parse is refused with 503 for the client to send again.
+more. A save of events alone whose every model call failed, was held by an unread switch
+or did not parse is refused with 503 for the client to send again. A save that also
+carries the agent's `sections` writes them over the brief as it was in both cases, and
+takes nothing from the events.
 State sections are replaced on each revision; decisions, dead ends and done items
 accumulate. Every revision is kept in `loom.session_brief_revisions`; `revision=N` on
 `brief_get` reads one. A save that repeats the previous save's session and

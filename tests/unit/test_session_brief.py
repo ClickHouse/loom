@@ -1245,3 +1245,29 @@ def test_under_a_policy_agent_sections_with_events_and_no_model_overlay_the_brie
     assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
     assert "4111" not in json.dumps(stored, default=str)
     assert "src/billing/cards.py" not in json.dumps(stored, default=str)
+
+
+def test_under_a_policy_agent_sections_with_events_whose_every_call_fails_overlay_the_brief(
+    mem, monkeypatch
+) -> None:
+    """Every model call fails: the agent's own sections still go over the brief
+    as it was, as with no model, and no raw event is stored. An event-only save
+    in the same state is refused (above)."""
+    from server.memory.domain.session_brief import BriefSections
+
+    _saved_once(monkeypatch)
+    _policy("Never store payment card data.")
+    llm = _llm(monkeypatch, [RuntimeError("provider down")])
+    out = _save(
+        brief_key="k",
+        events=[E(kind="user", text=_CARD), E(kind="edit", path="src/billing/cards.py")],
+        sections=BriefSections(status="handed over"),
+        event_cursor="c2",
+    )
+    assert (out.changed, out.author) == (True, "model")
+    assert llm.calls
+    stored = mem._newest()["k"]
+    sections = json.loads(stored["sections"])
+    assert (sections["goal"], sections["status"]) == ("Ship the login fix", "handed over")
+    assert "4111" not in json.dumps(stored, default=str)
+    assert "src/billing/cards.py" not in json.dumps(stored, default=str)
