@@ -507,9 +507,11 @@ class MemoryClearInput(BaseModel):
 
     org: str
     namespace: str
-    # The user whose rows are cleared (`'-'` for rows with no user); `"*"` clears every user's.
+    # The user whose rows are cleared (`'-'` for rows with no user); `'*'` or unset clears
+    # every user's.
     user_id: str | None = None
-    # The agent whose rows are cleared; `"*"` clears every agent's.
+    # The agent whose rows are cleared; `'*'` clears every agent's, and unset clears every
+    # agent's over HTTP but only the calling client's over MCP.
     agent: str | None = None
     # Must equal the `user_id` or `agent` being cleared; anything else is a 400.
     confirm_subject: str = Field(..., min_length=1, max_length=256)

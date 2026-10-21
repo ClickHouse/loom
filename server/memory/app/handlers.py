@@ -1118,9 +1118,9 @@ async def _retire_derived(
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     """Bulk-tombstone for `memory.clear`.
 
-    Defenses: at least one of `user_id` / `agent` is required (a scope-less
-    clear is `erasure.request_namespace`'s job), and `confirm_subject` must
-    match one of them (guard against UI-dropdown accidents).
+    Defenses: a concrete `user_id` or `agent` is required (`"*"` opens that axis;
+    a scope-less clear is `erasure.request_namespace`'s job), and `confirm_subject`
+    must match a concrete one (guard against UI-dropdown accidents).
 
     Same tombstone semantics as `memory.delete`.
     """

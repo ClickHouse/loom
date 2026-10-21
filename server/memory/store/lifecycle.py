@@ -299,7 +299,9 @@ async def bulk_tombstone_scope(
     scope_sql = " AND ".join([*scope, "tombstoned_at IS NULL"])
     # Locked rows survive a clear: the memory table filters
     # on the lock in force; memory_embeddings has no lock columns, so it
-    # excludes the locked keys by subquery. What was left behind is reported
+    # excludes the locked rows by subquery, by full identity: a key locked under
+    # one agent or session must not keep another identity's cleared vectors live.
+    # What was left behind is reported
     # under the `locked_skipped` key (the handler lifts it out of the
     # per-table counts).
     from server.memory.domain.lock import locked_predicate, unlocked_predicate
@@ -315,7 +317,8 @@ async def bulk_tombstone_scope(
     }
     if locked_n:
         where_by_table["loom.memory_embeddings"] = (
-            f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
+            f"{scope_sql} AND (agent, user_id, session_id, memory_key) NOT IN "
+            "(SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL "
             f"WHERE {scope_sql} AND {locked_predicate()})"
         )
     # One timestamp for the whole clear, so the rows it tombstoned can be read back.

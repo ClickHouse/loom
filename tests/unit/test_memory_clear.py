@@ -231,6 +231,49 @@ async def test_clear_star_agent_tombstones_without_an_agent_filter(
 
 
 @pytest.mark.asyncio
+async def test_clear_star_user_tombstones_without_a_user_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The statement a star-user clear runs filters on the agent alone."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id="*", agent="bot", confirm_subject="bot"
+        )
+    )
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert "agent = {" in memory_alter.sql
+    assert "user_id = {" not in memory_alter.sql
+    assert "uid" not in memory_alter.params
+
+
+@pytest.mark.asyncio
+async def test_clear_keeps_vectors_only_for_the_locked_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key locked under one agent leaves the other agents' vectors of it to the clear."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 2}])
+    ch.install(monkeypatch)
+    out = await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id="u1", agent="*", confirm_subject="u1"
+        )
+    )
+    assert out.locked_skipped == 1
+    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
+    assert "(agent, user_id, session_id, memory_key) NOT IN" in emb_alter.sql
+    assert "SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL" in emb_alter.sql
+
+
+@pytest.mark.asyncio
 async def test_clear_refuses_star_as_confirm_subject() -> None:
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
