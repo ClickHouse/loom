@@ -1750,6 +1750,9 @@ class MemoryClient:
         "content_sha256"}` on hit, `{"updated": False, "reason": "not_found"}`
         when no live row carries the key, and raises on 409 AMBIGUOUS_KEY
         (detail lists the candidate rows) or PRECONDITION_FAILED.
+
+        `run_id` stamps the revision with a run; unset, the active
+        `run_scope`'s.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,
