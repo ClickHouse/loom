@@ -1723,6 +1723,9 @@ class ErasureSettings(BaseModel):
     # Seconds erasure waits for this replica's buffered events before deleting them;
     # a timeout leaves the saga retryable. Must be positive and finite.
     erasure_event_drain_timeout_s: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    # Bytes of conversation text after which `erasure.export` stops its `conversations`
+    # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
+    erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
 
     # ---- external erasure backends ----
     # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse

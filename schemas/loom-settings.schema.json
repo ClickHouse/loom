@@ -2307,6 +2307,12 @@
           "type": "number",
           "description": "Seconds erasure waits for this replica's buffered events before deleting them; a timeout leaves the saga retryable. Must be positive and finite."
         },
+        "erasure_export_conversation_max_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it."
+        },
         "erasure_mutation_wait_s": {
           "default": 3600,
           "type": "integer",

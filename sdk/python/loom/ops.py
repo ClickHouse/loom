@@ -8835,6 +8835,8 @@ class ErasureExportOutput(TypedDict, total=False):
     counts: Required[dict[str, int]]
     memory: Required["ErasureExportSection"]
     knowledge: Required["ErasureExportSection"]
+    conversations: Required["ErasureExportSection"]
+    conversation_threads: Required["ErasureExportSection"]
     agent_events: Required["ErasureExportSection"]
     audit_log: Required["ErasureExportSection"]
 
