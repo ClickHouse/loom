@@ -330,6 +330,40 @@ async def _file(state: WorkflowState, fact: dict[str, Any] | None = None) -> int
     return await assistant_learnings.file_assistant_rules(state, [fact or _rule_fact()])
 
 
+_ORDER_MESSAGES = [
+    {
+        "role": "user",
+        "content": "I lost my order number. Can you tell me the order details without it?",
+    },
+    {"role": "assistant", "content": "I never share an order's details without its order number."},
+]
+
+
+@pytest.mark.asyncio
+async def test_a_rule_keeps_its_assistant_citation_when_the_user_turn_shares_its_words(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rule = _rule_fact(
+        key="assistant_rule_order_details",
+        value="The assistant never shares an order's details without its order number.",
+    )
+    # The user turn shares four content words with the rule; the rule still cites
+    # the assistant turn that said it.
+    (extracted,) = [
+        f for f in await _extract(monkeypatch, rule, _ORDER_MESSAGES, True) if f.about == "agent"
+    ]
+    assert extracted.source_message_indices == [1]
+    fact = {
+        "key": extracted.memory_key,
+        "value": extracted.value,
+        "about": extracted.about,
+        "source_message_indices": list(extracted.source_message_indices),
+    }
+    assert await _file(_state("alice", "s1", messages=list(_ORDER_MESSAGES)), fact) == 1
+    (row,) = queue.rows.values()
+    assert row["memory_key"] == "assistant_rule_order_details"
+
+
 @pytest.mark.asyncio
 async def test_a_rule_is_filed_once_and_each_session_adds_one_supporter_row(queue: _Queue) -> None:
     assert await _file(_state("alice", "s1")) == 1
@@ -738,11 +772,22 @@ _NEVER_ESCALATES = "The assistant never escalates any refund over $500 to a huma
         ("Always escalate my refund over $500 to a human.", _NEVER_ESCALATES, False),
     ],
 )
+@pytest.mark.parametrize("indices", [[1], [3, 1]])
 def test_a_request_is_agreed_only_when_it_asks_what_the_rule_says(
-    asked: str, value: str, agreed: bool
+    asked: str, value: str, agreed: bool, indices: list[int]
 ) -> None:
-    messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": _RULE}]
-    assert assistant_rules.user_requested(_rule_fact(value=value), messages, [1]) is agreed
+    messages = [
+        {"role": "user", "content": asked},
+        {"role": "assistant", "content": _RULE},
+        {"role": "user", "content": "Thanks, and where is my parcel?"},
+        {"role": "assistant", "content": f"It ships today. {_RULE}"},
+    ]
+    # A rule cited at turn 3 before turn 1 is read from its earliest turn: the
+    # request is the user turn before turn 1.
+    fact = _rule_fact(value=value, source_message_indices=indices)
+    cited = assistant_rules.cited_assistant_turns(fact, messages)
+    assert cited == sorted(indices)
+    assert assistant_rules.user_requested(fact, messages, cited) is agreed
 
 
 # Built at runtime so the secret scanner does not read it as a leaked key.

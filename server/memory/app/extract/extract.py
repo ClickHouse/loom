@@ -379,9 +379,10 @@ def _settle_facts(
     timestamps, suffix and attribute normalisation, relative-date grounding,
     speakers, code facets, index links, the grounding grade and speaker
     attribution. Without `from_turns` (an operator policy) nothing is taken
-    from the turns past what the model wrote. The assistant's `rules` get only
-    citation repair, since a key rewrite would rekey a rule each session, and are
-    returned after the facts. Pure."""
+    from the turns past what the model wrote. The assistant's `rules` get no
+    pass and are returned after the facts: a key rewrite would rekey a rule each
+    session, and citation repair scores only user turns, so it would move a rule's
+    citation off the assistant turn it must cite. Pure."""
     # Entity-stable key rewrite: turn a concept-level key
     # (`user_task_status`) into an entity-prefixed one (`pr107585_status`)
     # when the fact carries a salient identifier. Applied here so every
@@ -402,7 +403,6 @@ def _settle_facts(
     # (the backstop, timestamps, speakers, grounding grade, code facets),
     # with or without an observation date.
     facts = _repair(facts, messages)
-    rules = _repair(rules, messages)
     # Deterministic temporal-anchor backstop: prompt-level resolution is
     # the primary path; this catches facts where the model kept a
     # closed-class relative qualifier verbatim and emitted no anchor.

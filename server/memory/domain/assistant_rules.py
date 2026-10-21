@@ -64,20 +64,22 @@ def _bounded(text: str, limit: int) -> str:
 
 
 def cited_assistant_turns(fact: dict[str, Any], messages: list[dict[str, Any]]) -> list[int]:
-    """The assistant turns among the rule's `source_message_indices`. A rule that
-    cites none is not something the assistant said."""
-    return [
-        i
-        for i in fact.get("source_message_indices") or []
-        if 0 <= i < len(messages) and messages[i].get("role") == "assistant"
-    ]
+    """The assistant turns among the rule's `source_message_indices`, earliest
+    first. A rule that cites none is not something the assistant said."""
+    return sorted(
+        {
+            i
+            for i in fact.get("source_message_indices") or []
+            if 0 <= i < len(messages) and messages[i].get("role") == "assistant"
+        }
+    )
 
 
 def cited_texts(
     fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]
 ) -> tuple[str, str]:
     """What one supporter's conversation shows a reviewer, whole: the user turn
-    before the first of the `cited` assistant turns, and the rule as said. `said`
+    before the earliest of the `cited` assistant turns, and the rule as said. `said`
     quotes only an assistant turn or the rule itself: the evidence span when a
     cited assistant turn contains it, else that turn, else the rule. Checked
     whole, then cut by `bounded_quotes`."""
@@ -87,7 +89,7 @@ def cited_texts(
         said = evidence
     else:
         said = turns[0]
-    return _user_turn_before(messages, cited[0]), said or str(fact.get("value") or "")
+    return _user_turn_before(messages, min(cited)), said or str(fact.get("value") or "")
 
 
 def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
@@ -179,7 +181,7 @@ def _negative(words: list[str]) -> bool:
 
 
 def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]) -> bool:
-    """Whether the user turn before the first cited assistant turn in `messages`
+    """Whether the user turn before the earliest cited assistant turn in `messages`
     (the session's earlier turns, then the request's) asks for the behaviour the
     rule states (an agreed request is the user's preference): a sentence whose
     requested words share at least two of the rule's words, and at least half of
@@ -188,7 +190,7 @@ def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: 
     is not agreed to, so its rule is filed. It reads English requests only; in
     other languages only the extraction prompt keeps an agreed request from being
     filed."""
-    asked = _user_turn_before(messages, cited[0])
+    asked = _user_turn_before(messages, min(cited))
     rule_words = _words(str(fact.get("value") or ""))
     rule = _stems(rule_words)
     for sentence in re.findall(r"[^.!?\n]+[.!?]*", asked):

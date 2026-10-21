@@ -88,7 +88,7 @@ Coding captures never use it.
 Behaviour the assistant agrees to at the user's request is the user's preference, not a
 rule of the bot: "always answer me in French" answered with "I will always answer you in
 French" is a memory about the user. A rule is not filed when a sentence of the user turn
-before its first cited assistant turn, in `messages` or the earlier `last_messages`,
+before its earliest cited assistant turn, in `messages` or the earlier `last_messages`,
 meets all three of these:
 
 - **It requests the behaviour.** It opens an imperative with "always", "never", "don't"
