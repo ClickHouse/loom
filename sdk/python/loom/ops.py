@@ -17511,7 +17511,7 @@ class WebhookInfo(TypedDict, total=False):
             ]
         ]
     ]
-    created_at: NotRequired[Optional[str]]
+    created_at: Required[str]  # date-time as ISO-8601 text
     secret_present: NotRequired[bool]
 
 

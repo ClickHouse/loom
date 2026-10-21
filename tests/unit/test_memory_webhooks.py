@@ -157,7 +157,7 @@ def test_an_event_type_outside_the_fixed_set_is_refused() -> None:
 def registry() -> dict[tuple[str, str], Any]:
     """This process's copy of the registry, fresh for the test."""
     hooks: dict[tuple[str, str], Any] = {}
-    app._registry._reset_for_tests(hooks, read=True, refresh_s=float("inf"))
+    app._registry._reset_for_tests(hooks, read_age_s=0.0, due_in_s=float("inf"))
     return hooks
 
 
@@ -177,7 +177,7 @@ def _registration(webhook_id: str, namespace: str = "chat", **over: Any) -> dict
 
 
 def _unread_registry() -> None:
-    app._registry._reset_for_tests({}, read=False, refresh_s=0.0)
+    app._registry._reset_for_tests({}, read_age_s=None, due_in_s=0.0)
 
 
 @pytest.mark.asyncio
@@ -295,7 +295,7 @@ async def test_a_change_made_during_a_read_reads_the_registry_again_on_the_next_
 @pytest.mark.asyncio
 async def test_a_loaded_copy_serves_while_a_refresh_is_under_way() -> None:
     hooks = {("acme", "chat"): (("wh1", frozenset(EVENT_TYPES)),)}
-    app._registry._reset_for_tests(hooks, read=True, refresh_s=0.0)  # due again
+    app._registry._reset_for_tests(hooks, read_age_s=0.0, due_in_s=0.0)  # due again
     async with app._registry._lock:  # another write is refreshing
         got = await asyncio.wait_for(app.subscribers("acme", "chat", "memory.written"), 1)
     assert got == ["wh1"]
@@ -377,6 +377,22 @@ async def test_a_users_erasure_names_the_erasure_only(
     assert [(r["namespace"], r["webhook_id"]) for r in rows] == [("chat", "wh1")]
     assert rows[0]["erasure_id"] == "er-1"
     assert rows[0]["user_id"] == "-" and rows[0]["memory_key"] == ""
+
+
+@pytest.mark.asyncio
+async def test_an_erased_event_names_no_principal(
+    monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
+) -> None:
+    registry[("acme", "chat")] = (("wh1", frozenset({"memory.erased"})),)
+    monkeypatch.setattr(app.provenance, "writer_actor", lambda *_: "human:dpo@acme.test")
+    token = app.request_id_var.set("r-1")
+    try:
+        ch = RecordingCH().install(monkeypatch)
+        await app.announce_erasure("acme", ["chat"], "er-1")
+    finally:
+        app.request_id_var.reset(token)
+    (row,) = ch.inserted("memory_webhook_outbox")
+    assert row["actor"] == "-" and row["request_id"] == ""
 
 
 @pytest.mark.asyncio

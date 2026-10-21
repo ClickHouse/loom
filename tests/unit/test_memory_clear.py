@@ -228,8 +228,8 @@ async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
 
     webhooks._registry._reset_for_tests(
         {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
-        read=True,
-        refresh_s=float("inf"),
+        read_age_s=0.0,
+        due_in_s=float("inf"),
     )
     monkeypatch.setattr(lifecycle, "CLEAR_PAGE_ROWS", 2)
     ch = _clear_ch(monkeypatch, [[row("a"), row("b")], [row("c")]])
@@ -260,8 +260,8 @@ async def test_clear_announces_before_the_embeddings_step(monkeypatch: pytest.Mo
 
     webhooks._registry._reset_for_tests(
         {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
-        read=True,
-        refresh_s=float("inf"),
+        read_age_s=0.0,
+        due_in_s=float("inf"),
     )
     cleared = {"agent": "bot", "user_id": "u1", "session_id": "-", "memory_key": "a"}
     ch = _clear_ch(monkeypatch, [[cleared]])
@@ -293,8 +293,8 @@ async def test_clear_with_a_failed_read_back_still_clears(monkeypatch: pytest.Mo
 
     webhooks._registry._reset_for_tests(
         {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
-        read=True,
-        refresh_s=float("inf"),
+        read_age_s=0.0,
+        due_in_s=float("inf"),
     )
 
     def fail(sql, params):

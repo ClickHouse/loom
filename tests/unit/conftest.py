@@ -454,9 +454,9 @@ def _no_memory_webhooks() -> Iterator[None]:
     `monkeypatch`: requesting it would set it up ahead of the settings guard."""
     from server.memory.app import webhooks
 
-    webhooks._registry._reset_for_tests({}, read=True, refresh_s=float("inf"))
+    webhooks._registry._reset_for_tests({}, read_age_s=0.0, due_in_s=float("inf"))
     yield
-    webhooks._registry._reset_for_tests({}, read=False, refresh_s=0.0)
+    webhooks._registry._reset_for_tests({}, read_age_s=None, due_in_s=0.0)
 
 
 @pytest.fixture(autouse=True)

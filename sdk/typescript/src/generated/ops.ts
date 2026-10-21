@@ -8525,7 +8525,7 @@ export interface WebhookInfo {
   url: string;
   secret_ref: string;
   events: Array<"memory.written" | "memory.revised" | "memory.tombstoned" | "memory.restored" | "memory.redacted" | "memory.erased">;
-  created_at?: string | null;
+  created_at: string; // date-time
   secret_present?: boolean;
 }
 

@@ -59,8 +59,9 @@ log = logging.getLogger(__name__)
 # webhook.deliveries says why: for a usable secret, and for a receiver to take them (a
 # receiver that is down, or one whose backlog never reached its turn).
 # memory_webhook_max_attempts lets an operator give up sooner.
-# not a setting: both derived from the tables' 3-day TTL (store.KEEP_DAYS)
+# not a setting: derived from the tables' 3-day TTL (store.KEEP_DAYS)
 SECRET_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=12)
+# not a setting: derived from the tables' 3-day TTL (store.KEEP_DAYS)
 DELIVERY_DEADLINE = timedelta(days=store.KEEP_DAYS) - timedelta(hours=6)
 USER_AGENT = "loom-memory-webhook/1"
 
@@ -289,8 +290,12 @@ async def _send(
                 skipped = await _skip_row(row, started)
             except Exception as e:  # noqa: BLE001 — one event's check must not stop the pass
                 # It keeps its lease and goes again once the lease ends.
-                log.warning("memory_webhook_deliver: %s not checked: %s", row["event_id"], e)
-                pass_context.note_failure(e, "history check")
+                log.warning(
+                    "memory_webhook_deliver: %s not checked before its POST: %s",
+                    row["event_id"],
+                    e,
+                )
+                pass_context.note_failure(e, "pre-send check")
                 return
             if skipped is not None:
                 finished.append(skipped)

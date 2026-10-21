@@ -101,12 +101,12 @@ async def _read_registry() -> Registry:
 
 # This process's copy of the registry. A failed read keeps the last copy for as
 # long as reads fail: an event goes to the webhooks last seen, never to none.
-_registry: PolledCopy[Registry] = PolledCopy("memory webhooks", {}, _read_registry, log)
+_registry: PolledCopy[Registry] = PolledCopy("memory webhooks", _read_registry, log)
 
 
 def forget_registry() -> None:
     """Read the registry again on the next write, for a change made here."""
-    _registry.forget()
+    _registry.note_change()
 
 
 async def _fresh_hooks() -> Registry:
@@ -161,8 +161,8 @@ def _outbox_row(
         "memory_key": str(change["memory_key"]),
         "memory_id": str(change["memory_id"]),
         "memory_version": int(change["version"]),
-        "actor": actor,
-        "request_id": request_id_var.get() or "",
+        "actor": change.get("actor", actor),
+        "request_id": change.get("request_id", request_id_var.get() or ""),
         "erasure_id": str(change.get("erasure_id", "")),
         "occurred_at": now,
     }
@@ -201,7 +201,8 @@ async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> No
 async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_id: str) -> None:
     """`memory.erased` once a saga completed: to the webhooks of `namespaces`,
     or of every namespace of the org for a user's erasure (None). The event
-    names the erasure, never the user or a key. A user's erasure reaches
+    names the erasure, never the user, a key or who asked for it (its actor
+    and request id are blank). A user's erasure reaches
     receivers whose namespaces never held the user, so `erasure.status` of a
     user_id saga answers only the org-wide view, never a receiver's token."""
     if namespaces is None:
@@ -213,6 +214,8 @@ async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_i
         "memory_key": "",
         "memory_id": "",
         "version": 0,
+        "actor": "-",
+        "request_id": "",
     }
     await announce(
         [
