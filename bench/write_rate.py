@@ -12,7 +12,8 @@ server (`--op`). `--target client` runs, in this process, the two inserts a
 `conversation.append` makes (`loom.conversations`, then
 `loom.conversation_embeddings`) with the settings the store sends (the turn
 batched with `batched_insert_settings()`, the embedding row committed), or with
-`--committed` as two committed inserts: the insert path alone, at rates one server process cannot serve. Both read the
+`--committed` as two committed inserts:
+the insert path alone, at rates one server process cannot serve. Both read the
 ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
 
 A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
@@ -175,10 +176,14 @@ async def _inserts_sent(since: float, until: float) -> dict[str, dict[str, int]]
         "GROUP BY table, async_insert ORDER BY table, async_insert",
         {"since": int(since), "until": int(until) + 2},
     )
+    # The log leaves out a setting sent at the server's default value, which is
+    # 1 on recent ClickHouse releases, so an unset value is that default.
+    row = await ch.query_one("SELECT default FROM system.settings WHERE name = 'async_insert'")
+    default = row["default"] if row else "0"
     out: dict[str, dict[str, int]] = {}
     for r in rows:
-        # An unset value is the server default, 0.
-        out.setdefault(str(r["table"]), {})[f"async_insert={r['async_insert'] or 0}"] = int(r["n"])
+        value = r["async_insert"] or default
+        out.setdefault(str(r["table"]), {})[f"async_insert={value}"] = int(r["n"])
     return out
 
 

@@ -133,7 +133,7 @@ def _in_request(event: AgentEvent) -> bool:
     return asyncio.run(run())
 
 
-def test_a_rule_named_event_is_committed_with_the_server_clock_before_the_answer(
+def test_a_rule_named_event_is_written_with_the_server_clock_before_the_answer(
     witness: tuple[_Recorder, list[AgentEvent]],
 ) -> None:
     ch, queued = witness

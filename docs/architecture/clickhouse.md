@@ -126,7 +126,8 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   `entity_vectors`, `memory_chunks`) stay committed: the codec refuses a vector of
   another width when the part is written (code 190), so one mis-sized row in a shared
   flush would fail every other insert in it. A write whose token names the row's
-  identity (`conversation.save_message`) stays committed too: a replicated table keeps the tokens of committed and of buffered
+  identity (`conversation.save_message`) stays committed too:
+  a replicated table keeps the tokens of committed and of buffered
   inserts apart, so every writer of one identity sends it the same way.
 - **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
   client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
