@@ -19,7 +19,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.domain.conversations import (
@@ -64,6 +64,9 @@ class ConversationTitlerConfig:
 @dataclass
 class ConversationTitlerResult:
     titled: int = 0
+    # Threads marked so they are never titled: the model's title, or every opening
+    # turn, read as a credential.
+    refused: int = 0
     skipped_titled: int = 0
     skipped_deleted: int = 0
     errors: int = 0
@@ -85,7 +88,9 @@ async def _make_title(
     cfg: ConversationTitlerConfig,
     llm: Any,
     existing: ThreadInsertRow | None = None,
-) -> bool:
+) -> Literal["titled", "refused"] | None:
+    """Title one thread. Says whether it stored a title, marked the thread refused, or
+    left it as it was (None) for a later pass."""
     turns = await conversation_repo.opening_turns(
         str(row["org"]), str(row["namespace"]), str(row["thread_id"]), limit=_OPENING_TURNS
     )
@@ -103,7 +108,8 @@ async def _make_title(
             # The thread is marked, so it stops taking one of the scan's slots on every
             # pass. With fewer turns it stays unmarked: a plain turn may still arrive.
             await _store_title(row, existing, "", refused=True)
-        return False
+            return "refused"
+        return None
 
     # Bind a cost accumulator, label the leg, and drain it into an AgentEvent
     # afterwards: `begin_op()` alone only gives `report_llm()` somewhere to
@@ -125,12 +131,12 @@ async def _make_title(
         )
     title = (getattr(out, "text", "") or "").strip().strip('"').strip()[:80]
     if not title:
-        return False
+        return None
     # A title that reads as a credential is never stored. The thread is marked instead,
     # so later passes do not pay for the same title again.
     refused = reads_high(title)
     await _store_title(row, existing, "" if refused else title, refused=refused)
-    return not refused
+    return "refused" if refused else "titled"
 
 
 async def _store_title(
@@ -205,8 +211,11 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 ):
                     result.skipped_titled += 1
                     continue
-                if await _make_title(row, cfg, llm, existing):
+                made = await _make_title(row, cfg, llm, existing)
+                if made == "titled":
                     result.titled += 1
+                elif made == "refused":
+                    result.refused += 1
             except customer.HOLDS:
                 continue  # a held call is no failure: the thread is titled once the org is back
             except Exception as e:
@@ -216,6 +225,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
         rec.outcome = {
             "candidates": len(candidates),
             "titled": result.titled,
+            "refused": result.refused,
             "skipped_titled": result.skipped_titled,
             "skipped_deleted": result.skipped_deleted,
             "errors": result.errors,

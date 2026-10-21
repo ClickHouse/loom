@@ -406,6 +406,10 @@ _HANDLER_ROWS = rows_by_substring(
             }
         ],
         "FROM loom.categories FINAL": [{"category_id": "c1", "name": "work", "description": ""}],
+        # conversation.threads: the page of threads, then the keyed read of their counts
+        # and last turns, so the titles lookup after them renders too.
+        "AS msg_count": [{"thread_id": "t1", "msg_count": 1, "first_seen": _DT, "last_seen": _DT}],
+        "{tids:Array(String)}": [{"thread_id": "t1", "n": 1, "last_turn": ("a", "user", "x")}],
         "count()": [{"n": 1}],
     }
 )
@@ -494,6 +498,7 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
         AGENT,
         scope=pinned,
         user_id="u1",
+        listed=1264,
         conversation_id="t1" if f else None,
         before=(_DT, "t1", "m1") if f else None,
         ch=ch,
@@ -761,6 +766,17 @@ async def _list_score(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
 
 
+async def _conversation_threads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """conversation.threads under each `fields` choice that changes the keyed read:
+    every field, the count alone, the last turn alone; across agents and for one."""
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app.conversations import handle_conversation_threads
+
+    await handle_conversation_threads(
+        ConversationThreadsInput(org=ORG, namespace=NS, agent=c["agent"], fields=c["fields"])
+    )
+
+
 async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The session-run ledger reads: the run under an id, the idle sweep, a
     run's spend over its window, and the time a re-sent turn is recorded with."""
@@ -784,6 +800,15 @@ def cases() -> list[Case]:
         )
         for name, module in HANDLER_MODULES
     ]
+    out.append(
+        Case(
+            "handlers.conversation_threads",
+            "server.knowledge.app.conversations",
+            _conversation_threads,
+            {"fields": (None, ["msg_count"], ["last_role"]), "agent": ("*", AGENT)},
+            rows=_HANDLER_ROWS,
+        )
+    )
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
     out.append(
         Case(

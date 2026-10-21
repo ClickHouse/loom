@@ -235,7 +235,7 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
     monkeypatch.setattr(repo, "insert_thread", fake_insert)
     res = await run_pass()
-    assert res.titled == 0 and len(prompts) == 1
+    assert (res.titled, res.refused, len(prompts)) == (0, 1, 1)
     [written] = writes
     assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
     assert "JSONExtractBool(metadata, {refused:String})" in ch.calls[0]
@@ -273,7 +273,7 @@ async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeyp
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
     monkeypatch.setattr(repo, "insert_thread", fake_insert)
     res = await run_pass()
-    assert (res.titled, prompts) == (0, [])
+    assert (res.titled, res.refused, prompts) == (0, 1, [])
     [written] = writes
     assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
 
@@ -292,7 +292,7 @@ async def test_a_thread_with_fewer_opening_turns_stays_unmarked_until_a_plain_tu
     _patch(monkeypatch, StubCH([_CAND], turns, None))
     writes = _capture(monkeypatch)
     res = await run_pass()
-    assert (res.titled, writes) == (0, [])
+    assert (res.titled, res.refused, writes) == (0, 0, [])
 
     _patch(monkeypatch, StubCH([_CAND], [*turns, *_TURNS], None))
     res = await run_pass()
