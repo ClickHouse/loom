@@ -52,12 +52,12 @@ from server.llm import client as llm_client
 from server.llm import customer
 from server.llm.json_text import strip_code_fence
 from server.memory.app import profile_schema as schema_app
+from server.memory.app.model_attribution import newest_subject
 from server.memory.domain import lock, profile_schema
 from server.memory.domain.profile_facts import fact_text, render_fold_input
 from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
 from server.memory.domain.provenance import pipeline_actor
 from server.memory.domain.sensitivity import is_high, value_reads_high
-from server.memory.domain.trust import subject_of
 from server.memory.store import profile_schemas, profile_sources
 from server.memory.store.profile_sources import Behind
 from server.observability import cost_accumulator
@@ -573,15 +573,8 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     used = [r["memory_id"] for r in rows]
     facts = render_facts(rows)
     answer: Any = {}
-    writer = max(
-        (r for r in rows if subject_of(str(r.get("actor") or ""))),
-        key=lambda r: int(r.get("version") or 0),
-        default={},
-    )
     with (
-        customer.for_org(
-            org, namespace=ns, subject=subject_of(str(writer.get("actor") or "")), user_id=user_id
-        ),
+        customer.for_org(org, namespace=ns, subject=newest_subject(rows), user_id=user_id),
         pipeline_actor(profile_sources.WORKER_ACTOR),
     ):
         if facts:

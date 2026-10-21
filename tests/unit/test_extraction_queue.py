@@ -510,6 +510,7 @@ async def test_extraction_status_counts_pending_and_failed(
             "updated_at": None,
         },
     ]
+    rows.append({**rows[1], "queue_id": "q4", "status": "held", "last_error": "held: wait"})
     captured: dict[str, Any] = {}
 
     async def _list(**kw):
@@ -520,8 +521,8 @@ async def test_extraction_status_counts_pending_and_failed(
     out = await mx.handle_memory_extraction_status(
         MemoryExtractionStatusInput(org="o", namespace="n", user_id="u1", status="")
     )
-    assert out.pending == 2 and out.failed == 1
-    assert [b.queue_id for b in out.batches] == ["q1", "q2", "q3"]
+    assert out.pending == 3 and out.failed == 1
+    assert [b.queue_id for b in out.batches] == ["q1", "q2", "q3", "q4"]
     assert captured["queue_id"] is None and captured["status"] is None
     assert captured["agent"] == "*"
     assert captured["scope"] == WHOLE_NAMESPACE  # the handler resolves and passes it

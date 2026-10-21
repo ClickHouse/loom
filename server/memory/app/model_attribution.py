@@ -46,3 +46,13 @@ def attribution_for(
         subject=subject_of(actor),
         user_id=str(row.get("user_id") or ""),
     )
+
+
+def newest_subject(rows: Sequence[Mapping[str, Any]]) -> str:
+    """The most recent principal writer among the rows sent to a model."""
+    writer = max(
+        (r for r in rows if subject_of(str(r.get("actor") or ""))),
+        key=lambda r: int(r.get("version") or 0),
+        default={},
+    )
+    return subject_of(str(writer.get("actor") or ""))

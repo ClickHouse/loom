@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 
 import server.memory.store as memory_repo
@@ -20,7 +21,9 @@ async def _connected(control_plane_url: str):
     await ch.disconnect()
 
 
-async def test_an_older_worker_reclaims_a_hold_when_its_lease_ends(monkeypatch) -> None:
+async def test_an_older_worker_reclaims_a_hold_when_its_lease_ends(
+    monkeypatch, control_plane_url, mint_test_token
+) -> None:
     ch = get_client()
     org = unique_org("held-queue")
     await queue.enqueue(
@@ -46,6 +49,15 @@ async def test_an_older_worker_reclaims_a_hold_when_its_lease_ends(monkeypatch) 
     )
     assert len(status) == 1 and status[0]["status"] == "held"
     assert await queue.pending_count(org=org, namespace="mem", ch=ch) == 1
+    token = mint_test_token(org=org, namespaces=["mem"], roles=["writer"])
+    async with httpx.AsyncClient(base_url=control_plane_url) as client:
+        response = await client.post(
+            "/v1/memory.extraction_status",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"org": org, "namespace": "mem", "status": "held"},
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["pending"] == 1
     monkeypatch.setattr(queue, "_now", lambda: datetime.now(UTC) - timedelta(seconds=1))
     await queue.mark_held(claimed[0], reason="refused", seconds=0, ch=ch)
     assert len(await ch.query_all(old_selection, params={"org": org})) == 1

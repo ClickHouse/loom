@@ -356,10 +356,11 @@ gateway.
   (`process:extraction-worker`, `process:cli:<command>`, `provenance.PIPELINE_ACTORS`) is no
   principal. A deferred `memory.set_from_messages` stores its enqueuer on the queue row; the
   entity extractor, the embedding worker, projection repair and the code-link judge read the
-  writer of the memory they work on; observe-extract takes the newest writer of the session's
-  observations, a profile fold and a structured profile build the newest writer of the facts
-  they read, reflection and the period digest the newest writer of the session's memories
-  (`memory_repo.session_writers`), and the conflict sweep the write's writer. Only a row that
+  writer of the memory they work on. Observe-extract, profile folds and structured profiles
+  take the newest principal writer among the observations or facts eligible for their prompt.
+  Version orders these writes, so an update counts as a new write. Reflection and the period
+  digest take the newest writer of the session's memories (`memory_repo.session_writers`);
+  the conflict sweep takes the write's writer. Only a row that
   records no principal (a conversation turn, a shared-scope vector) takes the agent whose own
   namespace it is in (owned by `sa:<trust>:<agent>`, the home its trust made on the agent's
   first token exchange). Only the deployment's own calls (`customer.system()`) name no one.

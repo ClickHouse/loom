@@ -123,9 +123,24 @@ def test_observe_extract_calls_for_the_agent_that_recorded_the_session(
 
     async def observations(session: Any, cfg: Any, ch: Any) -> list[Any]:
         return [
-            SimpleNamespace(actor=provenance.EXTRACTION_WORKER_ACTOR),
-            SimpleNamespace(actor=f"process:{AGENT_8}"),
-            SimpleNamespace(actor=provenance.cli_actor("observe")),
+            SimpleNamespace(
+                actor=provenance.EXTRACTION_WORKER_ACTOR,
+                sensitivity="normal",
+                value="a fact",
+                version=30,
+            ),
+            SimpleNamespace(
+                actor=f"process:{AGENT_8}", sensitivity="normal", value="prefers tea", version=20
+            ),
+            SimpleNamespace(
+                actor=provenance.cli_actor("observe"),
+                sensitivity="normal",
+                value="a fact",
+                version=40,
+            ),
+            SimpleNamespace(
+                actor="process:sa:cell-t1:agent-7", sensitivity="high", value="secret", version=50
+            ),
         ]
 
     async def distill(session: Any, observations: Any) -> Any:
@@ -223,10 +238,26 @@ def test_the_profile_fold_calls_for_its_facts_newest_writer(
 
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            return [{"value": "prefers tea", "since": "2026-01-01", "memory_id": "fact-1"}]
+            return [
+                {
+                    "value": "prefers tea",
+                    "since": "2026-01-01",
+                    "memory_id": "fact-1",
+                    "actor": f"process:{AGENT_8}",
+                    "version": 20,
+                },
+                {
+                    "value": "badge PIN is 4471",
+                    "since": "2026-01-02",
+                    "memory_id": "fact-2",
+                    "actor": "process:sa:cell-t1:agent-7",
+                    "version": 50,
+                },
+            ]
 
     class _LLM(FakeLLMClient):
         async def complete(self, *a: Any, **k: Any) -> Any:
+            assert "4471" not in k["user"]
             seen.append(await _sent())
             return await super().complete(*a, **k)
 
@@ -236,7 +267,12 @@ def test_the_profile_fold_calls_for_its_facts_newest_writer(
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _LLM())
     monkeypatch.setattr(pc, "emit_worker_cost_event_for", lambda **kw: None)
     monkeypatch.setattr(profile, "write_folded_section", write_section)
-    row = {"org": "acme", "namespace": AGENT_NS, "user_id": "u1", "writer": f"process:{AGENT_8}"}
+    row = {
+        "org": "acme",
+        "namespace": AGENT_NS,
+        "user_id": "u1",
+        "writer": "process:sa:cell-t1:agent-7",
+    }
     assert asyncio.run(
         pc._consolidate_identity(_CH(), row, pc.ProfileConsolidationConfig(model=""))
     )

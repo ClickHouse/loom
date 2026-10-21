@@ -214,11 +214,11 @@ async def _load_session_observations(
 
 
 def _writer(observations: list[Any]) -> str:
-    """Whom a session's distillation is for: the newest principal that recorded
-    its observations ('' when none did, and the session's namespace decides)."""
-    for o in reversed(observations):
-        if subject := subject_of(str(getattr(o, "actor", "") or "")):
-            return subject
+    """The newest principal whose observations can be sent to the model."""
+    for o in sorted(observations, key=lambda o: int(o.version), reverse=True):
+        if _sendable(o.sensitivity, o.value):
+            if subject := subject_of(str(getattr(o, "actor", "") or "")):
+                return subject
     return ""
 
 

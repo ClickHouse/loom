@@ -131,7 +131,11 @@ async def handle_memory_extraction_status(
         status=input.status or None,
         limit=input.limit,
     )
-    pending = sum(1 for r in rows if r.get("status") in extraction_queue.WAITING)
+    pending = sum(
+        1
+        for r in rows
+        if r.get("status") in (*extraction_queue.WAITING, extraction_queue.STATUS_HELD)
+    )
     failed = sum(1 for r in rows if r.get("status") == "failed")
     return MemoryExtractionStatusOutput(
         batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
