@@ -86,7 +86,8 @@ the role the table names: `platform_admin` for the deployment-wide routes
 act inside the one org their body names (a platform admin passes for any org). With
 auth off, every gate passes, but `settings.set` and the model routes still refuse a
 non-loopback Host and a cross-site Origin, so a web page cannot reach them through DNS
-rebinding. The Python SDK has one method per route,
+rebinding. A bot registered with `--platform-admin` holds that role in every token it gets
+([Bots and CI](../operations/sso.md#bots-and-ci)). The Python SDK has one method per route,
 `agent.deployment.routes.<name>(body)` (`sdk/python/loom/admin_routes.py`, generated from
 the same routes), and the curated `agent.deployment` methods over them.
 

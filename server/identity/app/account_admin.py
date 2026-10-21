@@ -338,10 +338,13 @@ def bot_from(
     jwks_uri: str = "",
     max_token_s: int = 3600,
     max_agents: int = 1000,
+    platform_admin: bool = False,
 ) -> machines.Machine:
     """A bot from what an operator gave; ValueError says what is wrong. With
     `agent_claim`, a trust whose agents each get their own subject and
-    namespace (server/auth/agents.py); its namespace roles are what they share."""
+    namespace (server/auth/agents.py); its namespace roles are what they share.
+    With `platform_admin`, every token it gets carries that role, which spans
+    every org: it names no namespace and tells no agents apart."""
     from server.auth.authz import GRANT_ROLES
 
     if not _BOT_NAME.fullmatch(name):
@@ -362,7 +365,12 @@ def bot_from(
             raise ValueError(f"a namespace role names one namespace, got {item!r}")
         ns_roles[ns] = role
     agent_claim = agent_claim.strip()
-    if not ns_roles and not agent_claim:
+    if platform_admin and agent_claim:
+        # One identity: an agent's token would carry the role for every agent.
+        raise ValueError("a platform-admin bot is one identity: it takes no agent claim")
+    if platform_admin and ns_roles:
+        raise ValueError("a platform-admin bot reaches every namespace: give it no namespace role")
+    if not ns_roles and not agent_claim and not platform_admin:
         raise ValueError("a bot needs at least one namespace role")
     wanted: dict[str, str] = {}
     for item in claims or []:
@@ -417,6 +425,7 @@ def bot_from(
         "jwks_uri": jwks_uri,
         "max_token_s": max_token_s,
         "max_agents": max_agents,
+        "platform_admin": platform_admin,
     }
 
 
@@ -463,7 +472,12 @@ async def create_bot(bot: machines.Machine, *, by: str, replace: bool) -> None:
             org=org,
             namespace="-",
             actor=by,
-            subject={"name": name, "key": bool(bot["public_keys"]), "issuer": bot["issuer"]},
+            subject={
+                "name": name,
+                "key": bool(bot["public_keys"]),
+                "issuer": bot["issuer"],
+                "platform_admin": bot["platform_admin"],
+            },
         )
     except Exception as e:  # noqa: BLE001 — the bot is saved; its caller must keep the key
         log.warning("bot %s saved, but its audit row was not: %s", name, e)

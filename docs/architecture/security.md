@@ -200,7 +200,11 @@ Each op declares `required_role`.
   `LOOM_PLATFORM_ADMINS` (`platform_roles` in `server/auth/login.py`). A handle matches a
   password account; an email matches only an OIDC-verified sign-in. Self-signup emails are
   unverified and never confer a role. An OAuth refresh re-derives the role and never
-  promotes.
+  promotes. A bot registered `--platform-admin` (by a platform admin or on the host) gets
+  it in every hour-long token, as a flat token over every namespace (`_machine_tokens` in
+  `server/auth/oauth.py`); such a bot names no namespace and tells no agents apart.
+  `loom mint-token --platform-admin` mints it only for an `sa:` subject and only with an
+  expiry.
 
 ### The gate
 

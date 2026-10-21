@@ -315,6 +315,37 @@ loom mint-token --subject sa:legacy --org acme --service-account \
   --namespace-role legacy=writer --json
 ```
 
+A system that administers Loom itself, such as a control plane that registers
+trusts and grants for its tenants, holds the `platform_admin` role as a bot.
+**Platform admin spans every org**: a token holding it passes every admin route
+and acts in any org, so give it to as few identities as you can, and prefer a
+trust (no secret to leak) to a key. `--platform-admin` registers such a bot; it
+takes no `--namespace-role` (its tokens cover every namespace) and no
+`--agent-claim` (it is one identity, never an agent's):
+
+```bash
+loom bot create --name controlplane --org acme --platform-admin \
+  --issuer https://cp.example/workload-identity --audience loom \
+  --claim sub=controlplane
+```
+
+Each proof still gets an hour-long token, for `sa:controlplane`, carrying the
+role; `loom bot disable` ends them as it ends any bot's. The flag can be set
+only by a platform admin (`"platform_admin": true` on `/v1/admin/bots.create`)
+or on the host, the `auth.machine_created` audit row records it, and
+`loom bot list` and `/v1/admin/bots.list` show it. A trust of the same issuer
+that tells agents apart must not be able to take the platform-admin trust's
+token: give each a claim the other's tokens cannot meet, such as distinct `sub`
+values (`sub=controlplane` for this one, `sub=tenants/<id>/agents/*` beside an
+exact `tenant_id` for a tenant's), or registration refuses the second one.
+Where a trust cannot be used, an operator mints an expiring platform-admin token
+for a service account instead; `--platform-admin` refuses a token without
+`--ttl-days`:
+
+```bash
+loom mint-token --platform-admin --subject sa:controlplane --org acme --ttl-days 30 --json
+```
+
 SSO does not affect bots or minted tokens. A token a person creates from a `loom
 login` or dashboard SSO session (`/v1/me/service_accounts`) lasts as long as
 they chose and belongs to them: revoking the person ends it. One a third-party

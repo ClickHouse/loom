@@ -1566,29 +1566,33 @@ async def _machine_tokens(
     this token. An agent's token names the trust as its parent: disabling the
     trust ends every agent's. It also names what the agent was granted
     (`agents.with_grants`); a revoked grant caps the claim at once
-    (`authz.claim_cap`)."""
+    (`authz.claim_cap`). A platform-admin bot's token carries that role and
+    every namespace, and no namespace roles, which the admin gates refuse."""
     from server.auth.revocation import subjects_revoked
 
     trust = machines.subject(m["name"])
     subject = agents.subject(m["name"], agent) if agent else trust
     if await subjects_revoked([trust, subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
-    ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
-    if agent:
-        ns_roles = await agents.with_grants(m, agent, ns_roles)
-    if not ns_roles:
-        raise OAuthError(
-            "invalid_client", 401, description="none of this bot's namespaces is active"
-        )
+    admin = m["platform_admin"] and not agent  # never an agent's (`bot_from`)
+    ns_roles: list[tuple[str, str]] = []
+    if not admin:
+        ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)
+        if agent:
+            ns_roles = await agents.with_grants(m, agent, ns_roles)
+        if not ns_roles:
+            raise OAuthError(
+                "invalid_client", 401, description="none of this bot's namespaces is active"
+            )
     jti, now = new_jti(), int(time.time())
     if ends - now < 30:  # its proof runs out (verify's leeway, a slow lookup)
         raise OAuthError("invalid_grant", description="the proof has run out")
     token = mint_token(
         subject=subject,
         org=m["org"],
-        namespaces=[ns for ns, _ in ns_roles],
-        roles=[],
-        ns_roles=dict(ns_roles),
+        namespaces=["*"] if admin else [ns for ns, _ in ns_roles],
+        roles=["platform_admin"] if admin else [],
+        ns_roles=None if admin else dict(ns_roles),
         ttl_seconds=ends - since,  # dated `since`, it ends when its proof does
         is_service_account=True,
         jti=jti,
@@ -1601,7 +1605,7 @@ async def _machine_tokens(
         org=m["org"],
         namespace="-",
         actor=subject,
-        subject={"jti": jti, **how},
+        subject={"jti": jti, **how, **({"platform_admin": True} if admin else {})},
     )
     return {"access_token": token, "token_type": "Bearer", "expires_in": ends - now}
 

@@ -87,6 +87,12 @@ def register_bot_cli(sub: Any) -> None:
         help="CI trust: the claim naming the agent (e.g. agent_id); each agent gets its own "
         "subject and namespace, made on its first sign-in",
     )
+    p_create.add_argument(
+        "--platform-admin",
+        action="store_true",
+        help="Its tokens carry the platform_admin role, which spans every org; it takes no "
+        "--namespace-role and no --agent-claim",
+    )
     p_create.add_argument("--replace", action="store_true", help="Replace a bot of the same name")
     p_create.set_defaults(func=_cmd_create)
     p_list = bot.add_parser("list", help="Every bot, active or disabled.")
@@ -123,6 +129,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             jwks_uri=args.jwks_uri,
             max_token_s=args.max_token_age,
             max_agents=args.max_agents,
+            platform_admin=args.platform_admin,
         )
     except (OSError, ValueError) as e:
         return _fail(str(e))
@@ -143,6 +150,8 @@ def _cmd_create(args: argparse.Namespace) -> int:
                 os.remove(args.generate_key)
             return _fail(str(e))
         print(f"bot {args.name}: tokens for {machines.subject(args.name)} in {args.org}")
+        if bot["platform_admin"]:
+            print("  ! platform_admin: its tokens act in every org")
         if bot["public_keys"]:
             key_file = args.generate_key or "<its private key>"
             print(f"  key:  LOOM_CLIENT_ID={args.name} LOOM_CLIENT_KEY_FILE={key_file}")
@@ -162,6 +171,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             proofs += [f"agents by {r['agent_claim']}"] * bool(r["agent_claim"])
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
+            roles = "platform_admin (every org)" if r["platform_admin"] else roles
             print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}")
         return 0
 
