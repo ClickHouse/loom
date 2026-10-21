@@ -81,12 +81,18 @@ def _read(base: str, token: str, ns: str, user: str | None) -> dict[str, Any]:
 
 async def _build(ns: str) -> None:
     """One worker pass over the test's namespace only, with a fresh scan: the worker
-    keeps a namespace's last scan for minutes, longer than a test waits."""
+    keeps a namespace's last scan for minutes, longer than a test waits. The pass
+    runs in this process, so the fake model is pinned here: a provider key in this
+    process's environment would otherwise send the facts to a real model."""
+    from server.llm import client as llm_client
+    from server.llm.fake import FakeLLMClient
     from server.memory.workers import structured_profile as sp
     from server.settings import settings
 
     sp._scans.pop((ORG, ns), None)
     with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(llm_client, "get_llm_client", lambda: FakeLLMClient())
+        mp.setattr(llm_client, "get_llm_client_for_model", lambda model: FakeLLMClient())
         mp.setattr(settings, "structured_profile_cooldown_seconds", 0)
         mp.setattr(settings, "structured_profile_max_users_per_pass", 50)
         result = await sp.run_pass(sp.StructuredProfileConfig(only=(ORG, ns)))

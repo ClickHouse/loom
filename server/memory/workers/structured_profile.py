@@ -22,7 +22,7 @@ build in flight the second half to finish. A user whose build failed is
 skipped for a while, longer after each failure, and so is a namespace whose
 scan or stored schema failed, until its wait is over or its schema changes. A
 user whose profile row refuses the write (locked, pinned, labelled `high`,
-over a limit, blacklisted) is skipped until their sources digest or the
+blacklisted) is skipped until their sources digest or the
 profile row's version changes (an unpin, an unlock), or
 `structured_profile_refusal_retry_seconds` pass.
 """
@@ -588,9 +588,9 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
                 memory_ids=used,
             )
         except (HTTPException, LoomServerError) as e:
-            # A 4xx from memory.set (a lock or pin set since the check, the char
-            # limit, the blacklist) refuses the same build again; anything else is a
-            # failure to retry.
+            # A 4xx from memory.set (a lock or pin set since the check, the
+            # blacklist) refuses the same build again; anything else is a failure
+            # to retry.
             status = e.status_code
             if 400 <= status < 500:
                 raise Refused(digest, profile_version, status) from e

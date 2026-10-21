@@ -213,8 +213,8 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   failure. A
   namespace whose scan or stored schema fails is counted and backs off the same way until
   the wait is over or its schema changes; a namespace that is waiting takes no place in
-  the pass. A build the profile row refuses (locked, pinned, labelled `high`, over its
-  size cap, blacklisted) is not retried until the user's memories or the profile row change (an
+  the pass. A build the profile row refuses (locked, pinned, labelled `high`,
+  blacklisted) is not retried until the user's memories or the profile row change (an
   unpin, an unlock, of a redacted row too), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
   a lock that lapses on its own is retried. Both waits are kept by the worker's process
   and start over when another process takes the worker lease. A pass that reaches every

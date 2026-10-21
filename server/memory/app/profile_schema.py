@@ -34,9 +34,6 @@ from server.memory.store import profile_sources
 from server.memory.store.rows import next_version
 from server.settings import settings
 
-# A profile of 64 long properties is longer than a free-text section's default cap.
-STRUCTURED_CHAR_LIMIT = 32768  # not a setting: the row bound for a typical profile
-
 
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:
     """Set the namespace's profile schema. A changed schema leaves every
@@ -131,9 +128,8 @@ async def write_structured_profile(
             value=value,
             tags=profile_sources.profile_tags(schema_sha256, sources_digest, source_count),
             valid_at=sources_read_at,
-            # conform already bounds the profile's shape; a longer one (escaped
-            # non-ASCII text) gets a bound that fits it instead of a refusal.
-            char_limit=max(STRUCTURED_CHAR_LIMIT, len(json.dumps(value))),
+            # No cap: conform already bounds the profile's shape.
+            char_limit=None,
             source_trace=f"profile.fold:{label}:" + ",".join(memory_ids),
         )
     )
