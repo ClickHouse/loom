@@ -149,7 +149,7 @@ The namespace's guide: Markdown its writers keep on what it holds, its key layou
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `found` | `bool` | False when the namespace has no guide, or its current revision cleared it. |
-| `revision` | `int` | The revision read; the current one is what `namespace.guide_set` takes as `expected_revision`. 0 when the namespace never had a guide. |
+| `revision` | `int` | The revision read, the current one being what `namespace.guide_set` takes as `expected_revision`; 0 when that revision (or any guide) does not exist. |
 | `content` | `str` | The guide in Markdown: what the namespace holds, its key layout, what its tags mean. |
 | `summary` | `str` | One line for directories (`namespace.browse`) and the session-start pack. |
 | `note` | `str` | The writer's note on what this revision changed. |

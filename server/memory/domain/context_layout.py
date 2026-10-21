@@ -204,9 +204,9 @@ def _stable_sections(input: Any) -> set[str]:
 
     working_memory, profile, namespace_health, namespace_guide and mentor never do.
     memory_stack seeds its knowledge and procedure layers from the situation or
-    query, so it is stable only
-    when neither is given. The memories section is stable only for the
-    zero-query startup recall (pins + recency); a query makes it a search.
+    query, so it is stable only when neither is given. The memories section is
+    stable only for the zero-query startup recall (pins + recency); a query makes
+    it a search.
     procedures, knowledge and conversations always need a query."""
     stable = {"working_memory", "profile", "namespace_health", "namespace_guide", "mentor"}
     seeded = bool((input.situation or input.query or "").strip())

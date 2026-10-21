@@ -88,7 +88,7 @@ def test_agents_edit_a_guide_by_revision_and_find_it(
     assert refused.status_code == 403
 
     got = _ok(control_plane_url, viewer, "namespace.get", base)
-    assert got["guide_revision"] == 3
+    assert (got["guide_revision"], got["guide_summary"]) == (3, "Per-account plan facts")
 
     browse = _ok(control_plane_url, viewer, "namespace.browse", {"org": org, "query": "plan facts"})
     [row] = [r for r in browse["rows"] if r["namespace"] == ns]

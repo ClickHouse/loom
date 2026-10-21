@@ -155,7 +155,7 @@ Reading a guide takes read access to its namespace, since a public row's visibil
 widens no read: `namespace.browse` shows the org each public namespace's summary, and
 the whole guide is for its members (`namespace.join`). In the dashboard, Spaces shows a
 public namespace's guide summary under its description, and the **Guide** menu item of
-a public namespace you belong to, or one you manage, opens the guide; a writer edits it
+a namespace you belong to opens the guide; a writer edits it
 there, saving from the revision they opened, as an agent does. A namespace erasure
 deletes every revision of its guide.
 
