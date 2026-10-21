@@ -83,9 +83,11 @@ shows the same namespace.
 - **A URL without `?namespace=`** opens the default namespace: the saved pick while the
   account can still reach it, else a namespace it administers (its personal namespace
   first, then its oldest admin grant), else its first claimed memory namespace. A token
-  that reaches only code indexes and tracker records opens the first of those.
+  that reaches only code indexes and tracker records opens the first of those on the
+  pages that need no memory namespace; a memory page then opens on none and says so.
 - **Back and Forward** never switch namespace: an entry made in another namespace opens
-  nothing it names, and the address names the page's namespace.
+  nothing it names, and the address names the page's namespace. The one exception is Back
+  from a tracker's Patterns board, which returns to the namespace its Open left.
 - **On the bare root**, `?view=` names the page by view id or path (`/?view=memories`,
   `/?view=admin/health`) and `?memory=<key>` opens that memory on Memories.
 - **A single sign-on** started on a page returns to it, within ten minutes.
