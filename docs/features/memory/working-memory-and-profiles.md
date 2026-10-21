@@ -204,10 +204,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   the wait is over or its schema changes; a namespace that is waiting takes no place in
   the pass. A build the profile row refuses (locked, pinned, over its size cap,
   blacklisted) is not retried until the user's memories or the profile row change (an
-  unpin, an unlock), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
+  unpin, an unlock, of a redacted row too), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
   a lock that lapses on its own is retried. Both waits are kept by the worker's process
   and start over when another process takes the worker lease. A pass that reaches every
-  namespace with a schema and finds nothing to build waits
+  namespace with a schema and finds no user behind waits
   `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` (600) before the next; one that reached
   only part of the rotation runs again at the worker's interval.
 - **Erasure.** A build writes nothing for a user with no facts and no profile row, so a

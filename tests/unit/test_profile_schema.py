@@ -430,6 +430,26 @@ async def test_an_unpinned_or_unlocked_profile_is_rebuilt() -> None:
 
 @_needs_ch
 @pytest.mark.asyncio
+async def test_an_unpin_of_a_redacted_profile_ends_its_refusal() -> None:
+    from server.memory.store.profile_sources import profile_tags
+
+    # A redact scrubbed the pinned head: it reads as no profile, and the build is
+    # refused at the head's version.
+    setup = [ddl("memory"), _fact(_A, "u1", "tz", "a")]
+    gone = {"pinned": "1", "redacted_at": "now()"}
+    redacted = await _profiles_for(setup, ["u1"], **gone)
+    digest, count = await _digest(_LocalCH(*setup), "u1")
+    at = {"u1": (digest, 1)}
+    assert await _behind(_LocalCH(*setup, *redacted), refused=at) == []
+    # The unpin copies the redaction forward but moves the head to version 2.
+    unpinned = _profile("u1", profile_tags(_SHA, digest, count), redacted_at="now()").replace(
+        "'profile', '{}', 1,", "'profile', '{}', 2,"
+    )
+    assert await _behind(_LocalCH(*setup, *redacted, unpinned), refused=at) == ["u1"]
+
+
+@_needs_ch
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "gone",
     [{"expires_at": "now() - 60"}, {"redacted_at": "now()"}, {"sensitivity": "'high'"}],

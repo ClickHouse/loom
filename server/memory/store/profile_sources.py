@@ -56,12 +56,17 @@ SOURCES_DIGEST = (
     "coalesce(valid_at, updated_at))))), 16, '0')"
 )
 
+# The head of the structured profile key, redacted or expired: what a write to the key
+# checks, and what an unpin or an unlock moves to a new version.
+_PROFILE_HEAD = """
+    agent = '-' AND session_id = '-' AND memory_key = {label:String}
+    AND memory_type = 'profile' AND tombstoned_at IS NULL
+"""
+
 # A live structured profile row: not deleted, expired or redacted. A 'high' row is
 # readable by key only, so profile.structured serves none and the worker rebuilds it.
-_LIVE_PROFILE = """
-    agent = '-' AND session_id = '-' AND memory_key = {label:String}
-    AND memory_type = 'profile' AND tombstoned_at IS NULL AND redacted_at IS NULL
-    AND sensitivity != 'high'
+_LIVE_PROFILE = f"""{_PROFILE_HEAD}
+    AND redacted_at IS NULL AND sensitivity != 'high'
     AND (expires_at IS NULL OR expires_at > now())
 """
 
@@ -193,17 +198,16 @@ async def profile_head_hold(
     scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> dict[str, Any] | None:
-    """The pin and lock of the user's structured profile key's head, redacted or
-    expired: a write to the key checks its head, not the row a reader is served."""
+    """The version, pin and lock of the user's structured profile key's head, redacted
+    or expired: a write to the key checks its head, not the row a reader is served."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "label": label}
     row: dict[str, Any] | None = await ch.query_one(
         f"""
-        SELECT pinned, lock_mode, lock_until
+        SELECT version, pinned, lock_mode, lock_until
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}
-          AND agent = '-' AND session_id = '-' AND memory_key = {{label:String}}
-          AND memory_type = 'profile' AND tombstoned_at IS NULL{scope_and(scope, params)}
+          AND {_PROFILE_HEAD}{scope_and(scope, params)}
         LIMIT 1
         """,
         params=params,
@@ -245,9 +249,9 @@ async def users_behind(
     One aggregate digests every user's current facts, so the answer is exact: a
     recall or a backfill changes no digest, and an edit, a revert, a restore, a
     restatement (a new `updated_at`), a deletion, an expiry or a passed `valid_to`
-    does. A rebuild waits out the
-    cooldown, except when the user has fewer sources than the profile was built
-    from (a deletion), and a user whose sources are all gone is behind too."""
+    does. A rebuild waits out the cooldown, except when the user has fewer sources
+    than the profile was built from (a deletion), and a user whose sources are all
+    gone is behind too."""
     ch = ch or _default_client()
     refused = refused or {}
     params: dict[str, Any] = {
@@ -265,9 +269,12 @@ async def users_behind(
     # `NOT has(p.tags, ...)` is true for a user with no profile, never NULL.
     # The scan reads a whole namespace's current facts: one that runs past these caps
     # fails (the worker counts it and backs the namespace off) instead of holding the pass.
+    # A refusal is keyed on the version of the key's head (`h`), redacted or expired, so
+    # an unpin or an unlock of a redacted head ends it; a user with no sources left has
+    # a live profile, and that is the head.
     sql = f"""
         SELECT if(s.user_id != '', s.user_id, p.user_id) AS who, s.digest AS digest,
-               p.version AS profile_version
+               if(h.user_id != '', h.version, p.version) AS profile_version
         FROM (
             SELECT user_id, {SOURCES_DIGEST} AS digest, count() AS n
             FROM loom.memory FINAL
@@ -284,6 +291,12 @@ async def users_behind(
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
               AND {_LIVE_PROFILE}{scope_and(scope, params)}
         ) AS p ON p.user_id = s.user_id
+        LEFT JOIN (
+            SELECT user_id, version
+            FROM loom.memory FINAL
+            WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
+              AND {_PROFILE_HEAD}{scope_and(scope, params)}
+        ) AS h ON h.user_id = s.user_id
         WHERE if(s.user_id != '', s.user_id, p.user_id) NOT IN {{skip:Array(String)}}
           AND (NOT has(p.tags, {{schema_tag:String}})
                OR (NOT has(p.tags, concat('profile_sources:', s.digest))

@@ -425,8 +425,9 @@ async def test_a_pinned_profile_is_refused_before_the_model_call(
 async def test_a_pin_on_a_redacted_head_is_refused_before_the_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A redacted head reads as no profile, but its pin still refuses the write.
-    pinned = {"pinned": 1, "lock_mode": "", "lock_until": None}
+    # A redacted head reads as no profile, but its pin still refuses the write, at the
+    # head's version.
+    pinned = {"version": 4, "pinned": 1, "lock_mode": "", "lock_until": None}
     written = _one_user(monkeypatch, head=pinned)
 
     async def no_call(*a: Any) -> dict[str, Any]:
@@ -435,7 +436,7 @@ async def test_a_pin_on_a_redacted_head_is_refused_before_the_model_call(
     monkeypatch.setattr(w, "_ask", no_call)
     with pytest.raises(w.Refused) as e:
         await w.build_profile(_ONE, "u1")
-    assert (e.value.digest, e.value.profile_version) == ("d1", 0) and written == []
+    assert (e.value.digest, e.value.profile_version) == ("d1", 4) and written == []
 
 
 @pytest.mark.asyncio
@@ -672,6 +673,24 @@ async def test_a_pass_that_spent_its_budget_on_current_profiles_is_not_idle(
     ctx = pass_context.begin("structured_profile")
     result = await w.run_pass(_cfg())
     assert result.namespaces_reached == 2 and not result.profiles_written
+    assert not ctx.idle
+
+
+@pytest.mark.asyncio
+async def test_a_pass_that_took_users_and_wrote_none_is_not_idle(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
+) -> None:
+    async def sources_moved(schema: w.ActiveSchema, user_id: str) -> int | None:
+        return None
+
+    monkeypatch.setattr(w, "build_profile", sources_moved)
+    # One namespace, reached whole: users are still behind in its scan list.
+    settings_override(structured_profile_max_users_per_pass=2)
+    ctx = pass_context.begin("structured_profile")
+    result = await w.run_pass(_cfg(only=("o1", "a")))
+    assert result.namespaces_reached == 1 and not result.profiles_written
     assert not ctx.idle
 
 

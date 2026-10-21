@@ -118,8 +118,8 @@ _SYSTEM = (
 
 class Refused(Exception):
     """The user's profile row will not take this build: a lock, a pin or a 4xx refusal.
-    `digest` and `profile_version` are what the build saw; the user waits until
-    either moves on."""
+    `digest` and `profile_version` (the version of the profile key's head, redacted
+    or not) are what the build saw; the user waits until either moves on."""
 
     def __init__(self, digest: str, profile_version: int, status: int) -> None:
         # status: the write's HTTP status, 0 for a lock or pin seen before the model call.
@@ -436,11 +436,13 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             users = _take(schema, budget) or []
             budget -= len(users)
             await _build_users(schema, users, result)
-        # Idle only when the rotation came round and this pass reached every namespace
-        # in its page: until then the namespaces left are reached at the busy interval.
+        # Idle only when the rotation came round, this pass reached every namespace in
+        # its page and took no user: a user taken but not written (current, sources
+        # moved, refused) may leave others behind in the scan list.
         wrapped = _wrapped(rows, start, page)
         reached_all = result.namespaces_reached == len(spaces)
-        if wrapped and reached_all and not result.profiles_written and not result.errors:
+        took_none = budget == page
+        if wrapped and reached_all and took_none and not result.errors:
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
     return result
@@ -477,7 +479,6 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
         # No profile to clear and nothing to build from: a user erased after the scan
         # listed them gets no new row.
         return None
-    profile_version = int(existing["version"]) if existing else 0
     if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
         return None  # built since the scan listed the user (another pass, another replica)
     # A pin or lock still holds on a head that was redacted or expired, which reads as
@@ -489,6 +490,8 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
         label=settings.structured_profile_label,
         scope=WHOLE_NAMESPACE,
     )
+    # A refusal is keyed on the head's version: an unpin or an unlock moves it on.
+    profile_version = int(hold["version"]) if hold else 0
     if _refuses_a_write(hold):
         raise Refused(digest, profile_version, 0)
     rows = await profile_sources.user_facts(
