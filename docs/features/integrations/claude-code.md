@@ -23,12 +23,12 @@ The plugin sends:
 
 - whatever the agent passes to a Loom MCP tool: memories it saves, search and code
   queries;
-- the repository's identity: the owner and name of each git remote, to find its code
-  index, and of the one that identifies the repository with every observation, run
-  record and session brief; the branch and `HEAD` commit, with each session brief; the
-  absolute working directory, with the run record; and the checkout's directory name, the
-  working subdirectory and a hash of the repository, which tag observations and session
-  memory;
+- the repository's identity. The owner and name of each git remote go to `code.repos`
+  to find its code index. The remote that identifies the repository goes with every
+  observation, run record and session brief, and so do the branch and `HEAD` commit with
+  each brief and the absolute working directory with the run record. The checkout's
+  directory name, the working subdirectory and a hash of the repository tag observations
+  and session memory;
 - prompts, to fetch recalled memories and code pointers for them;
 - each tool call's input, output or error (`observe.record`), and the paths of files read
   or edited, for the code shunt, file rules and blast radius; a symbol name taken from a
@@ -41,7 +41,8 @@ The plugin sends:
   80,000 characters of the session's Loom tool arguments and results
   (`LOOM_SESSION_MEMORY=off` stops it);
 - a run record (the first prompt as its goal, the last reply), a working-memory note
-  (goal, git status, files edited, last reply), a session brief and token usage;
+  (goal, git status, files edited, last reply), a session brief (asks, replies, commands,
+  errors, files read, todo lists, pull request and commit identifiers) and token usage;
 - after each edit in an indexed checkout, that file's uncommitted diff against `HEAD` (up to
   200,000 characters), to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
 - at Stop in an indexed checkout, the uncommitted diff of the files the session changed
@@ -62,10 +63,12 @@ The server keeps this in its own ClickHouse database. It passes text to an LLM o
 provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
 Deleting data is covered in [retention and erasure](../memory/retention-and-erasure.md).
 Two skills reach other services, each only when you ask for it. The `loom-status` skill
-can install Node.js from NodeSource or the system package manager (apk, Homebrew), and
+can install Node.js from NodeSource through apt, dnf or yum, or from apk or Homebrew, and
 runs that installer only after you agree. The `improve-loom-for-my-repo` skill searches
 the ClickHouse/loom GitHub issues for each finding it reports and, after you approve,
 files its report there, or adds it as a comment on the issue that already reports it.
+The issue is public, and names the namespace and the symbols and queries behind each
+finding.
 
 ## Requirements
 

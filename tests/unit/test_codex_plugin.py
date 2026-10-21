@@ -235,8 +235,10 @@ def test_listing_fields_name_files_the_plugins_ship() -> None:
     assert (CLAUDE / claude["icon"]).is_file()
     skill = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
     assert (ROOT / skill["icon"]).is_file()
-    face = codex["interface"]
-    assert (CODEX / face["logo"]).is_file() and (CODEX / face["composerIcon"]).is_file()
-    assert isinstance(face["defaultPrompt"], list) and 1 <= len(face["defaultPrompt"]) <= 3
-    assert all(len(p) <= 128 for p in face["defaultPrompt"])
-    assert claude["privacyPolicyUrl"] == face["privacyPolicyURL"]
+    interface = codex["interface"]
+    assert (CODEX / interface["logo"]).is_file() and (CODEX / interface["composerIcon"]).is_file()
+    assert (
+        isinstance(interface["defaultPrompt"], list) and 1 <= len(interface["defaultPrompt"]) <= 3
+    )
+    assert all(len(p) <= 128 for p in interface["defaultPrompt"])
+    assert claude["privacyPolicyUrl"] == interface["privacyPolicyURL"]

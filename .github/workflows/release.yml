@@ -634,7 +634,8 @@ jobs:
 
   mcp-registry:
     name: MCP Registry (io.github.ClickHouse/loom)
-    if: github.event_name == 'workflow_dispatch' && needs.version.outputs.prerelease != 'true'
+    # The listing links the repository and its icon, so it waits until both are public.
+    if: github.event_name == 'workflow_dispatch' && needs.version.outputs.prerelease != 'true' && !github.event.repository.private
     needs: [version, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
