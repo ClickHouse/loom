@@ -18,7 +18,7 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 | Codex                                                 | plugin: MCP tools, hooks, code shunt, skills            | `integrations/codex-plugin/`: [codex.md](codex.md)                                         |
 | Claude Desktop, Cursor, VS Code, Cline, Windsurf, Zed | MCP client config                                       | `loom install --client …`: [mcp-clients.md](mcp-clients.md)                                |
 | Cursor                                                | MCP tools + `sessionEnd` transcript hook                | `integrations/cursor/`: [cursor.md](cursor.md)                                             |
-| Any Agent-Skills client                               | the `loom-code` skill, no hooks                         | `skills/loom-code/`: [below](#coding-agents)                                               |
+| Any Agent-Skills client                               | the `loom` and `loom-code` skills, no hooks             | `skills/loom/`, `skills/loom-code/`: [below](#coding-agents)                               |
 | Aider, Continue, OpenCode, JetBrains AI               | transcript capture template                             | `integrations/generic/`: [below](#transcript-capture-hooks)                                |
 | Agents that only use shell grep                       | the grep shim                                           | `integrations/grep-shim/`: [grep-shim.md](grep-shim.md)                                    |
 | LangGraph, Strands Agents                             | Python SDK memory adapters; needs the framework         | `loom.integrations.langgraph`, `loom.integrations.strands`: [frameworks.md](frameworks.md) |
@@ -36,9 +36,9 @@ opt-in; one you leave unconfigured does nothing. They fall into three groups:
 - Plugins (MCP tools, session hooks, code shunt): [connect a coding agent](../../getting-started/connect-a-coding-agent.md),
   then [claude-code.md](claude-code.md) or [codex.md](codex.md).
 - Any other MCP client (`loom install --client …`): [mcp-clients.md](mcp-clients.md).
-- The `loom-code` skill alone, no hooks: `npx skills add ClickHouse/loom --skill loom-code`, or
-  `claude plugin install loom-code-skill@loom`. Install either the `loom` plugin or
-  `loom-code-skill`, not both; the plugin already ships the skill.
+- The `loom` and `loom-code` skills alone, no hooks: `npx skills add ClickHouse/loom --skill loom loom-code`,
+  or `claude plugin install loom-code-skill@loom`. Install either the `loom` plugin or
+  `loom-code-skill`, not both; the plugin already ships `loom-code`, and its other skills cover what `loom` says.
 
 ## Transcript capture hooks
 

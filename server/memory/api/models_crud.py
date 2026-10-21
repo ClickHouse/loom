@@ -646,16 +646,22 @@ class MemoryAutoRetirementsOutput(BaseModel):
 class MemoryClearInput(BaseModel):
     """Bulk-tombstone memories in one scope.
 
-    At least one of `user_id` or `agent` must be set; a scope-less clear
-    is refused at the handler (use erasure.request_namespace). `confirm_subject`
-    must equal one of the set scope values — guards against UI-dropdown accidents.
+    At least one of `user_id` or `agent` must name a concrete value other than `'-'`;
+    anything wider is refused at the handler (use erasure.request_namespace).
+    `confirm_subject` must equal one of those concrete values — guards against UI-dropdown
+    accidents.
     """
 
     org: str
     namespace: str
+    # The user whose rows are cleared (`'-'` for rows with no user); `'*'` or unset clears
+    # every user's.
     user_id: str | None = None
+    # The agent whose rows are cleared; `'*'` clears every agent's, and unset clears every
+    # agent's over HTTP but only the calling client's over MCP.
     agent: str | None = None
-    # Must equal the `user_id` or `agent` being cleared; anything else is a 400.
+    # Must equal the concrete `user_id` or `agent` being cleared (`'*'` and `'-'` never
+    # confirm); anything else is a 400.
     confirm_subject: str = Field(..., min_length=1, max_length=256)
 
 

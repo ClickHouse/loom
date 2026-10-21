@@ -176,6 +176,8 @@ async with bot.session("thread-42", user_id="u1") as s:
 
 `await bot.mentor()` asks the store what the agent's calls are missing (planes
 it never uses, with the counts behind each hint) and logs up to three hints.
+`await bot.guide()` returns how to use Loom as Markdown (`mentor.guide`), for the
+system prompt of an agent with no plugin; `part="reference"` lists every plane.
 
 ## Framework adapters
 

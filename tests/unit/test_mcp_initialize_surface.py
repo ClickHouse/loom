@@ -405,9 +405,20 @@ def test_the_coding_primer_sends_documents_through_loom_op() -> None:
     core = asyncio.run(mcp_primer._loom_primer_text(None, include_profile=False, toolset="core"))
     assert "`loom_knowledge_add`" not in coding
     assert "`loom_op` (op `knowledge.add`)" in coding
-    assert "`loom_knowledge_add`" in core and "loom_op" not in core
+    assert "`loom_knowledge_add`" in core and "(op `knowledge.add`)" not in core
     # The ops the coding listing carries keep their own tool.
     assert "`loom_memory_set`" in coding and "`loom_context_pack`" in coding
+
+
+def test_the_guide_is_named_at_initialize_except_on_the_compact_coding_form() -> None:
+    guide = "`loom_op` (op `mentor.guide`)"
+    for toolset in ("core", "readonly", None):
+        assert guide in asyncio.run(mcp._initialize_instructions(None, toolset)), toolset
+    # A coding agent re-reads its instructions every turn and its plugin carries the
+    # same guidance; the full primer (loom_activate, the prompt) still names the guide.
+    assert guide not in asyncio.run(mcp._initialize_instructions(None, "coding"))
+    full = asyncio.run(mcp_primer._loom_primer_text(None, include_profile=False, toolset="coding"))
+    assert guide in full
 
 
 @pytest.mark.parametrize(("toolset", "writes"), [("readonly", False), ("coding", True)])

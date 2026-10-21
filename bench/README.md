@@ -286,9 +286,13 @@ Latency, throughput and storage at scale.
   carries (`"<op> <request_id>"` / `"worker.<name>"`).
 - **`vector_precision.py`**, **`vector_index_health.py`**,
   **`vector_tenant_recall.py`**, **`ann_final_staleness.py`** — does a
-  narrower vector change results; is the HNSW index pruning anything; do
-  small tenants get the same top-k as brute force; does the index return
-  stale versions under FINAL.
+  narrower vector change results; would an HNSW index prune anything (no
+  table has one); do small tenants get the same top-k as brute force; does
+  an HNSW index return stale versions under FINAL.
+- **`vector_index_vs_exact.py`** — exact scan, codes-first and an HNSW index
+  on synthetic vectors under a tenant filter: whether the index runs, its
+  recall@10 and the bytes each read takes. Needs ClickHouse 26.8 or later and
+  the `clickhouse-connect` package.
 - **`search_switch_ab.py`** — a one-switch A/B on a running server.
 
 `scripts/ops/benchmark.py` (not in `bench/`) load-tests a single op: "does

@@ -1253,11 +1253,14 @@ class MemoryClient:
     ) -> dict[str, Any]:
         """Bulk-tombstone all memories in one scope. ADMIN role required.
 
-        At least one of `user_id` or `agent` must be provided.
-        `confirm_subject` must equal that value (or one of them, when
+        At least one of `user_id` or `agent` must name a concrete value
+        other than `'-'`; `"*"` on the other clears every user's or every
+        agent's rows.
+        `confirm_subject` must equal a concrete value (or one of them, when
         both are set) — defense against accidental clears.
 
-        Returns `{cleared_at, rows_affected: {table: count}, total}`.
+        Returns `{cleared_at, rows_affected: {table: count}, total, locked_skipped}`;
+        locked rows stay and are counted in `locked_skipped`.
         Tombstone-not-hard-delete: cleared rows are recoverable for the
         14-day grace window by re-writing the same key. For
         cross-system erasure use `erasure.request_user_id` or
@@ -1773,6 +1776,10 @@ class MemoryClient:
             payload["reason"] = reason
         if relations:
             payload["relations"] = [list(f) for f in relations]
+        # Inside a run_scope the revision belongs to the run, as every other write does.
+        run_id = current_run_id()
+        if run_id:
+            payload["run_id"] = run_id
         return await self._agent.transport.post("/v1/memory.update", payload)
 
     async def share(
