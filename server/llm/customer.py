@@ -69,8 +69,9 @@ class ModelCallsDisabled(LoomServerError):
 
 
 class SwitchUnread(BackendUnavailableError):
-    """This process's copy of the switch is too old to trust: no call is made
-    for an org until it is read, and a job leaves its rows as they are."""
+    """A fail-closed copy this process holds (the model-call switch, or the
+    extraction policies) is too old to trust: no call is made for an org until
+    it is read, and a job leaves its rows as they are."""
 
 
 # What require() holds a call with: a refusal, or a switch it cannot read. None

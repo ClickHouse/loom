@@ -42,7 +42,9 @@ async def test_typed_extraction_counts_every_token_count_of_every_call(monkeypat
     reply = '{"record": {"city": "Lisbon"}}'
     client = _Scripted(['{"present": true}', '{"fields": ["city"]}', reply])
     monkeypatch.setattr(typed, "get_llm_client", lambda: client)
-    record, usage = await typed.extract_typed_record_iterative(_MESSAGES, {"city": "string"})
+    record, usage = await typed.extract_typed_record_iterative(
+        _MESSAGES, {"city": "string"}, operator_policy=""
+    )
     assert client.calls == 3 and record.record == {"city": "Lisbon"}
     assert (usage.tokens_in, usage.tokens_out) == (300, 30)
     assert (usage.cached_input_tokens, usage.cache_write_input_tokens) == (120, 15)

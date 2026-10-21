@@ -202,14 +202,19 @@ def _cmd_sensitivity_sweep(args: argparse.Namespace) -> int:
 
 async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
     from server.memory.app import sensitivity_sweep as sweep
+    from server.settings import settings
 
     org = args.org or None
     ns = args.namespace or None
+    limit = args.limit
     report = await sweep.scan(
         org=org,
         namespace=ns,
         since_days=int(args.since_days or 0) or None,
-        limit=int(args.limit),
+        limit=limit,
+        # A small `--limit` still reads the scope in pages as large as the worker's.
+        page_size=max(limit, int(settings.sensitivity_sweep_max_rows_per_pass)),
+        pages=None,  # page through the whole scope, up to `--limit` candidates
         only_shapes=getattr(args, "only_shape", None) or None,
         ch=ch,
     )
@@ -218,7 +223,7 @@ async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
     print(
         f"{report.scanned} unlabelled row(s) matched the coarse shape filter"
         + (f" ({scope})" if scope else "")
-        + ("; LIMIT reached — re-run after applying" if report.truncated else "")
+        + ("; --limit candidates found — re-run after applying" if report.truncated else "")
     )
     print(
         f"detector would label {len(report.candidates)}: high={levels.get('high', 0)} "
@@ -291,6 +296,16 @@ async def _integrity_repair_run(ch: Any, args: argparse.Namespace) -> int:
     return rc if not any(counts.get(k, 0) for k in repo.GAUGES) else max(rc, 1)
 
 
+def _positive_int(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer") from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer")
+    return n
+
+
 def _add_sensitivity_sweep_parser(sub: Any) -> None:
     """`loom sensitivity-sweep`: the detector's late pass."""
     p_ssw = sub.add_parser(
@@ -308,14 +323,17 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
         "--since-days", type=int, default=0, help="Only rows created in the last N days (0 = all)"
     )
     p_ssw.add_argument(
-        "--limit", type=int, default=20000, help="Candidate rows read per run (default 20000)"
+        "--limit",
+        type=_positive_int,
+        default=20000,
+        help="Candidates found per run, labelled with --apply (default 20000)",
     )
     p_ssw.add_argument("--show", type=int, default=20, help="Namespaces to print")
     p_ssw.add_argument(
         "--only-shape",
         action="append",
         choices=["credential", "email", "phone", "other"],
-        help="Keep candidates carrying this probe shape (repeatable); the phone shape is "
+        help="Select only rows of this probe shape (repeatable); the phone shape is "
         "a ten-digit run and the noisiest, so apply credential + email first",
     )
     add_apply_flags(p_ssw, writes="write the labels")

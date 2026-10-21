@@ -127,8 +127,9 @@ stored and found (`server/memory/domain/memory_types.py`):
   and the response says so in `retyped_from`.
 - **Sensitivity.** A row with `sensitivity="high"` is never embedded, so no search leg
   finds it. It is readable by key only, and that read is audited. With `sensitivity`
-  unset the server detects credential shapes (`high`) and email or phone shapes
-  (`medium`) (`LOOM_MEMORY_SENSITIVITY_AUTODETECT`).
+  unset the server detects credential shapes, card numbers, US Social Security
+  numbers and stated PINs (`high`), and email, phone and IBAN shapes (`medium`)
+  (`LOOM_MEMORY_SENSITIVITY_AUTODETECT`).
 
 ## Status
 

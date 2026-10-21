@@ -238,6 +238,7 @@ async def _step_llm_extract(
             existing_memories=state.existing_memories or None,
             last_messages=last or None,
             custom_instructions=state.extraction_instructions,
+            operator_policy=state.operator_policy,
             judge=judge_enabled,
             namespace_categories=state.namespace_categories or None,
             coverage_sweep=sweep_override,
@@ -766,7 +767,9 @@ async def _forget_plan(
         state, forget_requests
     )
     # What the user said instead is written, never retired.
-    facts, keep, linked_old = replacement_facts(facts, forget_requests, candidates, state.messages)
+    facts, keep, linked_old = replacement_facts(
+        facts, forget_requests, candidates, state.messages, keep_said=not state.operator_policy
+    )
     forget_keys = forget_targets(facts + forget_requests, candidates, keep) | linked_old
     # A replacement's own key is retired only when a live row holds it (the
     # old version); otherwise the "retire" would be a no-op reported as forgotten.
@@ -786,9 +789,15 @@ async def _step_bulk_write(
     del config
     # The deterministic passes read the messages, not
     # the extractor's output — a session that is only "please forget X" /
-    # "got it" extracts to nothing and still has work here.
-    premise_facts = premise_facts_from_messages(
-        state.messages, state.extracted_facts, state.existing_memories
+    # "got it" extracts to nothing and still has work here. Under an operator
+    # policy every row comes from the model that was given it, so no premise
+    # fact is added from the raw turns.
+    premise_facts = (
+        []
+        if state.operator_policy
+        else premise_facts_from_messages(
+            state.messages, state.extracted_facts, state.existing_memories
+        )
     )
     state.premise_facts = len(premise_facts)
     if premise_facts:
