@@ -181,7 +181,8 @@ def test_the_candidate_id_is_one_per_agent_key_and_rule_text() -> None:
 
 
 def _quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
-    return assistant_rules.bounded_quotes(*assistant_rules.cited_texts(fact, messages))
+    cited = assistant_rules.cited_assistant_turns(fact, messages)
+    return assistant_rules.bounded_quotes(*assistant_rules.cited_texts(fact, messages, cited))
 
 
 def test_a_supporters_quotes_are_its_user_turn_then_the_cited_evidence() -> None:
@@ -199,12 +200,6 @@ def test_a_supporters_quotes_are_its_user_turn_then_the_cited_evidence() -> None
     # No user turn before the rule: no user quote.
     alone = [{"role": "assistant", "content": _RULE}]
     assert _quotes(_rule_fact(source_message_indices=[0]), alone) == ("", _RULE)
-    # No assistant turn cited: no user quote, and the rule itself, never the
-    # evidence, which could be a user's words.
-    later = [*_MESSAGES, {"role": "user", "content": "I live in Porto."}]
-    for indices in ([], [0, 2]):
-        fact = _rule_fact(evidence="I live in Porto.", source_message_indices=indices)
-        assert _quotes(fact, later) == ("", _VALUE)
     # Evidence no cited assistant turn contains: that turn, not the evidence.
     fact = _rule_fact(evidence="Can you refund my $800 order?", source_message_indices=[0, 1])
     assert _quotes(fact, _MESSAGES) == (asked, f"{_RULE} Someone will reply within a day.")

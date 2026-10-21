@@ -69,15 +69,14 @@ def _folded(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def cited_texts(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
+def cited_texts(
+    fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]
+) -> tuple[str, str]:
     """What one supporter's conversation shows a reviewer, whole: the user turn
-    before the cited assistant turn (blank when none is cited), and the rule as
-    said. `said` quotes only an assistant turn or the rule itself: the evidence
-    span when a cited assistant turn contains it, else that turn, else the rule.
-    Checked whole, then cut by `bounded_quotes`."""
-    cited = cited_assistant_turns(fact, messages)
-    if not cited:
-        return "", str(fact.get("value") or "")
+    before the first of the `cited` assistant turns, and the rule as said. `said`
+    quotes only an assistant turn or the rule itself: the evidence span when a
+    cited assistant turn contains it, else that turn, else the rule. Checked
+    whole, then cut by `bounded_quotes`."""
     turns = [str(messages[i].get("content") or "") for i in cited]
     evidence = str(fact.get("evidence") or "")
     if evidence and any(_folded(evidence) in _folded(turn) for turn in turns):

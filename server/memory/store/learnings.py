@@ -1,8 +1,9 @@
-"""Repository for loom.learnings_queue.
+"""Repository for loom.learnings_queue and loom.learnings_supporters.
 
-The human-review queue for verified-auto-promote candidates. RMT
-collapses on (org, namespace, candidate_id); status transitions are
-new INSERTs with bumped versions.
+learnings_queue holds one ReplacingMergeTree row per candidate version,
+collapsed on (org, namespace, candidate_id); a review writes a newer
+version. learnings_supporters holds one append-only row per (candidate,
+user, session) behind an `assistant_turn` rule, with that user's quotes.
 """
 
 from __future__ import annotations
