@@ -85,7 +85,8 @@ def payload_for(
     """Serialize a MemorySetFromMessagesInput for storage: the request minus
     `defer` (the replay must run inline), plus the enqueuing principal
     (`enqueued_by`, else the current request's `writer_actor()`) and the
-    request's resolved read `scope`. Returns (json, messages, chars)."""
+    request's resolved read `scope` and the agent a filed rule is for
+    (`rule_agent`, '' files nothing). Returns (json, messages, chars)."""
     from server.memory.app.provenance import writer_actor
 
     data = input.model_dump(mode="json", exclude={"defer"})

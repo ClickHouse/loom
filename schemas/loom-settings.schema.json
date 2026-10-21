@@ -3551,7 +3551,7 @@
         "memory_extract_agent_learnings": {
           "default": false,
           "type": "boolean",
-          "description": "Whether extraction files the rules an assistant states about itself as assistant_turn learnings candidates for review (never memories); a request can only turn it off. Turn it on only once no replica runs a build without it: such a build does not erase loom.learnings_supporters (docs/architecture/rolling-upgrades.md)."
+          "description": "Whether extraction files an assistant's rules about itself as learnings candidates for review, never memories; a request can only turn it off (rolling-upgrades.md rule 15)."
         },
         "memory_extract_coding_sweep_min_user_turns": {
           "default": 4,

@@ -1771,10 +1771,8 @@ class ExtractionSettings(BaseModel):
     # a structured-answer block and assistant-answer facts get a higher content_excerpt
     # ceiling. The value column is untouched; takes effect only on (re-)ingest.
     memory_capture_structured_answers: Annotated[bool, LIVE] = True
-    # Whether extraction files the rules an assistant states about itself as assistant_turn
-    # learnings candidates for review (never memories); a request can only turn it off.
-    # Turn it on only once no replica runs a build without it: such a build does not
-    # erase loom.learnings_supporters (docs/architecture/rolling-upgrades.md).
+    # Whether extraction files an assistant's rules about itself as learnings candidates for
+    # review, never memories; a request can only turn it off (rolling-upgrades.md rule 15).
     memory_extract_agent_learnings: Annotated[bool, LIVE] = False
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short

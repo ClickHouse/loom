@@ -171,7 +171,8 @@ def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: 
     """Whether the user turn before the first cited assistant turn asks for the
     behaviour the rule states (an agreed request is the user's preference): a
     sentence whose requested words share at least two of the rule's words, and at
-    least half of them."""
+    least half of them. It reads English requests only; in other languages only the
+    extraction prompt keeps an agreed request from being filed."""
     asked = _user_turn_before(messages, cited[0])
     rule = _stems(_words(str(fact.get("value") or "")))
     for sentence in re.findall(r"[^.!?\n]+[.!?]*", asked):

@@ -77,12 +77,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
     if row is not None and row["status"] != "pending":
         return False  # decided: support no longer changes anything
-    # A promoted rule is served back to the bot, which restates it in other words; a
-    # new wording under the key of a promoted rule is not filed again while that rule
-    # is served. Deleting its `learning://` document lets a revised rule be filed. A
-    # rule rejected before any promotion has no document, so it does not stop a
-    # different rule; one rejected after its promotion is still served until its
-    # document is deleted.
+    # A promoted rule comes back restated in new words; do not file it again.
     if row is None and await learnings_repo.rule_promoted(state.org, state.namespace, agent, key):
         record_drop(state.org, state.namespace, "learnings.file", "already_promoted", item=key)
         return False
@@ -115,11 +110,8 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
         )
     wrote = row is None or new_supporter
     if wrote:
-        # Written again with every new supporter, at version 1: an erasure that
-        # deleted the candidate after the read above (no supporter left yet) cannot
-        # leave this supporter without it, and any review's newer version outranks
-        # it, so a decision is never undone. It holds the rule and nothing of any
-        # user's conversation.
+        # Rewritten at version 1 so an erasure racing this filing cannot orphan the
+        # supporter; any review's newer version outranks it.
         await learnings_repo.insert_row(
             {
                 "candidate_id": cid,

@@ -94,7 +94,9 @@ and its requested words name the user as the one it is done to ("me" or "us"):
 over $500", "You never told me you escalate refunds over $500", "I called twice, never
 got my refund over $500"), a question about the policy ("Do you always escalate refunds
 over $500?", "Will you always escalate my refund over $500?") or a request on its topic
-("Please refund my order") asks for no behaviour, so the rule is filed.
+("Please refund my order") asks for no behaviour, so the rule is filed. The filter
+reads English requests only; in other languages only the prompt clause keeps an agreed
+request from being filed.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule
