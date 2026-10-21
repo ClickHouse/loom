@@ -530,14 +530,39 @@ def test_snippet_centres_a_deep_match_and_keeps_an_early_one_at_the_start() -> N
     assert _snippet(early, ["inc"]).startswith("INC-48213")
 
 
-def test_the_saved_message_cuts_follow_a_live_excerpt_length(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_the_saved_message_cuts_follow_a_live_excerpt_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A saved listing's excerpt and a lexical hit's snippet read
     conversation_search_excerpt_chars per call."""
-    from server.knowledge.app.conversations import _excerpt, _snippet
+    from server.knowledge.app import conversations
+    from server.knowledge.app.conversations import _snippet
+    from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS
+    from server.knowledge.store import conversations as conversation_repo
     from server.settings import settings
 
+    listed: list[object] = []
+
+    async def fake_list(*_a: object, **kw: object) -> list[dict[str, object]]:
+        listed.append(kw["listed"])
+        return [
+            {
+                "thread_id": "c-1",
+                "msg_id": "m-1",
+                "role": "user",
+                "content": "x" * 50,
+                "saved_at": _TS,
+            }
+        ]
+
     monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 12)
-    assert _excerpt("x" * 50) == "x" * 12 + "…"
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    out = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(org="o", namespace="n", agent="client", user_id="u-1")
+    )
+    assert [r.content_excerpt for r in out.rows] == ["x" * 12 + "…"]
+    assert listed == [12 + LISTED_MARGIN_CHARS]
     window = _snippet("filler " * 400 + "ticket INC-48213 closed", ["inc"])
     assert window.startswith("…") and len(window.strip("…")) == 12
 
@@ -853,7 +878,7 @@ async def test_the_saved_list_checks_past_an_excerpt_longer_than_the_margin(
 
     monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 1500)
     at = datetime(2026, 1, 1, 12, 0, 0)
-    messages = {"m-long": "a" * 3000, "m-key": "a" * 1010 + OPENAI_KEY + "a" * 2000}
+    messages = {"m-long": "a" * 3000, "m-key": "a" * 1010 + f" {OPENAI_KEY} " + "a" * 2000}
     asked: list[object] = []
 
     async def fake_list(*_a: object, listed: int, **_kw: object) -> list[dict[str, object]]:
