@@ -176,7 +176,7 @@ async def test_export_user_id_includes_their_saved_messages_and_turns(
     """A user's saved message, their transcript turns and their thread export with the
     columns stored; another user's do not, and a turn holding a key is labelled high."""
     ns = admin_agent.namespace
-    org = "export-test-org"
+    org = admin_agent.org
     grace = f"grace-{uuid.uuid4().hex[:6]}"
     heidi = f"heidi-{uuid.uuid4().hex[:6]}"
     thread = f"t-{uuid.uuid4().hex[:6]}"

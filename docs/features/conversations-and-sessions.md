@@ -214,6 +214,8 @@ TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 
 characters of its text, has no TTL. Once its message has expired, a whole-thread
 delete in its thread passes it to a live copy of the turn or tombstones it; an erasure
 request tombstones it, and removes it only on a `namespace_list` erasure with `purge`.
+`erasure.export` does not return embedding rows, so the excerpt of a turn the TTL
+expired is erased with the subject but is not in their export.
 
 ### Thread titles
 
