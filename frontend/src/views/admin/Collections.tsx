@@ -51,8 +51,8 @@ const HEADERS = [
   { label: "Name" },
   { label: "Inside" },
   { label: "Your role" },
-  // The row menus' column: named for a screen reader, blank on screen.
-  { label: <span className="sr-only">Actions</span>, width: "48px" },
+  // A 32 px menu and 16 px cell padding on each side leave room for its focus ring.
+  { label: <span className="sr-only">Actions</span>, width: "64px" },
 ];
 
 /** How many of a collection's documents its details list. */
