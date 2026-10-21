@@ -423,6 +423,23 @@ def _synth_payload(model: type, *, seed: _Seed, namespace: str) -> dict[str, Any
     return out
 
 
+def _probe_bodies(payload: dict[str, Any], owner: str) -> list[dict[str, Any]]:
+    """The walk's body, plus one naming the saved canary's owner when the body
+    names no user, so only the gate stands between a caller and the canary."""
+    if payload.get("user_id") == "-":
+        return [payload, {**payload, "user_id": owner}]
+    return [payload]
+
+
+def _leak_in(seed: _Seed, op_name: str, response: httpx.Response) -> list[str]:
+    """Canary nonces in a response. saved_status answers ids, not text, so any
+    saved id it returns is the canary owner's."""
+    found = seed.leaked(response.text)
+    if op_name == "conversation.saved_status" and response.status_code == 200:
+        found = found or response.json()["saved"]
+    return found
+
+
 def _read_ops() -> list[Any]:
     from server.operations.registry import ALL_OPERATIONS
 
@@ -882,29 +899,19 @@ def test_every_read_op_against_namespace_a_leaks_nothing(
         if payload is None:
             unbuildable.append(op.name)
             continue
-        r = _post(control_plane_url, tokens[who], op.name, payload)
-        if r.status_code == 422:
-            unbuildable.append(op.name)
-            continue
-        exercised.add(op.name)
-        answers = {op.name: r}
-        # The saved canary is `_SAVED_USER`'s: ask for it by name too, so only
-        # the namespace gate stands between the caller and it.
-        if payload.get("user_id") == "-":
-            body = {**payload, "user_id": _SAVED_USER}
-            answers[f"{op.name}/{_SAVED_USER}"] = _post(
-                control_plane_url, tokens[who], op.name, body
-            )
-        for label, answer in answers.items():
+        for body in _probe_bodies(payload, _SAVED_USER):
+            label = f"{op.name}/{body.get('user_id', '-')}"
+            r = _post(control_plane_url, tokens[who], op.name, body)
+            if body is payload and r.status_code == 422:
+                unbuildable.append(op.name)
+                break
             # The named-user body may be unbuildable for this op; the base body may not.
-            if label != op.name and answer.status_code in (400, 422):
+            if body is not payload and r.status_code in (400, 422):
                 continue
-            if answer.status_code not in _OK_STATUSES:
-                bad_status[label] = answer.status_code
-            found = seed.leaked(answer.text)
-            # saved_status answers ids, not text: any saved id is tenant A's.
-            if op.name == "conversation.saved_status" and answer.status_code == 200:
-                found = found or answer.json()["saved"]
+            exercised.add(op.name)
+            if r.status_code not in _OK_STATUSES:
+                bad_status[label] = r.status_code
+            found = _leak_in(seed, op.name, r)
             if found:
                 leaks[label] = found
     assert not leaks, f"{who}: canary nonces in responses: {leaks}"
@@ -1768,8 +1775,8 @@ def test_positive_control_the_owner_reads_the_saved_canary_with_the_walks_body(
     op = next(o for o in ALL_OPERATIONS if o.name == op_name)
     payload = _synth_payload(op.input_model, seed=shared.seed, namespace="@me")
     assert payload is not None
-    # Both bodies the walk sends: its own, and the one naming the owner.
-    for body in (payload, {**payload, "user_id": "owner"}):
+    # The bodies the walk sends: its own, and the one naming the owner.
+    for body in _probe_bodies(payload, "owner"):
         r = _post_as(control_plane_url, shared.org, "owner", op_name, body)
         assert r.status_code == 200, r.text
         if op_name == "conversation.saved_status":
@@ -1804,22 +1811,14 @@ def test_every_read_op_against_a_collection_leaks_nothing(
             payload = _synth_payload(op.input_model, seed=shared.seed, namespace=namespace)
             if payload is None:
                 continue
-            bodies = [payload]
-            # The saved canary is the owner's: ask for it by name too, so only
-            # the gate stands between a caller and it.
-            if payload.get("user_id") == "-":
-                bodies.append({**payload, "user_id": "owner"})
-            for body in bodies:
+            for body in _probe_bodies(payload, "owner"):
                 label = f"{op.name}@{namespace}/{body.get('user_id', '-')}"
                 r = post(op.name, body)
                 if r.status_code in (400, 422):  # unbuildable, or `@me` for a non-gateway caller
                     continue
                 if r.status_code not in _OK_STATUSES:
                     bad_status[label] = r.status_code
-                found = shared.seed.leaked(r.text)
-                # saved_status answers ids, not text: any saved id is the owner's.
-                if op.name == "conversation.saved_status" and r.status_code == 200:
-                    found = found or r.json()["saved"]
+                found = _leak_in(shared.seed, op.name, r)
                 if found:
                     leaks[label] = found
     assert not leaks, f"{who}: canary nonces in responses: {leaks}"
