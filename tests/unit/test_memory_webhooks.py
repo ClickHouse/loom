@@ -88,7 +88,7 @@ def _change(**over: Any) -> dict[str, Any]:
 
 
 def _outbox_row(webhook_id: str = "wh1", event: str = "memory.written", **over: Any) -> Any:
-    row = app._outbox_row(event, webhook_id, _change(), actor="user:alice", now=NOW)
+    row = app._outbox_row(event, webhook_id, _change(), actor="user:alice", request_id="", now=NOW)
     return {**row, **over}
 
 
@@ -99,7 +99,9 @@ def test_the_body_names_the_change_and_never_its_content() -> None:
     # A memory version row handed to announce carries its value, tags and evidence;
     # the outbox row and the body keep none of them.
     change = _change(value="prefers green tea", tags=["diet"], source_trace="said so in chat")
-    row = app._outbox_row("memory.written", "wh1", change, actor="user:alice", now=NOW)
+    row = app._outbox_row(
+        "memory.written", "wh1", change, actor="user:alice", request_id="", now=NOW
+    )
     body = json.loads(event_body(row))
     assert list(body) == BODY_KEYS
     assert body["type"] == "memory.written"
@@ -337,6 +339,25 @@ async def test_a_background_pass_is_the_actor_of_its_changes(
     pass_context.begin("memory_expiry_sweep")
     try:
         await app.announce([("memory.tombstoned", _change())])
+    finally:
+        pass_context.clear()
+    assert ch.inserted("memory_webhook_outbox")[0]["actor"] == "worker:memory_expiry_sweep"
+
+
+@pytest.mark.asyncio
+async def test_a_pass_is_the_actor_of_a_row_another_principal_wrote(
+    monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
+) -> None:
+    # A version row carries its writer's actor forward; the event names the pass.
+    registry[("acme", "chat")] = (("wh1", frozenset({"memory.tombstoned"})),)
+    ch = RecordingCH().install(monkeypatch)
+    tombstone = memory_repo.build_memory_version_row(
+        _memory_row("user/pref/tea", actor="user:alice"), version=20, tombstoned_at=NOW
+    )
+    assert tombstone["actor"] == "user:alice"
+    pass_context.begin("memory_expiry_sweep")
+    try:
+        await app.announce([("memory.tombstoned", tombstone)])
     finally:
         pass_context.clear()
     assert ch.inserted("memory_webhook_outbox")[0]["actor"] == "worker:memory_expiry_sweep"
@@ -683,6 +704,42 @@ async def test_a_rollback_announces_revisions_revivals_and_tombstones(
         ("memory.tombstoned", "was_gone"),
         ("memory.tombstoned", "born_later"),
     }
+
+
+@pytest.mark.asyncio
+async def test_a_rollback_names_its_caller_not_the_historical_writer(
+    monkeypatch: pytest.MonkeyPatch, registry: dict[tuple[str, str], Any]
+) -> None:
+    from server.memory.app import namespace_rollback as rb
+    from server.memory.domain.rollback import RollbackAction, RollbackPlan
+
+    registry[("acme", "chat")] = (("wh1", frozenset({"memory.revised"})),)
+    historical = [_memory_row("changed", 10, actor="user:alice")]
+
+    async def fetch(*a: Any, **k: Any) -> list[MemoryRow]:
+        return historical
+
+    async def head(ident: Any, key: str, **k: Any) -> MemoryRow:
+        return _memory_row(key, 30, actor="user:alice")
+
+    async def noop(*a: Any, **k: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(memory_repo, "fetch_version_rows", fetch)
+    monkeypatch.setattr(memory_repo, "get_by_key", head)
+    monkeypatch.setattr(memory_repo, "insert_embedding_rows", noop)
+    monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", noop)
+    monkeypatch.setattr(memory_repo, "fence_vectors", noop)
+    monkeypatch.setattr(rb, "insert_memory_versions", noop)
+    monkeypatch.setattr(app.provenance, "writer_actor", lambda *_: "user:bob")
+    ch = RecordingCH().install(monkeypatch)
+    plan = RollbackPlan(
+        reinstate=[RollbackAction("bot", "u1", "-", "changed", "reinstate", 20, 10, False)],
+        remove=[],
+    )
+    await rb.apply_rollback("acme", "chat", plan, applied_at=NOW, ch=object())
+    (row,) = ch.inserted("memory_webhook_outbox")
+    assert (row["event_type"], row["actor"]) == ("memory.revised", "user:bob")
 
 
 @pytest.mark.asyncio

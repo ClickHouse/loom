@@ -147,7 +147,13 @@ def event_id(webhook_id: str, event: str, change: Mapping[str, Any]) -> str:
 
 
 def _outbox_row(
-    event: str, webhook_id: str, change: Mapping[str, Any], *, actor: str, now: datetime
+    event: str,
+    webhook_id: str,
+    change: Mapping[str, Any],
+    *,
+    actor: str,
+    request_id: str,
+    now: datetime,
 ) -> dict[str, Any]:
     return {
         "org": str(change["org"]),
@@ -161,8 +167,8 @@ def _outbox_row(
         "memory_key": str(change["memory_key"]),
         "memory_id": str(change["memory_id"]),
         "memory_version": int(change["version"]),
-        "actor": change.get("actor", actor),
-        "request_id": change.get("request_id", request_id_var.get() or ""),
+        "actor": actor,
+        "request_id": request_id,
         "erasure_id": str(change.get("erasure_id", "")),
         "occurred_at": now,
     }
@@ -175,19 +181,29 @@ def _actor() -> str:
     return provenance.writer_actor() or (f"worker:{ctx.worker}" if ctx else "")
 
 
-async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> None:
+async def announce(
+    changes: Sequence[tuple[EventType, Mapping[str, Any]]],
+    *,
+    actor: str | None = None,
+    request_id: str | None = None,
+) -> None:
     """Leave one outbox row per (event, change) and webhook that takes the event,
     in one insert. A change is a mapping with the memory's org, namespace, agent,
     user_id, session_id, memory_key, memory_id and version (a memory version row
-    is one). Never raises."""
+    is one). The event's actor and request id come from the call, never from the
+    row: a version row's `actor` is its writer's, which a background pass or a
+    restore carries forward. `actor` and `request_id` override them. Never raises."""
     if not changes:
         return
     try:
         now = naive_utc_now()
-        actor = _actor()
+        if actor is None:
+            actor = _actor()
+        if request_id is None:
+            request_id = request_id_var.get() or ""
         hooks = await _fresh_hooks()
         rows = [
-            _outbox_row(event, wid, c, actor=actor, now=now)
+            _outbox_row(event, wid, c, actor=actor, request_id=request_id, now=now)
             for event, c in changes
             for wid, events in hooks.get((str(c["org"]), str(c["namespace"])), ())
             if event in events
@@ -214,14 +230,14 @@ async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_i
         "memory_key": "",
         "memory_id": "",
         "version": 0,
-        "actor": "-",
-        "request_id": "",
     }
     await announce(
         [
             ("memory.erased", {"org": org, "namespace": ns, **no_memory, "erasure_id": erasure_id})
             for ns in namespaces
-        ]
+        ],
+        actor="-",
+        request_id="",
     )
 
 
