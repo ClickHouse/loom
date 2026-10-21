@@ -325,6 +325,14 @@ async def handle_memory_import_evidence(
                 split_credentials, [(c.session_id, c.chunk_index, c.content) for c in chunks]
             ),
         )
+        held = sum(1 for e in embedded if e.held)
+        if held:
+            log.info(
+                "memory.import_evidence: %d chunks written without a vector for %s/%s",
+                held,
+                input.org,
+                input.namespace,
+            )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []
         for c, e in zip(chunks, embedded, strict=True):

@@ -290,21 +290,29 @@ def test_split_credentials_joins_only_neighbouring_chunks_of_one_session() -> No
     ]
 
 
-def test_split_credentials_holds_a_session_with_two_texts_at_one_index() -> None:
+def test_split_credentials_reads_a_session_with_two_texts_at_one_index_in_pairs() -> None:
     from server.memory.domain.sensitivity import split_credentials
 
     # Two writes of one session each number their chunks from 0, so index 0 holds two
-    # texts and there is no single text to rebuild: every chunk of the session is held.
-    plain = "the build passed on the second try"
-    assert split_credentials([("s", 0, plain), ("s", 0, _KEY_HEAD), ("s", 1, _KEY_TAIL)]) == [
-        True,
-        True,
-        True,
+    # texts. Each chunk is joined only with a chunk at the next index that it overlaps.
+    first_call = "call one: the build passed on the second try after the cache was cleared"
+    second_call = "call two: the deploy is on Thursday and the release notes are drafted"
+    head = "call three: rotate the staging account key, which is " + AWS_KEY_ID[:10]
+    chunks = [
+        ("s", 0, first_call),
+        ("s", 1, first_call[-60:] + " and the suite stayed green."),
+        ("s", 0, second_call),
+        ("s", 1, second_call[-60:] + " for review."),
+        ("s", 0, head),
+        ("s", 1, head[-60:] + AWS_KEY_ID[10:] + " for uploads"),
     ]
+    # Two plain calls stay embedded; the key cut across the third call's boundary is held.
+    assert split_credentials(chunks) == [False, False, False, False, True, True]
     # The same text sent twice is one text; another session in the call is read as usual.
+    plain = "the build passed on the second try"
     chunks = [("s", 0, plain), ("s", 0, plain), ("s", 1, "The deploy is on Thursday.")]
     chunks += [("t", 0, "x"), ("t", 0, "y"), ("u", 0, _KEY_HEAD), ("u", 1, _KEY_TAIL)]
-    assert split_credentials(chunks) == [False, False, False, True, True, True, True]
+    assert split_credentials(chunks) == [False, False, False, False, False, True, True]
 
 
 def test_split_credentials_keeps_a_boundary_character_that_only_happens_to_repeat() -> None:

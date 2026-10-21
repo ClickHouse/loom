@@ -67,7 +67,12 @@ from server.knowledge.domain.conversations import (
     THREAD_EXCERPT_CHARS,
     metadata_object,
 )
-from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
+from server.memory.domain.sensitivity import (
+    HELD_MARGIN,
+    listed_text,
+    reads_high,
+    without_credentials,
+)
 from server.observability.genai import staged
 from server.observability.otel import traced
 from server.operations.read_projection import project_rows
@@ -993,12 +998,6 @@ async def _search_substring_fallback(
     return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
 
 
-def _listed(text: str) -> str:
-    """`text`, or '' when it reads as a credential: what a listing that reaches every
-    reader of a namespace shows of a title, a last turn or a saved message."""
-    return "" if reads_high(text) else text
-
-
 async def handle_conversation_search_saved_messages(
     input: ConversationSearchSavedMessagesInput,
 ) -> ConversationSearchSavedMessagesOutput:
@@ -1164,7 +1163,7 @@ async def handle_conversation_list_saved_messages(
             role=r["role"],
             # Listed without the text when it reads as a credential, as memory.list
             # lists a 'high' row.
-            content_excerpt=_excerpt(_listed(r["content"]), size),
+            content_excerpt=_excerpt(listed_text(r["content"]), size),
             ts=r["saved_at"],
         )
         for r in page
@@ -1243,8 +1242,8 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
             first_seen=r["first_seen"],
             last_seen=r["last_seen"],
             last_role=str(r["last_role"]),
-            last_content_excerpt=_listed(str(r["last_content"]))[:THREAD_EXCERPT_CHARS],
-            title=_listed(titles.get(str(r["thread_id"]), "")),
+            last_content_excerpt=listed_text(str(r["last_content"]))[:THREAD_EXCERPT_CHARS],
+            title=listed_text(titles.get(str(r["thread_id"]), "")),
         )
         for r in rows
     ]

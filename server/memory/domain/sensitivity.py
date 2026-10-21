@@ -320,7 +320,8 @@ def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]
     the one before dropped, or its own text reads as one: the rule the other chunk writers
     apply to the text they cut (`overlaps_credential`). Chunks with a gap in `chunk_index`
     are not joined. A session that holds two texts at one index (written by two calls) has
-    no single text to rebuild, so every chunk of it is held."""
+    no single text to rebuild, so its chunks are read in pairs instead
+    (`_held_in_pairs`)."""
     by_index: dict[Hashable, dict[int, list[int]]] = {}
     for i, (session, index, _) in enumerate(chunks):
         by_index.setdefault(session, {}).setdefault(index, []).append(i)
@@ -328,15 +329,40 @@ def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]
     for positions in by_index.values():
         texts = {index: {chunks[i][2] for i in at} for index, at in positions.items()}
         if any(len(versions) > 1 for versions in texts.values()):
-            for at in positions.values():
+            pairs_held = _held_in_pairs(texts)
+            for index, at in positions.items():
                 for i in at:
-                    held[i] = True
+                    held[i] = (index, chunks[i][2]) in pairs_held
             continue
         single = {index: next(iter(versions)) for index, versions in texts.items()}
         for joined, indexes, ranges in _joined_runs(single):
             for index, hit in zip(indexes, overlaps_credential(joined, ranges), strict=True):
                 for i in positions[index]:
                     held[i] = hit
+    return held
+
+
+def _held_in_pairs(texts: dict[int, set[str]]) -> set[tuple[int, str]]:
+    """The `(chunk_index, text)` chunks of a session with several texts at one index that
+    read as a credential on their own, or that overlap one in the text a chunk and a chunk
+    at the next index make joined. Only a pair whose texts overlap (`_overlap`) was cut
+    from one text, so only such a pair is joined."""
+    held = {
+        (index, text) for index, versions in texts.items() for text in versions if reads_high(text)
+    }
+    for index, versions in texts.items():
+        for first in versions:
+            for second in texts.get(index + 1, set()):
+                repeat = _overlap(first, second)
+                if not repeat:
+                    continue
+                joined = first + second[repeat:]
+                ranges = [(0, len(first)), (len(first) - repeat, len(joined))]
+                first_hit, second_hit = overlaps_credential(joined, ranges)
+                if first_hit:
+                    held.add((index, first))
+                if second_hit:
+                    held.add((index + 1, second))
     return held
 
 
@@ -357,6 +383,13 @@ def without_credentials[T](
         if not reads_high(text(item)):
             kept.append(item)
     return kept
+
+
+def listed_text(text: Any) -> str:
+    """`text` as a namespace-wide listing shows it: every reader of the namespace sees a
+    listing, so text that reads as a credential is shown empty."""
+    t = str(text or "")
+    return "" if reads_high(t) else t
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

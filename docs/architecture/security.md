@@ -732,7 +732,9 @@ returns it.
   whole chunk; every chunk a key in the rebuilt text touches is held, and a private-key
   block with no closing line holds every chunk to the end of that text. A session written
   by two calls can hold two texts at one index, which leaves no single text to rebuild, so
-  every chunk of such a session is held. The check reads one
+  each chunk of such a session is held when its own text reads as a credential, or when it
+  and a chunk at the next index that it overlaps (a repeat of at least 50 characters) make a
+  text where a key touches it; two chunks with no overlap are not joined. The check reads one
   call's chunks only (at most 256), so a key cut at the boundary between the last chunk of
   one call and the first chunk of the next reads as a credential in neither, and both
   chunks are embedded. `loom okf import` sends each session's chunks whole in one call, so
