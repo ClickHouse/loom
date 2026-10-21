@@ -508,3 +508,34 @@ def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() 
         )
     )
     assert [r["msg_id"] for r in got] == ["m1"] and left_out
+
+
+def test_two_measured_copies_of_one_turn_are_both_served() -> None:
+    """A save racing a transcript append can leave two rows of one turn; both were
+    measured, so both are served and nothing is reported left out."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    turn = {"namespace": STD, "thread_id": "t1", "ts": datetime(2026, 1, 1), "msg_id": "m1"}
+
+    class _Twice:
+        async def query_all(self, sql, params=None, **_k):
+            if "bytes_before_previous" in sql:
+                return [{**turn, "bytes_before": 0}, {**turn, "bytes_before": 6}]
+            assert params["kept"] == 2
+            return [{**turn, "is_saved": True}, {**turn, "is_saved": False}]
+
+    got, left_out = asyncio.run(
+        exports.export_conversations(
+            ORG,
+            "namespace",
+            STD,
+            include_tombstoned=True,
+            limit=10,
+            max_bytes=100,
+            as_of=_AS_OF,
+            ch=_Twice(),
+        )
+    )
+    assert [r["is_saved"] for r in got] == [True, False] and not left_out

@@ -121,19 +121,18 @@ async def _exports(ch: RecordingCH, c: dict[str, Any]) -> None:
     await erasure_exports.export_memory(
         ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
     )
-    tombstoned = c["include_tombstoned"]
     await erasure_exports.export_conversations(
         ORG,
         scope_type,
         value,
-        include_tombstoned=tombstoned,
+        include_tombstoned=c["include_tombstoned"],
         limit=100,
         max_bytes=1000,
         as_of=datetime(2026, 1, 2),
         ch=ch,
     )
     await erasure_exports.export_conversation_threads(
-        ORG, scope_type, value, include_tombstoned=tombstoned, limit=100, ch=ch
+        ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
     )
     await erasure_exports.export_agent_events(ORG, scope_type, value, limit=100, ch=ch)
     await erasure_exports.export_knowledge(ORG, "namespace", "n", limit=100, ch=ch)
