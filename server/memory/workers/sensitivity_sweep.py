@@ -100,10 +100,7 @@ def _stuck(report: SweepReport, result: ApplyResult) -> bool:
     if result.relabelled or not report.resume_after:
         return False
     if not report.candidates:
-        # A cursor already past an agent, or the key the pass started after, has no memory key.
-        return (
-            report.truncated and report.last_page_short and bool(report.resume_after["memory_key"])
-        )
+        return report.last_page_short
     if not result.failed:
         return False
     stopped_in = [report.resume_after[col] for col in CURSOR_KEY]

@@ -290,9 +290,9 @@ class MemorySetInput(_Identity):
     # Server-enforced char cap on the stringified value (422 on exceed). Persists
     # on the row so a later set without char_limit reuses the stored cap. NULL = no cap.
     char_limit: int | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
-    # Sensitivity tier. 'high' = never embedded, never in any
-    # search leg or recency pack, readable by key only with an audit row.
-    # '' lets the server detect credential / contact shapes from the value.
+    # Sensitivity tier. 'high' = never embedded, searched or in a recency pack;
+    # read by key only, audited. '' = detect from the value: credentials, card
+    # numbers, SSNs, PINs high; email, phone, IBAN medium.
     sensitivity: Literal["", "low", "medium", "high"] = ""
     # Run the conflict check and return its verdict, peers and
     # `next` WITHOUT writing — no loom.memory row, no embedding row, no audit

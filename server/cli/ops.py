@@ -206,7 +206,7 @@ async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
 
     org = args.org or None
     ns = args.namespace or None
-    limit = int(args.limit)
+    limit = args.limit
     report = await sweep.scan(
         org=org,
         namespace=ns,

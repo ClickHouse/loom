@@ -464,6 +464,23 @@ async def test_one_pass_crosses_several_agents_it_finds_nothing_to_label_in(monk
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_that_cannot_reread_every_agent_it_moved_past_says_it_was_truncated(
+    monkeypatch,
+) -> None:
+    # Agents `a` and `b` each hold three selected-but-unlabelled rows, and a pass reads four
+    # pages of two. It moves past both, reaches the last key and has one page left: it reads
+    # the rest of `a`, a short page, and none of `b`. The outcome says it was truncated.
+    spins = _spin_rows_then_a_pin(3)[:-1]
+    in_b = [r._replace(agent="b", memory_id=_uuid(10 + i)) for i, r in enumerate(spins)]
+    applied, out = await _run_pass_recording(
+        monkeypatch, _local_memory([*spins, *in_b]), rows_per_pass=2, pages=4
+    )
+    assert applied == []
+    assert out["scanned"] == 5 and out["truncated"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_a_limit_of_zero_reads_nothing() -> None:
     ch = _local_memory(_spin_rows_then_a_pin(2))
     report = await sweep.scan(since_days=2, limit=0, page_size=2, pages=None, ch=ch)  # type: ignore[arg-type]
