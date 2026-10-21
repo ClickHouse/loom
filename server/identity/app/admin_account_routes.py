@@ -29,9 +29,12 @@ def _by(info: AuthInfo | None) -> str:
     return f"admin:{info.subject}" if info else "admin:local"
 
 
-def _is_machine(info: AuthInfo) -> bool:
-    """A service account's token: a bot's, an agent's, or one minted from a session."""
-    return info.is_service_account or info.subject.startswith("sa:")
+def _short_lived(info: AuthInfo) -> bool:
+    """Whether `info` may mint nothing that outlives it: a service account's token
+    (a bot's, an agent's, one minted from a session), or a third-party client's
+    session, whose tokens end with it (`delegation`)."""
+    third_party_session = bool(info.session_id) and not info.first_party
+    return info.is_service_account or info.subject.startswith("sa:") or third_party_session
 
 
 def _invalid(e: ValueError) -> HTTPException:
@@ -142,16 +145,16 @@ class BotInput(_Input):
 async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     """Register a bot. With `generate_key` the answer carries its private key,
     once: Loom keeps only the public half."""
-    if input.platform_admin and info is not None and _is_machine(info):
+    if input.platform_admin and info is not None and _short_lived(info):
         # A token that carries platform_admin must not mint itself a lasting
         # successor: a leaked hour-long token would become a permanent one.
         raise HTTPException(
             status_code=403,
             detail={
                 "code": "AUTH_INSUFFICIENT",
-                "message": "a platform-admin bot is registered by a person signed in as a "
-                "platform admin, or on the host (`loom bot create`), never with a service "
-                "account's token",
+                "message": "a platform-admin bot is registered by a person signed in to Loom "
+                "as a platform admin, or on the host (`loom bot create`), never with a "
+                "service account's token or a third-party client's session",
             },
         )
     if input.generate_key and input.public_key_pem:

@@ -204,8 +204,9 @@ Each op declares `required_role`.
   token over every namespace (`_machine_tokens` in `server/auth/oauth.py`); such a bot
   names no namespace, tells no agents apart and, as a trust, matches every claim exactly.
   Only a person signed in as a platform admin, or an operator on the host, registers one:
-  `/v1/admin/bots.create` refuses the flag to every service account's token, so a token
-  holding the role cannot mint itself a lasting successor.
+  `/v1/admin/bots.create` refuses the flag to every service account's token and to a
+  third-party client's session, so a token holding the role cannot mint itself a lasting
+  successor.
   `loom mint-token --platform-admin` mints it only for a non-agent `sa:` subject, for at
   most 90 days, and audits each mint.
 

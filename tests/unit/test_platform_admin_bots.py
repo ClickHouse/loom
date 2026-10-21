@@ -104,19 +104,19 @@ def test_the_shared_token_check_takes_trusts_apart_on_sub(registry) -> None:
         )
     )
     tenant = _trust(
-        "nerve-t1",
+        "org-a",
         claims=["tenant_id=t1", "sub=tenants/t1/agents/*"],
         agent_claim="agent_id",
     )
     asyncio.run(create(tenant, by="op", replace=False))
-    assert set(registry["bots"]) == {"controlplane", "nerve-t1"}
-    loose = _trust("nerve-t2", claims=["tenant_id=t2"], agent_claim="agent_id")
+    assert set(registry["bots"]) == {"controlplane", "org-a"}
+    loose = _trust("org-b", claims=["tenant_id=t2"], agent_claim="agent_id")
     with pytest.raises(ValueError, match="could also meet 'controlplane'"):
         asyncio.run(create(loose, by="op", replace=False))
     made = [kw["subject"] for event, kw in registry["audits"] if event == "auth.machine_created"]
     assert [(m["name"], m["platform_admin"]) for m in made] == [
         ("controlplane", True),
-        ("nerve-t1", False),
+        ("org-a", False),
     ]
 
 
@@ -279,16 +279,19 @@ _CP_BODY = {
 
 
 @pytest.mark.parametrize(
-    ("subject", "service_account", "status"),
+    ("subject", "service_account", "session", "status"),
     [
-        ("sa:cp", True, 403),  # a platform-admin bot's own hour-long token
-        ("ops", True, 403),  # a token minted from a person's session: a service account
-        ("sa:cp", False, 403),  # an `sa:` subject is a machine's, whatever the token says
-        ("ops", False, 200),  # a person signed in as a platform admin
+        ("sa:cp", True, {}, 403),  # a platform-admin bot's own hour-long token
+        ("ops", True, {}, 403),  # a token minted from a person's session: a service account
+        ("sa:cp", False, {}, 403),  # an `sa:` subject is a machine's, whatever the token says
+        # A third-party client's session mints nothing that outlives it.
+        ("ops", False, {"session_id": "s-1", "first_party": False}, 403),
+        ("ops", False, {"session_id": "s-1", "first_party": True}, 200),  # `loom login`
+        ("ops", False, {}, 200),  # a person signed in as a platform admin
     ],
 )
 def test_only_a_person_registers_a_platform_admin_bot(
-    registry, monkeypatch, subject: str, service_account: bool, status: int
+    registry, monkeypatch, subject: str, service_account: bool, session: Any, status: int
 ) -> None:
     """A leaked platform-admin token must not mint itself a lasting successor."""
     from server.auth.jwt import mint_token
@@ -296,7 +299,7 @@ def test_only_a_person_registers_a_platform_admin_bot(
 
     monkeypatch.setattr(type(admin_routes.settings), "auth_actually_required", lambda self: True)
     token = mint_token(
-        subject, "acme", ["*"], ["platform_admin"], is_service_account=service_account
+        subject, "acme", ["*"], ["platform_admin"], is_service_account=service_account, **session
     )
     app = FastAPI()
     app.include_router(admin_account_routes.router)

@@ -333,10 +333,11 @@ loom bot create --name controlplane --org acme --platform-admin \
 
 Each proof still gets an hour-long token, for `sa:controlplane`, carrying the
 role; `loom bot disable` ends them as it ends any bot's. Only a person signed in
-as a platform admin (`"platform_admin": true` on `/v1/admin/bots.create`) or an
-operator on the host sets the flag: the route refuses it to every service
-account's token, a platform-admin bot's included, so a leaked token never mints
-itself a lasting successor. The `auth.machine_created` audit row records it, and
+to Loom as a platform admin (`"platform_admin": true` on `/v1/admin/bots.create`)
+or an operator on the host sets the flag: the route refuses it to every service
+account's token, a platform-admin bot's included, and to a third-party MCP
+client's session, whose tokens end with it, so a leaked token never mints itself
+a lasting successor. The `auth.machine_created` audit row records it, and
 `loom bot list` and `/v1/admin/bots.list` show it. A trust of the same issuer
 that tells agents apart must not be able to take the platform-admin trust's
 token: give each a claim the other's tokens cannot meet, such as distinct `sub`

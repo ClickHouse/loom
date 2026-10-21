@@ -25,7 +25,9 @@ no page uses them.
 
 `LOOM_DASHBOARD_REDIRECT_URL`, when set on a deployment that requires auth, makes a dashboard page load
 redirect (302) to another entry point instead, for a Loom that sits behind an
-aggregating front end.
+aggregating front end. `/me`, where a sign-in lands with its token in the URL
+fragment, is the exception: it always serves the page, so the token never
+follows the redirect to another origin.
 
 ## Signing in
 
