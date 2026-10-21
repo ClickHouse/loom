@@ -18,6 +18,8 @@ _SCHEMA_ANCHOR = "extract one structured record"
 _STAGE1_ANCHOR = "decide whether the source messages contain"
 _STAGE2_ANCHOR = "decide which schema fields are CLEARLY mentioned"
 _STAGE3_ANCHOR = "extract values for specific fields from source"
+_PROFILE_ANCHOR = "You fill a structured profile of one user"
+_PROFILE_PROP_RE = re.compile(r'^- "(?P<name>\w+)" \((?P<kind>[^)]*)\)', re.M)
 _SCHEMA_FIELD_RE = re.compile(r'- "(?P<name>[^"]+)": (?P<type>\w+)')
 _SCHEMA_ENUM_RE = re.compile(
     r'- "(?P<name>[^"]+)": one of \[(?P<values>[^\]]+)\]',
@@ -69,6 +71,30 @@ def _synthesize_typed_record(system: str, user: str) -> dict[str, object]:
             record[name] = ""
     entities = [w.lower() for w in re.findall(r"\b[A-Z][a-z]+\b", user)][:6]
     return {"record": record, "entities": entities}
+
+
+def _fill_profile(system: str, user: str) -> dict[str, object]:
+    """Fill each listed property from the newest fact line that names it (the
+    property name with `_` read as a space), null when none does."""
+    facts = [re.sub(r"^- \[[^\]]*\]\s*", "", line).strip() for line in user.splitlines()]
+    out: dict[str, object] = {}
+    for m in _PROFILE_PROP_RE.finditer(system):
+        name, kind = m["name"], m["kind"]
+        hits = [f.rstrip(".") for f in facts if name.replace("_", " ").lower() in f.lower()]
+        numbers = re.findall(r"-?\d+(?:\.\d+)?", hits[-1]) if hits else []
+        if not hits:
+            out[name] = None
+        elif kind.startswith("array"):
+            out[name] = hits
+        elif kind.startswith("integer"):
+            out[name] = int(float(numbers[-1])) if numbers else None
+        elif kind.startswith("number"):
+            out[name] = float(numbers[-1]) if numbers else None
+        elif kind.startswith("boolean"):
+            out[name] = True
+        else:
+            out[name] = hits[-1]
+    return out
 
 
 def _extract_facts_from_user_prompt(user: str) -> dict[str, list[dict[str, object]]]:
@@ -131,6 +157,8 @@ class FakeLLMClient:
             synthesized = json.dumps({"fields": fields})
         elif _STAGE3_ANCHOR in system or _SCHEMA_ANCHOR in system:
             synthesized = json.dumps(_synthesize_typed_record(system, user))
+        elif _PROFILE_ANCHOR in system:
+            synthesized = json.dumps(_fill_profile(system, user))
         elif _EXTRACTION_ANCHOR in system:
             payload = _extract_facts_from_user_prompt(user)
             synthesized = json.dumps(payload)

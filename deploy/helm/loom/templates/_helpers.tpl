@@ -104,6 +104,17 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- fail (printf "set %s through %s, not secrets.extra" . (include "loom.guardedThrough" (dict "key" . "root" $))) }}
 {{- end }}
 {{- end }}
+{{- /* The analytics export's name key reaches the export pod only. */}}
+{{- $nameKey := "LOOM_ANALYTICS_EXPORT_NAME_KEY" }}
+{{- $nameKeyRefused := printf "set %s through analyticsExport.nameKeySecret, which only the export pod reads, not env, extraEnv, secrets.extra or settingsFile" $nameKey }}
+{{- if or (hasKey .Values.env $nameKey) (hasKey .Values.secrets.extra $nameKey) (hasKey (.Values.settingsFile | default dict) "analytics_export_name_key") }}
+{{- fail $nameKeyRefused }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if eq .name $nameKey }}
+{{- fail $nameKeyRefused }}
+{{- end }}
+{{- end }}
 LOOM_DEPLOYMENT: "1"
 LOOM_PUBLIC_BASE_URL: {{ required "publicBaseUrl is required" .Values.publicBaseUrl | quote }}
 {{- if not (hasKey .Values.env "LOOM_OAUTH_ISSUER") }}
@@ -424,13 +435,15 @@ initContainers:
 {{- end }}
 {{- end }}
 
-{{/* Pod spec fields both Deployments share. */}}
+{{/* Pod spec fields the Deployments, the hook Jobs and the analytics export
+share; `serviceAccount` names another account than the release's. */}}
 {{/* `leads`: the pod may hold the workers lease, which alone reads the
 Kubernetes API (retireLostPods). */}}
 {{- define "loom.podCommon" -}}
 {{- $leads := .leads -}}
+{{- $sa := .serviceAccount -}}
 {{- with .root -}}
-serviceAccountName: {{ include "loom.serviceAccountName" . }}
+serviceAccountName: {{ default (include "loom.serviceAccountName" .) $sa }}
 automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken (and .Values.retireLostPods $leads) }}
 # Service links would inject LOOM_SERVICE_HOST and the like into Loom's env namespace.
 enableServiceLinks: false

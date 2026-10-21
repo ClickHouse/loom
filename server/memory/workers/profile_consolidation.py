@@ -19,8 +19,14 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.core import ch as core_ch
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.llm import client as llm_client
 from server.llm import customer
+from server.memory.app import profile as profile_app
+from server.memory.domain.profile_facts import render_fold_input
 from server.memory.domain.sensitivity import value_reads_high
+from server.memory.store.profile_sources import user_facts
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -72,9 +78,7 @@ async def run_pass(
     cfg = cfg or ProfileConsolidationConfig()
     result = ProfileConsolidationResult()
     with record_pass("profile_consolidation") as rec:
-        from server.core.ch import get_client
-
-        ch = get_client()
+        ch = core_ch.get_client()
         # Real users (user_id != '-') in opted-in namespaces with enough durable
         # preference/decision memories to be worth folding, whose section was
         # not rewritten within the cooldown. The cooldown is part of the scan,
@@ -135,56 +139,21 @@ async def run_pass(
     return result
 
 
-def render_fold_input(rows: list[dict[str, Any]]) -> str:
-    """The fold's input: one dated line per fact, oldest first, so the newest
-    statement of a changed preference is the last the model reads. Rows with
-    an empty value are dropped; "" when nothing remains."""
-    dated: list[tuple[str, str]] = []
-    for r in rows:
-        value = " ".join(str(r.get("value") or "").split())
-        if not value:
-            continue
-        since = str(r.get("since") or "")[:10] or "undated"
-        dated.append((since, value))
-    dated.sort(key=lambda t: (t[0] == "undated", t[0]))
-    return "\n".join(f"- [{since}] {value}" for since, value in dated)
-
-
 async def _consolidate_identity(
     ch: Any, row: dict[str, Any], cfg: ProfileConsolidationConfig
 ) -> bool:
-    # The fold reads only what is current — no superseded or
-    # rejected version, nothing past its stated end or TTL — and sees each
-    # fact's date, oldest first, so the prompt's recency rule has something
-    # to act on. FINAL already keeps one live version per key.
-    rows = await ch.query_all(
-        """
-        SELECT value, toString(coalesce(valid_at, created_at)) AS since
-        FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND user_id = {uid:String} AND tombstoned_at IS NULL
-          -- a high row is readable by key only, never folded into the profile
-          AND sensitivity != 'high'
-          AND memory_type IN ('preference', 'decision')
-          AND status NOT IN ('superseded', 'rejected', 'proposed')  -- proposed: not a fact yet
-          AND (valid_to IS NULL OR valid_to > now())
-          AND (expires_at IS NULL OR expires_at > now())
-          AND NOT arrayExists(t -> startsWith(t, 'attribute:'), tags)
-          AND NOT has(tags, 'about:other')
-          -- The fold reads facts whose subject is the user (the extractor
-          -- keys them `user_…`; most preference/decision rows) and never a
-          -- stored request to forget.
-          AND startsWith(memory_key, 'user_')
-          AND NOT has(tags, 'forget')
-        ORDER BY confidence DESC, created_at DESC
-        LIMIT {lim:UInt32}
-        """,
-        params={
-            "org": row["org"],
-            "ns": row["namespace"],
-            "uid": row["user_id"],
-            "lim": int(cfg.memory_limit),
-        },
+    # The fold reads only what is current and sees each fact's date, oldest
+    # first, so the prompt's recency rule has something to act on. FINAL
+    # already keeps one live version per key.
+    rows = await user_facts(
+        org=row["org"],
+        namespace=row["namespace"],
+        user_id=row["user_id"],
+        types=["preference", "decision"],
+        limit=int(cfg.memory_limit),
+        user_keys_only=True,
+        scope=WHOLE_NAMESPACE,
+        ch=ch,
     )
     # A row whose value reads as high, whatever its label, is never sent to the fold model,
     # whose output becomes a plain profile section.
@@ -193,15 +162,17 @@ async def _consolidate_identity(
     if not facts:
         return False
 
-    from server.llm.client import get_llm_client, get_llm_client_for_model
-
     # Bind an accumulator so this worker's spend is visible. The drain is what
     # makes it visible: `begin_op()` only gives `report_llm()` a place to write.
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
         with llm_stage("profile_fold"), customer.for_org(str(row["org"])):
-            client = get_llm_client_for_model(cfg.model) if cfg.model else get_llm_client()
+            client = (
+                llm_client.get_llm_client_for_model(cfg.model)
+                if cfg.model
+                else llm_client.get_llm_client()
+            )
             out = await client.complete(
                 system=_FOLD_SYSTEM,
                 user=facts,
@@ -218,13 +189,12 @@ async def _consolidate_identity(
     if not text:
         return False
 
-    from server.memory.app.profile import write_folded_section
-
-    await write_folded_section(
+    await profile_app.write_folded_section(
         org=row["org"],
         namespace=row["namespace"],
         user_id=row["user_id"],
         label=cfg.label,
         value=text,
+        memory_ids=[str(r["memory_id"]) for r in rows],
     )
     return True

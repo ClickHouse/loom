@@ -939,6 +939,25 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_PROFILE_CONSOLIDATION_COOLDOWN_SECONDS` | `int` | `86400` |  | Seconds after a profile section is written before it is folded again. |
 | `LOOM_PROFILE_CONSOLIDATION_LABEL` | `str` | `'consolidated_profile'` |  | `memory_key` of the folded profile row. |
 
+### Structured profiles
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_STRUCTURED_PROFILE_ENABLED` | `bool` | `True` |  | Run the worker that builds each user's structured profile in the namespace's schema (LLM calls, only where `profile_schema.set` set one). |
+| `LOOM_STRUCTURED_PROFILE_INTERVAL_SECONDS` | `int` | `120` |  | Seconds between structured profile passes. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_IDLE_INTERVAL_SECONDS` | `int` | `600` |  | Seconds the structured profile worker waits after a pass that reached every namespace with a schema and took no user. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS` | `int` | `60` | live | Seconds one namespace's scan for users behind their structured profile may run; past it the scan fails and the namespace backs off. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES` | `int` | `4294967296` | live | Bytes of memory one namespace's structured profile scan may use (ClickHouse max_memory_usage). At least 1 MiB. |
+| `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` | `int` | `20` | live | Structured profiles one pass builds; the namespaces in each page the pass reads share it equally, and the pass reads on while budget is left. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_MAX_PASS_SECONDS` | `float` | `600.0` |  | Seconds a structured profile pass may run before the supervisor abandons it; it takes no user in the second half. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` | `int` | `100` | live | Memories read into one structured profile build, highest confidence then newest first. At least 1. |
+| `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | live | Seconds after a structured profile is built before new memories rebuild it; a schema change or a deleted source skips this wait. 0 rebuilds on the next pass. |
+| `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` | `int` | `300` | live | Seconds a user or namespace whose structured profile build failed waits before the first retry; each further failure doubles it. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` | `int` | `21600` | live | Longest wait, in seconds, of a user or namespace whose structured profile build keeps failing. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` | `int` | `21600` | live | Seconds a refused or cut-off structured profile build waits before it is tried again with nothing changed. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` | `int` | `600` | live | Seconds a namespace's scan for users behind their structured profile serves later passes before it is run again. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_LABEL` | `str` | `'structured_profile'` |  | `memory_key` of the structured profile row. |
+
 ### Reflection distillation
 
 | Variable | Type | Default | Live | Meaning |
@@ -1281,6 +1300,7 @@ Models: which model does each job.
 | `LOOM_MEMORY_ASK_MID_MODEL` | `str` | `''` |  | memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer escalates to strong once. |
 | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` |  | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. "" turns it off. |
 | `LOOM_PROFILE_CONSOLIDATION_MODEL` | `str` | `''` |  | Model of the profile fold, which consolidates an identity's memories into its profile; "" = `llm_model`. |
+| `LOOM_STRUCTURED_PROFILE_MODEL` | `str` | `''` |  | Model of the structured profile builder, which fills a user's profile in the namespace's schema; "" = `llm_model`. |
 | `LOOM_REFLECTION_DISTILL_MODEL` | `str` | `''` |  | Reflection distillation: the outcome labeller and the contrast writer. |
 | `LOOM_CODE_LINK_REVISE_MODEL` | `str` | `''` |  | The code-link `revise` judge: does a memory's claim still hold for its code's new text. |
 | `LOOM_SESSION_BRIEF_LLM_MODEL` | `str` | `'gpt-6-luna'` |  | Session briefs; without its provider's key the deployment's LLM writes them. |
@@ -1392,6 +1412,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_LANGFUSE_CAPTURE_IO_LEVEL` | `'off' \| 'query' \| 'all'` | `'off'` |  | How much LLM prompt and completion text is recorded, by what the prompt holds: "off" records none (the default; consent is given, not withdrawn); "query" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); "all" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated. |
 | `LOOM_LANGFUSE_GENERATION_IO_MAX_CHARS` | `int` | `2000` |  | Per-field cap on recorded prompt/completion text; truncation adds an explicit marker. |
 | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` | `float` | `0.0` |  | Fraction of searches sent to an independent LLM judge, written back as a `retrieval_relevance` score (unlike loom's own confidence scores, it shares no state with retrieval). 0.0 = off: it costs money per search; a few percent (e.g. 0.05) suits production. |
+| `LOOM_ANALYTICS_EXPORT_NAME_KEY` | `str` | *(unset)* |  | Secret that `loom export-analytics` hashes org, namespace and agent names under: a random string of 32 or more characters; a new key changes every hash. |
 
 ### Timeouts, budgets and caches
 

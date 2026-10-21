@@ -256,6 +256,7 @@ SCOPED_OPS = frozenset(
         "procedure.list",
         "procedure.match",
         "profile.render",
+        "profile.structured",
         "search.query",
         "session.brief_delete",
         "session.brief_get",
@@ -356,6 +357,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not memory_schema.register / propose / approve: a schema is namespace-wide and
     # refuses every user's non-matching writes.
     "memory_schema.list": "value schemas",
+    # A narrowed token is not told the subject that set the schema (updated_by).
+    "profile_schema.get": "operator configuration: property names and descriptions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

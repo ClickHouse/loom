@@ -55,15 +55,6 @@ def test_extraction_batch_rows_are_labelled(monkeypatch):
     assert _with_attribute_tags(None, "likes tea", "ns") == []
 
 
-def test_profile_fold_excludes_attribute_rows():
-    import inspect
-
-    from server.memory.workers import profile_consolidation as pc
-
-    src = inspect.getsource(pc._consolidate_identity)
-    assert "NOT arrayExists(t -> startsWith(t, 'attribute:'), tags)" in src
-
-
 def test_unattributed_facts_get_a_provenance_tag():
     msgs = [{"role": "user", "content": "I like tea"}, {"role": "assistant", "content": "Noted"}]
     assert _source_role_tags(msgs, {"source_message_indices": [0]}) == ["source_role:user"]

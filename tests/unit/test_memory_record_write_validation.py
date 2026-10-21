@@ -10,14 +10,14 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from server.memory.domain.record_values import _coerce_bool, _coerce_number, _coerce_record_value
+from server.memory.domain.record_values import _coerce_bool, _coerce_number, coerce_record_value
 
 
 def test_non_value_states_store_no_concrete_value() -> None:
     # An explicitly-unknown/absent/rejected field must not be recorded as a
     # real 0 / '' / false that a negative-query could not distinguish.
     for state in ("unknown", "absent", "rejected"):
-        assert _coerce_record_value(123, "number", field_name="x", state=state) == ("", 0.0, False)
+        assert coerce_record_value(123, "number", field_name="x", state=state) == ("", 0.0, False)
 
 
 def test_boolean_accepts_truthy_tokens() -> None:
@@ -53,15 +53,15 @@ def test_number_accepts_numeric_strings_rejects_bool() -> None:
 
 
 def test_record_value_coerces_each_type() -> None:
-    assert _coerce_record_value(True, "boolean", field_name="b") == ("true", 1.0, True)
-    assert _coerce_record_value("12", "integer", field_name="n") == ("12", 12.0, True)
-    assert _coerce_record_value("1.5", "number", field_name="n") == ("1.5", 1.5, True)
-    assert _coerce_record_value("hi", "string", field_name="s") == ("hi", 0.0, False)
+    assert coerce_record_value(True, "boolean", field_name="b") == ("true", 1.0, True)
+    assert coerce_record_value("12", "integer", field_name="n") == ("12", 12.0, True)
+    assert coerce_record_value("1.5", "number", field_name="n") == ("1.5", 1.5, True)
+    assert coerce_record_value("hi", "string", field_name="s") == ("hi", 0.0, False)
 
 
 def test_enum_violation_raises() -> None:
-    assert _coerce_record_value(
+    assert coerce_record_value(
         "coffee", "string", field_name="cat", enum_values=["coffee", "lunch"]
     ) == ("coffee", 0.0, False)
     with pytest.raises(HTTPException):
-        _coerce_record_value("tea", "string", field_name="cat", enum_values=["coffee", "lunch"])
+        coerce_record_value("tea", "string", field_name="cat", enum_values=["coffee", "lunch"])

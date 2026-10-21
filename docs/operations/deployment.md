@@ -464,6 +464,7 @@ empty value uses `LOOM_LLM_MODEL`.
 | `memory.ask` mid tier                        | `LOOM_MEMORY_ASK_MID_MODEL`             | off               |
 | Coding-capture durability check              | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS`     | `claude-opus-5-5` |
 | Profile fold                                 | `LOOM_PROFILE_CONSOLIDATION_MODEL`      | `LOOM_LLM_MODEL`  |
+| Structured profiles                          | `LOOM_STRUCTURED_PROFILE_MODEL`         | `LOOM_LLM_MODEL`  |
 | Reflection distillation                      | `LOOM_REFLECTION_DISTILL_MODEL`         | `LOOM_LLM_MODEL`  |
 | Session briefs                               | `LOOM_SESSION_BRIEF_LLM_MODEL`          | `gpt-6-luna`      |
 | `code.ask` synthesis                         | `LOOM_CODE_ASK_LLM_MODEL`               | `LOOM_LLM_MODEL`  |

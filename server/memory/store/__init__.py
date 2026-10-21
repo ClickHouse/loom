@@ -88,6 +88,7 @@ from server.memory.store.history import (
     find_history_target,
     list_history,
     rollback_change_rows,
+    version_exists,
 )
 from server.memory.store.inserts import (
     check_memory_rows,
@@ -137,7 +138,8 @@ from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
     delete_llm_response_cache_by_key,
     key_derivative_scrubs,
-    redact_row,
+    profile_keys_built_from,
+    redact_versions,
     run_scrubs,
 )
 from server.memory.store.rows import (
@@ -270,7 +272,8 @@ __all__ = [
     "record_delete_check",
     "record_usage_event",
     "key_derivative_scrubs",
-    "redact_row",
+    "profile_keys_built_from",
+    "redact_versions",
     "run_scrubs",
     "reemit_embedding_rows_for_key",
     "reemit_embedding_rows_for_keys",
@@ -293,6 +296,7 @@ __all__ = [
     "tombstone_vectors_of",
     "unsupersede_embeddings",
     "uuid_or_none",
+    "version_exists",
     "version_second",
     "versions_above",
     "write_versions_by_ids",

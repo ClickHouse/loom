@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 
 import pytest
 
@@ -15,39 +14,54 @@ from tests.unit.clock_fake import ManualClock
 _LOG = logging.getLogger(__name__)
 
 
-async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter() -> None:
-    """A change here asked for a read, three calls queue for it, and the read
-    fails after longer than `refresh_s`: the next read is counted from its end,
-    so the waiters behind it are served the last copy instead of each reading."""
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
+    c = ManualClock(t=1000.0)
+    monkeypatch.setattr(polled_copy.time, "monotonic", c.monotonic)
+    return c
+
+
+async def test_a_read_slower_than_the_refresh_is_not_repeated_by_each_waiter(
+    clock: ManualClock,
+) -> None:
+    """A change here asked for a read, three calls arrive for it, two queue behind the one that
+    reads, and the read fails after longer than `refresh_s`: the next read is counted from its
+    end, so the waiters behind it are served the last copy instead of each reading."""
     reads = 0
 
     async def failing() -> str:
         nonlocal reads
         reads += 1
-        await asyncio.sleep(0.05)
+        clock.advance(0.05)
+        await asyncio.sleep(0)  # the other calls queue on the lock meanwhile
         raise ConnectionError("clickhouse away")
 
-    copy = PolledCopy("t", "", failing, _LOG)
-    copy._reset_for_tests("last", read=True, refresh_s=0.01)
-    copy.forget()
+    copy = PolledCopy("t", failing, _LOG)
+    copy._reset_for_tests("last", read_age_s=0.0, due_in_s=10)
+    copy.note_change()  # what makes the read due
     got = await asyncio.gather(*(copy.get(refresh_s=0.01, max_stale_s=60) for _ in range(3)))
     assert got == ["last"] * 3
     assert reads == 1
 
 
-async def test_the_copy_is_aged_from_the_start_of_its_read() -> None:
+async def test_the_copy_is_aged_from_the_start_of_its_read(clock: ManualClock) -> None:
+    """A read that takes 0.05 s leaves a copy already 0.05 s old: with a 0.04 s
+    bound it is not served, with a 0.06 s bound it is."""
+
     async def slow() -> str:
-        await asyncio.sleep(0.05)
+        clock.advance(0.05)
         return "new"
 
-    copy = PolledCopy("t", "", slow, _LOG)
-    before = time.monotonic()
-    assert await copy.get(refresh_s=10, max_stale_s=60) == "new"
-    assert before <= copy._read_at < before + 0.04
+    copy = PolledCopy("t", slow, _LOG)
+    assert await copy.get(refresh_s=10, max_stale_s=0.04) is None
+    assert copy._read_at == 1000.0
+    assert await copy.get(refresh_s=10, max_stale_s=0.06) == "new"
 
 
-async def test_a_change_made_here_is_waited_for_even_with_a_young_copy() -> None:
-    """After `forget`, a call made while a read runs waits for it: the read in
+async def test_a_change_made_here_is_waited_for_even_with_a_young_copy(
+    clock: ManualClock,
+) -> None:
+    """After `note_change`, a call made while a read runs waits for it: the read in
     progress may be the one that sees the change."""
     reading, release = asyncio.Event(), asyncio.Event()
 
@@ -56,38 +70,62 @@ async def test_a_change_made_here_is_waited_for_even_with_a_young_copy() -> None
         await release.wait()
         return "changed"
 
-    copy = PolledCopy("t", "", read, _LOG)
-    copy._reset_for_tests("old", read=True, refresh_s=10)
-    copy.forget()
-    first = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
+    copy = PolledCopy("t", read, _LOG)
+    copy._reset_for_tests("old", read_age_s=0.0, due_in_s=10)
+    copy.note_change()
+    first = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
     await reading.wait()
-    second = asyncio.ensure_future(copy.get(refresh_s=10, max_stale_s=60))
-    await asyncio.sleep(0.02)
+    second = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
+    await asyncio.sleep(0)
     assert not second.done()
     release.set()
     assert await first == "changed"
     assert await second == "changed"
 
 
-async def test_a_failed_read_logs_on_the_callers_logger(caplog) -> None:
+async def test_a_failed_read_logs_on_the_callers_logger(caplog, clock: ManualClock) -> None:
     async def failing() -> str:
         raise ConnectionError("clickhouse away")
 
     owner = logging.getLogger("server.llm.customer")
-    copy = PolledCopy("model-call switch", "", failing, owner)
+    copy = PolledCopy("model-call switch", failing, owner)
     with caplog.at_level(logging.WARNING, logger="server.llm.customer"):
         assert await copy.get(refresh_s=10, max_stale_s=60) is None
     assert [r.name for r in caplog.records] == ["server.llm.customer"]
-    assert "model-call switch: read failed" in caplog.records[0].getMessage()
+    assert caplog.records[0].getMessage() == "model-call switch: read failed (clickhouse away)"
+
+
+async def test_a_cancelled_read_hands_over_to_the_first_queued_call(clock: ManualClock) -> None:
+    """The call that was reading is cancelled; the first queued call reads, and
+    the next is served that read."""
+    reading = asyncio.Event()
+    reads = 0
+
+    async def read() -> str:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            reading.set()
+            await asyncio.Event().wait()  # until cancelled
+        return "fresh"
+
+    copy = PolledCopy("t", read, _LOG)
+    first = asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60))
+    await reading.wait()
+    queued = [asyncio.create_task(copy.get(refresh_s=10, max_stale_s=60)) for _ in range(2)]
+    await asyncio.sleep(0)
+    first.cancel()
+    assert await asyncio.gather(*queued) == ["fresh", "fresh"]
+    assert reads == 2
 
 
 @pytest.mark.parametrize("had_copy", [False, True], ids=["cold", "stale"])
 @pytest.mark.parametrize("failed", [False, True], ids=["success", "failure"])
 async def test_slow_refresh_waits_a_full_interval_before_reading_again(
-    monkeypatch: pytest.MonkeyPatch, had_copy: bool, failed: bool
+    clock: ManualClock, had_copy: bool, failed: bool
 ) -> None:
-    clock = ManualClock(t=1000)
-    monkeypatch.setattr(polled_copy.time, "monotonic", clock.monotonic)
+    """With no copy worth serving, a call made during a slow read waits for it; the next read is
+    due a full `refresh_s` after that read ended, whether it failed or not."""
     entered, release = asyncio.Event(), asyncio.Event()
     reads = 0
 
@@ -101,17 +139,19 @@ async def test_slow_refresh_waits_a_full_interval_before_reading_again(
             raise ConnectionError("policy store unavailable")
         return frozenset({"disabled"})
 
-    copy = polled_copy.PolledCopy("policy", frozenset({"old"}), read, _LOG)
-    copy._read_at = clock() - 61 if had_copy else 0
+    copy = PolledCopy("policy", read, _LOG)
+    copy._reset_for_tests(
+        frozenset({"old"}) if had_copy else None,
+        read_age_s=61 if had_copy else None,
+        due_in_s=0.0,
+    )
     first = asyncio.create_task(copy.get(refresh_s=5, max_stale_s=60))
     await entered.wait()
     second = asyncio.create_task(copy.get(refresh_s=5, max_stale_s=60))
     await asyncio.sleep(0)
     release.set()
-    answers = await asyncio.gather(first, second)
     expected = None if failed else frozenset({"disabled"})
-    assert answers == [expected, expected]
-    assert reads == 1
+    assert await asyncio.gather(first, second) == [expected, expected]
     assert await copy.get(refresh_s=5, max_stale_s=60) == expected
     assert reads == 1
     clock.advance(5)
