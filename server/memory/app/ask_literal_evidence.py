@@ -16,6 +16,7 @@ Fail-open to no extra hits.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
 from typing import Any
@@ -24,6 +25,7 @@ from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.domain.question_literals import question_literals
+from server.memory.domain.sensitivity import without_credentials
 
 log = logging.getLogger(__name__)
 
@@ -128,8 +130,13 @@ async def literal_complete(
             )
         except Exception as e:  # noqa: BLE001 — additive, never fatal
             log.warning("literal completion failed for %r (fail-open): %s", lit, e)
+    # A turn that reads as a credential still counts as a statement, but its text never
+    # becomes a hit or reaches the synthesis prompt.
     LAST_LITERAL_STATEMENTS.set(len(rows))
-    hits = turn_hits(rows, ranked, max_hits=max_hits)
+    shown = await asyncio.to_thread(
+        without_credentials, rows, lambda r: str(r.get("content") or "")
+    )
+    hits = turn_hits(shown, ranked, max_hits=max_hits)
     if hits:
         log.info(
             "memory.ask: literal completion %s → %d turn(s) (%d rows)", lits, len(hits), len(rows)

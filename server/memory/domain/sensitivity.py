@@ -32,15 +32,27 @@ catch-all for extraction is an operator's extraction policy, not this module.
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Hashable, Iterable, Iterator, Sequence
 from typing import Any, Final
+
+from server.memory.domain import chunk_shape
 
 HIGH: Final = "high"
 MEDIUM: Final = "medium"
 LEVELS: Final = ("", "low", "medium", "high")
 
+# A block without its closing line runs through its base64 body, so every chunk it covers
+# is held. The header-line alternatives come first, or the class would take the `Proc` of
+# `Proc-Type:`; the closing-line search stops at the next header to stay linear.
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----"
+    r"(?:(?:(?!-----BEGIN ).)*?-----END \1PRIVATE KEY-----"
+    r"|(?:Proc-Type:[^\n]*|DEK-Info:[^\n]*|[A-Za-z0-9+/=\r\n])*)",
+    re.S,
+)
 # The words a `password=…` style assignment starts with. The sweep's prefilter is built from
 # the same list.
 ASSIGNMENT_WORDS = (
@@ -55,7 +67,7 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b"),  # GitHub tokens
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),  # Slack
-    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"),
+    _PRIVATE_KEY_BLOCK,
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
@@ -168,27 +180,36 @@ def _has_card(text: str) -> bool:
     """Whether `text` holds a card number, ungrouped or in a printed grouping. The digits
     of an IBAN are left out: its printed groups can read as a card grouping that passes
     Luhn ("DE24 4005 0150 0000 0005 00"), and an IBAN is medium."""
+    return bool(_card_spans(text))
+
+
+def _card_spans(text: str) -> list[tuple[int, int]]:
+    """The (start, end) of each run of digit groups in `text` that holds a card number, by
+    the rule `_has_card` reads."""
     parts, prev = [], 0
     for start, end in _iban_spans(text):
         parts += [text[prev:start], "x" * (end - start)]
         prev = end
     text = "".join(parts) + text[prev:]
-    for m in _DIGIT_GROUPS.finditer(text):
-        groups = re.split(r"[ -]", m.group())
-        if any(len(group) in (15, 16) and _is_card(group) for group in groups):
-            return True
-        for i in range(4):  # a grouped card starts within the first four groups
-            for grouping in _CARD_GROUPINGS:
-                end = i + len(grouping)
-                after = len(groups) - end
-                if after < 0 or after > 2 or i + after > 3:
-                    continue
-                window = groups[i:end]
-                if tuple(map(len, window)) != grouping:
-                    continue
-                around = groups[:i] + groups[end:]
-                if all(len(g) <= 4 for g in around) and _is_card("".join(window)):
-                    return True
+    return [m.span() for m in _DIGIT_GROUPS.finditer(text) if _groups_hold_card(m.group())]
+
+
+def _groups_hold_card(run: str) -> bool:
+    groups = re.split(r"[ -]", run)
+    if any(len(group) in (15, 16) and _is_card(group) for group in groups):
+        return True
+    for i in range(4):  # a grouped card starts within the first four groups
+        for grouping in _CARD_GROUPINGS:
+            end = i + len(grouping)
+            after = len(groups) - end
+            if after < 0 or after > 2 or i + after > 3:
+                continue
+            window = groups[i:end]
+            if tuple(map(len, window)) != grouping:
+                continue
+            around = groups[:i] + groups[end:]
+            if all(len(g) <= 4 for g in around) and _is_card("".join(window)):
+                return True
     return False
 
 
@@ -500,6 +521,168 @@ def reads_high(text: str) -> bool:
         for t in texts
         for k, quoted, bare in _KEYED_PAIR.findall(t)
     )
+
+
+def _high_spans(text: str) -> list[tuple[int, int]]:
+    """The [start, end) ranges of `text` that `_reads_high_text` reads as high, with each
+    `"key": value` pair that states a secret (`{"badge_pin": "4471"}`)."""
+    spans = [m.span() for pat in _HIGH_SHAPES for m in pat.finditer(text)]
+    spans += _card_spans(text)
+    spans += [
+        m.span()
+        for m in _KEYED_PAIR.finditer(text)
+        if _reads_high_text(_keyed_secret(m.group(1), m.group(2) or m.group(3)))
+    ]
+    return spans
+
+
+def credential_spans(text: str) -> list[tuple[int, int]]:
+    """The [start, end) character ranges of `text` that read as high, by the rule
+    `reads_high` applies: as written, and with JSON string escapes undone."""
+    spans = _high_spans(text)
+    escapes = list(_JSON_ESCAPE.finditer(text))
+    if not escapes:
+        return spans
+    unescaped = _JSON_ESCAPE.sub(_json_unescape, text)
+    # Each escape decodes to one character: where that character sits in `unescaped`, and
+    # how much shorter the text is once that escape and every one before it are decoded.
+    decoded_at: list[int] = []
+    shortened: list[int] = []
+    removed = 0
+    for m in escapes:
+        decoded_at.append(m.start() - removed)
+        removed += len(m.group()) - 1
+        shortened.append(removed)
+
+    def in_text(pos: int) -> int:
+        before = bisect.bisect_left(decoded_at, pos)
+        return pos + (shortened[before - 1] if before else 0)
+
+    spans += [(in_text(start), in_text(end)) for start, end in _high_spans(unescaped)]
+    return spans
+
+
+def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
+    """For each [start, end) range of `source` (a chunk's place in the text it was cut from),
+    whether it overlaps a credential in `source` or its own text reads as one. A chunk cut
+    through a key holds only its head or its tail, which does not read as a credential on its
+    own; a chunk that starts inside a word can read as one where `source` does not."""
+    spans = credential_spans(source)
+    return [
+        reads_high(source[start:end])
+        or any(start < s_end and s_start < end for s_start, s_end in spans)
+        for start, end in ranges
+    ]
+
+
+def _overlap(previous: str, chunk: str) -> int:
+    """Length of the longest start of `chunk` that ends `previous`, between CHUNK_OVERLAP // 2
+    and 2 * CHUNK_OVERLAP characters; 0 when none (a shorter match is a coincidence)."""
+    longest = min(len(previous), len(chunk), 2 * chunk_shape.CHUNK_OVERLAP)
+    shortest = chunk_shape.CHUNK_OVERLAP // 2
+    for size in range(longest, shortest - 1, -1):
+        if previous.endswith(chunk[:size]):
+            return size
+    return 0
+
+
+def _joined_runs(texts: dict[int, str]) -> Iterator[tuple[str, list[int], list[tuple[int, int]]]]:
+    """Each run of a session's chunks at consecutive indexes, `texts` keyed by `chunk_index`:
+    the run's text with each chunk's overlap with the one before dropped, its indexes, and
+    each chunk's [start, end) range in that text. A gap in `chunk_index` starts a new run."""
+    runs: list[list[int]] = []
+    for index in sorted(texts):
+        if runs and index == runs[-1][-1] + 1:
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    for indexes in runs:
+        joined = ""
+        ranges: list[tuple[int, int]] = []
+        for index in indexes:
+            content = texts[index]
+            repeat = _overlap(joined, content)
+            ranges.append((len(joined) - repeat, len(joined) + len(content) - repeat))
+            joined += content[repeat:]
+        yield joined, indexes, ranges
+
+
+def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
+    """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
+    the text its session's chunks make joined in `chunk_index` order, each chunk's overlap with
+    the one before dropped, or its own text reads as one: the rule the other chunk writers
+    apply to the text they cut (`overlaps_credential`). Chunks with a gap in `chunk_index`
+    are not joined. A session that holds two texts at one index (written by two calls) has
+    no single text to rebuild, so its chunks are read in pairs instead
+    (`_held_in_pairs`)."""
+    by_index: dict[Hashable, dict[int, list[int]]] = {}
+    for i, (session, index, _) in enumerate(chunks):
+        by_index.setdefault(session, {}).setdefault(index, []).append(i)
+    held = [False] * len(chunks)
+    for positions in by_index.values():
+        texts = {index: {chunks[i][2] for i in at} for index, at in positions.items()}
+        if any(len(versions) > 1 for versions in texts.values()):
+            pairs_held = _held_in_pairs(texts)
+            for index, at in positions.items():
+                for i in at:
+                    held[i] = (index, chunks[i][2]) in pairs_held
+            continue
+        single = {index: next(iter(versions)) for index, versions in texts.items()}
+        for joined, indexes, ranges in _joined_runs(single):
+            for index, hit in zip(indexes, overlaps_credential(joined, ranges), strict=True):
+                for i in positions[index]:
+                    held[i] = hit
+    return held
+
+
+def _held_in_pairs(texts: dict[int, set[str]]) -> set[tuple[int, str]]:
+    """The `(chunk_index, text)` chunks of a session with several texts at one index that
+    read as a credential on their own, or that overlap one in the text a chunk and a chunk
+    at the next index make joined. Only a pair whose texts overlap (`_overlap`) was cut
+    from one text, so only such a pair is joined."""
+    held = {
+        (index, text) for index, versions in texts.items() for text in versions if reads_high(text)
+    }
+    for index, versions in texts.items():
+        for first in versions:
+            for second in texts.get(index + 1, set()):
+                repeat = _overlap(first, second)
+                if not repeat:
+                    continue
+                joined = first + second[repeat:]
+                ranges = [(0, len(first)), (len(first) - repeat, len(joined))]
+                first_hit, second_hit = overlaps_credential(joined, ranges)
+                if first_hit:
+                    held.add((index, first))
+                if second_hit:
+                    held.add((index + 1, second))
+    return held
+
+
+# Spare rows a read asks for, so a passage it holds back for reading as a credential does
+# not leave the page short.
+HELD_MARGIN = 2  # not a setting: algorithm shape, sized to how rarely a row is held
+
+
+def without_credentials[T](
+    items: Iterable[T], text: Callable[[T], str], limit: int | None = None
+) -> list[T]:
+    """`items`, in order, whose text does not read as a credential, the first `limit` of
+    them. The text is checked only as far as `limit` reaches."""
+    kept: list[T] = []
+    for item in items:
+        if limit is not None and len(kept) >= limit:
+            break
+        if not reads_high(text(item)):
+            kept.append(item)
+    return kept
+
+
+def listed_text(text: Any) -> str:
+    """`text` as a namespace-wide listing shows it: every reader of the namespace sees a
+    listing, so text that reads as a credential is shown empty."""
+    t = str(text or "")
+    return "" if reads_high(t) else t
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:

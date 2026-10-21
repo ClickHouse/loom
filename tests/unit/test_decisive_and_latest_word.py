@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from server.memory.app.ask import identifiers, question_shapes
+from server.memory.domain.sensitivity import HELD_MARGIN as _HELD_MARGIN
 
 
 def test_question_shapes() -> None:
@@ -113,9 +114,10 @@ def test_decisive_read_fires_only_for_bug_questions_and_only_when_on(monkeypatch
         recent=0,
     )
     marker_calls = [c for c in repo.calls if c["fn"] == "chunks" and c.get("markers")]
-    assert len(marker_calls) == 1 and marker_calls[0]["limit"] == 6
+    # A chunk lookup is asked for spare rows, for the chunks held back as credentials.
+    assert len(marker_calls) == 1 and marker_calls[0]["limit"] == 6 + _HELD_MARGIN
     assert "root cause" in marker_calls[0]["markers"]
-    assert any(k.memory_key == "chunk:s:m_6" for k in out)
+    assert any(k.memory_key == f"chunk:s:m_{6 + _HELD_MARGIN}" for k in out)
     repo, _ = _run(monkeypatch, "What do we know about PR 117831?", decisive=6, recent=0)
     assert not [c for c in repo.calls if c.get("markers")]
     repo, _ = _run(
@@ -130,9 +132,10 @@ def test_decisive_read_fires_only_for_bug_questions_and_only_when_on(monkeypatch
 def test_latest_word_read_is_by_recency_for_disposition_questions(monkeypatch) -> None:
     repo, out = _run(monkeypatch, "Is PR 117831 a known creator-ledger gap?", decisive=0, recent=4)
     rec = [c for c in repo.calls if c.get("order") == "recency"]
-    assert {c["fn"] for c in rec} == {"facts", "chunks"} and all(c["limit"] == 4 for c in rec)
+    assert {c["fn"] for c in rec} == {"facts", "chunks"}
+    assert {c["fn"]: c["limit"] for c in rec} == {"facts": 4, "chunks": 4 + _HELD_MARGIN}
     keys = {k.memory_key for k in out}
-    assert "user_recency_4" in keys and "chunk:s:recency_4" in keys
+    assert "user_recency_4" in keys and f"chunk:s:recency_{4 + _HELD_MARGIN}" in keys
     repo, _ = _run(monkeypatch, "What do we know about PR 117831?", decisive=0, recent=4)
     assert not [c for c in repo.calls if c.get("order") == "recency"]
 

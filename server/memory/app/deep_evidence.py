@@ -29,6 +29,7 @@ caller keeps its excerpt-level answer. Nothing here writes.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -37,6 +38,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.memory.domain.sensitivity import without_credentials
 from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
@@ -311,6 +313,11 @@ async def fetch_raw_evidence(
         for r in rows
         if str(r.get("support_type") or "") in _SCOPED_SUPPORT and bool(r.get("scoped_span"))
     }
+    # A turn that reads as a credential never reaches the synthesis prompt. The check reads
+    # each turn whole, so it runs in a thread, off the event loop.
+    rows = await asyncio.to_thread(
+        without_credentials, rows, lambda r: str(r.get("content") or "").strip()
+    )
     for r in rows:
         key = str(r.get("memory_key") or "")
         support = str(r.get("support_type") or "")
@@ -461,6 +468,8 @@ async def fetch_session_turns(
     except Exception as e:  # noqa: BLE001 — fail-open
         log.warning("deep-evidence session fetch failed (fail-open): %s", e)
         return []
+    # A turn that reads as a credential never reaches the synthesis prompt.
+    rows = await asyncio.to_thread(without_credentials, rows, lambda r: str(r.get("content") or ""))
     by_sid: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         by_sid.setdefault(str(r.get("session_id") or ""), []).append(r)

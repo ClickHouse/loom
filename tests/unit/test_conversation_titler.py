@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pytest
 
-from server.knowledge.workers.conversation_titler import run_pass
+from server.knowledge.workers.conversation_titler import ConversationTitlerConfig, run_pass
+from tests.unit._fake_credentials import OPENAI_KEY
 
 
 class StubCH:
@@ -16,11 +18,13 @@ class StubCH:
         self._title_row = title_row
 
         self.calls: list[str] = []
+        self.params: list[dict | None] = []
 
     async def query_all(self, sql, params=None):
         # The candidate scan groups by c.org; the thread rows are one keyed
         # read; the per-thread turn fetch is the rest.
         self.calls.append(sql)
+        self.params.append(params)
         if "GROUP BY c.org" in sql:
             return self._candidates
         if "IN {keys:Array(Tuple(String, String, String))}" in sql:
@@ -175,3 +179,147 @@ async def test_the_scan_excludes_titled_and_deleted_threads_before_its_limit(
     excl = scan.index("NOT IN (")
     assert excl < scan.index("GROUP BY") < scan.index("LIMIT {lim:UInt32}")
     assert "tombstoned_at IS NOT NULL OR title != ''" in scan
+
+
+@pytest.mark.asyncio
+async def test_a_credential_turn_never_reaches_the_title_model(monkeypatch) -> None:
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}, *_TURNS]
+    ch = StubCH([_CAND], turns, None)
+    _patch(monkeypatch, ch)
+    prompts: list[str] = []
+
+    class _Recording:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _LLMOut()
+
+    import server.knowledge.store.conversations as repo
+    import server.llm.client as llmmod
+
+    async def fake_insert(row, **k):
+        return None
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
+    monkeypatch.setattr(repo, "insert_thread", fake_insert)
+    res = await run_pass()
+    assert res.titled == 1
+    assert prompts and OPENAI_KEY not in prompts[0] and "what engine?" in prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
+    monkeypatch,
+) -> None:
+    """The thread is marked instead: neither the scan nor the pass's re-check picks it
+    again, so a second pass makes no model call."""
+    ch = StubCH([_CAND], _TURNS, None)
+    _patch(monkeypatch, ch)
+    prompts: list[str] = []
+
+    class _KeyTitle:
+        text = f"Deploy key {OPENAI_KEY}"
+
+    class _KeyLLM:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _KeyTitle()
+
+    import server.knowledge.store.conversations as repo
+    import server.llm.client as llmmod
+
+    writes = []
+
+    async def fake_insert(row, **k):
+        writes.append(row)
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
+    monkeypatch.setattr(repo, "insert_thread", fake_insert)
+    res = await run_pass()
+    assert (res.titled, res.refused, len(prompts)) == (0, 1, 1)
+    [written] = writes
+    assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
+    assert "JSONExtractBool(metadata, {refused:String})" in ch.calls[0]
+    assert ch.params[0]["refused"] == "title_refused"
+
+    # A scan on a merge state behind the write still returns the thread.
+    _patch(monkeypatch, StubCH([_CAND], _TURNS, written))
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
+    res = await run_pass()
+    assert (res.titled, res.skipped_titled, len(prompts), len(writes)) == (0, 1, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_refused_titles_count_toward_the_pass_cap(monkeypatch) -> None:
+    """Each refused title paid for a model call, so a pass stops at the cap."""
+    candidates = [{**_CAND, "thread_id": f"t{i}"} for i in range(10)]
+    _patch(monkeypatch, StubCH(candidates, _TURNS, None))
+    prompts: list[str] = []
+
+    class _KeyTitle:
+        text = f"Deploy key {OPENAI_KEY}"
+
+    class _KeyLLM:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _KeyTitle()
+
+    import server.llm.client as llmmod
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
+    _capture(monkeypatch)
+    res = await run_pass(ConversationTitlerConfig(max_threads_per_pass=2))
+    assert (res.titled, res.refused, len(prompts)) == (0, 2, 2)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeypatch) -> None:
+    """A thread whose eight opening turns all read as a credential is marked, so it no
+    longer takes a scan slot on later passes."""
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}] * 8
+    ch = StubCH([_CAND], turns, None)
+    _patch(monkeypatch, ch)
+    prompts: list[str] = []
+
+    class _Recording:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _LLMOut()
+
+    import server.knowledge.store.conversations as repo
+    import server.llm.client as llmmod
+
+    writes = []
+
+    async def fake_insert(row, **k):
+        writes.append(row)
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
+    monkeypatch.setattr(repo, "insert_thread", fake_insert)
+    res = await run_pass()
+    assert (res.titled, res.refused, prompts) == (0, 1, [])
+    [written] = writes
+    assert written["title"] == "" and json.loads(written["metadata"]) == {"title_refused": True}
+
+    _patch(monkeypatch, StubCH([_CAND], turns, written))
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _Recording())
+    res = await run_pass()
+    assert (res.skipped_titled, prompts, len(writes)) == (1, [], 1)
+
+
+@pytest.mark.asyncio
+async def test_a_thread_with_fewer_opening_turns_stays_unmarked_until_a_plain_turn_arrives(
+    monkeypatch,
+) -> None:
+    """The opening window is not full yet, so a later plain turn can still title it."""
+    turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}]
+    _patch(monkeypatch, StubCH([_CAND], turns, None))
+    writes = _capture(monkeypatch)
+    res = await run_pass()
+    assert (res.titled, res.refused, writes) == (0, 0, [])
+
+    _patch(monkeypatch, StubCH([_CAND], [*turns, *_TURNS], None))
+    res = await run_pass()
+    assert res.titled == 1
+    [written] = writes
+    assert written["title"] == "ClickHouse engine for an event log"
+    assert json.loads(written["metadata"]) == {}
