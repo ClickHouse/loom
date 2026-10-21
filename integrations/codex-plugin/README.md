@@ -79,6 +79,6 @@ name (`$loom-memory`) or let the description trigger it.
   the script's third argument (`… PostToolUse codex`).
 - `.mcp.json`, `plugin-defaults.json` — the bundled MCP entry and the hooks'
   default server; host-specific, not generated.
-- `hooks/*.mjs`, `bin/*.mjs`, `lib/*.mjs`, `skills/**` — **generated copies**. Edit the
+- `hooks/*.mjs`, `bin/*.mjs`, `lib/*.mjs`, `skills/**`, `assets/` — **generated copies**. Edit the
   originals under `integrations/claude-code-plugin/` and run
   `python scripts/codegen/agent_plugin_sync.py`.

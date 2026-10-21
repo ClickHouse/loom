@@ -17,11 +17,9 @@ Codex build runs the same scripts; see [codex.md](codex.md).
 ## Data handling
 
 This section covers the Claude Code plugin and the Codex plugin, which run the same
-scripts. The plugin sends data only to the Loom server it is configured with, using the
-token you give it. Nothing goes to the plugin's authors or to any other service. Before
-anything is sent, a client-side redaction removes common credential shapes; it is best
-effort, not a guarantee. The table in [what the hooks do](#what-the-hooks-do) lists each
-request. Together they send:
+scripts. The plugin sends data only to the Loom server it is configured with. Nothing goes
+to the plugin's authors or to any other service. The table in
+[what the hooks do](#what-the-hooks-do) lists each request. Together they send:
 
 - prompts, to fetch recalled memories and code pointers for them;
 - each tool call's input, output or error (`observe.record`), and the paths of files read
@@ -32,7 +30,15 @@ request. Together they send:
   source evidence for the facts it extracts whatever the logging setting is
   (`LOOM_SESSION_MEMORY=off` stops it);
 - a run record (the first prompt as its goal, the last reply), a working-memory note
-  (goal, git status, files edited, last reply), a session brief and token usage.
+  (goal, git status, files edited, last reply), a session brief and token usage;
+- at Stop in an indexed checkout, the uncommitted diff of the files the session changed
+  (up to 200,000 characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
+- with no credential, on a server that allows self-signup, your OS user name and host
+  name as the new agent's name (`LOOM_AUTO_SIGNUP=off` stops it).
+
+A client-side redaction removes common credential shapes from prompts, tool calls, turns,
+run records, notes and briefs before they are sent. It is best effort, not a guarantee, and
+the test gate's diff is sent without it.
 
 The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
 provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
@@ -177,7 +183,7 @@ that knows its outcome calls `run.complete` itself.
   `observe_extract` worker (`LOOM_OBSERVE_EXTRACT_ENABLED=true`, which needs LLM and
   embedder credentials; see [configuration](../../reference/configuration.md#extraction)).
 - Session memory is independent of logging: `memory.set_from_messages` writes facts and
-  a summary, not the transcript.
+  a summary, and keeps the turns it was given as their source evidence.
 
 **Safety.** A hook never blocks the agent on the network.
 
