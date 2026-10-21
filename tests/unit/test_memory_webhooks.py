@@ -965,6 +965,9 @@ class FakeStore:
     async def removed_webhooks(self, since: datetime) -> list[tuple[str, str, str]]:
         return list(self.removed) if self.removed_at >= since else []
 
+    async def webhook_removed_since(self, hook: tuple[str, str, str], since: datetime) -> bool:
+        return hook in await self.removed_webhooks(since)
+
     async def insert_attempts(self, rows: list[dict[str, Any]]) -> None:
         self.attempts.extend(dict(r) for r in rows)
 

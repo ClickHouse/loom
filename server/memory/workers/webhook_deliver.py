@@ -66,13 +66,8 @@ USER_AGENT = "loom-memory-webhook/1"
 
 
 def _post_budget_seconds() -> float:
-    """How long after it starts a pass may still be POSTing: every POST waiting its whole
-    ack deadline, for the larger of an even share of the pass per concurrency slot and
-    one webhook's whole turn (its POSTs go one after another), cut short of the pass
-    deadline by the reserve, which covers the one insert after the POSTs, so the pass
-    records what it sent; the rest go next pass. The reads before the POSTs come out of
-    this budget, which counts from the start of the pass: when the due-event read grows,
-    raise memory_webhook_deliver_max_pass_seconds."""
+    """Seconds after the pass starts that POSTs may run: every POST waiting its full ack
+    deadline, capped memory_webhook_deliver_reserve_seconds short of the pass deadline."""
     posts_per_slot = (
         settings.memory_webhook_max_posts_per_pass / settings.memory_webhook_deliver_concurrency
     )
@@ -259,7 +254,7 @@ async def _skip_row(row: Mapping[str, Any], started: datetime) -> dict[str, Any]
     if until is not None:  # failed its last POSTs earlier in this pass
         return _wait_row(row, until=until, why="the webhook is cooling down")
     # The pass read the registrations once; a webhook.remove since then stops its sends.
-    if _hook(row) in await store.removed_webhooks(started):
+    if await store.webhook_removed_since(_hook(row), started):
         return _dead_row(row, "the webhook was removed")
     # memory.erased names no key; any other event names the memory it is about.
     # Read right before the POST: only an erasure during the POST can let it out.

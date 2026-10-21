@@ -146,6 +146,22 @@ async def removed_webhooks(since: datetime, *, ch: _CHClient | None = None) -> l
     return [(str(r["org"]), str(r["namespace"]), str(r["webhook_id"])) for r in rows]
 
 
+async def webhook_removed_since(
+    hook: Hook, since: datetime, *, ch: _CHClient | None = None
+) -> bool:
+    """Whether `hook` was removed since `since`."""
+    ch = ch or _default_client()
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"SELECT 1 FROM {WEBHOOKS} FINAL "
+            "WHERE (org, namespace, webhook_id) = {hook:Tuple(String, String, String)} "
+            "AND is_deleted = 1 AND version >= toUnixTimestamp64Nano({since:DateTime64(3)}) "
+            "LIMIT 1",
+            params={"hook": hook, "since": since},
+        )
+    return bool(rows)
+
+
 async def insert_outbox(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
     """Outbox rows, committed before the call returns."""
     if not rows:

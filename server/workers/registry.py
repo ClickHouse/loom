@@ -452,9 +452,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.memory.workers.webhook_deliver",
         "memory_webhook_deliver_enabled",
         "memory_webhook_deliver_interval_seconds",
-        # POSTs stop memory_webhook_deliver_reserve_seconds before the pass deadline,
-        # which leaves the insert after them its time; the reads before them come out
-        # of the POST budget, so a slow due-event read needs a longer pass deadline
+        # the POST budget: webhook_deliver._post_budget_seconds
         max_pass_setting="memory_webhook_deliver_max_pass_seconds",
         idle_interval="memory_webhook_deliver_idle_interval_seconds",
     ),

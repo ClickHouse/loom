@@ -227,3 +227,31 @@ async def test_keys_with_history_are_the_keys_memory_versions_holds() -> None:
     kept = ("acme", "chat", "bot", "u1", "-", "kept")
     erased = ("acme", "chat", "bot", "u1", "-", "erased")
     assert await store.keys_with_history([kept, erased], ch=ch) == {kept}
+
+
+def _registration(webhook: str, *, deleted: int, minutes_ago: int, namespace: str = "chat") -> str:
+    when = _ts(NOW - timedelta(minutes=minutes_ago))
+    return (
+        "INSERT INTO loom.memory_webhooks (org, namespace, webhook_id, url, secret_ref, events, "
+        f"is_deleted, version) VALUES ('acme', '{namespace}', '{webhook}', 'https://x', 'REF', "
+        f"[], {deleted}, toUnixTimestamp64Nano(toDateTime64({when}, 3)))"
+    )
+
+
+@pytest.mark.asyncio
+async def test_webhook_removed_since_is_a_removal_of_that_webhook_in_the_window() -> None:
+    ch = _LocalCH(
+        ddl("memory_webhooks"),
+        _registration("wa", deleted=0, minutes_ago=90),
+        _registration("wa", deleted=1, minutes_ago=1),  # removed in the window
+        _registration("wb", deleted=1, minutes_ago=120),  # removed before it
+        _registration("wc", deleted=0, minutes_ago=1),  # live
+        _registration("wa", deleted=0, minutes_ago=1, namespace="other"),
+    )
+    since = NOW - timedelta(hours=1)
+    removed = [
+        h
+        for h in [*HOOKS, ("acme", "chat", "wc"), ("acme", "other", "wa")]
+        if await store.webhook_removed_since(h, since, ch=ch)
+    ]
+    assert removed == [("acme", "chat", "wa")]
