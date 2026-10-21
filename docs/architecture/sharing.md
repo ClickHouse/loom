@@ -73,8 +73,9 @@ The same five ops serve both ways a chat runs in front of Loom:
 
 In both, a save is refused for text that reads as high sensitivity (a credential, card
 number, SSN or stated PIN) and for a tombstoned turn (in `@me`, one a user erasure left),
-with its `reason`; in a recording namespace also for a stored system or tool turn (a request can name only a user or assistant role). Under
-the pinned token a body naming another user is refused (403). A client draws a
+with its `reason`; in a recording namespace also for a stored system or tool turn (a
+request can name only a user or assistant role). Under the pinned token a body naming
+another user is refused (403). A client draws a
 conversation's saved state with one `conversation.saved_status` call, and a user erasure
 takes the user's conversation rows, saved ones included. A user-scope `erasure.export`
 does not return conversation rows, so it leaves out saved messages, as it leaves out the
