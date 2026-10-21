@@ -36,8 +36,9 @@ change between releases, and ops MCP does not serve with ‡.
   stored once is recalled by meaning in every later session, yours or
   another agent's.
 - **You can trust what comes back.** Every hit says who wrote it, when and
-  from which source, and can say whether a person verified it (over MCP,
-  pass `explain: true` for that) and whether a newer fact contradicts it. A search that finds nothing says so (`abstain`).
+  from which source; a read by key also says whether a person verified it
+  (over MCP, `memory.get` with `explain: true`) and whether a newer fact
+  contradicts it. A search that finds nothing says so (`abstain`).
 - **Your context stays small.** One `context.pack` call loads what matters
   for the task inside a token budget; large logs go to `context.offload`†
   and come back by pattern.
@@ -121,8 +122,8 @@ change between releases, and ops MCP does not serve with ‡.
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
 | `abstain: true` on a read | nothing cleared the relevance floor | treat it as "not in Loom" and use your other context; never present the nearest weak hit as the answer |
-| `pending_extraction` > 0 | extraction has not run yet | an empty result is not evidence of absence |
-| `source_class`, `verified`, `verification` (over MCP, with `explain: true`) | how a row entered memory and whether someone attested it | weigh `external` and unverified rows as claims |
+| `pending_extraction` > 0 (not shown by `loom_search`) | extraction has not run yet | an empty result is not evidence of absence |
+| `source_class`, `verified`, `verification` (over MCP, on `memory.get` with `explain: true`; `loom_search` drops them) | how a row entered memory and whether someone attested it | weigh `external` and unverified rows as claims |
 | `hint` on a result (header `X-Loom-Hint`) | the mentor names a plane you are not using | act on it once; `mentor.brief` has the counts |
 | `found: false` on a read by id | not found, or not yours | the same answer for both, by design |
 
@@ -140,9 +141,11 @@ end user when you serve many, `session_id` to the conversation or job, and
 On reads the same fields select rows, and ops differ in how. Three rules
 cover the loop:
 
-- **Every author: send `agent: "*"` on searches, lists and
-  `memory.update`.** A raw `agent.call` stamps your own `agent`, which
-  narrows them to rows you wrote. Never on `memory.get` or `memory.delete`:
+- **Every author: send `agent: "*"` on `memory.search`‡, `memory.ask`,
+  `memory.list` and `memory.update`.** A raw `agent.call` stamps your own
+  `agent`, which narrows them to rows you wrote. `search.query`† already
+  reads every author: keep your own `agent` there, which picks the bot
+  rules it serves you (`"*"` would serve every bot's). Never on `memory.get` or `memory.delete`:
   there your stamped `agent` and `user_id` already fall back to the same
   user's row under any agent, and `"*"` ignores `user_id`, returning or
   removing the newest row under the key from any user.

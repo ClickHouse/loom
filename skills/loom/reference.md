@@ -14,8 +14,8 @@ TypeScript `await agent.call("<op>", {...})`; HTTP `POST /v1/<op>`. The SDKs
 stamp `org`, `namespace` and `agent` for you; over HTTP you send them. A
 stamped `agent` narrows reads that look rows up by author, and
 `memory.update`, to your own rows; pass `agent: "*"` there when you mean
-every author, except on the ops about you and on `memory.delete`, which the
-skill's Identity section names. Ops
+every author, except on the ops about you and on `memory.get` and
+`memory.delete`, which the skill's Identity section names. Ops
 marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
 `loom_search` searches memory, knowledge and conversations, and the rest are
 SDK and HTTP only.
