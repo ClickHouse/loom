@@ -202,9 +202,9 @@
           "description": "Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait."
         },
         "ch_batched_inserts": {
-          "default": false,
+          "default": true,
           "type": "boolean",
-          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written, holding its pooled connection for the wait. False (the default): these inserts are committed, one part each. Size `ch_pool_maxsize` for the wait before turning it on (docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False: these inserts are committed, one part each."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

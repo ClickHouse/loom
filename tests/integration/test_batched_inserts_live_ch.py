@@ -144,21 +144,33 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
             row = _embedding_row(org, "stale", [0.5] * (width // 2))
             await c._insert_rows(table, [row], batched_insert_settings())
 
-        good = [
-            conversations.insert_embedding(
-                cast(Any, _embedding_row(org, f"m{i}", [0.5] * width)), ch=c
-            )
-            for i in range(20)
-        ]
+        rows = [_embedding_row(org, f"m{i}", [0.5] * width) for i in range(20)]
+        good = [conversations.insert_embedding(cast(Any, row), ch=c) for row in rows]
         results = await asyncio.gather(stale_width_insert(), *good, return_exceptions=True)
 
         stale_error = results[0]
         assert stale_error is not None and error_code(stale_error) == WIDTH_MISMATCH_CODE
         assert [r for r in results[1:] if r is not None] == []
         got = await c.query_all(
-            f"SELECT DISTINCT msg_id FROM {table} WHERE org = {{org:String}}", {"org": org}
+            "SELECT DISTINCT msg_id, content_excerpt, embedding_dim,"
+            " length(embedding) AS embedding_len, embed_attempts, is_saved, user_id, run_id"
+            f" FROM {table} WHERE org = {{org:String}} ORDER BY msg_id",
+            {"org": org},
         )
-        assert sorted(r["msg_id"] for r in got) == sorted(f"m{i}" for i in range(20))
+        expected = [
+            {
+                "msg_id": row["msg_id"],
+                "content_excerpt": row["content_excerpt"],
+                "embedding_dim": row["embedding_dim"],
+                "embedding_len": len(row["embedding"]),
+                "embed_attempts": row["embed_attempts"],
+                "is_saved": row["is_saved"],
+                "user_id": row["user_id"],
+                "run_id": row["run_id"],
+            }
+            for row in sorted(rows, key=lambda row: row["msg_id"])
+        ]
+        assert [dict(r) for r in got] == expected
         # The stale row failed a flush it shared: the rows in it were resent committed.
         assert resent and "stale" not in resent
     finally:

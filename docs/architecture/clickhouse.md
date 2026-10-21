@@ -114,8 +114,8 @@ A committed insert makes one part, so a table written on every request makes par
 the request rate, and merges fall behind ("too many parts"). The rows written on every
 request or by every process on a short interval are batched inserts, sent with
 `async_insert = 1, wait_for_async_insert = 1` (`server/core/ch_writes.py`,
-`batched_insert_settings` and `async_insert_settings`; most of them only with
-`ch_batched_inserts` on, see below):
+`batched_insert_settings` and `async_insert_settings`; `ch_batched_inserts = false`
+sends most of them committed, see below):
 `audit_log`, the `conversations` turns of `conversation.append` and the turn
 `conversation.save_message` rewrites when deduplication dropped its first write, the
 `conversation_embeddings` rows (`conversation.append`, `conversation.save_message`,
@@ -161,13 +161,15 @@ hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background
 `ch_batched_insert_background_wait_max_ms` / 1000 connections: a delivery worker writing
 20 attempt batches a second holds at least 4. That is a lower bound: a waiting insert
 holds its connection for the window and then the flush and part write, which queue up
-and grow under load. One process taking 200 writes a second, two batched inserts each,
-exhausted 64 connections, where the formula gives 20. Size the ClickHouse connection
-pool (`ch_pool_maxsize`) well above the bound on top of the other statements, and when
-the pool still runs out, set `ch_batched_inserts = false` or lower
-`ch_batched_insert_wait_max_ms` ([troubleshooting](../operations/troubleshooting.md)).
+and grow under load. A measured run of one process taking 200 writes a second, two
+batched inserts each, once ended with 212 requests refused with 503 `OVERLOADED` at
+`ch_pool_maxsize = 64`, where the formula gives 20. Size the ClickHouse connection pool
+(`ch_pool_maxsize`) well above the bound on top of the other statements. A process at
+that rate either raises `ch_pool_maxsize` or sets `ch_batched_inserts = false`; lowering
+`ch_batched_insert_wait_max_ms` also frees connections
+([troubleshooting](../operations/troubleshooting.md)).
 
-`ch_batched_inserts` (live, off by default) switches batching on for every table in the
+`ch_batched_inserts` (live, on by default) switches batching off for every table in the
 list above except the ledger flushes named next: `audit_log`, the `conversations` turns
 of `conversation.append` and the turn `conversation.save_message` writes again, the
 `conversation_embeddings` rows of `conversation.append`, `conversation.save_message`
@@ -177,15 +179,11 @@ inserts are committed, one part each. The ledger flushes (`auth_attempts`, the
 carry-acknowledgement, write-mark and usage-event flushes, the policy witness's rows,
 `memory_projection_failures`, the graph Undo markers and the waited entity-graph
 inserts) are waited async inserts on the same bounds either way
-(`async_insert_settings`); fire-and-forget inserts are unchanged.
-
-It is off by default because each waited insert holds its pooled connection for the
-window and the flush: one process taking 200 writes a second, two inserts each, refused
-some of them with 503 `OVERLOADED` at the default `ch_pool_maxsize = 64`, where
-committed inserts refused none. Before turning it on, raise `ch_pool_maxsize` well above
-the bound above for the process's write rate, and watch for `OVERLOADED`. Leave it off
-on a deployment with little traffic where latency matters more than parts: with writes
-too sparse to share a part, each insert still waits `ch_batched_insert_wait_min_ms`.
+(`async_insert_settings`); fire-and-forget inserts are unchanged. Turn it off
+(`LOOM_CH_BATCHED_INSERTS=false`) on a process whose write rate exhausts the pool as
+above and whose pool cannot grow, or on a deployment with little traffic where latency
+matters more than parts: with writes too sparse to share a part, each insert still waits
+`ch_batched_insert_wait_min_ms`.
 
 ClickHouse keys the async buffer by table, statement shape, settings and user, so one
 flush can hold rows from several orgs, and one row that fails (a vector of the wrong

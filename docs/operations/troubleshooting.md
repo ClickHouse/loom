@@ -96,9 +96,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Cause:** a ClickHouse statement ran past its class deadline (504
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
-  (503 `OVERLOADED`). Under a sustained write rate, the ledger flushes, and with
-  `ch_batched_inserts` on the audit rows and transcript turns too, hold their connection
-  for up to `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and then the flush, and background ones (webhook
+  (503 `OVERLOADED`). Under a sustained write rate, batched inserts (audit rows,
+  transcript turns, ledgers) hold their connection for up to
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and then the flush, and background ones (webhook
   delivery attempts, usage-event and write-mark flushes) for up to
   `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` and the flush
   ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
@@ -110,11 +110,15 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   pressure.
 - **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
-  every call. For `OVERLOADED` under a sustained write rate, lower the insert waits live
-  with `loom settings set ch_batched_insert_wait_max_ms <ms>` (and
-  `ch_batched_insert_background_wait_max_ms`), switch batching off with
-  `loom settings set ch_batched_inserts false`, or raise `LOOM_CH_POOL_MAXSIZE` (a
-  restart). [Runtime settings](./runtime-settings.md) covers live overrides.
+  every call. For `OVERLOADED` under a sustained write rate: a waited batched insert
+  holds its pooled connection for the wait, and a measured run of one process at 200
+  writes a second once ended with 212 `OVERLOADED` at `LOOM_CH_POOL_MAXSIZE=64`. At that
+  rate raise `LOOM_CH_POOL_MAXSIZE` (a restart) or switch batching off with
+  `loom settings set ch_batched_inserts false` (`LOOM_CH_BATCHED_INSERTS=false` at
+  startup); lowering the insert waits live with
+  `loom settings set ch_batched_insert_wait_max_ms <ms>` (and
+  `ch_batched_insert_background_wait_max_ms`) also frees connections.
+  [Runtime settings](./runtime-settings.md) covers live overrides.
   The [errors reference](../reference/errors.md) lists every code.
 
 ## Providers and search quality

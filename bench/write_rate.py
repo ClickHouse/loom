@@ -10,11 +10,11 @@ form ran. Free with the fake embedder and LLM.
 `--target server` sends `memory.set` and/or `conversation.append` to a running
 server (`--op`). `--target client` makes, in this process, the two store calls a
 `conversation.append` makes (`conversations.append` into `loom.conversations`,
-then `conversations.insert_embedding` into `loom.conversation_embeddings`), with
-the settings the store sends under `ch_batched_inserts`; `--committed` switches
-it off, so both inserts are committed: the insert path alone, at rates one
-server process cannot serve. Both read the
-ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
+then `conversations.insert_embedding` into `loom.conversation_embeddings`): the
+insert path alone, at rates one server process cannot serve. By default both are
+batched, as `ch_batched_inserts` (on by default) sends them; `--committed` sets
+the switch off, so both are committed. Both targets read the ClickHouse settings
+(`LOOM_CH_*`, `.env`) to query the part log.
 
 A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
 `LOOM_AUTH_REQUIRED=false`; spreading over orgs keeps the org-wide rate limit

@@ -562,10 +562,8 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written, holding its pooled connection for the wait. False (the
-    # default): these inserts are committed, one part each. Size `ch_pool_maxsize` for
-    # the wait before turning it on (docs/architecture/clickhouse.md#batched-inserts).
-    ch_batched_inserts: Annotated[bool, LIVE] = False
+    # returns once written. False: these inserts are committed, one part each.
+    ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
@@ -5058,7 +5056,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "context.offload": 300,
     "context.pack": 600,
     # The message and its embedding row are batched inserts that each wait up to
-    # ch_batched_insert_wait_max_ms (50) on top of the ~30 ms of writes.
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default), on
+    # top of the ~30 ms of writes.
     "conversation.append": 130,
     # Dominated by the LLM round-trip.
     "conversation.compact": 3500,
@@ -5069,7 +5068,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "conversation.list": 80,
     "conversation.list_saved_messages": 150,
     # The embedding row, and the turn rewritten when deduplication dropped the
-    # first, are batched inserts that each wait up to ch_batched_insert_wait_max_ms (50).
+    # first, are batched inserts that each wait up to ch_batched_insert_wait_max_ms (50)
+    # with ch_batched_inserts on (the default).
     "conversation.save_message": 350,
     "conversation.saved_status": 100,
     "conversation.search": 120,
@@ -5152,10 +5152,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.backlinks": 200,
     "memory.brief": 4000,
     # Its audit row (high-sensitivity rows) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.bulk_get": 130,
     # One CH insert + N embeds, plus a batched audit row and an outbox row (namespaces
-    # with a webhook) that each wait up to ch_batched_insert_wait_max_ms (50).
+    # with a webhook) that each wait up to ch_batched_insert_wait_max_ms (50) with
+    # ch_batched_inserts on (the default).
     "memory.bulk_set": 400,
     # 6 ALTER UPDATEs against bounded scopes.
     "memory.clear": 600,
@@ -5170,11 +5171,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
     # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.delete": 80,
     # memory.delete's work plus two committed check inserts and the read after the
     # tombstone, plus a batched audit row and an outbox row that each wait up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.delete_version": 180,
     "memory.demonstrate": 400,
     "memory.demote": 100,
@@ -5187,14 +5188,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # it sits on the PreToolUse path, so the hook bounds it at 3 s anyway.
     "memory.for_file": 150,
     # Its audit row (high-sensitivity rows) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.get": 75,
     # Its audit row (high-sensitivity rows) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.get_by_id": 100,
     "memory.health": 400,
     # Its audit row (high-sensitivity rows) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.history": 130,
     # ~50 sections × per-section memory.set; embed-on-write dominates.
     "memory.import_curated": 30000,
@@ -5235,7 +5236,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.related": 120,
     "memory.resolve_orphan_duplicates": 5000,
     # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.restore": 130,
     # Covers semantic / hybrid / all_mine fan-out (auto_touch is async, no
     # contribution). Reranker hop is EXCLUDED — the operator endpoint owns its
@@ -5249,12 +5250,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier = 4 s sits at that
     # p99, so a violation is a signal. Its audit row, the waited entity-triple inserts
     # and (in a namespace with a webhook) its outbox row are batched inserts that each
-    # wait up to ch_batched_insert_wait_max_ms (50), about 150 ms in all, inside the
-    # 300 ms between that p99 and the 4 s ceiling.
+    # wait up to ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the
+    # default), about 150 ms in all, inside the 300 ms between that p99 and the 4 s
+    # ceiling.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms,
     # and about four batched inserts in sequence each wait up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.set_from_messages": 2700,
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.
@@ -5266,10 +5268,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.unlock": 40,
     "memory.unpin": 40,
     # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.update": 170,
     # Its outbox row (namespaces with a webhook) is a batched insert that waits up to
-    # ch_batched_insert_wait_max_ms (50).
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
     "memory.update_by_id": 130,
     "memory.verify": 80,
     "memory_schema.approve": 120,
