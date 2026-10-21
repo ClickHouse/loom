@@ -4975,8 +4975,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.import_evidence": 30000,
     # Bounded by namespace size.
     "memory.keys": 2000,
-    # Three bounded queries: shared point-lookup, audit by request_id, learnings_queue
-    # match.
+    # Bounded queries: shared point-lookup, audit by request_id, learnings_queue
+    # match, and for a bot's rule its supporter count (one candidate's rows).
     "memory.lineage": 150,
     "memory.link": 60,
     # Covers both recency (ORDER BY memory_key) and the wider score path.

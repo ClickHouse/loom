@@ -85,6 +85,29 @@ async def find_candidate(
     )
 
 
+async def rule_decided(
+    org: str,
+    namespace: str,
+    agent: str,
+    memory_key: str,
+    *,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Whether a reviewer already decided an `assistant_turn` rule of this bot under
+    this key."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        """
+        SELECT count() AS n FROM loom.learnings_queue FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND agent = {agent:String} AND memory_key = {k:String}
+          AND source_kind = 'assistant_turn' AND status != 'pending'
+        """,
+        params={"org": org, "ns": namespace, "agent": agent, "k": memory_key},
+    )
+    return bool(row and int(row["n"]))
+
+
 async def insert_row(
     row: dict[str, Any],
     *,

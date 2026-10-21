@@ -89,7 +89,10 @@ request's `(org, namespace, agent)`:
   is a separate candidate, so a first wording never collects the support of a later
   one. The same rule worded differently in another session is a separate candidate too,
   so wording drift splits its support. The extractor's key rewrites leave a rule's key
-  alone.
+  alone. Once a reviewer decides a bot's rule, no new candidate is filed for that bot
+  under that key: a promoted rule is served back to the bot, which restates it in its
+  own words, and each restatement would otherwise wait for review again. The skip is
+  counted in `loom.memory_drops` (stage `learnings.file`, reason `already_decided`).
 - The candidate row holds the rule and no user's words. Each session that states it adds
   a row to `loom.learnings_supporters` with the end user, the session and that user's
   own quotes: the user turn before the cited assistant turn (up to 200 characters) and

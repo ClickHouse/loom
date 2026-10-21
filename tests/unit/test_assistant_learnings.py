@@ -235,6 +235,12 @@ class _Queue:
         self.order.append("supporter")
         self.supporters[(row["candidate_id"], row["user_id"], row["session_id"])] = dict(row)
 
+    async def decided(self, org: str, ns: str, agent: str, key: str) -> bool:
+        return any(
+            r["agent"] == agent and r["memory_key"] == key and r["status"] != "pending"
+            for r in self.rows.values()
+        )
+
     def support(self, cid: str) -> list[tuple[str, str]]:
         return sorted((u, s) for c, u, s in self.supporters if c == cid)
 
@@ -275,6 +281,7 @@ def queue(monkeypatch: pytest.MonkeyPatch) -> _Queue:
     monkeypatch.setattr(learnings_repo, "insert_row", q.insert)
     monkeypatch.setattr(learnings_repo, "supporter_exists", q.exists)
     monkeypatch.setattr(learnings_repo, "insert_supporter", q.insert_supporter)
+    monkeypatch.setattr(learnings_repo, "rule_decided", q.decided)
     return q
 
 
@@ -422,6 +429,28 @@ async def test_a_decided_candidate_takes_no_more_supporters(queue: _Queue) -> No
     queue.rows[_cid()]["status"] = "promoted"
     assert await _file(_state("bob", "s2")) == 0
     assert queue.support(_cid()) == [("alice", "s1")]
+
+
+@pytest.mark.asyncio
+async def test_a_decided_rule_restated_in_new_words_is_not_filed_again(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drops: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        assistant_learnings,
+        "record_drop",
+        lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
+    )
+    await _file(_state("alice", "s1"))
+    queue.rows[_cid()]["status"] = "promoted"
+    reworded = "The assistant hands refunds above $500 to a human."
+    assert await _file(_state("bob", "s2"), _rule_fact(value=reworded)) == 0
+    assert set(queue.rows) == {_cid()}
+    assert drops == [("learnings.file", "already_decided", "assistant_rule_refund_escalation")]
+    # Another bot's rule under the same key is still filed.
+    assert (
+        await _file(_state("carol", "s3", rule_agent="sales-bot"), _rule_fact(value=reworded)) == 1
+    )
 
 
 @pytest.mark.asyncio
