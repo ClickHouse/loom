@@ -276,11 +276,14 @@ def credential_spans(text: str) -> list[tuple[int, int]]:
 
 def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
     """For each [start, end) range of `source` (a chunk's place in the text it was cut from),
-    whether it overlaps a credential in `source`. A chunk cut through a key holds only its
-    head or its tail, which does not read as a credential on its own."""
+    whether it overlaps a credential in `source` or its own text reads as one. A chunk cut
+    through a key holds only its head or its tail, which does not read as a credential on its
+    own; a chunk that starts inside a word can read as one where `source` does not."""
     spans = credential_spans(source)
     return [
-        any(start < s_end and s_start < end for s_start, s_end in spans) for start, end in ranges
+        reads_high(source[start:end])
+        or any(start < s_end and s_start < end for s_start, s_end in spans)
+        for start, end in ranges
     ]
 
 

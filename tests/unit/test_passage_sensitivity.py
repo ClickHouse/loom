@@ -192,6 +192,37 @@ async def test_a_chunk_holding_only_part_of_a_key_is_stored_without_a_vector(
 
 
 @pytest.mark.asyncio
+async def test_a_chunk_that_starts_inside_a_word_and_reads_as_a_key_is_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import set_chunks
+    from server.memory.domain.sensitivity import reads_high
+
+    async def head_still_embedded(*_: Any, **__: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(set_chunks, "_head_still_embedded", head_still_embedded)
+
+    def filler(n: int) -> str:
+        return ("plan notes " * 200)[: n - 1] + " "
+
+    # Chunks are cut at [0, 800) and [700, 1500): the second starts at the `sk-` inside
+    # `risk-`, which reads as a key there although the whole text does not.
+    value = filler(698) + "risk-assessment-for-the-migration-plan " + filler(800)
+    assert value[700:].startswith("sk-assessment") and not reads_high(value)
+    ch, emb = _CH(), _Embedder()
+    write = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="u", memory_key="notes/risk", value=value
+    )
+    await set_chunks.write_set_chunks(write, memory_type="semantic", limit=100, ch=ch, embedder=emb)
+    rows = ch.inserts["loom.memory_chunks"]
+    held = [r for r in rows if r["content"].startswith("sk-assessment")]
+    assert len(held) == 1 and held[0]["embedding_dim"] == 0
+    assert all(r["embedding_dim"] == 2 for r in rows if r not in held)
+    assert emb.seen and not any(t.startswith("sk-assessment") for t in emb.seen)
+
+
+@pytest.mark.asyncio
 async def test_memory_get_leaves_a_vectorless_neighbour_out_and_audits_its_own_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -720,7 +720,8 @@ returns it.
   `memory.import_evidence` writes) is held this way. Chunks overlap and can be cut through
   a key, and a chunk that holds only a key's head or tail does not read as one on its own.
   The conversation and long-value writers check the whole text once and also hold every
-  chunk whose character range overlaps a credential. A private-key block reads as a
+  chunk whose character range overlaps a credential, and every chunk whose own text reads
+  as one (a chunk can start inside a word, where a pattern's word boundary falls). A private-key block reads as a
   credential from its header to its closing line (to the end of the text without one), so
   every chunk its body covers is held, though a body line does not read as a key alone. `memory.import_evidence` joins each
   chunk with every chunk of its session at the next `chunk_index`, the overlap the second
