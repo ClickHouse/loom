@@ -375,7 +375,6 @@ async def handle_run_begin(input: RunBeginInput) -> RunBeginOutput:
     run of its own that already exists; a new one gets a server-made id."""
     ch = get_client()
     supplied = (input.run_id or "").strip()
-    # "-" is the identity sentinel the SDKs stamp when a call names no run.
     if named(supplied) is None:
         # A server-made id cannot collide: nothing to claim or check.
         return await _open_run(ch, input, uuid.uuid4().hex, None)
@@ -1003,7 +1002,6 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
 
     where: list[str] = []
     params: dict[str, Any] = {}
-    # "*" and the identity sentinel "-" the SDKs stamp mean every agent / session.
     if named(input.agent, wildcard=True):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent

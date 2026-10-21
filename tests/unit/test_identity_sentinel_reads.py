@@ -206,3 +206,38 @@ async def test_evidence_export_reads_the_session_sentinel_as_every_session(monke
         MemoryExportEvidenceInput(**_ID, kind="digests", session_id="-")
     )
     assert seen and "sid" not in seen[0]
+
+
+async def test_search_trace_log_reads_the_run_sentinel_as_every_run(monkeypatch):
+    from server.memory.api.models_search import SearchTraceLogInput
+    from server.memory.app.search import trace
+
+    seen: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_all(self, _sql: str, params: Any = None) -> list[Any]:
+            seen.append(params)
+            return []
+
+    monkeypatch.setattr(trace, "get_client", lambda: _CH())
+    await trace.handle_memory_search_trace_log(SearchTraceLogInput(**_ID, run_id="-"))
+    assert seen and "rid" not in seen[0]
+
+
+async def test_an_outcome_for_the_run_sentinel_derives_no_keys(monkeypatch):
+    """A stamped run_id "-" names no run: it must not credit every search made outside one."""
+    from server.memory.api.models_temporal import MemoryOutcomeRunInput
+    from server.memory.app import ops
+
+    queries: list[str] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
+            queries.append(sql)
+            return [{"memory_key": "k1"}]
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    out = await ops.handle_memory_outcome_run(
+        MemoryOutcomeRunInput(**_ID, outcome="negative", run_id="-")
+    )
+    assert (out.applied, out.keys_matched, queries) == (0, 0, [])

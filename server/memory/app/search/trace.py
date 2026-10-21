@@ -33,7 +33,6 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     from server.observability.otel import traced
 
     input, _ = pin_read_filters(input, current_auth())
-    # The identity sentinel "-" the SDKs stamp on a call that names no run filters nothing.
     input = input.model_copy(update={"run_id": named(input.run_id)})
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
@@ -135,7 +134,7 @@ async def handle_memory_search_trace_log(input: SearchTraceLogInput) -> SearchTr
     if getattr(input, "agent", ""):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent
-    if getattr(input, "run_id", ""):
+    if named(input.run_id):
         where.append("run_id = {rid:String}")
         params["rid"] = input.run_id
     rows = await get_client().query_all(

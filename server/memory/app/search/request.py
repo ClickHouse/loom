@@ -176,7 +176,6 @@ async def _resolve_search_input(
     from server.identity.domain.read_scope import pin_read_filters
 
     input, _ = pin_read_filters(input, current_auth())
-    # The identity sentinel "-" the SDKs stamp on a call that names no run filters nothing.
     input = input.model_copy(update={"run_id": named(input.run_id)})
     input, _top_k_ceiling = _apply_k_defaults(input)
 

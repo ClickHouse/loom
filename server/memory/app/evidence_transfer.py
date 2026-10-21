@@ -134,7 +134,6 @@ async def handle_memory_export_evidence(
     ch = get_client()
     params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "lim": int(input.limit) + 1}
     where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
-    # The identity sentinel "-" the SDKs stamp names no session: every session exports.
     if named(input.session_id):
         where.append("session_id = {sid:String}")
         params["sid"] = input.session_id

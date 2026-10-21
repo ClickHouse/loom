@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
+from server.core.naming import named
 
 # Higher = narrower. The effective scope is the narrowest of the request and
 # the token's ceiling. The keys are the token claim's values
@@ -42,10 +43,7 @@ def effective_read_scope(requested: str | None, auth: Any) -> str:
 
 
 def _clean(value: str | None) -> str | None:
-    if value is None:
-        return None
-    v = str(value).strip()
-    return v if v and v != SENTINEL else None
+    return named(str(value).strip()) if value is not None else None
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,8 @@
 """The identity sentinel `Agent.call` stamps when a call names no run, user or
 session ("-") reads as unset: memory.search with `run_id: "-"` reads every run's
-rows, and memory.update with `user_id` / `session_id` "-" (or `agent: "*"`)
-resolves the key across the namespace. A named value still narrows."""
+rows, memory.update with `user_id` / `session_id` "-" (or `agent: "*"`) resolves
+the key across the namespace, a startup context.pack reads every user's rows, and
+run.begin mints an id of its own. A named value still narrows."""
 
 from __future__ import annotations
 

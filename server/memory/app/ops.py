@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -656,7 +657,7 @@ async def handle_memory_outcome_run(input: MemoryOutcomeRunInput) -> MemoryOutco
     # Prefer the explicit key set the caller recalled; fall back to the run's
     # recorded keys in the trace log when only a run_id is given.
     keys = [str(k) for k in (getattr(input, "memory_keys", None) or []) if k]
-    if not keys and input.run_id:
+    if not keys and named(input.run_id):
         key_rows = await ch.query_all(
             """
             SELECT DISTINCT arrayJoin(returned_keys) AS memory_key

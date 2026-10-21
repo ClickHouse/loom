@@ -283,7 +283,6 @@ class RunGradeInput(BaseModel):
 
     @model_validator(mode="after")
     def _one_target(self) -> RunGradeInput:
-        # The identity sentinel "-" the SDKs stamp names no run or session.
         self.run_id = named(self.run_id) or ""
         self.session_id = named(self.session_id) or ""
         if bool(self.run_id.strip()) == bool(self.session_id.strip()):

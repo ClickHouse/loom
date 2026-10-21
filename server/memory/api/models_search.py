@@ -914,6 +914,7 @@ class SearchTraceLogInput(BaseModel):
     # Look-back window in hours, 1 to 8760 (one year).
     since_hours: int = Field(default=24, ge=1, le=8760)
     agent: str = ""
+    # Only searches made under this run; "" or "-" = every run.
     run_id: str = ""
     # At most this many rows, newest first; capped at 1000.
     limit: int = Field(default=100, ge=1, le=1000)

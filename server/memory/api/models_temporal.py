@@ -313,6 +313,7 @@ class MemoryOutcomeRunInput(BaseModel):
     outcome: Literal["positive", "negative", "used"]
     # The recalled keys to apply the outcome to; empty derives them from `run_id`.
     memory_keys: list[str] = Field(default_factory=list)
+    # The run whose recalls the keys come from; "" or "-" names none, so no keys.
     run_id: str = ""
     # How many events the outcome counts as on each key.
     weight: int = Field(default=1, ge=1, le=100)

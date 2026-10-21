@@ -1211,7 +1211,7 @@ Apply one outcome to many recalled memories in a single call — the bulk form o
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `outcome` | `Literal['positive', 'negative', 'used']` | required | `positive` records evidence, `negative` harm, `used` reinforcement on each key. |
 | `memory_keys` | `list[str]` | *(computed)* | The recalled keys to apply the outcome to; empty derives them from `run_id`. |
-| `run_id` | `str` | `''` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `run_id` | `str` | `''` | The run whose recalls the keys come from; "" or "-" names none, so no keys. |
 | `weight` | `int` | `1` | How many events the outcome counts as on each key. |
 | `source` | `str` | `''` | Optional caller-supplied tag; not stored on the usage events. |
 | `max_keys` | `int` | `1000` | At most this many keys are applied; the rest are dropped. |
@@ -1924,7 +1924,7 @@ Read loom.search_trace_log for a namespace (requires the telemetry flag).
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `since_hours` | `int` | `24` | Look-back window in hours, 1 to 8760 (one year). |
 | `agent` | `str` | `''` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `run_id` | `str` | `''` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `run_id` | `str` | `''` | Only searches made under this run; "" or "-" = every run. |
 | `limit` | `int` | `100` | At most this many rows, newest first; capped at 1000. |
 
 | Output field | Type | Meaning |

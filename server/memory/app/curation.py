@@ -131,7 +131,6 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
     ch = _get_client()
     where = "org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL"
     params: dict[str, Any] = {"o": input.org, "n": input.namespace, "lim": int(input.limit) + 1}
-    # "*" and the identity sentinel "-" the SDKs stamp list every session.
     if named(input.session_id, wildcard=True):
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
