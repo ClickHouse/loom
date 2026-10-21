@@ -1214,8 +1214,8 @@ class MemoryClient:
         """Bulk-tombstone all memories in one scope. ADMIN role required.
 
         At least one of `user_id` or `agent` must name a concrete value
-        (other than `'-'` when the other is open); `"*"` on the other clears
-        every user's or every agent's rows.
+        other than `'-'`; `"*"` on the other clears every user's or every
+        agent's rows.
         `confirm_subject` must equal a concrete value (or one of them, when
         both are set) — defense against accidental clears.
 

@@ -363,7 +363,7 @@ Bulk-tombstone memories in one scope.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `user_id` | `str \| None` | `None` | The user whose rows are cleared (`'-'` for rows with no user); `'*'` or unset clears every user's. |
 | `agent` | `str \| None` | `None` | The agent whose rows are cleared; `'*'` clears every agent's, and unset clears every agent's over HTTP but only the calling client's over MCP. |
-| `confirm_subject` | `str` | required | Must equal the concrete `user_id` or `agent` being cleared (`'*'` never confirms); anything else is a 400. |
+| `confirm_subject` | `str` | required | Must equal the concrete `user_id` or `agent` being cleared (`'*'` and `'-'` never confirm); anything else is a 400. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

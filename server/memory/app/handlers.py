@@ -1118,10 +1118,9 @@ async def _retire_derived(
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     """Bulk-tombstone for `memory.clear`.
 
-    Defenses: a concrete `user_id` or `agent` other than `'-'` is required when the
-    other is open (`"*"` or unset; a scope-less clear is `erasure.request_namespace`'s
-    job), and `confirm_subject` must match a concrete one (guard against UI-dropdown
-    accidents).
+    Defenses: a concrete `user_id` or `agent` other than `'-'` is required (`"*"` opens
+    an axis; a scope-less clear is `erasure.request_namespace`'s job), and
+    `confirm_subject` must match one (guard against UI-dropdown accidents).
 
     Same tombstone semantics as `memory.delete`.
     """
@@ -1130,10 +1129,10 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     # "*" opens an axis as it does on reads; matched literally it would clear nothing.
     user_id = None if input.user_id == "*" else input.user_id
     agent = None if input.agent == "*" else input.agent
-    # With one axis open, the other must name someone: "-" (no user, no agent) beside an
-    # open axis selects most of a namespace, which is erasure's job too.
+    # One axis must name someone: "-" (no user, no agent) beside an open axis selects most
+    # of a namespace, which is erasure's job too, and anyone can type it to confirm.
     named = [v for v in (user_id, agent) if v not in (None, "-")]
-    if (user_id is None or agent is None) and not named:
+    if not named:
         raise HTTPException(
             status_code=400,
             detail={
@@ -1146,16 +1145,15 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
                 ),
             },
         )
-    candidates = named  # "-" never confirms: anyone can type it
-    if input.confirm_subject not in candidates:
+    if input.confirm_subject not in named:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "CONFIRM_SUBJECT_MISMATCH",
                 "message": (
                     "`confirm_subject` must equal the concrete user_id or agent "
-                    'being cleared ("*" never confirms). This is a mid-weight defense against '
-                    "destructive UI-dropdown accidents."
+                    'being cleared ("*" and "-" never confirm). This is a mid-weight '
+                    "defense against destructive UI-dropdown accidents."
                 ),
             },
         )

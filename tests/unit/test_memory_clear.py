@@ -325,7 +325,7 @@ async def test_clear_refuses_star_as_confirm_subject() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("-", "-")])
+@pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("u1", "-")])
 async def test_dash_never_confirms_a_clear(user_id: str, agent: str) -> None:
     """'-' is a value anyone can type, so it never confirms, even as a literal scope."""
     from server.memory.api.models_crud import MemoryClearInput
@@ -369,7 +369,7 @@ async def test_clear_accepts_dash_beside_a_named_axis(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("user_id", "agent"),
-    [("*", "*"), ("-", "*"), ("*", "-"), ("-", None), (None, "-")],
+    [("*", "*"), ("-", "*"), ("*", "-"), ("-", None), (None, "-"), ("-", "-")],
 )
 async def test_clear_refuses_a_scope_that_names_nobody(
     user_id: str | None, agent: str | None
