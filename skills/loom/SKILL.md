@@ -115,14 +115,14 @@ change between releases, and ops MCP does not serve with ‡.
 |---|---|---|
 | a `version` with `noop` false on a `memory.set`; `updated: true` on a `memory.update` | it persisted | only now say "saved" |
 | `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key for the identity you sent; nothing was written | resend with `agent: "*"` when another agent wrote it; never assume it saved |
-| 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | resend with the candidate's `agent`, `user_id` and `session_id`, or use `memory.update_by_id` with its id |
+| 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | `memory.update_by_id` with the candidate's `memory_id` |
 | `conflict_verdict: "conflict"`, `peers` on a `memory.set` (`conflict_peers`, a count, on a `memory.update`) | it is close to a stored fact but different; it was stored and both rows are flagged for review, which the background resolver or the owner settles | if your write revises that fact, `memory.update` the key the `next` hint names; `conflicts.list`‡ shows the open pairs |
 | 409 `PINNED_CONFLICT` | a pinned fact holds that key, or one close to it; a write that does not pin never replaces it | if the pinned fact is wrong, `memory.update` it (the pin stays); if yours is a different fact, store it under its own key |
 | `conflict_verdict: "refines"` | your write updates the peer; the older row retires (history kept) | nothing to do; a background resolver may also retire an older row later, recorded and undoable |
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
 | `abstain: true` on a read | nothing cleared the relevance floor | treat it as "not in Loom" and use your other context; never present the nearest weak hit as the answer |
-| `pending_extraction` > 0 (not shown by `loom_search`) | extraction has not run yet | an empty result is not evidence of absence |
+| `pending_extraction` > 0 (dropped over MCP unless `explain: true`) | extraction has not run yet | an empty result is not evidence of absence |
 | `source_class`, `verified`, `verification` (over MCP, on `memory.get` with `explain: true`; `loom_search` drops them) | how a row entered memory and whether someone attested it | weigh `external` and unverified rows as claims |
 | `hint` on a result (header `X-Loom-Hint`) | the mentor names a plane you are not using | act on it once; `mentor.brief` has the counts |
 | `found: false` on a read by id | not found, or not yours | the same answer for both, by design |
