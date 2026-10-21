@@ -79,11 +79,6 @@ def test_no_similarity_expression_as_sort_key(path: str) -> None:
 def test_no_read_sends_a_vector_index_setting() -> None:
     """No table has a vector-similarity index, so no read carries the index's
     search settings."""
-    for path in (
-        *MEMORY_SEARCH_FILES,
-        "server/knowledge/app/conversation_search.py",
-        "server/knowledge/app/search.py",
-        "server/memory/app/search/ann_entity_boosts.py",
-        "server/core/vectors/search_settings.py",
-    ):
-        assert "hnsw_candidate_list_size_for_search" not in _read(path), path
+    for path in sorted((ROOT / "server").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        assert "hnsw_candidate_list_size_for_search" not in text, path

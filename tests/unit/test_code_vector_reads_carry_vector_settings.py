@@ -1,5 +1,5 @@
-"""Every code-plane vector-ranked read carries the same
-`vector_search_settings()` fragment the memory plane carries, so a
+"""Every code-plane vector-ranked read ends with the same
+`vector_search_settings()` fragment the memory plane uses, so a
 `Quantized(...)` codec on the column turns the scan codes-first."""
 
 from __future__ import annotations

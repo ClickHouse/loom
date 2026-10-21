@@ -246,13 +246,15 @@ A part count that keeps rising almost always means merges are failing. A skip in
 merge cannot build fails every merge of that table until inserts get `TOO_MANY_PARTS`.
 Loom keeps such indexes out of merges with `exclude_materialize_skip_indexes_on_merge`
 (the text index `content_text` on `chunks`): inserted parts still build the index, merged
-parts do without it. `memory_embeddings` names `embedding_hnsw_idx`, which no migration
-declares: the setting does nothing unless an operator adds a vector index of that name by
-hand, and then keeps merges from rebuilding its graph, so no migration resets it. The
-`clickhouse_parts` check of `ops.health` (`_clickhouse_parts_check`) reads
-`system.part_log` for failed `MergeParts` events in the last quarter hour and reports the
-exception and this repair. For the same reason memory-content tables carry no rows TTL. The runbook is in
+parts do without it. The `clickhouse_parts` check of `ops.health`
+(`_clickhouse_parts_check`) reads `system.part_log` for failed `MergeParts` events in the
+last quarter hour and reports the exception and this repair. For the same reason
+memory-content tables carry no rows TTL. The runbook is in
 [troubleshooting](../operations/troubleshooting.md).
+
+`memory_embeddings` also names `embedding_hnsw_idx` in that setting, an index no migration
+declares. The setting does nothing unless an operator adds a vector index of that name by
+hand, and then keeps merges from rebuilding its graph, so no migration resets it.
 
 ## The write → derive loop
 

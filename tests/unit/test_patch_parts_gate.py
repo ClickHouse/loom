@@ -146,6 +146,17 @@ async def test_main_leg_carries_the_codes_flag_only_on_a_patch_free_table() -> N
 
 
 @pytest.mark.asyncio
+async def test_exact_scan_opens_its_own_settings_block_before_the_thread_pin(monkeypatch) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_search_fact_leg_max_threads", 4)
+    ch = _CH(5)
+    await vector_search(_q(execution_planes=["fact"]), ch=ch)
+    sql = _fact_sql(ch)
+    assert _settings_tail(sql).lstrip().startswith("max_threads = 4,")
+
+
+@pytest.mark.asyncio
 async def test_main_leg_pinned_off_never_probes(monkeypatch) -> None:
     from server.settings import settings
 

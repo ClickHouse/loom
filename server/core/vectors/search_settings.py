@@ -1,5 +1,5 @@
-"""The `SETTINGS` fragment every vector-ranked read carries, for every plane
-(memory, code, knowledge, tracker)."""
+"""The `SETTINGS` fragment a vector-ranked read carries when the codes-first
+read applies, for every plane (memory, code, knowledge, tracker)."""
 
 from __future__ import annotations
 
@@ -53,8 +53,7 @@ def vector_search_settings(
         return ""
     if fetch_multiplier is None:
         # Measured on synthetic 1536-dim vectors: x3 at LIMIT 10 kept 0.73-0.88
-        # of the exact top 10 on 1M- and 500k-row reads; the fact leg's LIMIT 60
-        # at x1 kept 0.95-1.00.
+        # of the exact top 10 on 1M- and 500k-row reads.
         fetch_multiplier = settings.vector_search_quantized_fetch_multiplier
     # With a `Quantized(...)` codec on the column this turns the scan into
     # codes-first + full-precision rescore of LIMIT x fetch_multiplier

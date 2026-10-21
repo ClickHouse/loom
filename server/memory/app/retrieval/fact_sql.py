@@ -62,7 +62,7 @@ async def _fact_leg_sql(
     if q.search_mode in ("semantic", "hybrid", "bm25_hybrid", "rrf"):
         value_distance_select = "cosineDistance(e.embedding, {q:Array(Float32)}) AS value_distance,"
         order_clause = "ORDER BY value_distance ASC"
-    else:  # lexical — token-match WHERE filter, no ANN benefit
+    else:  # lexical — token-match WHERE filter
         value_distance_select = ""
         order_clause = "ORDER BY rank_score DESC, distance ASC, e.memory_key ASC"
 
@@ -140,10 +140,9 @@ async def _fact_leg_sql(
     # carries a patch part, so with patch parts present the
     # flag reads MORE than the plain scan (304 vs 177 ms on a large tenant).
     # `fact_codes_first` says yes only under `on`, or under `auto` when the
-    # 60 s probe of system.parts read zero patch parts; the multiplier then
-    # drops to `memory_search_fact_codes_fetch_multiplier` (1.0: the LIMIT
-    # already over-fetches 4x and the shortlist is re-ranked exactly, so the
-    # codec's x3 only touched more granules, as on the chunk leg's stage 1).
+    # 60 s probe of system.parts read zero patch parts; the shortlist is then
+    # LIMIT x `memory_search_fact_codes_fetch_multiplier` (3.0; x1 changed the
+    # top 10 on a quarter of queries).
     # Off, the statement carries no vector settings: an exact scan. No table
     # has a vector index; the identity PREWHERE keeps the read to the tenant's
     # granules, and ClickHouse sorts their distances exactly.
