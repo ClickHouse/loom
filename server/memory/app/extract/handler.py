@@ -17,6 +17,7 @@ from server.core.ch import get_client
 from server.core.datetimes import parse_iso_dt
 from server.embedding import get_embedder
 from server.memory.api.models_bulk import (
+    REFUSED,
     MemoryBulkSetInput,
     MemoryExtractionStatusInput,
     MemoryExtractionStatusOutput,
@@ -25,6 +26,8 @@ from server.memory.api.models_bulk import (
     _BulkSetEntry,
     _BulkSetResult,
     _ExtractionQueueRow,
+    _RefusedFact,
+    refused_facts,
 )
 from server.memory.app.agent_rules import request_rule_agent
 from server.memory.app.bulk_set import (
@@ -227,11 +230,15 @@ async def _set_record_from_messages(
         ],
     )
     bulk_out = await handle_memory_bulk_set(bulk_input)
+    # A refused record (blacklisted, pinned or locked key) gets no evidence, typed
+    # record or count: the message did not produce the stored row. A restatement of
+    # the stored value keeps its evidence.
+    written = [r for r in bulk_out.written if r.conflict_verdict not in REFUSED]
     evidence_ids = await evidence_task
     try:
         belief_source_links = await _link_written_memories_to_evidence(
             input,
-            [r.memory_key for r in bulk_out.written],
+            [r.memory_key for r in written],
             evidence_ids,
         )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
@@ -240,36 +247,39 @@ async def _set_record_from_messages(
             input,
             projection="memory_belief_sources",
             error=e,
-            memory_keys=[r.memory_key for r in bulk_out.written],
+            memory_keys=[r.memory_key for r in written],
             payload={"evidence_ids": evidence_ids},
         )
-    try:
-        projected = await _write_inline_record_projection(
-            input,
-            record.record,
-            record_schema,
-            evidence_ids=evidence_ids,
-        )
-        if not projected:
-            # A scope skip, not a provider failure: keep it off /v1/health.
-            with provider_health.unrecorded():
-                _degradations.note(
-                    "records", "projection_skipped", "read scope below the namespace"
-                )
-    except Exception as e:  # noqa: BLE001 — a projection; the write stands
-        log.warning("memory_records inline projection failed (non-fatal): %s", e)
-        await record_input_projection_failure(
-            input,
-            projection="memory_records",
-            error=e,
-            memory_keys=[r.memory_key for r in bulk_out.written],
-            payload={"record_schema_fields": sorted(str(k) for k in (record_schema or {}).keys())},
-        )
-    _account_build(input.namespace, llm.tokens_in, llm.tokens_out, len(bulk_out.written), len(msgs))
+    # The typed record follows the row: none for an unchanged entry (version 0).
+    if any(r.version > 0 for r in written):
+        try:
+            projected = await _write_inline_record_projection(
+                input,
+                record.record,
+                record_schema,
+                evidence_ids=evidence_ids,
+            )
+            if not projected:
+                # A scope skip, not a provider failure: keep it off /v1/health.
+                with provider_health.unrecorded():
+                    _degradations.note(
+                        "records", "projection_skipped", "read scope below the namespace"
+                    )
+        except Exception as e:  # noqa: BLE001 — a projection; the write stands
+            log.warning("memory_records inline projection failed (non-fatal): %s", e)
+            await record_input_projection_failure(
+                input,
+                projection="memory_records",
+                error=e,
+                memory_keys=[r.memory_key for r in written],
+                payload={
+                    "record_schema_fields": sorted(str(k) for k in (record_schema or {}).keys())
+                },
+            )
+    _account_build(input.namespace, llm.tokens_in, llm.tokens_out, len(written), len(msgs))
     return MemorySetFromMessagesOutput(
-        written=[
-            _BulkSetResult(memory_key=r.memory_key, version=r.version) for r in bulk_out.written
-        ],
+        written=[r.model_copy() for r in written],
+        refused=refused_facts(bulk_out.written),
         tokens_in=llm.tokens_in,
         tokens_out=llm.tokens_out,
         llm_provider=llm.provider,
@@ -660,9 +670,8 @@ async def _set_from_messages(
         len(msgs),
     )
     return MemorySetFromMessagesOutput(
-        written=[
-            _BulkSetResult(memory_key=w["memory_key"], version=w["version"]) for w in state.written
-        ],
+        written=[_BulkSetResult.model_validate(w) for w in state.written],
+        refused=[_RefusedFact.model_validate(r) for r in state.refused],
         tokens_in=state.tokens_in,
         tokens_out=state.tokens_out,
         llm_provider=state.llm_provider,
@@ -706,16 +715,6 @@ def _observe_task_result(task: asyncio.Task[Any]) -> None:
 #      server.memory.app.handlers) keeps resolving.
 # The sibling modules never import this module at module scope, so importing
 # them at the bottom here does not cycle.
-from server.memory.app.entity_projections import (  # noqa: E402, F401  (re-export)
-    _SET_ENTITY_MAX_CANDIDATES,
-    _SET_ENTITY_MIN_LEN,
-    _SET_ENTITY_PROPER_RE,
-    _SET_ENTITY_STOPWORDS,
-    _SET_ENTITY_WORD_RE,
-    _candidate_entities_from_value,
-    _write_derived_facts,
-    project_memory_set_entities,
-)
 from server.memory.app.extract.evidence import (  # noqa: E402  (re-export)
     SCOPE_CITED,
     _best_support_span,
@@ -743,9 +742,6 @@ from server.memory.app.session_summary import (  # noqa: E402, F401  (re-export)
 __all__ = [
     "handle_memory_bulk_set",
     "handle_memory_set_from_messages",
-    "project_memory_set_entities",
-    "_candidate_entities_from_value",
-    "_write_derived_facts",
     "_best_support_span",
     "_evidence_ids_by_memory_key",
     "_evidence_refs_by_memory_key",

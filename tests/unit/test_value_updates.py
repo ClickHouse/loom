@@ -123,10 +123,16 @@ async def test_link_value_updates_writes_supersession_on_the_older_row(
 
     writes: list[tuple[list[str], dict[str, Any]]] = []
 
-    async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
+    async def fake_write(
+        org: str, ids: list[str], update: Any, *, ch: Any = None, **_kw: Any
+    ) -> int:
         from types import SimpleNamespace
 
-        writes.append((ids, update(SimpleNamespace(conflict_with=[]))))
+        row = SimpleNamespace(memory_id=ids[0], conflict_with=[], status="active", pinned=False)
+        assert not _kw["skip"](row)
+        writes.append((ids, update(row)))
+        # The writer hears the version rows it built: dicts, the update applied.
+        _kw["on_written"]([{**vars(row), **update(row)}])
         return len(ids)
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", fake_write)
@@ -146,6 +152,7 @@ async def test_link_value_updates_writes_supersession_on_the_older_row(
         namespace="ns",
         rows=rows,
         embeddings_by_key={"user_5k_personal_best_time": [0.1, 0.2]},
+        agent="a",
         ch=ch,
     )
     assert rep.checked == 1 and len(rep.links) == 1 and rep.errors == 0
@@ -168,6 +175,7 @@ async def test_link_value_updates_fails_open(monkeypatch: pytest.MonkeyPatch) ->
         namespace="ns",
         rows=[{"memory_id": "n1", "memory_key": "k", "value": NEW}],
         embeddings_by_key={"k": [0.1]},
+        agent="a",
         ch=_FakeCH(RuntimeError("ch down")),
     )
     assert rep.links == [] and rep.errors == 1
@@ -177,6 +185,7 @@ async def test_link_value_updates_fails_open(monkeypatch: pytest.MonkeyPatch) ->
         namespace="ns",
         rows=[{"memory_id": "n1", "memory_key": "k", "value": NEW}],
         embeddings_by_key={},
+        agent="a",
         ch=_FakeCH([]),
     )
     assert rep.checked == 1 and rep.links == [] and rep.errors == 0
@@ -215,7 +224,7 @@ async def test_duplicate_rows_do_not_link(monkeypatch: pytest.MonkeyPatch) -> No
         }
     ]
     rep = await vu.link_value_updates(
-        org="o", namespace="ns", rows=rows, embeddings_by_key={"k": [0.1]}, ch=ch
+        org="o", namespace="ns", rows=rows, embeddings_by_key={"k": [0.1]}, agent="a", ch=ch
     )
     assert rep.links == [] and ch.calls == []
 

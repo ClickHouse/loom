@@ -122,7 +122,7 @@ change between releases, and ops MCP does not serve with ‡.
 | 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | resend with the candidate's `agent`, `user_id` and `session_id`, or use `memory.update_by_id` with its id |
 | `conflict_verdict: "conflict"`, `peers` on a `memory.set` (`conflict_peers`, a count, on a `memory.update`) | it contradicts a stored fact; both are marked | show both (read a revision's peers with `memory.ask`) and ask which is current |
 | 409 `PINNED_CONFLICT` | a pinned fact holds that key, or one close to it; a write that does not pin never replaces it | if the pinned fact is wrong, `memory.update` it (the pin stays); if yours is a different fact, store it under its own key |
-| `conflict_verdict: "pending"` | the conflict judge runs after the write | the row is stored; `memory.get` later shows the settled `status` |
+| `conflict_verdict: "refines"` | your write updates the peer; the older row retires (history kept) | nothing to do; a background resolver may also retire an older row later, recorded and undoable |
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
 | `abstain: true` on a read | nothing cleared the relevance floor | treat it as "not in Loom" and use your other context; never present the nearest weak hit as the answer |

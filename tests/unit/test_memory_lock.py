@@ -142,6 +142,9 @@ class _CH:
 
 
 def _stub_repo(monkeypatch: pytest.MonkeyPatch, row: MemoryRow | None) -> _CH:
+    from tests.unit.claims_fake import fake_key_locks
+
+    fake_key_locks(monkeypatch)  # an unpin and a pin hold the key's write lock
     ch = _CH()
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
@@ -226,6 +229,34 @@ async def test_set_refuses_a_changed_value_under_read_only(monkeypatch: pytest.M
             )
         )
     assert e.value.detail["refused_action"] == "expire"
+
+
+@pytest.mark.asyncio
+async def test_set_refuses_a_retention_window_on_a_read_only_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same bytes relabelled 'medium' would take the sensitive retention window as a
+    # new expiry: the lock refuses that as it refuses a ttl_seconds, as bulk does.
+    from server.memory.app import blacklist_guard
+    from server.settings import settings
+
+    async def no_match(**_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(blacklist_guard, "enforce_on_insert", no_match)
+    monkeypatch.setattr(settings, "memory_sensitive_retention_days", 7)
+    _stub_repo(monkeypatch, _row(lock_mode="read_only", lock_reason="hold"))
+    with pytest.raises(HTTPException) as e:
+        await write_mod.handle_memory_set(
+            MemorySetInput(
+                **_ID,
+                memory_key="deploy_window",
+                value="Tue and Thu only",
+                sensitivity="medium",
+                classify=False,
+            )
+        )
+    assert e.value.status_code == 423 and e.value.detail["refused_action"] == "expire"
 
 
 @pytest.mark.asyncio

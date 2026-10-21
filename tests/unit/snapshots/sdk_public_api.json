@@ -889,6 +889,10 @@
               "body",
               "options"
             ],
+            "auto_retirements": [
+              "body",
+              "options"
+            ],
             "backlinks": [
               "body",
               "options"
@@ -1122,6 +1126,10 @@
               "options"
             ],
             "stack": [
+              "body",
+              "options"
+            ],
+            "statuses": [
               "body",
               "options"
             ],
@@ -2693,8 +2701,8 @@
           "valid_at",
           "valid_to",
           "char_limit",
-          "dry_run",
-          "await_verdict"
+          "relations",
+          "dry_run"
         ],
         "promote": [
           "memory_key",
@@ -2746,7 +2754,9 @@
         "restore": [
           "memory_key",
           "user_id",
-          "session_id"
+          "session_id",
+          "if_superseded_by",
+          "only_if_superseded"
         ],
         "search": [
           "query",
@@ -2825,8 +2835,8 @@
           "valid_at",
           "valid_to",
           "char_limit",
-          "dry_run",
-          "await_verdict"
+          "relations",
+          "dry_run"
         ],
         "set_from_messages": [
           "messages",
@@ -2891,6 +2901,7 @@
           "concepts",
           "confidence",
           "reason",
+          "relations",
           "revive"
         ],
         "update_by_id": [
@@ -2900,6 +2911,7 @@
           "char_limit",
           "tags",
           "concepts",
+          "relations",
           "revive"
         ],
         "verify": [

@@ -383,7 +383,6 @@ server/memory/app/code_link_recheck.py::_MAX_ELSEWHERE
 server/memory/app/code_link_rehash.py::_REFINGERPRINT_PAGE
 server/memory/app/code_links.py::_MAX_LINKS
 server/memory/app/code_links.py::_MAX_MENTIONS
-server/memory/app/conflict_judge.py::_MAX_VALUE_CHARS
 server/memory/app/conflicts.py::_PEER_MAX_K
 server/memory/app/coverage_sweep_gate.py::_MAX_ENTRIES
 server/memory/app/decisions.py::MAX_ALTERNATIVES
@@ -394,7 +393,6 @@ server/memory/app/drops.py::_FLUSH_BATCH
 server/memory/app/drops.py::_FLUSH_DELAY_S
 server/memory/app/drops.py::_ITEM_MAX_LEN
 server/memory/app/durability_verifier.py::CONTEXT_LOOKUPS_MAX
-server/memory/app/entity_projections.py::_SET_ENTITY_MAX_CANDIDATES
 server/memory/app/entity_resolution.py::_MAX_NAMESPACE_CANDIDATES
 server/memory/app/entity_resolution.py::_MAX_NORMALIZED_ENTROPY
 server/memory/app/extract/dates.py::_IMMEDIACY_MAX_DAYS
@@ -438,6 +436,7 @@ server/memory/app/session_brief.py::_MAX_SOURCE_SESSIONS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_INPUT_CHARS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_KEY_FACTS
 server/memory/app/set_chunks.py::_MAX_CHUNKS_FALLBACK
+server/memory/app/set_entities.py::_SET_ENTITY_MAX_CANDIDATES
 server/memory/app/trajectory_notes.py::_MAX_HINT_ENTITIES
 server/memory/app/trajectory_notes.py::_MAX_NARRATIVE_CHARS
 server/memory/app/trajectory_notes.py::_MAX_SESSION_CHARS
@@ -476,8 +475,6 @@ server/memory/domain/value_shape.py::_MAX_JSON_PARSE
 server/memory/store/code_links.py::QUEUE_TTL_DAYS
 server/memory/store/code_links.py::TOMBSTONE_DAYS
 server/memory/store/conflict_candidates.py::PEER_LIMIT
-server/memory/store/conflict_marks.py::GRACE_SECONDS
-server/memory/store/conflict_marks.py::LOOKBACK_SECONDS
 server/memory/store/embeddings.py::_HEAD_READ_BATCH
 server/memory/store/entities.py::ENTITY_MIRROR_RETRY_DELAY_S
 server/memory/store/usage.py::_USAGE_BUFFER_MAX

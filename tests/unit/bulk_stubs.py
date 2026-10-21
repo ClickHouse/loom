@@ -108,4 +108,4 @@ def wire_stubs(
     monkeypatch.setattr(_bulk_set_mod, "write_entity_vectors", _noop_projection)
     monkeypatch.setattr(_bulk_set_mod, "write_entity_edges", _noop_projection)
     monkeypatch.setattr(_bulk_set_mod, "write_entity_triples", _noop_projection)
-    monkeypatch.setattr(_bulk_set_mod, "_write_derived_facts", _noop_projection)
+    monkeypatch.setattr(_bulk_set_mod, "write_derived_facts", _noop_projection)

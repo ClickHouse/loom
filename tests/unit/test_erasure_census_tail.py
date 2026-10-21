@@ -709,6 +709,7 @@ async def test_re_verify_run_lists_censuses_and_resumes_from_the_checkpoint(monk
         batch=200,
         show=20,
         requester="t",
+        completed_since=None,
     )
     assert await hygiene._re_verify_run(object(), args) == 1  # residue found, nothing resumed
     assert calls == [("list", "o"), ("census", "namespace", ["lme-1"], True)]
@@ -761,6 +762,7 @@ async def test_re_verify_orphan_graph_lists_and_erases_in_loom_only_purge_sagas(
         batch=2,
         show=20,
         requester="t",
+        completed_since=None,
     )
     assert await hygiene._re_verify_run(object(), args) == 1  # dry run with orphans → non-zero
     assert calls == []
@@ -782,6 +784,224 @@ async def test_re_verify_orphan_graph_lists_and_erases_in_loom_only_purge_sagas(
     ]
     args.org = ""
     assert await hygiene._re_verify_run(object(), args) == 2
+
+
+async def test_completed_since_deletes_only_orphan_row_links(monkeypatch) -> None:
+    # A saga an N-1 replica completed during a rollout never erased the tables N added
+    # (entity_triple_rows, entity_edge_rows). Everything else in its scope may have
+    # been written since, so the saga is not run again: only the orphan links go.
+    from datetime import datetime
+
+    from server.cli import hygiene
+
+    since = datetime(2026, 10, 17, 8, 0)
+    done = ["memory.tombstone", "graph_links.delete", "verify.residue"]
+    left = _ledger_row(id="c1", steps_completed=done, failure_reason="", verified_at=since)
+    clean = _ledger_row(
+        id="c2",
+        verified_at=since,
+        scope_value='{"namespaces": ["lme-2"], "purge": true, "external": true}',
+        steps_completed=done,
+        failure_reason="",
+    )
+    asked: list[Any] = []
+    deleted: list[Any] = []
+
+    async def fake_failed(*, org=None, ch=None):
+        return []
+
+    async def fake_completed(*, since, org=None, ch=None):
+        asked.append((since, org))
+        return [left, clean]
+
+    async def fake_orphans(org, st, sv, *, verified_at, ch=None):
+        n = 2 if sv == ["lme-1"] and not deleted else 0
+        return {"loom.entity_triple_rows": n, "loom.entity_edge_rows": 0}
+
+    async def fake_delete(org, st, sv, *, verified_at, ch=None):
+        assert verified_at == since  # the saga's own census time is the cut
+        deleted.append((org, st, sv))
+        return 2
+
+    async def no_census(*a, **k):
+        raise AssertionError("a completed saga gets no full census")
+
+    async def no_saga(**k):
+        raise AssertionError("a completed saga is not run again")
+
+    async def fake_counts(*, ch=None):
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_failed)
+    monkeypatch.setattr(erasure_ledger, "list_completed_requests", fake_completed)
+    monkeypatch.setattr(graph_steps, "count_orphan_row_links", fake_orphans)
+    monkeypatch.setattr(graph_steps, "delete_orphan_row_links", fake_delete)
+    monkeypatch.setattr(erasure_census, "residue_census", no_census)
+    monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
+    monkeypatch.setattr(h, "run_saga", no_saga)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=False,
+        skip_external=False,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=since,
+    )
+    assert await hygiene._re_verify_run(object(), args) == 1  # orphans found, read-only
+    assert asked == [(since, "o")] and deleted == []
+
+    args.resume = True
+    assert await hygiene._re_verify_run(object(), args) == 0
+    # Only the saga with orphans deletes, and only in its own scope.
+    assert deleted == [("o", "namespace", ["lme-1"])]
+
+
+async def test_completed_since_takes_only_completed_sagas(monkeypatch, capsys) -> None:
+    # A failed saga is the no-flag mode's: --completed-since must not resume it too.
+    from datetime import datetime
+
+    from server.cli import hygiene
+
+    failed = _ledger_row(id="f1")
+    done = _ledger_row(
+        id="c1", steps_completed=["verify.residue"], failure_reason="", verified_at=_now()
+    )
+
+    async def fake_failed(*, org=None, ch=None):
+        return [failed]
+
+    async def fake_completed(*, since, org=None, ch=None):
+        return [done]
+
+    async def fake_orphans(org, st, sv, *, verified_at, ch=None):
+        return {"loom.entity_triple_rows": 0, "loom.entity_edge_rows": 0}
+
+    async def no_saga(**k):
+        raise AssertionError("no saga runs: the failed one is not taken")
+
+    async def fake_counts(*, ch=None):
+        return {"orphan_entity_vectors": 0, "orphan_graph_namespaces": 0}
+
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", fake_failed)
+    monkeypatch.setattr(erasure_ledger, "list_completed_requests", fake_completed)
+    monkeypatch.setattr(graph_steps, "count_orphan_row_links", fake_orphans)
+    monkeypatch.setattr(erasure_health, "integrity_counts", fake_counts)
+    monkeypatch.setattr(h, "run_saga", no_saga)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=True,
+        skip_external=False,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=datetime(2026, 10, 17, 8, 0),
+    )
+    assert await hygiene._re_verify_run(object(), args) == 0
+    out = capsys.readouterr().out
+    assert "c1" in out and "f1" not in out
+
+
+async def test_completed_since_refuses_skip_external(monkeypatch, capsys) -> None:
+    # --skip-external changes how a failed saga resumes; a completed one is not resumed,
+    # so the flag would do nothing. Refuse it before reading the ledger.
+    from datetime import datetime
+
+    from server.cli import hygiene
+
+    async def no_ledger(**k):
+        raise AssertionError("the combination is refused before any read")
+
+    monkeypatch.setattr(erasure_ledger, "list_completed_requests", no_ledger)
+    monkeypatch.setattr(erasure_ledger, "list_failed_requests", no_ledger)
+    args = argparse.Namespace(
+        org="o",
+        id=None,
+        resume=True,
+        skip_external=True,
+        orphan_graph=False,
+        erase=False,
+        batch=200,
+        show=20,
+        requester="t",
+        completed_since=datetime(2026, 10, 17, 8, 0),
+    )
+    assert await hygiene._re_verify_run(object(), args) == 2
+    assert "--skip-external" in capsys.readouterr().err
+
+
+def test_an_orphan_row_link_is_one_whose_memory_has_no_live_row_and_no_later_one() -> None:
+    from datetime import datetime
+
+    cut = datetime(2026, 10, 17, 8, 0)
+    orphans = graph_steps._orphan_row_links("loom.entity_triple_rows", "namespace", ["a", "b"], cut)
+    where, params = orphans.where, orphans.params
+    assert where.startswith("namespace IN {ns:Array(String)} AND memory_id NOT IN (")
+    assert "FROM loom.memory FINAL" in where and "tombstoned_at IS NULL" in where
+    # A memory with any row written since the census keeps its link, tombstoned or not.
+    assert "AND memory_id NOT IN (SELECT memory_id FROM loom.memory WHERE " in where
+    assert "updated_at >= {verified_at:DateTime}" in where
+    assert params == {"ns": ["a", "b"], "verified_at": cut}
+    orphans = graph_steps._orphan_row_links("loom.entity_triple_rows", "user_id", "u1", cut)
+    where, params = orphans.where, orphans.params
+    assert where.startswith("user_id = {uid:String} AND memory_id NOT IN (")
+    assert "updated_at >= {verified_at:DateTime}" in where
+    assert params == {"uid": "u1", "verified_at": cut}
+
+
+def test_a_user_scope_reads_only_the_memories_its_links_name() -> None:
+    from datetime import datetime
+
+    cut = datetime(2026, 10, 17, 8, 0)
+    for table in graph_steps.ROW_LINK_TABLES:
+        where = graph_steps._orphan_row_links(table, "user_id", "u1", cut).where
+        bound = (
+            f"AND memory_id IN (SELECT memory_id FROM {table} "
+            "WHERE org = {org:String} AND user_id = {uid:String})"
+        )
+        # Both the live-row and the later-row reads, not the whole org.
+        assert where.count(bound) == 2
+
+
+async def test_list_completed_requests_takes_sagas_verified_since() -> None:
+    from datetime import datetime
+
+    seen: list[Any] = []
+
+    class _CH:
+        async def query_all(self, sql, params=None):
+            seen.append((" ".join(sql.split()), params))
+            return []
+
+    since = datetime(2026, 10, 17, 8, 0)
+    await erasure_ledger.list_completed_requests(since=since, org="o", ch=_CH())
+    sql, params = seen[0]
+    assert "status = 'completed' AND verified_at >= {since:DateTime}" in sql
+    assert "org = {org:String}" in sql and params == {"since": since, "org": "o"}
+
+
+def test_completed_since_reads_an_iso_instant_as_utc(monkeypatch) -> None:
+    from datetime import datetime
+
+    import server.cli as cli
+    from server.cli import hygiene
+
+    seen: list[argparse.Namespace] = []
+
+    def fake_cmd(args: argparse.Namespace) -> int:
+        seen.append(args)
+        return 0
+
+    monkeypatch.setattr(hygiene, "_cmd_erasure_re_verify", fake_cmd)
+    assert cli.main(["erasure-re-verify", "--completed-since", "2026-10-17T10:00+02:00"]) == 0
+    assert cli.main(["erasure-re-verify", "--completed-since", "2026-10-17 08:00"]) == 0
+    assert [a.completed_since for a in seen] == [datetime(2026, 10, 17, 8, 0)] * 2
 
 
 def test_the_cli_registers_the_command(monkeypatch) -> None:

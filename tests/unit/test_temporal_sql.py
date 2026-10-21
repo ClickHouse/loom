@@ -61,3 +61,14 @@ def test_tombstone_predicate_keeps_rows_deleted_after_the_anchor_only_under_know
     assert tombstone_predicate("knowledge_time", alias="e", replaying=True) == (
         "(e.tombstoned_at IS NULL OR e.tombstoned_at > {as_of:DateTime})"
     )
+
+
+def test_holds_value_sql_keeps_every_status_but_the_retired_ones() -> None:
+    # The first write's fence: a proposal still gets its edges, a retired row does not.
+    from server.memory.domain.temporal_sql import HOLDS_VALUE_SQL
+
+    for status in ("active", "conflicted", "duplicate", "proposed"):
+        assert repr(status) in HOLDS_VALUE_SQL
+    for status in ("superseded", "rejected", "tombstoned"):
+        assert repr(status) not in HOLDS_VALUE_SQL
+    assert "sensitivity != 'high'" in HOLDS_VALUE_SQL and "tombstoned_at IS NULL" in HOLDS_VALUE_SQL

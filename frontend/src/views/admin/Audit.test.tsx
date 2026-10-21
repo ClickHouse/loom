@@ -18,9 +18,9 @@ vi.mock("../../api", async (importOriginal) => {
   };
 });
 
-const row = (actor: string, subject: string): AuditEntry => ({
+const row = (actor: string, subject: string, event_type = "namespace.register"): AuditEntry => ({
   ts: new Date().toISOString(),
-  event_type: "namespace.register",
+  event_type,
   actor,
   subject,
   request_id: "",
@@ -53,6 +53,53 @@ describe("Audit rows", () => {
     const table = screen.getByRole("table", { name: "Audit events" });
     for (const actor of ["alice", "bob", "carol"]) expect(within(table).getByText(actor)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
+  });
+
+  it("says when Loom retired memories on its own, and when one was restored", async () => {
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [
+        row("process:loom", '{"reason":"conflict_resolver","count":3,"retired":[]}', "memory.auto_supersede"),
+        row("process:loom", '{"reason":"value_update","count":1,"retired":[]}', "memory.auto_supersede"),
+        row("alice", '{"memory_key":"user_city","memory_id":"m1"}', "memory.unsupersede"),
+      ],
+    });
+    render(<Audit />);
+    expect(
+      await screen.findByText(
+        "Loom retired 3 memories automatically (replaced by a later statement of the same attribute)",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Loom retired 1 memory automatically (replaced by an updated value)")).toBeTruthy();
+    expect(screen.getByText('Restored "user_city" after it was retired')).toBeTruthy();
+  });
+
+  it("does not count a retirement the re-read could not confirm as done", async () => {
+    const unsure = '{"memory_id":"m2","unconfirmed":"true"}';
+    vi.mocked(api.listAuditLog).mockResolvedValueOnce({
+      rows: [
+        row(
+          "process:loom",
+          `{"reason":"newest_wins_contradiction","count":1,"retired":[${unsure}]}`,
+          "memory.auto_supersede",
+        ),
+        row(
+          "process:loom",
+          `{"reason":"newest_wins_contradiction","count":3,"retired":[{"memory_id":"m1"},${unsure},{"memory_id":"m3"}]}`,
+          "memory.auto_supersede",
+        ),
+      ],
+    });
+    render(<Audit />);
+    expect(
+      await screen.findByText(
+        "Loom may have retired 1 memory automatically (replaced by a newer write (namespace policy))",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Loom retired 2 memories automatically (replaced by a newer write (namespace policy)), and may have retired 1 more",
+      ),
+    ).toBeTruthy();
   });
 });
 

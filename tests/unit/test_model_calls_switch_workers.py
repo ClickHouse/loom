@@ -800,21 +800,29 @@ def test_the_code_link_policy_leaves_a_switched_off_orgs_links_due(monkeypatch) 
     assert read == ["policy_due"]
 
 
-def test_the_conflict_sweep_rejudges_no_mark_of_a_switched_off_org() -> None:
-    from server.memory.store import conflict_marks
-    from server.memory.workers import conflict_sweep as w
+def test_the_conflict_resolver_reads_no_owed_row_of_a_switched_off_org(monkeypatch) -> None:
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import conflict_resolver as w
 
-    ch = _CH()
-    asyncio.run(
-        conflict_marks.stale_pending_marks(
-            grace_s=1, lookback_s=3600, limit=5, exclude_orgs=frozenset({"acme"}), ch=ch
-        )
-    )
-    assert _excludes(ch, "acme")
-    ch = _CH()
+    capped: list[Any] = []
+
+    async def namespaces(**k: Any) -> list[tuple[str, str]]:
+        return [("acme", "n"), ("beta", "n")]
+
+    async def under_cap(pairs: Any, **k: Any) -> dict[Any, bool]:
+        return {pair: False for pair in pairs}
+
+    async def owed(**k: Any) -> list[dict[str, Any]]:
+        capped.append(k["capped"])
+        return []
+
+    monkeypatch.setattr(queue, "queued_namespaces", namespaces)
+    monkeypatch.setattr("server.observability.budget.namespaces_over_cap", under_cap)
+    monkeypatch.setattr(queue, "owed_rows", owed)
+    monkeypatch.setattr(settings, "memory_conflict_resolver_recheck_batch", 0)
     switch_off("acme")
-    asyncio.run(w.run_pass(ch=ch))
-    assert _excludes(ch, "acme")
+    asyncio.run(w._queued(w._Pass()))
+    assert capped == [[("acme", "n")]]
 
 
 async def test_a_stub_whose_org_is_switched_off_mid_pass_is_left_unwritten() -> None:

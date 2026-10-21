@@ -37,8 +37,9 @@ class ProjectionFailureListInput(BaseModel):
     # Only failures of this projection (the derived table, such as `memory_chunks` or
     # `entity_edges`); empty lists every projection.
     projection: str = ""
-    # `active` lists open failures, `resolved` closed ones, empty both.
-    status: Literal["active", "resolved", ""] = "active"
+    # `active` lists open failures, `resolved` repaired ones, `abandoned` those the
+    # repair gave up on (the reason is in `error_message`), empty all of them.
+    status: Literal["active", "resolved", "abandoned", ""] = "active"
     # At most this many failures, newest first.
     limit: int = 100
 
@@ -92,6 +93,8 @@ class ProjectionFailureRetryRow(BaseModel):
     projection: str
     retried: bool
     resolved: bool
+    # Given up on: no retry can do the work, `reason` says why; it left the active queue.
+    abandoned: bool = False
     reason: str = ""
     error: str = ""
 
@@ -103,6 +106,8 @@ class ProjectionFailureRetryOutput(BaseModel):
     retried: int
     # Failures whose retry succeeded and which are now marked resolved.
     resolved: int
+    # Failures the retry gave up on, now marked abandoned.
+    abandoned: int = 0
 
 
 # ============================================================
