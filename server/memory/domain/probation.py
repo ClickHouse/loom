@@ -7,7 +7,7 @@ stands behind it: a human or process attestation (`verified`). The write an
 attacker controls is exactly the one an agent copied from its environment, and
 a salient retrieved row can steer the answer. Keeping
 it out of the synthesis pool until verified is the cheapest brake that
-does not touch the vector index.
+does not touch the stored vectors.
 """
 
 from __future__ import annotations

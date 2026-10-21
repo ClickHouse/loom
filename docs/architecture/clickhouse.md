@@ -420,9 +420,9 @@ MiB read and p50 per query, every read under `FINAL`:
 Compare the bytes: the 10% tenant's read was slower than the 50% tenant's in both runs,
 so the milliseconds do not rank by size. The `vector_search_filter_strategy`,
 `vector_search_index_fetch_multiplier` and `hnsw_candidate_list_size_for_search`
-settings change nothing here: the index is never opened. The codes-first column is the
-fact leg's shape (60 rows, codes multiplier 1); recall@10 of those 60 rows against the
-exact top 10 was 0.95-1.00.
+settings change nothing here: the index is never opened. The codes-first column reads
+the fact leg's 60 rows at codes multiplier 1 (the leg's default is 3); recall@10 of those
+60 rows against the exact top 10 was 0.95-1.00.
 
 **Where it does run, a selective filter loses recall.** With a predicate outside the sort
 key the graph runs first and the predicate drops its candidates afterwards. recall@10

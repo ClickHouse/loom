@@ -679,14 +679,14 @@ async def _search_memory_chunks(
         chunk_agent_pred = f"{chunk_agent_pred}\n          {parent_pred}"
     overlap_join, overlap_count_select = _chunk_overlap_join(q, chunk_params)
 
-    # Two stages. Stage 1 is the shape the vector index accepts
+    # Two stages. Stage 1 is the shape the codes-first read accepts
     # (bare ORDER BY cosineDistance LIMIT, no FINAL, no JOIN) and returns only
     # chunk identities; stage 2 is the full query below restricted to those
     # identities — a primary-key lookup under FINAL with skip indexes off, so
     # every version of a candidate is seen and collapses properly. A single
     # query that joined the parent dates between the vector read and the LIMIT
-    # could not be served by any index: a brute-force scan of every chunk in
-    # the namespace on every search.
+    # could not take the codes-first read: a full-precision scan of every
+    # chunk in the namespace on every search.
 
     q_tokens = _chunk_query_tokens(q.query_text or "")
     stage1_params = {
