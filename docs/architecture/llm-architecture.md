@@ -240,6 +240,9 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
   401, 403 and 404 propagate. Each hand-over is logged and counted (`loom.llm.fallback`),
   and the result names the model that answered. Fallbacks do not chain.
 - **Missing key.** The client is the fake (`_build_llm_client`), logged at WARNING.
+- **One identity refused.** With identity headers set, a 403, or a 429 whose error names a
+  budget, from a gateway host is the gateway refusing the call's identity
+  ([identity headers](#identity-headers)): never retried, never handed to the fallback model.
 
 ### Response cache
 
@@ -344,6 +347,16 @@ them beside the customer header on every chat, embedding, rerank and classify re
   most once a minute per process. A failed read serves the copy in hand; with none the call is
   held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as
   someone else's.
+- **One identity refused.** A 403, or a 429 whose error names a budget, that a gateway host
+  answers is the gateway refusing that identity, not a provider failure: the model client's
+  response hook (`gateway.answered`) raises `ModelCallRefused`, so the request answers 403
+  `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`. It is not
+  retried or handed to the fallback model, `/v1/health` reads nothing from it, and the org's
+  switch is untouched. It is one of `customer.HOLDS`, so a job leaves the row as it is, and
+  for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` a job's call for that identity is refused in
+  `customer.require()` with nothing sent, while other identities' calls go on. A request
+  always asks the gateway, which may take the identity back at any time. Any other 429 is a
+  rate limit, retried as before.
 
 **Why the namespace's owner.** Most rows a job works on record no writer (an embedding stub, a
 conversation turn), and an agent's token has its own namespace as its home, so the namespace

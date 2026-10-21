@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core.errors import ModelCallRefused
 from server.embedding import get_embedder
 from server.llm import customer
 from server.workers import pass_context
@@ -178,9 +179,10 @@ async def _embed_rows(
 ) -> list[tuple[list[float] | None, str]]:
     """`_embed_batch` per org and identity, in the rows' order: a pass picks
     stubs of every org, and one model call names a single customer and identity.
-    An org switched off since the stubs were picked gets `(None, SWITCHED_OFF)`:
-    its rows are left as they are, attempts untouched. A switch gone stale
-    mid-pass (`SwitchUnread`) stops the pass before its write."""
+    An org switched off since the stubs were picked, or an identity the gateway
+    refused, gets `(None, SWITCHED_OFF)`: its rows are left as they are, attempts
+    untouched, and the other groups go on. A switch gone stale mid-pass
+    (`SwitchUnread`) stops the pass before its write."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
     groups = await customer.groups(
         customer.Attribution(
@@ -199,7 +201,7 @@ async def _embed_rows(
                 else:
                     texts = [rows[i]["content_excerpt"] for i in positions]
                     embedded = await _embed_batch(embedder, texts)
-        except customer.ModelCallsDisabled:
+        except (customer.ModelCallsDisabled, ModelCallRefused):
             embedded = [(None, SWITCHED_OFF)] * len(positions)
         for i, one in zip(positions, embedded, strict=True):
             out[i] = one

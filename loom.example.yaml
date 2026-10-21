@@ -411,6 +411,11 @@ settings:
   # exactly. [restart]
   # inference_tenant_claim: "tenant_id"
 
+  # Seconds a background job leaves the work of an identity the gateway refused (a
+  # budget 429, a 403) before it calls for that identity again; 0 calls again at once.
+  # [restart]
+  # inference_refusal_cooldown_seconds: 600.0
+
   # Seconds between each process's reads of the orgs whose model calls are switched off
   # (loom.org_model_calls); a change reaches every process within it. [restart]
   # model_calls_policy_refresh_seconds: 10.0

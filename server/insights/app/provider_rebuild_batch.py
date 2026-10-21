@@ -9,6 +9,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from server.core.errors import ModelCallRefused
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.llm import customer
@@ -178,8 +179,9 @@ async def rebuild_batch(
             try:
                 with customer.attributed(who):
                     produced = await target.embed_many([texts[i] for i in part])
-            except customer.ModelCallsDisabled:
-                left.update(positions)  # switched off during the batch
+            except (customer.ModelCallsDisabled, ModelCallRefused):
+                # Switched off during the batch, or the identity refused: its rows wait.
+                left.update(positions)
                 break
             except customer.SwitchUnread:
                 raise  # not a provider failure: the step waits for the switch to be read

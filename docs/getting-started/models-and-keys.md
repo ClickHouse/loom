@@ -353,6 +353,11 @@ LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} name
 - Background jobs name the identity of the rows they work on: the writer of a memory or of a
   deferred extraction, else the agent whose own namespace the row is in. A job batching rows
   makes one call per identity.
+- When the gateway refuses one identity (a 403, or a 429 whose error names a budget), that
+  request answers 403 `MODEL_CALL_REFUSED`; nothing retries it, `/v1/health` does not read it
+  as a provider failure, and background jobs leave that identity's work for
+  `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (10 minutes by default) while other identities'
+  work goes on.
 - How each value is found: [identity headers](../architecture/llm-architecture.md#identity-headers).
 
 #### Switching an org's model calls off

@@ -102,6 +102,7 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     """One pass; the supervisor calls it with no config, which reads the
     `extraction_queue_*` settings at pass time."""
     from server.core.ch import get_client
+    from server.core.errors import ModelCallRefused
     from server.llm import customer
 
     cfg = cfg or _config_from_settings()
@@ -111,11 +112,13 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
     async def _replay_one(row: dict[str, Any]) -> None:
         try:
             written = await q.replay_row(row)
-        except (customer.ModelCallsDisabled, customer.SwitchUnread):
-            # Switched off after the claim, or the switch went unread: no attempt
-            # spent. The lease runs out and the row waits, unclaimed, until the
-            # org is back on or the switch is read. Not `HOLDS`: a request naming
-            # no customer never will, so it spends its attempts and fails.
+        except (customer.ModelCallsDisabled, customer.SwitchUnread, ModelCallRefused):
+            # Switched off after the claim, the switch went unread, or the gateway
+            # refused the enqueuer's identity: no attempt spent. The lease runs out
+            # and the row waits, unclaimed, until the org is back on, the switch is
+            # read or the identity's cooldown is over; the other rows go on. Not
+            # `HOLDS`: a request naming no customer never will, so it spends its
+            # attempts and fails.
             result.skipped += 1
             return
         except Exception as e:

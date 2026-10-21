@@ -148,7 +148,7 @@ class RateLimitedError(LoomServerError):
 class GatewayRequiredError(LoomServerError):
     """503 — a model call named a host LOOM_INFERENCE_GATEWAY_HOSTS does not
     list while the gateway is required (`LOOM_INFERENCE_GATEWAY_REQUIRED`, or a
-    token exchange); the message names the host. Also every data-plane request
+    workload token); the message names the host. Also every data-plane request
     on a server whose saved model configuration the check refuses, until a
     replacement is saved or the configuration is reset; that answer names no
     host. A setting to fix, not an outage: never retried. A classifier or
@@ -157,6 +157,18 @@ class GatewayRequiredError(LoomServerError):
 
     code = "GATEWAY_REQUIRED"
     status_code = 503
+
+
+class ModelCallRefused(LoomServerError):
+    """403 — the inference gateway refused a model call for the identity it was
+    made for (a 429 naming a budget, or a 403), with identity headers set: that
+    identity's refusal, not the provider's failure. It is not retried, marks no
+    provider failing and switches no org off; a background job leaves that
+    identity's work for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS`.
+    `gateway_status` and `gateway_code` say what the gateway answered."""
+
+    code = "MODEL_CALL_REFUSED"
+    status_code = 403
 
 
 class BackendUnavailableError(LoomServerError):

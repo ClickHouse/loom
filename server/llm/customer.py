@@ -39,8 +39,9 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from urllib.parse import quote
 
-from server.core.errors import BackendUnavailableError, LoomServerError
+from server.core.errors import BackendUnavailableError, LoomServerError, ModelCallRefused
 from server.core.polled_copy import PolledCopy
+from server.llm import gateway
 from server.llm.identity import Attribution as Attribution  # what a job's batch groups by
 from server.llm.identity import IdentityUnread, split_by, splits
 from server.llm.identity import render as render_identity
@@ -84,16 +85,17 @@ class SwitchUnread(BackendUnavailableError):
     for an org until it is read, and a job leaves its rows as they are."""
 
 
-# What require() holds a call with: a refusal, or a switch or an identity it
-# cannot read. None is a provider fault, so a fail-open caller (a reranker,
-# classify) lets these through, and a job leaves its rows as they are to try
-# again later; a queued extraction request naming no customer still fails,
-# since it never clears.
+# What holds a call: a refusal (require()'s, or the gateway's for the call's
+# identity), or a switch or an identity require() cannot read. None is a
+# provider fault, so a fail-open caller (a reranker, classify) lets these
+# through, and a job leaves its rows as they are to try again later; a queued
+# extraction request naming no customer still fails, since it never clears.
 HOLDS: tuple[type[LoomServerError], ...] = (
     Unattributed,
     ModelCallsDisabled,
     SwitchUnread,
     IdentityUnread,
+    ModelCallRefused,
 )
 
 
@@ -187,13 +189,20 @@ async def require() -> Customer:
     cached or recorded: no customer with no customer header configured, and the
     identity headers rendered (`identity.render`). Raises ModelCallsDisabled
     when the call's org is switched off (header or not), Unattributed, logged,
-    when a header is configured and the call names no org, and IdentityUnread
-    when what names its identity cannot be read."""
+    when a header is configured and the call names no org, IdentityUnread when
+    what names its identity cannot be read, and, for a job's call, the
+    ModelCallRefused of an identity the gateway refused within its cooldown,
+    which sends nothing."""
     who = attribution()
     org = who.org
     if org and await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
-    return Customer(name=_customer_named(org), identity=await render_identity(who))
+    out = Customer(name=_customer_named(org), identity=await render_identity(who))
+    if _attribution.get() is not None and splits():
+        held = gateway.refused_for(gateway.identity_of(dict(out.identity)))
+        if held is not None:
+            raise held  # a job leaves that identity's work and goes on with others
+    return out
 
 
 def _customer_named(org: str) -> str:

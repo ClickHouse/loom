@@ -3711,6 +3711,9 @@ class ProviderSettings(ModelSettings):
     inference_identity_headers_json: Annotated[str, JsonObject] = ""
     # The workload trust claim {tenant} names: the value the trust requires of it, exactly.
     inference_tenant_claim: str = "tenant_id"
+    # Seconds a background job leaves the work of an identity the gateway refused (a
+    # budget 429, a 403) before it calls for that identity again; 0 calls again at once.
+    inference_refusal_cooldown_seconds: float = Field(600.0, ge=0)
     # Seconds between each process's reads of the orgs whose model calls are
     # switched off (loom.org_model_calls); a change reaches every process within it.
     model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)

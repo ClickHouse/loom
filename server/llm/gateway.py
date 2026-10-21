@@ -16,6 +16,13 @@ the provider's key is the bearer, as always; `LOOM_OPENAI_BASE_URL` /
 `LOOM_ANTHROPIC_BASE_URL` point either at a gateway, and
 `LOOM_INFERENCE_GATEWAY_REQUIRED` (as a workload token does) refuses every call
 to a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list.
+
+With identity headers set (server/llm/identity.py) the gateway can refuse one
+identity: a 403, or a 429 whose error names a budget, from a gateway host is
+that identity's refusal (`ModelCallRefused`), never the provider's failure. It
+is not retried and marks no provider failing; a background job leaves that
+identity's work for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (`refused_for`),
+and other identities' calls go on.
 """
 
 from __future__ import annotations
@@ -24,13 +31,16 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
 
 from server.clients._http import refuse_off_gateway
-from server.core.errors import LoomServerError
+from server.clients._http_errors import provider_error_code, provider_error_detail
+from server.core.errors import LoomServerError, ModelCallRefused
 from server.settings import settings
+from server.settings.catalog import url_host
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +67,13 @@ _REREAD_S = 60.0  # not a setting: a platform rotates the file well before the t
 _file_token = ""
 _file_read_at = 0.0
 _file_refused = False
+
+# Identities the gateway refused, by their identity headers' values: when (time.monotonic)
+# a job may call for one again, and what the gateway answered.
+_refused: dict[tuple[tuple[str, str], ...], tuple[float, int, str]] = {}
+_REFUSED_MAX = 10_000  # not a setting: bounds memory; an identity dropped is asked once more
+_LOG_EVERY_S = 60.0  # not a setting: how often a refusal's log line repeats
+_logged_at: dict[tuple[int, str], float] = {}
 
 
 class GatewayUnavailable(httpx.TransportError):
@@ -174,12 +191,82 @@ async def _workload_bearer() -> str:
 
 
 async def answered(response: httpx.Response) -> None:
-    """What the gateway's answer to a model call says about the bearer: in the
-    bearer mode a 401 makes the next call read the token file again at once.
-    Runs on every response of the model client (`server.clients._http`)."""
+    """What the gateway's answer to a model call says: in the bearer mode a 401
+    makes the next call read the token file again at once; a refusal of the
+    call's identity raises `ModelCallRefused` and starts that identity's
+    cooldown. Runs on every response of the model client (`server.clients._http`)."""
     global _file_refused
     if response.status_code == 401 and bearing():
         _file_refused = True
+    if response.status_code in (403, 429) and _judges_identities(response.request):
+        await response.aread()
+        detail = provider_error_detail(response)
+        if response.status_code == 429 and "budget" not in detail.lower():
+            return  # a rate limit: retried as any is
+        code = provider_error_code(
+            httpx.HTTPStatusError(detail, request=response.request, response=response)
+        )
+        raise _refuse(identity_of(response.request.headers), response.status_code, code, detail)
+
+
+def _judges_identities(request: httpx.Request) -> bool:
+    """Whether `request` is a model call to the gateway naming an identity: the
+    identity headers set, a host it lists, and not the token exchange (Loom's own)."""
+    if (
+        not settings.identity_headers()
+        or url_host(str(request.url)) not in settings.gateway_hosts()
+    ):
+        return False
+    return not (exchanging() and request.url == httpx.URL(settings.inference_token_url))
+
+
+def _refuse(
+    identity: tuple[tuple[str, str], ...], status: int, code: str, detail: str
+) -> ModelCallRefused:
+    """The refusal of `identity`, its cooldown started; logged once a minute per answer."""
+    cooldown = settings.inference_refusal_cooldown_seconds
+    if cooldown > 0:
+        if len(_refused) >= _REFUSED_MAX:
+            _refused.clear()
+        _refused[identity] = (time.monotonic() + cooldown, status, code)
+    now = time.monotonic()
+    if now - _logged_at.get((status, code), -_LOG_EVERY_S) >= _LOG_EVERY_S:
+        _logged_at[(status, code)] = now
+        # The status and code, never the identity or the gateway's text: either can
+        # name a person.
+        log.warning(
+            "inference gateway refused a model call for its identity (%d %s); "
+            "jobs leave that identity's work for %.0f s",
+            status,
+            code or "no code",
+            cooldown,
+        )
+    return _refusal(status, code, f"the inference gateway refused this call ({status} {detail})")
+
+
+def _refusal(status: int, code: str, message: str) -> ModelCallRefused:
+    return ModelCallRefused(message.strip(), gateway_status=status, gateway_code=code)
+
+
+def identity_of(headers: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+    """The identity a call names, as the gateway judges it: each identity header's value."""
+    return tuple((name, headers.get(name) or "") for name, _ in settings.identity_headers())
+
+
+def refused_for(identity: tuple[tuple[str, str], ...]) -> ModelCallRefused | None:
+    """The refusal a job meets for an identity the gateway refused less than the
+    cooldown ago, without a call; None for any other."""
+    held = _refused.get(identity)
+    if held is None:
+        return None
+    end, status, code = held
+    left = end - time.monotonic()
+    if left <= 0:
+        _refused.pop(identity, None)
+        return None
+    return _refusal(
+        status, code, f"the inference gateway refused this identity's calls: {left:.0f} s left"
+    )
 
 
 async def _identity_token() -> str:
@@ -239,3 +326,5 @@ def _reset_for_tests() -> None:
     global _token, _expires_at, _renew_at, _file_token, _file_read_at, _file_refused
     _token, _expires_at, _renew_at = "", 0.0, 0.0
     _file_token, _file_read_at, _file_refused = "", 0.0, False
+    _refused.clear()
+    _logged_at.clear()

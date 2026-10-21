@@ -74,11 +74,26 @@ class _Wire:
         return httpx.Response(200, json=_VECTORS)
 
 
+def through_the_model_client(monkeypatch: pytest.MonkeyPatch) -> httpx.AsyncClient:
+    """A fresh model client, its hooks in place, that every sender posts through: a
+    sender first imported while a test patched `get_model_client` keeps that patch
+    under its own name, so each is pointed back here."""
+    from server.embedding import compatible
+    from server.embedding import openai as embed_openai
+    from server.llm import anthropic
+    from server.llm import openai as chat_openai
+
+    monkeypatch.setattr(_http, "_model_client", None)  # restored after the test
+    for mod in (chat_openai, anthropic, embed_openai):
+        monkeypatch.setattr(mod, "_http_client", _http.get_model_client)
+    monkeypatch.setattr(compatible, "get_model_client", _http.get_model_client)
+    return _http.get_model_client()
+
+
 @pytest.fixture
 def wire(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Wire]:
     w = _Wire()
-    monkeypatch.setattr(_http, "_model_client", None)  # restored after the test
-    client = _http.get_model_client()
+    client = through_the_model_client(monkeypatch)
     monkeypatch.setattr(client, "_transport", httpx.MockTransport(w.answer))
     yield w
     asyncio.run(client.aclose())

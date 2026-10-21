@@ -460,6 +460,7 @@
  "inference_gateway_hosts": "",
  "inference_gateway_required": false,
  "inference_identity_headers_json": "",
+ "inference_refusal_cooldown_seconds": 600.0,
  "inference_system_customer": "loom",
  "inference_tenant_claim": "tenant_id",
  "inference_token_audience": "",

@@ -22,6 +22,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from server.core.errors import ModelCallRefused
 from server.llm import customer
 
 # (text-source column, vector column) per table, plus an optional secondary
@@ -351,8 +352,9 @@ async def _rewrite_page(
                     keys = [_key_input(chunk[i]) for i in positions]
                     for i, v in zip(positions, await embedder.embed_many(keys), strict=True):
                         kvecs[i] = v
-        except customer.ModelCallsDisabled:
-            left.update(positions)  # switched off since the run began: its rows wait
+        except (customer.ModelCallsDisabled, ModelCallRefused):
+            # Switched off since the run began, or the identity refused: its rows wait.
+            left.update(positions)
             left_by_org[who.org] = left_by_org.get(who.org, 0) + len(positions)
     out = [
         rewrite_row(r, cfg, model, dim, vecs[i] if vecs else None, kvecs[i] if kvecs else None)
