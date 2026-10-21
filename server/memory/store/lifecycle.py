@@ -345,8 +345,8 @@ async def bulk_tombstone_scope(
     """`memory.clear`: bulk-tombstone every live memory row matching
     (org, namespace, user_id?, agent?), plus the loom.memory_embeddings rows.
 
-    The handler enforces that at least one of `user_id` / `agent` is set; the
-    repo runs the query as-given (a scope-less call would clear the whole
+    The handler requires a concrete `user_id` or `agent` other than `'-'` (`"*"`
+    arrives as unset); the repo runs the query as given (a scope-less call would clear the whole
     namespace — that's `erasure.request_namespace`'s job).
 
     `on_tombstoned`, when given, is called after the memory mutation and before
