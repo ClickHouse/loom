@@ -23,7 +23,16 @@ const browse: BrowseEntry[] = [
     member_count: 1,
     created_at: "",
   },
-  { namespace: "beta", description: "", kind: "memory", owner_email: "", member_count: 2, created_at: "" },
+  {
+    namespace: "beta",
+    description: "",
+    kind: "memory",
+    owner_email: "",
+    member_count: 2,
+    created_at: "",
+    guide_revision: 1,
+    guide_summary: "Beta's conventions",
+  },
 ];
 const mine: MyNamespaceEntry[] = [
   {
@@ -134,6 +143,11 @@ describe("Spaces: the rows", () => {
     expect(within(alpha).getByText("Public")).toBeInTheDocument();
     expect(within(alpha).getByText("1 member")).toBeInTheDocument();
     expect(within(alpha).getByText("Support team runbooks")).toBeInTheDocument();
+    // A member opens the guide from its summary; a non-member reads the summary only.
+    expect(screen.getByRole("button", { name: "Open the guide for beta" })).toHaveTextContent(
+      "Guide: Beta's conventions",
+    );
+    expect(screen.queryByRole("button", { name: "Open the guide for alpha" })).toBeNull();
     // The guide's summary is the directory's view of it, for members or not.
     expect(within(alpha).getByText("Guide: One runbook per service, keyed runbook/<service>")).toBeInTheDocument();
     expect(within(alpha).getByRole("button", { name: "Join" })).toBeInTheDocument();

@@ -143,7 +143,8 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
   Memories: {
     render: () => <Recent />,
     view: "memories",
-    allow: { "/v1/memory.list": 1, "/v1/conflicts.list": 1 },
+    // The namespace's guide card above the list reads the guide once.
+    allow: { "/v1/memory.list": 1, "/v1/conflicts.list": 1, "/v1/namespace.guide_get": 1 },
   },
   Documents: {
     render: () => <Documents />,

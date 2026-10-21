@@ -30,6 +30,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
+import { NamespaceGuideCard } from "../components/NamespaceGuideCard";
 import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
@@ -626,6 +627,7 @@ function MemoryList() {
         </span>
       </PageHeader>
       <MemoryTabs active="memories" />
+      <NamespaceGuideCard identity={identity} />
 
       <AddMemoryDialog
         open={addOpen}

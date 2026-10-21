@@ -535,12 +535,13 @@ const SpaceRow = memo(function SpaceRow({
   const settings = () => actions.settings(namespace);
   const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;
   const member = standing === "member" || standing === "admin";
+  const canReadGuide = member || !!role;
   /** The More menu: Settings where you manage it, Guide, Copy name, Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
     // Reading a guide takes a role on the namespace (a public row's visibility widens no
     // read); a viewer waiting on an upgrade still holds one.
-    ...(member || role
+    ...(canReadGuide
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
       : []),
     {
@@ -605,7 +606,22 @@ const SpaceRow = memo(function SpaceRow({
             {kind && <Badge text={sentenceCase(kind)} state="neutral" size="sm" />}
           </div>
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
-          {guideSummary && <p className="mt-0.5 truncate text-xs text-text-muted">Guide: {guideSummary}</p>}
+          {guideSummary &&
+            (canReadGuide ? (
+              // The summary is the way in: a member reads the guide it sums up.
+              <button
+                type="button"
+                onClick={() => actions.guide(namespace)}
+                className="mt-0.5 block max-w-full truncate text-left text-xs text-text-muted underline-offset-2 hover:underline"
+                aria-label={`Open the guide for ${namespace}`}
+              >
+                Guide: {guideSummary}
+              </button>
+            ) : (
+              <Tip content="Join to read the whole guide">
+                <p className="mt-0.5 truncate text-xs text-text-muted">Guide: {guideSummary}</p>
+              </Tip>
+            ))}
         </div>
         <div className="list-row-control ml-auto flex shrink-0 items-center gap-2">
           {members !== undefined && (

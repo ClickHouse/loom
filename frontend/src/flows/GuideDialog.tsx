@@ -16,8 +16,23 @@ interface Props {
   namespace: string;
   /** A writer or admin edits; everyone else reads. */
   canEdit: boolean;
+  /** Open on the editor once the guide is read (a writer's "Write the guide"). */
+  startEditing?: boolean;
   onSaved: () => void;
 }
+
+/** A first guide starts from the questions a newcomer to the namespace asks. */
+const STARTER = `## What this namespace holds
+
+## Keys
+- \`<prefix>/<id>\`: …
+
+## Tags
+- \`<tag>\`: what it marks
+
+## How to use it
+- Look up by key before searching.
+`;
 
 /**
  * A namespace's guide: what it holds and how to use it, the text agents read at session
@@ -25,7 +40,7 @@ interface Props {
  * when someone saved in between, their text is shown beside the draft to merge before
  * saving again on top of it.
  */
-export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSaved }: Props) {
+export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, startEditing, onSaved }: Props) {
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -41,7 +56,9 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
     async (signal, live) => {
       try {
         const g = await getNamespaceGuide(org, namespace, { signal });
-        if (live()) setGuide(g);
+        if (!live()) return;
+        setGuide(g);
+        if (startEditing && canEdit) startEdit(g);
       } catch (e) {
         if (live()) setError(humanizeError(e));
       }
@@ -49,14 +66,14 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
     [org, namespace],
   );
 
-  const startEdit = (g: NamespaceGuide) => {
-    setContent(g.content);
+  function startEdit(g: NamespaceGuide) {
+    setContent(g.found ? g.content : STARTER);
     setSummary(g.summary);
     setNote("");
     setBase(g);
     setConflict(false);
     setEditing(true);
-  };
+  }
 
   const save = async () => {
     if (!base) return;
