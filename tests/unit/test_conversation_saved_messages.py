@@ -870,7 +870,7 @@ async def test_the_saved_list_checks_past_an_excerpt_longer_than_the_margin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The prefix the listing reads follows conversation_search_excerpt_chars: a long
-    excerpt still ends in '…', and a key crossing character 1,024 is caught whole."""
+    excerpt still ends in '…', and a key crossing the 1,500-character cut is caught whole."""
     from server.knowledge.app import conversations
     from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS
     from server.knowledge.store import conversations as conversation_repo
@@ -878,7 +878,7 @@ async def test_the_saved_list_checks_past_an_excerpt_longer_than_the_margin(
 
     monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 1500)
     at = datetime(2026, 1, 1, 12, 0, 0)
-    messages = {"m-long": "a" * 3000, "m-key": "a" * 1010 + f" {OPENAI_KEY} " + "a" * 2000}
+    messages = {"m-long": "a" * 3000, "m-key": "a" * 1480 + f" {OPENAI_KEY} " + "a" * 2000}
     asked: list[object] = []
 
     async def fake_list(*_a: object, listed: int, **_kw: object) -> list[dict[str, object]]:

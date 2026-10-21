@@ -858,10 +858,12 @@ hashing are engineering primitives, not a compliance guarantee.
 - A row-scoped op answers `found=False` outside the caller's scope, never 403.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
-- A `high`-sensitivity value has no embedding row, and a chunk, session digest or
-  conversation turn whose text reads as a credential is written without a vector by
-  every write path (`loom reembed --in-database` excepted), and every read that serves
-  passages holds back one an earlier build embedded.
+- A `high`-sensitivity value has no embedding row; a chunk, session digest or
+  conversation turn whose text reads as a credential is written without a vector
+  (`loom reembed --in-database` and a chunk restored with the vector an earlier build
+  gave it excepted), and the ranked reads (`memory.search`, `memory.ask`,
+  `conversation.search` and the saved search) hold back one an earlier build embedded;
+  see Sensitivity for the reads that serve it as written.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
 
