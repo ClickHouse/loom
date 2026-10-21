@@ -61,8 +61,9 @@ A chat's saved message is a conversation turn flagged for its user:
 ([Saving single messages](../features/conversations-and-sessions.md#saving-single-messages)).
 The same five ops serve both ways a chat runs in front of Loom:
 
-- **A chat that records its conversations** in its own namespace calls them with a token
-  pinned to the user (`read_user_id`). Saving a turn the transcript holds flags it in
+- **A chat that records its conversations** in its own namespace writes the transcript
+  with a namespace-scoped writer token and calls these ops with a token pinned to the
+  user (`read_user_id`). Saving a turn the transcript holds flags it in
   place, so the message is stored and embedded once; the transcript row decides its
   owner, so two users never both save one turn, and compaction keeps a saved turn.
 - **A chat that signs end-user tokens** calls them with `namespace: "@me"`. The other
@@ -71,7 +72,8 @@ The same five ops serve both ways a chat runs in front of Loom:
   stores the text the request sends as a saved-only row, and unsaving it removes the row.
 
 In both, a save is refused for a tombstoned turn, a system or tool turn and text that
-reads as a credential (`reason`); a body naming another user is refused (403); a client
+reads as a credential (`reason`); under the pinned token a body naming another user is
+refused (403); a client
 draws a conversation's saved state with one `conversation.saved_status` call; and a user
 erasure takes the user's conversation rows, saved ones included. The personal
 collection's documents are for what the user brings (an upload, a chat's attachment),

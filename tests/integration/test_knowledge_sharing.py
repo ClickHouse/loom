@@ -444,6 +444,9 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
     gw.ok(
         "bob", "knowledge.upsert", {"namespace": "@me", "source_uri": "doc/mine", "content": mine}
     )
+    saved = {"conversation_id": "c1", "message_id": "m1", "user_id": "bob"}
+    r = _chat_ok(gw, "bob", "conversation.save_message", {**saved, "role": "user", "content": mine})
+    assert r["indexed"] is True, r
     admin = mint_test_token(
         org=gw.org, namespaces=["*"], roles=["org_admin", "admin"], subject="ops"
     )
@@ -516,6 +519,8 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
         "bob", "knowledge.search", {"namespace": "@me", "query": mine, "namespace_scope": "this"}
     )
     assert not any(mine in h["content"] for h in left["results"])
+    listed = {"user_id": "bob", "conversation_id": "c1"}
+    assert _chat_ok(gw, "bob", "conversation.list_saved_messages", listed)["rows"] == []
 
 
 def test_a_create_cut_short_is_finished_by_its_creator_alone(gw: Gateway, ch_client: Any) -> None:
