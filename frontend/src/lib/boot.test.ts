@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { claimsFromToken, provisionalNamespace, rememberKinds, rememberedKinds, sameIdentity } from "./boot";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  claimsFromToken,
+  provisionalNamespace,
+  rememberKinds,
+  rememberedKinds,
+  sameIdentity,
+  takeLinkToken,
+} from "./boot";
 import type { MyNamespaceEntry } from "../api";
 import { VIEW_LOADERS } from "../views/registry";
 import { ALL_VIEWS } from "./state";
@@ -111,5 +118,48 @@ describe("view registry", () => {
   it("has a loader for every view", () => {
     for (const v of ALL_VIEWS) expect(typeof VIEW_LOADERS[v]).toBe("function");
     expect(Object.keys(VIEW_LOADERS).sort()).toEqual([...ALL_VIEWS].sort());
+  });
+});
+
+// A login link's token is taken from the #token= fragment, and a ?token= query never is;
+// either leaves the address at once, before anything can fail.
+describe("login link token", () => {
+  afterEach(() => history.replaceState(null, "", "/"));
+  const address = () => window.location.pathname + window.location.search + window.location.hash;
+
+  it("takes a #token= fragment and scrubs it from the address bar", () => {
+    history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");
+    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: false });
+    expect(address()).toBe("/setup?tab=a");
+  });
+
+  it("never takes a ?token= query, and removes it anyway", () => {
+    history.replaceState(null, "", "/?token=leaked.jwt.value&tab=a#memories");
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: false });
+    expect(window.location.search).toBe("?tab=a");
+    expect(window.location.hash).toBe("#memories");
+    expect(window.location.href).not.toContain("leaked");
+  });
+
+  it("leaves a URL without a token alone", () => {
+    history.replaceState(null, "", "/library?q=x#y");
+    expect(takeLinkToken()).toBeNull();
+    expect(window.location.search + window.location.hash).toBe("?q=x#y");
+  });
+
+  it("says when the token came back to the bare root, where a sign-in returns to its page", () => {
+    for (const root of ["/", "/me"]) {
+      history.replaceState(null, "", `${root}#token=abc`);
+      expect(takeLinkToken(), root).toEqual({ token: "abc", atRoot: true });
+      expect(address(), root).toBe(root);
+    }
+    history.replaceState(null, "", "/?tab=a#token=abc");
+    expect(takeLinkToken()?.atRoot).toBe(false);
+  });
+
+  it("scrubs a fragment that does not decode, and takes no token from it", () => {
+    history.replaceState(null, "", "/#token=%E0%A4%A");
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: true });
+    expect(address()).toBe("/");
   });
 });

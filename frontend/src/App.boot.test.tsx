@@ -398,6 +398,32 @@ describe("a link's namespace", () => {
     expect(calls.some((c) => c.path.startsWith("memory."))).toBe(false);
   });
 
+  it("takes and scrubs a link's token even when the return's code fails to load, and boots on", async () => {
+    vi.doMock("./lib/linkToken", () => {
+      throw new Error("Failed to fetch dynamically imported module");
+    });
+    try {
+      sessionStorage.setItem(
+        "loom_sign_in_from_v1",
+        JSON.stringify({ path: "/memories?namespace=joined", at: Date.now() }),
+      );
+      localStorage.removeItem("loom_token_v1");
+      useStore.setState({ authed: false });
+      const token = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+      window.history.replaceState(null, "", `/#token=${token}`);
+      serve(MINE);
+      render(<App />);
+      await until(() => useStore.getState().identity !== null && useStore.getState().view === "setup");
+      expect(localStorage.getItem("loom_token_v1")).toBe(token);
+      expect(window.location.href).not.toContain("token=");
+      // No way back to the page the sign-in started on: the bare root's landing instead.
+      expect(address()).toBe(`/settings?namespace=${NS}`);
+      expect(screen.queryByText(/Auth bootstrap failed/)).toBeNull();
+    } finally {
+      vi.doUnmock("./lib/linkToken");
+    }
+  });
+
   it("a move inside one view after a switch brings the address back to the page's namespace", async () => {
     window.history.replaceState(null, "", `/memories?namespace=${NS}`);
     serve(MINE);

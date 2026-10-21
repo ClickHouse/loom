@@ -24,7 +24,7 @@ import {
   landingTarget,
   needsMemoryNamespace,
 } from "./lib/namespace";
-import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity } from "./lib/boot";
+import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity, takeLinkToken } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
@@ -249,11 +249,17 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        // A login link (federation redirect) carries the token in the #token= fragment; what
-        // takes it, and returns to the page a sign-in started on, loads only then.
-        if (location.hash.startsWith("#token=") || new URLSearchParams(location.search).has("token")) {
-          const linkToken = (await import("./lib/linkToken")).takeLinkToken();
-          if (linkToken) setToken(linkToken);
+        // A login link (federation redirect) carries the token in the #token= fragment: taken
+        // and scrubbed before anything can fail. The return to the page its sign-in started on
+        // is a chunk of its own, and boot goes on without it.
+        const link = takeLinkToken();
+        if (link) {
+          if (link.token) setToken(link.token);
+          try {
+            (await import("./lib/linkToken")).returnToSignInStart(link.atRoot);
+          } catch {
+            /* the address stays where the token came back */
+          }
         }
 
         // Auth-disabled mode (LOOM_AUTH_REQUIRED=false): skip TokenGate, synthesise

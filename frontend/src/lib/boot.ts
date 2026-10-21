@@ -46,6 +46,33 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
   }
 }
 
+/** The session key for where a single sign-on started, `{ path, at }`: the sign-in gate
+ *  writes it, and the return to it (`lib/linkToken.ts`) reads it. */
+export const SIGN_IN_FROM = "loom_sign_in_from_v1";
+
+/** A login link's token, taken before anything else can fail: the `#token=` fragment's (a
+ *  `?token=` query is never taken, since it reaches the server and its logs), and whether
+ *  it came back to the bare root (`/`, or `/me` from a server that lands there), where a
+ *  sign-in returns to the page it started on. Either form leaves the address and its
+ *  history at once, so no token lingers in a copied link, a reload or a failure report.
+ *  Null when the address carries neither. */
+export function takeLinkToken(): { token: string | null; atRoot: boolean } | null {
+  const { hash, search, pathname } = window.location;
+  const fromHash = hash.startsWith("#token=");
+  const query = new URLSearchParams(search);
+  if (!fromHash && !query.has("token")) return null;
+  query.delete("token");
+  const qs = query.toString();
+  history.replaceState(null, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
+  let token: string | null = null;
+  try {
+    token = fromHash ? decodeURIComponent(hash.slice("#token=".length)) || null : null;
+  } catch {
+    /* a fragment that does not decode carries no token */
+  }
+  return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me") };
+}
+
 /** Namespace kinds from the last membership answer this browser saw, so a
  *  deep link can tell a memory namespace from a code or QA one before
  *  list_mine answers again (a memory view never mounts on a code or tracker namespace;

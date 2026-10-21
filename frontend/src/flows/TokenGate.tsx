@@ -8,7 +8,7 @@ import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
-import { rememberSignInStart } from "../lib/linkToken";
+import { SIGN_IN_FROM } from "../lib/boot";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
 import { Alert } from "../components/ui";
@@ -43,8 +43,20 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
   return <PasswordGate onLogin={onLogin} reason={reason} />;
 }
 
-/** Sends the browser to the identity provider; it comes back to `/#token=…`, and boot
- *  opens the page the sign-in started on again (`lib/linkToken.ts`). */
+/** Remember the page a sign-in starts on, and when: the identity provider sends the
+ *  browser back to the root, and boot returns here within ten minutes
+ *  (`lib/linkToken.ts`). From the bare root there is nothing to come back to. */
+function rememberSignInStart(): void {
+  const path = window.location.pathname + window.location.search;
+  try {
+    if (path === "/") sessionStorage.removeItem(SIGN_IN_FROM);
+    else sessionStorage.setItem(SIGN_IN_FROM, JSON.stringify({ path, at: Date.now() }));
+  } catch {
+    /* no session storage: the sign-in lands on the root */
+  }
+}
+
+/** Sends the browser to the identity provider; it comes back to `/#token=…`. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   return (
     <GateShell>

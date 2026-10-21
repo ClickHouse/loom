@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SIGN_IN_FROM } from "../lib/linkToken";
+import { SIGN_IN_FROM } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate } from "./TokenGate";
@@ -168,7 +168,7 @@ describe("TokenGate", () => {
       history.replaceState(null, "", "/memories?namespace=group-a-shared");
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
       const link = screen.getByRole("link", { name: "Sign in with SSO" });
-      // jsdom does not navigate; the provider round trip is lib/linkToken.test.ts.
+      // jsdom does not navigate; the return from the provider is lib/linkToken.test.ts.
       link.addEventListener("click", (e) => e.preventDefault());
       fireEvent.click(link);
       expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
