@@ -103,7 +103,7 @@ async def test_a_row_whose_text_reads_as_a_credential_is_never_re_embedded() -> 
     )
     assert n == 2 and ch.inserted == ["000", "002"]
     assert sent == ["c0", "c2"]
-    assert any("reads as a credential" in line for line in lines)
+    assert any("reads as high" in line for line in lines)
 
 
 @pytest.mark.asyncio
