@@ -73,3 +73,22 @@ def test_a_mode_is_case_folded_and_an_unknown_one_fails_at_load() -> None:
         Settings(_env_file=None, memory_search_default_mode="semantc")  # type: ignore[call-arg]
     with pytest.raises(ValidationError, match="memory_search_key_axis"):
         Settings(_env_file=None, memory_search_key_axis="true")  # type: ignore[call-arg]
+
+
+def test_a_retire_confidence_below_the_clear_confidence_fails_at_load() -> None:
+    with pytest.raises(ValidationError, match="FLAG_CONFIDENCE must lie between"):
+        Settings(
+            memory_conflict_resolver_retire_confidence=0.85,
+            memory_conflict_resolver_clear_confidence=0.90,
+        )
+    Settings(
+        memory_conflict_resolver_retire_confidence=0.90,
+        memory_conflict_resolver_flag_confidence=0.90,
+        memory_conflict_resolver_clear_confidence=0.90,
+    )
+
+
+@pytest.mark.parametrize("flag", [0.85, 0.99])
+def test_a_flag_confidence_outside_clear_and_retire_fails_at_load(flag: float) -> None:
+    with pytest.raises(ValidationError, match="FLAG_CONFIDENCE must lie between"):
+        Settings(memory_conflict_resolver_flag_confidence=flag)

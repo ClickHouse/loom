@@ -137,8 +137,6 @@ IDENTIFIER_KEYS: frozenset[str] = frozenset(
         # `out_noop='true'` is the noop row; dry_run is the argument.
         "conflict_verdict",
         "noop",
-        # `deferred` when the verdict is pending on the row.
-        "verdict_at",
         # The write's advice to the agent about its VALUE
         # (today "value is base64-encoded (…)"), so the share of agents that
         # encode is one GROUP BY on the prefix.

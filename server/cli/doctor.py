@@ -340,16 +340,18 @@ def _doctor_keeper_check(settings: Any) -> tuple[str, str, str]:
 
 
 # Tables whose guarantees rest on a sequentially consistent read seeing every
-# acknowledged insert: the sign-in/sign-up limits and the single signing-key retire.
-_SEQUENTIAL_TABLES = ("auth_attempts", "signing_keys")
+# acknowledged insert: the sign-in/sign-up limits, the single signing-key retire,
+# task.create's idempotency key and the single coverage ready event.
+_SEQUENTIAL_TABLES = ("auth_attempts", "signing_keys", "tasks", "task_events")
 
 
 def _doctor_replica_consistency_check(settings: Any) -> tuple[str, str, str]:
     """The `replica_consistency` doctor line: WARN on a self-managed
     ReplicatedMergeTree cluster with more than one replica of those tables. A
     sequential read there waits only for inserts written with `insert_quorum`,
-    which Loom's async inserts cannot use, so a recount or a retire on one
-    replica can miss another's write. SharedMergeTree and one server are exact."""
+    which Loom's async inserts cannot use, so a recount, a retire, a task.create
+    retry or a ready-event check on one replica can miss another's write.
+    SharedMergeTree and one server are exact."""
     sql = (
         "SELECT table, total_replicas FROM system.replicas WHERE database = {db:String} "
         "AND table IN {tables:Array(String)} AND total_replicas > 1 AND table IN ("
@@ -368,8 +370,9 @@ def _doctor_replica_consistency_check(settings: Any) -> tuple[str, str, str]:
     return (
         "replica_consistency",
         WARN,
-        f"{tables}: a sign-in limit or a signing-key retire read on one replica can miss "
-        "another's write. Send every Loom process to one replica.",
+        f"{tables}: a sign-in limit, a signing-key retire, a task.create retry or a "
+        "coverage ready event read on one replica can miss another's write. Send every "
+        "Loom process to one replica.",
     )
 
 

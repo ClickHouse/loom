@@ -1407,6 +1407,15 @@ class MemoryOps:
             await self._agent.call("memory.assign_category", body, **options),
         )
 
+    async def auto_retirements(
+        self, body: _ops.MemoryAutoRetirementsBody | None = None, /, **options: Any
+    ) -> _ops.MemoryAutoRetirementsOutput:
+        """`memory.auto_retirements`."""
+        return cast(
+            "_ops.MemoryAutoRetirementsOutput",
+            await self._agent.call("memory.auto_retirements", body, **options),
+        )
+
     async def backlinks(
         self, body: _ops.MemoryBacklinksBody | None = None, /, **options: Any
     ) -> _ops.MemoryBacklinksOutput:
@@ -1887,6 +1896,14 @@ class MemoryOps:
         """`memory.stack`."""
         return cast(
             "_ops.MemoryStackOutput", await self._agent.call("memory.stack", body, **options)
+        )
+
+    async def statuses(
+        self, body: _ops.MemoryStatusesBody | None = None, /, **options: Any
+    ) -> _ops.MemoryStatusesOutput:
+        """`memory.statuses`."""
+        return cast(
+            "_ops.MemoryStatusesOutput", await self._agent.call("memory.statuses", body, **options)
         )
 
     async def sweep_expired(

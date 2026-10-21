@@ -438,7 +438,6 @@ async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
 
     ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
     monkeypatch.setattr(memory_repo, "index_late_rows", _noop)
-    monkeypatch.setattr(set_commit._cd, "schedule_settle", lambda *_a, **_k: None)
     w = await _delete_during_the_set(ch, "memory.delete")
     w.input = w.input.model_copy(update={"memory_type": "semantic"})
     w.memory_row["memory_type"] = "semantic"
@@ -446,7 +445,7 @@ async def test_an_embedded_set_in_flight_during_a_delete_lands_with_its_vector(
     w.excerpt, w.embedding = "Thursdays", [0.0] * 3072
     w.key_embedding, w.key_text = [0.0] * 3072, "deploy window"
     verdict = SimpleNamespace(verdict="", peers=[], refined_peers=[])
-    await set_commit._set_dual_write(w, ch, None, verdict)
+    await set_commit._set_dual_write(w, ch, SimpleNamespace(policy="manual"), verdict)
 
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays" and got.version == w.version
@@ -967,7 +966,6 @@ async def test_an_embedded_set_whose_fence_read_missed_a_conditional_delete_keep
 
     ch.setup[:0] = ["SET enable_quantized_codec = 1", ddl("memory_embeddings")]
     monkeypatch.setattr(memory_repo, "index_late_rows", _noop)
-    monkeypatch.setattr(set_commit._cd, "schedule_settle", lambda *_a, **_k: None)
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(head + 5_000_000)
@@ -990,7 +988,7 @@ async def test_an_embedded_set_whose_fence_read_missed_a_conditional_delete_keep
 
     monkeypatch.setattr(set_commit, "insert_memory_versions", delete_then_insert)
     verdict = SimpleNamespace(verdict="", peers=[], refined_peers=[])
-    await set_commit._set_dual_write(w, ch, None, verdict)
+    await set_commit._set_dual_write(w, ch, SimpleNamespace(policy="manual"), verdict)
     got = await _read_back(ch)
     assert got is not None and got.value == "Thursdays" and got.version == w.version
     assert w.version > answers[0].version

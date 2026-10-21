@@ -26,6 +26,7 @@ from server.memory.app import restore as _restore_mod
 from server.memory.app import restore as restore_mod
 from server.memory.app import stack as _stack_mod
 from server.memory.store import MEMORY_PERSISTED_COLS, MemoryRow
+from tests.unit.claims_fake import fake_key_locks
 
 _NOW = datetime(2026, 9, 19, 8, 0, 0)
 
@@ -268,6 +269,7 @@ async def test_restore_carries_the_stored_bytes_and_the_mirrors_excerpt(
     tombstoned_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
     existing = _row(stored, parsed, tombstoned_at=tombstoned_at)
     ch = _wire(monkeypatch, existing)
+    fake_key_locks(monkeypatch)  # an Undo takes the key's write lock
     ch.query_one_result = {
         "memory_key": "alert_3f9c",
         "memory_type": "semantic",
@@ -307,6 +309,7 @@ async def test_restore_rebuilds_the_excerpt_from_the_stored_bytes_only_when_the_
     tombstoned_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
     existing = _row(stored, parsed, tombstoned_at=tombstoned_at)
     ch = _wire(monkeypatch, existing)
+    fake_key_locks(monkeypatch)  # an Undo takes the key's write lock
     ch.routes = [("FROM loom.memory_embeddings", [{**_EMB_ROW, "content_excerpt": ""}])]
     ch.query_one_result = {
         "memory_key": "alert_3f9c",

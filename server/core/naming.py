@@ -40,6 +40,22 @@ def reserved_for_sso(namespace: str) -> bool:
     return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
 
 
+def is_anonymous_user(user_id: str) -> bool:
+    """Whether `user_id` names no user: the sentinel, or sent empty (stored as given)."""
+    return user_id in ("", SENTINEL)
+
+
+def session_spellings(session_id: str) -> list[str]:
+    """The stored session ids that mean `session_id`: no session is '-' or sent empty
+    (stored as given), so either spelling is the other."""
+    return [SENTINEL, ""] if session_id in ("", SENTINEL) else [session_id]
+
+
+def same_session(a: str, b: str) -> bool:
+    """Whether two stored session ids are one session ('-' and "" are both none)."""
+    return b in session_spellings(a)
+
+
 def names_session(session_id: str) -> bool:
     """Whether a session id names a session rather than "not given"."""
     return session_id.strip() not in ("", SENTINEL)

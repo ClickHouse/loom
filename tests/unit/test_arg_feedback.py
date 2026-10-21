@@ -227,3 +227,17 @@ def test_an_empty_top_level_list_stays_a_list() -> None:
     # nested empties are still dropped
     assert lean_result({"items": [{"a": 1, "tags": []}]}, {}) == {"items": [{"a": 1}]}
     assert lean_result({"note": "", "meta": {}}, {}) == {}
+
+
+def test_a_set_with_the_removed_await_verdict_is_served_and_names_it() -> None:
+    """`await_verdict` waited for the per-write judge, which is gone: a client that still
+    sends it is served, never refused, and told the argument was ignored."""
+    from server.memory.api.models_crud import MemorySetInput
+
+    op = OPERATIONS_BY_NAME["memory.set"]
+    args = {"org": "o", "namespace": "n", "agent": "a", "memory_key": "k", "value": "v"}
+    args["await_verdict"] = True
+    assert arg_check.named_argument_error(op, args) is None
+    MemorySetInput.model_validate(args)
+    body = arg_check.response_body(op, args, {"version": 1})
+    assert body["ignored_args"] == ["await_verdict"] and "did_you_mean" not in body

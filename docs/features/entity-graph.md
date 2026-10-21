@@ -9,16 +9,16 @@ it. Use it for questions vector search cannot answer, such as "what is connected
 
 ## What the graph holds
 
-| Table                                              | Holds                                                                                                |
-| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `loom.entity_edges` (+ `entity_edge_memories`)     | One row per co-occurrence observation (`co_occur = 1`); readers sum per pair. Source key per pair.   |
-| `loom.entity_triples` (+ `entity_triple_memories`) | Typed triples with `confidence` and the extractor model as `adapter_name`. Source key per triple.    |
-| `loom.entity_degree`                               | Each entity's total co-occurrence degree (`SummingMergeTree`); the hub rules read it.                |
-| `loom.entity_canonical_map`                        | Mention text → canonical entity.                                                                     |
-| `loom.entity_communities`                          | Community id per entity, per level.                                                                  |
-| `loom.entity_vectors`, `loom.entity_summaries`     | Embeddings read by the entity legs of search.                                                        |
-| `loom.derived_facts`                               | Numeric facts with unit and date, for computed answers in search.                                    |
-| `memory.link` edges                                | Edges an agent or person asserts (`supports`, `depends_on`, `caused`, …); read by graph-mode search. |
+| Table                                                                    | Holds                                                                                                                                   |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.entity_edges` (+ `entity_edge_memories`, `entity_edge_rows`)       | One row per co-occurrence observation (`co_occur = 1`); readers sum per pair. Source key per pair, and the row and value that named it. |
+| `loom.entity_triples` (+ `entity_triple_memories`, `entity_triple_rows`) | Typed triples with `confidence` and the extractor model as `adapter_name`. Source key per triple, and the row and value that stated it. |
+| `loom.entity_degree`                                                     | Each entity's total co-occurrence degree (`SummingMergeTree`); the hub rules read it.                                                   |
+| `loom.entity_canonical_map`                                              | Mention text → canonical entity.                                                                                                        |
+| `loom.entity_communities`                                                | Community id per entity, per level.                                                                                                     |
+| `loom.entity_vectors`, `loom.entity_summaries`                           | Embeddings read by the entity legs of search.                                                                                           |
+| `loom.derived_facts`                                                     | Numeric facts with unit and date, for computed answers in search.                                                                       |
+| `memory.link` edges                                                      | Edges an agent or person asserts (`supports`, `depends_on`, `caused`, …); read by graph-mode search.                                    |
 
 Edges and triples carry `valid_from` / `valid_to` (from the source memory's `valid_at` / `valid_to`) and an
 `invalid_at` stamp that retires them. A read with `as_of` sums only observations valid at that instant.
@@ -30,7 +30,9 @@ walk is capped.
 ## How the graph is built
 
 The memory row lands first; the graph rows are projections of it. A failed projection is logged to
-`loom.memory_projection_failures` and retried. It never fails the write.
+`loom.memory_projection_failures` and retried, only while the row still has the value that failed to project. It
+never fails the write. A `high`-sensitivity bulk entry projects nothing; a `high` `memory.set` projects only the
+edges of the entities its writer declared, never its text.
 
 1. **Entities.** The writer passes `entities` on `memory.set`, or `memory.set_from_messages` extracts them. The
    `entity_extractor` worker (`LOOM_ENTITY_EXTRACT_ENABLED`, on) tags rows written without them, off the write path;
@@ -42,10 +44,28 @@ The memory row lands first; the graph rows are projections of it. A failed proje
    `lower_snake`. `namespace.register_ontology` (admin) registers preferred entity types, verbs and attributes with a
    cardinality. Names outside the set produce `ontology_warnings`; nothing is rejected.
 4. **Supersession closes triples.** When a row supersedes another, the old row's open triples that the new one does
-   not attest get `invalid_at`. For a `one` relation (employer, location), a newer `valid_at` closes the older interval.
+   not attest get `invalid_at`. For a `one` relation (employer, location), the newer value stays current and the older
+   one closes when the newer starts. A write that states the older value again while that close runs keeps it open.
+   - Values order by the day they start (an undated value starts when it arrives), then by arrival to the
+     microsecond, so racing writers agree on one current value. Within one write, the later-stated value is newer.
+   - Within one write, an undated value in the past tense (`lived_in`, `worked_at`) is older than a dated one, in
+     either order: "user lived_in london" next to Paris from Oct 1 leaves Paris current.
+   - A value is judged at its newest row: "London from Oct 15, Paris from Oct 14, London from Oct 13" leaves London
+     current.
+   - A value stated with its own end ("London until December") is never closed early. It stays current beside the
+     newer value until that end.
+   - An Undo (`memory.restore`) makes the restored value current from the restore on, or from the fact's own later
+     start ("moving to Berlin on Dec 1"). The other value closes, and its row stays live. A value dated on a later
+     day still wins, and so does a value stated after the Undo. Undoing back and forth adds no weight.
+   - A failed close is replayed as of the write or Undo that made it, so a value stated since stays current.
 
-`memory.set` writes no triples; a typed graph needs `memory.set_from_messages` or a bulk writer that supplies
-relations. With the stock fake providers, only the entities you pass form edges.
+   How an Undo restates its facts and edges, weighs them and is replayed is in
+   [memory architecture](../architecture/memory-architecture.md#undo).
+
+A point write (`memory.set`, `memory.update`, `memory.update_by_id`) writes the triples the caller passes in
+`relations`, at most 8, over HTTP and in the SDKs' typed operations (not in the MCP listing); it extracts none.
+Automatic extraction runs on the bulk path: `memory.set_from_messages`, or a bulk writer that supplies relations.
+With the stock fake providers, only the entities you pass form edges.
 
 ## Operations
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.memory.domain.graph_quality import fold_case
+
 _GENERIC_HEADS = frozenset(
     {
         "thing",
@@ -425,11 +427,11 @@ _AUX_VERBS = frozenset(
 
 
 def verb_phrase(v: str) -> str:
-    """A raw verb as the model wrote it, lower-cased and underscore-joined, with
+    """A raw verb as the model wrote it, case-folded and underscore-joined, with
     leading auxiliaries stripped ("has_capital" -> "capital", "is_located_in" ->
     "located_in") and NOT stemmed: the readable attribute a memory key names.
     `canonicalize_verb` stems its head for matching relations."""
-    key = str(v or "").strip().lower().replace(" ", "_")
+    key = fold_case(str(v or "").strip()).replace(" ", "_")
     while "_" in key:
         head, _, tail = key.partition("_")
         if head in _AUX_VERBS and tail:

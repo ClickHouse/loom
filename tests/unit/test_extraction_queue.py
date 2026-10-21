@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, replayed_read_scope
 from server.memory.api.models_bulk import MemorySetFromMessagesInput, _Message
 from server.memory.app import extraction_queue as q
 from server.memory.app import extraction_queue as queue
@@ -241,7 +241,7 @@ def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> 
     payload, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE)
     data = json.loads(payload)
     data.pop(q.READ_SCOPE_KEY)
-    assert queue.replay_scope({"payload": json.dumps(data)}).narrowed is False
+    assert replayed_read_scope(data.get(q.READ_SCOPE_KEY)).narrowed is False
 
 
 @pytest.mark.parametrize(
@@ -252,12 +252,12 @@ def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> 
         {"scope": "everyone", "user_id": "u1", "session_id": None},
     ],
 )
-def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
+async def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
     payload = json.dumps(
         {**json.loads(q.payload_for(_input(), scope=WHOLE_NAMESPACE)[0]), q.READ_SCOPE_KEY: stored}
     )
     with pytest.raises(ValueError):
-        queue.replay_scope({"payload": payload})
+        await queue.replay_row({"payload": payload})
 
 
 def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(

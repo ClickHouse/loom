@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import uuid
 from typing import Any
 
 from fastapi import HTTPException
@@ -25,6 +26,9 @@ from server.memory.api.models_crud import (
     MemoryKeysOutput,
     MemoryListInput,
     MemoryListOutput,
+    MemoryStatus,
+    MemoryStatusesInput,
+    MemoryStatusesOutput,
     _MemoryListEntry,
 )
 from server.memory.api.models_search import (
@@ -875,6 +879,27 @@ async def handle_memory_bulk_get(
     )
     missing = [k for k in input.memory_keys if k not in results]
     return MemoryBulkGetOutput(results=results, missing=missing)
+
+
+async def handle_memory_statuses(input: MemoryStatusesInput) -> MemoryStatusesOutput:
+    """memory.statuses: each id's current status in the namespace, inside the request's
+    read scope. An id that is not a UUID, or that the namespace does not hold, is left
+    out, as one the caller may not read is."""
+    import server.memory.store as memory_repo
+
+    ids: list[str] = []
+    for raw in input.memory_ids:
+        try:
+            ids.append(str(uuid.UUID(raw)))
+        except ValueError:
+            continue
+    ids = list(dict.fromkeys(ids))  # an id asked twice is read once
+    if not ids:
+        return MemoryStatusesOutput()
+    rows = await memory_repo.statuses_by_ids(
+        input.org, input.namespace, ids, scope=request_scope(), ch=get_client()
+    )
+    return MemoryStatusesOutput(rows=[MemoryStatus(**r) for r in rows])
 
 
 async def handle_memory_keys(input: MemoryKeysInput) -> MemoryKeysOutput:

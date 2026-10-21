@@ -684,39 +684,6 @@ export async function listPolicyDecisions(
   return post("/v1/policy.decisions", body, opts.signal);
 }
 
-// ===== audit log =====
-
-export interface AuditEntry {
-  ts: string;
-  event_type: string;
-  actor: string;
-  /** JSON text of the operation's input (`AuditListRow.subject`); parse before reading. */
-  subject: string;
-  request_id: string;
-}
-
-export async function listAuditLog(
-  id: Pick<Identity, "org"> & { namespace?: string },
-  opts: { limit?: number; event_type?: string; since?: string; cursor?: string; fields?: string[] } & RequestOpts = {},
-): Promise<{ rows: AuditEntry[]; next_cursor?: string | null }> {
-  const body: Record<string, unknown> = {
-    org: id.org,
-    limit: opts.limit ?? 100,
-    // The fields the caller reads; unset, every field.
-    ...(opts.fields ? { fields: opts.fields } : {}),
-  };
-  // A time bound. The table is sorted by event type before time, so an unbounded "newest
-  // 100" reads the scope's whole recent history (~9 MB for a 27 kB page).
-  if (opts.since) body["since"] = opts.since;
-  // namespace omitted = org-wide (handler scopes platform admins to
-  // all, regular users to their accessible namespaces).
-  if (id.namespace) body["namespace"] = id.namespace;
-  if (opts.event_type) body["event_type"] = opts.event_type;
-  // The next, older page: the `next_cursor` the previous page answered.
-  if (opts.cursor) body["cursor"] = opts.cursor;
-  return post("/v1/audit.list", body, opts.signal);
-}
-
 // ===== cost rollup =====
 
 // Shape backed by /v1/cost.summary — field names mirror the backend
