@@ -124,7 +124,9 @@ request's `(org, namespace, agent)`:
   A rule that reads as a credential is never filed either, and the drop is counted
   under reason `sensitive`; nor is one that matches a blacklist pattern. A quote that
   does either is stored blank. The supporter row is written first, then the candidate
-  row again, at version 1, with every new supporter.
+  row again, at version 1, with every new supporter. A restatement after the first
+  filing never changes the candidate's text; two sessions that first file the same rule
+  at once, differing only in case or a trailing period, leave either wording.
   So an erasure that deletes a pending candidate mid-filing never leaves that supporter
   without it. A review always writes a newer version, so the rewrite never undoes a
   decision, and a decided candidate takes no new supporters: its restatement is

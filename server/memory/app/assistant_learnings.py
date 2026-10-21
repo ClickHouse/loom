@@ -124,8 +124,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "agent": agent,
                 "memory_key": key,
                 "memory_type": "semantic",
-                # The first wording stays: a restatement that folds to the same
-                # candidate never changes the text the reviewer reads and promotes.
+                # A restatement after the first filing never changes the text the
+                # reviewer reads and promotes. Two racing first filings may leave
+                # either wording; they differ only in case or a trailing period.
                 "proposed_value": row["proposed_value"] if row else json.dumps(value),
                 "supporter_count": 0,
                 # Not judged here: learnings.list and promotion read the supporters' mean.
