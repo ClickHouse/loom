@@ -211,12 +211,15 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   person's or a namespace's data everywhere, use
   [`erasure.request`](./memory/retention-and-erasure.md).
 
-Tombstoned turns are filtered from every read. They are removed from disk only if the
+Tombstoned turns are filtered from every read but `erasure.export`, which returns them
+unless asked with `include_tombstoned: false`. They are removed from disk only if the
 operator set a table TTL (`LOOM_RETENTION_CONVERSATIONS_DAYS`, 0 = keep forever). That
 TTL covers `loom.conversations` only: a turn's embedding row, which keeps up to 2,048
 characters of its text, has no TTL. Once its message has expired, a whole-thread
 delete in its thread passes it to a live copy of the turn or tombstones it; an erasure
 request tombstones it, and removes it only on a `namespace_list` erasure with `purge`.
+`erasure.export` does not return embedding rows, so the excerpt of a turn the TTL
+expired is erased with the subject but is not in their export.
 
 ### Thread titles
 

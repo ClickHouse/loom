@@ -56,6 +56,7 @@
  "conversation_search_min_similarity",
  "embedding_retry_attempts",
  "embedding_retry_max_wait_s",
+ "erasure_export_conversation_max_bytes",
  "extraction_defer_agents",
  "extraction_policy_max_namespaces",
  "extraction_queue_lease_seconds",

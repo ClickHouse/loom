@@ -20,7 +20,7 @@ GDPR Article 20 portability.
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | required | `user_id` exports one user's rows across the org (org admin only); `namespace` exports one namespace (admin on it). |
 | `scope_value` | `str` | required | The user id or namespace to export. |
 | `requester` | `str` | required | email or service account requesting the export |
-| `include_tombstoned` | `bool` | `True` | Include tombstoned memory rows. |
+| `include_tombstoned` | `bool` | `True` | Include tombstoned memory and conversation rows. |
 | `section_limit` | `int` | `10000` | Per-section caps. |
 
 | Output field | Type | Meaning |
@@ -30,9 +30,11 @@ GDPR Article 20 portability.
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | Echo of the requested scope kind. |
 | `scope_value` | `str` | Echo of the requested user id or namespace. |
 | `requester` | `str` | Echo of who asked for the export. |
-| `counts` | `dict[str, int]` | Rows per section (`memory`, `knowledge`, `agent_events`, `audit_log`) before truncation. |
+| `counts` | `dict[str, int]` | Rows returned per section (`memory`, `knowledge`, `conversations`, `conversation_threads`, `agent_events`, `audit_log`): at most `section_limit`, and the section's `truncated` says more exist. |
 | `memory` | `ErasureExportSection` | `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`. |
 | `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope. |
+| `conversations` | `ErasureExportSection` | Turns and saved messages in scope with their `sensitivity`, up to `erasure_export_conversation_max_bytes` of text plus the turn that crosses it. |
+| `conversation_threads` | `ErasureExportSection` | Threads in scope with their title, metadata and `sensitivity`, capped by `section_limit` rows only (no byte budget). |
 | `agent_events` | `ErasureExportSection` | Per-request ledger rows in scope, newest first. |
 | `audit_log` | `ErasureExportSection` | Audit rows in scope; for `user_id`, rows whose subject mentions the user id. |
 
