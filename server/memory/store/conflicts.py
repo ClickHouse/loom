@@ -230,12 +230,15 @@ async def tombstone_ids(
     when: datetime,
     *,
     ch: _CHClient | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     """Tombstone N rows by memory_id. `audit_note` is appended to
     source_trace so the resolution-audit trail is queryable.
-    Empty list short-circuits (an empty IN would mutate every row)."""
+    Empty list short-circuits (an empty IN would mutate every row).
+
+    Returns each tombstoned row's identity tuple, memory_key, memory_id and
+    tombstone version, for the handler's webhook events."""
     if not memory_ids:
-        return
+        return []
     import server.memory.store as memory_repo
 
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
@@ -244,7 +247,7 @@ async def tombstone_ids(
 
     # The tombstone must reach memory_embeddings too, or the losing side of a
     # conflict keeps surfacing in search.
-    await memory_repo.tombstone_cascade_by_ids(
+    return await memory_repo.tombstone_cascade_by_ids(
         org,
         memory_ids,
         when=when,

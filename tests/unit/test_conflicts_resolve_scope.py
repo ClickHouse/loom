@@ -71,8 +71,9 @@ def table(monkeypatch: pytest.MonkeyPatch) -> _Table:
             }
         )
 
-    async def _tombstone(org: str, ids: list[str], *_: Any, **__: Any) -> None:
+    async def _tombstone(org: str, ids: list[str], *_: Any, **__: Any) -> list[dict[str, Any]]:
         t.tombstoned.extend(ids)
+        return []
 
     async def _activate(org: str, ids: list[str], **_: Any) -> None:
         t.activated.extend(ids)

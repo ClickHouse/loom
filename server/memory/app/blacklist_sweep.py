@@ -6,7 +6,8 @@ and readers that do not go through search still see it. The sweep finds the live
 pattern matches — inside the caller's org, and inside the namespace for a
 namespace-scoped pattern — and tombstones them through the one by-id funnel that also
 mirrors the tombstone onto the embeddings table, leaving a `memory_drops` row per
-pattern so the ledger says what a Refuse removed. A token narrowed to one user never
+pattern so the ledger says what a Refuse removed, and a `memory.tombstoned` event per
+row for the namespace's webhooks. A token narrowed to one user never
 reaches a sweep (no blacklist op is in NARROW_SAFE_OPS).
 
 Matching is the SQL twin of `server.memory.app.blacklist_guard._matches`: `position(value,
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.memory.app import webhooks
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.settings import settings
 
@@ -90,16 +92,17 @@ async def sweep_pattern(
         return SweepResult(pattern_id, 0, 0, False)
     when = naive_utc_now()
     ids = [str(r["memory_id"]) for r in rows]
-    written = await memory_repo.tombstone_cascade_by_ids(
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
         org,
         ids,
         when=when,
         update=lambda _existing: {"expire_reason": f"{SWEEP_REASON_PREFIX}{pattern_id}"[:512]},
         ch=ch,
     )
+    await webhooks.announce([("memory.tombstoned", change) for change in tombstoned])
     by_ns: dict[str, int] = {}
     for r in rows:
         by_ns[str(r["namespace"])] = by_ns.get(str(r["namespace"]), 0) + 1
     for ns, n in by_ns.items():
         record_drop(org, ns, "blacklist.sweep", f"pattern:{pattern_id}", n=n)
-    return SweepResult(pattern_id, len(rows), int(written), truncated)
+    return SweepResult(pattern_id, len(rows), len(tombstoned), truncated)

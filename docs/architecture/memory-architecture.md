@@ -502,6 +502,45 @@ Every write that creates or changes memory leaves one hash-only row in `loom.aud
 hash, source class and verdict. The row hash and the checkpoint chain are described in
 [audit](../features/observability/audit.md).
 
+## Change webhooks
+
+After a write path's rows are in, it calls `announce` (`server/memory/app/webhooks.py`)
+with the event (`memory.written`, `memory.revised`, `memory.tombstoned`,
+`memory.restored`, `memory.redacted`; the erasure saga sends `memory.erased` after its
+census, which does not count those rows as residue). For each webhook of the namespace that takes the event it inserts one
+`loom.memory_webhook_outbox` row holding ids and the identity tuple, never content, and
+nothing rewrites it. Which namespaces have webhooks is a per-process copy of
+`loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
+namespace with no webhook pays no insert, and the first write after each interval waits
+for one registry read (`server/core/polled_copy.py`). A failed read keeps the last copy. A
+write on a cold copy waits for the first read; if that read fails, writes announce nothing
+(noted as a degradation) until a read lands. `memory.clear` tombstones with one mutation
+per table and, only when a webhook of the namespace takes `memory.tombstoned`, reads back
+the rows that mutation stamped in one streamed read in sort-key order, so the scope is
+scanned once, with one outbox insert per 1000 rows.
+
+The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
+the events of webhooks removed in the last `memory_webhook_removal_window_leases` lease
+lengths (an event of a removed webhook is never due, so later passes skip it), those that
+waited 2.5 days for a secret, and those a receiver has not taken in 2.75 days ("not
+delivered in time"), then reads the due events of the webhooks it can send to (registered,
+a usable secret, not cooling down) through the outbox's sort key (`org, namespace,
+webhook_id, occurred_at`): the events whose newest row in `loom.memory_webhook_attempts`
+is not settled or waiting, in turns (each webhook's oldest first, `row_number()` per
+webhook), at most `memory_webhook_posts_per_webhook` per webhook and
+`memory_webhook_max_posts_per_pass` in all. It appends a lease (an attempt row whose
+`next_attempt_at` is the lease's end), then POSTs the signed bodies
+(`server/core/webhooks.py`, one `memory_webhook_ack_timeout_seconds` deadline per POST)
+`memory_webhook_deliver_concurrency` at a time and one at a time per webhook, checking
+before each POST the webhook's cooldown, that it was not removed since the pass began, and
+the key's history in `loom.memory_versions` (the event of a removed webhook or an erased
+key is marked dead), and appends every outcome in one insert: `delivered`, `pending` with
+its next attempt, or `dead`. Attempt rows hold event ids and counters only, so an erasure
+that deletes an event while a pass is in flight leaves nothing a later pass can send. An
+outbox insert that fails never fails the write. During a rolling upgrade an N-1 replica
+writes no outbox rows ([rule 14](rolling-upgrades.md#the-rules)).
+[Change webhooks](../features/memory/writing.md#change-webhooks) has the caller's view.
+
 ## Invariants
 
 - Every new `memory` or `memory_embeddings` version carries every persisted column
