@@ -49,6 +49,8 @@ _AS_IS = "".join(c for c in string.punctuation if c != "%")
 _NONE = ("-", "*")
 # The placeholders that read the call's subject.
 _BY_SUBJECT = frozenset({"agent", "tenant", "subject", "email", "user_id"})
+# The placeholders that name the agent: their headers are sent together or not at all.
+_AGENT = frozenset({"agent", "tenant"})
 
 
 class IdentityUnread(BackendUnavailableError):
@@ -102,18 +104,29 @@ def reads_writer() -> bool:
 
 
 async def render(a: Attribution) -> tuple[tuple[str, str], ...]:
-    """The identity headers of a call made for `a`, in their configured order;
-    a header whose template renders empty is left out."""
+    """The identity headers of a call made for `a`, in their configured order. The
+    headers that name the agent (`{agent}`, `{tenant}`) go together or not at all:
+    when any placeholder of theirs renders empty, none of them is sent, since a
+    gateway takes a tenant and an agent as one identity. Any other header whose
+    template renders empty is left out."""
     templates = settings.identity_headers()
     if not templates:
         return ()
     values = await _values(a, _used())
+    agent_headers = [t for _, t in templates if _names(t) & _AGENT]
+    whole = all(values[p] for t in agent_headers for p in _names(t))
     out = []
     for name, template in templates:
+        if _names(template) & _AGENT and not whole:
+            continue
         value = IDENTITY_PLACEHOLDER.sub(lambda m: values[m.group(1)], template)
         if value:
             out.append((name, value))
     return tuple(out)
+
+
+def _names(template: str) -> frozenset[str]:
+    return frozenset(m.group(1) for m in IDENTITY_PLACEHOLDER.finditer(template))
 
 
 async def _values(a: Attribution, used: frozenset[str]) -> dict[str, str]:

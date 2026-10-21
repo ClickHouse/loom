@@ -335,6 +335,14 @@ them beside the customer header on every chat, embedding, rerank and classify re
   placeholder is left out when its value is unknown; text around a placeholder is sent as
   written. A value is percent-encoded only where a header cannot carry it (a space, `%`,
   anything outside printable ASCII). A prefix claim (`tenant_id=acme-*`) names no tenant.
+- **The agent goes whole.** The headers whose templates name `{agent}` or `{tenant}` are sent
+  together or not at all: when any placeholder of theirs renders empty (an agent whose trust
+  requires no exact tenant, a trust's own token), none of them goes, and the gateway applies
+  its default identity rather than refusing half of one. The other headers stand alone.
+- **No org, no call.** With identity headers set, a call that names no org is refused
+  (`MODEL_CALL_UNATTRIBUTED`, logged), as it is with the customer header, unless it is the
+  deployment's own (`customer.system()`): a `loom` command run without `--org` or a request
+  whose identity was not recorded never goes out as the gateway's default.
 - **Writer first.** A job's call is for the principal that wrote the row: the subject in its
   `actor` (`human:` or `process:` and a token's subject). A pipeline's own actor
   (`process:extraction-worker`, `process:cli:<command>`, `provenance.PIPELINE_ACTORS`) is no
@@ -348,8 +356,8 @@ them beside the customer header on every chat, embedding, rerank and classify re
   `sa:<trust>:<agent>`, the home its trust made on the agent's first token exchange). Only the
   deployment's own calls (`customer.system()`) name no one.
 - **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
-  model rebuild) groups them by what the templates read (`customer.groups`), so one call never
-  carries two agents' texts.
+  model rebuild) groups them by the identity they render (`customer.groups`), so one call never
+  carries two agents' texts, and one agent's rows in several namespaces share a call.
 - **Reads.** A trust's claims (`loom.machine_identities`) and a namespace's owner are read at
   most once a minute per process. A failed read serves the copy in hand; with none the call is
   held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as

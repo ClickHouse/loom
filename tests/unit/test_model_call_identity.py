@@ -144,7 +144,7 @@ def test_an_empty_header_is_left_out_and_a_value_is_encoded_only_where_it_must(
     _as("sso-alice", service=False, namespace="ns", user_id="a b%c@d+e.f/ü")
     assert _sent() == {
         "X-Caller": "loom",  # no placeholder: always sent
-        "X-Seat": "agent:",  # renders to text, so it is sent: bare placeholders leave out
+        # X-Seat names the agent, which a person's call has none of: left out whole
         "X-User": "u:a%20b%25c@d+e.f/%C3%BC",
         "X-Who": "alice@example.com",
     }
@@ -175,7 +175,8 @@ def test_a_trust_is_read_once_a_minute_and_a_prefix_claim_names_no_tenant(direct
     assert directory.reads.count(("trust", "nerve-t1")) == 1
     directory.claims["nerve-t2"] = {"tenant_id": "t*"}
     _as("sa:nerve-t2:agent-1")
-    assert "X-Tenant" not in _sent() and _sent()["X-Agent"] == "agent-1"
+    sent = _sent()  # no tenant: the agent does not go alone either
+    assert "X-Tenant" not in sent and "X-Agent" not in sent and sent["X-Org"] == "acme"
 
 
 def test_the_tenant_is_the_claim_inference_tenant_claim_names(directory, monkeypatch) -> None:
@@ -503,3 +504,76 @@ def test_settings_take_identity_headers_and_refuse_ones_a_call_could_not_send() 
             _load(bad)
     with pytest.raises(ValidationError, match="HTTP header name"):
         _load('{"X-Customer": "{org}"}', inference_customer_header="X-Customer")
+
+
+def test_with_identity_headers_a_call_naming_no_org_is_refused_unless_the_deployments(
+    directory, caplog
+) -> None:
+    # The MCP path whose identity stamping failed names its op and no org.
+    genai.set_identity(operation="memory.search", capture_level="off")
+    with pytest.raises(customer.Unattributed):
+        _sent()
+    assert any("MODEL_CALL_UNATTRIBUTED" in r.getMessage() for r in caplog.records)
+    with customer.for_org(""):  # a `loom` command run without --org
+        with pytest.raises(customer.Unattributed):
+            _sent()
+        assert not customer.names_one()
+    with customer.system():  # the deployment's own call names no one, on purpose
+        assert _sent() == {}
+        assert customer.names_one()
+
+
+def test_the_agent_and_its_tenant_go_together_or_not_at_all(directory, monkeypatch) -> None:
+    monkeypatch.setattr(
+        settings,
+        "inference_identity_headers_json",
+        '{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}',
+    )
+    directory.claims["nerve-t3"] = {"agent_id": "*"}  # a trust that requires no tenant
+    _as("sa:nerve-t3:agent-2")
+    assert _sent() == {}  # an agent alone is no identity the gateway takes: neither goes
+    _as("sa:nerve-t1")  # the trust's own token: a tenant, and no agent
+    assert _sent() == {}
+    _as("sso-alice", service=False, namespace="ns")
+    assert _sent() == {"X-Actor": "alice@example.com"}  # the actor stands alone
+    _as(AGENT)
+    assert _sent() == {"X-Tenant": "t1", "X-Agent": "agent-7"}
+
+
+def test_settings_trim_templates_and_refuse_empty_ones_and_hop_by_hop_names() -> None:
+    assert _load('{"X-Agent": "  {agent} "}').identity_headers() == (("X-Agent", "{agent}"),)
+    for bad in (
+        '{"X-Agent": "   "}',
+        '{"Connection": "{agent}"}',
+        '{"Transfer-Encoding": "{agent}"}',
+        '{"TE": "{agent}"}',
+        '{"Proxy-Authorization": "{agent}"}',
+    ):
+        with pytest.raises(ValidationError):
+            _load(bad)
+
+
+def test_a_jobs_batch_groups_rows_by_the_identity_they_render(directory, monkeypatch) -> None:
+    from server.memory.workers import embedding
+
+    monkeypatch.setattr(settings, "inference_identity_headers_json", '{"X-Agent": "{agent}"}')
+    directory.owners[("acme", "nerve-t1-agent-8")] = "sa:nerve-t1:agent-8"
+    directory.owners[("acme", "shared")] = ""
+    calls: list[tuple[str, int]] = []
+
+    class _Embedder:
+        model_name, dim = "fake", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            agent = customer.headers(await customer.require()).get("X-Agent", "")
+            calls.append((agent, len(texts)))
+            return [[1.0, 0.0] for _ in texts]
+
+    rows = [
+        _stub("nerve-t1-agent-8", "k1", "its own namespace"),
+        _stub("shared", "k2", "the shared namespace, written by agent-8"),
+        _stub(AGENT_NS, "k3", "agent-7's"),
+    ]
+    directory.writers[("acme", "shared", "a", "u1", "-", "k2")] = "process:sa:nerve-t1:agent-8"
+    asyncio.run(embedding._embed_rows(_Embedder(), rows))
+    assert calls == [("agent-8", 2), ("agent-7", 1)]  # two namespaces, one identity: one call

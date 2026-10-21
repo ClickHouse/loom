@@ -37,6 +37,7 @@ import logging
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from typing import NoReturn
 from urllib.parse import quote
 
 from server.core.errors import BackendUnavailableError, LoomServerError, ModelCallRefused
@@ -197,6 +198,10 @@ async def require() -> Customer:
     org = who.org
     if org and await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
+    if not org and not _system.get() and splits():
+        # An identity header names whom a call is for: one that names no org would go
+        # out as the gateway's default identity, billed to no one it names.
+        _unattributed("names no org for its identity headers")
     out = Customer(name=_customer_named(org), identity=await render_identity(who))
     if _attribution.get() is not None and splits():
         held = gateway.refused_for(gateway.identity_of(dict(out.identity)))
@@ -219,15 +224,20 @@ def _customer_named(org: str) -> str:
         return settings.inference_customer_format.replace("{org}", org)
     if _system.get():
         return settings.inference_system_customer
+    _unattributed("names no customer")
+
+
+def _unattributed(why: str) -> NoReturn:
+    """Refuse a call that names no one, logged once a minute by what made it."""
     what = feature()
     # Logged here: a fail-open caller (a reranker, a degraded leg) may swallow
     # the error, and the missed path must still show by its code.
     now = time.monotonic()
     if now - _logged_at.get(what, -_LOG_EVERY_S) >= _LOG_EVERY_S:
         _logged_at[what] = now
-        log.error("MODEL_CALL_UNATTRIBUTED: a model call (%s) names no customer", what)
+        log.error("MODEL_CALL_UNATTRIBUTED: a model call (%s) %s", what, why)
     raise Unattributed(
-        f"a model call ({what}) names no customer: run it for an org "
+        f"a model call ({what}) {why}: run it for an org "
         "(server.llm.customer.for_org) or as the deployment's (customer.system)"
     )
 
@@ -237,7 +247,9 @@ def names_one() -> bool:
     for a job that records a row naming none instead of calling. Logs nothing:
     the row is bad data, not a missed call path."""
     if not settings.inference_customer_header:
-        return not settings.inference_customer_required
+        if settings.inference_customer_required:
+            return False
+        return not splits() or bool(current() or _system.get())
     return bool(current() or _system.get())
 
 
@@ -293,10 +305,19 @@ async def groups(rows: Iterable[Attribution]) -> dict[Attribution, list[int]]:
         and {r.org for r in rows}.isdisjoint(await switched_off_orgs())
     ):
         return {Attribution(): list(range(len(rows)))}
-    out: dict[Attribution, list[int]] = {}
+    # One group per rendered identity: rows of two namespaces one agent owns share a
+    # call. An identity that cannot be read is its own group, held where it is called.
+    keys: dict[Attribution, tuple[str, object]] = {}
+    out: dict[tuple[str, object], tuple[Attribution, list[int]]] = {}
     for i, r in enumerate(rows):
-        out.setdefault(split_by(r), []).append(i)
-    return out
+        a = split_by(r)
+        if a not in keys:
+            try:
+                keys[a] = (a.org, await render_identity(a))
+            except IdentityUnread:
+                keys[a] = (a.org, a)
+        out.setdefault(keys[a], (a, []))[1].append(i)
+    return dict(out.values())
 
 
 async def switched_off(org: str) -> bool:

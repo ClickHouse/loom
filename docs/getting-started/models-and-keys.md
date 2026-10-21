@@ -349,7 +349,11 @@ LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} name
   of a workload trust's token, `sa:<trust>:<agent>`), `{tenant}` (the value that trust requires
   of its `LOOM_INFERENCE_TENANT_CLAIM` claim) and `{email}` (a signed-in person's address).
 - A header whose template renders empty is not sent: with bare placeholders, a call with no
-  agent behind it (a person's, or the deployment's own) carries no agent header.
+  agent behind it (a person's, or the deployment's own) carries no agent header. The headers
+  naming `{agent}` or `{tenant}` go together or not at all, so an agent never goes without its
+  tenant.
+- A call that names no org is refused (`MODEL_CALL_UNATTRIBUTED`) unless it is the deployment's
+  own: run `loom` commands that call models with `--org`.
 - Background jobs name the identity of the rows they work on: the writer of a memory or of a
   deferred extraction, else the agent whose own namespace the row is in. A job batching rows
   makes one call per identity.

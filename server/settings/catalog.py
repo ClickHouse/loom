@@ -3577,6 +3577,20 @@ IDENTITY_PLACEHOLDERS = ("org", "namespace", "agent", "tenant", "subject", "user
 IDENTITY_PLACEHOLDER = re.compile(r"\{(" + "|".join(IDENTITY_PLACEHOLDERS) + r")\}")
 # The text around them: printable ASCII but braces, which a header carries as it is.
 _IDENTITY_TEXT = re.compile(r"[\x20-\x7a|~]*")
+# Hop-by-hop headers (RFC 9110 §7.6.1): a proxy drops them, so no identity rides one.
+_HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 # Headers the model-call senders set themselves, or the HTTP client does: a customer or
 # feature header of that name would overwrite them (the provider key, the body's type).
 _SENDER_HEADERS = frozenset(
@@ -3707,7 +3721,9 @@ class ProviderSettings(ModelSettings):
     # JSON object {header: template} every model call carries, naming whom it is for:
     # {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token),
     # {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header
-    # whose template renders empty is not sent; "" sends none (server/llm/identity.py).
+    # whose template renders empty is not sent, and those naming {agent} or {tenant} go
+    # together or not at all; set, a call naming no org is refused. "" sends none
+    # (server/llm/identity.py).
     inference_identity_headers_json: Annotated[str, JsonObject] = ""
     # The workload trust claim {tenant} names: the value the trust requires of it, exactly.
     inference_tenant_claim: str = "tenant_id"
@@ -3794,11 +3810,13 @@ class ProviderSettings(ModelSettings):
         return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
 
     def identity_headers(self) -> tuple[tuple[str, str], ...]:
-        """`inference_identity_headers_json` parsed: (header, template) pairs."""
+        """`inference_identity_headers_json` parsed: (header, template) pairs, each
+        template without its surrounding whitespace."""
         raw = self.inference_identity_headers_json.strip()
         if not raw:
             return ()
-        return json_map_items(raw, "LOOM_INFERENCE_IDENTITY_HEADERS_JSON", strings_only=True)
+        pairs = json_map_items(raw, "LOOM_INFERENCE_IDENTITY_HEADERS_JSON", strings_only=True)
+        return tuple((name, template.strip()) for name, template in pairs)
 
     @model_validator(mode="after")
     def _check_model_calls_refresh(self) -> ProviderSettings:
@@ -3867,12 +3885,17 @@ class ProviderSettings(ModelSettings):
         customer or feature header sets, with a template of known placeholders."""
         taken = {h.lower() for h in (self.inference_customer_header, self.inference_feature_header)}
         for name, template in self.identity_headers():
-            if not _HEADER_NAME.fullmatch(name) or name.lower() in _SENDER_HEADERS | taken:
+            refused = _SENDER_HEADERS | _HOP_BY_HOP | taken
+            if not _HEADER_NAME.fullmatch(name) or name.lower() in refused:
                 raise ValueError(
-                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: {name[:64]!r} must be an HTTP header "
-                    "name, once, that no sender and neither metering header sets"
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: {name[:64]!r} must be an end-to-end "
+                    "HTTP header name, once, that no sender and neither metering header sets"
                 )
             taken.add(name.lower())
+            if not template:
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: the template of {name!r} is empty"
+                )
             if not _IDENTITY_TEXT.fullmatch(IDENTITY_PLACEHOLDER.sub("", template)):
                 raise ValueError(
                     f"LOOM_INFERENCE_IDENTITY_HEADERS_JSON: the template of {name!r} may name "

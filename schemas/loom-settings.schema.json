@@ -2505,7 +2505,7 @@
         "inference_identity_headers_json": {
           "default": "",
           "type": "string",
-          "description": "JSON object {header: template} every model call carries, naming whom it is for: {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token), {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header whose template renders empty is not sent; \"\" sends none (server/llm/identity.py)."
+          "description": "JSON object {header: template} every model call carries, naming whom it is for: {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token), {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header whose template renders empty is not sent, and those naming {agent} or {tenant} go together or not at all; set, a call naming no org is refused. \"\" sends none (server/llm/identity.py)."
         },
         "inference_refusal_cooldown_seconds": {
           "default": 600.0,
