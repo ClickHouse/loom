@@ -814,10 +814,10 @@ no search leg returns it. The other reads that could serve its value follow thre
   version, which served no value, is not) and `memory.evidence` each write a
   `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
   carry `high` rows on purpose and write one per row. A conversation row has no label, so
-  `erasure.export` labels `high` a turn or thread whose text reads as high and
-  audits it the same way. `memory.copy_to` and
-  `memory.cross_promote` read a `high` row by key and copy it to another namespace with its
-  label; each writes its own audit row (both are `audit=True` ops), which records the copy.
+  `erasure.export` labels `high` a turn or thread whose text reads as high and audits it
+  the same way. `memory.copy_to` and `memory.cross_promote` read a `high` row by key and
+  copy it to another namespace with its label; each writes its own audit row (both are
+  `audit=True` ops), which records the copy.
   `memory.get` (with or without `as_of`), `memory.get_by_id` and `memory.bulk_get` never
   serve a `high` row past its retention window; `memory.history` and `memory.evidence` still
   do until the sweep. `memory.bulk_get`, like `memory.list`, serves any other row past

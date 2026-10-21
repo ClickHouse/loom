@@ -176,14 +176,6 @@ def _label_high(rows: list[dict[str, object]], fields: tuple[str, ...]) -> None:
         r["sensitivity"] = "high" if any(reads_high(str(r[f])) for f in fields) else ""
 
 
-async def _labelled(rows: list[Any], fields: tuple[str, ...]) -> list[dict[str, object]]:
-    """Conversation rows serialized, each labelled by its text. A turn can be megabytes
-    long, so the check runs off the event loop."""
-    served = [_serialize_row(r) for r in rows]
-    await asyncio.to_thread(_label_high, served, fields)
-    return served
-
-
 async def _export_agent_events(
     org: str, scope_type: str, scope_value: str, *, limit: int, shown: erasure_exports.Shown
 ) -> tuple[list[dict[str, object]], int, bool]:
@@ -279,7 +271,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         shown=shown,
     )
     # The read is already capped at `section_limit` and says whether it cut rows.
-    conv_rows = await _labelled(turns, _CONVERSATION_TEXT)
+    conv_rows = [_serialize_row(r) for r in turns]
     conv_count = len(conv_rows)
     threads = await erasure_exports.export_conversation_threads(
         input.org,
@@ -289,9 +281,10 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit + 1,
         shown=shown,
     )
-    thread_trunc = len(threads) > input.section_limit
-    thread_rows = await _labelled(threads[: input.section_limit], _THREAD_TEXT)
-    thread_count = len(thread_rows)
+    thread_rows, thread_count, thread_trunc = _page(threads, input.section_limit)
+    # A turn can be megabytes long, so the check runs off the event loop.
+    await asyncio.to_thread(_label_high, conv_rows, _CONVERSATION_TEXT)
+    await asyncio.to_thread(_label_high, thread_rows, _THREAD_TEXT)
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,
         input.scope_type,
