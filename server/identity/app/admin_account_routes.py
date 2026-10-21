@@ -9,10 +9,11 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from server.auth import machines, oauth
+from server.auth import machines, oauth, revocation, subject_revocation
 from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
 from server.core.errors import GrantBusyError
+from server.core.principals import org_of_end_user_revocation
 from server.identity.app import account_admin
 from server.insights.app.admin_routes import require_admin
 
@@ -205,3 +206,48 @@ class NameInput(_Input):
 async def bots_disable(input: NameInput, info: Admin) -> dict[str, Any]:
     """Disable a bot: its proofs are refused and the tokens it holds revoked."""
     return {"disabled": await account_admin.disable_bot(input.name, by=_by(info))}
+
+
+class RevokeSubjectInput(_Input):
+    org: str
+    subject: str
+    reason: str = ""
+
+
+@router.post("/v1/admin/revoke_subject")
+async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, Any]:
+    """Revoke every token and sign-in session of a subject, in every org and for
+    good, and list the tokens it made revoked (see `loom revoke-token --subject`).
+
+    The spellings `org`'s directory ties to the subject are revoked with it, as
+    grants read them: a person's email and the login handle of the account it
+    signs in to. `org` is also where the audit rows land; an end user's subject,
+    `<org>/user:<id>`, must name it. `sessions` and `tokens` count the sign-in
+    sessions and the tokens made by those subjects that the revocation ends, so
+    a repeat answers the same.
+    """
+    org, subject = input.org, input.subject.strip()
+    if not org.strip() or "*" in org or org != org.strip():
+        raise _invalid(ValueError(f"org must name one org, got {org!r}"))
+    problem = subject_revocation.refusal(subject)
+    end_user_org = org_of_end_user_revocation(subject)
+    if problem is None and end_user_org and end_user_org != org:
+        problem = f"an end user's revocation is their org's: send org {end_user_org!r}"
+    if problem:
+        raise _invalid(ValueError(problem))
+    done = await subject_revocation.revoke_in_org(org, subject, by=_by(info), reason=input.reason)
+    return {
+        "subjects": [s for s, _ in done],
+        "org": org,
+        "revoked_at": max(d.row["revoked_at"] for _, d in done),
+        "reason": input.reason,
+        "sessions": sum(d.sessions for _, d in done),
+        "tokens": sum(d.tokens for _, d in done),
+    }
+
+
+@router.get("/v1/admin/revocations")
+async def revocations(subject: str | None = None) -> dict[str, Any]:
+    """The unexpired revocations, newest first; `?subject=` narrows them to one
+    subject's own row, an operator cutoff's and SCIM's (see `loom revoke-token --list`)."""
+    return {"revocations": await revocation.list_active(subject)}

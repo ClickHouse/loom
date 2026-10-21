@@ -129,6 +129,16 @@ class AdminRoutes:
             "POST", "/v1/admin/ratelimit.set", json=body or {}
         )
 
+    async def revocations(self) -> Any:
+        """`GET /v1/admin/revocations` (platform_admin). The unexpired revocations, newest first; `?subject=` narrows them to one subject's own row, an operator cutoff's and SCIM's (see `loom revoke-token --list`)."""
+        return await self._agent.transport.request_json("GET", "/v1/admin/revocations")
+
+    async def revoke_subject(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/revoke_subject` (platform_admin). Revoke every token and sign-in session of a subject, in every org and for good, and list the tokens it made revoked (see `loom revoke-token --subject`)."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/revoke_subject", json=body or {}
+        )
+
     async def schema_status(self) -> Any:
         """`GET /v1/admin/schema.status` (platform_admin). Report the gap between what migrations expect and what's in CH."""
         return await self._agent.transport.request_json("GET", "/v1/admin/schema.status")

@@ -202,6 +202,20 @@ def _refresh_row(rid: str, g: Grant, version: int) -> dict[str, Any]:
     }
 
 
+async def session_families(subject: str) -> list[str]:
+    """The sign-in sessions of `subject`, in any org, that hold a refresh token
+    not yet expired, by family; ended ones included."""
+    from server.core.ch import get_client
+
+    rows = await get_client().query_all(
+        f"SELECT DISTINCT family FROM {_T} FINAL "
+        "WHERE record_type = {t:String} AND subject = {s:String} AND family != '' "
+        "AND expires_at > toUInt32(now())",
+        params={"t": _REFRESH_TYPE, "s": subject},
+    )
+    return sorted(str(r["family"]) for r in rows)
+
+
 def _current(generation: int, rid: str) -> str:
     """A session key's value naming its current refresh token."""
     return f"{generation}:{rid}"

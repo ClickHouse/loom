@@ -210,11 +210,12 @@ _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
 _MADE_BY = "(created_by IN {subs:Array(String)} OR hasAny(lineage, {subs:Array(String)}))"
 
 
-async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
+async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> set[str]:
     """Mark revoked each token any of `subjects` made, directly or through
     their tokens, whose token the revocations kill, so its name comes free;
     one made after a cutoff stays live. A retry finds only what an earlier
-    try left."""
+    try left. Returns the `sa:` subjects of every unexpired token found dead,
+    those an earlier try marked included."""
     from server.auth import revocation
     from server.auth.delegation import MAX_CHAIN_DEPTH
     from server.core.ch import get_client, own_write_reads
@@ -226,7 +227,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
     # One pass per generation: the person's tokens, then the tokens those made.
     for _ in range(MAX_CHAIN_DEPTH + 1):
         if not creators:
-            return
+            return dead
         made: set[str] = set()
         for i in range(0, len(creators), _CREATORS_AT_ONCE):
             chunk = creators[i : i + _CREATORS_AT_ONCE]
@@ -250,6 +251,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> None:
         made -= seen
         seen |= made
         creators = sorted(made)
+    return dead
 
 
 def _is_dead(row: dict[str, Any], revoked: dict[str, int | None], dead: set[str]) -> bool:

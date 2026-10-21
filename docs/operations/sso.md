@@ -326,7 +326,8 @@ of the above, so they do not stop with someone's offboarding.
   its next provisioning run (Okta when the person is deactivated, Entra within
   its cycle), and Loom revokes the person and every token they made. Without it,
   revoke the person when offboarding, which ends every token they made too:
-  `loom revoke-token --subject <their subject>`.
+  `loom revoke-token --subject <their subject>`, or
+  [`POST /v1/admin/revoke_subject`](#deprovisioning-without-scim) from anywhere.
 - Every sign-in, device approval and denial, MCP consent, JIT account and
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
@@ -557,6 +558,60 @@ What happens to the old account:
 - An account made at an SSO sign-in has no command to move it: the person's
   first sign-in with the new address makes a new account. Grant it the old
   account's namespaces; the old account and its data stay, revoked.
+
+## Deprovisioning without SCIM
+
+A system that knows when a person leaves, such as a control plane that also
+issues their sign-in, revokes them over the admin API instead. A platform admin
+sends:
+
+```bash
+loom call /v1/admin/revoke_subject \
+  --data '{"org":"acme","subject":"lee@acme.io","reason":"left the company"}'
+```
+
+Loom revokes the subject and every spelling the org's directory ties to it, the
+same pairing grants are read under: an email reaches the login handle of the
+account it signs in to (an SSO account's subject is its namespace, `u-…`), and a
+handle reaches its email. Each is revoked outright and for good, as
+`loom revoke-token --subject` revokes it: every token whose subject it is, every
+token it made or that descends from one of its tokens, and every refresh of its
+sign-in sessions are refused at once by the process that took the request, and
+by every other process at its next revocation refresh. Every mint reads
+revocations from ClickHouse, so a sign-in, a device approval or an MCP connect
+for it gets no token either. The service accounts and MCP tokens it made show
+as revoked in the Tokens list, by `admin:<you>`, and their names are free again,
+as after a SCIM deactivation. The accounts, their grants and their data stay;
+this is not erasure.
+
+```json
+{
+  "subjects": ["lee@acme.io", "u-lee-1a2b3c4d"],
+  "org": "acme",
+  "revoked_at": "2026-01-31T12:00:00",
+  "reason": "left the company",
+  "sessions": 2,
+  "tokens": 3
+}
+```
+
+`sessions` counts the sign-in sessions of those subjects that could still
+refresh, and `tokens` the tokens they made, directly or through their tokens,
+that the revocation ends. A subject is a name, not an org's, so the revocation
+holds in every org; `org` picks the directory the spellings come from and the
+audit log each `token.revoked` row lands in, and an end user's subject,
+`<org>/user:<id>`, must name its own org. When the directory cannot be read,
+nothing is revoked and the request fails. A repeat writes the same revocations
+and answers the same counts, so a caller retries until it gets a 200; a failure
+after the revocations landed (marking the tokens did not finish) is finished by
+the retry.
+
+`GET /v1/admin/revocations?subject=<subject>` lists a subject's revocations:
+its own, an operator cutoff's and SCIM's (`kind`). Without `subject` it lists
+every unexpired one, as `loom revoke-token --list` does. To let a revoked person
+back in, narrow the revocation rather than remove it: with
+`loom revoke-token --subject <it> --issued-before <now>`, tokens made from then
+on work and everything from before stays dead.
 
 ## Behind a proxy
 

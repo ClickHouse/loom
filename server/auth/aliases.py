@@ -99,6 +99,17 @@ def invalidate(org: str, subjects: Iterable[str]) -> None:
             del _CACHE[key]
 
 
+async def spellings(org: str, subject: str) -> list[str]:
+    """`subject_aliases` read uncached, and raising when the directory cannot
+    be read: for a change that must reach every spelling, never guess."""
+    from server.core.ch import own_write_reads
+
+    if not has_aliases(subject):
+        return [subject] if subject else []
+    with own_write_reads():
+        return await _read(org, subject, None)
+
+
 async def canonical_subject(org: str, subject: str, *, ch: object | None = None) -> str:
     """The login handle for a human spelling (the row's `owner_email`), so a
     new grant is written under the one subject every read folds onto; the

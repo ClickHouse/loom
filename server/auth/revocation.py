@@ -494,22 +494,29 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
         )
 
 
-async def list_active() -> list[dict[str, Any]]:
+async def list_active(subject: str | None = None) -> list[dict[str, Any]]:
     """The unexpired revocations, newest first — the same rows the refresh
     worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
     already paid for at that cadence. It grows with the revoked tokens not yet
     expired and with every subject an operator or SCIM cut off, whose row never
     expires. An operator cutoff's row says `kind: cutoff`, SCIM's `kind: scim`,
-    and each names its subject."""
+    and each names its subject. With `subject`, only the rows of that subject
+    (its own, an operator cutoff's and SCIM's), read by key."""
     from server.core.ch import get_client
 
+    where = "expires_at > now()"
+    params: dict[str, Any] = {}
+    if subject is not None:
+        where += " AND jti IN {keys:Array(String)}"
+        params["keys"] = _keys_of([subject])
     rows = await get_client().query_all(
-        """
+        f"""
         SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before
         FROM loom.revoked_tokens FINAL
-        WHERE expires_at > now()
+        WHERE {where}
         ORDER BY revoked_at DESC
         """,
+        params=params,
     )
     out = []
     for r in rows:

@@ -2192,6 +2192,10 @@
             "retry_model_configuration": [
               "body"
             ],
+            "revocations": [],
+            "revoke_subject": [
+              "body"
+            ],
             "save_model_configuration": [
               "body"
             ],
