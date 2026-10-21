@@ -145,8 +145,9 @@ reads the loop uses:
   and `session_id`. With no `query`, only `mode: "startup"` loads memories:
   pinned and recent rows of every author under exactly that `user_id` and
   `session_id`. A pack that names this session's `session_id` recalls only
-  this session's memories, so leave it off when the task needs what
-  earlier sessions learned.
+  this session's memories; keep it on anyway, because the pack picks this
+  session's working-memory blocks by it, and read what earlier sessions
+  learned with `search.query`† or `memory.ask`.
 - `memory.get` and `memory.delete` take your row under the key, else the
   same user's row under another agent.
 - `memory.list` needs `agent` and matches `agent`, `user_id` and

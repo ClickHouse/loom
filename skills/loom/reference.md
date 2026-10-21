@@ -30,7 +30,7 @@ on a row.
 |---|---|
 | `memory.set` | Store or revise one fact (`memory_key`, `value`, `tags`, `entities`, `confidence`, `valid_at`, `source_resource_id`, `ttl_seconds`). |
 | `memory.set_from_messages` | Hand over a transcript; the server extracts the durable facts under short keys. |
-| `memory.search`‡ | Ranked hits with scores, `abstain` and provenance. `recipe`: `fast`, `balanced`, `quality`, `verbatim`, `temporal`, `graph`. |
+| `memory.search`‡ | Ranked hits with scores, `abstain` and provenance. `recipe`: `fast`, `balanced`, `quality`, `verbatim`, `code`, `temporal`, `graph`. |
 | `memory.ask` | A synthesized answer with citations, or an abstain. |
 | `memory.brief` | Orientation on a task: an answer, its grounding, unknowns, what to read next. |
 | `memory.get`, `memory.bulk_get`‡, `memory.list` | Read by exact key, many keys, or a key `prefix`. |
@@ -131,9 +131,10 @@ on loses that boost.
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
 Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
-Its typed helpers carry the run's `run_id` on every call, and on recall
-reads (`memory.search`‡, `memory.ask`, `memory.list`) send it as the
-`X-Loom-Run-Id` header (a body `run_id` there filters to the run's rows). A raw `agent.call` inside
+Its typed helpers carry the run's `run_id` on every call, and on
+`memory.search`‡ and `memory.ask` send it as the `X-Loom-Run-Id` header (a
+body `run_id` there filters to the run's rows; `memory.list` gets the
+header too and has no run filter). A raw `agent.call` inside
 the scope gets it only on writes (memory writes, `observe.record`, and
 working-memory `set` and `append`), and as the header on recall reads.
 
