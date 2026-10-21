@@ -138,18 +138,21 @@ def _opens_imperative(words: list[str], i: int) -> bool:
 
 def _requested_words(sentence: str) -> list[str]:
     """The words after the ask word that opens an imperative in `sentence`, or none.
-    A clause after a comma or semicolon opens one too ("From now on, always ...").
-    A question asks for a behaviour only when it opens with can, could, would or
-    will you ("Could you always answer me in French?"); "Do you always escalate
-    refunds?" asks about a policy."""
+    A clause after a comma or semicolon opens one only with "always" ("From now on,
+    always ..."): one that opens with never or don't usually leaves out its subject
+    ("I called twice, never got my refund"). A question asks for a behaviour only
+    when it opens with can, could, would or will you ("Could you always answer me in
+    French?"); "Do you always escalate refunds?" asks about a policy."""
     words = _words(sentence)
     if sentence.endswith("?") and not (words[:1] and words[0] in _POLITE and words[1:2] == ["you"]):
         return []
-    for start in [0, *(m.end() for m in re.finditer(r"[,;]\s", sentence))]:
-        words = _words(sentence[start:])
-        for i, word in enumerate(words):
-            if word in _ASKS and _opens_imperative(words, i):
-                return words[i + 1 :]
+    for i, word in enumerate(words):
+        if word in _ASKS and _opens_imperative(words, i):
+            return words[i + 1 :]
+    for match in re.finditer(r"[,;]\s", sentence):
+        clause = _words(sentence[match.end() :])
+        if clause[:1] == ["always"]:
+            return clause[1:]
     return []
 
 

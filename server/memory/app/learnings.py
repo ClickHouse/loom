@@ -177,9 +177,11 @@ async def handle_learnings_review(
     otherwise: `loom.shared` through memory.promote for a supporters
     candidate, a new row through memory.set for the rest.
 
-    Idempotent: re-reviewing an already-decided candidate is a no-op
-    (returns the existing status), except a bot's rule whose last supporter
-    was erased, which answers 404.
+    Reviewing a candidate again with the decision it already holds is a
+    no-op (returns the existing status); rejecting a promoted candidate marks
+    it rejected and leaves what the promotion wrote (delete a knowledge
+    promotion's `learning://<candidate_id>` document with knowledge.delete to
+    stop serving it). A bot's rule whose last supporter was erased answers 404.
     """
     from fastapi import HTTPException
 

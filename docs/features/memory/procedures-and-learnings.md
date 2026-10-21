@@ -232,8 +232,11 @@ extraction quality; pass `source_kind="assistant_turn"` for the bot rules.
 `learnings.list` and `learnings.review` are HTTP and SDK only (`bot.learnings`). A
 promotion to `memory` carries the candidate id, so
 [`memory.lineage`](./history-and-provenance.md#lineage) traces it back to the candidate.
-Reviewing a decided candidate again is a no-op. A bot's rule whose last supporter was
-erased answers 404, as a missing candidate does. Field lists:
+Reviewing a candidate again with the decision it already holds is a no-op; rejecting a
+promoted candidate marks it rejected and leaves what the promotion wrote (delete a
+knowledge promotion's `learning://<candidate_id>` document with `knowledge.delete` to
+stop serving it). A bot's rule whose last supporter was erased answers 404, as a missing
+candidate does. Field lists:
 [operations reference](../../reference/operations.md#learnings).
 
 ## Settings

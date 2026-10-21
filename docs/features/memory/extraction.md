@@ -79,20 +79,21 @@ users' quotes live (an older build's erasure does not cover that table), and the
 (`ALTER TABLE loom.learnings_queue DELETE WHERE source_kind = 'assistant_turn'`).
 Coding captures never use it.
 
-Behaviour the assistant agrees to at the user's request is the user's preference, not
-a rule of the bot: "always answer me in French" answered with "I will always answer you
-in French" is a memory about the user. A rule is not filed when a sentence of the user
-turn before its first cited assistant turn opens an imperative with "always", "never",
-"don't" or "do not" (first in the sentence or in a clause after a comma or semicolon,
-after "please", after "can", "could", "would" or "will" you, or after "want" or "need"
-you to), and the words after it share at least two of the rule's content words and
-at least half of them. A question asks for a behaviour only when it opens with "can",
-"could", "would" or "will" you ("Could you always answer me in French?"). The drop is
-counted in `loom.memory_drops` (stage `learnings.file`, reason `user_requested`). A
-statement ("I never received my refund over $500", "You never told me you escalate
-refunds over $500"), a question about the policy ("Do you always escalate refunds over
-$500?") or a request on its topic ("Please refund my order") asks for no behaviour, so
-the rule is filed.
+Behaviour the assistant agrees to at the user's request is the user's preference, not a
+rule of the bot: "always answer me in French" answered with "I will always answer you in
+French" is a memory about the user. A rule is not filed when a sentence of the user turn
+before its first cited assistant turn opens an imperative with "always", "never",
+"don't" or "do not" (first in the sentence, after "please", after "can", "could",
+"would" or "will" you, or after "want" or "need" you to), or opens a clause after a
+comma or semicolon with "always" ("From now on, always ..."), and the words after it
+share at least two of the rule's content words and at least half of them. A question
+asks for a behaviour only when it opens with "can", "could", "would" or "will" you
+("Could you always answer me in French?"). The drop is counted in `loom.memory_drops`
+(stage `learnings.file`, reason `user_requested`). A statement ("I never received my
+refund over $500", "You never told me you escalate refunds over $500", "I called twice,
+never got my refund over $500"), a question about the policy ("Do you always escalate
+refunds over $500?") or a request on its topic ("Please refund my order") asks for no
+behaviour, so the rule is filed.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule

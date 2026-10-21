@@ -592,7 +592,7 @@ async def test_a_rule_citing_only_a_user_turn_is_never_filed(
         "Could you always answer me in French?",
         # The typographic apostrophe a mobile keyboard types.
         "Don\u2019t answer me in anything but French.",
-        # An ask word opening a clause after a comma.
+        # "always" opening a clause after a comma.
         "From now on, always answer me in French.",
         # "want you to" asks as "could you" does.
         "I want you to always answer me in French.",
@@ -640,6 +640,9 @@ async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_f
         "I never received my refund over $500.",
         "You never told me you escalate refunds over $500.",
         "I don't understand why my refund over $500 is stuck.",
+        # A clause after a comma that leaves out its subject.
+        "I called twice, never got my refund over $500.",
+        "I paid last week, don't see my refund over $500 yet.",
     ],
 )
 async def test_a_rule_after_a_users_turn_on_its_topic_is_filed(queue: _Queue, asked: str) -> None:
