@@ -715,8 +715,8 @@ settings:
   # Write the `namespace.restricted_access` audit row (a batched insert) every admitted
   # read of a restricted namespace writes before answering (inline). True by default: a
   # row written beside the request is lost when the process is killed before it lands.
-  # False trades that row for the batched insert's wait (up to
-  # `ch_batched_insert_wait_max_ms`). [restart]
+  # False trades that row for the awaited insert's latency (its round trip, up to
+  # `ch_batched_insert_wait_max_ms` of batching, and the part write). [restart]
   # restricted_audit_inline: true
 
   # Comma-separated origin list. "*" allows all (acceptable when auth_required=True).

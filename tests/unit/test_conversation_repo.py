@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from server.core.ch_writes import batched_insert_settings
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.knowledge.store.conversations import (
     MessageInsert,
@@ -68,7 +69,7 @@ async def test_append_omits_ts_when_none() -> None:
     await append(msg, ch=ch)
     _, rows, settings = ch.insert_calls[0]
     assert "ts" not in rows[0]  # CH defaults to now()
-    assert settings.get("async_insert") == 1 and settings.get("wait_for_async_insert") == 1
+    assert settings == batched_insert_settings()
 
 
 @pytest.mark.asyncio

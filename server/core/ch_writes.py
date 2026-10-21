@@ -1,7 +1,7 @@
-"""What `CHClient.insert` applies to a write before it is sent: the dedup rule
-for async inserts, fire-and-forget or batched (`normalize_insert_settings`), and
-the deduplication token that makes a retried batch land once. Also the settings
-of a batched insert (`batched_insert_settings`).
+"""What `CHClient.insert` applies to a write before it is sent: the async
+dedup default (`normalize_insert_settings`) and the deduplication token that
+makes a retried batch land once (`dedup_settings`). Also the settings of a
+batched insert (`batched_insert_settings`).
 """
 
 from __future__ import annotations
@@ -34,11 +34,13 @@ def batched_insert_settings() -> dict[str, Any]:
 
 
 def normalize_insert_settings(extra: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Async inserts (`async_insert = 1`, fire-and-forget or batched) gain
-    `async_insert_deduplicate = 0` unless the call site set it: the Cloud profile
-    defaults it to 1, which would silently drop a byte-identical event row landing
-    in the same flush window. Committed writes (`async_insert = 0`) pass through
-    unchanged."""
+    """Async inserts (`async_insert = 1`) gain `async_insert_deduplicate = 0`
+    unless the call site set it, so the server profile's content dedup is off.
+    Committed writes (`async_insert = 0`) pass through unchanged. `CHClient`
+    then applies `dedup_settings`, which switches async deduplication back on
+    with the per-batch token: an async insert is deduplicated by token only, so
+    two identical rows in one flush window both land and a retried batch lands
+    once."""
     if not extra:
         return extra
     out = dict(extra)

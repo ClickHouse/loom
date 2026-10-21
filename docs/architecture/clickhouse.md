@@ -93,9 +93,10 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 - **Waited inserts.** A write that a later read depends on is sent with
   `wait_for_async_insert = 1`, so it is written when the insert returns: committed
   (`async_insert = 0`, the client's session default) or batched (below). Fire-and-forget
-  telemetry (`async_insert = 1, wait_for_async_insert = 0`) adds `async_insert_deduplicate = 0`
-  (`server/core/ch_writes.py`, `normalize_insert_settings`),
-  because identical telemetry rows in one flush window are legitimate.
+  telemetry is sent with `async_insert = 1, wait_for_async_insert = 0`. Every insert
+  carries a per-batch `insert_deduplication_token` (`server/core/ch_writes.py`,
+  `dedup_settings`), and an async insert is deduplicated by that token only, never by
+  content: a retried batch lands once, and two identical rows in one flush window both land.
 - **Batched inserts.** A committed insert makes one part, so a table written on every
   request makes parts at the request rate, and merges fall behind ("too many parts"). The
   rows written on every request or by every process on a short interval are sent with

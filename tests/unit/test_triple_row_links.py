@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from server.core.ch_writes import batched_insert_settings
 from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app.projections import write_entity_triples
@@ -19,9 +20,11 @@ _NO_OPEN_ROW = (None, datetime(1970, 1, 1))
 class _CH:
     def __init__(self) -> None:
         self.inserts: dict[str, list[dict[str, Any]]] = {}
+        self.settings: dict[str, Any] = {}
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         self.inserts[table] = rows
+        self.settings[table] = settings
 
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         return []
@@ -403,6 +406,11 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(monkeypat
     ]
     assert all(m["adapter_name"] == "row-restore" and m["co_occur"] == 0 for m in markers)
     assert [e["valid_to"] for e in ch.inserts["loom.entity_edges"]] == [until]
+    # The Undo markers are batched inserts.
+    assert ch.settings == {
+        "loom.entity_triples": batched_insert_settings(),
+        "loom.entity_edges": batched_insert_settings(),
+    }
     # The repair runs the normal rule, each value seen at its marker.
     ((restated, at),) = repaired
     assert at == restored

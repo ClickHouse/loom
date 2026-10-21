@@ -76,8 +76,9 @@ async def note_restricted_access(
     `restricted_audit_inline` off, scheduled). Never raises.
 
     By default the row is waited for (a batched insert) before the handler
-    runs, so a process killed after answering never loses it. That wait
-    includes up to `ch_batched_insert_wait_max_ms`;
+    runs, so a process killed after answering never loses it. The read pays
+    that insert's round trip, up to `ch_batched_insert_wait_max_ms` of
+    batching, and the part write;
     `restricted_audit_inline=false` writes it beside the request instead
     (same row, same hash, drained at shutdown) and accepts losing it to a
     SIGKILL."""

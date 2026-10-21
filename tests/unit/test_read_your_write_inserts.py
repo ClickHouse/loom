@@ -126,6 +126,9 @@ BATCHED_TABLES = [
     ("server/memory/app/projections.py", "loom.entity_vectors"),
     ("server/core/namespace_write_marks.py", "loom.namespace_write_marks"),
     ("server/core/rmt_carry.py", "loom.carry_acks"),
+    ("server/auth/attempts.py", "loom.auth_attempts"),
+    ("server/memory/app/projection_failures.py", "loom.memory_projection_failures"),
+    ("server/memory/store/usage.py", "loom.memory_usage_events"),
 ]
 
 

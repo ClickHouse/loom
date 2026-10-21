@@ -197,7 +197,7 @@ async def record_usage_event(
         await ch.insert(
             "loom.memory_usage_events",
             [event],
-            settings={"async_insert": 0, "wait_for_async_insert": 1},
+            settings=batched_insert_settings(),
         )
         return
 
