@@ -187,13 +187,13 @@
           "default": 50,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Longest an insert sent with `batched_insert_settings()` (the rows written on every request: audit, transcript turns, ledgers) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node, insert shape and partition. The insert holds its pooled connection for the wait."
+          "description": "Longest wait, ms, of a batched insert (audit rows, transcript turns, request ledgers) for concurrent inserts to share its part; the pooled connection is held meanwhile."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Shortest wait, ms, of an insert sent with `batched_insert_settings()`: what a lone insert waits when writes are sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum."
+          "description": "Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse; capped at ch_batched_insert_wait_max_ms."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

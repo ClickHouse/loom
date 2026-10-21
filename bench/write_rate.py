@@ -10,8 +10,8 @@ form ran. Free with the fake embedder and LLM.
 `--target server` sends `memory.set` and/or `conversation.append` to a running
 server (`--op`). `--target client` runs, in this process, the two inserts a
 `conversation.append` makes (`loom.conversations`, then
-`loom.conversation_embeddings`) through the store functions, with
-`--committed` sending them as committed inserts instead of batched ones: the
+`loom.conversation_embeddings`) with the settings the store sends
+(`batched_insert_settings()`), or with `--committed` as committed inserts: the
 insert path alone, at rates one server process cannot serve. Both read the
 ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
 
@@ -47,7 +47,7 @@ from typing import Any
 import httpx
 
 from server.core.ch import get_client
-from server.knowledge.store import conversations as conversation_repo
+from server.core.ch_writes import batched_insert_settings
 
 _COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
 _SERVER_OPS = {
@@ -105,41 +105,45 @@ def _server_body(op: str, i: int, run: str, args: argparse.Namespace) -> dict[st
 
 
 async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
+    ch = get_client()
+    settings = dict(_COMMITTED) if args.committed else batched_insert_settings()
     ts = datetime.now(UTC).replace(tzinfo=None)
-    msg = conversation_repo.MessageInsert(
-        org=_org(i, args),
-        namespace=_namespace(i, args),
-        agent=f"agent-{i % 8}",
-        thread_id=f"{run}-thread-{i % 50}",
-        msg_id=f"{run}-{i}",
-        role="user",
-        content=f"Turn {i} of run {run}: the delivery for order {i} moved to day {i % 28}.",
-        ts=ts,
+    turn = {
+        "org": _org(i, args),
+        "namespace": _namespace(i, args),
+        "agent": f"agent-{i % 8}",
+        "thread_id": f"{run}-thread-{i % 50}",
+        "msg_id": f"{run}-{i}",
+        "role": "user",
+        "user_id": "-",
+        "run_id": "-",
+        "is_saved": False,
+        "saved_at": None,
+        "ts": ts,
+    }
+    content = f"Turn {i} of run {run}: the delivery for order {i} moved to day {i % 28}."
+    await ch.insert(
+        "loom.conversations",
+        [{**turn, "content": content, "reasoning": "", "metadata": "{}", "tokens": 0}],
+        settings=settings,
     )
-    await conversation_repo.append(msg)
-    await conversation_repo.insert_embedding(
-        {
-            "org": msg.org,
-            "namespace": msg.namespace,
-            "agent": msg.agent,
-            "thread_id": msg.thread_id,
-            "msg_id": msg.msg_id,
-            "role": msg.role,
-            "content_excerpt": msg.content,
-            # Stored as a failed embed (no vector), so the run needs no embedder
-            # and fits any column width.
-            "embedding_model": "write-rate",
-            "embedding_dim": 0,
-            "embedding": [],
-            "user_id": msg.user_id,
-            "run_id": msg.run_id,
-            "embed_attempts": 0,
-            "embed_last_error": "write-rate: not embedded",
-            "embed_failed_at": ts,
-            "is_saved": False,
-            "saved_at": None,
-            "ts": ts,
-        }
+    await ch.insert(
+        "loom.conversation_embeddings",
+        [
+            {
+                **turn,
+                "content_excerpt": content,
+                # Stored as a failed embed (no vector), so the run needs no embedder
+                # and fits any column width.
+                "embedding_model": "write-rate",
+                "embedding_dim": 0,
+                "embedding": [],
+                "embed_attempts": 0,
+                "embed_last_error": "write-rate: not embedded",
+                "embed_failed_at": ts,
+            }
+        ],
+        settings=settings,
     )
 
 
@@ -187,10 +191,6 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     latencies: dict[str, list[float]] = {k: [] for k in kinds}
     errors: dict[str, int] = {k: 0 for k in kinds}
     first_error: dict[str, str] = {}
-    if args.committed:
-        # The committed form, as the baseline.
-        conversation_repo.batched_insert_settings = lambda: dict(_COMMITTED)  # type: ignore[attr-defined]
-
     limits = httpx.Limits(max_connections=args.max_in_flight)
     headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
     async with httpx.AsyncClient(
@@ -229,12 +229,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         started = time.time()
         start = time.monotonic() + 0.5
         total = int(args.rate * args.seconds)
-        await asyncio.gather(*(one(i, start + i / args.rate) for i in range(total)))
-        elapsed = time.monotonic() - start
-        parts = await _parts(started, time.time())
-        sent = await _inserts_sent(started, time.time())
-        if args.target == "client":
-            await _delete_client_rows(args)
+        try:
+            await asyncio.gather(*(one(i, start + i / args.rate) for i in range(total)))
+            elapsed = time.monotonic() - start
+            parts = await _parts(started, time.time())
+            sent = await _inserts_sent(started, time.time())
+        finally:
+            if args.target == "client":
+                await _delete_client_rows(args)
 
     return {
         "target": args.target,

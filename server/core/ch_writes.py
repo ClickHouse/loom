@@ -1,7 +1,6 @@
-"""What `CHClient.insert` applies to a write before it is sent: the async
-dedup default (`normalize_insert_settings`) and the deduplication token that
-makes a retried batch land once (`dedup_settings`). Also the settings of a
-batched insert (`batched_insert_settings`).
+"""What `CHClient.insert` applies to a write before it is sent: the
+deduplication token that makes a retried batch land once (`dedup_settings`).
+Also the settings of a batched insert (`batched_insert_settings`).
 """
 
 from __future__ import annotations
@@ -13,15 +12,9 @@ from server.settings import settings
 
 
 def batched_insert_settings() -> dict[str, Any]:
-    """Settings of a batched insert: the rows written on every request (audit
-    rows, transcript turns, request ledgers) are sent with them. ClickHouse
-    collects concurrent inserts into one table in one part per partition
-    (`async_insert = 1`) and answers each only once those parts are written
-    (`wait_for_async_insert = 1`), so on return the row is as durable and as
-    visible as after a committed insert, and a caller's later insert lands in a
-    later part. Each waits at most
-    `ch_batched_insert_wait_max_ms` for others to join it. The deduplication token
-    still applies (`dedup_settings`)."""
+    """Settings of a batched insert: an async insert answered once its shared part
+    is written, waiting between the two live bounds for others to join it. Why it
+    is safe: docs/architecture/clickhouse.md#conventions-every-table-follows."""
     wait_max = int(settings.ch_batched_insert_wait_max_ms)
     return {
         "async_insert": 1,
@@ -31,22 +24,6 @@ def batched_insert_settings() -> dict[str, Any]:
         ),
         "async_insert_busy_timeout_max_ms": wait_max,
     }
-
-
-def normalize_insert_settings(extra: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Async inserts (`async_insert = 1`) gain `async_insert_deduplicate = 0`
-    unless the call site set it, so the server profile's content dedup is off.
-    Committed writes (`async_insert = 0`) pass through unchanged. `CHClient`
-    then applies `dedup_settings`, which switches async deduplication back on
-    with the per-batch token: an async insert is deduplicated by token only, so
-    two identical rows in one flush window both land and a retried batch lands
-    once."""
-    if not extra:
-        return extra
-    out = dict(extra)
-    if out.get("async_insert") == 1:
-        out.setdefault("async_insert_deduplicate", 0)
-    return out
 
 
 # Bytes of a str or bytes value the token reads.
@@ -111,5 +88,4 @@ __all__ = [
     "batched_insert_settings",
     "dedup_settings",
     "insert_dedup_token",
-    "normalize_insert_settings",
 ]

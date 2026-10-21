@@ -79,16 +79,20 @@ async def test_an_unbounded_pool_leaves_the_connector_unbounded(
     assert captured["connector_limit"] == captured["connector_limit_per_host"] == 0
 
 
-def test_committed_idiom_passes_through_and_fire_and_forget_turns_dedup_off() -> None:
-    """A committed insert is sent as the call site wrote it; fire-and-forget
-    gains `async_insert_deduplicate = 0` unless the call site set it."""
-    committed = {"async_insert": 0, "wait_for_async_insert": 1}
-    assert ch_writes.normalize_insert_settings(committed) == committed
-    ff = ch_writes.normalize_insert_settings({"async_insert": 1, "wait_for_async_insert": 0})
-    assert ff == {"async_insert": 1, "wait_for_async_insert": 0, "async_insert_deduplicate": 0}
-    pinned = {"async_insert": 1, "wait_for_async_insert": 0, "async_insert_deduplicate": 1}
-    assert ch_writes.normalize_insert_settings(pinned) == pinned
-    assert ch_writes.normalize_insert_settings(None) is None
+def test_async_inserts_are_deduplicated_by_token_only() -> None:
+    """Fire-and-forget and batched inserts both turn the async dedup switch on
+    with the batch's token, so the check is by token, never by content."""
+    ff = ch_writes.dedup_settings("t", {"async_insert": 1, "wait_for_async_insert": 0})
+    assert ff == {
+        "async_insert": 1,
+        "wait_for_async_insert": 0,
+        "insert_deduplication_token": "t",
+        "async_insert_deduplicate": 1,
+    }
+    batched = ch_writes.dedup_settings("t", {"async_insert": 1, "wait_for_async_insert": 1})
+    assert batched["async_insert_deduplicate"] == 1
+    assert batched["insert_deduplication_token"] == "t"
+    assert "insert_deduplicate" not in batched
 
 
 def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(

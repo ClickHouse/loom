@@ -561,14 +561,11 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Longest an insert sent with `batched_insert_settings()` (the rows written on every
-    # request: audit, transcript turns, ledgers) waits, ms, for others to share its
-    # part; under load ~1000 / this parts/s per table, node, insert shape and partition.
-    # The insert holds its pooled connection for the wait.
+    # Longest wait, ms, of a batched insert (audit rows, transcript turns, request ledgers)
+    # for concurrent inserts to share its part; the pooled connection is held meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
-    # Shortest wait, ms, of an insert sent with `batched_insert_settings()`: what a
-    # lone insert waits when writes are sparse. A value above
-    # `ch_batched_insert_wait_max_ms` is read as the maximum.
+    # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
+    # sparse; capped at ch_batched_insert_wait_max_ms.
     ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0)
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.

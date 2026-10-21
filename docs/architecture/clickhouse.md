@@ -800,7 +800,7 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 ## Source entry points
 
 - `server/core/ch.py`: `set_query_tag`, `statement_class`, `statement_settings`,
-  `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `normalize_insert_settings`,
+  `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `dedup_settings`,
   `insert_dedup_token`; `server/core/ch_schema_guard.py`: `pending_tables`.
 - `server/core/schema/journal.py`: the journal as data (file order, baselines, statements, the
   objects each file creates or drops).
