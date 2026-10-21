@@ -5,6 +5,7 @@ labelling and audit included."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -16,6 +17,7 @@ from server.auth.jwt import AuthInfo
 from server.core.errors import AuthInsufficientError
 from server.erasure.api.erasure import ErasureExportInput
 from server.erasure.app import handlers as h
+from server.erasure.store import exports as store_exports
 from server.erasure.store.exports import Shown
 from server.operations.base import Role
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
@@ -317,9 +319,6 @@ def _visible(shown, namespace: str) -> bool:
 def test_an_export_leaves_out_what_it_may_not_show_before_its_limit(shown, first) -> None:
     """Run on clickhouse-local: a hidden collection's chunk sorts first, and the
     page of one still holds the visible chunk after it."""
-    import asyncio
-
-    from server.erasure.store import exports
 
     class _Local:
         async def query_all(self, sql, params=None, **_k):
@@ -334,7 +333,7 @@ def test_an_export_leaves_out_what_it_may_not_show_before_its_limit(shown, first
             return run(setup, sql, params)
 
     got = asyncio.run(
-        exports.export_knowledge(ORG, "user_id", "u1", limit=1, shown=shown, ch=_Local())
+        store_exports.export_knowledge(ORG, "user_id", "u1", limit=1, shown=shown, ch=_Local())
     )
     assert [r["namespace"] for r in got] == [first]
 
@@ -381,12 +380,8 @@ def _read_turns(
     max_bytes=1000,
     shown=_NO_COLLECTIONS,
 ):
-    import asyncio
-
-    from server.erasure.store import exports
-
     return asyncio.run(
-        exports.export_conversations(
+        store_exports.export_conversations(
             ORG,
             scope_type,
             scope_value,
@@ -485,9 +480,6 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
     """Run on clickhouse-local: one row per thread, its latest version, filtered after the
     latest is chosen (t3 moved from u1 to u2, so u1's export leaves it out), without the
     threads of a restricted namespace or a collection the caller may not read."""
-    import asyncio
-
-    from server.erasure.store import exports
 
     class _Local:
         async def query_all(self, sql, params=None, **_k):
@@ -511,7 +503,7 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
             return run([ddl("conversation_threads"), insert], sql, params)
 
     got = asyncio.run(
-        exports.export_conversation_threads(
+        store_exports.export_conversation_threads(
             ORG,
             scope_type,
             scope_value,
@@ -527,9 +519,6 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
 def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() -> None:
     """A turn the size pass never measured is dropped, and the measured turn it pushed
     out of the text read's page marks the section truncated."""
-    import asyncio
-
-    from server.erasure.store import exports
 
     def key(thread: str, second: int, msg: str) -> dict:
         ts = datetime(2026, 1, 1, 0, 0, second)
@@ -550,7 +539,7 @@ def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() 
             ]
 
     got, left_out = asyncio.run(
-        exports.export_conversations(
+        store_exports.export_conversations(
             ORG,
             "namespace",
             STD,
@@ -567,10 +556,6 @@ def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() 
 def test_two_measured_copies_of_one_turn_are_both_served() -> None:
     """A save racing a transcript append can leave two rows of one turn; both were
     measured, so both are served and nothing is reported left out."""
-    import asyncio
-
-    from server.erasure.store import exports
-
     turn = {
         "namespace": STD,
         "thread_id": "t1",
@@ -587,7 +572,7 @@ def test_two_measured_copies_of_one_turn_are_both_served() -> None:
             return [{**turn, "is_saved": True}, {**turn, "is_saved": False}]
 
     got, left_out = asyncio.run(
-        exports.export_conversations(
+        store_exports.export_conversations(
             ORG,
             "namespace",
             STD,
@@ -605,9 +590,6 @@ def test_two_measured_copies_of_one_turn_are_both_served() -> None:
 def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() -> None:
     """The size pass reads one row past `limit` to say more exist; the text read asks
     only for the `limit` rows served."""
-    import asyncio
-
-    from server.erasure.store import exports
 
     def turn(msg: str) -> dict:
         return {
@@ -627,7 +609,7 @@ def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() ->
             return [turn("m1"), turn("m2")]
 
     got, left_out = asyncio.run(
-        exports.export_conversations(
+        store_exports.export_conversations(
             ORG,
             "namespace",
             STD,
@@ -644,10 +626,6 @@ def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() ->
 def test_an_uncounted_copy_that_ties_on_the_last_key_is_not_served() -> None:
     """Two copies of one turn share its sort key; when the text read returns the copy the
     size pass left out, it is dropped by its size and the section says rows are missing."""
-    import asyncio
-
-    from server.erasure.store import exports
-
     key = {"namespace": STD, "thread_id": "t1", "ts": datetime(2026, 1, 1), "msg_id": "m1"}
 
     class _Tie:
@@ -660,7 +638,7 @@ def test_an_uncounted_copy_that_ties_on_the_last_key_is_not_served() -> None:
             return [{**key, "row_bytes": 999, "content": "huge"}]
 
     got, left_out = asyncio.run(
-        exports.export_conversations(
+        store_exports.export_conversations(
             ORG,
             "namespace",
             STD,
