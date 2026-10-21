@@ -345,27 +345,49 @@ def test_split_credentials_reads_only_the_boundary_of_each_distinct_pair(
     assert max(joins) <= 2 * sensitivity._BOUNDARY_REACH
 
 
-def test_split_credentials_holds_the_pairs_past_its_bound_without_reading_them(
+def test_split_credentials_holds_the_runs_past_its_bound_without_reading_them(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.memory.domain import sensitivity
 
-    # 128 distinct chunks at index 0 and 128 at index 1 make 16,384 distinct pairs.
+    # 128 distinct chunks at index 0 and 128 at index 1 make 16,384 distinct runs.
     chunks = [("s", 0, f"first {n} notes on the plan.") for n in range(128)]
     chunks += [("s", 1, f"second {n} more notes.") for n in range(128)]
-    joined: list[tuple[str, str]] = []
+    joined: list[tuple[str, tuple[str, ...]]] = []
     cut = sensitivity._cut_at_boundary
 
-    def counting(first: str, second: str) -> bool:
-        joined.append((first, second))
-        return cut(first, second)
+    def counting(first: str, run: tuple[str, ...]) -> list[bool]:
+        joined.append((first, run))
+        return cut(first, run)
 
     monkeypatch.setattr(sensitivity, "_cut_at_boundary", counting)
     held = sensitivity.split_credentials(chunks)
-    assert len(joined) == sensitivity._MAX_JOINED_PAIRS
-    # The first four chunks at index 0 make the 512 pairs read, all clean; every other chunk
-    # is in a pair past the bound.
+    assert len(joined) == sensitivity._MAX_JOINED_RUNS
+    # The first four chunks at index 0 make the 512 runs read, all clean; every other chunk
+    # is in a run past the bound.
     assert held == [False] * 4 + [True] * 252
+
+
+def test_split_credentials_bounds_the_runs_of_each_session_on_its_own() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # Session "s" trips the bound; the plain session after it is still read.
+    chunks = [("s", 0, f"first {n} notes on the plan.") for n in range(128)]
+    chunks += [("s", 1, f"second {n} more notes.") for n in range(128)]
+    chunks += [("t", 0, "The build passed."), ("t", 1, "The deploy is on Thursday.")]
+    assert split_credentials(chunks)[-2:] == [False, False]
+
+
+def test_split_credentials_runs_of_short_chunks_stop_past_the_boundary_reach() -> None:
+    from server.memory.domain import sensitivity
+
+    # Imported chunks shorter than the overlap, with none: a run ends once its text covers
+    # the reach, not at the end of the session.
+    texts = [f"{n:03d} " + "x" * 146 for n in range(256)]
+    versions = {("s", n): {text: [n]} for n, text in enumerate(texts)}
+    runs = list(sensitivity._runs(versions, "s", 1, texts[0]))
+    reach = sensitivity._BOUNDARY_REACH
+    assert [len(run) for run in runs] == [-(-reach // 150)]
 
 
 def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> None:
