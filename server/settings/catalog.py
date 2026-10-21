@@ -2394,8 +2394,9 @@ class MemorySettings(BaseModel):
 
     # ---- sensitivity and provenance ----
     # With no explicit `sensitivity`, detect it from the value with regexes:
-    # credential shapes -> 'high' (never embedded, key-only reads, audited);
-    # email/phone -> 'medium' (embedded, labelled). Off = every row stays ''.
+    # credential shapes, card numbers, SSNs and stated PINs -> 'high' (never
+    # embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded,
+    # labelled). Off = every row stays ''.
     memory_sensitivity_autodetect: bool = True
     # `medium`/`high` rows get expires_at = now + N days on the set and bulk
     # paths (a shorter caller expiry wins) and, if the caller set none, this
@@ -2412,12 +2413,15 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_interval_seconds: int = 86400
     # Days back the sensitivity sweep re-labels rows created in.
     sensitivity_sweep_window_days: int = 2
-    # Rows one sweep pass re-labels (at least 1).
+    # Rows one sensitivity sweep pass re-labels, and the keys per page it reads
+    # (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
+    # Pages one sensitivity sweep pass reads at most, each of
+    # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000).
+    sensitivity_sweep_pages_per_pass: Annotated[int, LIVE] = Field(default=10, ge=1, le=1000)
     # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
-    # other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label
-    # demotes the row in ranking, so it is left to the operator's
-    # `--only-shape phone`.
+    # other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are
+    # left to the operator's `loom sensitivity-sweep --apply`.
     sensitivity_sweep_shapes: str = "credential,email"
     # Tag rows mentioning a protected attribute or common proxy with
     # `attribute:<class>` at write time (gender, religion, health, age, family,

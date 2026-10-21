@@ -271,6 +271,7 @@
  "readiness_check_timeout_s",
  "schema_status_ttl_s",
  "search_trace_log_enabled",
+ "sensitivity_sweep_pages_per_pass",
  "session_brief_llm",
  "session_brief_max_windows",
  "session_brief_window_chars",

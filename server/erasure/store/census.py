@@ -481,9 +481,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.worker_status": (
         "worker health per pass: worker name, launcher label, status, "
-        "counters and a bounded error text; `namespace` is the label of the namespace "
-        "a pass reached, not a tenant axis over memory rows; no "
-        "org/user axis, no memory row; 30-day TTL."
+        "counters, a bounded error text and a resume cursor; `namespace` is the label of "
+        "the namespace a pass reached, not a tenant axis over memory rows; the sensitivity "
+        "sweep's cursor names an org, a namespace and an agent, never a user or a memory "
+        "key; no user axis, no memory row; 30-day TTL."
     ),
     "loom.qa_link_candidates": (
         "issue and PR numbers of the public tracker record with scores and titles, keyed by "

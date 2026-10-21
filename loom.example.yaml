@@ -2887,8 +2887,9 @@ settings:
   # --- sensitivity and provenance ---
 
   # With no explicit `sensitivity`, detect it from the value with regexes: credential
-  # shapes -> 'high' (never embedded, key-only reads, audited); email/phone -> 'medium'
-  # (embedded, labelled). Off = every row stays ''. [restart]
+  # shapes, card numbers, SSNs and stated PINs -> 'high' (never embedded, key-only
+  # reads, audited); email/phone/IBAN -> 'medium' (embedded, labelled). Off = every row
+  # stays ''. [restart]
   # memory_sensitivity_autodetect: true
 
   # `medium`/`high` rows get expires_at = now + N days on the set and bulk paths (a
@@ -2911,12 +2912,17 @@ settings:
   # Days back the sensitivity sweep re-labels rows created in. [restart]
   # sensitivity_sweep_window_days: 2
 
-  # Rows one sweep pass re-labels (at least 1). [restart]
+  # Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least
+  # 1). [restart]
   # sensitivity_sweep_max_rows_per_pass: 500
 
+  # Pages one sensitivity sweep pass reads at most, each of
+  # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). [live]
+  # sensitivity_sweep_pages_per_pass: 10
+
   # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
-  # other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes
-  # the row in ranking, so it is left to the operator's `--only-shape phone`. [restart]
+  # other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are
+  # left to the operator's `loom sensitivity-sweep --apply`. [restart]
   # sensitivity_sweep_shapes: "credential,email"
 
   # Tag rows mentioning a protected attribute or common proxy with `attribute:<class>`

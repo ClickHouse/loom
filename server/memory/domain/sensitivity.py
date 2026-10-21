@@ -6,16 +6,28 @@ deterministic regexes — no LLM, no network:
 
   high    credential shapes: API keys with a known prefix, AWS access key
           ids, private-key blocks, JWTs, `password=` / `secret:` assignments
-          followed by a long token. A 'high' row is never embedded and is
-          readable by key only, with an audit row per read.
-  medium  contact details: an email address or a phone number. Embedded and
-          searchable, but labelled so a pack or an export can treat it.
+          followed by a long token. Also payment and identity numbers: a card
+          number that passes the Luhn check, a US Social Security number, and
+          a PIN, passcode, CVV or security code stated with its value. A
+          'high' row is never embedded and is readable by key only, with an
+          audit row per read.
+  medium  contact and account details: an email address, a phone number, or
+          an IBAN that passes its mod-97 check. Embedded and searchable, but
+          labelled so a pack or an export can treat it.
   ''      everything else (unset). Rows are not labelled 'low' by the
           detector; 'low' is a caller's explicit statement.
 
-The high patterns are the same family `scripts/gates/check_no_secrets.py` uses to
-keep credentials out of the repo; a memory row holding a live key must never
-be pulled into a prompt by similarity, which is what embedding it would do.
+The key and token patterns are the same family `scripts/gates/check_no_secrets.py`
+uses to keep credentials out of the repo; the card, SSN and PIN patterns are not
+repo secrets and live here only. A memory row holding a live key or a card number
+must never be pulled into a prompt by similarity, which is what embedding it would
+do. Every pattern is a linear regex pass; the Luhn check runs on each 15- or 16-digit
+group and on at most sixteen grouped windows per run, and the mod-97 check on at most 55
+runs per match, so the work stays linear in the text.
+
+The detector is a deterministic lower bound: it reads the label forms and shapes that
+docs/architecture/security.md lists, not every way a person can phrase a secret. The
+catch-all for extraction is an operator's extraction policy, not this module.
 """
 
 from __future__ import annotations
@@ -29,6 +41,13 @@ HIGH: Final = "high"
 MEDIUM: Final = "medium"
 LEVELS: Final = ("", "low", "medium", "high")
 
+# The words a `password=…` style assignment starts with. The sweep's prefilter is built from
+# the same list.
+ASSIGNMENT_WORDS = (
+    r"password|passwd|pwd|api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|"
+    r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key"
+)
+
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
     re.compile(r"\bpk-lf-[0-9a-fA-F-]{16,}"),
@@ -41,10 +60,7 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
     # token-shaped value of 8+ non-space characters.
-    re.compile(
-        r"(?i)\b(?:password|passwd|pwd|api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|"
-        r"auth[_-]?token|bearer|client[_-]?secret|private[_-]?key)\b\s*[:=]\s*[\"']?[^\s\"',;]{8,}"
-    ),
+    re.compile(rf"(?i)\b(?:{ASSIGNMENT_WORDS})\b\s*[:=]\s*[\"']?[^\s\"',;]{{8,}}"),
 )
 
 _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -54,6 +70,173 @@ _MEDIUM_PATTERNS: tuple[re.Pattern[str], ...] = (
     # "(415) 555 0123" match but a 4-digit year or a 6-digit count does not.
     re.compile(r"(?<![\w.])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])"),
 )
+
+# The patterns below are ASCII-only (`re.ASCII`), as RE2 is in the sweep's coarse filter,
+# so a row the write path labels is a row the sweep can select.
+#
+# A run of digit groups joined by single spaces or dashes, not after `+` (an international
+# phone number). A card number is one ungrouped group of 15 (Amex) or 16 digits, or
+# consecutive groups in a printed card grouping with at most three short groups (1-4
+# digits) around it, at most two of them after it. So a card pasted with its expiry and
+# CVV ("4111 1111 1111 1111 0429 123") or after a date ("2024-01-15 4111 ...") is still
+# found, and two phone numbers side by side (3-3-4 groups), a table of eight or more
+# numbers, or a 19-digit hash are not.
+_DIGIT_GROUPS = re.compile(r"(?<![\d+])\d+(?:[ -]\d+)*", re.ASCII)
+# Group lengths of a printed card: 16 and 19 digits in fours, Amex 4-6-5, Diners 4-6-4.
+_CARD_GROUPINGS = ((4, 4, 4, 4), (4, 4, 4, 4, 3), (4, 6, 5), (4, 6, 4))
+
+
+def _numbers(first: int, last: int) -> tuple[str, ...]:
+    return tuple(str(n) for n in range(first, last + 1))
+
+
+# Leading digits and lengths of the card networks. A number with other leading digits or
+# another length (epoch milliseconds, yyyymmdd dates, a 15-digit IMEI, which always passes
+# Luhn) is never a card.
+_CARD_NETWORKS: tuple[tuple[tuple[str, ...], tuple[int, ...]], ...] = (
+    (("4",), (16, 19)),  # Visa
+    (_numbers(51, 55) + _numbers(2221, 2720), (16,)),  # Mastercard
+    (("34", "37"), (15,)),  # Amex
+    (_numbers(300, 305) + ("3095", "36", "38", "39"), (14,)),  # Diners
+    (_numbers(3528, 3589), (16, 19)),  # JCB
+    (("6011", "62", *_numbers(644, 649), "65"), (16, 19)),  # Discover, UnionPay
+)
+# A US Social Security number written ddd-dd-dddd, without the never-issued ranges:
+# area 000, 666 or 9xx, group 00, serial 0000.
+_SSN = re.compile(r"(?<![\d-])(?!000|666|9)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\d-])", re.ASCII)
+# A PIN, passcode, CVV/CVC or security code stated with its value (the forms are listed in
+# docs/architecture/security.md). The label strings are plain regex that RE2 reads too: the
+# sweep's prefilter is built from them.
+#
+# `pin` and `pin code`, whose 6-digit values are postal codes ("PIN: 560001"): they take
+# 3-5 digits. `pin code` is the one of them that takes its value directly.
+PIN_CODE_LABEL = r"pin[_ ]code"
+POSTCODE_LIKE_PIN_LABEL = rf"(?:{PIN_CODE_LABEL}|pin)"
+# Every other label: 3-8 digits.
+PIN_LABEL = r"(?:pin[_ ]number|pass[_ ]?code|cv[vc]2?(?:[_ ](?:code|number))?|security[_ ]code)"
+# A label starts after anything but a letter or digit, so a prefix (`atm_pin`) counts and
+# a word that ends in one (`spin`) does not.
+_LABEL_START = r"(?<![A-Za-z0-9])"
+
+
+def pin_grammar(space: str) -> tuple[str, str]:
+    """The `for ...` qualifier and the `is`/`:` separator before a stated PIN's value, over
+    the whitespace class `space`, so the detector and the sweep's RE2 prefilter share one
+    grammar. Each whitespace run has its own anchor, so a long run is read once."""
+    qualifier = rf"(?:{space}+for(?:{space}+[A-Za-z]+){{1,3}})?"
+    separator = rf"(?:{space}+(?:is|was)(?:{space}*[:=])?|{space}*[:=]){space}*"
+    return qualifier, separator
+
+
+_PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(r"\s")
+# A value ends where its number does, so a version, a date or a run-on word (`pin is
+# 2024.1`, `2024/01/15`, `1234abc`) is not read as one.
+_PIN_END = r"(?![-./]?\d)(?![A-Za-z])"
+_STATED_PIN = re.compile(
+    rf"(?i){_LABEL_START}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,8}}{_PIN_END}"
+    rf"|{_LABEL_START}{PIN_LABEL}\s+\d{{3,8}}{_PIN_END}(?!\s+of\b)"
+    rf"|{_LABEL_START}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}\d{{3,5}}{_PIN_END}"
+    rf"|{_LABEL_START}{PIN_CODE_LABEL}\s+\d{{3,5}}{_PIN_END}(?!\s+of\b)",
+    re.ASCII,
+)
+# An IBAN: country code, two check digits, then the BBAN in groups of four (spaced or
+# not) with a short last group; 15-34 characters once the spaces are gone. One group more
+# than the longest IBAN needs leaves room for an IBAN-shaped token before it.
+_IBAN = re.compile(r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,8}(?: ?[A-Z0-9]{1,3})?\b", re.ASCII)
+# Every regex shape that reads as high; a card number is checked apart (`_has_card`).
+_HIGH_SHAPES = (*_HIGH_PATTERNS, _SSN, _STATED_PIN)
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d = d * 2 - 9 if d > 4 else d * 2
+        total += d
+    return total % 10 == 0
+
+
+def _is_card(digits: str) -> bool:
+    return any(
+        digits.startswith(prefixes) and len(digits) in lengths
+        for prefixes, lengths in _CARD_NETWORKS
+    ) and _luhn_ok(digits)
+
+
+def _has_card(text: str) -> bool:
+    """Whether `text` holds a card number, ungrouped or in a printed grouping. The digits
+    of an IBAN are left out: its printed groups can read as a card grouping that passes
+    Luhn ("DE24 4005 0150 0000 0005 00"), and an IBAN is medium."""
+    parts, prev = [], 0
+    for start, end in _iban_spans(text):
+        parts += [text[prev:start], "x" * (end - start)]
+        prev = end
+    text = "".join(parts) + text[prev:]
+    for m in _DIGIT_GROUPS.finditer(text):
+        groups = re.split(r"[ -]", m.group())
+        if any(len(group) in (15, 16) and _is_card(group) for group in groups):
+            return True
+        for i in range(4):  # a grouped card starts within the first four groups
+            for grouping in _CARD_GROUPINGS:
+                end = i + len(grouping)
+                after = len(groups) - end
+                if after < 0 or after > 2 or i + after > 3:
+                    continue
+                window = groups[i:end]
+                if tuple(map(len, window)) != grouping:
+                    continue
+                around = groups[:i] + groups[end:]
+                if all(len(g) <= 4 for g in around) and _is_card("".join(window)):
+                    return True
+    return False
+
+
+# The IBAN length of each country in the ISO 13616 registry.
+_IBAN_LENGTHS = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22,
+    "BH": 22, "BI": 27, "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24,
+    "DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20, "EG": 29, "ES": 24, "FI": 18,
+    "FK": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23, "GL": 18, "GR": 27,
+    "GT": 28, "HN": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26,
+    "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20,
+    "LU": 20, "LV": 21, "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20,
+    "MR": 27, "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23, "PK": 24,
+    "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22, "RU": 33, "SA": 24,
+    "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "SO": 23, "ST": 25,
+    "SV": 28, "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
+    "YE": 30,
+}  # fmt: skip
+
+
+def _is_iban(candidate: str) -> bool:
+    """ISO 13616: a registered country code, that country's length and numeric check
+    digits; move the first four characters to the end, letters become 10-35, and the number
+    is 1 mod 97."""
+    if len(candidate) != _IBAN_LENGTHS.get(candidate[:2]) or not candidate[2:4].isdigit():
+        return False
+    moved = candidate[4:] + candidate[:4]
+    return int("".join(str(int(ch, 36)) for ch in moved)) % 97 == 1
+
+
+def _iban_spans(text: str) -> list[tuple[int, int]]:
+    """The (start, end) of each IBAN in `text`. A spaced match can take in an uppercase
+    word before or after it ("XY12 GB82 ...", "... 1332 EUR"), so each run of its groups is
+    checked, longest first (at most ten groups, so at most 55 runs)."""
+    spans = []
+    for m in _IBAN.finditer(text):
+        groups = m.group().split(" ")
+        span = None
+        for start in range(len(groups)):
+            for end in range(len(groups), start, -1):
+                if _is_iban("".join(groups[start:end])):
+                    offset = m.start() + len(" ".join(groups[:start])) + (start > 0)
+                    span = (offset, offset + len(" ".join(groups[start:end])))
+                    break
+            if span:
+                spans.append(span)
+                break
+    return spans
 
 
 # --- Protected-attribute classes --------------------------------------------
@@ -160,17 +343,20 @@ def attribute_tags(text: str, existing: Iterable[str] = ()) -> list[str]:
     ]
 
 
+def _reads_high_text(text: str) -> bool:
+    """Whether `text` holds a high shape: a credential, a card number, an SSN or a stated PIN."""
+    return any(pat.search(text) for pat in _HIGH_SHAPES) or _has_card(text)
+
+
 def detect_sensitivity(text: str) -> str:
-    """Classify `text`: 'high' for a credential shape, 'medium' for contact
-    details, '' otherwise. Order matters — a line with both is 'high'."""
+    """Classify `text`: 'high' for a credential, card, SSN or stated PIN, 'medium' for
+    contact details or an IBAN, '' otherwise. Order matters — a line with both is 'high'."""
     if not text:
         return ""
-    for pat in _HIGH_PATTERNS:
-        if pat.search(text):
-            return HIGH
-    for pat in _MEDIUM_PATTERNS:
-        if pat.search(text):
-            return MEDIUM
+    if _reads_high_text(text):
+        return HIGH
+    if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _iban_spans(text):
+        return MEDIUM
     return ""
 
 
@@ -178,13 +364,81 @@ def detect_sensitivity(text: str) -> str:
 # phone shape allows only one space, dot or dash between its groups.
 _SCALAR_SEP = "\n;\n"
 
+# Key words naming a PIN-like secret, and the label a value under them is stated with
+# (`{"pin_code": "4471"}` reads as `pin is 4471`), so the free-text grammar decides the
+# value's length. The sweep's prefilter is built from the same list.
+_KEYED_SECRET_PARTS: dict[tuple[str, ...], str] = {
+    ("pin",): "pin",
+    ("pin", "code"): "pin",
+    ("pin", "number"): "pin number",
+    ("pass", "code"): "passcode",
+    ("cvv",): "cvv",
+    ("cvv", "2"): "cvv",
+    ("cvv", "code"): "cvv",
+    ("cvv", "number"): "cvv",
+    ("cvc",): "cvc",
+    ("cvc", "2"): "cvc",
+    ("cvc", "code"): "cvc",
+    ("cvc", "number"): "cvc",
+    ("security", "code"): "security code",
+}
+KEYED_SECRET_WORDS = _KEYED_SECRET_PARTS | {
+    ("".join(w),): label for w, label in _KEYED_SECRET_PARTS.items() if len(w) > 1
+}
+# The key words that state an SSN, written apart or as one word. The spelled-out
+# `social_security_number` is read as its last three words.
+_SSN_KEY_PARTS = (("ssn",), ("ssn", "number"), ("ssn", "no"), ("social", "security", "number"))
+SSN_KEYS = _SSN_KEY_PARTS + tuple(("".join(w),) for w in _SSN_KEY_PARTS if len(w) > 1)
+_KEY_WORDS = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z0-9]+")  # `PIN`, `badge`, `Pin`, `2`
+# `ATMPin` and `PINcode` have the same shape, so one split cannot read both: the split
+# above reads `ATM`, `Pin`, this one `PIN`, `code`. Both start a word at a single capital,
+# so `Spin` is one word.
+_KEY_CAPS_WORDS = re.compile(r"[A-Z]{2,}|[A-Z]?[a-z0-9]+")
+
+
+def _keyed_secret(key: str, value: Any) -> str:
+    """The stated form of a secret held under a key that names it ("pin is 4471" for
+    `{"badge_pin": "4471"}`, "cvv is 123" for `{"cvv_2": "123"}`), for the detector to read;
+    '' when the key names none."""
+    if not isinstance(value, str | int) or isinstance(value, bool):
+        return ""
+    # the last one, two and three words of both splits, lowercased
+    tails = [
+        tuple(w.lower() for w in words[-n:])
+        for words in (_KEY_WORDS.findall(key), _KEY_CAPS_WORDS.findall(key))
+        for n in (1, 2, 3)
+        if len(words) >= n
+    ]
+    label = next((KEYED_SECRET_WORDS[t] for t in tails if t in KEYED_SECRET_WORDS), "")
+    if not (label or any(t in SSN_KEYS for t in tails)):
+        return ""
+    v = str(value).strip(" \t\n\r\f\v")  # the whitespace the patterns read, ASCII only
+    if label:
+        return f"{label} is {v}" if v.isdigit() else ""
+    if re.fullmatch(r"[0-9]{3}-?[0-9]{2}-?[0-9]{4}", v):
+        digits = v.replace("-", "")
+        return f"{digits[:3]}-{digits[3:5]}-{digits[5:]}"
+    return ""
+
+
+# A `"key": value` pair in raw JSON text, for `reads_high`. A quoted value must be the
+# whole string and a bare number must end at its digits; a key reads at most 200
+# characters, so the scan stays linear.
+_KEYED_PAIR = re.compile(
+    r'"((?:[^"\\]|\\.){1,200})"\s*:\s*'
+    r'(?:"\s*([0-9][0-9-]{0,15})\s*"|([0-9][0-9-]{0,15})(?![\w.-]))',
+    re.ASCII,
+)
+
 
 def detector_text(value: Any) -> str:
     """Decoded text of a stored value for the detector: a JSON string is parsed, and each key
     and scalar is its own line, so a token after a newline keeps its word boundary. The lines
     are joined by `_SCALAR_SEP`, which no pattern crosses, so two scalars never read as one
-    (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). Iterative, so
-    a deeply nested value cannot stop a worker pass."""
+    (`Password:` then the next key, or `256`, `512`, `1024` as a phone number). A key that
+    names a PIN-like secret or an SSN adds its value's stated form (`_keyed_secret`), so
+    `{"pin": "4471"}` reads as `pin is 4471` does; other keys label nothing. Iterative, so a
+    deeply nested value cannot stop a worker pass."""
     if isinstance(value, str):
         text = value
         try:
@@ -199,6 +453,9 @@ def detector_text(value: Any) -> str:
             for k, x in reversed(list(v.items())):
                 stack.append(x)
                 stack.append(str(k))
+                stated = _keyed_secret(str(k), x)
+                if stated:
+                    lines.append(stated)
         elif isinstance(v, list | tuple):
             stack.extend(reversed(v))
         elif v is not None:
@@ -207,28 +464,42 @@ def detector_text(value: Any) -> str:
 
 
 def value_reads_high(value: Any) -> bool:
-    """Whether a stored value holds a credential shape, read decoded (`detector_text`), whatever
-    the autodetect setting. For a value; raw stored text (a chunk, a passage) goes through
-    `reads_high`, which also undoes JSON escapes."""
-    return detect_sensitivity(detector_text(value)) == HIGH
+    """Whether a stored value holds a high shape (a credential, card number, SSN or stated
+    PIN), read decoded (`detector_text`), whatever the autodetect setting. For a value; raw
+    stored text (a chunk, a passage) goes through `reads_high`, which also undoes JSON
+    escapes."""
+    return _reads_high_text(detector_text(value))
 
 
 # A JSON string escape, decoded once and in order (so `\\n`, an escaped backslash then `n`,
-# stays a backslash and an `n`).
-_JSON_ESCAPE = re.compile(r'\\(["\\/bfnrt])')
+# stays a backslash and an `n`). `\uXXXX` is how JSON writes other control characters
+# (`\u000b`) even with `ensure_ascii=False`.
+_JSON_ESCAPE = re.compile(r'\\(?:(["\\/bfnrt])|u([0-9a-fA-F]{4}))')
 _JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f"}
 
 
+def _json_unescape(m: re.Match[str]) -> str:
+    if m.group(2):
+        return chr(int(m.group(2), 16))
+    return _JSON_ESCAPES.get(m.group(1), m.group(1))
+
+
 def reads_high(text: str) -> bool:
-    """Whether `text` holds a credential shape, whatever the autodetect setting: the rule for
+    """Whether `text` holds a high shape, whatever the autodetect setting: the rule for
     text copied from a row (a digest's key facts, an observation sent to a model, a raw
     chunk), which has no label of its own or carries one a later sweep may not have set
     yet. Text holding JSON (a chunk of an object value) is read with its string escapes
-    undone too, where a token after `\\n` or a quoted password keeps its word boundary."""
-    if detect_sensitivity(text) == HIGH:
+    undone too, where a token after `\\n` or a quoted password keeps its word boundary, and
+    its `"key": value` pairs with a digits-and-dashes value are read as `detector_text`
+    reads them (`{"badge_pin": "4471"}`)."""
+    texts = {text, _JSON_ESCAPE.sub(_json_unescape, text)}
+    if any(_reads_high_text(t) for t in texts):
         return True
-    unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
-    return unescaped != text and detect_sensitivity(unescaped) == HIGH
+    return any(
+        _reads_high_text(_keyed_secret(k, quoted or bare))
+        for t in texts
+        for k, quoted, bare in _KEYED_PAIR.findall(t)
+    )
 
 
 def resolve_sensitivity(requested: str | None, text: str) -> str:
@@ -268,7 +539,9 @@ _CONTACT_INTENT = re.compile(
     r"\b(?:reach|contact|e-?mail(?:s|ed|ing)?|phone|get (?:a )?hold of|"
     r"call (?:him|her|them|me|us|the)|"
     r"how (?:do|can) i (?:reach|contact|get)|"
-    r"who (?:do|should) i (?:call|email|contact))\b",
+    r"who (?:do|should) i (?:call|email|contact)|"
+    # an IBAN is labelled medium too: a question for the account is asking for it
+    r"ibans?|bank account(?: number)?s?)\b",
     re.IGNORECASE,
 )
 
@@ -295,7 +568,7 @@ def sensitivity_tags(level: str | None, existing: Iterable[str] = ()) -> list[st
 
 
 def contact_intent(query: str) -> bool:
-    """Does the question ask for a way to reach someone? Then a labelled
-    contact detail is the answer, not collateral, and the ranking must not
+    """Does the question ask for a way to reach someone, or for a bank account? Then a
+    labelled contact detail or IBAN is the answer, not collateral, and the ranking must not
     demote it."""
     return bool(_CONTACT_INTENT.search(query or ""))

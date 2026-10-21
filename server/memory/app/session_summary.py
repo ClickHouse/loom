@@ -69,7 +69,7 @@ def _top_key_facts(
     limit: int = _SESSION_SUMMARY_MAX_KEY_FACTS,
 ) -> list[str]:
     """Top-N non-empty fact values as strings, order-preserving + deduped. A fact whose text
-    reads as a credential is left out: the digest is listed by memory.digests and sent to
+    reads as `high` is left out: the digest is listed by memory.digests and sent to
     the outcome judge, so its key facts never carry such a value."""
     out: list[str] = []
     seen: set[str] = set()

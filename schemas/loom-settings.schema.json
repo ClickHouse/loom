@@ -4209,7 +4209,7 @@
         "memory_sensitivity_autodetect": {
           "default": true,
           "type": "boolean",
-          "description": "With no explicit `sensitivity`, detect it from the value with regexes: credential shapes -> 'high' (never embedded, key-only reads, audited); email/phone -> 'medium' (embedded, labelled). Off = every row stays ''."
+          "description": "With no explicit `sensitivity`, detect it from the value with regexes: credential shapes, card numbers, SSNs and stated PINs -> 'high' (never embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded, labelled). Off = every row stays ''."
         },
         "memory_session_digest_max_input_chars": {
           "default": 3000,
@@ -4969,12 +4969,19 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Rows one sweep pass re-labels (at least 1)."
+          "description": "Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least 1)."
+        },
+        "sensitivity_sweep_pages_per_pass": {
+          "default": 10,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000)."
         },
         "sensitivity_sweep_shapes": {
           "default": "credential,email",
           "type": "string",
-          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`."
+          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are left to the operator's `loom sensitivity-sweep --apply`."
         },
         "sensitivity_sweep_window_days": {
           "default": 2,

@@ -56,8 +56,9 @@ class MemoryExportEvidenceInput(BaseModel):
     # Rows per page (1–2000); `has_more` says whether another page follows.
     limit: int = Field(default=500, ge=1, le=2000)
     cursor: str = ""  # opaque keyset cursor from a previous page
-    # Also export the chunks and digests behind a 'high' row, or whose text reads as a
-    # credential. Off: a bundle reaches a wider audience than the namespace's grants.
+    # Also export the chunks and digests behind a 'high' row, or whose text holds a
+    # high shape (a credential, card number, SSN or stated PIN). Off: a bundle reaches
+    # a wider audience than the namespace's grants.
     include_high: bool = False
 
 
