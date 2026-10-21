@@ -114,6 +114,7 @@ def _converse(
     user_id: str,
     session_id: str,
     rule: str = _RULE,
+    **extra: Any,
 ) -> dict[str, Any]:
     return _call(
         base_url,
@@ -125,11 +126,11 @@ def _converse(
             "agent": _AGENT,
             "user_id": user_id,
             "session_id": session_id,
-            "agent_learnings": True,
             "messages": [
                 {"role": "user", "content": _asked(user_id)},
                 {"role": "assistant", "content": f"{rule} A colleague will reply soon."},
             ],
+            **extra,
         },
     )
 
@@ -169,6 +170,17 @@ async def _raw(ch: Any, table: str, org: str, where: str, **params: Any) -> list
             params={"org": org, **params},
         )
     )
+
+
+def test_a_request_turns_learnings_off_for_its_own_call(
+    base_url: str, token: tuple[str, str]
+) -> None:
+    org, tok = token
+    ns = f"bot-{uuid.uuid4().hex[:8]}"
+
+    out = _converse(base_url, tok, org, ns, "alice", "s1", agent_learnings=False)
+    assert out["learning_candidates"] == 0
+    assert _listed(base_url, tok, org, ns) == []
 
 
 def test_an_assistant_rule_waits_for_review_and_promotes_to_the_agent(

@@ -395,9 +395,9 @@ def test_a_purge_turns_the_conversation_tombstones_into_deletes() -> None:
     assert len(lw) == 1 and "loom.conversation_embeddings" in lw[0]
 
 
-def test_the_sagas_run_every_uncounted_step_in_the_scope_that_owns_it() -> None:
-    ns_steps = {name for name, _ in saga_steps._UNCOUNTED_STEPS_NS}
-    user_steps = {name for name, _ in saga_steps._UNCOUNTED_STEPS_USER}
+def test_the_sagas_run_every_late_step_in_the_scope_that_owns_it() -> None:
+    ns_steps = {name for name, _ in saga_steps._LATE_STEPS_NS}
+    user_steps = {name for name, _ in saga_steps._LATE_STEPS_USER}
     owners_ns = set(erasure_census.step_owners("namespace"))
     owners_user = set(erasure_census.step_owners("user_id"))
     assert ns_steps <= owners_ns, ns_steps - owners_ns

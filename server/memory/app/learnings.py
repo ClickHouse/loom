@@ -326,9 +326,7 @@ async def _do_promote(
       Route through `handle_memory_set` so the row lands in loom.memory
       AND check_on_commit fires (enforces pinned-conflict reject + the
       semantic-conflict / canonical-merge / duplicate verdicts).
-    - `assistant_turn` takes the same `handle_memory_set` path, written as the
-      candidate's agent's namespace-wide row (`user_id` '-'), which reads bounded
-      to one user do not serve.
+    - `assistant_turn` takes the same `handle_memory_set` path.
     """
     source_kind = candidate_row.get("source_kind") or "memory_supporters"
 
@@ -401,8 +399,6 @@ async def _promote_via_memory_set(
 
     # In both cases the approver is the row's `actor`, stamped from the review's token.
     if candidate_row.get("source_kind") == assistant_rules.SOURCE_KIND:
-        # A bot's rule about itself: its agent's namespace-wide row (`user_id` '-'),
-        # which reads bounded to one user do not serve.
         agent, user_id = str(candidate_row.get("agent") or "-"), "-"
         # The candidate, not one supporter's session, is where it came from.
         source_trace = f"learning:{candidate_row['candidate_id']}"
