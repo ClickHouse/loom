@@ -46,9 +46,15 @@ if TYPE_CHECKING:
 log = logging.getLogger("server.transport.gates")
 
 # The org-level ops an end user may call (server/auth/gateway.py):
-# make and list collections, and read their own standing.
+# make and list collections, read their own standing, and read the static agent guide.
 END_USER_ORG_OPS = frozenset(
-    {"collection.create", "collection.list", "namespace.list_mine", "grants.pending_for_me"}
+    {
+        "collection.create",
+        "collection.list",
+        "namespace.list_mine",
+        "grants.pending_for_me",
+        "mentor.guide",
+    }
 )
 
 # The code a role / namespace refusal carries on both transports: the one the

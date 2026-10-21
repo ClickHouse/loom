@@ -190,6 +190,8 @@ COPY scripts/serve.sh ./scripts/serve.sh
 # hard-coded relative to the handler — without this COPY the op 422s
 # in-container ("probe corpus missing").
 COPY bench/fixtures ./bench/fixtures
+# mentor.guide serves the agent guide (SKILL.md, reference.md) from here.
+COPY skills/loom ./skills/loom
 # Dev tooling — loom_init.py, loom_ingest.py, verify_audit_chain.py, backup
 # and restore. Migrations run in the server's startup lifespan; these ship for
 # `docker exec` operational tasks (token mint, knowledge ingest, audit verification).
