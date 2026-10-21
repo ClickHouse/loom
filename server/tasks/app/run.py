@@ -1003,10 +1003,11 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
 
     where: list[str] = []
     params: dict[str, Any] = {}
-    if input.agent:
+    # "*" and the identity sentinel "-" the SDKs stamp mean every agent / session.
+    if input.agent not in ("", "*", SENTINEL):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent
-    if input.session_id:
+    if names_session(input.session_id):
         where.append("session_id = {sid:String}")
         params["sid"] = input.session_id
     if input.status:

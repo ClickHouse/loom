@@ -147,7 +147,7 @@ Enumerate stored conversation threads for an agent / namespace.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | "*" or "-" reads every agent's turns in the thread (a turn two agents both logged once), for a caller that has only its id, as conversation.search reads "*" and "-"; any other value reads that one agent's. |
 | `thread_id` | `str` | required | The thread to page through, oldest message first. |
-| `run_id` | `str \| None` | `None` | optional filter |
+| `run_id` | `str \| None` | `None` | optional filter; None or "-" = every run |
 | `limit` | `int` | `100` | At most this many messages per page (1-1000). |
 | `cursor` | `str \| None` | `None` | opaque (ts, msg_id) |
 
@@ -235,9 +235,9 @@ Rank conversation messages by embedding similarity to `query`.
 | `agent` | `str` | required | "*" or "-" searches every agent's turns; any other value, that one agent's. |
 | `query` | `str` | required | Text matched against message content, by embedding similarity, or by substring when the embedder is unavailable. |
 | `thread_id` | `str \| None` | `None` | optional: scope to one thread |
-| `run_id` | `str \| None` | `None` | optional: filter by run_id |
+| `run_id` | `str \| None` | `None` | optional: filter by run_id; None or "-" = every run |
 | `role` | `Literal['user', 'assistant', 'system', 'tool'] \| None` | `None` | Filter by speaker; system turns other than compaction summaries, and tool turns, are not embedded, so they match only on the substring fallback. |
-| `user_id` | `str \| None` | `None` | Optional owner filter. |
+| `user_id` | `str \| None` | `None` | Optional owner filter; None or "-" = every user. |
 | `top_k` | `int` | `20` | At most this many hits (1-200). |
 | `namespace_scope` | `Literal['this', 'all_mine']` | `'all_mine'` | "all_mine" also reads the caller's own namespaces, up to `memory_search_fanout_max_namespaces`, as knowledge.search does. |
 
@@ -343,7 +343,7 @@ Update one thread's title/metadata/run_id.
 | `thread_id` | `str` | required | The thread to update; an unknown thread returns `updated=False`. |
 | `title` | `str \| None` | `None` | Handler raises 400 if all three are absent (no-op signals a caller bug). |
 | `metadata` | `dict[str, Any] \| None` | `None` | New metadata JSON, replacing the old object whole; None leaves it unchanged. |
-| `run_id` | `str \| None` | `None` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `run_id` | `str \| None` | `None` | The thread's new run; None or "-" leaves it unchanged. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

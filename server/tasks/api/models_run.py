@@ -268,7 +268,9 @@ class RunGradeInput(BaseModel):
 
     org: str
     namespace: str
+    # The run to grade; "" or "-" = none. Name exactly one of run_id and session_id.
     run_id: str = Field(default="", max_length=128)
+    # Every closed run of this session; "" or "-" = none.
     session_id: str = Field(default="", max_length=256)
     # The verdict: `pass` (the result held up) or `fail`.
     grade: Literal["pass", "fail"]
@@ -281,6 +283,11 @@ class RunGradeInput(BaseModel):
 
     @model_validator(mode="after")
     def _one_target(self) -> RunGradeInput:
+        # The identity sentinel "-" the SDKs stamp names no run or session.
+        if self.run_id == SENTINEL:
+            self.run_id = ""
+        if self.session_id == SENTINEL:
+            self.session_id = ""
         if bool(self.run_id.strip()) == bool(self.session_id.strip()):
             raise ValueError("pass exactly one of run_id or session_id")
         return self
@@ -350,7 +357,9 @@ class RunGetOutput(BaseModel):
 class RunListInput(BaseModel):
     org: str
     namespace: str
+    # Only this agent's runs; "", "*" or "-" = every agent.
     agent: str = ""
+    # Only this session's runs; "" or "-" = every session.
     session_id: str = ""
     # Only runs in this status; "" lists every status.
     status: Literal["", "active", "completed", "failed", "cancelled"] = ""

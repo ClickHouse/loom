@@ -130,7 +130,8 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
     ch = _get_client()
     where = "org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL"
     params: dict[str, Any] = {"o": input.org, "n": input.namespace, "lim": int(input.limit) + 1}
-    if input.session_id and input.session_id != "*":
+    # "-" is the identity sentinel the SDKs stamp when a call names no session.
+    if input.session_id not in ("", "*", "-"):
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
     where += scope_and(request_scope(), params)

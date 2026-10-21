@@ -16,7 +16,7 @@ from server.memory.api.models_common import MemoryType, _Identity
 
 class MemoryDigestsInput(_Identity):
     """List the session digests of a namespace. `session_id`
-    "*" (the default of a namespace audit) lists every session; a concrete
+    "*" (the default of a namespace audit) or "-" lists every session; a concrete
     session id lists that one."""
 
     session_id: str = "*"

@@ -323,12 +323,13 @@ async def _pack_startup_recall(st: _PackState) -> None:
                 return v
         return _json.dumps(v, default=str)
 
+    # The identity SENTINEL ("-") means unset, as on the query path; "*" drops the axis.
     ident = memory_repo.Identity(
         org=input.org,
         namespace=input.namespace,
         agent="*",
-        user_id=input.user_id,
-        session_id=input.session_id,
+        user_id=input.user_id if input.user_id and input.user_id != "-" else "*",
+        session_id=input.session_id if input.session_id and input.session_id != "-" else "*",
     )
     k = input.top_k
     try:

@@ -16,6 +16,7 @@ from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError
+from server.core.naming import SENTINEL
 from server.embedding import get_embedder
 from server.identity.app.conversation_logging import set_conversation_logging
 from server.identity.app.request_scope import request_scope
@@ -579,6 +580,12 @@ async def handle_conversation_set_logging(
     return ConversationSetLoggingOutput(namespace=input.namespace, enabled=input.enabled)
 
 
+def _named(value: str | None) -> str | None:
+    """`value`, or None when it is unset: empty, or the identity sentinel "-" the SDKs
+    stamp when a call names no user or run."""
+    return value if value and value != SENTINEL else None
+
+
 async def handle_conversation_update(
     input: ConversationUpdateInput,
 ) -> ConversationUpdateOutput:
@@ -593,6 +600,7 @@ async def handle_conversation_update(
 
     from server.knowledge.store import conversations as conversation_repo
 
+    input = input.model_copy(update={"run_id": _named(input.run_id)})
     if input.title is None and input.metadata is None and input.run_id is None:
         raise HTTPException(
             status_code=400,
@@ -810,7 +818,7 @@ async def handle_conversation_list(
         input.namespace,
         _thread_reader(input.agent),
         input.thread_id,
-        run_id=input.run_id,
+        run_id=_named(input.run_id),
         after=after,
         limit=input.limit + 1,  # +1 to detect "more"
     )
@@ -869,6 +877,9 @@ async def _search_conversations(
 
     from server.settings import settings
 
+    input = input.model_copy(
+        update={"run_id": _named(input.run_id), "user_id": _named(input.user_id)}
+    )
     embedder = get_embedder()
     max_distance = 1.0 - settings.conversation_search_min_similarity
     query_vec: list[float] | None

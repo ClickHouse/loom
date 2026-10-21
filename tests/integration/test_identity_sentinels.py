@@ -106,6 +106,30 @@ async def test_update_with_the_identity_sentinels_resolves_the_key_across_identi
 
 
 @pytest.mark.asyncio
+async def test_startup_pack_with_the_identity_sentinels_reads_every_users_rows(
+    control_plane_url: str, mint_test_token
+) -> None:
+    from loom import Agent
+
+    ns = f"sp-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG)
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set(
+            "deploy:day",
+            "Deploys go out on Tuesday.",
+            memory_type="semantic",
+            user_id="u1",
+            session_id="s1",
+        )
+        # `Agent.call` stamps user_id and session_id "-".
+        pack = await a.call("context.pack", {"mode": "startup", "query": "", "top_k": 5})
+
+    assert "Deploys go out on Tuesday." in pack["sections"].get("memories", "")
+
+
+@pytest.mark.asyncio
 async def test_run_begin_with_the_run_sentinel_opens_a_run_of_its_own(
     control_plane_url: str, mint_test_token
 ) -> None:
