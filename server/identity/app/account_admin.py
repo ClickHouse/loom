@@ -528,6 +528,25 @@ async def disable_bot(name: str, *, by: str) -> bool:
     return True
 
 
+async def provision_agent(name: str, agent: str, *, by: str) -> tuple[str, str]:
+    """Make the namespace of agent `agent` of the trust `name` before its first
+    exchange, as that exchange makes it (`agents.ensure_namespace`: the trust's
+    tag, the agent as its one owner, the trust's `max_agents`), so grants can
+    name the agent's subject first; its first exchange adopts it. Returns the
+    org and the namespace. Run again, it changes nothing. Raises ValueError for
+    a trust that tells no agents apart, or a namespace the trust refuses."""
+    bot = await machines.get(name)
+    if bot is None or not bot["agent_claim"]:
+        raise ValueError(f"no active bot {name!r} with an agent claim")
+    if not agents.AGENT.fullmatch(agent):
+        # As its claim must give it: the name is refused, never rewritten.
+        raise ValueError("agent: lower-case letters, digits and '-', at most 63")
+    try:
+        return bot["org"], await agents.ensure_namespace(bot, agent, by=by)
+    except machines.Refused as e:
+        raise ValueError(e.description or e.error) from None
+
+
 async def end_tokens(subject: str, *, by: str, reason: str) -> datetime:
     """A bot's or an agent's tokens live an hour; revoked now, not when they
     run out. Returns the cutoff: past every token issued so far."""

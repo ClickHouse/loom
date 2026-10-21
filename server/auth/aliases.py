@@ -54,7 +54,7 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
         return list(hit[1])
     try:
-        out = await _read(org, subject, ch)
+        out = await read_aliases(org, subject, ch)
     except Exception:
         log.warning(
             "aliases: lookup failed for %r in %r; subject stands alone", subject, org, exc_info=True
@@ -67,11 +67,12 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     return out
 
 
-async def _read(org: str, subject: str, ch: object | None) -> list[str]:
+async def _rows(org: str, subject: str, ch: object | None) -> list[dict[str, Any]]:
+    """The accounts tying `subject` to another spelling, matched in any case."""
     from server.core.ch import get_client
 
     client = ch or get_client()
-    rows = await client.query_all(  # type: ignore[attr-defined]
+    rows: list[dict[str, Any]] = await client.query_all(  # type: ignore[attr-defined]
         """
         SELECT owner_email, contact_email
         FROM loom.namespaces FINAL
@@ -83,6 +84,11 @@ async def _read(org: str, subject: str, ch: object | None) -> list[str]:
         """,
         params={"org": org, "sub": subject},
     )
+    return rows
+
+
+async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
+    rows = await _rows(org, subject, ch)
     out = [subject]
     for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
@@ -100,6 +106,29 @@ def invalidate(org: str, subjects: Iterable[str]) -> None:
             del _CACHE[key]
 
 
+async def spellings(org: str, subject: str) -> list[str]:
+    """Every spelling of `subject` a change keyed by exact spelling must reach
+    (a revocation): itself, an email's lower case, and each spelling the
+    directory ties to it, as stored. Read uncached, and raising when the
+    directory cannot be read: never guess."""
+    from server.core.ch import own_write_reads
+
+    if not subject:
+        return []
+    out = [subject]
+    if "@" in subject and subject.lower() != subject:
+        out.append(subject.lower())  # how the directory keeps an address
+    if not has_aliases(subject):
+        return out
+    with own_write_reads():
+        rows = await _rows(org, subject, None)
+    for r in rows:
+        for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
+            if spelling and spelling not in out:
+                out.append(spelling)
+    return out
+
+
 async def canonical_subject(org: str, subject: str, *, ch: object | None = None) -> str:
     """The login handle for a human spelling (the row's `owner_email`), so a
     new grant is written under the one subject every read folds onto; the
@@ -111,7 +140,7 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     if not has_aliases(subject) or "@" not in subject:
         return subject
     with own_write_reads():
-        spellings = await _read(org, subject, ch)
+        spellings = await read_aliases(org, subject, ch)
     for alias in spellings:
         if "@" not in alias:
             return alias
