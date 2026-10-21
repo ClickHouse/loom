@@ -83,7 +83,7 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 | A document over about 2 KB (spec, runbook, report) | `knowledge.upsert` as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |
 | Rows with identity (PRs by number, services by id) | `memory.record.write` against a schema an admin registered (`memory_schema.register`; a writer proposes one with `memory_schema.propose`) | one memory per batch |
 | Your plan, a checklist or a cursor for the task in hand | `working_memory.set` or `working_memory.append` by `block_key`; a block belongs to one `(agent, user_id, session_id, run_id)` | `memory.set` read in a loop |
-| Where you are, for a later session or another agent to resume | `session.brief_save`, read back with `session.brief_get` | working memory, which a new session does not see |
+| Where you are, for a later session or another agent to resume | `session.brief_save`, read back with `session.brief_get` | working memory, which is read back only under the identity that wrote it |
 | Work several agents may pick up | the task inbox: `task.pull` claims a task, `task.heartbeat` keeps the claim | a lock row in memory or working memory |
 | A log, diff or tool output too big for context | `context.offload`, then `context.fetch` | memory or working memory |
 | Work for another agent | `task.create` into its inbox | a memory it might search for |

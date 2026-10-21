@@ -1,6 +1,7 @@
 # Loom planes — what each holds, when to use it, its ops
 
-Read `SKILL.md` first: it has the loop, the write rules and how to read
+Read the skill first (`mentor.guide` with `part: "skill"`, or `SKILL.md`
+beside this file): it has the loop, the write rules and how to read
 answers. This file is the catalog. Each plane lists what it is for, what it
 gives you, and its main ops. Ops marked † are experimental: their fields may
 change between releases. `ops.capabilities` says what this server serves;
@@ -76,12 +77,14 @@ here and one short claim pointing at it in memory.
 ## Working memory — state you are told, not state you search for
 
 Small named blocks (`block_key`, default `scratchpad`, 4,096 characters by
-default, up to 16,384) scoped to one `(agent, user_id, session_id, run_id)`:
-another agent, a new session or a different run does not see them. Never
-embedded, ranked or conflict-checked; loaded into a `context.pack` under the
-same identity. Use for the plan, a checklist, a cursor, a resume point
-within the session; for another session or agent, a session brief or the
-task inbox.
+default, up to 16,384) keyed by `(agent, user_id, session_id, run_id)`:
+`working_memory.get` and `render` read back under exactly that identity, so
+another agent does not see them. `context.pack` loads three layers: the
+run's blocks, the session's (`run_id` `-`) and the agent's (`session_id` and
+`run_id` `-`), so a block written with `session_id` `-` reaches every later
+session of that agent. Never embedded, ranked or conflict-checked. Use for
+the plan, a checklist, a cursor, a resume point; for another agent, a
+session brief or the task inbox.
 
 | Op | Use it to |
 |---|---|
