@@ -1083,7 +1083,8 @@ async def test_the_cli_sweep_pages_through_its_whole_scope(capsys, monkeypatch) 
     read = ch.query_all
 
     async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        page_params.append(params or {})
+        # a copy: the page adds its FINAL read's bounds to the dict its key read was sent
+        page_params.append(dict(params or {}))
         return await read(sql, params)
 
     monkeypatch.setattr(ch, "query_all", _recording)
