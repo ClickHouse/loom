@@ -12,9 +12,10 @@ When the IdP advertises `offline_access`, loom asks for it and keeps the IdP's
 refresh token (sealed). Every Loom refresh spends it at the IdP first, so a
 user the IdP has deactivated loses Loom at their next refresh.
 
-Loom's own calls to the IdP (discovery, token, revocation, signing keys) follow
-no redirect, and with `LOOM_OIDC_BACKCHANNEL_BASE_URL` those to the issuer's
-host go to that base instead, the issuer's host in `Host` (`_route`).
+Loom's own calls to the IdP (discovery, token, revocation, its signing keys)
+follow no redirect, and with `LOOM_OIDC_BACKCHANNEL_BASE_URL` those to the
+issuer's host go to that base instead, the issuer's host in `Host` (`_route`).
+A bot trust's keys never do (`signing_key`).
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ log = logging.getLogger(__name__)
 
 # issuer -> (expiry_epoch, openid-configuration document)
 _discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
-_jwk_clients: dict[str, PyJWKClient] = {}
+# (jwks_uri, through the back-channel base) -> its client and key cache
+_jwk_clients: dict[tuple[str, bool], PyJWKClient] = {}
 
 # What an id_token may be signed with, whichever the IdP lists: asymmetric
 # algorithms only, never `none`, nor an HMAC, whose key is the client secret.
@@ -227,15 +229,17 @@ async def check_callback_issuer(iss: str) -> bool:
     return iss.rstrip("/") == str(doc["issuer"]).rstrip("/")
 
 
-def signing_key(jwks_uri: str, id_token: str) -> Any:
+def signing_key(jwks_uri: str, id_token: str, *, sign_in: bool = False) -> Any:
     """Resolve the IdP signing key for this token. Sync (PyJWKClient's fetch,
     which follows no redirect); callers run it off the event loop. One client
     per jwks_uri keeps its key cache, and an unknown `kid` refetches once, which
-    follows IdP rotation."""
-    client = _jwk_clients.get(jwks_uri)
+    follows IdP rotation. Only the sign-in provider's own keys (`sign_in`) go
+    through LOOM_OIDC_BACKCHANNEL_BASE_URL; a bot trust's are fetched from the
+    https address it names, whatever host that is."""
+    client = _jwk_clients.get((jwks_uri, sign_in))
     if client is None:
-        url, headers = _route(jwks_uri)
-        client = _jwk_clients[jwks_uri] = PyJWKClient(
+        url, headers = _route(jwks_uri) if sign_in else (jwks_uri, {})
+        client = _jwk_clients[(jwks_uri, sign_in)] = PyJWKClient(
             url, headers=headers, timeout=settings.identity_provider_timeout_s
         )
     return client.get_signing_key_from_jwt(id_token).key
@@ -263,7 +267,7 @@ async def verify_id_token(id_token: str, *, nonce: str) -> dict[str, Any]:
     failure."""
     doc = await _discover()
     algorithms = id_token_algorithms(doc)
-    key = await asyncio.to_thread(signing_key, doc["jwks_uri"], id_token)
+    key = await asyncio.to_thread(signing_key, doc["jwks_uri"], id_token, sign_in=True)
     claims: dict[str, Any] = jwt.decode(
         id_token,
         key,

@@ -4692,7 +4692,7 @@
         "oidc_backchannel_base_url": {
           "default": "",
           "type": "string",
-          "description": "Base URL (http(s), host, optional port) Loom reaches the IdP at for its own calls to the issuer's host (discovery, token, revocation, signing keys) when that host is not reachable from Loom; each call keeps the issuer's host in `Host`, and the browser still goes to the issuer. Empty = the issuer's own URLs."
+          "description": "Base URL (http(s), host, optional port) Loom reaches the IdP at for its own sign-in calls to the issuer's host (discovery, token, revocation, the keys ID tokens are checked with) when that host is not reachable from Loom; each keeps the issuer's host in `Host`. The browser still goes to the issuer, a bot trust's keys to its own address. Empty = the issuer's own URLs."
         },
         "oidc_client_id": {
           "default": "",

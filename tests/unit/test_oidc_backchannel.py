@@ -245,5 +245,26 @@ def test_a_signing_key_fetch_follows_no_redirect(key_server: str) -> None:
     key, _ = _es256()
     token = jwt.encode({"sub": "x"}, key, algorithm="ES256", headers={"kid": "k1"})
     with pytest.raises(jwt.PyJWKClientConnectionError):
-        oidc.signing_key(f"{_ISS}/moved", token)
+        oidc.signing_key(f"{_ISS}/moved", token, sign_in=True)
     assert _Keys.seen == [("/oauth/moved", "idp.example")]  # asked once, never followed
+
+
+def test_a_bot_trusts_keys_never_go_through_the_base(monkeypatch) -> None:
+    """A trust's https `jwks_uri` on the issuer's host is fetched from that
+    address, never over the base: only the sign-in's own keys are rerouted."""
+    built: list[tuple[str, dict[str, str]]] = []
+
+    class _Client:
+        def __init__(self, uri: str, *, timeout: float, headers: dict[str, str]) -> None:
+            built.append((uri, headers))
+
+        def get_signing_key_from_jwt(self, token: str) -> Any:
+            return type("K", (), {"key": "k"})()
+
+    monkeypatch.setattr(oidc, "PyJWKClient", _Client)
+    oidc.signing_key(f"{_ISS}/jwks.json", "t")  # as `machines` asks for a trust's keys
+    oidc.signing_key(f"{_ISS}/jwks.json", "t", sign_in=True)
+    assert built == [
+        (f"{_ISS}/jwks.json", {}),
+        (f"{_BASE}/oauth/jwks.json", {"Host": "idp.example"}),
+    ]

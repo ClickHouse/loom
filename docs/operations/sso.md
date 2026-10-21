@@ -710,9 +710,10 @@ as `http://idp.internal:8080`: a scheme, a host and an optional port, nothing
 else. Loom's own calls to the issuer's host then go there, with the path kept and
 the issuer's host in the `Host` header: the discovery document
 (`<base>/<issuer path>/.well-known/openid-configuration`), the token and
-revocation endpoints, and the signing keys. The browser still goes to the
-issuer's `authorization_endpoint`, an endpoint the document names on another
-host is called as it is, and the document and every ID token must still name
+revocation endpoints, and the keys ID tokens are checked with. The browser still
+goes to the issuer's `authorization_endpoint`, an endpoint the document names on
+another host is called as it is, a bot trust's keys are always fetched from the
+https address it names, and the document and every ID token must still name
 `LOOM_OIDC_ISSUER` as their issuer. None of these calls follows a redirect. A
 plain `http` base sends the client secret unencrypted: use one only on a network
 you trust.

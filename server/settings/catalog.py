@@ -219,10 +219,11 @@ class AuthSettings(BaseModel):
     oidc_client_id: str = ""
     # Client secret sent to the IdP token endpoint when exchanging the sign-in code.
     oidc_client_secret: str = ""
-    # Base URL (http(s), host, optional port) Loom reaches the IdP at for its own calls to
-    # the issuer's host (discovery, token, revocation, signing keys) when that host is not
-    # reachable from Loom; each call keeps the issuer's host in `Host`, and the browser still
-    # goes to the issuer. Empty = the issuer's own URLs.
+    # Base URL (http(s), host, optional port) Loom reaches the IdP at for its own sign-in
+    # calls to the issuer's host (discovery, token, revocation, the keys ID tokens are checked
+    # with) when that host is not reachable from Loom; each keeps the issuer's host in `Host`.
+    # The browser still goes to the issuer, a bot trust's keys to its own address. Empty =
+    # the issuer's own URLs.
     oidc_backchannel_base_url: str = ""
     # JIT provisioning: a first OIDC sign-in with no account creates a personal
     # namespace in oidc_jit_org instead of being rejected. Off = fail closed.
