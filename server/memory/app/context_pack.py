@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.naming import SENTINEL as _WM_SENTINEL
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_context import ContextBlock, ContextPackInput, ContextPackOutput
 from server.memory.api.models_lifecycle import MemoryStackInput
@@ -328,8 +329,8 @@ async def _pack_startup_recall(st: _PackState) -> None:
         org=input.org,
         namespace=input.namespace,
         agent="*",
-        user_id=input.user_id if input.user_id and input.user_id != "-" else "*",
-        session_id=input.session_id if input.session_id and input.session_id != "-" else "*",
+        user_id=named(input.user_id) or "*",
+        session_id=named(input.session_id) or "*",
     )
     k = input.top_k
     try:

@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.naming import named_one
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -130,8 +131,8 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
     ch = _get_client()
     where = "org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL"
     params: dict[str, Any] = {"o": input.org, "n": input.namespace, "lim": int(input.limit) + 1}
-    # "-" is the identity sentinel the SDKs stamp when a call names no session.
-    if input.session_id not in ("", "*", "-"):
+    # "*" and the identity sentinel "-" the SDKs stamp list every session.
+    if named_one(input.session_id):
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
     where += scope_and(request_scope(), params)

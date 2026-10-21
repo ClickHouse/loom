@@ -343,7 +343,7 @@ Update one thread's title/metadata/run_id.
 | `thread_id` | `str` | required | The thread to update; an unknown thread returns `updated=False`. |
 | `title` | `str \| None` | `None` | Handler raises 400 if all three are absent (no-op signals a caller bug). |
 | `metadata` | `dict[str, Any] \| None` | `None` | New metadata JSON, replacing the old object whole; None leaves it unchanged. |
-| `run_id` | `str \| None` | `None` | The thread's new run; None or "-" leaves it unchanged. |
+| `run_id` | `str \| None` | `None` | The thread's new run; None or "-" leaves it unchanged, "" detaches it from its run. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

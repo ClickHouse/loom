@@ -45,6 +45,18 @@ def names_session(session_id: str) -> bool:
     return session_id.strip() not in ("", SENTINEL)
 
 
+def named(value: str | None) -> str | None:
+    """An identity filter's value, or None when it names nothing: empty, or the
+    SENTINEL the SDKs stamp on every call that names no user, session or run."""
+    return value if value and value != SENTINEL else None
+
+
+def named_one(value: str | None) -> str | None:
+    """`named`, also None for "*", the reader's "every agent / session" wildcard."""
+    v = named(value)
+    return v if v != "*" else None
+
+
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 

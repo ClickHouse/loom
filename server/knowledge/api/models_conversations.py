@@ -194,7 +194,7 @@ class ConversationUpdateInput(BaseModel):
     title: str | None = None
     # New metadata JSON, replacing the old object whole; None leaves it unchanged.
     metadata: dict[str, Any] | None = None
-    # The thread's new run; None or "-" leaves it unchanged.
+    # The thread's new run; None or "-" leaves it unchanged, "" detaches it from its run.
     run_id: str | None = None
 
 

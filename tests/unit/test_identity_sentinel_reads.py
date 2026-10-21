@@ -58,7 +58,35 @@ async def test_conversation_search_reads_the_sentinels_as_unset(monkeypatch):
     assert seen == {"run_id": None, "user_id": None}
 
 
-async def test_conversation_update_keeps_the_threads_run_under_the_sentinel(monkeypatch):
+async def test_saved_message_search_keeps_its_owner_exact(monkeypatch):
+    """The saved-message search shares the search path, but its user_id is the owner."""
+    from server.knowledge.api.models_conversations import ConversationSearchSavedMessagesInput
+
+    seen: dict[str, Any] = {}
+
+    class _NoEmbedder:
+        model_name = "m"
+
+        async def embed(self, _text: str) -> list[float]:
+            raise RuntimeError("no embedder")
+
+    async def search_substring(*_a: Any, user_id: Any = None, **_k: Any):
+        seen["user_id"] = user_id
+        return []
+
+    monkeypatch.setattr(conv, "get_embedder", lambda: _NoEmbedder())
+    monkeypatch.setattr(conversation_repo, "search_substring", search_substring)
+    await conv.handle_conversation_search_saved_messages(
+        ConversationSearchSavedMessagesInput(
+            **_ID, agent="w", query="q", user_id="-", search_mode="semantic"
+        )
+    )
+    assert seen == {"user_id": "-"}
+
+
+@pytest.mark.parametrize(("sent", "stored"), [("-", "run-7"), (None, "run-7"), ("", "-")])
+async def test_conversation_update_keeps_or_clears_the_threads_run(monkeypatch, sent, stored):
+    """None and the stamped "-" keep the thread's run; "" detaches it."""
     written: list[dict[str, Any]] = []
 
     async def fetch_thread(*_a: Any) -> dict[str, Any]:
@@ -70,9 +98,9 @@ async def test_conversation_update_keeps_the_threads_run_under_the_sentinel(monk
     monkeypatch.setattr(conversation_repo, "fetch_thread", fetch_thread)
     monkeypatch.setattr(conversation_repo, "insert_thread", insert_thread)
     await conv.handle_conversation_update(
-        ConversationUpdateInput(**_ID, agent="w", thread_id="t", title="new", run_id="-")
+        ConversationUpdateInput(**_ID, agent="w", thread_id="t", title="new", run_id=sent)
     )
-    assert [(r["title"], r["run_id"]) for r in written] == [("new", "run-7")]
+    assert [(r["title"], r["run_id"]) for r in written] == [("new", stored)]
 
 
 async def test_conversation_update_with_only_the_sentinel_changes_nothing():

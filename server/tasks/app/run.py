@@ -26,7 +26,7 @@ from typing import Any
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
-from server.core.naming import SENTINEL, names_session
+from server.core.naming import SENTINEL, named_one, names_session
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
 from server.memory.app import run_feedback, run_retention
@@ -1004,7 +1004,7 @@ async def handle_run_list(input: RunListInput) -> RunListOutput:
     where: list[str] = []
     params: dict[str, Any] = {}
     # "*" and the identity sentinel "-" the SDKs stamp mean every agent / session.
-    if input.agent not in ("", "*", SENTINEL):
+    if named_one(input.agent):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent
     if names_session(input.session_id):
