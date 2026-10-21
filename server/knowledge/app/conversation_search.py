@@ -8,6 +8,7 @@ shape (no vector), not a service concern.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -16,6 +17,7 @@ from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
+from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
 
 
 class _CHClient(Protocol):
@@ -80,8 +82,8 @@ async def vector_search(
         "ns": q.namespace,
         "model": q.embedding_model,
         "q": q.query_vec,
-        "lim": int(q.top_k),
-        "excerpt": int(settings.conversation_search_excerpt_chars),
+        # Spare rows, so a turn held back below does not leave the page short.
+        "lim": int(q.top_k) + HELD_MARGIN,
         "maxd": float(q.max_distance),
     }
     # Relevance gate: drop rows beyond max_distance so a short query doesn't
@@ -115,7 +117,7 @@ async def vector_search(
     rows = await ch.query_all(
         f"""
         SELECT thread_id, msg_id, role,
-               substringUTF8(content_excerpt, 1, {{excerpt:UInt32}}) AS excerpt, ts,
+               content_excerpt AS embedded_text, ts,
                cosineDistance(embedding, {{q:Array(Float32)}}) AS distance
         FROM loom.conversation_embeddings FINAL
         WHERE {" AND ".join(where)}
@@ -125,12 +127,17 @@ async def vector_search(
         """,
         params=params,
     )
+    # The whole embedded text is read so the credential check covers all of it. A turn that
+    # reads as a credential gets no embedding row; this holds back a row an earlier build
+    # wrote for one.
+    rows = await asyncio.to_thread(without_credentials, rows, lambda r: str(r["embedded_text"]))
+    excerpt_chars = int(settings.conversation_search_excerpt_chars)
     hits = [
         ConversationHit(
             thread_id=r["thread_id"],
             msg_id=r["msg_id"],
             role=r["role"],
-            content_excerpt=r["excerpt"],
+            content_excerpt=str(r["embedded_text"])[:excerpt_chars],
             ts=r["ts"],
             distance=float(r["distance"]),
         )
@@ -138,7 +145,7 @@ async def vector_search(
     ]
     # Recency breaks exact distance ties (newest first).
     hits.sort(key=lambda h: (h.distance, _ts_desc_key(h.ts)))
-    return hits
+    return hits[: int(q.top_k)]
 
 
 def _ts_desc_key(ts: Any) -> float:

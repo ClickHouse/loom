@@ -5,15 +5,23 @@ The coordinator supplies an explicit target provider and writes the returned
 full rows only after the entire batch validates. Source rows stay untouched.
 """
 
+import asyncio
 import math
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
+from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
+from server.insights.store.provider_staging import session_chunks
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.embed_text import key_axis_text
+from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
+from server.memory.domain.sensitivity import reads_high, split_credentials
+from server.settings import settings
+from server.workers.holds import UNREAD_HOLD_S, hold_seconds
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -30,11 +38,20 @@ TEXT_COLUMNS = {
     "session_summaries": "summary_text",
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
+# Raw-passage tables: a credential-like row is staged without a vector (see rebuild_batch).
+PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
 
 class RebuildBatchError(ValueError):
     """A safe status code, never source content or an upstream provider body."""
+
+
+@dataclass(frozen=True)
+class RebuildBatchResult:
+    rows: list[dict[str, Any]]
+    rows_waiting: int
+    retry_after_s: float = 0.0
 
 
 def _source_text(
@@ -56,10 +73,88 @@ def _source_text(
     return value
 
 
+def _has_vector(row: Mapping[str, Any], columns: Sequence[str]) -> bool:
+    return any(any(row[column]) for column in columns)
+
+
+def _reembed_columns(table: str) -> list[str]:
+    return [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
+
+
+def _held_run(by_index: Mapping[int, Sequence[Mapping[str, Any]]], at: int) -> set[int]:
+    """The indexes of the stored chunks around `at` that a key held at `at` could span:
+    outward from it while a chunk has no vector (`embedding_dim = 0`), plus the first chunk
+    with one on each side. The write path holds every chunk a key covers and those chunks
+    are contiguous, so the key's header is inside this run."""
+    run: set[int] = set()
+    for step in (-1, 1):
+        n = at + step
+        while n in by_index:
+            run.add(n)
+            if any(int(chunk["embedding_dim"]) for chunk in by_index[n]):
+                break
+            n += step
+    return run
+
+
+def _held_in_session(
+    stored: Sequence[Mapping[str, Any]], page: Sequence[tuple[int, str]]
+) -> list[bool]:
+    """For each `(chunk_index, content)` page row of one session, whether it overlaps a
+    credential in the text it makes with the runs of stored chunks around the page's rows
+    (`_held_run`). The runs are joined and read once (`split_credentials`) for the whole
+    session, so a long session is not read again for every row."""
+    by_index: dict[int, list[Mapping[str, Any]]] = {}
+    for chunk in stored:
+        by_index.setdefault(int(chunk["chunk_index"]), []).append(chunk)
+    around: set[int] = set()
+    for at, _ in page:
+        around |= _held_run(by_index, at)
+    chunks = [("s", n, str(chunk["content"])) for n in sorted(around) for chunk in by_index[n]]
+    chunks.extend(("s", at, text) for at, text in page)
+    return split_credentials(chunks)[len(chunks) - len(page) :]
+
+
+async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) -> set[int]:
+    """The indexes of the memory chunks stored without a vector that are part of a key the
+    write path held (`_held_in_session`). Only a plain chunk without a vector needs its
+    session read, once per session on the page."""
+    columns = _reembed_columns("memory_chunks")
+    by_session: dict[tuple[str, str, str], list[int]] = {}
+    for index, row in enumerate(rows):
+        if (
+            row.get("tombstoned_at") is None
+            and all(column in row for column in columns)
+            and not _has_vector(row, columns)
+            and str(row.get("content") or "").strip()
+            and not reads_high(str(row["content"]))
+        ):
+            session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
+            by_session.setdefault(session, []).append(index)
+    # One write call stores at most this many chunks, so a key spans no more.
+    cap = max(
+        settings.memory_chunks_max_per_call,
+        settings.memory_set_chunk_max_chunks,
+        IMPORT_MAX_ITEMS,
+    )
+    held: set[int] = set()
+    for session, indexes in by_session.items():
+        page = [(int(rows[i]["chunk_index"]), str(rows[i]["content"])) for i in indexes]
+        ats = [at for at, _ in page]
+        stored = await session_chunks(*session, max(0, min(ats) - cap), max(ats) + cap, ch=ch)
+        # Reading a long session's text is CPU work; it runs off the event loop.
+        flags = await asyncio.to_thread(_held_in_session, stored, page)
+        held.update(index for index, hit in zip(indexes, flags, strict=True) if hit)
+    return held
+
+
 def _inputs(
-    table: str, rows: Sequence[Mapping[str, Any]], source_texts: Mapping[int, str]
+    table: str,
+    rows: Sequence[Mapping[str, Any]],
+    source_texts: Mapping[int, str],
+    held: set[int],
 ) -> tuple[list[str], list[tuple[int, str]]]:
-    columns = [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
+    columns = _reembed_columns(table)
     if not columns:
         raise RebuildBatchError("unsupported_rebuild_table")
     texts: list[str] = []
@@ -70,6 +165,8 @@ def _inputs(
         if row.get("tombstoned_at") is not None:
             continue
         text = _source_text(table, row, index, source_texts)
+        if table in PASSAGE_TABLES and (index in held or reads_high(text)):
+            continue
         for column in columns:
             value = text
             if column == "memory_key_embedding":
@@ -139,16 +236,20 @@ async def rebuild_batch(
     target: Embedder,
     *,
     source_texts: Mapping[int, str] | None = None,
-    waiting: list[int] | None = None,
-) -> list[dict[str, Any]]:
-    """Return full staged rows; never publish partial or malformed embeddings.
+    ch: _CHClient | None = None,
+) -> RebuildBatchResult:
+    """Return staged rows and the retry delay for model calls held on this page.
 
-    A row whose org's model calls are switched off is staged without a vector
-    (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
-    the rebuild completes and counts it in its progress (`rows_waiting`). Once the
-    org is back on, memory_embeddings and code_chunks / code_summaries stubs are
-    embedded again by their recovery workers; a row of any other table has no
-    vector until a write replaces it or a later rebuild covers it.
+    Model holds leave empty vectors until the coordinator retries this page.
+    Verification prevents publishing those rows before their vectors are rebuilt.
+
+    A raw passage (`PASSAGE_TABLES`) whose text reads as a credential is staged
+    without a vector and never sent to the provider; verification reads its text
+    and accepts it. A memory chunk stored without a vector is staged without one
+    too when a key touches it in the text it makes with the run of its session's
+    chunks without a vector around it: the write path held it as part of a key
+    cut across chunks. Any other row stored without a vector (a failed embed, or a row a
+    rebuild staged while its org's model calls were off) is embedded.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
@@ -157,26 +258,30 @@ async def rebuild_batch(
     """
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
-    texts, slots = _inputs(table, rows, source_texts or {})
+    held = await _held_chunks(rows, ch) if table == "memory_chunks" else set()
+    texts, slots = _inputs(table, rows, source_texts or {}, held)
     # One call carries one org's texts, of one identity: a model call names a single
     # customer and identity.
-    writers = await memory_writers(rows)
+    writers = await memory_writers([rows[index] for index, _ in slots])
     groups = await customer.groups(attribution_for(rows[index], writers) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]
     left: set[int] = set()
+    retry_after_s = 0.0
     for who, positions in groups.items():
         if await customer.switched_off(who.org):
             left.update(positions)
+            retry_after_s = max(retry_after_s, UNREAD_HOLD_S)
             continue
         for start in range(0, len(positions), _CALL_BATCH):
             part = positions[start : start + _CALL_BATCH]
             try:
                 with customer.attributed(who):
                     produced = await target.embed_many([texts[i] for i in part])
-            except customer.GROUP_HOLDS:
+            except customer.GROUP_HOLDS as error:
                 # Switched off during the batch, or the identity refused, asked to wait
                 # or unread: its rows wait.
                 left.update(positions)
+                retry_after_s = max(retry_after_s, hold_seconds(error))
                 break
             except customer.SwitchUnread:
                 raise  # not a provider failure: the step waits for the switch to be read
@@ -188,8 +293,6 @@ async def rebuild_batch(
     result = [_empty_target_row(table, row, target.model_name) for row in rows]
     for i in sorted(left):
         vectors[i] = []  # staged without a vector, as the row's empty target row has
-    if waiting is not None:
-        waiting.extend(sorted({slots[i][0] for i in left}))
     for i, ((index, column), vector) in enumerate(zip(slots, vectors, strict=True)):
         if i in left:
             continue
@@ -199,4 +302,4 @@ async def rebuild_batch(
         )
         if dimension_column in result[index]:
             result[index][dimension_column] = target.dim
-    return result
+    return RebuildBatchResult(result, len({slots[i][0] for i in left}), retry_after_s)

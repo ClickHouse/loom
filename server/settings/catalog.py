@@ -1912,7 +1912,9 @@ class KnowledgeSettings(BaseModel):
     conversation_search_min_similarity: Annotated[float, LIVE] = 0.30
     # Characters of a turn a conversation search hit or a saved-message listing shows;
     # it changes no stored row. At most 2048, the most an embedding row stores
-    # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it.
+    # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message
+    # listing reads this many characters and a fixed margin past them, and checks them
+    # all for a credential before it cuts the excerpt.
     conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled

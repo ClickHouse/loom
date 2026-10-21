@@ -133,10 +133,31 @@ async def test_a_lost_checkpoint_repeats_the_same_idempotent_page(backend):
 
 
 @pytest.mark.asyncio
-async def test_rows_staged_without_a_vector_are_counted_in_the_progress(backend):
-    backend.rebuild.return_value = runner.BatchCheckpoint(30, 10, False, rows_waiting=4)
-    updated = await runner.run_rebuild_step(row("rebuild", cursor=20, rows_waiting=1), backend)
-    assert json.loads(updated["progress"])["rows_waiting"] == 5
+async def test_a_waiting_page_keeps_its_cursor_and_counts_only_current_waiters(
+    backend, monkeypatch
+):
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock(t=1000)
+    monkeypatch.setattr(runner, "time", clock.time)
+    original = row("rebuild", cursor=20, rows_done=20, rows_waiting=1)
+    backend.rebuild.return_value = runner.BatchCheckpoint(
+        30, 10, False, rows_waiting=4, retry_after_s=600
+    )
+    updated = await runner.run_rebuild_step(original, backend)
+    held = json.loads(updated["progress"])
+    assert (held["cursor"], held["rows_done"], held["table_index"], held["phase"]) == (
+        20,
+        20,
+        0,
+        "rebuild",
+    )
+    assert held["rows_waiting"] == 4 and held["retry_at"] == 1600
+    clock.advance(600)
+    backend.rebuild.return_value = runner.BatchCheckpoint(30, 10, False)
+    complete = json.loads((await runner.run_rebuild_step(updated, backend))["progress"])
+    assert complete["cursor"] == complete["rows_done"] == 30
+    assert complete["rows_waiting"] == 0
 
 
 @pytest.mark.asyncio

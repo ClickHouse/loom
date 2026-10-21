@@ -6,9 +6,10 @@ after an effect succeeds but before its checkpoint reaches ClickHouse.
 """
 
 import json
+import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from time import time_ns
+from time import time, time_ns
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -27,8 +28,9 @@ class BatchCheckpoint:
     cursor: int
     rows_written: int
     done: bool
-    # Rows staged without a vector: their org's model calls are switched off.
+    # Held rows are staged but must be rebuilt before this page can advance.
     rows_waiting: int = 0
+    retry_after_s: float = 0.0
 
 
 class RebuildBackend(Protocol):
@@ -73,6 +75,9 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Invalid rebuild cursor")
     if progress["table_index"] > len(REBUILD_TABLES):
         raise ValueError("Invalid rebuild table index")
+    retry_at = progress.get("retry_at", 0.0)
+    if type(retry_at) not in (int, float) or not math.isfinite(retry_at) or retry_at < 0:
+        raise ValueError("Invalid rebuild retry time")
     if progress["phase"] in ("verify", "publish", "cleanup", "activate") and (
         progress["table_index"] != len(REBUILD_TABLES) or progress["cursor"] != 0
     ):
@@ -119,16 +124,21 @@ async def _rebuild_page(config_id: UUID, progress: dict[str, Any], backend: Rebu
         or result.rows_written < 0
         or type(result.rows_waiting) is not int
         or result.rows_waiting < 0
+        or type(result.retry_after_s) not in (int, float)
+        or not math.isfinite(result.retry_after_s)
+        or result.retry_after_s < 0
         or (not result.done and result.cursor == progress["cursor"])
     ):
         raise ValueError("Rebuild backend did not advance its cursor")
+    progress["table"] = REBUILD_TABLES[index]
+    progress["rows_waiting"] = result.rows_waiting
+    if result.rows_waiting:
+        progress["retry_at"] = time() + result.retry_after_s
+        return
+    progress.pop("retry_at", None)
     progress["rows_done"] += result.rows_written
-    # Staged without a vector (the org's model calls are off): shown, so an
-    # operator sees what the published space is missing.
-    progress["rows_waiting"] += result.rows_waiting
     progress["cursor"] = 0 if result.done else result.cursor
     progress["table_index"] += int(result.done)
-    progress["table"] = REBUILD_TABLES[index]
     if progress["table_index"] == len(REBUILD_TABLES):
         progress["phase"] = "verify"
 
@@ -183,6 +193,8 @@ async def run_rebuild_step(
     if row["state"] == "queued":
         return await _checkpoint(write, row, progress, "rebuilding")
     phase = progress["phase"]
+    if phase == "rebuild" and progress.get("retry_at", 0.0) > time():
+        return row
     try:
         advanced = await _advance(UUID(str(row["config_id"])), progress, backend)
     except customer.SwitchUnread:

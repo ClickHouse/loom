@@ -18,7 +18,7 @@ vulnerability, and for the deployment hardening checklist, see
 | One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
 | An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
 | Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                                                                      | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as a credential, are never embedded            | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
 | Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
 | Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
 | A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
@@ -813,19 +813,125 @@ no search leg returns it. The other reads that could serve its value follow thre
   do until the sweep. `memory.bulk_get`, like `memory.list`, serves any other row past
   `expires_at` until the expiry sweep.
 
-Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
-has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
-to a key with any `high` version, and those whose text the detector reads as `high`,
-unless asked with `include_high` (each one it then releases is audited). `bodies: "source"`
-leaves out a passage whose text reads as `high`. Other raw text is served to readers
-of the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
-row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
-`memory.get` on a `chunk:` key, the session digests `memory.digests` lists (their summary
-text; key facts that read as `high` are left out), what the session-summary draft (the
-conversation turns), the period-digest draft and the outcome judge (session digest text)
-send their model, `memory.recall`'s raw turns, and the turns `conversation.search` and
-`conversation.search_saved_messages` rank, which are embedded whatever card number, SSN or
-stated PIN they hold.
+Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as a credential (in
+this section, any high shape: a credential, card number, SSN or stated PIN) is stored as
+written with no vector, and its text is never sent to the embedder. Every read
+that ranks passages reads only those with a vector (`embedding_dim > 0`), so no search leg
+returns it.
+
+- Chunk writers: a verbatim chunk in `loom.memory_chunks` (a conversation chunk
+  `memory.set_from_messages` writes, a chunk of a long `memory.set` value, a chunk
+  `memory.import_evidence` writes) is held this way. Chunks overlap and can be cut
+  through a key, and a chunk that holds only a key's head or tail does not read as one
+  on its own. The conversation and long-value writers check the chunked text once, plus
+  one chunk past its end for a key that crosses it, in a worker thread, and also hold
+  every chunk whose character range overlaps a credential, and every chunk whose own
+  text reads as one (a chunk can start inside a word, where a pattern's word boundary
+  falls). A private-key block reads as a credential from its header to its closing line
+  (without one, through the base64 characters, line breaks and `Proc-Type:` /
+  `DEK-Info:` lines after the header, so prose ends it), so every chunk its body covers
+  is held, though a body line does not read as a key alone. A chunk of a long
+  `memory.set` value is held by the value's text, as a conversation chunk is, whatever
+  its row's label; a `low` row stays findable through its own embedding.
+  `memory.import_evidence` applies the same rule to each session's text rebuilt from its
+  imported chunks: the chunks in `chunk_index` order, each one's overlap with the chunk
+  before it dropped (a repeat of at least 50 characters; chunks with no overlap are
+  joined whole), and a gap in `chunk_index` starts a new text. Imported chunks have no
+  minimum length, so a key can run through a whole chunk; every chunk a key in the
+  rebuilt text touches is held, and a private-key block with no closing line holds every
+  chunk its body lines cover. A session written by two calls can hold two texts at one
+  index, which leaves no single text to rebuild, so each chunk of such a session is held
+  when its own text reads as a credential, or when it and a chunk at the next index that
+  it overlaps (a repeat of at least 50 characters) make a text where a key touches it;
+  two chunks with no overlap are not joined. The check reads one call's chunks only (at
+  most 256), so a key cut at the boundary between the last chunk of one call and the
+  first chunk of the next reads as a credential in neither, and both chunks are
+  embedded. `loom okf import` sends each session's chunks whole in one call, so only a
+  session of more than 256 chunks can still hit this gap. `memory.get` on a `chunk:` key
+  leaves out a neighbour with no vector, as it leaves out one that reads as a
+  credential, and audits a key read of either.
+- Digests and turns: a session digest whose text reads as a credential is written without
+  a vector. A `conversation.append` turn that reads as one is stored as written in
+  `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
+  out of vector search. `conversation.save_message` answers
+  `reason: "reads_as_credential"` for such a turn, so the saved search never indexes it.
+- Compaction: `conversation.compact` leaves such a turn out of its window: it stays live
+  and is never sent to the summarizer. A summary that reads as a credential anyway is
+  refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window
+  stays the same while its turns are live, so a retry most likely gets the same refusal.
+- Provider rebuild: a chunk, digest or turn embedding whose text reads as a credential is
+  staged without a vector, which covers one an earlier build embedded. A memory chunk stored
+  without a vector whose own text is plain is read with the run of its session's live chunks
+  around it: outward while a chunk has no vector, plus the first chunk with one on each
+  side, within the most chunks one write call stores. It stays without a vector when a key
+  in that joined text touches it. A writer holds every chunk a key covers, so the held
+  chunks are contiguous and the key's header is inside the run: a chunk its writer held as
+  part of a cut key stays held whichever page its neighbours land on, however many chunks
+  the key spans. Any other row stored without a vector (a failed embed, or a row an earlier
+  rebuild staged while its org's model calls were off) is embedded. Verification reads the
+  text of every row left empty whose source held a vector and accepts those that read as a
+  credential.
+- `loom reembed` re-embeds only rows that have a vector, and keeps a conversation turn
+  that reads as a credential on its old model, which search does not read, until
+  `--delete-old` removes it (a memory row's vector follows its sensitivity label).
+  `loom reembed --in-database` runs the embedding inside ClickHouse and cannot check the
+  text, so it re-embeds such a turn too.
+
+Chunks, digests and turn embeddings that an earlier build embedded keep their vector, so
+the reads that serve passages check their text too. That check reads each passage's own
+text, so a chunk an earlier build embedded that holds only the head or tail of a key cut
+at a chunk boundary does not read as a credential and stays searchable until it is
+rewritten:
+
+- Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
+  its model and the context pack built from search), the chunks `memory.ask` injects for
+  an identifier or a session date, the raw turns `memory.ask`'s literal completion,
+  deep-evidence pass and when-evidence pass add to its prompt (literal completion still
+  counts such a turn as a statement), the neighbours `memory.get` stitches around a `chunk:`
+  key, `conversation.search`'s hits (the vector ranking, checked on the text the vector
+  was built from, and the substring fallback the search takes when the embedder is down),
+  and `conversation.search_saved_messages`'s hits (its vector leg and its BM25 keyword leg
+  over the whole text). The `memory.ask` lookups, `conversation.search` and the saved
+  keyword leg ask for two spare rows, so up to two held-back passages do not leave a page
+  short; the chunk leg already over-fetches. The summary leg asks for none, since a spare
+  row costs a granule of vectors on every search: a held-back digest leaves it one hit
+  short.
+- Listed without the text: `conversation.list_saved_messages` shows an empty
+  `content_excerpt` for a saved message that reads as a credential (one an earlier build
+  saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
+  whose last turn reads as a credential, and an empty `title` for a title that reads as
+  one. Both listings check the excerpt they show and 1,024 characters past it, so a key
+  that crosses the cut is caught. `memory.digests` shows an empty `summary_text`, and
+  `memory.outline` an empty `headline`, for a session digest whose text reads as a
+  credential (one an earlier build wrote), and `memory.digests` leaves out key facts that
+  read as one.
+  The conversation titler never sends a turn that reads as a credential
+  to its model and never stores a title that reads as one: it marks the thread
+  `title_refused` in its metadata instead, as it does a thread whose first eight user
+  and assistant turns all read as a credential, and later passes skip it. A thread with
+  fewer such turns stays unmarked, so a plain turn that arrives later gets it titled.
+  New `metadata` from `conversation.update` or `conversation.create` replaces the mark,
+  and the titler then asks its model once more and marks the thread again.
+- Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
+  credential serves it and writes a `memory.sensitive_read` row.
+- `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
+  version, those whose text reads as a credential and chunks stored without a vector (which
+  includes a chunk holding only part of a key), unless asked with `include_high` (each one
+  it then releases is audited). `bodies: "source"` leaves out a passage whose text
+  reads as a credential.
+
+Other raw text is served to readers of the namespace, or sent to a model, as it is: a
+caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
+its own text, not by the rows it holds), the digest lines of the runs manifest, what the
+session-summary draft (the conversation turns), the period-digest draft and the outcome
+judge (session digest text) send their model,
+`memory.recall`'s raw turns, a title a caller set with `conversation.create` or
+`conversation.update` as `conversation.get` serves it, and a thread's own turns as
+`conversation.get` and `conversation.list` serve them. Those two read one thread by its id
+under the caller's read scope, as the thread's participants read their transcript, so they
+serve each turn as written. Raw text is stored as written, and erasure removes the chunk,
+digest, message and embedding rows whole.
 
 Search demotes labelled rows on questions that did not ask for a contact detail or a bank
 account (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
@@ -843,7 +949,8 @@ undone): `memory.export_evidence` (chunks, and digests with their key facts deco
 `bodies: "source"`, the observations `observe_extract` sends its model, the entity
 extractor's input, the existing memories an extraction prompt shows, the rows
 `memory.consolidate`, the profile fold and the structured profile send their models, and a
-session digest's key facts when written, listed by `memory.digests` or read by the outcome judge. The
+session digest's key facts when written, listed by `memory.digests` or read by the outcome judge, and
+the chunks, digests and turns above when written and when served. The
 `sensitivity_sweep` worker (on, daily) labels the rows from paths that skip the detector:
 a new version per row and, for `high`, tombstoned embedding rows and entity vectors. Until
 the sweep labels it, an unlabelled row that holds a high shape (a credential, card
@@ -1028,7 +1135,13 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 - A row-scoped op answers `found=False` outside the caller's scope, never 403.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
-- A `high`-sensitivity value has no embedding row.
+- A `high`-sensitivity value has no embedding row; a chunk, session digest or
+  conversation turn whose text reads as a credential is written without a vector
+  (`loom reembed --in-database` and a chunk restored with the vector an earlier build
+  gave it excepted), and the ranked reads (`memory.search`, `memory.ask`,
+  `conversation.search` and the saved search) hold back one an earlier build embedded,
+  except a chunk that holds only part of a key; see Sensitivity for the reads that serve
+  it as written.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
 

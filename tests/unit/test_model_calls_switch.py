@@ -1078,7 +1078,7 @@ def test_a_switch_gone_unread_mid_rebuild_batch_is_no_provider_failure(monkeypat
     monkeypatch.setattr(
         batch,
         "_inputs",
-        lambda table, rows, source: ([r["text"] for r in rows], [(0, "embedding")]),
+        lambda table, rows, source, held: ([r["text"] for r in rows], [(0, "embedding")]),
     )
 
     class _E:
@@ -1098,7 +1098,7 @@ def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch)
     monkeypatch.setattr(
         batch,
         "_inputs",
-        lambda table, rows, source: (
+        lambda table, rows, source, held: (
             [r["text"] for r in rows],
             [(i, "embedding") for i in range(len(rows))],
         ),
@@ -1116,11 +1116,11 @@ def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch)
 
     rows = [{"org": "acme", "text": "a"}, {"org": "beta", "text": "b"}]
     switch_off("acme")
-    waiting: list[int] = []
-    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _E(), waiting=waiting))
-    assert waiting == [0]  # the rebuild goes on: acme's row waits for its vector
-    assert (out[0]["embedding"], out[0]["embedding_dim"]) == ([], 0)
-    assert (out[1]["embedding"], out[1]["embedding_dim"]) == ([0.5, 0.5], 2)
+    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _E()))
+    assert out.rows_waiting == 1
+    assert out.retry_after_s == 30.0
+    assert (out.rows[0]["embedding"], out.rows[0]["embedding_dim"]) == ([], 0)
+    assert (out.rows[1]["embedding"], out.rows[1]["embedding_dim"]) == ([0.5, 0.5], 2)
 
 
 def test_the_dupcheck_refit_command_sends_nothing_for_a_switched_off_org(monkeypatch) -> None:

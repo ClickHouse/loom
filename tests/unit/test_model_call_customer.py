@@ -259,7 +259,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
     monkeypatch.setattr(
         batch,
         "_inputs",
-        lambda table, rows, source: (
+        lambda table, rows, source, held: (
             [r["text"] for r in rows],
             [(i, "embedding") for i in range(len(rows))],
         ),
@@ -271,7 +271,7 @@ def test_a_provider_rebuild_batch_makes_one_call_per_org(metered, monkeypatch) -
         {"org": "acme", "text": "c"},
     ]
     emb = _ByOrg()
-    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, emb))
+    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, emb)).rows
     assert emb.calls == [("acme", 2), ("beta", 1)]
     assert [r["embedding"][0] for r in out] == [1.0, 2.0, 1.0]
 

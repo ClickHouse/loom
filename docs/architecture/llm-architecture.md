@@ -416,7 +416,10 @@ gateway.
   when a healthy writer uses the same namespace and agent label. The batch embedders (the
   embedding workers, `loom reembed`, a model rebuild) hold one group at a time (`customer.GROUP_HOLDS`: an org switched off, an
   identity refused, asked to wait or unread), and write the vectors the other groups' calls
-  bought.
+  bought. A model rebuild stages those healthy vectors but retains the page's cursor and
+  counters until every held row can be rebuilt. Its saved retry deadline survives a worker
+  change and prevents provider calls before the hold ends. Verification still rejects a
+  lost source vector before publication.
 
 **Why the namespace's owner.** Some rows a job works on record no principal (a conversation
 turn, a shared-scope vector), and an agent's token has its own namespace as its home, so the

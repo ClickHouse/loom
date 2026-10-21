@@ -24,6 +24,7 @@ from typing import Any
 
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
+from server.memory.domain.sensitivity import without_credentials
 from server.settings import settings
 
 # (text-source column, vector column) per table, plus an optional secondary
@@ -285,7 +286,7 @@ async def reembed_table(
     keys = _KEYS[table]
     order = ", ".join(keys)
     after = list(start_after) if start_after else None
-    written = 0
+    written = held = 0
     while True:
         page_where, page_params = where_clause, dict(params)
         if after is not None:
@@ -301,8 +302,15 @@ async def reembed_table(
         )
         if not rows:
             break
-        left = await _rewrite_page(ch, embedder, table, [_without_key(r) for r in rows], key_only)
-        written += len(rows) - sum(left.values())
+        page = [_without_key(r) for r in rows]
+        if table == "conversation_embeddings":
+            # A turn whose text reads as a credential is never sent to the embedder: it stays
+            # on the old model, which search does not read, until --delete-old removes it. A
+            # memory row's vector follows its own sensitivity label instead.
+            page = without_credentials(page, lambda r: str(r.get(cfg["text"]) or ""))
+        held += len(rows) - len(page)
+        left = await _rewrite_page(ch, embedder, table, page, key_only)
+        written += len(page) - sum(left.values())
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)
@@ -311,9 +319,12 @@ async def reembed_table(
                 "left for later"
             )
         after = [str(x) for x in rows[-1]["_k"]]
-        log(f"  {table}: {written}/{total}  resume: {encode_resume(table, after)}")
+        progress = f"{written}/{total}" + (f" ({held} held as credentials)" if held else "")
+        log(f"  {table}: {progress}  resume: {encode_resume(table, after)}")
         if len(rows) < batch:
             break
+    if held:
+        log(f"  {table}: {held} rows whose text reads as a credential kept on the old model")
     return written
 
 

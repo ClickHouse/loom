@@ -25,7 +25,11 @@ before ClickHouse applies it; watch `system.mutations`.
   gateway is required: ClickHouse's own calls name no customer or identity and skip the
   gateway's host check. The Python path reads `--batch-size` rows at a time in sort-key
   order and prints a `resume:` token after each page; `--resume <token>` continues an
-  interrupted run there.
+  interrupted run there. The Python path never sends a conversation turn whose text reads as a
+  credential to the embedder: the row stays on the old model, which search does not read,
+  until `--delete-old` removes it. A memory row's vector follows its sensitivity label.
+  `--in-database` cannot check the text and re-embeds such a turn too; search still holds
+  it back ([sensitivity](../architecture/security.md#sensitivity)).
 - **A model of another width.** On ClickHouse 26.8 or later a fresh install codes its
   vector columns (`Quantized`), and a coded column takes vectors of the width it was
   created with only. Change to a model of another width (a multiple of 8) in Settings → Models & keys, which

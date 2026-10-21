@@ -348,7 +348,7 @@ def test_a_rebuild_stages_the_group_it_cannot_name_without_a_vector(by_org, monk
     monkeypatch.setattr(
         batch,
         "_inputs",
-        lambda table, rows, source: (
+        lambda table, rows, source, _held: (
             [r["text"] for r in rows],
             [(i, "embedding") for i in range(len(rows))],
         ),
@@ -357,7 +357,7 @@ def test_a_rebuild_stages_the_group_it_cannot_name_without_a_vector(by_org, monk
         batch, "_empty_target_row", lambda t, row, m: {**row, "embedding": [], "embedding_dim": 0}
     )
     rows = [{"org": "acme", "text": "a"}, {"org": "beta", "text": "b"}]
-    waiting: list[int] = []
-    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _ByOrg(), waiting=waiting))
-    assert waiting == [0]  # never "embedding_provider_failed": acme's row waits
-    assert (out[1]["embedding"], out[1]["embedding_dim"]) == ([0.5, 0.5], 2)
+    out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _ByOrg()))
+    assert out.rows_waiting == 1
+    assert out.retry_after_s == 30.0
+    assert (out.rows[1]["embedding"], out.rows[1]["embedding_dim"]) == ([0.5, 0.5], 2)

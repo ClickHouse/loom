@@ -147,9 +147,9 @@ def test_chunk_lines_carry_the_turn_clock(monkeypatch) -> None:
 
     def _split(text: str):
         captured["text"] = text
-        return [], 0
+        return [], [], 0
 
-    monkeypatch.setattr(chunk_projection, "chunk_text_with_truncation", _split)
+    monkeypatch.setattr(chunk_projection, "chunk_text_with_ranges", _split)
     inp = MemorySetFromMessagesInput(
         org="o", namespace="n", agent="a", messages=[{"role": "user", "content": "x"}]
     )

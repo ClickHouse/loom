@@ -19,6 +19,7 @@ from server.knowledge.api.models_conversations import (
     ConversationUnsaveMessageInput,
 )
 from server.knowledge.store.conversations import StoredEmbedding, StoredMessage
+from tests.unit._fake_credentials import OPENAI_KEY
 
 
 @pytest.fixture(autouse=True)
@@ -529,14 +530,39 @@ def test_snippet_centres_a_deep_match_and_keeps_an_early_one_at_the_start() -> N
     assert _snippet(early, ["inc"]).startswith("INC-48213")
 
 
-def test_the_saved_message_cuts_follow_a_live_excerpt_length(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_the_saved_message_cuts_follow_a_live_excerpt_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A saved listing's excerpt and a lexical hit's snippet read
     conversation_search_excerpt_chars per call."""
-    from server.knowledge.app.conversations import _excerpt, _snippet
+    from server.knowledge.app import conversations
+    from server.knowledge.app.conversations import _snippet
+    from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS
+    from server.knowledge.store import conversations as conversation_repo
     from server.settings import settings
 
+    listed: list[object] = []
+
+    async def fake_list(*_a: object, **kw: object) -> list[dict[str, object]]:
+        listed.append(kw["listed"])
+        return [
+            {
+                "thread_id": "c-1",
+                "msg_id": "m-1",
+                "role": "user",
+                "content": "x" * 50,
+                "saved_at": _TS,
+            }
+        ]
+
     monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 12)
-    assert _excerpt("x" * 50) == "x" * 12 + "…"
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    out = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(org="o", namespace="n", agent="client", user_id="u-1")
+    )
+    assert [r.content_excerpt for r in out.rows] == ["x" * 12 + "…"]
+    assert listed == [12 + LISTED_MARGIN_CHARS]
     window = _snippet("filler " * 400 + "ticket INC-48213 closed", ["inc"])
     assert window.startswith("…") and len(window.strip("…")) == 12
 
@@ -550,6 +576,43 @@ def test_saved_message_ops_are_registered_with_their_roles() -> None:
     assert save.required_role is Role.WRITER
     assert save.idempotent is True
     assert search.required_role is Role.VIEWER
+
+
+@pytest.mark.asyncio
+async def test_a_new_turn_that_reads_as_a_credential_is_refused_and_not_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import conversations
+
+    store = _Store(monkeypatch, [None], _embedding(current=0))
+    out = await conversations.handle_conversation_save_message(
+        _save_input().model_copy(update={"content": f"my key is {OPENAI_KEY}"})
+    )
+    assert (out.indexed, out.reason) == (False, "reads_as_credential")
+    assert store.appends == [] and store.embeddings == [] and store.marked == []
+
+
+@pytest.mark.asyncio
+async def test_a_stored_turn_that_reads_as_a_credential_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stored text wins over the request's: a logged turn holding a key is never
+    embedded, so the saved search could never find it."""
+    from server.knowledge.app import conversations
+
+    stored = StoredMessage(
+        role="assistant",
+        content=f"use {OPENAI_KEY}",
+        run_id="run-7",
+        ts=_TS,
+        owners=("-",),
+        tombstoned=False,
+        unsaved=1,
+    )
+    store = _Store(monkeypatch, [stored], _embedding(current=0))
+    out = await conversations.handle_conversation_save_message(_save_input())
+    assert (out.indexed, out.reason) == (False, "reads_as_credential")
+    assert store.marked == [] and store.embeddings == []
 
 
 @pytest.mark.asyncio
@@ -726,3 +789,117 @@ async def test_saved_status_answers_in_the_order_asked_without_repeats(
         )
     )
     assert out.saved == ["m-3", "m-1"]
+
+
+@pytest.mark.asyncio
+async def test_the_keyword_leg_holds_back_a_saved_message_that_reads_as_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A message an earlier build saved with a key in it is never a keyword hit; the leg
+    asks for spare rows so the page is not left short."""
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+    from server.memory.domain.sensitivity import HELD_MARGIN
+
+    at = datetime(2026, 1, 1, 12, 0, 0)
+    asked: list[int] = []
+
+    def row(mid: str, content: str) -> dict[str, Any]:
+        return {
+            "thread_id": "c-1",
+            "msg_id": mid,
+            "role": "user",
+            "content": content,
+            "saved_at": at,
+        }
+
+    async def fake_lexical(*_a: Any, limit: int, **_kw: Any) -> list[dict[str, Any]]:
+        asked.append(limit)
+        return [
+            row("m-key", f"deploy key {OPENAI_KEY}"),
+            row("m-1", "deploy notes"),
+            row("m-2", "deploy"),
+        ]
+
+    monkeypatch.setattr(conversation_repo, "lexical_saved_messages", fake_lexical)
+    out = await conversations.handle_conversation_search_saved_messages(
+        ConversationSearchSavedMessagesInput(
+            org="o",
+            namespace="n",
+            agent="client",
+            user_id="u-1",
+            query="deploy",
+            search_mode="lexical",
+            top_k=2,
+        )
+    )
+    assert [h.message_id for h in out.hits] == ["m-1", "m-2"]
+    assert asked == [2 + HELD_MARGIN]
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_shows_no_text_of_a_message_that_reads_as_a_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import conversations
+    from server.knowledge.store import conversations as conversation_repo
+
+    at = datetime(2026, 1, 1, 12, 0, 0)
+
+    async def fake_list(*_a: object, **_kw: object) -> list[dict[str, object]]:
+        return [
+            {
+                "thread_id": "c-1",
+                "msg_id": "m-k",
+                "role": "user",
+                "content": OPENAI_KEY,
+                "saved_at": at,
+            },
+            {"thread_id": "c-1", "msg_id": "m-1", "role": "user", "content": "a", "saved_at": at},
+        ]
+
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    out = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(org="o", namespace="n", agent="client", user_id="u-1")
+    )
+    assert [(r.message_id, r.content_excerpt) for r in out.rows] == [("m-k", ""), ("m-1", "a")]
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_checks_past_an_excerpt_longer_than_the_margin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prefix the listing reads follows conversation_search_excerpt_chars: a long
+    excerpt still ends in '…', and a key crossing the 1,500-character cut is caught whole."""
+    from server.knowledge.app import conversations
+    from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS
+    from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 1500)
+    at = datetime(2026, 1, 1, 12, 0, 0)
+    messages = {"m-long": "a" * 3000, "m-key": "a" * 1480 + f" {OPENAI_KEY} " + "a" * 2000}
+    asked: list[object] = []
+
+    async def fake_list(*_a: object, listed: int, **_kw: object) -> list[dict[str, object]]:
+        asked.append(listed)
+        return [
+            {
+                "thread_id": "c-1",
+                "msg_id": mid,
+                "role": "user",
+                "content": text[:listed],
+                "saved_at": at,
+            }
+            for mid, text in messages.items()
+        ]
+
+    monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
+    out = await conversations.handle_conversation_list_saved_messages(
+        ConversationListSavedMessagesInput(org="o", namespace="n", agent="client", user_id="u-1")
+    )
+    assert asked == [1500 + LISTED_MARGIN_CHARS]
+    assert [(r.message_id, r.content_excerpt) for r in out.rows] == [
+        ("m-long", "a" * 1500 + "…"),
+        ("m-key", ""),
+    ]
