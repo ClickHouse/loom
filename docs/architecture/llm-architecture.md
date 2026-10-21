@@ -405,12 +405,16 @@ gateway.
   lasts (`server/workers/holds.py`), so its batch goes to other identities' work instead of
   filling again with work that would only be held. The extraction queue marks the request
   `held` with the reason until the hold ends, and claims none of that enqueuer's other
-  requests in the namespace meanwhile; the profile fold leaves the identity out of its scan;
-  the embedding worker leaves the held stubs out and, while any identity is held,
-  reads four times its batch and drops the held identities' stubs before calling. The batch
-  embedders (the embedding workers, `loom reembed`, a model rebuild) hold one group at a time
-  (`customer.GROUP_HOLDS`: an org switched off, an identity refused, asked to wait or unread),
-  and write the vectors the other groups' calls bought.
+  requests in the namespace meanwhile (by its `enqueued_by` column). The profile fold reads
+  four times its slots, gives a held identity's slot to the next one read, and leaves it out
+  of its scan. The embedding worker reads the stubs of a held writer's (org, namespace,
+  agent, user_id) groups after every other stub and leaves the held writer's rows among them
+  uncalled, so a neighbour under the same label is embedded when the batch has room; the
+  groups are a handful of parameters, and every list it binds is cut to what one ClickHouse
+  form field carries. The batch embedders (the embedding workers, `loom reembed`, a model
+  rebuild) hold one group at a time (`customer.GROUP_HOLDS`: an org switched off, an
+  identity refused, asked to wait or unread), and write the vectors the other groups' calls
+  bought.
 
 **Why the namespace's owner.** Some rows a job works on record no principal (a conversation
 turn, a shared-scope vector), and an agent's token has its own namespace as its home, so the
