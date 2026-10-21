@@ -295,8 +295,8 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
     failure never fails boot; the scalar settings apply.
 
 Shutdown reverses this: stop the loops, drain the workers (10 s), release the lease, drain
-the Langfuse queue, the event emitter and the deferred writes (conflict judges, exposure
-rows, after-write projections, the events stream). The ClickHouse client disconnects last.
+the Langfuse queue, the event emitter and the deferred writes (exposure rows,
+after-write projections, the events stream). The ClickHouse client disconnects last.
 
 `/v1/health` reports ClickHouse reachability and a `problems` list (for example a fake
 provider). It answers 503 only when ClickHouse is down;

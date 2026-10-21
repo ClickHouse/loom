@@ -356,7 +356,6 @@ def test_marked_fields_are_unlisted_but_still_accepted():
         "code.search": {"query", "expand", "namespaces", "top_k", "cursor"},
         "memory.set": {
             "dry_run",
-            "await_verdict",
             "ttl_seconds",
             "on_expire",
             "entities",

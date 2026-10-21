@@ -95,6 +95,7 @@ async def test_pipeline_entry_carries_the_grade(monkeypatch: pytest.MonkeyPatch)
 
         class _Out:
             written: list = []
+            skipped_blacklisted: list = []
 
         return _Out()
 
@@ -301,3 +302,42 @@ def test_consolidation_keeps_the_grade_of_the_earliest_anchor() -> None:
     ]
     assert _confidence_of_earliest_anchor(cluster) == 0.9
     assert _confidence_of_earliest_anchor([{"temporal_anchor": None}]) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_an_extracted_fact_with_a_huge_entity_reaches_the_bulk_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The extractor's reply names one 32 KB entity: parse keeps it and the pipeline
+    writes the fact with it, instead of refusing the batch."""
+    import json
+
+    from server.memory.app import bulk_set as bulk_set_mod
+    from server.memory.app.extract.parse import _parse_fact_list
+    from server.memory.app.pipeline import _step_bulk_write
+    from server.memory.app.pipeline_state import WorkflowState
+
+    huge = "rome" + " district" * 3600
+    reply = {"facts": [{"key": "user/home", "value": "lives in Rome", "entities": [huge]}]}
+    (fact,) = _parse_fact_list(json.dumps(reply))
+    captured: list = []
+
+    async def _capture(bulk_input):
+        captured.append(bulk_input)
+
+        class _Out:
+            written: list = []
+            skipped_blacklisted: list = []
+
+        return _Out()
+
+    monkeypatch.setattr(bulk_set_mod, "handle_memory_bulk_set", _capture)
+    state = WorkflowState(
+        org="dev",
+        namespace="ns",
+        agent="a",
+        observation_date="2023-05-07",
+        extracted_facts=[{"key": fact.memory_key, "value": fact.value, "entities": fact.entities}],
+    )
+    await _step_bulk_write(state, {})
+    assert captured[0].entries[0].entities == [huge.lower()]

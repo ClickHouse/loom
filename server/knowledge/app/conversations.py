@@ -746,7 +746,7 @@ def _thread_reader(agent: str) -> str | None:
     """The agent filter for one thread's reads: "*" or "-" reads every agent's turns
     (a caller that has only the thread id: a search hit, a memory's source), as
     conversation.search reads them."""
-    return named(agent, wildcard=True)
+    return None if agent in ("*", SENTINEL) else agent
 
 
 async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGetOutput:

@@ -85,6 +85,25 @@ def _key_absent(provider: str) -> bool:
     return bool(env) and not provider_key(provider) and not gateway.exchanging()
 
 
+def log_conflict_resolver_resolution() -> None:
+    """One boot WARN when the conflict resolver is on but its model's key is missing:
+    writes are marked and wait, unjudged, for the key."""
+    import logging
+
+    from server.settings import settings
+
+    provider = settings.conflict_resolver_provider()
+    if not settings.memory_conflict_resolver_enabled or not provider_key_missing(provider):
+        return
+    logging.getLogger(__name__).warning(
+        "conflict resolver: its model %s runs on %s and %s is not set; writes are marked "
+        "and judged once the key is set",
+        settings.conflict_resolver_model,
+        provider,
+        KEY_ENV_BY_PROVIDER.get(provider, "its key"),
+    )
+
+
 def provider_key_missing(provider: str) -> bool:
     """True when a keyed provider's API key is absent — the condition under
     which `_build_llm_client` silently falls back to the fake client.
@@ -213,6 +232,19 @@ def get_llm_client_for_model(model: str | None) -> LLMClient:
     if wrapped is not None:
         return wrapped
     return _remember(_wrapped_cache, wkey, _with_fallback(_override_client(model), model))
+
+
+def get_llm_client_without_fallback(model: str, *, reasoning_effort: str = "") -> LLMClient:
+    """The client for `model` alone, never wrapped in LOOM_LLM_FALLBACK_MODEL: for a
+    stage whose thresholds were measured on this model, where another model's answer
+    would be acted on as if it were this one's. `reasoning_effort` asks an OpenAI
+    model for that effort (at least); other providers have no such field."""
+    client = _override_client(model)
+    if reasoning_effort and client.provider == "openai":
+        from server.llm.openai import OpenAILLMClient
+
+        return OpenAILLMClient(model=model, reasoning_effort=reasoning_effort)
+    return client
 
 
 # Wrapped (fallback-aware) override clients, keyed by (model, fallback_model).

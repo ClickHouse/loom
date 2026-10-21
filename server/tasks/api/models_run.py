@@ -1,8 +1,9 @@
 """Run ledger — one agent execution as a first-class object.
 
 `run.begin` opens a run (goal, original request, expected outcome) and hands
-back a `run_id` the agent threads through `memory.set`, `memory.ask`,
-`memory.search` and `observe.record`. `run.complete` closes it with the
+back a `run_id` the agent passes on its writes (`memory.set`, `memory.update`,
+`observe.record`); its reads are labelled through `X-Loom-Run-Id` or the MCP
+session's run, since a body `run_id` on a read filters. `run.complete` closes it with the
 terminal status, the memories the agent RELIED on (`memories_used` → a `used`
 usage event, distinct from `recall` = returned) and an outcome that feeds the
 evidence counters. `run.get` / `run.list` render the story: goal → recalled →

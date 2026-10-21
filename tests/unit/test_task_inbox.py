@@ -12,6 +12,7 @@ task.updates. Loom stores the trust mode the owner sets and never moves it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -25,6 +26,7 @@ from server.tasks.api import ops_task
 from server.tasks.app import common, inboxes, reads, sweep, transitions, trust
 from server.tasks.store import repo as repo
 from server.tasks.store.repo import ClaimResult, KeeperLeases, resolve_policy
+from tests.unit.claims_fake import memory_claims
 
 ORG = "acme"
 
@@ -52,11 +54,21 @@ class FakeLeases:
         self.rows: dict[str, dict[str, Any]] = {}
         self.deleted: list[str] = []
 
-    async def ensure_row(self, task_id: str, org: str, inbox: str, fence: int) -> None:
-        self.rows.setdefault(task_id, {"owner": "", "fence": fence, "lease_until": None})
+    async def ensure_row(
+        self, task_id: str, org: str, inbox: str, fence: int, *, reset_idle: bool = False
+    ) -> bool:
+        if task_id not in self.rows:
+            self.rows[task_id] = {"owner": "", "fence": fence, "lease_until": None}
+            return True
+        row = self.rows[task_id]
+        if reset_idle and row["owner"] == "" and row["fence"] < fence:
+            row["fence"] = fence
+        return False
 
     async def try_claim(self, task_id, claimant, *, expected_fence, lease_until) -> ClaimResult:
-        row = self.rows.setdefault(task_id, {"owner": "", "fence": expected_fence})
+        row = self.rows.get(task_id)
+        if row is None:  # no lease row: nothing to win
+            return ClaimResult(False, expected_fence, "")
         expired = row.get("lease_until") is not None and row["lease_until"] < datetime.now(
             UTC
         ).replace(tzinfo=None)
@@ -64,6 +76,12 @@ class FakeLeases:
             row.update({"owner": claimant, "fence": expected_fence + 1, "lease_until": lease_until})
             return ClaimResult(True, row["fence"], claimant)
         return ClaimResult(False, row["fence"], row["owner"])
+
+    async def give_back(self, task_id, holder, *, held_fence, fence) -> bool:
+        row = self.rows.get(task_id)
+        if row is not None and row["owner"] == holder and row["fence"] == held_fence:
+            row.update({"owner": "", "fence": fence, "lease_until": None})
+        return row is not None and row["owner"] == "" and row["fence"] == fence
 
     async def set_owner(self, task_id, *, fence, owner, lease_until, status) -> bool:
         row = self.rows.get(task_id)
@@ -75,6 +93,12 @@ class FakeLeases:
     async def delete(self, task_id: str) -> None:
         self.rows.pop(task_id, None)
         self.deleted.append(task_id)
+
+    async def delete_held(self, task_id: str, holder: str, *, fence: int) -> bool:
+        row = self.rows.get(task_id)
+        if row is not None and row["owner"] == holder and row["fence"] == fence:
+            await self.delete(task_id)
+        return task_id not in self.rows
 
 
 class FakeRepo:
@@ -138,13 +162,24 @@ class FakeRepo:
         return None if row is None or row["org"] != org or row.get("is_deleted") else dict(row)
 
     async def fetch_task_by_idempotency_key(self, org, inbox, key):
+        await asyncio.sleep(0)  # a racing create runs meanwhile
         for r in self.tasks.values():
             if r["org"] == org and r["inbox"] == inbox and r.get("idempotency_key") == key:
                 return dict(r)
         return None
 
-    async def insert_task_version(self, row, *, dedup_token=""):
+    async def insert_task_version(self, row):
         self.tasks[str(row["task_id"])] = dict(row)
+
+    async def insert_created_task(self, row):
+        # Storage dedups the key's create token: a second task under the key is dropped.
+        prior = await self.fetch_task_by_idempotency_key(
+            row["org"], row["inbox"], row["idempotency_key"]
+        )
+        if prior is not None:
+            return prior
+        await self.insert_task_version(row)
+        return dict(row)
 
     async def list_tasks(
         self,
@@ -208,6 +243,15 @@ class FakeRepo:
                 stale.append({**r, "after_s": after})
         return {"expired": expired, "resume": resume, "stale_triage": stale}
 
+    async def lease_strays(self, *, before, terminal, limit):
+        # The todo and triage tasks with no lease row; no stray rows.
+        missing = [
+            {"task_id": tid, "org": r["org"], "inbox": r["inbox"], "fence": int(r["fence"])}
+            for tid, r in self.tasks.items()
+            if r["status"] in ("todo", "triage") and tid not in self.leases.rows
+        ]
+        return missing[:limit], []
+
     async def inbox_counts(self, org, *, namespace=None, inbox=None):
         out: dict[tuple[str, str, str], int] = {}
         for r in self.tasks.values():
@@ -228,7 +272,7 @@ class FakeRepo:
     async def insert_event(self, row):
         self.events.append(dict(row))
 
-    async def task_history(self, org, task_id, *, limit=500):
+    async def task_history(self, org, task_id, *, limit=500, consistent=False):
         return [e for e in self.events if e["org"] == org and e["task_id"] == str(task_id)][:limit]
 
     async def events_since(
@@ -263,6 +307,7 @@ class FakeRepo:
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
     fr = FakeRepo()
     patch_handlers(monkeypatch, "repo", fr)
+    memory_claims(monkeypatch)
     monkeypatch.setattr("server.tasks.domain.cursors.LAG_SECONDS", -1)  # the fake has no replicas
     return fr
 
@@ -465,6 +510,152 @@ async def test_idempotency_key_returns_the_first_task(fake: FakeRepo) -> None:
     a = await _post(fake, idempotency_key="k1")
     b = await _post(fake, idempotency_key="k1", title="retried")
     assert a.created and not b.created and a.task.task_id == b.task.task_id
+
+
+@pytest.mark.asyncio
+async def test_a_create_cut_off_before_its_lease_row_is_claimable_after_one_reconcile(
+    fake: FakeRepo,
+) -> None:
+    """A create cut off after its task row: a retry writes no lease row (it reads a
+    status it cannot hold), and the lease reconcile writes the missing one."""
+    from server.tasks.app import sweep
+
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    tid = a.task.task_id
+    fake.leases.rows.pop(tid)
+    await _post(fake, idempotency_key="k1")
+    assert tid not in fake.leases.rows
+    assert await sweep.reconcile_leases(datetime.now(UTC).replace(tzinfo=None), limit=10) == 1
+    assert fake.leases.rows[tid]["owner"] == "" and fake.leases.rows[tid]["fence"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_retried_create_writes_the_created_event_a_cut_off_create_left_out(
+    fake: FakeRepo,
+) -> None:
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    tid = a.task.task_id
+    first = fake.events.pop()
+    assert first["event"] == "created"
+    # A create cut off after its task row: the retry logs the created event it missed,
+    # as the create would have, and only once.
+    await _post(fake, idempotency_key="k1")
+    await _post(fake, idempotency_key="k1")
+    events = [e for e in fake.events if e["task_id"] == tid]
+    assert [e["event"] for e in events] == ["created"]
+    keep = ("from_status", "to_status", "actor", "agent", "from_subject", "fence")
+    assert {k: events[0][k] for k in keep} == {k: first[k] for k in keep}
+    # A claimed task is not a create's to finish.
+    fake.events.clear()
+    fake.tasks[tid].update(status="in_progress", fence=1)
+    await _post(fake, idempotency_key="k1")
+    assert fake.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_backfilled_created_event_with_nothing_after_it_reaches_cursor_readers(
+    fake: FakeRepo,
+) -> None:
+    # A reader whose cursor already passed the task's version must still be handed the
+    # created event the retry writes, so it gets a fresh seq.
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    fake.events.clear()
+    cursor = await fake.server_version()
+    await _post(fake, idempotency_key="k1")
+    delivered = await fake.events_since(ORG, since_seq=cursor, lag_s=0)
+    assert [(e["event"], e["task_id"]) for e in delivered] == [("created", a.task.task_id)]
+
+
+@pytest.mark.asyncio
+async def test_a_create_that_lost_the_insert_race_leaves_the_event_to_the_winner(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The winner stored its task and is still running: it writes its own created event.
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1")
+    fake.events.clear()
+
+    async def missed(org, inbox, key):
+        return None  # the loser's lease ran out, so its lookup ran before the winner stored
+
+    winner = dict(fake.tasks[a.task.task_id])
+
+    async def lost(row):
+        return dict(winner)
+
+    monkeypatch.setattr(fake, "fetch_task_by_idempotency_key", missed)
+    monkeypatch.setattr(fake, "insert_created_task", lost)
+    b = await _post(fake, idempotency_key="k1", title="raced")
+    assert not b.created and b.task.task_id == a.task.task_id
+    assert fake.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_backfilled_created_event_lands_before_the_events_logged_since(
+    fake: FakeRepo,
+) -> None:
+    # The triaged task was accepted before the retry came: the created event it gets
+    # lands the task in triage, ahead of the accept.
+    await _register(fake)
+    a = await _post(fake, idempotency_key="k1", title="new kind")
+    assert a.task.status == "triage"
+    fake.events.clear()
+    await transitions.handle_task_accept(
+        wire.TaskAcceptInput(**_caller("private", "private-bot"), task_id=a.task.task_id)
+    )
+    await _post(fake, idempotency_key="k1")
+    events = sorted(fake.events, key=lambda e: e["seq"])
+    assert [(e["event"], e["from_status"], e["to_status"]) for e in events] == [
+        ("created", "", "triage"),
+        ("accepted", "triage", "todo"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_racing_creates_with_one_key_answer_with_the_task_that_landed(
+    fake: FakeRepo,
+) -> None:
+    await _register(fake)
+    # The key lookup yields, so without the key's lease both creates would
+    # miss it before either stored its task.
+    a, b = await asyncio.gather(
+        _post(fake, idempotency_key="k1"), _post(fake, idempotency_key="k1", title="raced")
+    )
+    assert a.created and not b.created and b.task.task_id == a.task.task_id
+    assert len(fake.tasks) == 1
+    assert [e["task_id"] for e in fake.events] == [a.task.task_id]
+    assert list(fake.leases.rows) == [a.task.task_id]
+
+
+@pytest.mark.asyncio
+async def test_a_create_whose_key_lease_is_held_or_unavailable_stores_nothing(
+    fake: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.core import leases
+    from server.core.errors import PreconditionFailedError
+
+    await _register(fake)
+
+    async def still_held(name: str, **_: Any) -> None:
+        return None  # another create kept the key past the wait
+
+    monkeypatch.setattr(leases, "take", still_held)
+    with pytest.raises(PreconditionFailedError):
+        await _post(fake, idempotency_key="k1")
+
+    async def keeper_down(name: str, **_: Any) -> None:
+        raise leases.LeaseUnavailable("the lease store did not answer", operation=name)
+
+    monkeypatch.setattr(leases, "take", keeper_down)
+    with pytest.raises(leases.LeaseUnavailable) as e:
+        await _post(fake, idempotency_key="k1")
+    assert e.value.status_code == 503
+    assert not fake.tasks and not fake.events
+    # a create without a key takes no lease
+    assert (await _post(fake)).created
 
 
 # ------------------------------------------------------------ accept + promotion

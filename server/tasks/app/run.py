@@ -867,14 +867,13 @@ _GRADE_SESSION_LIMIT = 200
 
 async def _runs_to_grade(ch: Any, input: RunGradeInput) -> list[RunLedgerRow]:
     """The run addressed by `run_id`, or the session's runs, newest first."""
-    run_id = input.run_id
     return await runs_store.runs_to_grade(
         ch,
         input.org,
         input.namespace,
-        run_id=run_id,
+        run_id=input.run_id,
         session_id=input.session_id,
-        limit=1 if run_id else _GRADE_SESSION_LIMIT,
+        limit=1 if input.run_id else _GRADE_SESSION_LIMIT,
     )
 
 

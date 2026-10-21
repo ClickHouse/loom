@@ -12,7 +12,7 @@ from server.llm.client import LLMResult
 EXTRACTION_PROMPT_VERSION = "extraction-v1"
 
 # Per-fact cap on `derived` operands. Shared with the derived_facts writer
-# (memory/app/entity_projections.py) so the extractor never emits more
+# (memory/app/triple_projections.py) so the extractor never emits more
 # than the writer keeps (a mismatch silently drops the extra operands).
 MAX_DERIVED_PER_FACT = 12
 

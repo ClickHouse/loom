@@ -240,6 +240,25 @@ Link a memory to one of the namespace's registered categories.
 | `assigned` | `bool` | True when the link was written; False when it was rescinded. |
 | `category_id` | `str` | The id of the named category. |
 
+## `memory.auto_retirements`
+
+The memories Loom retired on its own (the conflict resolver, `newest_wins`), newest record first, inside the request's read scope.
+
+`POST /v1/memory.auto_retirements` · MCP `loom_memory_auto_retirements` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `since` | `datetime \| None` | `None` | Only records written at or after this time; unset, the last 30 days. |
+| `limit` | `int` | `50` | Retired memories per page, 1 to 200 (default 50). |
+| `cursor` | `str \| None` | `None` | The `next_cursor` of the previous page; unset, the newest page. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `rows` | `list[MemoryAutoRetirement]` | One row per retired memory, newest record first. |
+| `next_cursor` | `str \| None` | Pass back as `cursor` for the next, older page; None when this page is the last. |
+
 ## `memory.backlinks`
 
 What points at one memory: its version chain, the digests whose lineage names it, the typed links in and out of it, how many evidence turns support it, and the memories that share its entities.
@@ -341,6 +360,7 @@ Insert many memory entries in one batched CH insert.
 | `written` | `list[_BulkSetResult]` | One result per entry, in order: key, version (0 when not inserted) and verdict. |
 | `skipped_pinned` | `list[str]` | Keys whose live row is pinned: skipped (result version=0) rather than overwritten, since overwriting would also unpin (entries default pinned=False). |
 | `skipped_locked` | `list[str]` | Keys whose live row is locked read_only: skipped (result version=0), where memory.set would answer 423 LOCKED. |
+| `skipped_blacklisted` | `list[str]` | Keys whose entry the blacklist refused: not written (result version=0), where memory.set would answer 422 BLACKLISTED. |
 | `merged` | `list[str]` | Conflict verdicts, the same four memory.set produces: canonical restatement of an existing row → not inserted, existing row reinforced; close to a pinned peer → not inserted; same fact in other words → inserted as status=duplicate… |
 | `value_updates_linked` | `int` | Older rows marked superseded by a value update in this batch. |
 | `rejected_pinned` | `list[str]` | Keys not inserted because they are too close to a pinned row. |
@@ -808,11 +828,13 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `actor` | `str` | Who wrote the live version (`human:<subject>` / `process:<subject>`) and how the content entered memory (asserted \| extracted \| observed \| derived \| imported \| external). |
 | `source_class` | `str` | How the content entered memory: asserted \| extracted \| observed \| derived \| imported \| external; '' when not found. |
 | `agent` | `str` | Writer agent of the resolved row. |
+| `user_id` | `str` | The resolved row's user and session: a write back to this row (restore, verify) names them, since a key repeats across users and sessions. |
+| `session_id` | `str` | The session or conversation the row belongs to; `'-'` for none. |
 | `status` | `str \| None` | Lifecycle state from loom.memory.status. |
 | `code` | `list[CodeLink]` | The code this memory is linked to: each link's path, symbol, state (`fresh`, `moved`, `changed`, `unresolved` or `missing`) and the `revise` policy's suggestion. |
 | `superseded_by` | `str` | For a `status='superseded'` row, the memory_id of the row that replaced it ('' otherwise) — the bundle turns it into a `supersedes` edge on the newer row. |
-| `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read — `pending` while a deferred judge still holds it, else derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
-| `conflict_verdict` | `str` | pending \| clear \| conflict \| duplicate \| superseded, as described above. |
+| `duplicate_of` | `str` | The row this one duplicates (status='duplicate'), and the verdict the row shows on read, derived from `status` (active → clear, conflicted → conflict, duplicate, superseded). |
+| `conflict_verdict` | `str` | clear \| conflict \| duplicate \| superseded, as described above. |
 | `canonical_key` | `str \| None` | For a `status='duplicate'` row, the memory_key of the canonical that answers for it ("" when that row is no longer active — the orphan case `memory.resolve_orphan_duplicates` repairs). |
 | `resolved_from` | `str \| None` | On an answer given by another row, the memory_key the caller asked for: a `follow: true` read that served a duplicate's canonical, or a memory.bulk_get chunk id answered by its parent fact. |
 | `tags` | `list[str]` | Surfaced so an in-place tag edit can preserve existing tags/entities rather than clobbering them. |
@@ -842,6 +864,7 @@ Fetch a memory by its UUID (not memory_key).
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `memory_id` | `str` | required | UUID returned by memory.set |
 | `as_of` | `datetime \| None` | `None` | As-of replay filter — see MemoryGetInput.as_of. |
+| `omit_high_value` | `bool` | `False` | True answers a 'high' row without its value or hash, and audits no sensitive read. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1291,6 +1314,7 @@ WHAT: Save a standing fact and protect it.
 | `value` | `dict[str, Any] \| list[Any] \| str \| int \| float \| bool` | required | The fact itself: plain text, or a JSON object, list or scalar. |
 | `tags` | `list[str]` | *(computed)* | Flexible classification, filterable at recall via MemorySearchInput.tags; per-tag retention/dedup/conflict policy via NamespaceRegisterInput.tag_registry. |
 | `entities` | `list[str]` | *(computed)* | Explicit entities for a point write. |
+| `relations` | `list[tuple[str, str, str]]` | *(computed)* | The (subject, relation, object) facts the value states, written to the fact graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued fact closes the older one it replaces and, under `newest_wins`, retires the rows… |
 | `files` | `list[str] \| None` | `None` | The repo files this memory is about (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `confidence` | `float` | `1.0` | The writer's own confidence in the fact, 0..1 (1.0 = certain). |
 | `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted), and one starting with `memory.delete_version:` is refused. |
@@ -1308,7 +1332,6 @@ WHAT: Save a standing fact and protect it.
 | `char_limit` | `int \| None` | `None` | Server-enforced char cap on the stringified value (422 on exceed). |
 | `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, searched or in a recency pack; read by key only, audited. '' = detect from the value: credentials, card numbers, SSNs, PINs high; email, phone, IBAN medium. |
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
-| `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
 
 | Output field | Type | Meaning |
@@ -1327,7 +1350,6 @@ WHAT: Save a standing fact and protect it.
 | `conflict_verdict` | `str` | What the write-time conflict check decided about THIS write — clear \| merge \| duplicate \| conflict \| refines \| rejected (the last only on a dry run; a real write answers 409). |
 | `peers` | `list[MemorySetPeer]` | The rows the verdict was reached against (closest first, at most five): the key is the handle for memory.update, the excerpt what the store holds. |
 | `next` | `str` | A short machine hint naming the op to reach for: memory.update(key) on a conflict, memory.pin on a merge the store has seen before, "" otherwise. |
-| `verdict_at` | `str` | `inline` when `conflict_verdict` was settled in this response, `deferred` when it is `pending` (the judge runs after the write; `memory.get` shows the settled `status` / `duplicate_of`), "" when no check ran. |
 | `noop` | `bool` | True when this call wrote nothing: a `merge` (the store already held the fact; its row was reinforced instead) or a dry run. |
 | `dry_run` | `bool` | Echo of the request's dry_run so a tool-call transcript is unambiguous. |
 | `advisories` | `list[str]` | One line per thing the server noticed about the VALUE that the agent should fix on its side — currently only "base64-encoded". |
@@ -1670,7 +1692,7 @@ Scan (org, namespace) for orphaned duplicate rows and re-activate them.
 
 ## `memory.restore`
 
-Restore a tombstoned memory within its 14-day grace window.
+Bring back a deleted memory (within 14 days) or one Loom retired on its own.
 
 `POST /v1/memory.restore` · MCP `loom_memory_restore` · role `writer` · idempotent · audited
 
@@ -1683,6 +1705,8 @@ Restore a tombstoned memory within its 14-day grace window.
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `memory_key` | `str` | required | The key to restore, under this exact identity (no namespace-wide fallback). |
+| `if_superseded_by` | `str` | `''` | Precondition: restore only a row still retired behind this memory, as a `memory.auto_supersede` record names it; a row deleted, revived or retired behind another memory since is left as it is. |
+| `only_if_superseded` | `bool` | `False` | Precondition: restore only a row still retired (`superseded`), never undo a delete. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1690,7 +1714,7 @@ Restore a tombstoned memory within its 14-day grace window.
 | `memory_id` | `str \| None` | Empty / None when nothing was tombstoned or superseded for this key (no-op). |
 | `version` | `int \| None` | Version of the restored row, or of the already-live row on a no-op. |
 | `expired` | `bool` | Surfaces "you missed the window" cleanly rather than 404-ing. |
-| `from_status` | `str` | What the row was restored FROM: "tombstoned" (a delete undone) or "superseded" (an automatic dedup/maintenance retirement reversed — the undo the dedup fuse counts). |
+| `from_status` | `str` | What the row was restored FROM: "tombstoned" (a delete undone) or "superseded" (an automatic retirement reversed). |
 
 ## `memory.search`
 
@@ -1950,6 +1974,7 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `value` | `dict[str, Any] \| list[Any] \| str \| int \| float \| bool` | required | The fact itself: plain text, or a JSON object, list or scalar. |
 | `tags` | `list[str]` | *(computed)* | Flexible classification, filterable at recall via MemorySearchInput.tags; per-tag retention/dedup/conflict policy via NamespaceRegisterInput.tag_registry. |
 | `entities` | `list[str]` | *(computed)* | Explicit entities for a point write. |
+| `relations` | `list[tuple[str, str, str]]` | *(computed)* | The (subject, relation, object) facts the value states, written to the fact graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued fact closes the older one it replaces and, under `newest_wins`, retires the rows… |
 | `files` | `list[str] \| None` | `None` | The repo files this memory is about (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `confidence` | `float` | `1.0` | The writer's own confidence in the fact, 0..1 (1.0 = certain). |
 | `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted), and one starting with `memory.delete_version:` is refused. |
@@ -1967,7 +1992,6 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `char_limit` | `int \| None` | `None` | Server-enforced char cap on the stringified value (422 on exceed). |
 | `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, searched or in a recency pack; read by key only, audited. '' = detect from the value: credentials, card numbers, SSNs, PINs high; email, phone, IBAN medium. |
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
-| `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
 
 | Output field | Type | Meaning |
@@ -1986,7 +2010,6 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `conflict_verdict` | `str` | What the write-time conflict check decided about THIS write — clear \| merge \| duplicate \| conflict \| refines \| rejected (the last only on a dry run; a real write answers 409). |
 | `peers` | `list[MemorySetPeer]` | The rows the verdict was reached against (closest first, at most five): the key is the handle for memory.update, the excerpt what the store holds. |
 | `next` | `str` | A short machine hint naming the op to reach for: memory.update(key) on a conflict, memory.pin on a merge the store has seen before, "" otherwise. |
-| `verdict_at` | `str` | `inline` when `conflict_verdict` was settled in this response, `deferred` when it is `pending` (the judge runs after the write; `memory.get` shows the settled `status` / `duplicate_of`), "" when no check ran. |
 | `noop` | `bool` | True when this call wrote nothing: a `merge` (the store already held the fact; its row was reinforced instead) or a dry run. |
 | `dry_run` | `bool` | Echo of the request's dry_run so a tool-call transcript is unambiguous. |
 | `advisories` | `list[str]` | One line per thing the server noticed about the VALUE that the agent should fix on its side — currently only "base64-encoded". |
@@ -2028,6 +2051,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `written` | `list[_BulkSetResult]` | Key and version of each extracted fact written; empty on a deferred call. |
+| `refused` | `list[_RefusedFact]` | The extracted facts the write refused (a blacklisted, pinned or locked key, or a pinned row close by), with the verdict; not in `written` or the counts. |
 | `tokens_in` | `int` | Prompt tokens of the extraction LLM calls. |
 | `tokens_out` | `int` | Completion tokens of the extraction LLM calls. |
 | `llm_provider` | `str` | The LLM provider that ran the extraction; '' when deferred. |
@@ -2089,6 +2113,22 @@ Compose a token-budgeted recall bundle for agent wake-up.
 | `tokens_budget` | `int` | The `token_budget` the bundle was trimmed to, echoed. |
 | `truncated` | `bool` | true when at least one section was trimmed to fit |
 | `section_counts` | `dict[str, int]` | how many entries per section |
+
+## `memory.statuses`
+
+The current status of some memories, by id: which automatic retirements still stand (the Review queue's Auto-resolved tab reads it).
+
+`POST /v1/memory.statuses` · MCP `loom_memory_statuses` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `memory_ids` | `list[str]` | required | Ids this namespace does not hold are left out, including one replaced by a racing first write of the same key. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `rows` | `list[MemoryStatus]` | One entry per id the namespace holds inside the read scope. |
 
 ## `memory.sweep_expired`
 
@@ -2242,6 +2282,7 @@ Key-addressed update: the fact changed or got more specific.
 | `if_match_sha256` | `str` | `''` | Content hash the live row must still carry, else 409 PRECONDITION_FAILED; '' skips the check. |
 | `char_limit` | `int \| None` | `None` | Char cap on the new value (422 on exceed); None = no cap on the new version, so pass the row's cap back to keep it. |
 | `revive` | `bool` | `False` | Allow updating an expired row (else 409 EXPIRED); the update clears its expiry. |
+| `relations` | `list[tuple[str, str, str]]` | *(computed)* | The facts the new value states, as MemorySetInput.relations; [] states none. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -2272,6 +2313,7 @@ Update a memory by UUID with an optimistic concurrency check.
 | `if_match_sha256` | `str` | `''` | No-clobber precondition; same shape as MemorySetInput.if_match_sha256. |
 | `char_limit` | `int \| None` | `None` | Char cap, same as MemorySetInput. |
 | `revive` | `bool` | `False` | An expired row answers 409 EXPIRED unless the caller says revive=True, which also clears the expiry. |
+| `relations` | `list[tuple[str, str, str]]` | *(computed)* | The facts the new value states, as MemorySetInput.relations; [] states none. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
