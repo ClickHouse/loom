@@ -44,7 +44,7 @@ change between releases, and ops MCP does not serve with ‡.
   when the fact was written (`created_at`, `updated_at`), names the writer
   (`actor`, `agent`, `user_id`), and says whether a person verified it
   (`verification`, `verified_by`) and whether a newer fact contradicts it.
-  A search that finds nothing says so (`abstain`).
+  A search with no hit strong enough to answer from says so (`abstain`).
 - **Your context stays small.** One `context.pack` call loads what matters
   for the task inside a token budget; large logs go to `context.offload`†
   and come back by pattern.
