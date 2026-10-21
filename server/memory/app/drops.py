@@ -18,7 +18,7 @@ Contract:
     (a memory key, field name, ...), which is NEVER used as a metric label.
 
 Stages wired: extract.parse, extract.judge, extract.truncate, write,
-entity.extract, consolidate.merge, records.field, chunk.split.
+entity.extract, consolidate.merge, records.field, chunk.split, learnings.file.
 """
 
 from __future__ import annotations

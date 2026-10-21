@@ -92,11 +92,13 @@ request's `(org, namespace, agent)`:
   alone.
 - The candidate row holds the rule and no user's words. Each session that states it adds
   a row to `loom.learnings_supporters` with the end user, the session and that user's
-  own quotes: the user turn before the cited assistant turn (up to 200 characters, blank
-  when the extractor cites none) and the rule as said,
-  the span the extractor cited, else the assistant turn, else the rule itself (up to 400). A rule that matches a
-  blacklist pattern, or reads as a credential, is never filed, and a quote that does is
-  stored blank. The supporter row is
+  own quotes: the user turn before the cited assistant turn (up to 200 characters) and
+  the rule as said, the span the extractor cited when a cited assistant turn contains
+  it, else that assistant turn (up to 400). A rule whose `source_message_indices` name no
+  assistant turn is not something the assistant said: it is never filed, and the drop is
+  counted in `loom.memory_drops` (stage `learnings.file`, reason `no_assistant_turn`).
+  A rule that matches a blacklist pattern, or reads as a credential, is never filed
+  either, and a quote that does is stored blank. The supporter row is
   written first, then the candidate row again, at version 1, with every new supporter.
   So an erasure that deletes a pending candidate mid-filing never leaves that supporter
   without it. A review always writes a newer version, so the rewrite never undoes a

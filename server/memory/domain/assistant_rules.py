@@ -55,27 +55,40 @@ def _bounded(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def cited_texts(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
-    """What one supporter's conversation shows a reviewer, whole: the user turn
-    before the cited assistant turn (blank when none is cited), and the rule as
-    said (the span the extractor cited as evidence, else the cited assistant turn,
-    else the rule itself). Checked whole, then cut by `bounded_quotes`."""
-    cited = [
+def cited_assistant_turns(fact: dict[str, Any], messages: list[dict[str, Any]]) -> list[int]:
+    """The assistant turns among the rule's `source_message_indices`. A rule that
+    cites none is not something the assistant said."""
+    return [
         i
         for i in fact.get("source_message_indices") or []
         if 0 <= i < len(messages) and messages[i].get("role") == "assistant"
     ]
-    said = str(fact.get("evidence") or "")
-    if not said and cited:
-        said = str(messages[cited[0]].get("content") or "")
-    # No cited assistant turn: no turn to quote the user before, so no user quote.
-    asked = ""
-    if cited:
-        before = messages[: cited[0]]
-        asked = next(
-            (str(m.get("content") or "") for m in reversed(before) if m.get("role") == "user"),
-            "",
-        )
+
+
+def _folded(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def cited_texts(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
+    """What one supporter's conversation shows a reviewer, whole: the user turn
+    before the cited assistant turn (blank when none is cited), and the rule as
+    said. `said` quotes only an assistant turn or the rule itself: the evidence
+    span when a cited assistant turn contains it, else that turn, else the rule.
+    Checked whole, then cut by `bounded_quotes`."""
+    cited = cited_assistant_turns(fact, messages)
+    if not cited:
+        return "", str(fact.get("value") or "")
+    turns = [str(messages[i].get("content") or "") for i in cited]
+    evidence = str(fact.get("evidence") or "")
+    if evidence and any(_folded(evidence) in _folded(turn) for turn in turns):
+        said = evidence
+    else:
+        said = turns[0]
+    before = messages[: cited[0]]
+    asked = next(
+        (str(m.get("content") or "") for m in reversed(before) if m.get("role") == "user"),
+        "",
+    )
     return asked, said or str(fact.get("value") or "")
 
 

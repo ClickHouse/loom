@@ -17,6 +17,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.memory.app import blacklist_guard
+from server.memory.app.drops import record_drop
 from server.memory.app.pipeline_state import WorkflowState
 from server.memory.domain import assistant_rules
 from server.memory.domain.extracted_facts import judged_confidence
@@ -54,6 +55,11 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     # A rule that reads as a credential is never filed: promoted, it would reach
     # every user of the bot.
     if not key or not value or not agent or reads_high(value):
+        return False
+    # Only what the assistant said is its rule: a fact citing no assistant turn
+    # would show a user's words to the reviewer as the bot's.
+    if not assistant_rules.cited_assistant_turns(fact, state.messages):
+        record_drop(state.org, state.namespace, "learnings.file", "no_assistant_turn", item=key)
         return False
     # Refuse (blacklist), as memory.bulk_set does for every other extracted fact.
     if await _blacklisted(state, key, value):
