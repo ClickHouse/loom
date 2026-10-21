@@ -389,8 +389,8 @@ async def test_chunk_orphan_stays_undated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_semantic_mode_orders_by_bare_cosine_for_hnsw() -> None:
-    """Order by the bare cosineDistance alias (HNSW activates only on that shape);
+async def test_semantic_mode_orders_by_bare_cosine() -> None:
+    """Order by the bare cosineDistance alias (the codes-first read needs that shape);
     the least() composite stays in the SELECT for scoring."""
     ch = StubCH()
     ch.query_all_returns.append([])
@@ -402,12 +402,12 @@ async def test_semantic_mode_orders_by_bare_cosine_for_hnsw() -> None:
     assert "ORDER BY value_distance ASC" in sql
     assert "ORDER BY distance ASC" not in sql
     assert "least(" in sql
-    assert "hnsw_candidate_list_size_for_search" in sql
+    assert "{internal_limit:UInt32}" in sql
 
 
 @pytest.mark.asyncio
-async def test_hybrid_mode_orders_by_bare_cosine_for_hnsw() -> None:
-    """Hybrid also orders by the bare cosineDistance alias to keep HNSW active."""
+async def test_hybrid_mode_orders_by_bare_cosine() -> None:
+    """Hybrid also orders by the bare cosineDistance alias."""
     ch = StubCH()
     ch.query_all_returns.append([])
     await vector_search(_q(search_mode="hybrid"), ch=ch)
@@ -936,7 +936,7 @@ async def test_vector_leg_retries_the_fresh_part_empty_block_error_once(monkeypa
 
     async def flaky(sql, params=None):
         calls["n"] += 1
-        if calls["n"] == 1 and "hnsw_candidate_list_size_for_search" in sql:
+        if calls["n"] == 1 and "{internal_limit:UInt32}" in sql:
             raise RuntimeError(
                 "Code: 10. DB::Exception: Not found column org: in block memory_key String String(size = 0)"
             )
@@ -967,7 +967,7 @@ async def test_vector_leg_does_not_retry_other_errors_or_forever(monkeypatch) ->
     n = {"c": 0}
 
     async def always(sql, params=None):
-        if "hnsw_candidate_list_size_for_search" in sql:  # the vector leg only
+        if "{internal_limit:UInt32}" in sql:  # the vector leg only
             n["c"] += 1
         raise RuntimeError("Not found column org: in block memory_key String String(size = 0)")
 
@@ -1026,7 +1026,7 @@ def test_rrf_adaptive_lexical_is_on_unless_the_request_pins_it_off() -> None:
 async def test_key_axis_off_never_names_the_key_vector_column() -> None:
     """Off, `distance` is the bare value distance and memory_key_embedding is
     absent from the SQL, so ClickHouse never reads that column; ordering
-    still uses the bare value_distance alias HNSW needs."""
+    still uses the bare value_distance alias the codes-first read needs."""
     ch = StubCH()
     ch.query_all_returns.append([])
     await vector_search(_q(search_mode="semantic", key_axis=False), ch=ch)

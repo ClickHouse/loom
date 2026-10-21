@@ -26,12 +26,10 @@ _ENTITY_RANK_BOOSTS = [0.40, 0.25, 0.15, 0.08, 0.04]
 
 
 def _chunk_candidates_sql(agent_pred: str) -> str:
-    """Stage 1 of the chunk leg: the one query shape the
-    `vector_similarity` index serves — a bare `ORDER BY cosineDistance LIMIT`
-    over the table with no FINAL and no JOIN — returning only the chunk
-    identity, its parent key and its distance. The fact leg's index knobs
-    ride along so a selective tenant predicate does not starve the
-    post-filter.
+    """Stage 1 of the chunk leg: the one query shape the codes-first read
+    serves — a bare `ORDER BY cosineDistance LIMIT` over the table with no
+    FINAL and no JOIN — returning only the chunk identity, its parent key and
+    its distance.
 
     The codec's shortlist over-fetch inherits the vector multiplier (3): 1
     changed the 180-candidate set on the largest tenant (Jaccard 0.636

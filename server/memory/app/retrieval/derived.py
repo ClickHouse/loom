@@ -405,7 +405,7 @@ async def fetch_current_state_observation(
         -- The window function + subquery boundary put this plane permanently
         -- on brute force: the vector-search rewrite needs the LIMIT/sort to sit
         -- directly above the table read. Latest-per-key is the point of the
-        -- plane, so that trade stands; ef_search still has to be right.
+        -- plane, so that trade stands.
         ORDER BY distance ASC
         LIMIT 1
         {vector_search_settings(table="loom.memory_embeddings")}
