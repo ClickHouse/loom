@@ -569,8 +569,18 @@ async def test_a_rule_citing_only_a_user_turn_is_never_filed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "Please always answer me in French.",
+        # A request phrased as a question.
+        "Could you always answer me in French?",
+        # The typographic apostrophe a mobile keyboard types.
+        "Don\u2019t answer me in anything but French.",
+    ],
+)
 async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_filed(
-    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch, asked: str
 ) -> None:
     drops: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
@@ -582,7 +592,7 @@ async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_f
         "alice",
         "s1",
         messages=[
-            {"role": "user", "content": "Please always answer me in French."},
+            {"role": "user", "content": asked},
             {"role": "assistant", "content": "Bien sûr, je vous répondrai toujours en français."},
         ],
     )
@@ -605,6 +615,9 @@ async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_f
         "Please refund my order over $500.",
         # A question about the policy the bot states.
         "Do you always escalate refunds over $500?",
+        # A complaint: "never" and "don't" in a statement ask for nothing.
+        "I never received my refund over $500.",
+        "I don't understand why my refund over $500 is stuck.",
     ],
 )
 async def test_a_rule_after_a_users_turn_on_its_topic_is_filed(queue: _Queue, asked: str) -> None:

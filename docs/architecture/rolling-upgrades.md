@@ -119,6 +119,10 @@ schema. These rules keep that safe. The operator procedure is in
     of `loom.learnings_supporters` and the `assistant_turn` rows of
     `loom.learnings_queue`
     ([extraction](../features/memory/extraction.md#rules-the-assistant-states-about-itself)).
+    N-1 has no per-agent filter on knowledge reads, so after a rollback it serves a
+    promoted bot rule to every agent in the namespace. To keep a rule to its bot,
+    delete the documents tagged `source-kind:assistant_turn` with `knowledge.delete`
+    before the rollback; otherwise accept the wider serving.
 
 ## What checks them
 

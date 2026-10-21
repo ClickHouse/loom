@@ -99,6 +99,9 @@ back to a build without assistant-turn learnings, turn `memory_extract_agent_lea
 off and delete the rows of `loom.learnings_supporters` and the `assistant_turn` rows of
 `loom.learnings_queue`
 ([extraction](../features/memory/extraction.md#rules-the-assistant-states-about-itself)).
+The previous build serves a promoted bot rule to every agent in the namespace, not only
+its bot. To prevent that, delete the documents tagged `source-kind:assistant_turn` with
+`knowledge.delete` before rolling back; otherwise accept the wider serving.
 There is no schema step: the previous build reads and writes the newer schema. Its version writes to
 `loom.memory` and the other `ReplacingMergeTree` memory tables keep the columns it does
 not know ([rolling upgrades](../architecture/rolling-upgrades.md)).

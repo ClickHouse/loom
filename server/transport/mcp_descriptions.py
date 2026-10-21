@@ -1162,11 +1162,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Learnings (high-confidence promotions) ----
     "learnings.list": (
-        "List candidate learnings waiting for review. The queue holds memories "
+        "List learnings candidates by status (pending by default, promoted, "
+        "rejected). The queue holds memories "
         "several writers back (promoted to shared), conversation-seeded facts "
         "(promoted to a namespace memory row), and rules a bot stated about itself "
         "(source_kind=assistant_turn, promoted to knowledge). Use when the user "
-        "wants to review the promotion queue."
+        "wants to review the promotion queue or find a decided candidate's id."
     ),
     "learnings.review": (
         "Approve or reject a pending learning. Approving promotes a candidate "
