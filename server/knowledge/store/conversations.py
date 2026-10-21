@@ -1153,7 +1153,7 @@ async def recent_threads(
     thread shows; off, the window's raw row count (for a caller that does not read the
     count). `last_turn`: the latest message's agent (`last_agent`), role and first
     `THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS` characters (`last_content`, so the listing
-    can check them for a credential before it cuts the excerpt); off, they are empty. With
+    can check them for a high shape before it cuts the excerpt); off, they are empty. With
     both off the page is one statement."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
@@ -1567,8 +1567,8 @@ async def titler_candidates(
           AND NOT has({off:Array(String)}, c.org)
           -- Titled and deleted threads are not candidates: skipped after
           -- the LIMIT, they filled it every pass and older untitled
-          -- threads were never reached. Nor is a thread whose generated
-          -- title was refused as a credential.
+          -- threads were never reached. Nor is a thread marked
+          -- title_refused: its title, or every opening turn, read as high.
           AND (c.org, c.namespace, c.thread_id) NOT IN (
               SELECT org, namespace, thread_id FROM loom.conversation_threads FINAL
               WHERE tombstoned_at IS NOT NULL OR title != ''

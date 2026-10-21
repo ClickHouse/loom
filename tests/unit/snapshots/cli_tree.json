@@ -11067,7 +11067,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Select only rows of this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
+       "help": "Select only rows of this probe shape (repeatable); credential is every row the detector reads as high (a credential, card number, SSN or stated PIN); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
        "metavar": null
       },
       {

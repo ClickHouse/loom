@@ -50,11 +50,16 @@ end of this section are the exceptions. The plugin sends:
   identifier. The server stores none of it, summary or log, when the namespace has
   conversation logging off (`LOOM_SESSION_BRIEF=off` stops sending it);
 - token usage and the model name (Claude Code only);
-- after each edit in an indexed checkout, that file's uncommitted diff against `HEAD` (up to
-  200,000 characters), to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
-- at Stop in an indexed checkout, the uncommitted diff of the files the session changed,
-  or of the whole uncommitted tree when the client gives no transcript (up to 200,000
-  characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
+- after each edit in an indexed checkout, the outline of that file's uncommitted diff
+  against `HEAD`, to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
+- at Stop in an indexed checkout, the outline of the diff of the files the session
+  changed, or of the whole uncommitted tree when the client gives no transcript, to
+  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). A diff's outline, up to 200,000
+  characters, is its file paths, its hunk line ranges and, in a code file, the last
+  identifier before the first `(` of each hunk header's context, usually the enclosing
+  function's name. Git takes that context from a line above the hunk in the old file,
+  which an earlier hunk of the same diff may have changed; no other part of a changed
+  line is sent;
 - with no credential, at the first session, your OS user name and host name, to request a
   self-signup token (refused unless the server allows self-signup; `LOOM_AUTO_SIGNUP=off`
   stops it);
@@ -64,8 +69,7 @@ end of this section are the exceptions. The plugin sends:
 [What the hooks do](#what-the-hooks-do) lists the hooks behind these requests. A
 client-side redaction removes common credential shapes from the prompts, tool calls, turns,
 run records, notes and briefs the hooks send. It is best effort, not a guarantee. MCP tool
-arguments, a brief the `loom-session` skill saves and the blast-radius and test-gate diffs are
-sent without it.
+arguments and a brief the `loom-session` skill saves are sent without it.
 
 The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
 provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
