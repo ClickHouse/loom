@@ -527,6 +527,11 @@ def test_a_users_erasure_leaves_no_trace_and_keeps_others_documents(
     assert not any(mine in h["content"] for h in left["results"])
     listed = {"user_id": "bob", "conversation_id": "c1"}
     assert _chat_ok(gw, "bob", "conversation.list_saved_messages", listed)["rows"] == []
+    # The erasure tombstoned the saved turn, so saving it again is refused.
+    again = _chat_ok(
+        gw, "bob", "conversation.save_message", {**saved, "role": "user", "content": mine}
+    )
+    assert (again["indexed"], again["reason"]) == (False, "deleted"), again
 
 
 def test_a_create_cut_short_is_finished_by_its_creator_alone(gw: Gateway, ch_client: Any) -> None:

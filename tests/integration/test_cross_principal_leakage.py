@@ -1664,6 +1664,17 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
         s.seed.nonces.append(nonce)
         content = f"{nonce} quarterly renewal plan"
         s.ok("owner", "knowledge.upsert", {"namespace": ns, "source_uri": uri, "content": content})
+    # A saved message in the owner's `@me`, where the probes' conversation id points.
+    nonce = _canary()
+    s.seed.nonces.append(nonce)
+    turn = {"conversation_id": "canary", "message_id": "m1", "role": "user", "user_id": "owner"}
+    content = f"{nonce} quarterly renewal plan"
+    saved = s.ok(
+        "owner",
+        "conversation.save_message",
+        {"namespace": "@me", "agent": "a", **turn, "content": content},
+    )
+    assert saved["indexed"] is True, saved
     # The probes ask with the canary's words, not its nonce: an op that echoes
     # the question back is not a leak, and a hit carries the nonce.
     s.seed.value_text = "quarterly renewal plan"

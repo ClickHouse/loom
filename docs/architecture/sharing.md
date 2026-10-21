@@ -48,8 +48,8 @@ flowchart LR
   is: it admits that user (as admin) and no one else (an org admin's export of that user
   reads it, see below), takes no grant, sits in no tree, and
   needs no setup (its directory row appears with its first write). It holds the user's
-  own documents (their files, a chat's attachments) and the memories a chat writes for
-  them. A message the user saves from a chat is not a document there; see
+  own documents (their files, a chat's attachments), chunked and embedded whatever their
+  text holds, and the memories a chat writes for them. A message the user saves from a chat is not a document there; see
   [Saved messages](#saved-messages).
 
 ## Saved messages
@@ -78,9 +78,7 @@ the pinned token a body naming another user is refused (403). A client draws a
 conversation's saved state with one `conversation.saved_status` call, and a user erasure
 takes the user's conversation rows, saved ones included. A user-scope `erasure.export`
 does not return conversation rows, so it leaves out saved messages, as it leaves out the
-rest of a user's transcript. The personal collection's documents are for what the user
-brings (an upload, a chat's attachment), which is chunked and embedded whatever its text
-holds.
+rest of a user's transcript.
 
 ## Identity
 
