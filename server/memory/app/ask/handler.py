@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core.llm_free import refuse_synthesis
 from server.core.naming import SENTINEL
 from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
 from server.memory.api.models_common import run_next_hint
@@ -212,7 +213,7 @@ def _ask_precedent(input: MemoryAskInput, llm: Any, settings: Any) -> tuple[str,
     if _prec_on and input.allow_synthesis and llm is not None:
         from server.memory.domain.precedents import precedent_key as _pkey
 
-        precedent_shape = ask_shape_sha256(input)
+        precedent_shape = ask_shape_sha256(input, settings)
         precedent_key = _pkey(input.query, precedent_shape)
     return precedent_key, precedent_shape
 
@@ -221,6 +222,8 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
     from server.memory.app.ask import ask
     from server.settings import settings
 
+    if input.allow_synthesis:
+        refuse_synthesis("memory.ask", "allow_synthesis=false")
     # A summary-shaped question over documents goes to the whole-document pass, not to
     # fifteen memories. Deterministic detector, then one knowledge.search to find which
     # documents; falls through when nothing concentrates or the flag is off.
@@ -581,9 +584,34 @@ def _precedents_namespace_allowed(namespace: str, globs: str) -> bool:
 # depth, budgets, gates... Two asks with the same text and the same shape
 # read the same window, which is what a precedent needs.
 _ASK_SHAPE_EXCLUDE = frozenset({"query", "org", "namespace", "run_id", "precedents"})
+# A request field left unset takes its setting, so the settings that shape retrieval
+# and synthesis are part of the shape too: a live change (world knowledge allow ->
+# forbid) misses every precedent written under the old value. Like the request
+# fields, only a value off its default is hashed, so a release that adds a setting
+# keeps the stored precedents. The precedent settings only decide whether to reuse.
+_ASK_SHAPE_SETTINGS = ("memory_ask_", "memory_search_", "memory_rrf_")
 
 
-def ask_shape_sha256(input: MemoryAskInput) -> str:
+# Names of the settings that bound how long a call waits or retries, not what it answers.
+_OPERATIONAL_SUFFIXES = ("_timeout_s", "_timeout_ms", "_bound_s", "_bound_retries", "_wall_ms")
+
+
+def _shape_settings(settings: Any) -> dict[str, Any]:
+    shape = {}
+    for name, field in type(settings).model_fields.items():
+        if not name.startswith(_ASK_SHAPE_SETTINGS) or name.startswith("memory_ask_precedent"):
+            continue
+        # A timeout, a wait bound or a cache lifetime changes no answer a precedent holds:
+        # a call cut short already changes the window the precedent is checked against.
+        if name.endswith(_OPERATIONAL_SUFFIXES) or "_ttl" in name:
+            continue
+        value = getattr(settings, name)
+        if value != field.get_default(call_default_factory=True):
+            shape[name] = value
+    return shape
+
+
+def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     """sha256 over the ask's non-default, non-identity fields. A `user_id` or
     `session_id` the read filters on is part of the shape, whatever the read
     scope: a namespace-scoped ask that names no user shares its precedent
@@ -603,6 +631,9 @@ def ask_shape_sha256(input: MemoryAskInput) -> str:
     # Only a user or session the read filters on is part of the shape.
     exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
+    # Absent, not empty, at every default: the shape a build without this key hashed.
+    if shaped := _shape_settings(settings):
+        shape["settings"] = shaped
     canonical = json.dumps(shape, sort_keys=True, default=str, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

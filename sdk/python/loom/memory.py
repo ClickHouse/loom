@@ -249,9 +249,11 @@ class MemorySearchHit:
     # `moved`, `changed` (check the code before relying on it), `unresolved` (gone
     # where it was, maybe renamed) or `missing`.
     code_state: str = ""
-    # Final blended rank score: the fused value the served order follows,
+    # Final blended rank score: the value the served order follows,
     # mode-dependent (about 0.03 under rrf), not a similarity. The terms that
-    # moved the row are itemised in `score_components`.
+    # moved the row are itemised in `score_components`. After a reranker that
+    # changed the order it is the score of the rank the row holds; its own is
+    # `score_components["rank_score_pre_rerank"]`.
     rank_score: float = 0.0
     # True when this row's `similarity` is below the abstain threshold the
     # response's gate used; the server sends the key only
@@ -2234,12 +2236,11 @@ class MemoryClient:
         entity_filter: builtins.list[str] | None = None,
         top_k: int = 5,
     ) -> dict[str, Any]:
-        """Same shape as `search()`; returns the per-candidate scoring
-        breakdown instead of just the ranked hits.
-
-        Each result row carries `similarity`, `entity_boost`,
-        `rank_score`, and `rank` — for "why did this row rank here"
-        investigations.
+        """Same shape as `search()`; returns the vector leg's per-candidate
+        scoring breakdown (no fusion, assembly or reranker): each row carries
+        `similarity`, `entity_boost`, `rank_score` and `rank`. Why a served row
+        ranked where it did: `search(..., explain=True)` and its
+        `score_components`.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,

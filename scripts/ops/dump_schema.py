@@ -32,11 +32,12 @@ if (_ROOT := str(Path(__file__).resolve().parents[2])) not in sys.path:  # run a
     sys.path.insert(0, _ROOT)
 
 from scripts.codegen.common import ROOT, GeneratedFile
+from server.core.ch_names import SCHEMA, TELEMETRY, logical, physical, unqualify
 
-# The migrations address loom.<table> whatever LOOM_CH_DATABASE says, and
-# loom_telemetry.<table> for telemetry derived from it (the SLI rollup).
-DATABASE = "loom"
-DATABASES = (DATABASE, "loom_telemetry")
+# The dump names the aliases the migrations are written against, whatever
+# LOOM_CH_DATABASE and LOOM_CH_TELEMETRY_DATABASE call them on the server.
+DATABASE = SCHEMA
+DATABASES = (SCHEMA, TELEMETRY)
 TARGET = GeneratedFile(ROOT / "schemas" / "schema.sql", "make schema-dump")
 DIFF_LINES = 40
 
@@ -48,10 +49,10 @@ def list_objects(client: Any) -> tuple[list[str], list[str]]:
         "SELECT database, name, engine FROM system.tables "
         "WHERE database IN {dbs:Array(String)} AND name NOT LIKE '\\_%' AND name NOT LIKE '.%' "
         "ORDER BY indexOf({dbs:Array(String)}, database), name",
-        parameters={"dbs": list(DATABASES)},
+        parameters={"dbs": [physical(db) for db in DATABASES]},
     ).result_rows
-    tables = [f"{d}.{n}" for d, n, engine in rows if engine != "MaterializedView"]
-    views = [f"{d}.{n}" for d, n, engine in rows if engine == "MaterializedView"]
+    tables = [f"{logical(d)}.{n}" for d, n, engine in rows if engine != "MaterializedView"]
+    views = [f"{logical(d)}.{n}" for d, n, engine in rows if engine == "MaterializedView"]
     return tables, views
 
 
@@ -136,7 +137,7 @@ def show_create(client: Any, name: str) -> tuple[str, str]:
     rows = client.query(f"SHOW CREATE TABLE `{db}`.`{table}`").result_rows
     if not rows:
         raise RuntimeError(f"no DDL for {name}")
-    return name, str(rows[0][0])
+    return name, unqualify(str(rows[0][0]))
 
 
 def dump(client: Any) -> str:

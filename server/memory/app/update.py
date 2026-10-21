@@ -26,6 +26,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateInput,
     MemoryUpdateOutput,
 )
+from server.memory.app import after_write
 from server.memory.app import provenance as app_provenance
 from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.conflicts import same_key_mark
@@ -745,7 +746,7 @@ async def _write_revision(
             # and even when the gather failed: the version row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
-    await memory_repo.index_late_rows(emb_rows, ch=ch)
+    after_write.index_late_rows(emb_rows, ch=ch)
     cfg = await cfg_task
 
     follows: list[Follow] = []

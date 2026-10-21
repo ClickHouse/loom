@@ -32,6 +32,7 @@ from server.code.app.index.pass_budget import (
 )
 from server.code.app.index.pass_fetch import _publish_clone_head, fetch_entry, prefetch_mirrors
 from server.code.app.index.pass_stream import ingest_oldest_first
+from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass, set_worker_identity
@@ -148,8 +149,15 @@ async def _run(result: CodeIngestResult, org: str = "", namespace: str = "") -> 
             )
             break
         pass_context.set_namespace(cfg.namespace)  # Where a cut pass stopped
+        if await customer.switched_off(cfg.org):
+            # Its chunks are embedded and described: the repository waits,
+            # watermark unmoved, until the org's model calls are back on.
+            continue
         try:
-            plan = await _run_repo(cfg, result, commit_budget)
+            with customer.for_org(cfg.org):
+                plan = await _run_repo(cfg, result, commit_budget)
+        except customer.HOLDS:
+            continue  # a held call is no failure: the repository waits, watermark unmoved
         except Exception as e:
             result.errors.append(f"{cfg.label}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: repo %s failed", cfg.label)
@@ -211,7 +219,10 @@ async def _run_leg(
         pass_context.set_namespace(plan.cfg.namespace)
         set_worker_identity("code_ingest", org=plan.cfg.org, namespace=plan.cfg.namespace)
         try:
-            await run(plan, result, budget)
+            with customer.for_org(plan.cfg.org):
+                await run(plan, result, budget)
+        except customer.HOLDS:
+            pass  # a held call is no failure: the leg runs once the org is back
         except Exception as e:
             result.errors.append(f"{plan.cfg.label}: {leg}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: %s of %s failed", leg, plan.cfg.label)
@@ -623,6 +634,8 @@ async def _maybe_reconcile(
                 found.truncated,
                 healed.files if healed else 0,
             )
+    except customer.HOLDS:
+        raise  # the reconcile re-ingests through the embedder: the repository waits
     except Exception as e:
         result.errors.append(f"reconcile: {type(e).__name__}: {e}")
         logger.exception("code_ingest: reconcile failed for %s", cfg.label)
@@ -933,6 +946,8 @@ async def _maybe_rechunk(
                 len(paths),
                 identical,
             )
+    except customer.HOLDS:
+        raise  # the re-chunk embeds: the repository waits
     except Exception as e:
         result.errors.append(f"rechunk: {type(e).__name__}: {e}")
         logger.exception("code_ingest: extractor re-chunk failed for %s", cfg.label)

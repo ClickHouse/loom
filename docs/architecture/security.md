@@ -8,19 +8,21 @@ vulnerability, and for the deployment hardening checklist, see
 
 ## Threat model
 
-| Threat                                               | Boundary                                                                      | Enforced by                                                                                                          |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| An unauthenticated caller reads or writes data       | Bearer token on every op; 401 before the body is read                         | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                   |
-| A forged or tampered token                           | Signature, algorithm allow-list, `kid`, issuer, audience, time claims         | `server/auth/jwt.py` (`verify_token`)                                                                                |
-| A revoked token keeps working                        | Per-process revocation snapshot, fail closed until loaded                     | `server/auth/revocation.py`                                                                                          |
-| Tenant A reads tenant B's rows                       | Org + namespace check on every call; row-scoped ops check the row's namespace | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                          |
-| A refusal confirms that an id or namespace exists    | `found=False` or a generic "cannot access", never a 403 naming the target     | Row-scoped handlers; the restricted gate                                                                             |
-| One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                    | `server/core/ratelimit.py`                                                                                           |
-| An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing       | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
-| Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                             | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                         | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
-| Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                      | `server/observability/audit.py`, `audit_verifier` worker                                                             |
-| Erasure leaves residue                               | Checkpointed saga ending in a residue census                                  | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
+| Threat                                               | Boundary                                                                                                                   | Enforced by                                                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| An unauthenticated caller reads or writes data       | Bearer token on every op; 401 before the body is read                                                                      | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                   |
+| A forged or tampered token                           | Signature, algorithm allow-list, `kid`, issuer, audience, time claims                                                      | `server/auth/jwt.py` (`verify_token`)                                                                                |
+| A revoked token keeps working                        | Per-process revocation snapshot, fail closed until loaded                                                                  | `server/auth/revocation.py`                                                                                          |
+| Tenant A reads tenant B's rows                       | Org + namespace check on every call; row-scoped ops check the row's namespace                                              | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                          |
+| A refusal confirms that an id or namespace exists    | `found=False` or a generic "cannot access", never a 403 naming the target                                                  | Row-scoped handlers; the restricted gate                                                                             |
+| One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
+| An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
+| Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows are never embedded                                                                      | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
+| Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
+| Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
+| A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
+| A collection is read without a grant                 | Only grants of the request's principals, inherited down the tree, open one                                                 | `server/auth/sharing.py`, `server/auth/authz.py` (`check_authorized`)                                                |
 
 Out of scope: an attacker who already operates the ClickHouse database, vulnerabilities
 in ClickHouse or the integrated backends, and third-party MCP clients.
@@ -69,6 +71,35 @@ the workers leader or a keyring command (never a replica's first boot, which wou
 mistyped secret); a process whose root does not match it reports
 `keyring_root_mismatch`, and the keyring commands and `loom mint-token` refuse there.
 
+**Model calls behind the gateway.** While the gateway is required
+(`LOOM_INFERENCE_GATEWAY_REQUIRED`, or any token exchange), model calls and the memory
+content posted to classifiers and rerankers go only to the hosts
+`LOOM_INFERENCE_GATEWAY_HOSTS` lists, matched exactly (`Settings.off_gateway`); an
+allow-list, so a cloud's own endpoint, an IP address or a look-alike name is refused as a
+provider's API is. The settings refuse to load with no hosts, or with an API root, the
+token endpoint or a rerank endpoint elsewhere, or the Gemini embedder (`gateway_refusal`),
+and with a `builtin:cohere` code-search default (`_check_code_rerank_behind_the_gateway`).
+Model calls go through their own client, `server/clients/_http.py::get_model_client`,
+whose request hook (`_on_request`) refuses every other host on every hop, redirects
+included; GitHub and an issuer's discovery document use the other client, which has no
+such hook. The rerank and classify senders, on their own clients, check each URL. Every
+check reads the host as httpx sends it (`url_host`: httpx's parser, an IDN as punycode),
+so a URL with several `@` or a backslash cannot pass the check for one host and be sent to
+another. `namespace.register` refuses a `classify_endpoint` that is not https at the
+default port of a listed host (422), and one stored before is never called: a namespace
+admin can neither send memory content off the gateway nor reach another port or service
+with it. A dashboard configuration goes through the same check: refused at save (422), and
+a stored one that fails is not applied, its serving vector settings included
+(`provider_runtime.load_active_configuration`), and `/v1/health` reports
+`model_configuration_refused`. The check reads only the embedding, so a refused one always
+differs from the one in force and the vector tables may hold that other space; it fails
+closed: every data-plane request on that server answers 503 `GATEWAY_REQUIRED` with no
+`Retry-After` (the gate's `refusal`, which the maintenance middleware reads) and readiness
+fails, until a configuration the check accepts, or a reset to the environment, replaces
+it; the transition that replaces it takes the hold over. A rolling restart stops at such a
+server until then. A refusal (`GATEWAY_REQUIRED`) is a setting to fix, and neither SDK
+retries it.
+
 **Rotation.** `loom signing-key rotate [--algorithm HS256|RS256] [--activate-in 300]`
 writes a key whose `activate_at` lies `--activate-in` seconds ahead on the ClickHouse
 server's clock; it must exceed two of the slowest process's refresh intervals (each
@@ -86,9 +117,12 @@ longer open.
 **Expiry.** Tokens have no `exp` unless minted with a TTL (`--ttl-days`). Every token
 Loom mints carries a `jti`; an outside token without one is identified by its digest.
 
-**Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti`
-or `sub` values, optionally with an issued-before cutoff. Each process loads a snapshot at
-boot and refreshes it on its own loop every `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
+**Revocation** (`server/auth/revocation.py`). `loom.revoked_tokens` holds revoked `jti` or
+`sub` values, optionally with an issued-before cutoff. An end user's tokens are revoked by
+subject under their org, `<org>/user:<id>`
+(`server.core.principals.end_user_revocation_subject`), since `user:<id>` names one person
+per org. Each process loads a snapshot at boot and refreshes it on its own loop every
+`LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` (30 s).
 
 - Until the first load succeeds, every token gets 503 `AUTH_UNAVAILABLE`.
 - After that, a ClickHouse outage keeps the last good snapshot for at most
@@ -115,9 +149,16 @@ forgotten.
   statement per (org, subject) into a per-process cache (`server/core/grant_cache.py`) kept
   for `grant_cache_ttl_seconds` (10 s). A grant write in this process drops at once the
   entries whose read covered the spelling it wrote, and any read in flight; a write to the
-  accounts that tie a person's spellings drops the org's. The server's other web processes
-  (`LOOM_WEB_WORKERS`) read again at once: the write marks a file in their runtime directory,
-  and an entry read before the mark is not served. Another server sees either within the TTL.
+  accounts that tie a person's spellings drops the org's.
+- Every other process, on this server or another, drops the org's entries within
+  `acl_watermark_poll_seconds` (1 s). The write adds one change for its org to
+  `loom.acl_versions` (a `SummingMergeTree`, counted per org and kind of change), and each
+  process reads `sum(changes)` per org and kind with sequential consistency; an entry read
+  before its count moved is not served. A sum only grows, so neither a merge nor a writer's
+  clock can hide a change. A process whose last good poll is older than
+  `acl_watermark_max_stale_seconds` (10 s) serves no cached grant and reads per request. The
+  TTL bounds a change whose watermark row was never written, and a change made by a build
+  that predates the table.
 - A failed re-read serves the cached entry while it is younger than
   `jwt_revocation_max_stale_seconds`, the bound a token check already lives with, and
   answers a retryable 503 past it.
@@ -464,6 +505,21 @@ token is writer there and a restricted read needs a grant an admin chose to give
 before the namespace was restricted stays until the agent or an admin revokes it. A keyed bot's
 token names only its registered roles.
 
+**An org's model calls switched off** (`server/llm/customer.py`). An org admin's
+`org.set_model_calls` (`loom.org_model_calls`) stops every model request for the org's data:
+each send point refuses a call for a switched-off org (403 `MODEL_CALLS_DISABLED`) before
+anything is sent, and background jobs leave the org's work queued. The server that took the
+change applies it on its next call, every other within
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`; an older build ignores the switch. It fails
+closed: a process whose copy of the switch is older than
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` refuses every model call for an org until it
+reads it again. An org admin reaches only its own org's switch. A platform admin's lock
+(`"locked": true`, settable only by a platform admin) stops the org's admins from switching
+it back on or unlocking it, never from switching it off. Offboarding is manual: a
+platform admin switches the org off locked, and the org's cached query vectors expire after
+30 days. Changes to one org's switch are serialized, so an org admin's write never carries
+an old lock state over a new one.
+
 **Unauthenticated routes.** Sign-up and password sign-in are rate-limited
 (`server/auth/attempts.py`) per client address (the connection's peer, which uvicorn
 replaces with the `X-Forwarded-For` client only when the peer is in
@@ -503,17 +559,47 @@ host and port) when it is set; otherwise an `Origin` whose host and port match t
 request's `Host` counts, whatever its scheme, so a TLS proxy whose `X-Forwarded-Proto`
 is not trusted still works. `loom doctor` and `/v1/health` report each of these.
 
-**Browser.** Every response is `X-Content-Type-Options: nosniff`. The dashboard page carries a
-Content-Security-Policy whose `script-src` admits the bundle's origin and the one boot
-snippet by a per-response nonce, never `unsafe-inline`. An uploaded document is
-attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
-inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and
-PNG, JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
+## Response headers
+
+Every response carries these except an unhandled 500, which Starlette's error middleware
+answers outside every middleware the app adds. A route that sets one of them itself keeps
+its value.
+
+| Header                      | Value                                                                      |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `X-Content-Type-Options`    | `nosniff`                                                                  |
+| `X-Frame-Options`           | `DENY`                                                                     |
+| `Content-Security-Policy`   | `frame-ancestors 'none'`                                                   |
+| `Referrer-Policy`           | `same-origin`                                                              |
+| `Strict-Transport-Security` | `max-age=<LOOM_HSTS_MAX_AGE_SECONDS>`; one year by default, `0` sends none |
+
+- `nosniff`: no body is sniffed into a type it was not served as.
+- Frame denial: no other page can frame the dashboard or an API answer. Every CSP Loom
+  sends has `frame-ancestors 'none'`, the routes' own (the dashboard page, downloads, the
+  sign-in pages) included; `X-Frame-Options: DENY` is the same rule for browsers without
+  CSP. Nothing in Loom frames the dashboard, and the dashboard frames nothing: its own CSP
+  sets `frame-src 'none'`.
+- `same-origin`: a dashboard URL, which can name a record, is never sent to another origin,
+  and a same-origin non-GET request still carries its real `Origin`, which the cross-site
+  check reads. Under `no-referrer` a browser sends `Origin: null` on a form POST, which the
+  check refuses. The sign-in pages under `/oauth/` run no script and send the same policy:
+  their URLs can carry a user code or an authorization request, so no other site receives
+  them as a referrer, and their form POSTs carry the page's own `Origin`.
+- HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
+  terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
+
+**Route policies.** The dashboard page carries a Content-Security-Policy whose
+`script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
+never `unsafe-inline`, and whose `frame-src 'none'` allows no frame. An uploaded document
+is attacker-chosen bytes under an attacker-chosen type, so `knowledge.download` previews
+inline only plain text (text, Markdown, CSV and JSON, all served as `text/plain`) and PNG,
+JPEG, GIF and WebP whose bytes match their type; anything else (HTML, SVG, XML, PDF,
 unknown, mismatched) is an `application/octet-stream` attachment, and every download
-carries `Content-Security-Policy: sandbox; default-src 'none'`. The dashboard applies the
-same allowlist itself, because a `blob:` URL ignores the server's headers: it re-types
-text as `text/plain` in an `<iframe sandbox="">`, shows images with `<img>`, and
-downloads everything else, PDF and SVG included.
+carries `Content-Security-Policy: sandbox; default-src 'none'; frame-ancestors 'none'`.
+The dashboard applies the same allowlist to the bytes it fetches: it decodes the first 1
+MB of text as UTF-8 into a text node in a `<pre>`, shows images with `<img>` from a
+re-typed `blob:` URL (which ignores the server's headers), and downloads everything else,
+PDF and SVG included.
 
 ## Rate limiting
 
@@ -581,9 +667,9 @@ leg returns it. The other reads that could serve its value follow three rules:
   the `memory.stack`, context pack and MCP primer built from it, `memory.ask`'s bridge hop
   and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
-  duplicate's place), the profile fold, the entity graph (a row written as `high` projects
-  only the entities its writer declared, and the entity extractor never sends it to its
-  model, nor an unlabelled value that reads as a credential; for a fact
+  duplicate's place), the profile fold and the structured profile, the entity graph (a row
+  written as `high` projects only the entities its writer declared, and the entity
+  extractor never sends it to its model, nor an unlabelled value that reads as a credential; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, the candidates `procedure.match` reads, the bodies
@@ -611,17 +697,18 @@ leg returns it. The other reads that could serve its value follow three rules:
 - Listed without the value: `memory.list` (no value or hash, `value_truncated: true`, and
   `contains` does not search it), `conflicts.list`, `memory.proposals`, and the preview of a
   `memory.move` dry run.
-- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get` (which, like
-  `memory.list`, serves a row past `expires_at` until the expiry sweep; it,
-  `memory.get_by_id` and `memory.get` (with or without `as_of`) never serve a `high` row
-  past its retention window, while `memory.history` and `memory.evidence` still do until the
-  sweep), `memory.history` (one row per version it serves of a row with any `high` version,
-  since the version before a sweep labelled the row holds the same value unlabelled; a
-  redacted version, which served no value, is not) and `memory.evidence` each write a
+- Read by key and audited: `memory.get`, `memory.get_by_id`, `memory.bulk_get`,
+  `memory.history` (one row per version it serves of a row with any `high` version, since
+  the version before a sweep labelled the row holds the same value unlabelled; a redacted
+  version, which served no value, is not) and `memory.evidence` each write a
   `memory.sensitive_read` row. The admin dumps `namespace.snapshot` and `erasure.export`
   carry `high` rows on purpose and write one per row. `memory.copy_to` and
   `memory.cross_promote` read a `high` row by key and copy it to another namespace with its
   label; each writes its own audit row (both are `audit=True` ops), which records the copy.
+  `memory.get` (with or without `as_of`), `memory.get_by_id` and `memory.bulk_get` never
+  serve a `high` row past its retention window; `memory.history` and `memory.evidence` still
+  do until the sweep. `memory.bulk_get`, like `memory.list`, serves any other row past
+  `expires_at` until the expiry sweep.
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
@@ -650,14 +737,41 @@ also reads text holding JSON, such as a chunk of an object value, with its strin
 undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
 `bodies: "source"`, the observations `observe_extract` sends its model, the entity
 extractor's input, the existing memories an extraction prompt shows, the rows
-`memory.consolidate` and the profile fold send their models, and a session digest's key
-facts when written, listed by `memory.digests` or read by the outcome judge. The
+`memory.consolidate`, the profile fold and the structured profile send their models, and a
+session digest's key facts when written, listed by `memory.digests` or read by the outcome judge. The
 `sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
 counting as `credential` for its default shape filter: a new version per row and, for
 `high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
 unlabelled row that holds a credential is embedded like any other, so search serves it, and
 `memory.ask` can send it to its model; the conflict resolver reads every row and peer for a
 credential shape before its prompt and sends none that holds one.
+
+A redaction (`memory.redact`) scrubs the version it names, that key's derived rows, and
+every version of the user's profiles whose trace names the memory: the structured profile
+and the free-text fold's `consolidated_profile` name the memories they read in their trace
+(`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
+memory is scrubbed with its key's derived rows, the live one included. The trace names
+the memory and not its version, so a profile built from another version of it is scrubbed
+too. The named version and every profile version reached are scrubbed in one statement
+per version table, so the redaction issues two mutations however many profile versions
+name the memory. The cached
+answers and ask precedents whose window held a scrubbed profile key are deleted with those
+of the memory's own key. A window records bare keys, and every user's profile has the same
+key, so this reach is org-wide: one redaction clears every cached answer and precedent in
+the org that rendered any user's profile, in every namespace, and each profile key reached
+adds one deletion per table. A profile version whose trace names no memory ids
+(`profile.fold:<label>` alone, as a build that does not record its sources writes it,
+including an older build during a rolling upgrade) is not reached and keeps the text until
+the user is erased. A lock on a profile key reached refuses the redaction
+before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
+profile is left out of `profile.render`, `profile.structured` and profile search, and so
+of every pack and primer, until the worker rebuilds it from the user's current facts; the
+fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
+its minimum memory count or in a namespace that has turned the fold off.
+
+A structured profile is served only from a row written as `worker:structured-profile`, an
+actor kind no token maps to, so a caller cannot forge one
+([memory invariants](memory-architecture.md#invariants)).
 
 ## Audit log
 
@@ -682,6 +796,21 @@ in scope fails the saga. The saga, the census registry and the rule for new tabl
 [memory architecture](memory-architecture.md#erasure-saga); the caller's view is in
 [retention and erasure](../features/memory/retention-and-erasure.md). Erasure and audit
 hashing are engineering primitives, not a compliance guarantee.
+
+The [analytics export](../operations/analytics-export.md) copies rows to a store erasure
+does not reach (an S3 bucket a warehouse loads), as `loom export-okf --out` does with a
+namespace's memory ([copying a namespace](../operations/okf-sync.md)). It is therefore an
+allowlist of aggregate and registry columns with no memory content and no stored person
+identifier: users and sessions leave as distinct counts only, and
+`tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.
+Org, namespace and agent names always leave as a keyed reference SipHash-2-4-128, because a
+personal namespace carries its owner's email and self-signup a username. The hash is a
+pseudonym the key's holder can recompute, one string has one hash in every org and column,
+and erasure in Loom does not reach rows already exported. The key (32 characters or more) is
+in a Secret only the export's pod reads; ClickHouse's query and debug logs record it as a
+bound parameter, on Loom's server and on any warehouse server that joins with it. The
+bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
+pods, and the upload never replaces an object.
 
 ## Secrets
 

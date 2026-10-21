@@ -266,7 +266,7 @@ async def test_knowledge_stats_failure_is_counted_and_fails_open(
 
     monkeypatch.setattr(bm25, "_STATS_FAILURES", _Counter())
     out = await knowledge_bm25.lexical_stats(
-        _BoomCH(), org="o", namespace="n", embedding_model="m", tokens=["k8s"]
+        _BoomCH(), org="o", namespaces=["n"], embedding_model="m", tokens=["k8s"]
     )
     assert out == (0.0, [])
     assert counted == [{"plane": "knowledge", "error": "TimeoutError"}]
@@ -285,6 +285,8 @@ class _RecCH:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
         self.sqls.append(" ".join(sql.split()))
+        if "GROUP BY namespace" in sql:  # the corpus statistics
+            return [{"namespace": "n", "n": 3, "avgdl": 12.0}]
         return [{"term": "k8s", "df": 1}]
 
 
@@ -295,7 +297,7 @@ async def test_knowledge_avgdl_is_the_mean_word_count() -> None:
     knowledge_bm25.reset_cache()
     ch = _RecCH()
     avgdl, idfs = await knowledge_bm25.lexical_stats(
-        ch, org="o", namespace="n", embedding_model="m", tokens=["k8s", "pod"]
+        ch, org="o", namespaces=["n"], embedding_model="m", tokens=["k8s", "pod"]
     )
     knowledge_bm25.reset_cache()
     assert avgdl == 12.0 and idfs == [bm25.idf(1, 3), bm25.idf(0, 3)]

@@ -35,6 +35,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.identity.domain.read_scope import ReadFilters, scope_and
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,8 @@ PREWHERE org = {org:String}
   AND (namespace, agent, user_id, session_id, memory_key)
       IN {keys:Array(Tuple(String, String, String, String, String))}
 WHERE memory_type = 'profile' AND tombstoned_at IS NULL
+  -- a head scrubbed by memory.redact is no section to find
+  AND redacted_at IS NULL
   -- a 'high' section is never embedded or ranked: no stub, no vector, no hit
   AND sensitivity != 'high'
 """
@@ -262,10 +265,6 @@ async def _similarities(
     return sims
 
 
-# The most sections one search embeds on the fly.
-_ON_THE_FLY_CAP = 8
-
-
 async def _score_unvectored(
     by_ident: dict[Ident, dict[str, Any]],
     sims: dict[Ident, float],
@@ -278,7 +277,7 @@ async def _score_unvectored(
     second ago would score nothing and fall back to the word rule ('likes tea'
     never matches 'what do I like to drink?'). One batched embed of those sections' own
     text (the embed cache serves repeats), bounded; the heal still runs."""
-    todo = [i for i in by_ident if i not in sims][:_ON_THE_FLY_CAP]
+    todo = [i for i in by_ident if i not in sims][: settings.memory_profile_search_embed_cap]
     if not todo:
         return {}
     texts = [

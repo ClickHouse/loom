@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import record_pass, set_worker_identity
@@ -77,6 +78,8 @@ class CodeEmbedRecoveryResult:
     summaries_embedded: int = 0
     failed: int = 0
     poisoned: int = 0
+    # Stubs left as they are: their org was switched off during the pass.
+    switched_off: int = 0
     rows_written: int = 0
     scans: int = 0
     keys_seen: int = 0
@@ -102,6 +105,7 @@ async def run_pass() -> CodeEmbedRecoveryResult:
             "summaries_embedded": result.summaries_embedded,
             "failed": result.failed,
             "poisoned": result.poisoned,
+            "switched_off": result.switched_off,
             "rows_written": result.rows_written,
             "scans": result.scans,
             "keys_seen": result.keys_seen,
@@ -119,7 +123,11 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
     repo = CodeRepo()
     embedder = get_embedder()
     max_attempts = settings.code_embed_max_attempts
-    repos = [(cfg.org, cfg.namespace) for cfg in configured_repos()]
+    # A switched-off org's repositories are not scanned: their stubs wait,
+    # attempts untouched, and the periodic full scan from zero finds them once
+    # the org is back on (the watermark may have moved past them meanwhile).
+    off = await customer.switched_off_orgs()
+    repos = [(cfg.org, cfg.namespace) for cfg in configured_repos() if cfg.org not in off]
     result.full_scan = _full_scan_due()
     for table, text_of in _TABLES:
         embedded = await _recover_table(
@@ -151,7 +159,6 @@ async def _run(result: CodeEmbedRecoveryResult) -> None:
 # versions never reach the FINAL row read, and the flat candidate scan stays
 # cheap (a namespace-wide aggregate would read hundreds of MB a scan).
 _MAX_SCANS_PER_TABLE = 8
-_CHAIN_BUDGET_S = 20.0
 
 
 async def _recover_table(
@@ -178,7 +185,10 @@ async def _recover_table(
     rows: list[dict[str, Any]] = []
     chain_started = time.monotonic()
     for scan_no in range(_MAX_SCANS_PER_TABLE):
-        if scan_no and time.monotonic() - chain_started > _CHAIN_BUDGET_S:
+        if (
+            scan_no
+            and time.monotonic() - chain_started > settings.code_embed_recovery_chain_budget_s
+        ):
             break  # embed what the chain found; the watermark carries the rest over
         keys = await repo.pending_embed_keys(
             table,
@@ -239,7 +249,9 @@ async def _vectors_for(
 ) -> tuple[dict[int, list[float]], dict[int, str]]:
     """`embed_many` for the batch's non-empty texts, per-text on its failure
     so one poison text cannot fail its neighbours; `(vectors, failures)` by
-    index. An empty text is never sent: one would fail the whole batch."""
+    index. An empty text is never sent: one would fail the whole batch. A
+    refused call or an unread switch (`customer.HOLDS`) is not a text's failure
+    and propagates."""
     failures: dict[int, str] = {i: EMPTY_TEXT for i, t in enumerate(texts) if not t.strip()}
     todo = [i for i in range(len(texts)) if i not in failures]
     if not todo:
@@ -250,6 +262,8 @@ async def _vectors_for(
             got = await embed_many([texts[i] for i in todo])
             if len(got) == len(todo):
                 return dict(zip(todo, got, strict=True)), failures
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — fall back per-text
             logger.warning("code_embed_recovery: batch failed (%s), per-text", e)
     from server.code.app.index.embed_text import embed_shrinking
@@ -258,6 +272,8 @@ async def _vectors_for(
     for i in todo:
         try:
             vectors[i] = await embed_shrinking(embedder, texts[i])
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — one failing chunk must not fail its group
             failures[i] = str(e)[:300]
     return vectors, failures
@@ -275,7 +291,8 @@ async def _embed_rows(
 ) -> int:
     """Embed the pass's rows per `(org, namespace)` — the provider spans and
     spend stay attributed to the namespace — `_batch()` texts an embed call,
-    and write every replacement row of the table in one insert."""
+    and write every replacement row of the table in one insert. A switch gone
+    stale mid-pass (`SwitchUnread`) stops the pass before that insert."""
     if not rows:
         return 0
     from server.code.app.index.embed_text import clip_for_embedding
@@ -293,7 +310,19 @@ async def _embed_rows(
         for start in range(0, len(whole), batch):
             group = whole[start : start + batch]
             texts = [clip_for_embedding(text_of(r), count_tokens=counter) for r in group]
-            vectors, failures = await _vectors_for(embedder, texts)
+            vectors: dict[int, list[float]]
+            try:
+                with customer.for_org(org):
+                    if not customer.names_one():
+                        vectors = {}
+                        failures = dict.fromkeys(range(len(group)), customer.NO_CUSTOMER)
+                    else:
+                        vectors, failures = await _vectors_for(embedder, texts)
+            except customer.ModelCallsDisabled:
+                # Switched off since the pass began: its stubs stay as they are,
+                # no attempt spent, and are embedded once the org is back on.
+                result.switched_off += len(group)
+                continue
             embedded += _stage_replacements(
                 repo, table, group, vectors, failures, max_attempts, result, replacements
             )
@@ -331,7 +360,7 @@ def _stage_replacements(
             row["embed_attempts"] = attempts
             row["embed_last_error"] = failures.get(i, "")
             result.failed += 1
-            if attempts >= max_attempts or failures.get(i) == EMPTY_TEXT:
+            if attempts >= max_attempts or failures.get(i) in (EMPTY_TEXT, customer.NO_CUSTOMER):
                 row["embed_failed_at"] = naive_utc_now()
                 result.poisoned += 1
         replacements.append(row)

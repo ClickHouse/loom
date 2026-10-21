@@ -37,10 +37,13 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   and the SDK call for every dashboard view.
 - [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) ·
   [Monitoring](operations/monitoring.md) · [Maintenance](operations/maintenance.md) ·
+  [Runtime settings](operations/runtime-settings.md) ·
   [Troubleshooting](operations/troubleshooting.md) ·
   [Code-index operations](operations/code-index-operations.md) ·
   [Running N replicas](operations/replicas.md): identical Looms behind one URL ·
-  [Kubernetes](operations/kubernetes.md): the Helm chart, with EKS and kind overlays
+  [Kubernetes](operations/kubernetes.md): the Helm chart, with EKS and kind overlays ·
+  [Copying a namespace to another Loom](operations/okf-sync.md) ·
+  [Exporting usage to a data warehouse](operations/analytics-export.md)
 
 ## 3. Connect agents
 

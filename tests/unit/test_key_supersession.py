@@ -255,8 +255,11 @@ async def test_follow_pairs_past_the_cap_or_in_a_failed_follow_go_to_the_repair(
     monkeypatch.setattr(triple_follow, "follow_row_supersessions", follow)
     monkeypatch.setattr(bulk_set, "record_input_projection_failure", record)
     monkeypatch.setattr(bulk_set, "bulk_source_resource_id", lambda input: "src")
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_bulk_follow_max_pairs", 4)
     inp = SimpleNamespace(org="o", namespace="ns")
-    pairs = [(f"o{i}", f"n{i}") for i in range(bulk_set._FOLLOW_MAX + 10)]
+    pairs = [(f"o{i}", f"n{i}") for i in range(14)]
 
     async def run() -> None:
         await bulk_set._bulk_follow_row_supersessions(
@@ -264,7 +267,7 @@ async def test_follow_pairs_past_the_cap_or_in_a_failed_follow_go_to_the_repair(
         )
 
     await run()
-    assert followed == [bulk_set._FOLLOW_MAX]
+    assert followed == [4]
     assert recorded == [("triples_follow_rows", 10)]
     # A failed follow leaves every pair for the repair.
     fail["now"], recorded[:] = True, []

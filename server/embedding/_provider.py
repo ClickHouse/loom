@@ -39,8 +39,13 @@ def vector(values: Iterable[Any], width: int | None) -> list[float]:
 
 
 def retrying() -> AsyncRetrying:
-    """Three attempts, backoff capped at 10 s."""
-    return _retry.retrying(attempts=3, max_wait_s=10)
+    """`embedding_retry_attempts` attempts, backoff capped at `embedding_retry_max_wait_s`."""
+    from server.settings import settings
+
+    return _retry.retrying(
+        attempts=settings.embedding_retry_attempts,
+        max_wait_s=settings.embedding_retry_max_wait_s,
+    )
 
 
 class _TokenEncoder(Protocol):
@@ -80,12 +85,16 @@ def split_cached(
     the process cache where it can be, `misses` are the `(index, text)` pairs
     left for the provider."""
     from server.embedding._cache import _cache, batch_key
+    from server.observability.genai import request_org
 
     results: list[list[float] | None] = [None] * len(texts)
     misses: list[tuple[int, str]] = []
     hits: list[str] = []
+    org = request_org()
+    if not org:  # no org to scope by: nothing is shared
+        return results, list(enumerate(texts)), hits
     for i, t in enumerate(texts):
-        cached = _cache.get(batch_key(model, t))
+        cached = _cache.get(batch_key(model, t, org))
         if cached is None:
             misses.append((i, t))
         else:
@@ -99,9 +108,11 @@ def store(
 ) -> None:
     """Put one validated provider vector in its batch slot and the process cache."""
     from server.embedding._cache import _cache, batch_key
+    from server.observability.genai import request_org
 
     results[index] = vec
-    _cache.put(batch_key(model, text), vec)
+    if org := request_org():
+        _cache.put(batch_key(model, text, org), vec)
 
 
 def filled(results: list[list[float] | None]) -> list[list[float]]:

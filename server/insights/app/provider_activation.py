@@ -12,7 +12,11 @@ from server.core.provider_keys import KEY_NAMES, environment_provider_key
 from server.embedding.embedder import provider_for
 from server.insights.api.models_provider_setup import ProviderSaveResult, ProviderSetupInput
 from server.insights.app.provider_credentials import open_configuration, seal_configuration
-from server.insights.app.provider_runtime import apply_configuration, environment_embedding
+from server.insights.app.provider_runtime import (
+    apply_configuration,
+    environment_embedding,
+    gateway_refusal,
+)
 from server.insights.app.provider_validation import validate_providers
 from server.insights.domain.provider_rebuild import unpublishable_refusal
 from server.insights.domain.provider_setup import committed_configuration, pending_configuration
@@ -96,6 +100,10 @@ async def rebuild_required() -> bool:
 
 
 async def _save_locked(setup: ProviderSetupInput) -> ProviderSaveResult:
+    refusal = gateway_refusal(setup.embedding)
+    if refusal:
+        # The check the settings run at load; applied, it would be refused too.
+        raise HTTPException(422, refusal)
     rows = await configurations()
     if pending_configuration(rows) is not None:
         raise HTTPException(409, "Another model configuration is being applied")

@@ -43,6 +43,25 @@ describe("LoomClient", () => {
     expect(calls[1].body.query).toBe("q2");
   });
 
+  it("passes a read's version_text to memory.delete_version exactly", async () => {
+    // A nanosecond version is above 2^53: JSON.parse rounds the number, the string is exact.
+    const exact = "1792436295126090001";
+    const sent: Array<Record<string, unknown>> = [];
+    const fetch = async (url: string, init: RequestInit) => {
+      sent.push(JSON.parse(init.body as string));
+      const body = url.endsWith("/memory.get")
+        ? `{"found":true,"memory_key":"k","version":${exact},"version_text":"${exact}"}`
+        : `{"tombstoned":true,"version":1}`;
+      return new Response(body, { status: 200 });
+    };
+    const c = new LoomClient(new Transport({ baseUrl: "http://x", fetch }));
+    const ident = { org: "o", namespace: "n", agent: "a", memory_key: "k" };
+    const got = await c.call("memory.get", ident);
+    expect(String(got.version)).not.toBe(exact);
+    await c.call("memory.delete_version", { ...ident, version: got.version_text ?? "" });
+    expect(sent[1].version).toBe(exact);
+  });
+
   it("exposes every generated group as a property", () => {
     const { c } = client();
     for (const g of new Set(OPS.map((o) => o.group))) {

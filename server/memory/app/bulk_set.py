@@ -19,10 +19,12 @@ from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.llm import customer
 from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
 )
+from server.memory.app import after_write
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
     _bulk_build_rows,
@@ -60,6 +62,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.set_commit import set_next
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import reconcile_row_facts, write_derived_facts
+from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.conflicts import kept_versions
 from server.memory.domain.memory_types import is_embedded
 
@@ -395,6 +398,14 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     rows — gathered, each a committed insert."""
     import server.memory.store as memory_repo
 
+    if state.memory_rows:
+        first = state.memory_rows[0]
+        lifted = await lift_above_deletes(
+            first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
+        )
+        for res in state.results:
+            res.version = lifted.get((res.memory_key, res.version), res.version)
+
     # The two core writes are independent rows of two tables and each is a ~260 ms committed
     # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
     async def _insert_memory_rows() -> None:
@@ -410,9 +421,18 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
     )
+    if state.memory_rows:
+        # A memory.delete_version that landed after the fence read: the rows go above it.
+        lifted = await lift_after_insert(
+            first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
+        )
+        if lifted:
+            for res in state.results:
+                res.version = lifted.get((res.memory_key, res.version), res.version)
+            retire = _vectors_to_retire(state)
     # The entries' versions were drawn before the batch embedded: a slow batch indexes
     # its own BM25 stats.
-    await memory_repo.index_late_rows(state.embedding_rows, ch=ch)
+    after_write.index_late_rows(state.embedding_rows, ch=ch)
     await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     fences = _high_winners(state)
     if fences:
@@ -871,10 +891,6 @@ async def _close_overtaken_edges(
         await end_overtaken_edges(input, sorted(overtaken), op="memory.bulk_set", ch=ch, high=high)
 
 
-# The most supersession pairs one write follows in the request.
-_FOLLOW_MAX = 1024
-
-
 async def _bulk_follow_row_supersessions(
     ch: Any,
     input: MemoryBulkSetInput,
@@ -887,16 +903,18 @@ async def _bulk_follow_row_supersessions(
     # The triple plane follows the rows this write retired. The predecessor's open triples
     # close and the successor triple is written under the predecessor's relation name, after
     # the projections, so a successor the extractor did emit is seen and not repeated.
-    # Up to `_FOLLOW_MAX` pairs are followed in the request; the rest, those whose chain
-    # was too long or circular to read, or all of them if the follow fails, are recorded for the
-    # projection repair to follow later.
+    # Up to `memory_bulk_follow_max_pairs` pairs are followed in the request; the rest,
+    # those whose chain was too long or circular to read, or all of them if the follow
+    # fails, are recorded for the projection repair to follow later.
     _pairs: list[tuple[str, str]] = _supersede_pairs(plan)
     _pairs += [(str(ln.older_id), str(ln.newer_id)) for ln in value_links]
     _pairs += intra_pairs
     if _pairs:
         from server.memory.app.triple_follow import follow_row_supersessions
+        from server.settings import settings
 
-        first, later = _pairs[:_FOLLOW_MAX], _pairs[_FOLLOW_MAX:]
+        cap = settings.memory_bulk_follow_max_pairs
+        first, later = _pairs[:cap], _pairs[cap:]
         restated: dict[str, Any] = {}
         try:
             later += (await follow_row_supersessions(input, first, ch=ch)).unfollowed
@@ -1023,7 +1041,8 @@ async def _bulk_conflict_verdicts(
     are indexes into memory_rows; values are ConflictResults. A bulk past the
     cap checks the first N and writes the rest unchecked (the caller counts
     them); a check that errors counts as clear — the write must not fail
-    because the check could not run."""
+    because the check could not run — except one the model-call switch holds
+    (`customer.HOLDS`), which the write answers as its own embeds would."""
     import asyncio
 
     from server.memory.app.conflicts import check_on_commit
@@ -1059,6 +1078,8 @@ async def _bulk_conflict_verdicts(
                     candidate_rows=candidate_rows,
                     resolved_threshold=resolved_threshold,
                 )
+            except customer.HOLDS:
+                raise  # held, as the batch's own embeds would be: the write answers it
             except Exception as e:  # noqa: BLE001 — the fact writes unchecked
                 log.warning("bulk_set: conflict check failed for %r: %s", entry.memory_key, e)
 

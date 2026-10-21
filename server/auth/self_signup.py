@@ -109,7 +109,7 @@ async def insert_owner_grant(org: str, namespace: str, subject: str, *, ch: Any 
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
-    grant_cache.invalidate(org)
+    await grant_cache.changed(org)
 
 
 class SelfSignupInput(BaseModel):
@@ -540,7 +540,7 @@ async def _provision_agent(
         ],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
-    grant_cache.invalidate(org, [sa_subject])
+    await grant_cache.changed(org, [sa_subject])
     await ch.insert(
         "loom.service_accounts",
         [

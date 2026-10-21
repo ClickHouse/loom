@@ -161,8 +161,8 @@ operation's role, or a live grant does.
     role there, capped at the live grant.
   - **What is not touched.** A namespace the subject never held a grant on keeps its
     claim; revoke the token to take that away.
-  - **When it applies.** The server that changed the grant applies it at once, every other
-    within `LOOM_GRANT_CACHE_TTL_SECONDS` (default 10 s).
+  - **When it applies.** The process that changed the grant applies it at once, every other
+    within `LOOM_ACL_WATERMARK_POLL_SECONDS` (default 1 s), on this server or another.
 - **Service accounts inherit.** A service account with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, except on a restricted namespace.
@@ -231,9 +231,10 @@ another user's memories into the answer. `read_scope` bounds a read inside the n
 | `own_user`            | rows written under the `user_id` the request names    |
 | `own_session`         | rows written under the `session_id` the request names |
 
-`memory.search`, `memory.search_trace`, `memory.ask`, `memory.recall`, `context.pack` and
-`profile.render` take it. A token can carry a `read_scope` claim (and a pinned
-`read_user_id`) that is a ceiling: a request can narrow it but never widen it, and a
+`memory.search`, `memory.search_trace`, `memory.ask`, `memory.recall`, `context.pack`,
+`profile.render` and `profile.structured` take it; `profile.structured` refuses
+`own_session`, since a user's profile spans their sessions. A token can carry a
+`read_scope` claim (and a pinned `read_user_id`) that is a ceiling: a request can narrow it but never widen it, and a
 scoped read without the `user_id` or `session_id` it binds to is refused with
 `IDENTITY_INCOMPLETE` instead of silently widening. Mint `own_user` tokens for
 multi-user agents.
@@ -338,7 +339,17 @@ How a caller gets a token at all is the deployment's identity mode
 - **`gateway`**: an upstream identity layer authenticates people and mints short-lived
   Loom tokens with the shared secret; Loom only verifies. A subject in
   `LOOM_TRUSTED_CALLERS` may act for an end user with `X-Loom-On-Behalf-Of`, and every
-  ledger row records the real caller.
+  ledger row records the real caller. A service whose users have no Loom account signs a
+  short-lived token per request for a `user:<id>` instead, with a key registered for it
+  as an end-user issuer ([act for a service's end users](../guides/tokens-and-grants.md#act-for-a-services-end-users)).
+
+## Collections
+
+A collection is a namespace named `col-…` that only grants open: no token claim or org
+admin role reaches it. A collection can sit inside another and inherit its grants, and a
+grant on one can name a `user:`, `group:` or `agent:` principal, or `everyone` (every
+request acting in the org), besides a person or a service account.
+[Sharing knowledge](../architecture/sharing.md) describes the model.
 
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on

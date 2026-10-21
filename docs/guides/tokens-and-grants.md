@@ -233,12 +233,12 @@ curl -s "$LOOM_BASE_URL/v1/grants.create" -H "Authorization: Bearer $ADMIN_TOKEN
 
 - **A claim goes no further than the grant.** Where the subject holds a grant row on a
   namespace the token names, of any status, the claim is capped at that grant: a
-  `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or a
-  restore ends every older token's claim there at once on the server that made it and
-  within `LOOM_GRANT_CACHE_TTL_SECONDS` (10 s) on the others, and a pending or rejected
-  request caps it at no access. A scoped token keeps its own role there, capped at the
-  grant. A namespace an operator named at mint that was never granted to the subject keeps
-  its claim; revoke the token for that.
+  `grants.revoke`, a `replace: true` lowering, `namespace.leave`, `loom claim-release` or
+  a restore ends every older token's claim there at once in the server process that made
+  it and within `LOOM_ACL_WATERMARK_POLL_SECONDS` (1 s) in every other process, on that
+  server or another, and a pending or rejected request caps it at no access. A scoped
+  token keeps its own role there, capped at the grant. A namespace an operator named at
+  mint that was never granted to the subject keeps its claim; revoke the token for that.
 - **Registering is owning.** `namespace.register` makes the caller the namespace's `admin`.
   With self-signup (`LOOM_IDENTITY_PROVIDER=trust-network`) the first principal to claim a
   name owns it; `loom claim-release --org <org> --namespace <ns>` revokes its grants,
@@ -466,7 +466,65 @@ person sign up again, under a new subject.
 
 **An aggregator acting for its users.** A subject listed in `LOOM_TRUSTED_CALLERS` may send
 `X-Loom-On-Behalf-Of: <subject>`: the call runs as that subject and every ledger row records
-the real caller in `impersonated_by`. Empty disables the header.
+the real caller in `impersonated_by`. A subject spelled like a grant principal (`user:`,
+`group:`, `agent:`, `everyone`, in any case, bare or after a `/`) is refused: end users are
+signed in by their own issuer. Empty disables the header.
+
+## Act for a service's end users
+
+A service in front of Loom, whose users have no Loom account, signs a short-lived RS256
+token per request for the user it serves. Register it in
+`LOOM_JWT_END_USER_ISSUERS_JSON`, under its issuer: the orgs it may sign for (exact names
+or `prefix*`, never `*`) and where its keys come from, a `jwks_url` (https, fetched at
+boot and every `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS`) or `keys` by `kid`:
+
+```bash
+LOOM_JWT_END_USER_ISSUERS_JSON='{"chat-app": {"orgs": ["acme", "team-*"], "jwks_url": "https://chat.example.com/.well-known/jwks.json"}}'
+# or, with the public keys inline:
+LOOM_JWT_END_USER_ISSUERS_JSON='{"chat-app": {"orgs": ["acme"], "keys": {"chat-1": "-----BEGIN PUBLIC KEY-----\n…"}}}'
+```
+
+The service then signs, for each call, a token with `kid` in its header, `iss` its
+issuer, `aud` Loom's audience (`LOOM_JWT_AUDIENCE`), `sub: user:<id>`, `org`, a fresh
+`jti`, `iat` and an `exp` at most `LOOM_JWT_END_USER_MAX_TTL_SECONDS` (5 min) later, and
+`agent: agent:<id>` when the call runs inside one of its agents:
+
+```bash
+curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"org": "acme", "namespace": "@me", "query": "renewal clause"}'
+```
+
+- The request runs as `user:u-42` alone, in the token's org: an org member with no claim,
+  reads pinned to that user's rows, reaching what grants give `user:u-42`, the groups that
+  list it, the agent the token names, and `everyone`. A token with any other claim
+  (namespaces, roles, a read scope), an org its issuer does not list, no `jti` or a longer
+  life is refused, and the key verifies its own issuer's end-user tokens and nothing else.
+  Until an issuer's JWKS is first fetched, its tokens are answered 503 (retry). MCP,
+  `/v1/me/*` and the admin routes refuse an end-user token.
+- Grants name these principals as subjects: `grants.create` with `subject: "user:u-42"`,
+  `"group:finance"`, `"agent:helper"` or `"everyone"`. Groups, agents and `everyone` hold
+  grants on collections only.
+- Groups are pushed with a token of the org's admin to SCIM `/scim/v2/Groups` (create,
+  replace, patch members, delete); a member is a user id. A removed member loses the
+  group's grants within `LOOM_ACL_WATERMARK_POLL_SECONDS`.
+- Ids are lowercase letters, digits and `._@-`. `namespace: "@me"` is the user's personal
+  collection: only they reach it, and it takes no grant.
+- Of the ops that name no namespace, an end user may call `collection.create`,
+  `collection.list`, `namespace.list_mine` and `grants.pending_for_me`, but no directory
+  self-service (`namespace.register`, `namespace.join`, `namespace.browse`).
+- An agent's files: a collection granted to `agent:<id>`, searched with
+  `knowledge.search` and `namespaces: ["<that collection>", "@me"]`, so the search reads
+  those alone. A search that names neither `namespaces` nor `namespace_scope` reads its
+  `namespace` alone (`this`) for an end user; `namespace_scope: "all_mine"` widens it to
+  every collection the user reaches. A document's `agent`, `session_id` and
+  `source_class` come back on each hit.
+- To cut off one user, revoke their tokens and grants and take them out of their groups,
+  or erase them (`erasure.request` with `scope_type: user_id`, and `purge: true` to take
+  the rows off disk). An end user's tokens are revoked by subject under their org,
+  `loom revoke-token --subject <org>/user:<id>`, since `user:<id>` names one person per
+  org. Collections, their tree and the read cost are in
+  [Sharing knowledge](../architecture/sharing.md).
 
 ## Revoke and rotate
 

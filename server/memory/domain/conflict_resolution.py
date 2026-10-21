@@ -37,7 +37,7 @@ NOTHING = "nothing"
 RETIRING_POLICIES = ("newest_wins", "auto_reinforce")
 
 # A value is cut to this many characters in the prompt.
-MAX_VALUE_CHARS = 700
+MAX_VALUE_CHARS = 700  # not a setting: the thresholds were calibrated on this prompt
 
 # Named in each memory.conflict_resolver audit row, so a verdict can be traced to the
 # prompt that produced it. Change it with SYSTEM_PROMPT or `user_prompt`.

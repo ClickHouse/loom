@@ -1005,7 +1005,6 @@ def test_inside_a_batch_a_call_s_refusal_is_ledgered_once_but_each_handler_failu
         output_model=_In,
         handler=_fails,
         idempotent=True,
-        budget_p99_ms=1000,
         required_role=Role.VIEWER,
     )
 
@@ -1092,7 +1091,6 @@ def test_an_mcp_call_that_hid_a_row_unverified_is_the_server_s_and_the_next_star
         output_model=_Out,
         handler=_lookup,
         idempotent=True,
-        budget_p99_ms=1000,
         required_role=Role.VIEWER,
     )
     monkeypatch.setattr(events, "get_emitter", lambda: _Emitter())

@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.llm import customer
 from server.memory.app.observe_replay import _extract_replay, replay_messages
 from server.memory.domain.observation_tags import (
     CRYSTALLIZE_DONE_TAG,
@@ -24,6 +25,7 @@ from server.memory.domain.observation_tags import (
 )
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.rows import next_version
+from server.settings import settings
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -98,6 +100,9 @@ async def find_ready_sessions(
     if cfg.namespace_filter is not None:
         scope += " AND namespace = {ns_f:String}"
         params["ns_f"] = cfg.namespace_filter
+    # An org whose model calls are switched off waits, and takes no slot.
+    scope += " AND NOT has({off:Array(String)}, org)"
+    params["off"] = sorted(await customer.switched_off_orgs())
     rows = await ch.query_all(
         f"""
         SELECT org, namespace, agent, user_id, session_id,
@@ -229,9 +234,14 @@ async def _distill_session(
             observation_date = va.date().isoformat()
 
     written = await _extract_replay(session, msgs, observation_date)
-    # The transition events and the two session notes, from
-    # the same observations, before they are marked DONE. Fail-open: the
-    # facts are already written; a failed note is a count, not a lost pass.
+    # The transition events and the two session notes, from the same observations,
+    # before they are marked DONE. Fail-open: the facts are already written, and a
+    # failed note is a count, not a lost pass.
+    # A call the switch holds (`customer.HOLDS`: switched off since the session was
+    # picked, or a copy too old to read) propagates instead: the sources stay
+    # un-DONE and the whole session is distilled again once the org is back on.
+    # Its events and hints are keyed by the session and its facts deduplicated by
+    # hash, so the rerun replaces them rather than adding copies.
     context = await _load_session_context(session, ch=get_client_for_context())
     extras = await _distill_extras(session, readable, context=context)
 
@@ -299,7 +309,7 @@ async def _load_session_context(session: dict[str, Any], *, ch: Any) -> list[Any
                 "uid": session["user_id"],
                 "sid": session["session_id"],
                 "obs_tag": OBSERVATION_TAG,
-                "lim": int(_SESSION_CONTEXT_LIMIT),
+                "lim": int(settings.memory_observe_extract_session_context_limit),
             },
         )
     except Exception as e:  # noqa: BLE001 — the session distills without context
@@ -318,19 +328,14 @@ def _sendable(sensitivity: str, value: Any) -> bool:
     return sensitivity != "high" and not value_reads_high(value)
 
 
-# The most observations a session's notes read: the notes
-# prompt is bounded by characters anyway; this bounds the read.
-_SESSION_CONTEXT_LIMIT = 400
-
-
 async def _distill_extras(
     session: dict[str, Any], observations: list[Any], *, context: list[Any] | None = None
 ) -> Any:
     """Events + notes for one session; a missing model or any error leaves an
-    empty result. With
-    `context` the events are numbered over, and the notes
-    written from, the WHOLE session so far; only this pass's observations
-    get new events."""
+    empty result, except a call the switch holds (`customer.HOLDS`), which
+    propagates so the session is not marked done. With `context` the events
+    are numbered over, and the notes written from, the WHOLE session so far;
+    only this pass's observations get new events."""
     from server.memory.app import trajectory_notes as tn
     from server.settings import settings
 
@@ -383,7 +388,8 @@ async def run_pass(
                 observations = await _load_session_observations(session, cfg, ch)
                 if not observations:
                     continue
-                distilled = await _distill_session(session, observations)
+                with customer.for_org(str(session["org"])):
+                    distilled = await _distill_session(session, observations)
                 result.distilled_sessions.append(distilled)
                 result.written_memories += distilled.written
                 result.observations_consumed += distilled.observations

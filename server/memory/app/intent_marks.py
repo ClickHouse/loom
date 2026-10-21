@@ -15,7 +15,7 @@ from server.core.ch import set_query_tag
 log = logging.getLogger(__name__)
 
 # Seconds between flushes.
-FLUSH_S = 10.0
+FLUSH_S = 10.0  # not a setting: an internal flush cadence
 
 # org -> intent ids queued for the next flush. The ids came from this process's own
 # writes, so one mark across their orgs reaches no other tenant's rows.

@@ -617,9 +617,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "destroying the memory entirely."
     ),
     "memory.search_trace": (
-        "Same shape as memory.search but with per-hit scoring breakdown "
-        "(cosine, lexical, entity boost, rank). Use for debugging recall "
-        '("why did X rank above Y") — not for routine retrieval.'
+        "The vector leg of memory.search with a per-candidate scoring breakdown "
+        "(cosine, entity boost, rank; no fusion, assembly or reranker). For "
+        '"why did X rank above Y", call memory.search with explain=true.'
     ),
     "memory.outcome": (
         "Record that a memory turned out to be useful or wrong. Positive "

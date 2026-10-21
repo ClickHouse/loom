@@ -56,7 +56,9 @@ async def test_the_cache_row_carries_the_window_keys_the_call_rendered() -> None
     ch = _CH()
     lc.set_window_keys(["k1", "k2", "k1", "", None])
     try:
-        await CachedLLMClient(_Inner(), ch=ch, table="loom.t").complete("sys", "u", max_tokens=100)
+        await CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t").complete(
+            "sys", "u", max_tokens=100
+        )
         await _settle()
         assert len(ch.inserts) == 1
         row = ch.inserts[0][1][0]
@@ -64,7 +66,7 @@ async def test_the_cache_row_carries_the_window_keys_the_call_rendered() -> None
         # a narrowed scope is what one call stores; the enclosing window returns
         with lc.window_keys_scope(["k9"]):
             assert lc.current_window_keys() == ("k9",)
-            await CachedLLMClient(_Inner(), ch=ch, table="loom.t").complete(
+            await CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t").complete(
                 "sys", "v", max_tokens=100
             )
         assert lc.current_window_keys() == ("k1", "k2")
@@ -73,7 +75,9 @@ async def test_the_cache_row_carries_the_window_keys_the_call_rendered() -> None
     finally:
         lc.set_window_keys([])
     # outside an ask there is no window: the row has no key axis
-    await CachedLLMClient(_Inner(), ch=ch, table="loom.t").complete("sys", "w", max_tokens=100)
+    await CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t").complete(
+        "sys", "w", max_tokens=100
+    )
     await _settle()
     assert ch.inserts[2][1][0]["window_keys"] == []
 
@@ -97,7 +101,7 @@ async def test_synthesize_publishes_exactly_the_keys_it_rendered() -> None:
     try:
         window = [_mem("k1", "The dose is 20 mg."), _mem("k2", "Taken at breakfast.")]
         await synthesis._synthesize(
-            CachedLLMClient(_Inner(), ch=ch, table="loom.t"), "dose?", list(window)
+            CachedLLMClient(_Inner(), org="o", ch=ch, table="loom.t"), "dose?", list(window)
         )
         await _settle()
         assert ch.inserts[0][1][0]["window_keys"] == ["k1", "k2"]
@@ -280,8 +284,11 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
 
     redacted: list[tuple[str, str, int]] = []
 
-    async def _redact_row(org, mid, version, *, when, reason_blob):
+    async def _redact_versions(org, namespace, user_id, mid, version, *, when, reason_blob):
         redacted.append((org, mid, version))
+
+    async def _exists(org, target, mid, version):
+        return True
 
     deleted: list[tuple[str, str, str]] = []
 
@@ -308,7 +315,8 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         assert scrubs == ["scrub"] and apply is True
         return {}
 
-    monkeypatch.setattr(memory_repo, "redact_row", _redact_row)
+    monkeypatch.setattr(memory_repo, "version_exists", _exists)
+    monkeypatch.setattr(memory_repo, "redact_versions", _redact_versions)
     monkeypatch.setattr(memory_repo, "key_derivative_scrubs", _derivatives)
     monkeypatch.setattr(cur, "_live_link_inputs", _live_inputs)
     monkeypatch.setattr(memory_repo, "run_scrubs", _run)
@@ -360,8 +368,10 @@ def test_events_scrub_rewrites_memory_key_and_the_identifier_args_in_one_mutatio
         "subject",
     ):
         assert f"'{key}'" in sql, key
-    assert "WHERE (org = {org:String} AND user_id = {uid:String})" in sql
-    assert params["uid"] == "alice"
+    # A gateway's end user is named by its subject too.
+    assert "WHERE (org = {org:String} AND (user_id = {uid:String} OR subject = {p:String}))" in sql
+    assert "subject = if(subject = {p:String}, '<erased>', subject)" in sql
+    assert (params["uid"], params["p"]) == ("alice", "user:alice")
     # the identity tuple never reaches args (event_args strips it); the scrub list is the rest
     assert not (set(memory_steps.ARGS_SCRUB_KEYS) & IDENTITY_KEYS)
     assert erasure_census.STEP_ONLY_TABLES["agent_events.scrub"] == ("loom.agent_events",)

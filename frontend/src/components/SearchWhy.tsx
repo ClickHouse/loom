@@ -3,10 +3,11 @@ import { Popover } from "@clickhouse/click-ui/Popover";
 import type { SearchHit } from "../api";
 import { IconButton } from "./IconButton";
 import { PopoverTrigger } from "./ui/Menu";
-import { signed, whyTerms } from "../lib/whyNote";
+import { termText, whyTerms } from "../lib/whyNote";
 
-// A search hit's "Why this result" in the Memories list: an info button in the row's meta
-// slot whose popover says why the row is there — rank, similarity, blended score and the
+// A ranked search hit in the Memories list shows its similarity and blended score in the
+// row's meta line (SearchScores), and its "Why this result" info button, after the meta,
+// opens a popover that says why the row is there — rank, similarity, blended score and the
 // ranking terms that moved it (key match, date proximity, entity, reinforcement, ...), or,
 // for a row that holds the typed text, that it does. The server already computes all of it
 // (`explanation` + `score_components` on memory.search); the full breakdown, every leg, is
@@ -20,6 +21,32 @@ type SearchWhyProps =
       contains?: never;
     }
   | { contains: string; hit?: never; rank?: never };
+
+/** A hit's similarity and blended score to two places; null for one the server did not send. */
+function scoresOf(hit: SearchHit): { similarity: string | null; score: string | null } {
+  return {
+    similarity: Number.isFinite(hit.similarity) ? hit.similarity.toFixed(2) : null,
+    score: Number.isFinite(hit.rank_score) ? hit.rank_score.toFixed(2) : null,
+  };
+}
+
+/** How well a hit matched, in the row's meta line; under 640 px the score alone on screen,
+ *  with the similarity still read out. */
+export function SearchScores({ hit }: { hit: SearchHit }) {
+  const { similarity, score } = scoresOf(hit);
+  if (similarity === null && score === null) return null;
+  return (
+    <span data-testid="search-score" className="tabular whitespace-nowrap">
+      {similarity !== null && (
+        <span className="sr-only sm:not-sr-only sm:whitespace-nowrap">
+          similarity {similarity}
+          {score !== null && " · "}
+        </span>
+      )}
+      {score !== null && <span>score {score}</span>}
+    </span>
+  );
+}
 
 export function SearchWhy(props: SearchWhyProps) {
   return (
@@ -38,7 +65,7 @@ export function SearchWhy(props: SearchWhyProps) {
 
 function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
   const terms = whyTerms(hit.score_components);
-  const similarity = Number.isFinite(hit.similarity) ? hit.similarity : null;
+  const { similarity, score } = scoresOf(hit);
   const explanation = String(hit.explanation ?? "")
     .replace(/\n/g, " ")
     .trim();
@@ -46,8 +73,8 @@ function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
     <>
       <p className="flex flex-wrap gap-x-2">
         <span className="font-medium text-text">#{rank}</span>
-        {similarity !== null && <span>similarity {similarity.toFixed(2)}</span>}
-        {typeof hit.rank_score === "number" && <span>score {hit.rank_score.toFixed(2)}</span>}
+        {similarity !== null && <span>similarity {similarity}</span>}
+        {score !== null && <span>score {score}</span>}
       </p>
       {terms.length > 0 ? (
         <div className="flex flex-wrap gap-1">
@@ -56,7 +83,7 @@ function Ranked({ hit, rank }: { hit: SearchHit; rank: number }) {
               key={t.label}
               size="sm"
               state={t.value < 0 ? "warning" : "default"}
-              text={`${t.label} ${signed(t.value)}`}
+              text={`${t.label} ${termText(t)}`}
             />
           ))}
         </div>

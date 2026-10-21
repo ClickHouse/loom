@@ -399,7 +399,7 @@ async def test_llm_response_cache_statements_pass_the_analyzer_and_round_trip(ch
             return LLMResult(text="", tokens_in=0, tokens_out=0, provider="fake", model=self.model)
 
     stub = _Stub()
-    await CachedLLMClient(_Inner(), ch=stub).complete("sys", "user", max_tokens=600)
+    await CachedLLMClient(_Inner(), org="o", ch=stub).complete("sys", "user", max_tokens=600)
     assert len(stub.query_all_calls) == 1
     sql, params = stub.query_all_calls[0]
     assert sql == read_sql()
@@ -486,24 +486,33 @@ async def test_erasure_census_and_orphan_statements_pass_the_analyzer(ch_client)
 
 
 def test_state_probe_invariants_statement_passes_the_analyzer(ch_client, monkeypatch) -> None:
-    """The slow-clock probe statement with its two invariant subqueries."""
-    from server.observability import otel_probes
+    """The slow-clock probe statement with its two invariant subqueries, with the
+    parameters the shared probe client binds."""
+    from server.observability import otel_exporters, otel_probes
+    from server.observability.otel_probe_client import _probe_client_reset
 
-    captured: list[str] = []
+    captured: list[tuple[str, dict[str, Any]]] = []
 
     class _Rows:
         result_rows: list[Any] = []
 
     class _Sync:
-        def query(self, sql: str) -> _Rows:
-            captured.append(sql)
+        def query(self, sql: str, **kwargs: Any) -> _Rows:
+            captured.append((sql, dict(kwargs.get("parameters") or {})))
             return _Rows()
 
-    monkeypatch.setattr(otel_probes, "_probe_client", lambda: _Sync())
-    assert otel_probes._probe_invariants() == {}
-    assert len(captured) == 1 and "AS orphan_graph_namespaces" in captured[0]
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(otel_exporters, "_make_ch_client_for_otel", lambda: _Sync())
     try:
-        ch_client.query(f"EXPLAIN QUERY TREE {captured[0]}")
+        assert otel_probes._probe_invariants() == {}
+    finally:
+        _probe_client_reset()
+    assert len(captured) == 1 and "AS orphan_graph_namespaces" in captured[0][0]
+    sql, params = captured[0]
+    try:
+        ch_client.query(f"EXPLAIN QUERY TREE {sql}", parameters=params)
     except Exception as exc:  # pragma: no cover - the assertion message is the point
         raise AssertionError(f"probe statement rejected by the analyzer: {str(exc)[:300]}") from exc
 
@@ -1315,7 +1324,8 @@ async def test_reliance_split_statements_pass_the_analyzer(ch_client) -> None:
 def test_storage_housekeeping_statements_pass_the_analyzer(ch_client) -> None:
     """The storage gauge statements (system.parts over the closed table list;
     system.view_refreshes for the loom roll-ups; the SLI rollup's sentinel and
-    the ledger rows it missed) with their real parameter types."""
+    the ledger rows it missed) with the parameters the shared probe client binds."""
+    from server.observability.otel_probe_client import database_parameters
     from server.observability.otel_probes import (
         _SLI_LAG_SQL,
         _SLI_MISSED_SQL,
@@ -1325,8 +1335,8 @@ def test_storage_housekeeping_statements_pass_the_analyzer(ch_client) -> None:
     )
 
     for sql, params in (
-        (_STORAGE_PARTS_SQL, {"tables": list(STORAGE_TABLES)}),
-        (_VIEW_REFRESH_SQL, {}),
+        (_STORAGE_PARTS_SQL, {**database_parameters(), "tables": list(STORAGE_TABLES)}),
+        (_VIEW_REFRESH_SQL, database_parameters()),
         (_SLI_LAG_SQL, {}),
         (_SLI_MISSED_SQL, {}),
     ):

@@ -13,6 +13,7 @@ from typing import Literal
 import httpx
 
 from server.clients._http_errors import provider_error_code
+from server.core.errors import GatewayRequiredError
 from server.core.llm_provider import provider_for_model
 from server.core.schema.vector_codec_ddl import codable
 from server.core.vectors import codes_state
@@ -25,11 +26,13 @@ from server.insights.api.models_provider_setup import (
     ProviderSetupInput,
     ProviderValidation,
 )
-from server.llm import gateway
+from server.llm import customer, gateway
 from server.llm.anthropic import AnthropicLLMClient
 from server.llm.openai import OpenAILLMClient
 from server.observability import provider_health
 from server.observability.genai import llm_stage
+from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 
 async def _probe_llm(provider: str, model: str, key: str) -> None:
@@ -38,9 +41,11 @@ async def _probe_llm(provider: str, model: str, key: str) -> None:
         if provider == "anthropic"
         else OpenAILLMClient(model, api_key=key)
     )
-    with llm_stage("provider_validation"):
+    with llm_stage("provider_validation"), customer.system():
         result = await client.complete(
-            "This is a connection check. Reply with OK.", "Connection check.", max_tokens=128
+            "This is a connection check. Reply with OK.",
+            "Connection check.",
+            max_tokens=llm_max_tokens("provider_validation"),
         )
     if not result.text.strip():
         raise ValueError("empty completion")
@@ -71,7 +76,8 @@ async def _probe_embedding(
     )
     # Bypass the vector cache: a cache hit would falsely validate an invalid key.
     # Also do not insert a validation-only vector into any data-plane table.
-    vector = await client._embed_one_raw("Loom provider connection check.")
+    with customer.system():
+        vector = await client._embed_one_raw("Loom provider connection check.")
     if len(vector) != dimensions or not all(math.isfinite(v) for v in vector):
         raise ValueError("invalid embedding dimensions or values")
     if not any(vector):
@@ -98,13 +104,15 @@ async def _check(
         return check
     try:
         with provider_health.unrecorded():
-            async with asyncio.timeout(30):
+            async with asyncio.timeout(settings.provider_check_timeout_s):
                 if role == "llm":
                     await _probe_llm(provider, model, key)
                 else:
                     await _probe_embedding(
                         provider, model, key, dimensions, base_url, send_dimensions
                     )
+    except GatewayRequiredError:
+        check.code = "gateway_required"
     except (TimeoutError, httpx.TimeoutException):
         check.code = "timeout"
     except httpx.HTTPStatusError as exc:

@@ -53,6 +53,8 @@ async def claim_release(
     input: ClaimReleaseInput,
     request: Request,
 ) -> ClaimReleaseOutput:
+    """Release a self-signup claim: revoke its grants, clear the owner, deactivate it;
+    the name stays reserved."""
     from server.insights.app.admin_routes import refuse_foreign_org, require_org_admin
 
     info = await require_org_admin(request)
@@ -218,7 +220,7 @@ async def _release(
     await sso_links.forget_account(org, namespace, actor_subject, ch=ch)
     await machines.forget_namespace(org, namespace, actor_subject, ch=ch)
     # The claim cap reads which accounts tie a person's spellings from this table.
-    grant_cache.invalidate(org)
+    await grant_cache.changed(org)
     aliases.invalidate(org, [previous_owner, str(existing.get("contact_email") or "")])
 
     log.info(

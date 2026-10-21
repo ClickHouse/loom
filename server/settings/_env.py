@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from pydantic import AfterValidator, BeforeValidator
 
 
-def _decode_json_or_b64(raw: str, field: str) -> object:
+def decode_json_or_b64(raw: str, field: str) -> object:
     """Parse either raw JSON or base64-encoded JSON. base64 sidesteps shell
     newline-mangling when PEM keys are stored in .env files."""
     raw = raw.strip()
@@ -29,13 +29,18 @@ def _decode_json_or_b64(raw: str, field: str) -> object:
 
 
 @functools.lru_cache(maxsize=16)
-def json_map_items(raw: str, field: str) -> tuple[tuple[str, str], ...]:
+def json_map_items(
+    raw: str, field: str, *, strings_only: bool = False
+) -> tuple[tuple[str, str], ...]:
     """A string → string map setting (JWT kid → key, rerank name → URL), decoded once
     per raw value: signing and verification read it on every token. Keyed on the raw
-    string, so a changed value (a test override) is decoded afresh."""
-    parsed = _decode_json_or_b64(raw, field)
+    string, so a changed value (a test override) is decoded afresh. `strings_only`
+    refuses a value that is not a string instead of converting it."""
+    parsed = decode_json_or_b64(raw, field)
     if not isinstance(parsed, dict):
         raise ValueError(f"{field} must be a JSON object")
+    if strings_only and not all(isinstance(v, str) for v in parsed.values()):
+        raise ValueError(f"{field} must map names to strings")
     return tuple((str(k), str(v)) for k, v in parsed.items())
 
 
@@ -48,52 +53,47 @@ DEV_JWT_SECRET = "dev-only-jwt-secret-do-not-use-in-prod"
 # environment by the server, the CLI, deploy scripts or the clients.
 NON_SETTINGS_ENV = frozenset(
     {
-        "LOOM_ACTIVATE_TOOL_NAME",
         "LOOM_ADMIN_TOKEN",
         "LOOM_AGENT",
         "LOOM_API_KEY",
         "LOOM_API_KEY_FILE",
-        "LOOM_AUTH_DISABLED",
+        "LOOM_AUTO_RUN",
         "LOOM_BASE_URL",
         "LOOM_BIND_PORT",
-        "LOOM_CH_CAPTURE_STATEMENTS",
         "LOOM_CH_CONTAINER",
         "LOOM_CH_HOST_PORT",
         "LOOM_CH_NATIVE_HOST_PORT",
         "LOOM_CLICKHOUSE_IMAGE",
         "LOOM_COLOUR",
         "LOOM_COLOUR_PORT",
-        "LOOM_CONFIG_DIR",
         "LOOM_CONFIG_FILE",
+        "LOOM_EMBEDDING_API_KEY",
         "LOOM_ENV_FILE",
         "LOOM_GRACEFUL_SHUTDOWN_S",
         "LOOM_HOOK_EXIT_MS",
         "LOOM_HOOK_TIMEOUT_MS",
         # Compose-only, from an install's .env: the image and the published port.
         "LOOM_IMAGE_REPOSITORY",
-        "LOOM_INIT",
         "LOOM_INSTANCE_LABEL",
         "LOOM_KEEP_ALIVE_S",
         "LOOM_LISTEN_HOST",
+        "LOOM_MENTOR_BRIEF",
         "LOOM_NAMESPACE",
-        "LOOM_OP",
-        "LOOM_OP_TOOL_NAME",
         "LOOM_ORG",
         "LOOM_OUTPUT_DIR",
-        "LOOM_OWNED",
         "LOOM_PORT",
         "LOOM_PREFLIGHT_HEALTH_URL",
         "LOOM_PREFLIGHT_MIGRATE",
         "LOOM_PREFLIGHT_PORT",
-        "LOOM_PRIMER_RESOURCE_URI",
-        "LOOM_PROMPT_NAME",
-        "LOOM_PROXY_AUTH",
+        "LOOM_PREFLIGHT_STRICT",
+        "LOOM_PROFILE",
+        "LOOM_PUBLIC_HEALTH_URL",
         "LOOM_REBUILD_DIR",
-        "LOOM_ROOT",
-        "LOOM_EMBEDDING_API_KEY",
-        "LOOM_SEARCH_RECIPES",
-        "LOOM_SEARCH_TOOL_NAME",
+        "LOOM_REDEPLOY_READY_TIMEOUT_S",
+        "LOOM_REPO",
+        "LOOM_SETTINGS_FILE",
         "LOOM_SHUNT_READ_CAP",
+        "LOOM_UVICORN_LOOP",
         "LOOM_VERSION",
     }
 )
@@ -114,19 +114,22 @@ def unknown_env_keys(fields: Iterable[str], env_file: str | None) -> list[str]:
 
 # A field whose name matches is a secret: `repr(settings)` shows only its length
 # and the configuration reference never prints its default. The word-boundary
-# suffixes avoid false positives like `clickstack_user_id_keys`. `code_repos_json`
+# suffixes avoid false positives like `clickstack_user_id_keys`; `jwt_secret_previous`
+# is the root secret a rotation still opens credentials with. `code_repos_json`
 # entries may carry a `github_token`; the OTLP headers carry the exporter's
 # bearer token.
 _SECRET_FIELD = re.compile(
     "|".join(
         (
-            r"(?:^|_)secret$",
+            r"(?:^|_)secret(?:_previous)?$",
             r"(?:^|_)password$",
             r"(?:^|_)(?:admin|github|scim)_token$",
             r"(?:^|_)key$",
             r"(?:^|_)public_keys_json$",
             r"(?:^|_)credentials_json$",
             r"^code_repos_json$",
+            # Its URLs can carry a credential (`_check_rerank_endpoints`).
+            r"^rerank_endpoints_json$",
             r"(?:^|_)otlp_headers$",
         )
     )

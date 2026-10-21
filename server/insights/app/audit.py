@@ -58,7 +58,7 @@ def _same_write(a: audit_repo.AuditRow, b: audit_repo.AuditRow) -> bool:
 
 
 # One write's audit rows, read whole: a request writes far fewer.
-_WRITE_ROWS = 10_000
+_WRITE_ROWS = 10_000  # not a setting: a read cap far above one request's rows
 
 
 async def _finish_the_write(

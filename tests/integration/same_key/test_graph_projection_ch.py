@@ -1272,7 +1272,7 @@ async def test_a_successor_is_judged_by_an_unredacted_copy_of_its_value(
     from server.memory import store as M
     from server.memory.api.models_crud import MemoryUpdateByIdInput
     from server.memory.app.update import handle_memory_update_by_id
-    from server.memory.store.redaction import redact_row
+    from server.memory.store.redaction import redact_versions
 
     paris = await _stated(ch, org, "s1", "I currently live in Paris")
     london = await _stated(ch, org, "s2", "I currently live in London", extracted=False)
@@ -1288,7 +1288,16 @@ async def test_a_successor_is_judged_by_an_unredacted_copy_of_its_value(
     # earlier copy, if any, still says it.
     when = datetime.now(UTC).replace(tzinfo=None)
     mid = str(london["memory_id"])
-    await redact_row(org, mid, versions[-1]["version"], when=when, reason_blob="t", ch=ch)
+    await redact_versions(
+        org,
+        str(london["namespace"]),
+        str(london["user_id"]),
+        mid,
+        versions[-1]["version"],
+        when=when,
+        reason_blob="t",
+        ch=ch,
+    )
     other = await _stated(ch, org, "s3", "I currently live in London")
     rome = await _stated(ch, org, "s4", "I currently live in Rome", extracted=False)
     await _follow_retirement(ch, org, other, rome)

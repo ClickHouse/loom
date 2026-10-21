@@ -225,6 +225,20 @@
    }
   },
   {
+   "deadline_seconds()": 600.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 600,
+   "interval_seconds": 120,
+   "max_pass_seconds": 600.0,
+   "name": "structured_profile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.structured_profile:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -278,6 +292,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.memory.workers.expiry_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "delete_version_check",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.delete_version_check:run_pass"
    }
   },
   {
@@ -844,6 +872,20 @@
    }
   },
   {
+   "deadline_seconds()": 600.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 600,
+   "interval_seconds": 120,
+   "max_pass_seconds": 600.0,
+   "name": "structured_profile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.structured_profile:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 240.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -883,6 +925,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.memory.workers.expiry_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "delete_version_check",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.delete_version_check:run_pass"
    }
   },
   {
@@ -1321,6 +1377,20 @@
    }
   },
   {
+   "deadline_seconds()": 600.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 600,
+   "interval_seconds": 120,
+   "max_pass_seconds": 600.0,
+   "name": "structured_profile",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.structured_profile:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -1374,6 +1444,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.memory.workers.expiry_sweep:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 300,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "delete_version_check",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.delete_version_check:run_pass"
    }
   },
   {

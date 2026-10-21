@@ -548,6 +548,7 @@ def test_entity_vectors_is_in_the_census_for_both_scopes() -> None:
         "loom.code_chunks",
         "loom.code_summaries",
         "loom.conversation_embeddings",
+        "loom.embedding_cache",  # deleted org-wide, uncounted: traffic refills it
     }:
         assert t in erasure_census.census_tables("namespace"), t
 

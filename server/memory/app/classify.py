@@ -30,12 +30,22 @@ import logging
 
 import httpx
 
+from server.llm import customer
+from server.memory.app.log_once import LogOnce
+from server.memory.domain.classify_endpoints import classify_refusal
 from server.observability import degradations as _degradations
 from server.observability import provider_health as _provider_health
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
+# Namespaces whose stored classify_endpoint is refused, logged once per process.
+_OFF_GATEWAY_LOGGED = LogOnce()
+
+
+def _timeout() -> httpx.Timeout:
+    # not a setting: the connect, write and pool waits; the read is the setting
+    return httpx.Timeout(connect=2.0, read=settings.memory_classify_timeout_s, write=2.0, pool=2.0)
 
 
 async def classify(
@@ -49,16 +59,19 @@ async def classify(
     when the response's memory_type isn't in valid_types (when
     valid_types is non-empty).
     """
-    if not endpoint:
+    if not endpoint or classify_refusal(endpoint):
+        # Off the gateway: no call; the caller's type stays.
         return ""
     body = {
         "value": value,
         "prompt_template": prompt_template,
         "valid_types": valid_types,
     }
+    # Outside the fail-open: a refused call is an error, not a kept type.
+    headers = customer.headers(await customer.require())
     try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(endpoint, json=body)
+        async with httpx.AsyncClient(timeout=_timeout()) as client:
+            resp = await client.post(endpoint, json=body, headers=headers)
             resp.raise_for_status()
             payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed classifier keeps the caller's type
@@ -109,7 +122,18 @@ async def get_namespace_classify_config(
         return "", ""
     if not row:
         return "", ""
-    return (
-        row.get("classify_endpoint") or "",
-        row.get("classify_prompt_template") or "",
-    )
+    endpoint = row.get("classify_endpoint") or ""
+    refusal = classify_refusal(endpoint)
+    if refusal:
+        # Stored before the gateway was required: memory content never goes
+        # there, and the namespace has no classifier until it is changed.
+        if _OFF_GATEWAY_LOGGED.first((org, namespace)):
+            log.warning(
+                "%s/%s: its classify_endpoint is refused while the gateway is required "
+                "(%s): not classified",
+                org,
+                namespace,
+                refusal,
+            )
+        return "", ""
+    return (endpoint, row.get("classify_prompt_template") or "")

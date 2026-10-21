@@ -19,6 +19,7 @@ from server.auth.context import current_auth
 from server.code.app.member_writes import assert_own_row
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import BackendUnavailableError, ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -29,6 +30,8 @@ from server.memory.api.models_crud import (
     MemoryClearOutput,
     MemoryDeleteInput,
     MemoryDeleteOutput,
+    MemoryDeleteVersionInput,
+    MemoryDeleteVersionOutput,
     MemoryGetByIdInput,
     MemoryGetByIdOutput,
     MemoryGetInput,
@@ -46,8 +49,11 @@ from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
+from server.memory.domain.delete_marks import delete_version_trace
+from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
-from server.memory.store.rows import next_version
+from server.memory.store.rows import Identity, next_version
+from server.observability import degradations
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -591,9 +597,6 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     import server.memory.store as memory_repo
     from server.observability.otel import traced
 
-    ch = get_client()
-    now = datetime.now(UTC)
-
     identity = memory_repo.Identity(
         org=input.org,
         namespace=input.namespace,
@@ -627,22 +630,445 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
         return MemoryDeleteOutput(tombstoned=False, found=False, version=next_version())
     _lock.assert_unlocked(existing, "delete", op="memory.delete")
     assert_own_row(existing, op="memory.delete")
-
-    # build_memory_version_row carries every live column forward (avoiding
-    # silent column loss); only the tombstone deltas override. The version is drawn
-    # here, right before the insert: the vector retire below skips rows at or above
-    # it, so the later it is drawn the fewer late vector writes it leaves live.
+    # The version is drawn here, right before the insert: the vector retire skips rows at
+    # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
+    tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
+    return MemoryDeleteOutput(
+        tombstoned=True,
+        version=version,
+        dependents_tombstoned=tombstoned,
+        dependents_downgraded=downgraded,
+    )
+
+
+async def handle_memory_delete_version(
+    input: MemoryDeleteVersionInput,
+) -> MemoryDeleteVersionOutput:
+    """Tombstone one version of a key under this exact identity, or nothing when the row
+    under it has moved on. Conditional writes of the key wait for the key lock. A plain
+    write takes none: one that committed after the version check is put back above the
+    tombstone here, and one still in flight lifts itself above it when it lands
+    (`write_fence`). Either way the write after the named version stays."""
+    import server.memory.store as memory_repo
+
+    if input.agent == "*":
+        raise ValidationError("memory.delete_version needs a concrete agent, not '*'")
+    identity = memory_repo.Identity(
+        org=input.org,
+        namespace=input.namespace,
+        agent=input.agent,
+        user_id=input.user_id,
+        session_id=input.session_id,
+    )
+    try:
+        async with key_write_lock.key_write_locks.hold(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+        ):
+            return await _delete_version_locked(input, identity)
+    except _DeleteDeferred:
+        # Written once the key lock is released: the insert may wait out the same outage.
+        await _audit_deferred(input)
+        raise
+
+
+async def _delete_version_locked(
+    input: MemoryDeleteVersionInput, identity: Identity
+) -> MemoryDeleteVersionOutput:
+    """`handle_memory_delete_version` under the key lock."""
+    import server.memory.store as memory_repo
+
+    existing = await memory_repo.get_by_key(
+        identity, input.memory_key, fresh=True, strong=True, scope=request_scope()
+    )
+    if existing is None:
+        # A retry of a delete of this version whose check is owed (it answered 503)
+        # runs the check now and answers as the delete would have.
+        check = await memory_repo.find_delete_check(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+            checked=int(input.version),
+        )
+        if check is not None and not check["done"]:
+            try:
+                answer = await rerun_delete_check(check)
+            except Exception as e:  # still owed: the next retry or the worker runs it
+                raise _check_deferred(e) from e
+            if answer is not None:
+                return answer
+        return MemoryDeleteVersionOutput(tombstoned=False, found=False)
+    if existing.version != input.version:
+        return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+    _lock.assert_unlocked(existing, "delete", op="memory.delete_version")
+    assert_own_row(existing, op="memory.delete_version")
+    version = next_version()
+    # The check this delete owes after its tombstone, recorded first: when the check
+    # cannot run now, a retry or the delete_version_check worker runs it, so a write it
+    # would have found is never left under the tombstone. A record whose insert failed
+    # leaves nothing to run, but one that timed out can still commit: it answers the
+    # same 503, and a retry or the worker finishes that delete.
+    check = {
+        "org": existing.org,
+        "namespace": existing.namespace,
+        "agent": existing.agent,
+        "user_id": existing.user_id,
+        "session_id": existing.session_id,
+        "memory_key": existing.memory_key,
+        "checked": int(input.version),
+        "tombstone": version,
+    }
+    try:
+        await memory_repo.record_delete_check(check, done=False)
+        await _write_tombstone_row(
+            existing, version=version, trace=delete_version_trace(input.version)
+        )
+        return await finish_delete_check(existing, check)
+    except Exception as e:  # a retry finishes it, or the worker once the check is recorded
+        raise _check_deferred(e) from e
+
+
+async def _audit_deferred(input: MemoryDeleteVersionInput) -> None:
+    """The op's audit row for a call that answers the deferred 503. The transport writes one
+    only for a call that succeeds, and the delete may stand once a retry or the worker runs
+    its check: the row names the call as the transport would, its outcome `deferred`. The
+    worker that finishes it writes none; a retry is its own call with its own row. Best
+    effort, as every audit row is (it goes to the ClickHouse that just failed). Never
+    raises."""
+    from server.core.logging_config import request_id_var
+    from server.observability import audit
+
+    auth = current_auth()
+    await audit.emit(
+        "memory.delete_version",
+        org=input.org,
+        namespace=input.namespace,
+        actor=auth.subject if auth is not None else "anonymous",
+        subject={**input.model_dump(mode="json"), "outcome": "deferred"},
+        request_id=request_id_var.get() or "",
+    )
+
+
+class _DeleteDeferred(BackendUnavailableError):
+    """The 503 of a delete that did not finish (`_check_deferred`)."""
+
+
+def _check_deferred(e: Exception) -> _DeleteDeferred:
+    """The 503 of a delete that did not finish: its check record, its tombstone, the check
+    after it, or a retry's run of an owed check failed. A recorded check stays owed."""
+    degradations.note("memory.delete_version", "check_deferred", e)
+    log.warning("memory.delete_version: the delete did not finish: %s", e)
+    return _DeleteDeferred(
+        "the delete did not finish; a retry finishes it, or the background worker once its "
+        "check is recorded"
+    )
+
+
+async def finish_delete_check(
+    existing: Any, check: dict[str, Any], *, tombstone: int | None = None
+) -> MemoryDeleteVersionOutput:
+    """The check memory.delete_version owes after its tombstone (the recorded one, or
+    `tombstone` when recovery wrote it again), and its answer: when the key moved on
+    (`_key_moved_on`) nothing derived is retired; otherwise the delete stands and what
+    `existing` (the removed version) derived retires. The recorded check is then marked
+    done. Safe to run again: a retry and the delete_version_check worker run it for a
+    delete whose own run failed."""
+    import server.memory.store as memory_repo
+
+    checked = int(check["checked"])
+    tombstone = int(check["tombstone"]) if tombstone is None else tombstone
+    moved_on = await _key_moved_on(existing, checked=checked, tombstone=tombstone)
+    if moved_on is not None:
+        answer = moved_on
+    else:
+        tombstoned, downgraded = await _retire_derived(
+            existing, version=tombstone, op="memory.delete_version", only_its_chunks=True
+        )
+        answer = MemoryDeleteVersionOutput(
+            tombstoned=True,
+            version=tombstone,
+            dependents_tombstoned=tombstoned,
+            dependents_downgraded=downgraded,
+        )
+    try:
+        await memory_repo.record_delete_check(check, done=True)
+    except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly
+        log.warning("memory.delete_version: the check ran but was not marked done: %s", e)
+    return answer
+
+
+async def rerun_delete_check(check: dict[str, Any]) -> MemoryDeleteVersionOutput | None:
+    """Run an owed check (the caller holds the key lock) and answer as its delete would
+    have, or close it and answer None when the removed version was erased since. When the
+    tombstone is missing from the key's history (its insert failed), the check runs against
+    another tombstone of this same delete (a retry's), or writes one when nothing came
+    after the removed version, at a new version so the namespace's watermark moves, or
+    otherwise answers how the key moved on. An insert that timed out can still commit: it
+    lands aimed at the same version and counts as this same delete (`_key_moved_on`)."""
+    import server.memory.store as memory_repo
+
+    checked, tombstone = int(check["checked"]), int(check["tombstone"])
+    ident = (check["agent"], check["user_id"], check["session_id"])
+    rows = await memory_repo.fetch_version_rows(
+        check["org"],
+        check["namespace"],
+        [(check["memory_key"], checked), (check["memory_key"], tombstone)],
+        sequential=True,
+    )
+    mine = {r.version: r for r in rows if (r.agent, r.user_id, r.session_id) == ident}
+    removed = mine.get(checked)
+    if removed is None:
+        await memory_repo.record_delete_check(check, done=True)
+        return None
+    if tombstone not in mine:
+        same_delete, others = await _after_checked(removed, checked=checked, tombstone=tombstone)
+        if same_delete:
+            tombstone = max(same_delete)  # a retry's, or a late one: the delete's that stands
+        elif not others:
+            # Nothing came after the removed version: the delete is still owed, above any
+            # write a fence lifted over a late commit of the original.
+            tombstone = _above_lift_band(tombstone)
+            await _write_tombstone_row(
+                removed, version=tombstone, trace=delete_version_trace(checked)
+            )
+    return await finish_delete_check(removed, check, tombstone=tombstone)
+
+
+async def _key_moved_on(
+    existing: Any, *, checked: int, tombstone: int
+) -> MemoryDeleteVersionOutput | None:
+    """The answer when the key moved on after the version check (`checked`), read with
+    sequential consistency; None when it did not. Every tombstone of this same delete (the
+    split `_after_checked` makes) is set aside, and the newest version left decides. A live
+    row means `version_changed`; another remover's tombstone (a delete, a sweep, a dedup or
+    a conflict resolution) means it removed the key, not this one (`found=False`). Either
+    one below this delete's newest tombstone is written again above it, a tombstone stamped
+    as this delete's own so the key's head is the row it removed; a head that already
+    carries that row is left. A write still in flight lifts itself when it lands
+    (`write_fence.lift_after_insert`)."""
+    same_delete, others = await _after_checked(existing, checked=checked, tombstone=tombstone)
+    if not others:
+        return None
+    row = await _version_row(existing, max(others))
+    gone = row.tombstoned_at is not None  # another remover took the key
+    top = max([tombstone, *same_delete])
+    if row.version < top and not (gone and await _head_carries(existing, top, row)):
+        # A sweep's marker stays on the sweep's tombstone, which keeps the writes it caught.
+        trace = delete_version_trace(checked) if gone else None
+        await _write_above(row, tombstone=top, source_trace=trace)
+    if gone:
+        return MemoryDeleteVersionOutput(tombstoned=False, found=False)
+    return MemoryDeleteVersionOutput(tombstoned=False, reason="version_changed")
+
+
+# What a copy of a tombstone does not carry from it: its own version and write stamps, and
+# the trace a copy replaces with this delete's marker.
+_NOT_CARRIED = frozenset({"version", "updated_at", "tombstoned_at", "source_trace"})
+
+
+async def _head_carries(existing: Any, top: int, row: Any) -> bool:
+    """Version `top` of the key, this delete's newest tombstone, already carries every
+    column of `row` a copy would: a copy this delete wrote back, or its own tombstone of
+    the row another remover took. Then it is not copied again. What the removing write
+    stamped is not the row's: the `tombstoned` status of a by-id tombstone (a sweep, dedup,
+    conflict resolution) and a sweep's marker over the row's own reason."""
+    import server.memory.store as memory_repo
+    from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
+
+    head = await _find_version_row(existing, top)
+    if head is None:
+        return False
+    skip = set(_NOT_CARRIED)
+    if row.status == "tombstoned":
+        skip.add("status")
+    if row.expire_reason.startswith(SWEEP_REASON_PREFIX):
+        skip.add("expire_reason")
+    mine, theirs = (memory_repo.build_memory_version_row(r) for r in (head, row))
+    return all(mine[c] == theirs[c] for c in mine if c not in skip)
+
+
+async def _restore_newer_chunks(existing: Any, *, tombstone: int) -> None:
+    """Put back the chunks the removed row `existing` shares with the key's newest value,
+    when search serves that value. A chunk row is named by its index and text, so a newer
+    value keeping a passage at the same index shares the row, and its write may land after
+    the delete's check but before the retire. A write inserts its row before its chunks,
+    and this read follows the retire, so it sees any write whose chunks it caught. The head
+    is read again after the restore: a delete, or a write the chunks no longer serve, that
+    found them retired and left them has them retired again."""
+    from server.memory.app import set_chunks as _set_chunks
+
+    removed = _set_chunks.set_chunk_identities(existing.value, existing.memory_type)
+    if not removed:
+        return  # a value too short to chunk shares nothing
+    ch = get_client()
+    key_chunks = {
+        "org": existing.org,
+        "namespace": existing.namespace,
+        "memory_key": existing.memory_key,
+        "user_id": str(existing.user_id or "-"),
+    }
+    try:
+        shared = removed & await _served_chunks(existing, tombstone=tombstone)
+        if not await _set_chunks.restore_set_chunks(identities=shared, ch=ch, **key_chunks):
+            return
+    except Exception as e:  # noqa: BLE001 — the newer row stands; its chunks only aid search
+        log.warning(
+            "memory.delete_version: shared chunks of %s not restored: %s", existing.memory_key, e
+        )
+        return
+    try:
+        stale = shared - await _served_chunks(existing, tombstone=tombstone)
+    except Exception as e:  # noqa: BLE001 — unread, the restored chunks retire again
+        log.warning("memory.delete_version: head of %s unread: %s", existing.memory_key, e)
+        stale = shared
+    if not stale:
+        return
+    try:
+        await _set_chunks.tombstone_set_chunks(only=stale, strong=True, ch=ch, **key_chunks)
+    except Exception as e:  # noqa: BLE001 — the delete stands; the chunks only aid search
+        log.warning(
+            "memory.delete_version: restored chunks of %s not retired again: %s",
+            existing.memory_key,
+            e,
+        )
+
+
+async def _served_chunks(existing: Any, *, tombstone: int) -> frozenset[tuple[int, str]]:
+    """The chunk identities of the key's newest value after `existing` (other than the
+    delete's own `tombstone`) when search serves it: live and embedded (a high row's
+    chunks stay retired); none otherwise."""
+    from server.memory.app import set_chunks as _set_chunks
+
+    same_delete, others = await _after_checked(
+        existing, checked=int(existing.version), tombstone=tombstone
+    )
+    if not others or max(same_delete, default=0) > max(others):
+        return frozenset()  # nothing after it, or this delete's own tombstone on top
+    newer = await _version_row(existing, max(others))
+    if newer.tombstoned_at is not None:
+        return frozenset()
+    if not is_embedded(newer.memory_type, newer.sensitivity):
+        return frozenset()
+    return _set_chunks.set_chunk_identities(newer.value, newer.memory_type)
+
+
+async def _after_checked(
+    existing: Any, *, checked: int, tombstone: int
+) -> tuple[list[int], list[int]]:
+    """The key's committed versions above `checked` under the identity of `existing`, read
+    with sequential consistency, other than the delete's own `tombstone`: the other
+    tombstones of this same delete (aimed at `checked`: a late or retried insert of it, or
+    a copy it wrote back), and the rest."""
+    import server.memory.store as memory_repo
+
+    key = {
+        "agent": existing.agent,
+        "user_id": existing.user_id,
+        "session_id": existing.session_id,
+        "memory_key": existing.memory_key,
+        "version": checked,
+    }
+    committed = await memory_repo.versions_above(existing.org, existing.namespace, [key])
+    above = committed.get(
+        (existing.agent, existing.user_id, existing.session_id, existing.memory_key), []
+    )
+    same_delete: list[int] = []
+    others: list[int] = []
+    for v, deleted, target in above:
+        if v != tombstone:
+            (same_delete if deleted and target == checked else others).append(v)
+    return same_delete, others
+
+
+async def _find_version_row(existing: Any, version: int) -> Any | None:
+    """Version `version` of the key under the identity of `existing`, read with sequential
+    consistency; None when it is not committed."""
+    import server.memory.store as memory_repo
+
+    ident = (existing.agent, existing.user_id, existing.session_id)
+    rows = await memory_repo.fetch_version_rows(
+        existing.org, existing.namespace, [(existing.memory_key, version)], sequential=True
+    )
+    return next((r for r in rows if (r.agent, r.user_id, r.session_id) == ident), None)
+
+
+async def _version_row(existing: Any, version: int) -> Any:
+    """`_find_version_row` for a version a listing just saw committed."""
+    row = await _find_version_row(existing, version)
+    if row is None:
+        raise RuntimeError(f"version {version} of {existing.memory_key!r} was listed, not read")
+    return row
+
+
+def _above_lift_band(tombstone: int) -> int:
+    """A version drawn on this process's clock, but above the band the write fence lifts
+    writes into over `tombstone` (`write_fence.LIFT_BAND_NS`), so it cannot tie with one
+    when another process's clock put the tombstone ahead of this one."""
+    from server.memory.app import write_fence
+
+    return max(next_version(), tombstone + write_fence.LIFT_BAND_NS + 1)
+
+
+async def _write_above(row: Any, *, tombstone: int, source_trace: str | None = None) -> None:
+    """`row` written again above `tombstone` (`_above_lift_band`), `source_trace` replacing
+    its own when given."""
+    import server.memory.store as memory_repo
+
+    changes = {} if source_trace is None else {"source_trace": source_trace}
+    back = memory_repo.build_memory_version_row(
+        row,
+        version=_above_lift_band(tombstone),
+        updated_at=memory_repo.written_now(),
+        **changes,
+    )
+    await insert_memory_versions([back], ch=get_client())
+
+
+async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
+    """Write the tombstone of `existing` at `version` and retire what was derived from it.
+    Returns how many consolidated summaries it tombstoned and downgraded."""
+    await _write_tombstone_row(existing, version=version)
+    return await _retire_derived(existing, version=version, op=op)
+
+
+async def _write_tombstone_row(existing: Any, *, version: int, trace: str = "") -> None:
+    """The loom.memory tombstone of `existing` at `version`, `trace` as its source_trace."""
+    import server.memory.store as memory_repo
+    from server.observability.otel import traced
+
+    now = datetime.now(UTC)
+    # build_memory_version_row carries every live column forward (avoiding
+    # silent column loss); only the tombstone deltas override.
     tombstone_row = memory_repo.build_memory_version_row(
         existing,
         version=version,
         updated_at=memory_repo.written_now(),
         tombstoned_at=now,
-        source_trace="",
+        source_trace=trace,
         expires_at=None,
     )
     with traced("ch.insert.memory.tombstone", table="loom.memory"):
-        await insert_memory_versions([tombstone_row], ch=ch)
+        await insert_memory_versions([tombstone_row], ch=get_client())
+
+
+async def _retire_derived(
+    existing: Any, *, version: int, op: str, only_its_chunks: bool = False
+) -> tuple[int, int]:
+    """Retire what was derived from the row a tombstone at `version` removed: its vectors,
+    its chunks, a procedure's run ledger, and the summaries built from it. Returns how many
+    consolidated summaries it tombstoned and downgraded."""
+    import server.memory.store as memory_repo
+
+    ch = get_client()
+    now = datetime.now(UTC)
 
     # Propagate the tombstone to memory_embeddings — search reads that table, so without it
     # soft-deleted memories keep surfacing. Each live row of the key (one per scope and
@@ -652,12 +1078,12 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # (dim-0 stubs, rows other paths wrote). A key with no live row writes nothing.
     try:
         await memory_repo.tombstone_embeddings_for_key(
-            input.org,
-            input.namespace,
+            existing.org,
+            existing.namespace,
             existing.agent,  # the row's own identity, which may differ from the caller's
             existing.user_id,
             existing.session_id,
-            input.memory_key,
+            existing.memory_key,
             ts=now.replace(tzinfo=None) if now.tzinfo else now,
             version=version,
             ch=ch,
@@ -673,7 +1099,12 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if is_searchable_type(existing.memory_type):
         from server.memory.app import set_chunks as _set_chunks
 
-        await _set_chunks.tombstone_row_chunks_fail_open(existing, ch=ch)
+        # memory.delete_version removes one version: a newer value's chunks stay.
+        await _set_chunks.tombstone_row_chunks_fail_open(
+            existing, ch=ch, only_its_own=only_its_chunks
+        )
+        if only_its_chunks:
+            await _restore_newer_chunks(existing, tombstone=version)
 
     # A procedure's run ledger must not outlive the procedure.
     # Best-effort: the tombstone above is the erasure of record; a ledger
@@ -681,12 +1112,10 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     if getattr(existing, "memory_type", "") == "procedural":
         try:
             await memory_repo.delete_procedure_runs_by_key(
-                input.org, input.namespace, input.memory_key
+                existing.org, existing.namespace, existing.memory_key
             )
         except Exception as e:  # noqa: BLE001 — the tombstone stands
-            log.warning(
-                "memory.delete: procedure_runs cascade failed for %s: %s", input.memory_key, e
-            )
+            log.warning("%s: procedure_runs cascade failed for %s: %s", op, existing.memory_key, e)
     # A summary built from this row now says something its evidence no
     # longer supports. If none of its sources survive it goes too; otherwise
     # it is downgraded to `conflicted` (review queue) with a
@@ -694,23 +1123,19 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     dep_tomb = dep_down = 0
     try:
         dep_tomb, dep_down = await memory_repo.downgrade_consolidated_dependents(
-            input.org,
-            input.namespace,
-            input.memory_key,
+            existing.org,
+            existing.namespace,
+            existing.memory_key,
             ch=ch,
         )
     except Exception as e:  # noqa: BLE001 — the tombstone stands
         log.warning(
-            "memory.delete: dependent summaries not downgraded for %s: %s",
-            input.memory_key,
+            "%s: dependent summaries not downgraded for %s: %s",
+            op,
+            existing.memory_key,
             e,
         )
-    return MemoryDeleteOutput(
-        tombstoned=True,
-        version=version,
-        dependents_tombstoned=dep_tomb,
-        dependents_downgraded=dep_down,
-    )
+    return dep_tomb, dep_down
 
 
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:

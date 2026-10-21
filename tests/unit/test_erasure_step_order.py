@@ -34,17 +34,24 @@ class _TraceCH:
 
     def __init__(self, trace: dict[str, list[tuple[str, str]]]) -> None:
         self.trace = trace
+        # (step, table): a step's INSERT ... SELECT rewrite makes its rows stop matching.
+        self.rewritten: set[tuple[str, str]] = set()
 
     async def query_one(self, sql: str, params: Any = None, **kw: Any) -> Any:
         if "system.tables" in sql:
             return {"engine": "KeeperMap"}
-        return {"n": 1} if "count()" in sql else None
+        if "count()" not in sql:
+            return None
+        done = any(f"FROM {t} " in sql for step, t in self.rewritten if step == _STEP.get())
+        return {"n": 0 if done else 1}
 
     async def query_all(self, sql: str, params: Any = None, **kw: Any) -> list[dict[str, Any]]:
         if "system.mutations" in sql:
             if "is_done = 0" in sql:
                 return []
             return [{"mutation_id": "m", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}]
+        if sql.startswith("SELECT group_id FROM loom.principal_groups"):
+            return [{"group_id": "g"}]
         if "blob_path" in sql and "loom.documents" in sql:
             return [{"source_uri": "doc://a", "blob_path": "o/a/blob"}]
         return []
@@ -56,6 +63,8 @@ class _TraceCH:
             entry = ("LIGHTWEIGHT", m.group(1))
         else:  # pragma: no cover - a new statement shape shows up as a failure
             entry = ("OTHER", sql.split()[0])
+            if sql.startswith("INSERT INTO "):
+                self.rewritten.add((_STEP.get(), sql.split()[2]))
         self.trace.setdefault(_STEP.get(), []).append(entry)
 
 
@@ -177,6 +186,21 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         ),
     ),
     ("session_outcomes.delete", ((D, "loom.session_outcomes_by_user"),)),
+    ("chunks.supersede", ((U, "loom.chunks"),)),
+    (
+        "documents.tombstone",
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            (U, "loom.documents"),
+        ),
+    ),
+    ("grants.revoke", ((D, "loom.namespace_grants"),)),  # revoked rows of the user, deleted
+    ("groups.remove_member", (("OTHER", "INSERT"),)),
+    ("personal.retire", (("OTHER", "INSERT"),)),
+    ("collections.forget_owner", (("OTHER", "INSERT"), ("OTHER", "INSERT"))),
+    ("subject_last_seen.delete", ((D, "loom.subject_last_seen"),)),
     (
         "conversations.tombstone",
         (
@@ -190,10 +214,11 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_exposures.delete", ((D, "loom.memory_exposures"),)),
     ("code_search_trace.delete", ((D, "loom.code_search_trace"),)),
     ("events.delete", ((D, "loom.events"),)),
+    ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
-    ("idempotency.delete", ((D, "loom.idempotency"),)),
+    ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
 ]
 
 NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
@@ -255,7 +280,12 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("chunks.supersede", ((U, "loom.chunks"),)),
     (
         "documents.tombstone",
-        ((D, "loom.document_blobs"), (U, "loom.documents"), (U, "loom.documents")),
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            (U, "loom.documents"),
+        ),
     ),
     (
         "conversations.tombstone",
@@ -272,6 +302,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("code_search_trace.delete", ((D, "loom.code_search_trace"), (D, "loom.code_search_outcome"))),
     ("events.delete", ((D, "loom.events"),)),
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
+    ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("learnings_queue.delete", ((D, "loom.learnings_queue"),)),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
@@ -281,7 +312,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
-    ("idempotency.delete", ((D, "loom.idempotency"),)),
+    ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
 ]
 
@@ -344,7 +375,12 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("chunks.supersede", ((L, "loom.chunks"),)),
     (
         "documents.tombstone",
-        ((D, "loom.document_blobs"), (U, "loom.documents"), (D, "loom.documents")),
+        (
+            (D, "loom.document_blobs"),
+            (U, "loom.documents"),
+            (D, "loom.blob_uploads"),
+            (D, "loom.documents"),
+        ),
     ),
     (
         "conversations.tombstone",
@@ -361,6 +397,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("code_search_trace.delete", ((D, "loom.code_search_trace"), (D, "loom.code_search_outcome"))),
     ("events.delete", ((D, "loom.events"),)),
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
+    ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("learnings_queue.delete", ((D, "loom.learnings_queue"),)),
     ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
@@ -370,7 +407,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ),
     ("consolidation_runs.delete", ((D, "loom.consolidation_runs"),)),
     ("projection_failures.delete", ((D, "loom.memory_projection_failures"),)),
-    ("idempotency.delete", ((D, "loom.idempotency"),)),
+    ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
 ]
 

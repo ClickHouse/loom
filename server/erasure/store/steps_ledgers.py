@@ -4,6 +4,7 @@ runs and the curation, consolidation and projection-failure ledgers."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -11,6 +12,8 @@ from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
 from server.erasure.store.predicates import NS_EQ, NS_IN, PAYLOAD_UID, UID
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Steps for tables outside the census. Every `loom.*` table is a census row,
@@ -116,20 +119,33 @@ async def delete_idempotency_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
     """The org's cached replay bodies (loom.idempotency has no namespace
-    column, see its census row). A row with org '' leaves by the table's
-    24-hour TTL."""
+    column, see its census row), and its cached query vectors (`_drop_vectors`).
+    Returns the replay bodies deleted; the vectors' count is logged. A row with
+    org '' leaves by the table's TTL."""
     del namespace  # the rows carry no namespace; the scope is the org
-    return await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    n = await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    await _drop_vectors(org, ch=ch)
+    return n
 
 
 async def delete_idempotency_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
     """Every cached replay body in the user's org, not only the rows whose
     stamped subject is `user_id`: a replay a service account stored while
     acting for the user quotes the user's text under the account's subject,
-    and nothing on the row names the user. Fail closed; the cost is cache
-    misses."""
+    and nothing on the row names the user; and the org's cached query vectors,
+    which name no user either (`_drop_vectors`). Returns the replay bodies
+    deleted; the vectors' count is logged. Fail closed; the cost is cache misses."""
     del user_id  # no row column names the end user; the scope is the org
-    return await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    n = await delete_scoped("loom.idempotency", org=org, scope_where="1", params={}, ch=ch)
+    await _drop_vectors(org, ch=ch)
+    return n
+
+
+async def _drop_vectors(org: str, *, ch: _CHClient | None) -> None:
+    """The org's cached query vectors, beside its replay bodies: an uncounted
+    table, so its count goes to the log rather than the step's."""
+    n = await delete_embedding_cache_for_org(org, ch=ch)
+    log.info("erasure: %d cached query vectors of org %s deleted", n, org)
 
 
 # Telemetry that quotes the subject: the search trace keeps the query text and
@@ -200,6 +216,27 @@ async def delete_memory_drops_by_namespace(
     30-day TTL, no soft-delete."""
     return await delete_scoped(
         "loom.memory_drops", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def delete_delete_version_checks_by_namespace(
+    org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
+) -> int:
+    """memory.delete_version's owed checks name a row's identity and key; 30-day TTL."""
+    return await delete_scoped(
+        "loom.delete_version_checks",
+        org=org,
+        scope_where=NS_EQ,
+        params={"ns": namespace},
+        ch=ch,
+    )
+
+
+async def delete_delete_version_checks_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    return await delete_scoped(
+        "loom.delete_version_checks", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )
 
 
@@ -317,4 +354,15 @@ async def delete_projection_failures_by_user(
         scope_where=PAYLOAD_UID,
         params={"uid": user_id},
         ch=ch,
+    )
+
+
+async def delete_embedding_cache_for_org(org: str, *, ch: _CHClient | None = None) -> int:
+    """Every cached query vector the org's requests left. The rows hold
+    vectors of query text, never the text, and have no namespace or user axis,
+    so any erasure in the org clears them all, as it clears the search trace's
+    query text (a cache: the cost is misses). Rows a build before `org` wrote
+    carry '', which this build's reads never find; the 30-day TTL takes them."""
+    return await delete_scoped(
+        "loom.embedding_cache", org=org, scope_where="1", params={}, ch=ch, lightweight=True
     )

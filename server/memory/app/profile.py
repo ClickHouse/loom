@@ -26,8 +26,7 @@ from server.memory.api.models_profile import (
     ProfileSetInput,
 )
 from server.memory.domain.context_layout import escape_data
-
-_CAS_MAX_RETRIES = 3
+from server.settings import settings
 
 
 def _canonical_json_str(s: str) -> str:
@@ -84,7 +83,7 @@ def _to_memory_set_input(
     )
 
 
-async def _write_section(mset: MemorySetInput) -> Any:
+async def write_section(mset: MemorySetInput) -> Any:
     """memory.set for a profile section, then a re-embed of its current text queued off the
     request: memory.set gives a profile row no inline vector, and the worker's reconcile
     only embeds a section that has none, so without this an edited section would keep the
@@ -107,7 +106,7 @@ async def handle_profile_set(input: ProfileSetInput) -> ProfileMutationOutput:
         char_limit=input.char_limit,
         if_match_sha256=input.if_match_sha256,
     )
-    out = await _write_section(mset)
+    out = await write_section(mset)
     return ProfileMutationOutput(
         version=out.version,
         memory_id=out.memory_id,
@@ -120,14 +119,15 @@ async def handle_profile_set(input: ProfileSetInput) -> ProfileMutationOutput:
 
 
 async def write_folded_section(
-    *, org: str, namespace: str, user_id: str, label: str, value: str
+    *, org: str, namespace: str, user_id: str, label: str, value: str, memory_ids: list[str]
 ) -> None:
     """Write a consolidation fold's text as the user's `label` section.
 
     The section is user-scoped (user_id); agent='-' so profile.render's
     per-user fan-out picks it up for every client. The trace names the fold
     so provenance classes the row `derived`, not `asserted`: an LLM's summary
-    of a user's working style is an inference."""
+    of a user's working style is an inference. It also names the memories the
+    fold read, so `memory.redact` of one of them scrubs this version too."""
     await handle_profile_set(
         ProfileSetInput(
             org=org,
@@ -136,7 +136,7 @@ async def write_folded_section(
             user_id=user_id,
             label=label,
             value=value,
-            source_trace=f"profile.fold:{label}",
+            source_trace=f"profile.fold:{label}:" + ",".join(memory_ids),
         )
     )
 
@@ -160,7 +160,7 @@ async def handle_profile_append(input: ProfileAppendInput) -> ProfileMutationOut
     )
 
     last_err: Exception | None = None
-    for _ in range(_CAS_MAX_RETRIES):
+    for _ in range(settings.memory_profile_cas_max_retries):
         existing = await handle_memory_get(get_input)
         if not existing.found:
             return await handle_profile_set(
@@ -205,7 +205,7 @@ async def handle_profile_append(input: ProfileAppendInput) -> ProfileMutationOut
                 char_limit=char_limit,
                 if_match_sha256=existing.content_sha256,
             )
-            out = await _write_section(mset)
+            out = await write_section(mset)
             return ProfileMutationOutput(
                 version=out.version,
                 memory_id=out.memory_id,
@@ -244,7 +244,7 @@ async def handle_profile_replace(input: ProfileReplaceInput) -> ProfileMutationO
     )
 
     last_err: Exception | None = None
-    for _ in range(_CAS_MAX_RETRIES):
+    for _ in range(settings.memory_profile_cas_max_retries):
         existing = await handle_memory_get(get_input)
         if not existing.found:
             raise HTTPException(
@@ -285,7 +285,7 @@ async def handle_profile_replace(input: ProfileReplaceInput) -> ProfileMutationO
                 char_limit=char_limit,
                 if_match_sha256=existing.content_sha256,
             )
-            out = await _write_section(mset)
+            out = await write_section(mset)
             return ProfileMutationOutput(
                 version=out.version,
                 memory_id=out.memory_id,
@@ -373,6 +373,8 @@ async def handle_profile_render(input: ProfileRenderInput) -> ProfileRenderOutpu
               {user_clause}
               AND memory_type = 'profile'
               AND tombstoned_at IS NULL
+              -- a head scrubbed by memory.redact reads as no section, not as its marker
+              AND redacted_at IS NULL
               -- rendered into packs and prompts; a high section is readable by key only
               AND sensitivity != 'high'
               AND (expires_at IS NULL OR expires_at > now())
@@ -422,12 +424,13 @@ def _render_sections(sections: list[tuple[str, str]], fmt: str) -> str:
 
 
 # Every op whose response carries the caller's profile sections: `loom_activate` (the typed
-# "use loom"), `profile.render` (the SDK's system_prompt), `context.pack` (the plugin's
-# session-start primer, profile section by default) and `mcp.initialize` (the handshake's
-# instructions inline the primer). Counting fewer would tell a plugin user their profile was
-# "not yet read by any AI client" while every session began with it.
+# "use loom"), `profile.render` (the SDK's system_prompt), `profile.structured` (a chat
+# bot's structured profile), `context.pack` (the plugin's session-start primer, profile
+# section by default) and `mcp.initialize` (the handshake's instructions inline the primer).
+# Counting fewer would tell a plugin user their profile was "not yet read by any AI client"
+# while every session began with it.
 PROFILE_READ_OPERATIONS: frozenset[str] = frozenset(
-    {"loom_activate", "profile.render", "context.pack", "mcp.initialize"}
+    {"loom_activate", "profile.render", "profile.structured", "context.pack", "mcp.initialize"}
 )
 
 

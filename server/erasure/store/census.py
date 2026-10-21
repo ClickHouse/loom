@@ -291,6 +291,14 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate("loom.code_search_outcome", "1", None, "code_search_trace.delete", None),
     Substrate("loom.events", "1", UID, "events.delete", "events.delete"),
     Substrate("loom.memory_drops", "1", None, "memory_drops.delete", None),
+    # memory.delete_version's owed checks: a row's identity and key, 30-day TTL.
+    Substrate(
+        "loom.delete_version_checks",
+        "1",
+        UID,
+        "delete_version_checks.delete",
+        "delete_version_checks.delete",
+    ),
     Substrate("loom.entity_degree", "1", None, "entity_graph.delete", None),
     Substrate("loom.learnings_queue", "1", None, "learnings_queue.delete", None),
     # Task inbox plane: the brief and the notes quote source
@@ -323,18 +331,26 @@ _CENSUS: tuple[Substrate, ...] = (
     Substrate("loom.code_chunks", "1", None, "code_index.purge", None),
     Substrate("loom.code_summaries", "1", None, "code_index.purge", None),
     # The knowledge plane: chunk text, and the whole documents with their
-    # uploaded originals. Namespace-only (no user axis). A chunk is live by the
-    # predicate every reader and the step's count use; a document by its own
-    # `superseded_at`, or while its original is not erased yet; an original by its row.
-    Substrate("loom.chunks", LIVE_CHUNK_SQL, None, "chunks.supersede", None, final=False),
+    # uploaded originals. A chunk is live by the predicate every reader and the
+    # step's count use; a document by its own `superseded_at`, or while its
+    # original is not erased yet; an original by its row. A user's are the ones
+    # they wrote (`user_id`); an original shared with another writer's document
+    # stays, so originals are counted by namespace only.
+    Substrate(
+        "loom.chunks", LIVE_CHUNK_SQL, UID, "chunks.supersede", "chunks.supersede", final=False
+    ),
     Substrate(
         "loom.documents",
         "(superseded_at IS NULL OR (blob_path != '' AND blob_erased_at IS NULL))",
-        None,
+        UID,
         "documents.tombstone",
-        None,
+        "documents.tombstone",
     ),
     Substrate("loom.document_blobs", "1", None, "documents.tombstone", None, final=False),
+    # Who uploaded each original: a user's rows go with their originals.
+    Substrate(
+        "loom.blob_uploads", "1", UID, "documents.tombstone", "documents.tombstone", final=False
+    ),
 )
 
 # Steps that mutate a table the census does not count, with the reason. The
@@ -342,6 +358,8 @@ _CENSUS: tuple[Substrate, ...] = (
 # step cannot appear without saying whether the census sees its table.
 #   entity_canonical_map.tombstone   — alias map, no memory content.
 #   agent_events.scrub               — identity scrubbed, rows kept for cost.
+#   subject_last_seen.delete         — an end user's newest-call row: an
+#                                       identifier, no memory content.
 #   shared*.tombstone                — org-wide promoted rows, matched by
 #                                       provenance not by scope.
 #   consolidated.tombstone           — loom.memory rows under another identity,
@@ -393,6 +411,7 @@ CODE_INDEX_STEP_ONLY_TABLES: tuple[str, ...] = (
 STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
     "agent_events.scrub": ("loom.agent_events",),
+    "subject_last_seen.delete": ("loom.subject_last_seen",),
     "shared.tombstone": ("loom.shared",),
     "shared_embeddings.tombstone": ("loom.memory_embeddings",),
     "consolidated.tombstone": ("loom.memory", "loom.memory_embeddings", "loom.memory_code_links"),
@@ -404,6 +423,16 @@ STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
     # Who began each still-open run (KeeperMap: ids and user ids, no run text);
     # dropped beside the runs, not counted.
     "agent_runs.delete": ("loom.agent_run_claims",),
+    # What a grant, a group and the collection tree say about a user as a
+    # principal: identifiers, no memory content; rewritten, not counted.
+    "grants.revoke": ("loom.namespace_grants",),
+    "groups.remove_member": ("loom.principal_groups",),
+    "personal.retire": ("loom.namespaces",),
+    "collections.forget_owner": ("loom.collections", "loom.namespaces"),
+    # The org's other cache: its cached query vectors (never their text), deleted
+    # org-wide beside the replay bodies at both scopes but not counted, since any
+    # search in the org refills them between the step and the census.
+    "idempotency.delete": ("loom.embedding_cache",),
 }
 
 # Every other `loom.*` table in schemas/schema.sql, with the reason it holds
@@ -468,12 +497,11 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "(org, namespace), holding no memory or source content; retired by active=false."
     ),
     # -- no tenant axis: cannot be scoped by namespace or user -----------------
-    "loom.embedding_cache": (
-        "no org/namespace column; a vector keyed by sha1(model, text) — the text is "
-        "not stored; 30-day TTL. The compliance bench counts the canary's key."
-    ),
     "loom.audit_checkpoints": "hash-chain checkpoints over the audit log; digests only.",
     "loom.blacklist_version": "singleton version counter for the blacklist cache.",
+    "loom.acl_versions": (
+        "change counts per org and kind for the grant cache; an org name, a kind and a number."
+    ),
     "loom.worker_status": (
         "worker health per pass: worker name, launcher label, status, "
         "counters and a bounded error text; `namespace` is the label of the namespace "
@@ -495,6 +523,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.revoked_tokens": "auth plane: revoked JWT ids.",
     "loom.machine_identities": "auth plane: registered bots and their public keys; no memory.",
+    "loom.org_model_calls": "whether an org's data may go to a model, and who said so; no memory.",
     "loom.sso_links": "auth plane: which password accounts SSO sign-ins reach; no memory.",
     "loom.scim_users": (
         "auth plane: the people the identity provider provisions (email, the emails "
@@ -506,10 +535,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.grant_claims": "auth plane: no code path writes it; never holds memory content.",
     "loom.service_accounts": "auth plane: service-account definitions.",
     "loom.user_state": "per-subject UI state (default namespace).",
-    "loom.subject_last_seen": (
-        "one row per (org, subject) with the newest ledger call time; "
-        "subjects, not memory rows — the ledger it aggregates is agent_events.scrub's."
-    ),
     # -- ledgers of the erasure itself, kept by design ----------
     "loom.erasure_requests": "the erasure ledger; scope_value names the scope, 90-day TTL.",
     "loom.erasure_reversals": "reversal ledger: memory ids/keys restored after an erasure.",
@@ -541,11 +566,13 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "90-day TTL ages the identity columns out."
     ),
     # -- namespace registry and configuration ---------------------------------
-    "loom.namespaces": "namespace registry and per-namespace settings.",
     "loom.signing_keys": "token signing keys, sealed with the root secret; no subject data.",
-    "loom.runtime_overrides": "operator rate-limit and latency-budget overrides; numbers only.",
+    "loom.runtime_overrides": (
+        "operator rate-limit, latency-budget and setting overrides: numbers and "
+        "operator-written names and patterns (namespaces, orgs, agents, tool globs), "
+        "no memory content."
+    ),
     "loom.namespace_types": "per-type retention/dedup configuration.",
-    "loom.namespace_grants": "access grants (subject, role).",
     "loom.namespace_visits": "last-seen per (subject, namespace) for the namespace picker.",
     "loom.namespace_policies": "admin-authored access policies (effect, actions, condition).",
     "loom.namespace_ontology": "admin-registered kinds/names for the ontology.",
@@ -557,6 +584,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.categories": "namespace taxonomy (name, description, summary) authored by the operator",
     "loom.memory_schemas": "admin-authored record schemas.",
     "loom.memory_schema_fields": "fields of the admin-authored record schemas.",
+    "loom.profile_schemas": (
+        "admin-authored profile schemas: property names and descriptions; each user's "
+        "profile built from one is a loom.memory row."
+    ),
     "loom.blacklist": "consent patterns authored by admins; policy, not subject data.",
     # -- code plane: the indexed tables are `code_index.purge`'s; what stays
     # here is configuration (`code_repos`) and a per-question answer cache

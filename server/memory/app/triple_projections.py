@@ -344,7 +344,7 @@ async def _keep_one_current(input: Any, rows: list[Mapping[str, Any]], *, ch: An
 
 # The rows a fallback asks to state each value again: one is enough, and a few more
 # keep it from failing when the newest is revised meanwhile.
-_FALLBACK_ROWS = 8
+_FALLBACK_ROWS = 8  # not a setting: algorithm shape
 
 
 async def write_derived_facts(

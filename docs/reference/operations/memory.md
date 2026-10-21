@@ -68,7 +68,7 @@ One scope grammar for every write that can touch more than one row.
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `target` | `ApplyTarget` | required | Which rows: exactly one of `keys` (up to 500), `filter` (predicates, ANDed) or `search` (a query, optional `min_score`). |
 | `action` | `Literal['delete', 'expire', 'lock', 'label', 'demote']` | required | What to do to each row; every action but `delete` needs its block below. |
-| `reason` | `str` | required | Why (1..512 chars); stored as lock_reason / expire_reason where the action has such a column. |
+| `reason` | `str` | required | Why (1..512 chars, and for `expire` not starting with `blacklist.sweep:`); stored as lock_reason / expire_reason where the action has such a column. |
 | `limit` | `int \| None` | `None` | Row cap for a `filter` or `search` target, where it is required; unused for `keys`. |
 | `dry_run` | `bool` | `True` | True (the default) reports `would_apply` rows without writing; false writes. |
 | `expire` | `ApplyExpire \| None` | `None` | For `expire`: `ttl_seconds` or `until`, and an optional `on_expire`. |
@@ -544,6 +544,32 @@ WHAT: Tombstone a memory by key (14-day recovery in the dashboard).
 | `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
 | `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
 
+## `memory.delete_version`
+
+Tombstone one version of a key under this exact identity, or nothing when the row under it has moved on.
+
+`POST /v1/memory.delete_version` · MCP `loom_memory_delete_version` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `memory_key` | `str` | required | The key to delete, under this exact identity: another agent's row of it is never read. |
+| `version` | `int \| str` | required | The version to delete, as memory.get answered it. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `tombstoned` | `bool` | True when the row still had `version` and a tombstone was written over it. |
+| `version` | `int` | Nanosecond version of the tombstone row; 0 when nothing was deleted. |
+| `found` | `bool` | False when no live row of this key exists under this identity. |
+| `reason` | `str` | "version_changed" when the live row no longer carries `version`, or moved on while the delete ran (its tombstone then stays in the key's history, under the newer row). |
+| `dependents_tombstoned` | `int` | Consolidated summaries built from this row (tag `src:<key>`): retired when none of their sources survive, else downgraded to `conflicted`. |
+| `dependents_downgraded` | `int` | Summaries built from this row that keep a live source: set to `conflicted`. |
+
 ## `memory.demonstrate`
 
 Test-time learning from memory: the nearest memories tagged as examples (default tag `example`, label carried as `label:<value>`), a similarity-weighted vote over their labels, the predicted label…
@@ -769,9 +795,10 @@ WHAT: Fetch one memory by exact `memory_key`.
 | `memory_type` | `str \| None` | The row's memory type; None when not found. |
 | `confidence` | `float \| None` | The writer's confidence in the fact, 0..1 (a `demote` expiry lowers it). |
 | `version` | `int \| None` | Nanosecond version of the live row; send it back as `if_version` to poll. |
+| `version_text` | `str \| None` | The same version as a decimal string, exact for a JavaScript caller (the number is above 2^53, which JSON.parse rounds): send this one to memory.delete_version. |
 | `created_at` | `datetime \| None` | When the key was first written; kept across later versions. |
 | `updated_at` | `datetime \| None` | Last write to this key; distinct from created_at, which is preserved across updates. |
-| `expires_at` | `datetime \| None` | When the row expires (memory.get hides it after that; memory.list serves it until the expiry sweep, and memory.bulk_get does too, except a high one); None = no expiry. |
+| `expires_at` | `datetime \| None` | When the row expires (memory.get hides it after that, with `as_of` only a high one; memory.list serves it until the expiry sweep, and memory.bulk_get does too, except a high one); None = no expiry. |
 | `on_expire` | `str` | Post-action on expiry ('' = tombstone) and its reason. |
 | `expire_reason` | `str` | Why the expiry was set, as the writer gave it; '' when none. |
 | `valid_at` | `datetime \| None` | Real-world time the fact became true (distinct from created_at = when recorded). |
@@ -953,6 +980,23 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded. |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
+
+## `memory.keys`
+
+Every live row's identity and key in one read: a set an exporter can check its paged listing against, since a row that moves while pages are read can be skipped.
+
+`POST /v1/memory.keys` · MCP `loom_memory_keys` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `limit` | `int` | `100000` | The most keys to answer; `truncated` says when the namespace holds more. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `keys` | `list[MemoryKeyRef]` | Every live row's identity and key, read by one statement, so the set is the namespace at one moment (memory.list's pages are read one at a time). |
+| `truncated` | `bool` | True when the namespace holds more than `limit` live rows. |
 
 ## `memory.lineage`
 
@@ -1254,13 +1298,13 @@ WHAT: Save a standing fact and protect it.
 | `relations` | `list[tuple[str, str, str]]` | *(computed)* | The (subject, relation, object) facts the value states, written to the fact graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued fact closes the older one it replaces and, under `newest_wins`, retires the rows… |
 | `files` | `list[str] \| None` | `None` | The repo files this memory is about (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `confidence` | `float` | `1.0` | The writer's own confidence in the fact, 0..1 (1.0 = certain). |
-| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted). |
+| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted), and one starting with `memory.delete_version:` is refused. |
 | `source_class` | `str \| None` | `None` | Declare that this content came from outside (a tool result, a page, a document): `external`, or `imported`. |
 | `source_resource_id` | `str` | `''` | Provenance pointer to the primary source this fact was cited from — a file path, document id, or URL. |
 | `ttl_seconds` | `int \| None` | `None` | Expire the row this many seconds from now. |
 | `clear_expiry` | `bool` | `False` | Force expires_at=NULL, ignoring per-type/namespace retention defaults. |
 | `on_expire` | `Literal['', 'tombstone', 'demote', 'anonymize']` | `''` | What happens when expires_at passes: '' keeps the row's current action (tombstone for a new row); 'demote' clears the expiry and scales confidence down; 'anonymize' replaces the value with a marker and drops the embeddings, keeping the… |
-| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars); '' keeps the row's current reason. |
+| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); '' keeps the row's current reason. |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the fact became true (distinct from created_at and from temporal_anchor). |
 | `valid_to` | `datetime \| None` | `None` | Closing bound of the fact's stated validity ("until 2024"); NULL = open interval. |
 | `pinned` | `bool` | `False` | True when written via memory.pin (explicit-save) |
@@ -1535,11 +1579,11 @@ Scrub the value of a historical memory row, preserving its audit entry.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `redacted` | `bool` | False if memory_id not found |
+| `redacted` | `bool` | False when memory_id or that version is not found, or the caller is not admin of its namespace. |
 | `refused_head` | `bool` | True when the target was the live head |
 | `redacted_at` | `datetime \| None` | UTC time of the scrub; None when nothing was redacted. |
-| `cache_rows_deleted` | `int` | The cached answers and precedents whose window held the redacted key, deleted with it — the stored text that quoted the value. |
-| `precedent_rows_deleted` | `int` | Stored `memory.ask` precedents that quoted the key, deleted with it. |
+| `cache_rows_deleted` | `int` | The cached answers whose window held the redacted key or a profile key the redact reached, deleted with it: the stored text that quoted the value. |
+| `precedent_rows_deleted` | `int` | Stored `memory.ask` precedents that quoted the redacted key or a profile key the redact reached, deleted with it, across the org for a profile key. |
 
 ## `memory.reindex`
 
@@ -1732,7 +1776,7 @@ Semantic search over the agent's own memory.
 | `personalization` | `Literal['full', 'none']` | `'full'` | Personalization arm. "full" = the default ranking. "none" drops every user-derived rank term in every mode — preference boost, discretionary prior group, reinforcement — and keeps relevance terms. |
 | `observation_date` | `str` | `''` | ISO YYYY-MM-DD anchor for resolving relative time in the query; when set the resolved date is appended to the embedded query text. |
 | `rerank` | `str` | `''` | Per-request reranker override. |
-| `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall. |
+| `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" makes no LLM call (as recipe "fast"); "deep" allows upfront expensive recall. |
 | `hyde` | `bool` | `True` | HyDE: embed an LLM-generated hypothetical answer instead of the raw query to close the question/stored-phrasing vocabulary gap. |
 | `as_of` | `datetime \| None` | `None` | As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized onto memory_embeddings so vector_search applies it without joining loom.memory. |
 | `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default; what was true as of then) or "knowledge_time" (what loom had learned by then — created_at only, ignoring valid_at; the incremental-ingest knowledge cutoff). |
@@ -1783,7 +1827,7 @@ Semantic search over the agent's own memory.
 
 ## `memory.search_trace`
 
-Same shape as memory.search; returns the per-candidate scoring breakdown instead of just the top-k.
+Same shape as memory.search; returns the vector leg's per-candidate scoring breakdown (no fusion, assembly or reranker).
 
 `POST /v1/memory.search_trace` · MCP `loom_memory_search_trace` · role `viewer` · read · not listed under the MCP `all` toolset
 
@@ -1860,14 +1904,14 @@ Same shape as memory.search; returns the per-candidate scoring breakdown instead
 | `personalization` | `Literal['full', 'none']` | `'full'` | Personalization arm. "full" = the default ranking. "none" drops every user-derived rank term in every mode — preference boost, discretionary prior group, reinforcement — and keeps relevance terms. |
 | `observation_date` | `str` | `''` | ISO YYYY-MM-DD anchor for resolving relative time in the query; when set the resolved date is appended to the embedded query text. |
 | `rerank` | `str` | `''` | Per-request reranker override. |
-| `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall. |
+| `retrieval_budget` | `Literal['fast', 'standard', 'deep']` | `'standard'` | Cost posture. "standard" stages cheap recall first, spending expensive LLM/graph/rerank legs only when the planner or fallback gates justify them. "fast" makes no LLM call (as recipe "fast"); "deep" allows upfront expensive recall. |
 | `hyde` | `bool` | `True` | HyDE: embed an LLM-generated hypothetical answer instead of the raw query to close the question/stored-phrasing vocabulary gap. |
 | `as_of` | `datetime \| None` | `None` | As-of replay filter (coalesce(valid_at, created_at) <= as_of), denormalized onto memory_embeddings so vector_search applies it without joining loom.memory. |
 | `as_of_basis` | `Literal['valid_time', 'knowledge_time']` | `'valid_time'` | Which time axis `as_of` replays: "valid_time" (default; what was true as of then) or "knowledge_time" (what loom had learned by then — created_at only, ignoring valid_at; the incremental-ingest knowledge cutoff). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored, in final rank order, with its breakdown. |
+| `results` | `list[_SearchTraceHit]` | Every candidate the fact leg scored, in the leg's rank order, with its breakdown. |
 | `embedding_model` | `str` | The embedding model the query was embedded with. |
 | `entity_filter` | `list[str]` | The request's `entity_filter`, lowercased as it was matched. |
 | `query_spellings` | `dict[str, str]` | Query words embedded in the corpus's spelling instead of as typed (`memory_search_query_spelling_max_words`); {} when none was. |
@@ -1914,13 +1958,13 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `relations` | `list[tuple[str, str, str]]` | *(computed)* | The (subject, relation, object) facts the value states, written to the fact graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued fact closes the older one it replaces and, under `newest_wins`, retires the rows… |
 | `files` | `list[str] \| None` | `None` | The repo files this memory is about (repo-relative path or bare filename); memory.for_file serves it before an edit of them. |
 | `confidence` | `float` | `1.0` | The writer's own confidence in the fact, 0..1 (1.0 = certain). |
-| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted). |
+| `source_trace` | `str` | `''` | Provenance tag of the write (`conversation:<id>`, `curated_doc://…`); a known prefix decides `source_class` (`conversation:` → extracted), and one starting with `memory.delete_version:` is refused. |
 | `source_class` | `str \| None` | `None` | Declare that this content came from outside (a tool result, a page, a document): `external`, or `imported`. |
 | `source_resource_id` | `str` | `''` | Provenance pointer to the primary source this fact was cited from — a file path, document id, or URL. |
 | `ttl_seconds` | `int \| None` | `None` | Expire the row this many seconds from now. |
 | `clear_expiry` | `bool` | `False` | Force expires_at=NULL, ignoring per-type/namespace retention defaults. |
 | `on_expire` | `Literal['', 'tombstone', 'demote', 'anonymize']` | `''` | What happens when expires_at passes: '' keeps the row's current action (tombstone for a new row); 'demote' clears the expiry and scales confidence down; 'anonymize' replaces the value with a marker and drops the embeddings, keeping the… |
-| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars); '' keeps the row's current reason. |
+| `expire_reason` | `str` | `''` | Why the expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); '' keeps the row's current reason. |
 | `valid_at` | `datetime \| None` | `None` | Real-world time the fact became true (distinct from created_at and from temporal_anchor). |
 | `valid_to` | `datetime \| None` | `None` | Closing bound of the fact's stated validity ("until 2024"); NULL = open interval. |
 | `pinned` | `bool` | `False` | True when written via memory.pin (explicit-save) |
@@ -2133,7 +2177,7 @@ Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear
 | `ttl_seconds` | `int \| None` | `None` | New expiry this many seconds from now; send it or `clear_expiry: true`, not both. |
 | `clear_expiry` | `bool` | `False` | "never expire" — expires_at becomes NULL. |
 | `on_expire` | `Literal['', 'tombstone', 'demote', 'anonymize']` | `''` | Optionally re-declare the post-action alongside the new expiry. |
-| `expire_reason` | `str` | `''` | Why the new expiry is set (at most 512 chars); '' keeps the row's reason. |
+| `expire_reason` | `str` | `''` | Why the new expiry is set (at most 512 chars, not starting with `blacklist.sweep:`); '' keeps the row's reason. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

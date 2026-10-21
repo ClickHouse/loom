@@ -15,12 +15,22 @@ from server.knowledge.api.models_conversations import (
     ConversationGetOutput,
     ConversationListInput,
     ConversationListOutput,
+    ConversationListSavedMessagesInput,
+    ConversationListSavedMessagesOutput,
+    ConversationSavedStatusInput,
+    ConversationSavedStatusOutput,
+    ConversationSaveMessageInput,
+    ConversationSaveMessageOutput,
     ConversationSearchInput,
     ConversationSearchOutput,
+    ConversationSearchSavedMessagesInput,
+    ConversationSearchSavedMessagesOutput,
     ConversationSetLoggingInput,
     ConversationSetLoggingOutput,
     ConversationThreadsInput,
     ConversationThreadsOutput,
+    ConversationUnsaveMessageInput,
+    ConversationUnsaveMessageOutput,
     ConversationUpdateInput,
     ConversationUpdateOutput,
 )
@@ -31,9 +41,14 @@ from server.knowledge.app.conversations import (
     handle_conversation_delete,
     handle_conversation_get,
     handle_conversation_list,
+    handle_conversation_list_saved_messages,
+    handle_conversation_save_message,
+    handle_conversation_saved_status,
     handle_conversation_search,
+    handle_conversation_search_saved_messages,
     handle_conversation_set_logging,
     handle_conversation_threads,
+    handle_conversation_unsave_message,
     handle_conversation_update,
 )
 from server.operations.base import Operation, Role
@@ -45,7 +60,6 @@ conversation_create = Operation(
     output_model=ConversationCreateOutput,
     handler=handle_conversation_create,
     idempotent=True,
-    budget_p99_ms=30,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -56,7 +70,28 @@ conversation_append = Operation(
     output_model=ConversationAppendOutput,
     handler=handle_conversation_append,
     idempotent=True,  # dedup on msg_id
-    budget_p99_ms=30,
+    required_role=Role.WRITER,
+    audit=False,
+)
+
+conversation_save_message = Operation(
+    name="conversation.save_message",
+    maturity="experimental",
+    input_model=ConversationSaveMessageInput,
+    output_model=ConversationSaveMessageOutput,
+    handler=handle_conversation_save_message,
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=False,
+)
+
+conversation_unsave_message = Operation(
+    name="conversation.unsave_message",
+    maturity="experimental",
+    input_model=ConversationUnsaveMessageInput,
+    output_model=ConversationUnsaveMessageOutput,
+    handler=handle_conversation_unsave_message,
+    idempotent=True,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -68,7 +103,6 @@ conversation_set_logging = Operation(
     output_model=ConversationSetLoggingOutput,
     handler=handle_conversation_set_logging,
     idempotent=True,
-    budget_p99_ms=200,  # ALTER UPDATE mutation
     required_role=Role.ADMIN,  # changing a namespace setting
     audit=True,
 )
@@ -80,7 +114,6 @@ conversation_list = Operation(
     output_model=ConversationListOutput,
     handler=handle_conversation_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -92,7 +125,6 @@ conversation_get = Operation(
     output_model=ConversationGetOutput,
     handler=handle_conversation_get,
     idempotent=True,
-    budget_p99_ms=100,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -104,7 +136,6 @@ conversation_update = Operation(
     output_model=ConversationUpdateOutput,
     handler=handle_conversation_update,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -116,7 +147,6 @@ conversation_delete = Operation(
     output_model=ConversationDeleteOutput,
     handler=handle_conversation_delete,
     idempotent=True,
-    budget_p99_ms=600,  # three bulk ALTER UPDATEs, mutations_sync=2
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -128,7 +158,39 @@ conversation_search = Operation(
     output_model=ConversationSearchOutput,
     handler=handle_conversation_search,
     idempotent=True,
-    budget_p99_ms=120,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+conversation_search_saved_messages = Operation(
+    name="conversation.search_saved_messages",
+    maturity="experimental",
+    input_model=ConversationSearchSavedMessagesInput,
+    output_model=ConversationSearchSavedMessagesOutput,
+    handler=handle_conversation_search_saved_messages,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+conversation_list_saved_messages = Operation(
+    name="conversation.list_saved_messages",
+    maturity="experimental",
+    input_model=ConversationListSavedMessagesInput,
+    output_model=ConversationListSavedMessagesOutput,
+    handler=handle_conversation_list_saved_messages,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+conversation_saved_status = Operation(
+    name="conversation.saved_status",
+    maturity="experimental",
+    input_model=ConversationSavedStatusInput,
+    output_model=ConversationSavedStatusOutput,
+    handler=handle_conversation_saved_status,
+    idempotent=True,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -139,7 +201,6 @@ conversation_threads = Operation(
     output_model=ConversationThreadsOutput,
     handler=handle_conversation_threads,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -152,7 +213,6 @@ conversation_compact = Operation(
     output_model=ConversationCompactOutput,
     handler=handle_conversation_compact,
     idempotent=True,
-    budget_p99_ms=3500,  # dominated by the LLM round-trip
     required_role=Role.WRITER,
     audit=True,
 )
@@ -161,12 +221,17 @@ conversation_compact = Operation(
 OPERATIONS: list[Operation] = [
     conversation_create,
     conversation_append,
+    conversation_save_message,
+    conversation_unsave_message,
     conversation_set_logging,
     conversation_get,
     conversation_update,
     conversation_delete,
     conversation_list,
     conversation_search,
+    conversation_search_saved_messages,
+    conversation_list_saved_messages,
+    conversation_saved_status,
     conversation_threads,
     conversation_compact,
 ]

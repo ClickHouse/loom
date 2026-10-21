@@ -238,7 +238,7 @@ _FIRST_PERSON_FORMS = frozenset(
 # What every first-person form canonicalises to.
 SELF_SUBJECT = "user"
 # The most triples one memory row states; the triple writer keeps the first ones.
-MAX_TRIPLES_PER_ROW = 8
+MAX_TRIPLES_PER_ROW = 8  # not a setting: a wire bound of `relations`
 
 # Singularize the head noun so distinct-thing COUNTs don't split on
 # plural/singular surface forms ("data breach" vs "data breaches", "kit" vs

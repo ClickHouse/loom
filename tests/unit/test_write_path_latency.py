@@ -316,7 +316,7 @@ def test_http_post_handler_rows_are_written_concurrently(monkeypatch) -> None:
         await asyncio.sleep(0.02)  # over its 1 ms budget: the violation row is due
         return base.output_model.model_construct(unlocked=True)
 
-    op = dataclasses.replace(base, handler=_handler, budget_p99_ms=1)
+    op = dataclasses.replace(base, handler=_handler)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setattr(settings, "auth_required", False)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)

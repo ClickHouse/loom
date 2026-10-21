@@ -9,6 +9,18 @@ from typing import Any
 import pytest
 
 from server.memory.store import bm25_stats
+from tests.unit.test_memory_update_conflict import wired  # noqa: F401
+
+
+@pytest.fixture(autouse=True)
+def _no_delete_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No delete races these writes: the fence before the insert finds no later version."""
+
+    async def _none(*_a: Any, **_k: Any) -> dict[Any, int]:
+        return {}
+
+    monkeypatch.setattr("server.memory.store.versions_above", _none)
+
 
 _NOW = 1_800_000_000 * 1_000_000_000
 _S = 1_000_000_000
@@ -53,16 +65,107 @@ async def test_late_rows_are_folded_with_both_views_statements_and_errors_are_lo
 
 
 @pytest.mark.asyncio
-async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeypatch) -> None:
-    """Each embedding write whose version predates its insert hands its rows over."""
+async def test_both_statements_run_at_once_and_one_failing_waits_for_the_other(caplog) -> None:
+    """Concurrent, and the call ends only after both have: shutdown's drain must not
+    close the client under the statement that is still running."""
+    import asyncio
+
+    started: list[str] = []
+    finished: list[str] = []
+    both_started = asyncio.Event()
+
+    class _CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            table = "doc_stats" if "memory_doc_stats" in sql else "term_freq"
+            started.append(table)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=5)
+            if table == "doc_stats":
+                raise RuntimeError("memory limit")
+            await asyncio.sleep(0.05)
+            finished.append(table)
+
+    with caplog.at_level("WARNING", logger=bm25_stats._log.name):
+        assert await bm25_stats.index_late_rows([_row(version=1)], ch=_CH()) == 0
+    assert sorted(started) == ["doc_stats", "term_freq"]
+    assert finished == ["term_freq"]
+    (warning,) = [r.getMessage() for r in caplog.records]
+    assert "memory_doc_stats" in warning and "memory limit" in warning
+
+
+def _late_and_blocked(monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[str]]:
+    """Every row late, and the statements held until released: a path that awaited them
+    would not return."""
+    import asyncio
+
     import server.memory.store as memory_repo
-    from server.memory.app import bulk_set
+
+    release = asyncio.Event()
+    indexed: list[str] = []
+
+    async def _index(rows: Any, **_k: Any) -> int:
+        await release.wait()
+        indexed.extend(str(r.get("memory_key")) for r in rows)
+        return len(rows)
+
+    monkeypatch.setattr(memory_repo, "late_rows", lambda rows, **_k: list(rows))
+    monkeypatch.setattr(memory_repo, "index_late_rows", _index)
+    return release, indexed
+
+
+@pytest.mark.asyncio
+async def test_memory_set_answers_before_its_late_row_is_indexed(monkeypatch) -> None:
+    import asyncio
+
+    from server.memory.app import after_write
+    from server.memory.app import write as write_mod
+    from server.memory.domain.conflicts import ConflictResult
+    from tests.unit.test_memory_set_verdict import _input, _wire
+
+    _wire(monkeypatch, ConflictResult(verdict="clear", peers=[]))
+    release, indexed = _late_and_blocked(monkeypatch)
+    out = await asyncio.wait_for(write_mod.handle_memory_set(_input()), timeout=5)
+    assert out.version > 0 and indexed == []
+    release.set()
+    await after_write.drain()
+    assert indexed == ["release_day"]
+
+
+@pytest.mark.asyncio
+async def test_memory_update_answers_before_its_late_row_is_indexed(wired, monkeypatch) -> None:  # noqa: F811
+    import asyncio
+
+    from server.memory.app import after_write
+    from server.memory.app import update as update_mod
+    from server.memory.domain.conflicts import ConflictResult
+    from tests.unit.test_memory_update_conflict import _input
+
+    wired(ConflictResult(verdict="clear", peers=[]))
+    release, indexed = _late_and_blocked(monkeypatch)
+    out = await asyncio.wait_for(update_mod.handle_memory_update(_input()), timeout=5)
+    assert out.updated and indexed == []
+    release.set()
+    await after_write.drain()
+    assert indexed == ["deploy_day"]
+
+
+@pytest.mark.asyncio
+async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeypatch) -> None:
+    """Each embedding write whose version predates its insert hands its rows over; a
+    request does it after its response, so a slow statement does not hold the write."""
+    import asyncio
+
+    import server.memory.store as memory_repo
+    from server.memory.app import after_write, bulk_set
     from server.memory.app.bulk_rows import _BulkWriteState
     from server.memory.workers import embedding
 
     handed: list[list[dict[str, Any]]] = []
+    release = asyncio.Event()
 
     async def _index(rows: Any, **_k: Any) -> int:
+        await release.wait()  # inserts are slow
         handed.append(list(rows))
         return 0
 
@@ -76,7 +179,10 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     state = _BulkWriteState()
     state.memory_rows.append({**_row(), "memory_type": "semantic", "sensitivity": "", "version": 1})
     state.embedding_rows.append(_row(version=1))
-    await bulk_set._bulk_insert(object(), state)
+    await asyncio.wait_for(bulk_set._bulk_insert(object(), state), timeout=5)
+    assert handed == []  # the write returned with the statements still running
+    release.set()
+    await after_write.drain()
     assert handed and handed[0][0]["memory_key"] == "k"
 
     # The worker: a filled stub is handed over after its replacement row is in (the
@@ -121,6 +227,15 @@ async def test_the_bulk_insert_and_the_worker_fill_index_their_late_rows(monkeyp
     monkeypatch.setattr(embedding, "get_embedder", lambda: _Embedder())
     await embedding.run_pass(embedding.EmbeddingWorkerConfig(org_filter="o", namespace_filter="n"))
     assert order[:2] == ["insert", "index"], order
+
+
+@pytest.mark.asyncio
+async def test_a_write_with_no_late_row_schedules_nothing() -> None:
+    """The common write lands inside the lag: no task, no statement."""
+    from server.memory.app import after_write
+
+    assert after_write.index_late_rows([_row(version=10**30)], ch=object()) is None
+    assert after_write.index_late_rows([], ch=object()) is None
 
 
 @pytest.mark.asyncio

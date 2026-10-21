@@ -1,11 +1,12 @@
 """Pluggable per-namespace reranker.
 
 When a namespace sets `rerank_endpoint` (or a request sets `rerank`),
-`memory.search` POSTs its candidate pool to the endpoint of that NAME and
-orders results by the response. Names map to URLs only in the operator's
-LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies the URL, and a value that
-is not a configured name (a URL included) reranks nothing. Loom owns the data
-plane, not the model.
+`memory.search` POSTs its candidate pool to the endpoint of that NAME and orders
+results by the response. Rows an exact identifier match pins keep their place
+and are not sent; with fewer than two rows left, no call is made. Names map to
+URLs only in the operator's LOOM_RERANK_ENDPOINTS_JSON; a caller never supplies
+the URL, and a value that is not a configured name (a URL included) reranks
+nothing. Loom owns the data plane, not the model.
 
 Built-in rerankers (no separate service to run): `builtin:openai` (or
 `builtin:openai:gpt-4o-mini`) routes through Loom's LLM client;
@@ -32,7 +33,8 @@ Contract — response body:
 
 Order of `ranked` is the new order; entries omitted from `ranked` get
 appended after in their original order so a flaky reranker can't
-silently drop hits.
+silently drop hits. A key can name several candidates (one per session): each
+entry naming it takes that key's next candidate in input order.
 
 If the endpoint times out / errors / returns malformed JSON, the
 candidate pool is returned in its original order — fail-open. Rerank
@@ -47,19 +49,25 @@ from typing import Any
 
 import httpx
 
+from server.clients._http import refuse_off_gateway
+from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.llm.json_text import strip_code_fence
-from server.memory.domain.rerank_names import (
-    BUILTIN_COHERE,
-    BUILTIN_OPENAI,
-    is_rerank_choice,
-)
+from server.memory.app.log_once import LogOnce
+from server.memory.domain.rerank_names import BUILTIN_OPENAI, is_rerank_choice
 from server.observability import degradations as _degradations
 from server.observability.genai import llm_stage
-from server.settings import settings
+from server.settings import BUILTIN_COHERE, is_builtin_cohere, settings
 
 log = logging.getLogger(__name__)
 
-_TIMEOUT = httpx.Timeout(connect=2.0, read=8.0, write=2.0, pool=2.0)
+
+def _timeout() -> httpx.Timeout:
+    # not a setting: the connect, write and pool waits; the read is the setting
+    return httpx.Timeout(
+        connect=2.0, read=settings.memory_search_rerank_timeout_s, write=2.0, pool=2.0
+    )
+
 
 _BUILTIN_COHERE_DEFAULT_MODEL = "rerank-english-v3.0"
 _COHERE_API_URL = "https://api.cohere.com/v2/rerank"
@@ -100,15 +108,16 @@ class RerankCandidate:
 
 # Names already logged as not configured, so a namespace holding one logs once per
 # process, not once per search.
-_UNCONFIGURED_LOGGED: set[str] = set()
+_UNCONFIGURED_LOGGED = LogOnce()
+# Namespaces whose stored builtin:cohere was unset, logged once per process.
+_COHERE_UNSET_LOGGED = LogOnce()
 
 
 def _note_unconfigured(endpoint: str) -> None:
     """Log once that `endpoint` is not a configured name; nothing is posted to it."""
     shown = f"a URL on host {_host_of(endpoint)!r}" if "://" in endpoint else repr(endpoint[:64])
-    if shown in _UNCONFIGURED_LOGGED or len(_UNCONFIGURED_LOGGED) > 1000:
+    if not _UNCONFIGURED_LOGGED.first(shown):
         return
-    _UNCONFIGURED_LOGGED.add(shown)
     log.warning(
         "rerank endpoint %s is not a name in LOOM_RERANK_ENDPOINTS_JSON; not reranking", shown
     )
@@ -141,6 +150,8 @@ async def rerank(
         return candidates
 
     if endpoint.startswith(BUILTIN_OPENAI):
+        if reads_llm_free():
+            return candidates  # an LLM reranker; LLM-free reads keep the fused order
         return await _rerank_with_builtin_openai(
             endpoint,
             query,
@@ -175,10 +186,13 @@ async def rerank(
     # reranker read as slow retrieval.
     from server.observability.otel import traced
 
+    # Outside the fail-open: a refused call is an error, not a kept order.
+    headers = customer.headers(await customer.require())
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(url, json=body)
+            refuse_off_gateway(url)  # its own client: the model client's hook never runs
+            async with httpx.AsyncClient(timeout=_timeout()) as client:
+                resp = await client.post(url, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed reranker keeps the input order
@@ -192,11 +206,12 @@ async def rerank(
         _degradations.note("rerank", "input_order_kept", "malformed payload")
         return candidates
 
-    by_key: dict[tuple[str, str], RerankCandidate] = {
-        (c.namespace, c.memory_key): c for c in candidates
-    }
+    # The endpoint names a candidate by (namespace, key), and a key can name several (one per
+    # session): each entry takes the key's next candidate in input order.
+    by_key: dict[tuple[str, str], list[RerankCandidate]] = {}
+    for c in candidates:
+        by_key.setdefault((c.namespace, c.memory_key), []).append(c)
     ordered: list[RerankCandidate] = []
-    seen: set[tuple[str, str]] = set()
     for entry in ranked:
         if not isinstance(entry, dict):
             continue
@@ -204,15 +219,11 @@ async def rerank(
         key = entry.get("memory_key")
         if not key:
             continue
-        cand = by_key.get((ns, key))
-        if cand is None:
-            continue
-        ordered.append(cand)
-        seen.add((ns, key))
-
-    for c in candidates:
-        if (c.namespace, c.memory_key) not in seen:
-            ordered.append(c)
+        queue = by_key.get((ns, key))
+        if queue:
+            ordered.append(queue.pop(0))
+    taken = {id(c) for c in ordered}
+    ordered.extend(c for c in candidates if id(c) not in taken)
     return ordered
 
 
@@ -221,13 +232,13 @@ async def _rerank_with_builtin_cohere(
     query: str,
     candidates: list[RerankCandidate],
 ) -> list[RerankCandidate]:
-    """Cohere rerank via their hosted API. Reads COHERE_API_KEY from env.
+    """Cohere rerank via their hosted API, with COHERE_API_KEY.
 
     Fail-open: any error returns candidates in input order.
     """
-    import os
+    from server.core.provider_keys import rerank_key
 
-    api_key = os.environ.get("COHERE_API_KEY", "")
+    api_key = rerank_key("cohere")
     if not api_key:
         log.warning(
             "builtin:cohere rerank requested but COHERE_API_KEY unset; falling back to input order",
@@ -246,17 +257,17 @@ async def _rerank_with_builtin_cohere(
     }
     from server.observability.otel import traced
 
+    org = await customer.require()  # outside the fail-open: a refusal is an error, not a kept order
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        **customer.headers(org),
+    }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    _COHERE_API_URL,
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
+            refuse_off_gateway(_COHERE_API_URL)
+            async with httpx.AsyncClient(timeout=_timeout()) as client:
+                resp = await client.post(_COHERE_API_URL, json=body, headers=headers)
                 resp.raise_for_status()
                 payload = resp.json()
     except Exception as e:  # noqa: BLE001 — a failed Cohere call keeps the input order
@@ -338,6 +349,8 @@ async def _rerank_with_builtin_openai(
                 user=user_prompt,
                 max_tokens=rerank_max_tokens,
             )
+    except customer.HOLDS:
+        raise  # a refusal or an unread switch: never "kept the input order"
     except Exception as e:  # noqa: BLE001 — a failed LLM rerank keeps the input order
         log.warning("builtin:openai rerank failed (%s); fallback", e)
         _degradations.note("rerank:openai", "input_order_kept", e)
@@ -412,5 +425,16 @@ async def get_namespace_rerank_config(
         _note_unconfigured(endpoint)
         return "", ""
     if endpoint == "none":
+        return "", ""
+    if settings.gateway_required() and is_builtin_cohere(endpoint):
+        # Stored before the gateway was required: Cohere's own API would be
+        # refused at each search, unseen behind the fail-open, so it is unset.
+        if _COHERE_UNSET_LOGGED.first((org, namespace)):
+            log.warning(
+                "%s/%s reranks with builtin:cohere, refused while %s is set: not reranked",
+                org,
+                namespace,
+                settings.gateway_required_by(),
+            )
         return "", ""
     return (endpoint, row.get("rerank_prompt_template") or "")

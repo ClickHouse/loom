@@ -18,7 +18,8 @@ from typing import Any
 import jwt
 
 from server.auth.authz import Role, grant_role
-from server.settings import settings
+from server.core.principals import RESERVED_SUBJECT, is_reserved_subject
+from server.settings import EndUserIssuer, settings
 
 
 class TokenError(Exception):
@@ -158,6 +159,9 @@ class AuthInfo:
     # dashboard), whose children may outlive it (`delegation._child_ttl`);
     # False for a session a third-party client holds.
     first_party: bool = False
+    # The agent an end-user token names (`agent:<id>`, signed by its issuer),
+    # whose grants on a collection the request also holds; '' otherwise.
+    agent_principal: str = ""
     # `iat` as unix seconds; None for an identity no token backs (dev mode).
     issued_at: int | None = None
     # `exp` as unix seconds; None for a token without one.
@@ -275,6 +279,9 @@ def mint_token(
     if "\x00" in subject:
         # Reserved: revocation keys an operator's cutoffs by a NUL a subject never has.
         raise ValueError("a token subject may not contain a NUL character")
+    if is_reserved_subject(subject):
+        # Only an end-user issuer's tokens carry these.
+        raise ValueError(f"{RESERVED_SUBJECT}: {subject!r}")
     now = int(time.time()) if issued_at is None else issued_at
     payload: dict[str, Any] = {
         "sub": subject,
@@ -345,6 +352,9 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     if secret is None:
         from server.auth import keyring
 
+        end_user = _end_user_key(token)
+        if end_user is not None:
+            return _verify_end_user(token, *end_user)
         if not keyring.loaded():
             raise KeyringUnavailable("the signing keyring is not loaded yet; retry shortly")
         if keyring.stale():
@@ -404,6 +414,8 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         raise TokenError("claim 'org' must be a string")
     if "\x00" in str(decoded["sub"]):
         raise TokenError("claim 'sub' may not contain a NUL character")
+    if is_reserved_subject(str(decoded["sub"])):
+        raise TokenError(f"claim 'sub': {RESERVED_SUBJECT}")
     exp = decoded.get("exp")
 
     return AuthInfo(
@@ -430,7 +442,115 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     )
 
 
-def _decode(token: str, keys: list[str], algorithm: str) -> dict[str, Any]:
+class EndUserKeysUnavailable(AuthUnavailable):
+    """An end-user issuer's JWKS has not been fetched in this process yet."""
+
+
+def _end_user_key(token: str) -> tuple[str, EndUserIssuer, Any] | None:
+    """(issuer, its spec, public key) when `token` names an end-user issuer
+    (its `iss`, checked against the signature after), else None. The key is the
+    issuer's own of the token's `kid`: from its `keys`, or its last fetched JWKS."""
+    from server.auth import end_user_keys
+
+    issuers = settings.end_user_issuers()
+    if not issuers:
+        return None
+    try:
+        iss = jwt.decode(token, options={"verify_signature": False}).get("iss")
+        kid = jwt.get_unverified_header(token).get("kid")
+    except jwt.PyJWTError as e:
+        raise TokenError(f"invalid token: {e}") from e
+    if not isinstance(iss, str) or iss not in issuers:
+        return None
+    spec = issuers[iss]
+    found = spec.keys.get(kid) if isinstance(kid, str) else None
+    if found is None and isinstance(kid, str):
+        found = end_user_keys.key(iss, kid)
+    if found is None:
+        if spec.jwks_url and not end_user_keys.loaded(iss):
+            raise EndUserKeysUnavailable(f"the keys of {iss!r} are not fetched yet; retry shortly")
+        raise TokenError(f"token kid {kid!r} is not a key of {iss!r}")
+    return iss, spec, found
+
+
+# Claims an end-user token may not carry: its identity is the user, nothing more.
+_NOT_FOR_END_USERS = (
+    "namespaces",
+    "ns_write",
+    "ns_roles",
+    "roles",
+    "sa",
+    "read_scope",
+    "read_user_id",
+    "creator",
+    "parents",
+)
+
+
+def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: Any) -> AuthInfo:
+    """A short-lived token an end-user issuer signed for one of its users: one
+    org, `sub: user:<id>`, and the agent the request runs inside when there is
+    one (`agent: agent:<id>`, signed, since an agent's grants widen the
+    request). It runs as that user alone: an org member with no claim, whose
+    reads are pinned to the user's rows (`own_user`) and who reaches what
+    grants give the user, the user's groups and the agent."""
+    from server.core.principals import AGENT, USER, end_user_revocation_subject, principal_id
+
+    try:
+        decoded = _decode(token, [public_key], "RS256")
+    except jwt.ExpiredSignatureError as e:
+        raise TokenError(f"token expired: {e}", reason="expired") from e
+    except jwt.PyJWTError as e:
+        raise TokenError(f"invalid token: {e}") from e
+    if decoded.get("iss") != issuer:
+        raise TokenError(f"an end-user key of {issuer!r} signed a token of another issuer")
+    user = principal_id(str(decoded.get("sub") or ""), USER)
+    org = decoded.get("org")
+    agent = decoded.get("agent") or ""
+    exp, iat = decoded.get("exp"), decoded.get("iat")
+    if not user:
+        raise TokenError("an end-user token names one user: sub user:<id>")
+    if not isinstance(org, str) or org in ("", "*"):
+        raise TokenError("an end-user token names one org")
+    if not spec.signs_for(org):
+        raise TokenError(f"{issuer!r} does not sign for the org {org!r}")
+    if not isinstance(decoded.get("jti"), str) or not decoded["jti"]:
+        raise TokenError("an end-user token carries a jti, so one token can be revoked")
+    if not isinstance(agent, str) or (agent and not principal_id(agent, AGENT)):
+        raise TokenError("an end-user token's agent is agent:<id>")
+    if not isinstance(exp, int | float) or isinstance(exp, bool) or not isinstance(iat, int):
+        raise TokenError("an end-user token carries a numeric iat and exp")
+    if exp - iat > settings.jwt_end_user_max_ttl_seconds:
+        raise TokenError(
+            f"an end-user token lives at most {settings.jwt_end_user_max_ttl_seconds} s"
+        )
+    carried = [c for c in _NOT_FOR_END_USERS if c in decoded]
+    if carried:
+        raise TokenError(f"an end-user token carries no {', '.join(carried)} claim")
+    # `user:<id>` names one person per org, so a subject revocation of an end
+    # user names its org (`loom revoke-token --subject <org>/user:<id>`): one
+    # tenant's never reaches the same id at another.
+    _check_not_revoked({**decoded, "sub": end_user_revocation_subject(org, USER + user)})
+    return AuthInfo(
+        subject=USER + user,
+        org=org,
+        namespaces=(),
+        # A member of the org with no claim: an org-level read it may make, a
+        # namespace only through a grant.
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+        impersonated_by=issuer,
+        read_scope="own_user",
+        read_user_id=user,
+        agent_principal=agent,
+        token_id=token_id_of(token, decoded.get("jti")),
+        consumer=_consumer_claim(decoded.get("consumer")),
+        issued_at=iat,
+        expires_at=int(exp),
+    )
+
+
+def _decode(token: str, keys: list[Any], algorithm: str) -> dict[str, Any]:
     """The claims under the first of `keys` the signature matches. `issuer=` is
     checked by the caller (PyJWT takes one string, not a set); `exp` is not
     required (indefinite tokens) but enforced when present."""

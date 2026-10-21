@@ -287,11 +287,19 @@ async def test_a_failed_run_restarts_the_retry_window_at_its_end(tmp_path, monke
 
 def test_harness_tools_write_their_temp_files_beside_the_delta(tmp_path) -> None:
     import subprocess
+    import sys
 
     from server.core.paths import SCIP_HARNESS_DIR
 
     out = subprocess.run(
-        ["bash", "-c", f'source {SCIP_HARNESS_DIR / "lib.sh"}; echo "$TMPDIR"; mktemp'],
+        [
+            "bash",
+            "-c",
+            'source "$1"; echo "$TMPDIR"; "$2" -c "import tempfile; print(tempfile.mkstemp()[1])"',
+            "harness-temp",
+            str(SCIP_HARNESS_DIR / "lib.sh"),
+            sys.executable,
+        ],
         env={"PATH": "/usr/bin:/bin", "DELTA_OUT": str(tmp_path / "delta.json")},
         capture_output=True,
         text=True,

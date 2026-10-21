@@ -445,6 +445,7 @@ def _memory_ops_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
     from server.knowledge.store import conversations as R
 
     f = c["filters"]
@@ -457,13 +458,50 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
         [NS],
         AGENT,
         "deploy",
+        scope=WHOLE_NAMESPACE,
         thread_id="t1" if f else None,
         role="user" if f else None,
         run_id="r1" if f else None,
         ch=ch,
     )
     await R.count_thread_msgs(ORG, NS, AGENT, "t1", ch=ch)
-    await R.message_exists(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    # Saved-message search under a token pinned to one user.
+    pinned = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    await R.search_substring(
+        ORG, NS, AGENT, "deploy", scope=pinned, user_id="u1", saved_only=f, ch=ch
+    )
+    await R.message_exists(ORG, NS, AGENT, "t1", "m1", live_only=f, ch=ch)
+    await R.message_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", ch=ch)
+    await R.embedding_state(ORG, NS, AGENT, "t1", "m1", user_id="u1", embedding_model="m", ch=ch)
+    await R.saved_message_owner(ORG, NS, AGENT, "t1", "m1", ch=ch)
+    await R.lexical_saved_messages(
+        ORG,
+        NS,
+        AGENT if f else "*",
+        ["deploy", "window"],
+        scope=pinned,
+        user_id="u1",
+        conversation_id="t1" if f else None,
+        role="user" if f else None,
+        ch=ch,
+    )
+    await R.saved_message_ids(
+        ORG, NS, AGENT if f else "*", "t1", ["m1", "m2"], scope=pinned, user_id="u1", ch=ch
+    )
+    await R.list_saved_messages(
+        ORG,
+        NS,
+        AGENT,
+        scope=pinned,
+        user_id="u1",
+        conversation_id="t1" if f else None,
+        before=(_DT, "t1", "m1") if f else None,
+        ch=ch,
+    )
+    for table in R.SAVED_MESSAGE_TABLES:
+        await R.unsave_message(
+            table, ORG, NS, AGENT, "t1", "m1", user_id="u1", remove=f, when=_DT, ch=ch
+        )
     await R.namespace_logging_enabled(ORG, NS, ch=ch)
     await R.tombstone_thread(ORG, NS, AGENT, "t1", when=_DT, ch=ch)
     await R.tombstone_messages(ORG, NS, AGENT, "t1", ["m1"], when=_DT, ch=ch)
@@ -474,10 +512,53 @@ async def _conversations(ch: RecordingCH, c: dict[str, Any]) -> None:
 # key for the delete's embeddings pass to reconcile.
 _CONVERSATION_ROWS = rows_by_substring(
     {
-        "max(tombstoned_at) AS gone": [{"gone": _DT}],
+        "max(tombstoned_at) AS gone": [{"n": 1, "gone": _DT}],
         "SELECT DISTINCT embedding_model, msg_id": [{"embedding_model": "m", "msg_id": "m1"}],
     }
 )
+
+
+# A transcript turn already stored, unsaved and unowned, whose embedding row is
+# unflagged (`embedded`) or never landed: saving it flags the message row and
+# either flags the embedding row or writes it.
+def _logged_turn_rows(embedded: bool):
+    return rows_by_substring(
+        {
+            "groupUniqArray(user_id)": [
+                {
+                    "n": 1,
+                    "role": "assistant",
+                    "content": "the logged answer",
+                    "run_id": "r1",
+                    "last_ts": _DT,
+                    "owners": ["-"],
+                    "tombstoned": False,
+                    "unsaved": 1,
+                }
+            ],
+            "countIf(live AND embedding_model": [
+                {"current": 1 if embedded else 0, "unsaved": 1 if embedded else 0, "foreign": 0}
+            ],
+        }
+    )
+
+
+async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.api.models_conversations import ConversationSaveMessageInput
+    from server.knowledge.app.conversations import handle_conversation_save_message
+
+    await handle_conversation_save_message(
+        ConversationSaveMessageInput(
+            org=ORG,
+            namespace=NS,
+            agent=AGENT,
+            conversation_id="t1",
+            message_id="m1",
+            role="assistant",
+            content="the saved answer",
+            user_id="u1",
+        )
+    )
 
 
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -545,6 +626,8 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await L.delete_procedure_runs_by_key(ORG, NS, "k1", ch=ch)
     await R.delete_llm_response_cache_by_key(ORG, "k1", ch=ch)
     await R.delete_ask_precedents_by_key(ORG, "k1", ch=ch)
+    await R.profile_keys_built_from(ORG, NS, "u1", _UUID, ch=ch)
+    await R.redact_versions(ORG, NS, "u1", _UUID, 1, when=_DT, reason_blob="r|admin", ch=ch)
 
 
 async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -692,6 +775,61 @@ async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     await cost.recorded_turn_times(ORG, NS, "s1", ["m1"], ch=ch)
 
 
+async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The profile schema reads and the structured profile's source reads: a
+    user's facts (with and without the fold's key rule), their digest, the
+    profile row, its head's pin and lock, and the users whose profile is behind, each unbounded and under
+    an `own_user` scope."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+    from server.memory.store import profile_schemas, profile_sources
+
+    await profile_schemas.get(ORG, NS, ch=ch)
+    await profile_schemas.list_active(
+        exclude_orgs=["o2"],
+        after=("o1", "a"),
+        limit=10,
+        only=("o1", "b"),
+        waiting=[("o1", "c", "0" * 64)],
+        ch=ch,
+    )
+    own = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    for scope in (WHOLE_NAMESPACE, own):
+        for keys in (False, True):
+            await profile_sources.user_facts(
+                org=ORG,
+                namespace=NS,
+                user_id="u1",
+                types=["preference"],
+                limit=5,
+                scope=scope,
+                user_keys_only=keys,
+                ch=ch,
+            )
+        await profile_sources.sources_digest(
+            org=ORG, namespace=NS, user_id="u1", scope=scope, ch=ch
+        )
+        await profile_sources.profile_row(
+            org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
+        )
+        await profile_sources.profile_head_hold(
+            org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
+        )
+        await profile_sources.users_behind(
+            org=ORG,
+            namespace=NS,
+            label="structured_profile",
+            schema_sha256="0" * 64,
+            cooldown_seconds=600,
+            limit=10,
+            skip=("u2",),
+            refused={"u3": ("0" * 16, 1)},
+            timeout_seconds=60,
+            max_memory_bytes=4 * 1024**3,
+            scope=scope,
+            ch=ch,
+        )
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -704,6 +842,7 @@ def cases() -> list[Case]:
         for name, module in HANDLER_MODULES
     ]
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
+    out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(
         Case(
             "memory_list_score",
@@ -719,6 +858,18 @@ def cases() -> list[Case]:
             _conversations,
             {"filters": (False, True)},
             rows=_CONVERSATION_ROWS,
+        ),
+        Case(
+            "conversation_save_logged_turn",
+            "server.knowledge.app.conversations",
+            _save_logged_turn,
+            rows=_logged_turn_rows(embedded=True),
+        ),
+        Case(
+            "conversation_save_unembedded_turn",
+            "server.knowledge.app.conversations",
+            _save_logged_turn,
+            rows=_logged_turn_rows(embedded=False),
         ),
         Case(
             "knowledge_repos",

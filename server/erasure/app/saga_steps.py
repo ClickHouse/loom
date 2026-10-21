@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from typing import Any
 
+from server.auth.grant_claims import account_change, collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
+from server.core import grant_cache
+from server.core.principals import personal_name
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
+from server.erasure.store import steps_principals as principal_steps
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -102,11 +107,65 @@ async def _step_tombstone_documents_by_ns(org: str, namespace: _NS) -> int:
     return await memory_steps.tombstone_documents_by_namespace(org, namespace)
 
 
+async def _step_revoke_grants_by_user(org: str, user_id: str) -> int:
+    """Every grant naming the user as a principal, `user:<user_id>`, revoked
+    (which moves the watermark) and then deleted; then the user's id off the
+    grants they gave others. Returns the grants revoked."""
+    from server.identity.app.grants import forget_granter, revoke_subject
+    from server.memory.app.provenance import writer_actor
+
+    principal = "user:" + user_id
+    revoked = await revoke_subject(org, principal, actor=writer_actor("-"))
+    await forget_granter(org, principal)
+    await principal_steps.delete_grant_rows_of_user(org, user_id)
+    return revoked
+
+
+async def _step_remove_from_groups_by_user(org: str, user_id: str) -> int:
+    """Each group under the claim a SCIM change of it holds, so a PATCH that
+    read the group first cannot put the user back."""
+    removed = 0
+    groups = await principal_steps.groups_of_user(org, user_id)
+    if not groups:
+        return 0
+    async with grant_cache.announced(org, kind=grant_cache.GROUPS):
+        for group_id in groups:
+            async with group_change(org, group_id):
+                removed += await principal_steps.remove_from_group(org, group_id, user_id)
+    return removed
+
+
+async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> int:
+    """Under its directory row's claim, which `namespace.delete` holds too."""
+    async with account_change(org, personal_name(org, "user:" + user_id)):
+        return await principal_steps.retire_personal_collection_by_user(org, user_id)
+
+
+async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
+    """Under each directory row's claim, then the tree's, so neither a
+    `namespace.delete` nor a move that lands meanwhile writes back what it read."""
+    async with AsyncExitStack() as held:
+        for namespace in await principal_steps.collections_created_by(org, user_id):
+            await held.enter_async_context(account_change(org, namespace))
+        await held.enter_async_context(collections_change(org))
+        # No watermark: the cached tree holds parents, not owners.
+        return await principal_steps.forget_collection_owner_by_user(org, user_id)
+
+
+async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
+    """The user's originals first, as `_step_tombstone_documents_by_ns`, then
+    the documents they wrote."""
+    await memory_steps.erase_blobs_by_user(org, user_id)
+    return await memory_steps.tombstone_documents_by_user(org, user_id)
+
+
 async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
-    """Delete the uploaded originals of the namespace(s), then stamp
-    `blob_erased_at` on their documents. Returns the originals deleted."""
+    """Delete the uploaded originals of the namespace(s), stamp
+    `blob_erased_at` on their documents, then delete the record of who
+    uploaded them. Returns the originals deleted."""
     n = await memory_steps.delete_document_blobs_by_namespace(org, namespace)
     await memory_steps.stamp_blobs_erased(org, namespace)
+    await memory_steps.delete_blob_uploads_by_namespace(org, namespace)
     return n
 
 
@@ -124,6 +183,7 @@ _UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_namespace),
     ("events.delete", ledger_steps.delete_events_by_namespace),
     ("memory_drops.delete", ledger_steps.delete_memory_drops_by_namespace),
+    ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
     ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_namespace),
     ("tasks.delete", ledger_steps.delete_tasks_by_namespace),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_namespace),
@@ -140,6 +200,7 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
     ("memory_exposures.delete", ledger_steps.delete_memory_exposures_by_user),
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_user),
     ("events.delete", ledger_steps.delete_events_by_user),
+    ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_user),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_user),
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_user),
     ("projection_failures.delete", ledger_steps.delete_projection_failures_by_user),
@@ -181,6 +242,21 @@ USER_STEPS: tuple[UserStep, ...] = (
     ("summaries.tombstone", graph_steps.tombstone_summaries_by_user),
     ("records.tombstone", graph_steps.tombstone_records_by_user),
     ("session_outcomes.delete", memory_steps.delete_session_outcomes_by_user),
+    # The knowledge the user wrote, in any namespace of the org; chunks first, as for a
+    # namespace.
+    ("chunks.supersede", memory_steps.supersede_chunks_by_user),
+    ("documents.tombstone", _step_tombstone_documents_by_user),
+    # The user as a principal (`user:<user_id>`): what a grant, a group or the
+    # tree still says about them.
+    ("grants.revoke", _step_revoke_grants_by_user),
+    ("groups.remove_member", _step_remove_from_groups_by_user),
+    ("personal.retire", _step_retire_personal_collection_by_user),
+    ("collections.forget_owner", _step_forget_collection_owner_by_user),
+    # Last of the counted steps, after the scrub: a refresh of the table that
+    # read the ledger before the scrub landed has most likely finished by now.
+    # That is a bound in time, not an order: one still running could write the
+    # row back, and the user's later calls write a new one.
+    ("subject_last_seen.delete", memory_steps.delete_last_seen_by_user),
     *_UNCOUNTED_STEPS_USER,
 )
 

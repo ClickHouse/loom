@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.knowledge.app.conversation_search import (
     ConversationHit,
     ConversationVectorQuery,
@@ -32,6 +33,7 @@ def _q(**overrides) -> ConversationVectorQuery:
         "embedding_model": "text-embedding-3-small",
         "query_vec": [0.1] * 1536,
         "top_k": 10,
+        "scope": WHOLE_NAMESPACE,
     }
     base.update(overrides)
     return ConversationVectorQuery(**base)
@@ -80,6 +82,7 @@ async def test_optional_filters_thread_through() -> None:
             thread_id="t-9",
             role="assistant",
             run_id="r-1",
+            user_id="u-1",
         ),
         ch=ch,
     )
@@ -87,9 +90,11 @@ async def test_optional_filters_thread_through() -> None:
     assert "thread_id = {thread_id:String}" in sql
     assert "role = {role:String}" in sql
     assert "run_id = {run_id:String}" in sql
+    assert "user_id = {user_id:String}" in sql
     assert params["thread_id"] == "t-9"
     assert params["role"] == "assistant"
     assert params["run_id"] == "r-1"
+    assert params["user_id"] == "u-1"
 
 
 @pytest.mark.asyncio
@@ -101,6 +106,7 @@ async def test_no_optional_filters_omits_clauses() -> None:
     assert "thread_id = " not in sql
     assert "role = " not in sql
     assert "run_id = " not in sql
+    assert "user_id = " not in sql
 
 
 @pytest.mark.asyncio
@@ -185,7 +191,77 @@ async def test_the_substring_fallback_cuts_a_hit_as_the_vector_path_does(monkeyp
 
     monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
     out = await h._search_substring_fallback(
-        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"), ["ns"], []
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"),
+        ["ns"],
+        [],
+        scope=WHOLE_NAMESPACE,
+        saved_only=False,
     )
     [hit] = out.hits
     assert hit.content_excerpt == content[:240]
+
+
+@pytest.mark.asyncio
+async def test_a_live_excerpt_length_reaches_both_cuts(monkeypatch) -> None:
+    """conversation_search_excerpt_chars is read per search, by the vector path and the
+    fallback alike."""
+    from server.knowledge.api.models_conversations import ConversationSearchInput
+    from server.knowledge.app import conversations as h
+    from server.knowledge.store import conversations as conversation_repo
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "conversation_search_excerpt_chars", 12)
+    ch = StubCH()
+    ch.query_all_returns.append([_row()])
+    await vector_search(_q(), ch=ch)
+    assert ch.query_all_calls[0][1]["excerpt"] == 12
+
+    content = "deploy " * 100
+
+    async def fake_search_substring(*a, **k):
+        return [
+            conversation_repo.MessageRow(
+                org="o",
+                namespace="ns",
+                agent="a",
+                thread_id="t",
+                msg_id="m1",
+                role="user",
+                content=content,
+                ts=datetime(2026, 5, 17, 10, 0, tzinfo=UTC),
+            )
+        ]
+
+    monkeypatch.setattr(conversation_repo, "search_substring", fake_search_substring)
+    out = await h._search_substring_fallback(
+        ConversationSearchInput(org="o", namespace="ns", agent="a", query="deploy"),
+        ["ns"],
+        [],
+        scope=WHOLE_NAMESPACE,
+        saved_only=False,
+    )
+    assert out.hits[0].content_excerpt == content[:12]
+
+
+def test_the_excerpt_setting_is_bounded_by_what_a_row_stores() -> None:
+    """server.settings cannot import the knowledge plane, so the bound is a copy."""
+    from annotated_types import Le
+
+    from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS
+    from server.settings import Settings
+
+    field = Settings.model_fields["conversation_search_excerpt_chars"]
+    assert [m.le for m in field.metadata if isinstance(m, Le)] == [EMBEDDED_EXCERPT_CHARS]
+
+
+@pytest.mark.asyncio
+async def test_a_bounded_scope_rides_the_vector_statement() -> None:
+    from server.identity.domain.read_scope import ReadFilters
+
+    ch = StubCH()
+    await vector_search(
+        _q(scope=ReadFilters(scope="own_user", user_id="u-1", session_id=None)), ch=ch
+    )
+    sql, params = ch.query_all_calls[0]
+    assert "user_id = {scope_uid:String}" in sql
+    assert params["scope_uid"] == "u-1"

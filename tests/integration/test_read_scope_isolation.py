@@ -2,9 +2,11 @@
 
 Users U and V write into the SAME namespace: facts (one key both hold, the
 rest V's alone, across two sessions), raw turns through set_from_messages
-(the same session id for both), an entity both rows name, a profile section, a session brief, a working-memory block, a procedure and a blacklist pattern. V's rows
-carry a nonce (each fact row its own, all starting with V's). A token minted with `read_user_id=U` then drives every op the
-registry holds:
+(the same session id for both), an entity both rows name, a profile section,
+a session brief, a working-memory block, a procedure, a saved chat message
+(one conversation id for both) and a blacklist pattern. V's rows carry a
+nonce (each fact row its own, all starting with V's). A token minted with
+`read_user_id=U` then drives every op the registry holds:
 
 * an op in `SCOPED_OPS` answers, and no answer carries V's nonce;
 * the same op asked for `user_id="*"` or `user_id=V` is refused (403);
@@ -13,7 +15,9 @@ registry holds:
 * every write a bounded token may call, aimed at V's keys, ids and brief by a
   token pinned to a third user W, answers without V's nonce and leaves each
   of V's rows (value, lifecycle, lock, version) and its usage counters as
-  they were.
+  they were;
+* W re-saving V's saved message is refused as another user's turn, W
+  unsaving it finds nothing, and V's message stays saved.
 
 An op the walks cannot build a body for fails the test unless `_UNBUILDABLE`
 names it with the reason.
@@ -73,9 +77,16 @@ class _Seed:
     keys_v: list[str] = field(default_factory=list)
     memory_ids_v: list[str] = field(default_factory=list)
     brief_key: str = ""
+    # One conversation both users saved a message in; V's message id carries V's nonce.
+    conversation_id: str = ""
     # A blacklist pattern added by a namespace-wide token (its reason carries V's nonce).
     pattern_v: str = ""
     pattern_id_v: str = ""
+
+
+def _saved_message_id(nonce: str) -> str:
+    """The id of the chat message a seeded user saves; it carries the user's nonce."""
+    return f"msg-{nonce}"
 
 
 def _post(base: str, token: str, op: str, payload: dict[str, Any]) -> httpx.Response:
@@ -175,6 +186,22 @@ def _seed_user(base: str, tok: str, s: _Seed, user: str, nonce: str) -> list[str
             "sections": {"goal": f"rotate the {nonce} code"},
         },
     )
+    saved = _write(
+        base,
+        tok,
+        "conversation.save_message",
+        {
+            "org": s.org,
+            "namespace": s.ns,
+            "agent": "a",
+            "user_id": user,
+            "conversation_id": s.conversation_id,
+            "message_id": _saved_message_id(nonce),
+            "role": "user",
+            "content": f"{s.entity} saved the vault code {nonce}",
+        },
+    )
+    assert saved["indexed"], saved
     return ids
 
 
@@ -188,6 +215,7 @@ def seed(control_plane_url: str) -> _Seed:
         nonce_v=f"NONCEV{uuid.uuid4().hex[:10]}",
         entity=f"Zorblax{uuid.uuid4().hex[:6]}",
         brief_key=f"brief-{uuid.uuid4().hex[:6]}",
+        conversation_id=f"conv-{uuid.uuid4().hex[:8]}",
     )
     writer = _mint(org, s.ns)
     _seed_user(control_plane_url, writer, s, U, s.nonce_u)
@@ -237,6 +265,8 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "memory_keys": seed.keys_v,
         "memory_id": seed.memory_ids_v[0],
         "memory_ids": seed.memory_ids_v,
+        # memory.delete_version names the version it removes; the gate refuses first.
+        "version": "1",
         "query": f"vault code {seed.entity}",
         "question": f"what is the vault code {seed.entity} keeps?",
         "situation": f"the vault is locked and {seed.entity} is away",
@@ -259,6 +289,8 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "messages": [{"role": "user", "content": "canary"}],
         "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
         "failure_ids": [str(uuid.uuid4())],
+        "conversation_id": seed.conversation_id,
+        "message_ids": [_saved_message_id(seed.nonce_v)],
     }
     out: dict[str, Any] = {}
     fields = model.model_fields
@@ -384,6 +416,82 @@ def test_the_walk_reaches_vs_rows_without_the_bound(
         "session.brief_get",
     }
     assert must <= reached, sorted(must - reached)
+
+
+def test_the_walk_reaches_vs_saved_messages(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str]
+) -> None:
+    """These ops read `user_id="*"` as a literal user, so the same bodies are asked
+    for V under a namespace-scoped token, and they return V's saved message."""
+    from server.operations.registry import OPERATIONS_BY_NAME
+
+    for name in (
+        "conversation.saved_status",
+        "conversation.list_saved_messages",
+        "conversation.search_saved_messages",
+    ):
+        body = _payload(OPERATIONS_BY_NAME[name].input_model, seed, V)
+        assert body is not None, name
+        r = _post(control_plane_url, tokens["namespace"], name, body)
+        assert r.status_code == 200 and seed.nonce_v in r.text, f"{name}: {r.text[:300]}"
+
+
+def test_a_pinned_token_cannot_save_or_unsave_vs_saved_message(
+    control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
+) -> None:
+    """W re-saves and unsaves V's saved message as itself: the save is refused as
+    another user's turn, the unsave finds nothing, and V's message stays saved
+    as V's one row. Both answers echo the message id W sent, so they are checked
+    here and not by the write walk's nonce check."""
+    conv = {
+        "org": seed.org,
+        "namespace": seed.ns,
+        "agent": "a",
+        "conversation_id": seed.conversation_id,
+    }
+    msg = {**conv, "message_id": _saved_message_id(seed.nonce_v)}
+    saved = _write(
+        control_plane_url,
+        tokens["pinned_w"],
+        "conversation.save_message",
+        {**msg, "user_id": W, "role": "user", "content": "canary"},
+    )
+    assert saved["reason"] == "owner_mismatch", saved
+    unsaved = _write(
+        control_plane_url, tokens["pinned_w"], "conversation.unsave_message", {**msg, "user_id": W}
+    )
+    assert unsaved["found"] is False, unsaved
+    status = _write(
+        control_plane_url,
+        tokens["namespace"],
+        "conversation.saved_status",
+        {**conv, "user_id": V, "message_ids": [msg["message_id"]]},
+    )
+    assert status["saved"] == [msg["message_id"]], status
+    status_w = _write(
+        control_plane_url,
+        tokens["pinned_w"],
+        "conversation.saved_status",
+        {**conv, "user_id": W, "message_ids": [msg["message_id"]]},
+    )
+    assert status_w["saved"] == [], status_w
+    rows = ch_client.query(
+        """
+        SELECT user_id, content, is_saved, tombstoned_at IS NULL
+        FROM loom.conversations
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND thread_id = {tid:String} AND msg_id = {mid:String}
+        """,
+        parameters={
+            "org": seed.org,
+            "ns": seed.ns,
+            "tid": seed.conversation_id,
+            "mid": msg["message_id"],
+        },
+    ).result_rows
+    assert [tuple(r) for r in rows] == [
+        (V, f"{seed.entity} saved the vault code {seed.nonce_v}", True, True)
+    ], rows
 
 
 @pytest.mark.parametrize("other_user", ["*", V])

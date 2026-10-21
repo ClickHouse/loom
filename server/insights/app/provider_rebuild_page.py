@@ -79,7 +79,10 @@ async def rebuild_snapshot_page(
         rows, source_texts = await reconcile_tracker_page(
             rows, body_chars=settings.tracker_embed_body_chars
         )
-    rebuilt = await rebuild_batch(names.table, rows, embedder, source_texts=source_texts)
+    waiting: list[int] = []
+    rebuilt = await rebuild_batch(
+        names.table, rows, embedder, source_texts=source_texts, waiting=waiting
+    )
     await write_target_page(
         names,
         schema,
@@ -91,5 +94,8 @@ async def rebuild_snapshot_page(
         ch=ch,
     )
     return BatchCheckpoint(
-        cursor=after + len(rows), rows_written=len(rows), done=len(rows) < PAGE_SIZE
+        cursor=after + len(rows),
+        rows_written=len(rows),
+        done=len(rows) < PAGE_SIZE,
+        rows_waiting=len(waiting),
     )

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from server.clients._http import get_client as _http_client
+from server.clients._http import get_model_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
 from server.embedding._cache import cached_embed, last_tier
@@ -26,6 +26,7 @@ from server.embedding._provider import (
     store,
     vector,
 )
+from server.llm import customer
 from server.observability.genai import embedding_span
 from server.observability.provider_health import recording
 
@@ -73,25 +74,28 @@ class GeminiEmbedder:
             "outputDimensionality": self.dim,
         }
 
-    async def _post(self, url: str, payload: dict[str, object]) -> dict[str, Any]:
+    async def _post(self, url: str, payload: dict[str, object], org: str) -> dict[str, Any]:
         resp = await _http_client().post(
-            url, json=payload, headers={"x-goog-api-key": self._api_key}
+            url,
+            json=payload,
+            headers={"x-goog-api-key": self._api_key, **customer.headers(org)},
         )
         _raise_for_status(resp, _HEALTH)
         data: dict[str, Any] = resp.json()
         return data
 
     async def _embed_one_raw(self, text: str) -> list[float]:
-        # Outside `recording`: an oversized text is the caller's to fix, not a
-        # provider failure for /v1/health to report.
+        # Outside `recording`: an oversized text, or a call naming no customer,
+        # is the caller's to fix, not a provider failure for /v1/health to report.
+        org = await customer.require()
         check_size(text, _MAX_INPUT_TOKENS, "gemini-embedding-001")
         with recording(_HEALTH):
-            return await self._embed_one_raw_inner(text)
+            return await self._embed_one_raw_inner(text, org)
 
-    async def _embed_one_raw_inner(self, text: str) -> list[float]:
+    async def _embed_one_raw_inner(self, text: str, org: str) -> list[float]:
         async for attempt in retrying():
             with attempt:
-                data = await self._post(self._endpoint, self._content_request(text))
+                data = await self._post(self._endpoint, self._content_request(text), org)
                 return vector(data["embedding"]["values"], self.dim)
         raise RuntimeError("embedding retry loop exited without result")
 
@@ -128,6 +132,7 @@ class GeminiEmbedder:
     async def _embed_many_raw(self, texts: list[str]) -> tuple[list[list[float]], list[str]]:
         """`(vectors in input order, cache_hit_texts)`; misses go to the API
         `_GEMINI_BATCH_LIMIT` at a time."""
+        org = await customer.require()  # before the cache: a hit must not hide a missed path
         results, misses, hits = split_cached(self.model_name, texts)
         for start in range(0, len(misses), _GEMINI_BATCH_LIMIT):
             batch = misses[start : start + _GEMINI_BATCH_LIMIT]
@@ -139,7 +144,7 @@ class GeminiEmbedder:
             with recording(_HEALTH):
                 async for attempt in retrying():
                     with attempt:
-                        data = await self._post(self._batch_endpoint, payload)
+                        data = await self._post(self._batch_endpoint, payload, org)
                 # batchEmbedContents answers in request order with no per-entry
                 # index, so map by position; a short answer is a hard failure,
                 # never a silent misalignment.

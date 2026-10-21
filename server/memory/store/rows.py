@@ -23,6 +23,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import hash_text
 from server.core.rmt_carry import register
+from server.memory.domain.delete_marks import carried_trace
+from server.memory.domain.expire_reasons import carried_reason
 
 
 class Identity(BaseModel):
@@ -357,7 +359,15 @@ def build_memory_version_row(
             row[col] = overrides[col]
             continue
         val = getattr(existing, col, None)
-        if col == "value":
+        if col == "expire_reason":
+            # A blacklist sweep's marker stays on the sweep's tombstone (the sweep and
+            # namespace.rollback pass it as an override); every other version drops it
+            # (write_fence).
+            val = carried_reason(val)
+        elif col == "source_trace":
+            # memory.delete_version's marker likewise stays on its own tombstone.
+            val = carried_trace(val)
+        elif col == "value":
             # The stored bytes verbatim, never the parsed value written back
             # (see `stored_value_text`).
             val = stored_value_text(existing)

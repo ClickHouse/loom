@@ -21,6 +21,8 @@ dependencies = [
   "uvicorn[standard]>=0.30",
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
+  # The YAML settings file (server/settings/_file.py); uvicorn[standard] pulls it in too.
+  "pyyaml>=6.0",
   "clickhouse-connect>=1.7", # older ones drop milliseconds (<1.2) or bind a naive datetime as local time
   "aiohttp>=3.10",           # clickhouse-connect's async client requires it
   "httpx[http2]>=0.27",
@@ -72,7 +74,8 @@ lemma = [
   "lemmagen3>=3.3",
 ]
 dev = [
-  "lemmagen3>=3.3",             # the server's own lexical leg; tests exercise it
+  "lemmagen3>=3.3",              # the server's own lexical leg; tests exercise it
+  "clickhouse-loom-server[aws]", # the export-analytics tests exercise boto3
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
   "pytest-httpx>=0.32",
@@ -96,6 +99,10 @@ ingest = [
   "pypdf>=4.0",
   "boto3>=1.34",
   "trafilatura>=2.0",
+]
+# `loom export-analytics` uploads to S3 under an assumed role; ships in the image.
+aws = [
+  "boto3>=1.35.2", # the first whose put_object takes IfNoneMatch
 ]
 # Code intelligence plane: tree-sitter parses C++ for
 # the fast tier, numpy runs the weekly PageRank. Needed only when the code
@@ -201,10 +208,10 @@ ignore_missing_imports = true
 module = ["re2"]
 ignore_missing_imports = true
 
-# boto3 is the SDK's optional `aws` extra (a bot key in Secrets Manager), and
-# ships no types.
+# boto3 is the SDK's and the server's optional `aws` extra (a bot key in Secrets
+# Manager, `loom export-analytics`), and ships no types.
 [[tool.mypy.overrides]]
-module = ["boto3", "boto3.*"]
+module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 
 # The SDK's framework adapters: langgraph and strands are optional, so each adapter

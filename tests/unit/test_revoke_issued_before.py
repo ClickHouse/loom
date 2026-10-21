@@ -183,6 +183,42 @@ def test_cli_issued_before_rejects_a_bad_instant(
     assert fake_ch.connected == 0
 
 
+@pytest.mark.parametrize(
+    "subject",
+    ["user:u-1", "Group:finance", "everyone", "acme/User:u-1", "acme/user:U-1", "/user:u-1"],
+)
+def test_cli_refuses_a_subject_no_token_check_builds(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], subject: str
+) -> None:
+    """No token's sub is spelled like a principal, bare or after a `/`, and an
+    end user's key is `<org>/user:<id>` with a lowercase id: any other such
+    spelling would cut off no one while saying it had."""
+    rc = cli.main(["revoke-token", "--subject", subject])
+    assert rc == 2 and "<org>/user:<id>" in capsys.readouterr().err, subject
+    assert fake_ch.inserts == []
+
+
+def test_cli_revokes_an_end_user_in_their_org(
+    fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    audited: list[str] = []
+
+    async def _emit(event: str, *, org: str, **_k: Any) -> None:
+        audited.append(org)
+
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    rc = cli.main(
+        ["revoke-token", "--subject", "acme/user:u-1", "--issued-before", "2026-09-17T16:30:00Z"]
+    )
+    assert rc == 0
+    (row,) = fake_ch.inserts[0][1]
+    assert row["jti"] == "acme/user:u-1"
+    out = capsys.readouterr().out
+    assert "that org's end user; a token minted after that stays valid" in out
+    assert "every org" not in out
+    assert audited == ["acme"], "the revocation's record is the org's"
+
+
 def test_cli_subject_with_cutoff_writes_it_and_says_the_re_mint_survives(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -452,3 +488,43 @@ def test_a_plain_narrowing_says_scim_still_revokes_it(
     when = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     assert cli.main(["revoke-token", "--subject", "alice", "--issued-before", when]) == 0
     assert "SCIM also revokes 'alice' outright" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("subject", ["acme/User:u-1", "acme/user:u-1", "team/everyone"])
+def test_no_loom_token_carries_a_subject_spelled_like_an_end_user_key(subject: str) -> None:
+    """Minting and verification refuse every subject the revocation CLI
+    reserves, an end user's key `<org>/user:<id>` included, so a Loom token
+    never shares one or escapes a subject revocation."""
+    with pytest.raises(ValueError, match="grant principal"):
+        mint_token(subject, "acme", ["shop"], ["viewer"], secret=_SECRET)
+    claims = _claims(mint_token("sa:bot", "acme", ["shop"], ["viewer"], secret=_SECRET))
+
+    def _signed(sub: str) -> str:
+        return pyjwt.encode(
+            {**claims, "sub": sub}, _SECRET, algorithm="HS256", headers={"kid": "default"}
+        )
+
+    # The same claims verify under an ordinary subject: the subject alone is refused.
+    assert verify_token(_signed("sa:bot"), secret=_SECRET).subject == "sa:bot"
+    forged = _signed(subject)
+    with pytest.raises(TokenError, match="grant principal"):
+        verify_token(forged, secret=_SECRET)
+
+
+@pytest.mark.parametrize("subject", ["user:u-1", "team/everyone"])
+def test_cli_mint_refuses_a_reserved_subject_without_a_traceback(
+    fake_ch: _FakeCH,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    subject: str,
+) -> None:
+    """Refused before the keyring is read: no such token is minted, connected
+    or not."""
+    from server.auth import keyring
+
+    def _read(**_k: Any) -> None:
+        raise AssertionError("the keyring was read for a subject no token may carry")
+
+    monkeypatch.setattr(keyring, "load_for_offline_mint", _read)
+    rc = cli.main(["mint-token", "--subject", subject, "--org", "acme", "--namespaces", "shop"])
+    assert rc == 2 and "grant principal" in capsys.readouterr().err

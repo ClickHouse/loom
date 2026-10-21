@@ -15,6 +15,7 @@ from server.code.app.index.pass_budget import (
     git_text_source,
 )
 from server.code.app.index.pass_commit import _ingest_commit
+from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import set_worker_identity
@@ -159,6 +160,9 @@ class CommitStream:
                     on_round=_saved,
                     **self._ctx,
                 )
+        except customer.HOLDS:
+            self.index = len(self.commits)  # held, no failure: the watermark stays
+            return False
         except Exception as e:
             self.result.errors.append(f"{sha[:12]}: {type(e).__name__}: {e}")
             logger.exception("code_ingest: commit %s failed", sha[:12])
@@ -262,7 +266,8 @@ async def ingest_oldest_first(
         # Attribution is ContextVar state, so each lane task tags its own entry.
         pass_context.set_namespace(stream.cfg.namespace)
         set_worker_identity("code_ingest", org=stream.cfg.org, namespace=stream.cfg.namespace)
-        landed = await stream.step(clock=clock)
+        with customer.for_org(stream.cfg.org):
+            landed = await stream.step(clock=clock)
         if landed is None:
             deferred.append(stream)  # sliced: continues next pass
         elif landed and stream.remaining:

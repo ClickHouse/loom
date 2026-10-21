@@ -117,7 +117,9 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "compact",
         "title",
         "profile_fold",
-        "classify",
+        "structured_profile",
+        # The sampled retrieval judge: the query and the excerpts it returned.
+        "retrieval_judge",
         "code_answer",
         "ask_synthesize",
         "ask_synthesize_cheap",
@@ -207,6 +209,19 @@ def current_operation() -> str:
     caller actually invoked."""
     ident = _identity.get()
     return str((ident or {}).get("operation") or "")
+
+
+def request_org() -> str:
+    """The org of the request this context serves, as the transport recorded
+    it once the token was verified; "" outside a request. A worker's identity
+    is not one: a pass stamps the org of the row it last worked on, which says
+    nothing about whose the next text is."""
+    ident = _identity.get() or {}
+    op = str(ident.get("operation") or "")
+    org = str(ident.get("org") or "")
+    if not op or op.startswith("worker.") or org == "*":
+        return ""
+    return org
 
 
 def set_worker_identity(name: str, *, org: str = "", namespace: str = "") -> None:

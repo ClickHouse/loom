@@ -17,6 +17,7 @@ class _CH:
         self.rows: dict[tuple[str, str, str], bytes] = {}
         self.inserts: list[dict[str, Any]] = []
         self.seen: list[tuple[str, dict[str, Any]]] = []
+        self.uploads_deleted: list[str] = []
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
         assert table == "loom.document_blobs" and settings == {"async_insert": 0}
@@ -26,15 +27,21 @@ class _CH:
 
     async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any] | None:
         self.seen.append((sql, params))
-        if "uniqExact" in sql:
-            left = [s for s in params["shas"] if (params["org"], params["ns"], s) in self.rows]
-            return {"n": len(left)}
         data = self.rows.get((params["org"], params["ns"], params["sha"]))
         return None if data is None else {"size": len(data)}
 
+    async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        self.seen.append((sql, params))
+        assert "DISTINCT" in sql and "FROM loom.document_blobs" in sql
+        return [{"sha": s} for s in params["shas"] if (params["org"], params["ns"], s) in self.rows]
+
     async def execute(self, sql: str, params: dict[str, Any]) -> None:
         self.seen.append((sql, params))
-        assert sql.startswith("DELETE FROM loom.document_blobs") and "IN {shas:" in sql
+        assert "IN {shas:" in sql
+        if sql.startswith("DELETE FROM loom.blob_uploads"):
+            self.uploads_deleted.extend(params["shas"])
+            return
+        assert sql.startswith("DELETE FROM loom.document_blobs")
         for sha in params["shas"]:
             self.rows.pop((params["org"], params["ns"], sha), None)
 
@@ -69,6 +76,7 @@ def test_put_stream_delete_round_trips_binary_bytes() -> None:
     sha, size, got, n, gone = asyncio.run(go())
     assert sha == hashlib.sha256(raw).hexdigest()
     assert size == len(raw) and got == raw and n == 1 and gone is None
+    assert ch.uploads_deleted == [sha], "who uploaded it goes with it"
     assert ch.inserts[0]["size"] == len(raw)
     stream_sql = next(sql for sql, _ in ch.seen if "RawBLOB" in sql)
     assert stream_sql.endswith("LIMIT 1 FORMAT RawBLOB") and "base64" not in stream_sql
@@ -103,6 +111,7 @@ def test_a_delete_with_a_min_age_spares_a_fresh_row_and_counts_what_went() -> No
     assert asyncio.run(blobs.delete("o", "ns", ["a"], min_age_s=3600, ch=ch)) == 0
     aged, p = ch.seen[0]
     assert "created_at < now64(3) - INTERVAL {age:UInt32} SECOND" in aged and p["age"] == 3600
+    assert not any("blob_uploads" in sql for sql, _ in ch.seen), "a spared one keeps its record"
     assert asyncio.run(blobs.delete("o", "ns", [], min_age_s=3600, ch=ch)) == 0
 
 

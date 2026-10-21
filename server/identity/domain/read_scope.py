@@ -272,6 +272,10 @@ SCOPED_OPS = frozenset(
     {
         "context.pack",
         "conflicts.list",
+        # Saved messages are one user's opt-ins; both legs filter the user's rows.
+        "conversation.list_saved_messages",
+        "conversation.saved_status",
+        "conversation.search_saved_messages",
         "memory.aggregate",
         "memory.ask",
         "memory.bulk_get",
@@ -295,6 +299,7 @@ SCOPED_OPS = frozenset(
         "procedure.list",
         "procedure.match",
         "profile.render",
+        "profile.structured",
         "search.query",
         "session.brief_delete",
         "session.brief_get",
@@ -371,7 +376,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.verify_citations": _CODE_INDEX,
     # The groups below are planes with no path to memory rows.
     "tracker.": "tracker records: issues and their sources, no user's memory",
-    "knowledge.": "namespace documents: the plane has no user or session axis",
+    "knowledge.": "namespace documents: access is the namespace's; the user column is authorship",
     "task.": "the task inbox: tasks, not memory",
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
@@ -395,6 +400,8 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not memory_schema.register / propose / approve: a schema is namespace-wide and
     # refuses every user's non-matching writes.
     "memory_schema.list": "value schemas",
+    # A narrowed token is not told the subject that set the schema (updated_by).
+    "profile_schema.get": "operator configuration: property names and descriptions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.
@@ -423,6 +430,10 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not here: writes to tables keyed without a user (records, decisions,
     # procedure_runs, conversation threads, context blobs), which would fold
     # into or overwrite another user's row.
+    "conversation.save_message": "a write: the turn is saved as the pinned user, and a "
+    "stored turn another user owns is refused, not claimed",
+    "conversation.unsave_message": "a write: only the pinned user's saved row changes; "
+    "another user's reads as not found",
     "memory.set": "a write",
     "memory.pin": "a write",
     "memory.bulk_set": "a write",
@@ -444,6 +455,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "observe.record": "a write",
     "run.begin": "a write: another user's run_id starts a new run",
     "run.complete": "a write: completes only a run inside the read scope",
+    "collection.": "collections and their places in the tree; no user's memory",
 }
 
 

@@ -5,16 +5,18 @@ Deployment of web pods over one ClickHouse service, each pod a full replica. It 
 any conformant cluster; `values-eks.yaml` sets it up on EKS and `values-kind.yaml` runs
 it on a laptop.
 
-| Object                       | What it does                                                                                                         |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Deployment `<release>`       | The web pods. Rolls one pod at a time and takes none down before its replacement is ready.                           |
-| Service, optional Ingress    | Routes to ready pods only. The readiness probe is `/v1/health/ready`.                                                |
-| Secret                       | The keys every pod shares. Bring your own with `secrets.existingSecret`. The rest of the env is in the pod template. |
-| PodDisruptionBudget          | One pod at a time on node drains and upgrades.                                                                       |
-| Optional HPA                 | CPU-based. Rate-limit shares resize as pods come and go.                                                             |
-| Optional `<release>-workers` | Background workers in their own pods (`workers.enabled`). Off by default: one web pod holds the lease and runs them. |
-| Optional `<release>-publish` | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                               |
-| Optional dev ClickHouse      | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                            |
+| Object                                | What it does                                                                                                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Deployment `<release>`                | The web pods. Rolls one pod at a time and takes none down before its replacement is ready.                               |
+| Service, optional Ingress             | Routes to ready pods only. The readiness probe is `/v1/health/ready`.                                                    |
+| Secret                                | The keys every pod shares. Bring your own with `secrets.existingSecret`. The rest of the env is in the pod template.     |
+| ConfigMap `<release>-settings`        | The settings file (`settingsFile`), mounted at `/app/config/loom.yaml` on every pod; each hook Job carries its own copy. |
+| PodDisruptionBudget                   | One pod at a time on node drains and upgrades.                                                                           |
+| Optional HPA                          | CPU-based. Rate-limit shares resize as pods come and go.                                                                 |
+| Optional `<release>-workers`          | Background workers in their own pods (`workers.enabled`). Off by default: one web pod holds the lease and runs them.     |
+| Optional `<release>-publish`          | A pre-upgrade Job for a change that cannot roll ([below](#changing-what-cannot-roll)).                                   |
+| Optional `<release>-analytics-export` | A daily CronJob and its own ServiceAccount (`analyticsExport.enabled`, [below](#analytics-export)).                      |
+| Optional dev ClickHouse               | `devClickhouse.enabled`: one ClickHouse pod with embedded Keeper. For test clusters only.                                |
 
 ## Before you install
 
@@ -45,12 +47,31 @@ The first pod runs the migrations under the migrate lease and the others wait fo
 so the first install takes a few minutes. The startup probe allows 15 minutes
 (`probes.startup`), which also covers cloning the git mirrors.
 
-The embedding settings and the root secret go through `embedding.*` and `secrets.jwtSecret`,
-which the chart guards (below); it refuses them in `env`, `extraEnv` and `secrets.extra`,
-and an `envFrom` source must not carry them either. Every other
+The embedding settings go through `embedding.*`, and the root secret and its previous
+value through `secrets.jwtSecret` and `secrets.jwtSecretPrevious`; the chart guards these
+(below). The root secret can instead live in the `secrets.existingSecret` Secret, whose
+contents the chart cannot check. The chart refuses all of them in `env`, `extraEnv`,
+`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
 setting goes in `env` (plain values) or `secrets.extra` (keys), named as in
-the [configuration reference](../reference/configuration.md). `values.yaml` documents
-the chart's own values.
+the [configuration reference](../reference/configuration.md). `settingsFile` takes the same
+settings as the YAML settings file holds them, lowercase and typed:
+
+```yaml
+settingsFile:
+  memory_search_default_mode: rrf
+  memory_ask_recency_weight: 0.3
+```
+
+The chart always renders the settings file (an empty `settings` map when `settingsFile`
+is empty), mounts it at `/app/config/loom.yaml` on every pod and on the publish, reseal
+and rollback-check Jobs (each from its own copy, rendered with the Job), and rolls the
+pods when it changes; `env` wins over it. A pod of the previous ReplicaSet that starts
+during a rollout still finds the file, and reads the new revision's copy: a pod of the
+previous build logs a setting it does not have and ignores it, so a new setting can go
+in the same upgrade, but it refuses to start on a value only the new build accepts (a
+new choice of an existing setting, a widened bound). Set such a value in the upgrade
+after the one that changes the image. A live setting can also change without a rollout
+([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.
 
 ### On a laptop
 
@@ -336,6 +357,12 @@ leader among themselves. The web pods run no workers. Use it when the workers ne
 more memory than a web pod, or to scale them apart from it. With `replicaCount: 2`
 the second pod is a standby with warm mirrors, and a PodDisruptionBudget keeps one of
 the two through a drain.
+
+## Analytics export
+
+`analyticsExport.enabled: true` adds a daily CronJob that writes the previous UTC day's
+usage and a namespace snapshot to an S3 bucket as Parquet, under a ServiceAccount of its
+own ([exporting usage to a data warehouse](./analytics-export.md)).
 
 ## Checks
 

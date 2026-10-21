@@ -24,9 +24,11 @@ from typing import Any, TypedDict, cast
 from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
+from server.llm import customer
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
 from server.workers.status import record_pass
@@ -94,8 +96,10 @@ async def _make_title(
     row_started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("title"):
-            out = await llm.complete(system=_TITLE_SYSTEM, user=snippet, max_tokens=30)
+        with llm_stage("title"), customer.for_org(str(row["org"])):
+            out = await llm.complete(
+                system=_TITLE_SYSTEM, user=snippet, max_tokens=llm_max_tokens("title")
+            )
     finally:
         emit_worker_cost_event_for(
             org=str(row["org"]),
@@ -151,6 +155,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             window_hours=int(cfg.window_hours),
             min_turns=int(cfg.min_turns),
             limit=int(max(1, cfg.max_threads_per_pass) * 5),
+            exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
         )
         candidates = cast(list[TitleCandidate], rows)
         stored = await conversation_repo.thread_rows(
@@ -173,6 +178,8 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                     continue
                 if await _make_title(row, cfg, llm, existing):
                     result.titled += 1
+            except customer.HOLDS:
+                continue  # a held call is no failure: the thread is titled once the org is back
             except Exception as e:
                 result.errors += 1
                 log.exception("conversation titling failed for %s", dict(row))

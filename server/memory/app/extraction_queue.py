@@ -32,8 +32,10 @@ from server.identity.domain.read_scope import (
     scope_and,
     stored_read_scope,
 )
+from server.llm import customer
 from server.memory.api.models_bulk import MemorySetFromMessagesInput
 from server.memory.store.rows import next_version
+from server.settings import settings
 
 TABLE = "loom.memory_extraction_queue"
 
@@ -162,9 +164,12 @@ async def claim_batch(
     ch: Any | None = None,
     org_filter: str | None = None,
     namespace_filter: str | None = None,
+    exclude_orgs: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Oldest pending (or lease-expired running) rows, rewritten `running`
     with a fresh lease. Returns the claimed rows (post-rewrite projection).
+    `exclude_orgs` (orgs whose model calls are switched off) leaves their rows
+    pending and unclaimed.
 
     FINAL collapses the RMT so a row already marked done by another replica is
     not seen as pending. The claim write itself is not atomic across replicas;
@@ -185,6 +190,9 @@ async def claim_batch(
     if namespace_filter is not None:
         scope += " AND namespace = {ns_f:String}"
         params["ns_f"] = namespace_filter
+    if exclude_orgs:
+        scope += " AND org NOT IN {xo:Array(String)}"
+        params["xo"] = sorted(exclude_orgs)
     cols = ", ".join(COLUMNS)
     rows = await ch.query_all(
         f"""
@@ -247,6 +255,74 @@ async def mark_error(
         settings=_SYNC,
     )
     return status
+
+
+async def drop_waiting(
+    orgs: frozenset[str],
+    *,
+    older_than_days: int,
+    ch: Any | None = None,
+    org_filter: str | None = None,
+    namespace_filter: str | None = None,
+) -> int:
+    """Drop the requests of `orgs` (switched off) that have waited longer than
+    `older_than_days`, counted from when the request was queued or the org was
+    switched off, whichever is later. Each gets a memory_drops record (reason
+    `model_calls_off`), written before the request is marked `failed`: a
+    record that cannot be written leaves the request pending. Returns how many."""
+    from server.core.ch import get_client
+    from server.memory.app.drops import write_drops
+
+    if not orgs:
+        return 0
+    ch = ch or get_client()
+    scope = ""
+    params: dict[str, Any] = {
+        "pending": STATUS_PENDING,
+        "running": STATUS_RUNNING,
+        "orgs": sorted(orgs),
+        "days": int(older_than_days),
+        "lim": settings.model_calls_off_drop_per_pass,
+    }
+    if org_filter is not None:
+        scope += " AND org = {org_f:String}"
+        params["org_f"] = org_filter
+    if namespace_filter is not None:
+        scope += " AND namespace = {ns_f:String}"
+        params["ns_f"] = namespace_filter
+    cols = ", ".join(COLUMNS)
+    rows = await ch.query_all(
+        f"""
+        SELECT {cols}
+        FROM {TABLE} FINAL
+        WHERE status IN ({{pending:String}}, {{running:String}})
+          AND has({{orgs:Array(String)}}, org)
+          AND enqueued_at < now64(3) - toIntervalDay({{days:UInt32}})
+          AND org IN (
+              SELECT org FROM loom.org_model_calls FINAL
+              WHERE enabled = 0 AND updated_at < now64(3) - toIntervalDay({{days:UInt32}})
+          )
+          {scope}
+        ORDER BY enqueued_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+    if not rows:
+        return 0
+    await write_drops(
+        [(str(r["org"]), str(r["namespace"]), str(r.get("queue_id") or "")) for r in rows],
+        "extraction_queue",
+        "model_calls_off",
+        ch=ch,
+    )
+    why = f"dropped: model calls switched off, waited over {older_than_days} days"
+    await ch.insert(
+        TABLE,
+        [_mirror(dict(r), status=STATUS_FAILED, last_error=why, lease_until=_EPOCH) for r in rows],
+        settings=_SYNC,
+    )
+    return len(rows)
 
 
 async def pending_count(
@@ -389,6 +465,10 @@ async def replay_row(row: dict[str, Any]) -> int:
     # The worker has no auth bound, so the scope stored at enqueue time is bound for
     # "no auth".
     scope = replayed_read_scope(json.loads(row["payload"]).get(READ_SCOPE_KEY))
-    with _prov.pipeline_actor(replay_actor(row)), read_filters_bound(None, scope):
+    with (
+        _prov.pipeline_actor(replay_actor(row)),
+        read_filters_bound(None, scope),
+        customer.for_org(str(row.get("org") or "")),
+    ):
         out = await handle_memory_set_from_messages(rebuild_input(row))
     return len(out.written)

@@ -239,18 +239,22 @@ def dev_bearer(request: Request) -> AuthInfo | None:
     """With auth off, the principal of a valid bearer the request sends; None
     for no bearer or one that does not verify, which auth off ignores. 503 while
     a bearer cannot be checked yet, as `verify_bearer` answers."""
-    from server.auth.bearer import auth_unavailable, bearer_token
+    from server.auth.bearer import auth_unavailable, bearer_token, gateway_refused
+    from server.auth.gateway import is_end_user
     from server.auth.jwt import AuthUnavailable, TokenError, verify_token
     from server.observability.metrics import record_auth_refusal
 
     try:
         token = bearer_token(request.headers.get("Authorization"))
-        return None if token is None else verify_token(token)
+        info = None if token is None else verify_token(token)
     except AuthUnavailable as e:
         record_auth_refusal(e, transport="http")
         raise auth_unavailable(e) from e
     except TokenError:
         return None
+    if info is not None and is_end_user(info):
+        raise gateway_refused()
+    return info
 
 
 def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str]:

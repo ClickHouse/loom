@@ -31,9 +31,14 @@ OWNERS = {"code", "memory", "platform"}
 
 WRITE_PATHS: dict[str, tuple[str, str]] = {
     "provider_configuration": ("builder", "test_provider_configuration.py"),
+    "collections": ("builder", "test_sharing.py"),
+    "principal_groups": ("builder", "test_sharing.py"),
     "sso_links": ("builder", "test_sso_links.py"),
     "scim_users": ("builder", "test_scim.py"),
+    "delete_version_checks": ("builder", "test_delete_version_sql.py"),
     "machine_identities": ("builder", "test_machines.py"),
+    "org_model_calls": ("builder", "test_model_calls_switch.py"),
+    "profile_schemas": ("builder", "test_profile_schema.py"),
     "deployment_config": ("builder", "test_deployment_config.py"),
     "document_blobs": (
         "insert_once",

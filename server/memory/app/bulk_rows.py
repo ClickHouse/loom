@@ -32,6 +32,7 @@ from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
 from server.memory.domain.embed_text import _build_embed_text, key_axis_text
 from server.memory.domain.excerpt import build_excerpt
+from server.memory.domain.expire_reasons import carried_reason
 from server.memory.domain.memory_types import is_embedded
 from server.memory.domain.procedural_contract import retype_for as _procedural_retype
 from server.memory.domain.sensitive_retention import sensitive_retention
@@ -179,10 +180,12 @@ def _bulk_carried(state: _BulkWriteState, memory_key: str) -> dict[str, Any]:
     else the schema defaults. Every row carries all of them — ch.insert derives its column
     list from rows[0].keys()."""
     live = state.existing_carried.get(memory_key) or {}
-    return {
+    carried = {
         c: (live.get(c) if live.get(c) is not None else d)
         for c, d in _BULK_CARRIED_DEFAULTS.items()
     }
+    carried["expire_reason"] = carried_reason(carried["expire_reason"])
+    return carried
 
 
 def _full_version_row(

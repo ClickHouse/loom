@@ -19,10 +19,10 @@ Constraints, all of which shape the design:
   by a deployment that upgraded.
 * **Never on the request path.** Judging happens on a background task after the
   response has been sent, on a bounded queue.
-* **Its own cost is attributed.** The judge is itself an LLM call; it binds a cost
-  accumulator and emits a worker cost event under `worker.retrieval_judge`, so
-  the observability spend is visible as spend rather than quietly inflating the
-  namespace whose search triggered it.
+* **Its own cost is attributed.** The judge is itself an LLM call on the judged
+  org's content, so it is that org's call, metered to it at the gateway. It binds
+  a cost accumulator and emits a worker cost event under `worker.retrieval_judge`,
+  so its spend is not mistaken for the spend of the search that was judged.
 * **Never judges its own judging.** The judge call is not sampled, so there is no
   recursion.
 """
@@ -35,8 +35,11 @@ import logging
 import time
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.observability.worker_queue import LoopBoundQueue
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -242,7 +245,7 @@ def submit(
     Synchronous and non-blocking: the caller is inside a request.
     """
     global _dropped
-    if not enabled() or not trace_id or not query:
+    if not enabled() or not trace_id or not query or reads_llm_free():
         return False
     if not _sampled(trace_id):
         return False
@@ -337,9 +340,7 @@ async def _judge_one(item: dict[str, Any]) -> None:
     model = settings.retrieval_judge_model.strip()
     client = get_llm_client_for_model(model) if model else get_llm_client()
 
-    # The judge's own spend is attributed to a worker op rather than left on the
-    # namespace whose search triggered it — observability cost is an operating
-    # cost, not the tenant's.
+    # The judge's spend is recorded under a worker op, apart from the search it judged.
     # The judge prompt IS the namespace's query and memory text, so it rides the
     # judged namespace's consent. With no explicit level `set_identity` falls back
     # to the operator default, which would override a namespace's opt-out. Fails
@@ -359,10 +360,17 @@ async def _judge_one(item: dict[str, Any]) -> None:
     started = time.monotonic()
     cost_accumulator.begin_op()
     try:
-        with llm_stage("classify"):
+        # The prompt is the org's query and memory text, so the call is the org's,
+        # metered to it and refused while its model calls are off.
+        with llm_stage("retrieval_judge"), customer.for_org(item["org"]):
             out = await client.complete(
-                _JUDGE_SYSTEM, user, max_tokens=120, response_format={"type": "json_object"}
+                _JUDGE_SYSTEM,
+                user,
+                max_tokens=llm_max_tokens("retrieval_judge"),
+                response_format={"type": "json_object"},
             )
+    except customer.HOLDS:
+        return  # a sample, not owed work: an org off, or maybe off, sends none of its text
     finally:
         from server.workers.cost_event import emit_worker_cost_event_for
 

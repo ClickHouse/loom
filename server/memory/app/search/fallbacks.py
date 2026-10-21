@@ -10,6 +10,8 @@ import asyncio
 import logging
 
 from server.memory.app.search.context import SearchContext
+from server.memory.app.search.scoring import drop_rerank_trail
+from server.memory.app.search.verdict import gate_order
 from server.memory.domain.search_types import hit_sort_key
 
 log = logging.getLogger(__package__)
@@ -23,7 +25,7 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
     retrievals skip."""
     input = ctx.input
     final_hits = ctx.final_hits
-    _iter_top_sim = (1.0 - final_hits[0].distance) if final_hits else 0.0
+    _iter_top_sim = (1.0 - gate_order(final_hits)[0].distance) if final_hits else 0.0
     if not (
         getattr(input, "recipe", "") == "quality"
         and 0.35 <= _iter_top_sim <= 0.65
@@ -33,8 +35,8 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
         and not ctx.chronological_intent
         # One level of re-entry: a re-entered pass never retries again.
         and getattr(input, "_pass_depth", 0) == 0
-        # Fast posture buys no LLM-judge latency.
-        and not ctx.fast_posture
+        # An LLM-free read (`_is_llm_free`) buys no LLM-judge latency.
+        and not ctx.llm_free
         # The judge's call is paid only when the round it could lead to is affordable: a
         # judge whose "retry" the budget would refuse is an LLM call for nothing.
         and ctx.search_budget.fallback_affordable(
@@ -97,6 +99,8 @@ async def _maybe_iterative_retry(ctx: SearchContext) -> None:
                 )
                 if rh_key not in seen_keys:
                     seen_keys.add(rh_key)
+                    # A retry row's rerank trail is on the retry pool's scale.
+                    drop_rerank_trail(rh)
                     final_hits.append(rh)
             final_hits.sort(key=hit_sort_key)
             ctx.final_hits = final_hits[: input.top_k]

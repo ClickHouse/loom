@@ -16,6 +16,7 @@ import server.boot as boot
 from server import health
 from server.core import readiness
 from server.core.readiness import CheckResult
+from server.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -62,7 +63,7 @@ def test_draining_makes_the_process_unready() -> None:
 
 @pytest.mark.asyncio
 async def test_a_raising_or_hanging_check_fails_instead_of_erroring(monkeypatch) -> None:
-    monkeypatch.setattr(readiness, "CHECK_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(settings, "readiness_check_timeout_s", 0.05)
 
     def _boom() -> CheckResult:
         raise RuntimeError("no table")
@@ -118,6 +119,7 @@ def test_boot_registers_every_check(monkeypatch) -> None:
         "migrations",
         "revocation",
         "keyring",
+        "grant_watermark",
         "tracker_registry",
         "runtime_overrides",
         "calibration",
@@ -128,6 +130,17 @@ def test_boot_registers_every_check(monkeypatch) -> None:
     monkeypatch.setattr(settings, "ready_requires_mirrors", True)
     boot.register_readiness_checks(object())
     assert "mirrors" in readiness.names()
+
+
+def test_a_stale_grant_watermark_is_reported_but_not_required(monkeypatch) -> None:
+    import time
+
+    from server.core import grant_cache
+
+    grant_cache.clear()
+    assert not grant_cache.readiness_check().ok
+    monkeypatch.setattr(grant_cache, "_polled_at", time.monotonic())
+    assert grant_cache.readiness_check().ok
 
 
 def test_token_state_needs_a_loaded_fresh_snapshot(monkeypatch) -> None:

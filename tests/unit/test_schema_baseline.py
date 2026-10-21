@@ -33,6 +33,7 @@ TRANSIENT_TABLES = {
     "memory_extraction_queue": "a work queue; the facts it yields live in loom.memory",
     "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
+    "delete_version_checks": "memory.delete_version's owed checks (identity and key only)",
     "memory_projection_failures": "the repair queue; a resolved entry is done",
 }
 
@@ -104,13 +105,21 @@ def test_the_journal_files() -> None:
         "043_scim_users.sql",
         "044_service_account_lineage.sql",
         "045_request_sli.sql",
-        "046_entity_triple_rows.sql",
-        "047_projection_failure_abandoned.sql",
-        "048_entity_triple_seen_at.sql",
-        "049_graph_restore_id.sql",
-        "050_entity_edge_rows.sql",
-        "051_entity_edge_close_id.sql",
-        "052_projection_failure_ttl.sql",
+        "054_embedding_cache_org.sql",
+        "055_delete_version_checks.sql",
+        "056_org_model_calls.sql",
+        "057_acl_versions.sql",
+        "058_collections_and_groups.sql",
+        "059_conversation_saved_messages.sql",
+        "060_conversation_saved_at.sql",
+        "061_profile_schemas.sql",
+        "062_entity_triple_rows.sql",
+        "063_projection_failure_abandoned.sql",
+        "064_entity_triple_seen_at.sql",
+        "065_graph_restore_id.sql",
+        "066_entity_edge_rows.sql",
+        "067_entity_edge_close_id.sql",
+        "068_projection_failure_ttl.sql",
     ]
 
 

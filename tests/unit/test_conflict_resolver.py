@@ -2127,7 +2127,7 @@ async def test_a_full_batch_takes_the_next_one_at_once_and_a_short_one_ends_the_
 async def test_the_recheck_waits_once_it_comes_back_short(
     pass_env: NS, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A full batch: read again next pass. Short: not again for RECHECK_IDLE_S.
+    # A full batch: read again next pass. Short: not again for memory_conflict_resolver_recheck_idle_seconds.
     monkeypatch.setattr(settings, "memory_conflict_resolver_recheck_batch", 2)
     pass_env.recheck = [_q(memory_key=f"k{i}") for i in range(3)]
     await pass_env.run()
@@ -2179,7 +2179,7 @@ async def test_a_full_batch_past_the_burst_window_ends_the_pass(pass_env: NS, mo
     from server.settings import settings
 
     monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 2)
-    monkeypatch.setattr(worker, "BURST_S", 0.0)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_burst_seconds", 0.0)
     pass_env.owed = [_q(memory_key=f"k{i}") for i in range(10)]  # every read comes back full
     await pass_env.run()
     assert [s for s in pass_env.seeds if s[0] == "owed"].__len__() == 1
@@ -2197,7 +2197,7 @@ async def test_a_pass_tags_its_queries_as_the_resolver(pass_env: NS, monkeypatch
 def test_the_resolver_interval_is_at_least_a_second() -> None:
     from pydantic import ValidationError
 
-    from server.settings._memory import MemorySettings
+    from server.settings.catalog import MemorySettings
 
     with pytest.raises(ValidationError, match="memory_conflict_resolver_interval_seconds"):
         MemorySettings(memory_conflict_resolver_interval_seconds=0.5)

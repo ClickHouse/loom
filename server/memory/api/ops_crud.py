@@ -8,10 +8,14 @@ from server.memory.api.models_crud import (
     MemoryClearOutput,
     MemoryDeleteInput,
     MemoryDeleteOutput,
+    MemoryDeleteVersionInput,
+    MemoryDeleteVersionOutput,
     MemoryGetByIdInput,
     MemoryGetByIdOutput,
     MemoryGetInput,
     MemoryGetOutput,
+    MemoryKeysInput,
+    MemoryKeysOutput,
     MemoryListInput,
     MemoryListOutput,
     MemoryRedactInput,
@@ -43,13 +47,14 @@ from server.memory.app.curation import handle_memory_redact
 from server.memory.app.handlers import (
     handle_memory_clear,
     handle_memory_delete,
+    handle_memory_delete_version,
     handle_memory_get,
     handle_memory_get_by_id,
     handle_memory_pin,
     handle_memory_touch,
     handle_memory_unpin,
 )
-from server.memory.app.query import handle_memory_list, handle_memory_statuses
+from server.memory.app.query import handle_memory_keys, handle_memory_list, handle_memory_statuses
 from server.memory.app.restore import handle_memory_restore
 from server.memory.app.update import handle_memory_update, handle_memory_update_by_id
 from server.memory.app.verify import handle_memory_verify
@@ -66,7 +71,6 @@ memory_get = Operation(
     output_model=MemoryGetOutput,
     handler=handle_memory_get,
     idempotent=True,
-    budget_p99_ms=25,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -77,10 +81,6 @@ memory_set = Operation(
     output_model=MemorySetOutput,
     handler=handle_memory_set,
     idempotent=True,  # idempotent on (identity tuple, memory_key)
-    # A set is five committed inserts plus the conflict and dedup reads: p50
-    # 1,062 ms and p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier
-    # = 4 s sits at that p99, so a violation is a signal.
-    budget_p99_ms=200,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -92,7 +92,6 @@ memory_pin = Operation(
     output_model=MemorySetOutput,
     handler=handle_memory_pin,
     idempotent=True,
-    budget_p99_ms=30,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -104,7 +103,6 @@ memory_unpin = Operation(
     output_model=MemoryUnpinOutput,
     handler=handle_memory_unpin,
     idempotent=True,
-    budget_p99_ms=40,
     # Removing a write-time invariant is the privileged direction, like
     # memory.unlock.
     required_role=Role.ADMIN,
@@ -117,9 +115,19 @@ memory_delete = Operation(
     output_model=MemoryDeleteOutput,
     handler=handle_memory_delete,
     idempotent=True,
-    budget_p99_ms=30,
     required_role=Role.WRITER,
     audit=True,  # delete is auditable
+)
+
+memory_delete_version = Operation(
+    name="memory.delete_version",
+    maturity="experimental",
+    input_model=MemoryDeleteVersionInput,
+    output_model=MemoryDeleteVersionOutput,
+    handler=handle_memory_delete_version,
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=True,
 )
 
 memory_restore = Operation(
@@ -128,7 +136,6 @@ memory_restore = Operation(
     output_model=MemoryRestoreOutput,
     handler=handle_memory_restore,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -139,7 +146,6 @@ memory_clear = Operation(
     output_model=MemoryClearOutput,
     handler=handle_memory_clear,
     idempotent=True,  # second clear on already-tombstoned is a no-op
-    budget_p99_ms=600,  # 6 ALTER UPDATEs against bounded scopes
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -150,8 +156,17 @@ memory_list = Operation(
     output_model=MemoryListOutput,
     handler=handle_memory_list,
     idempotent=True,
-    # Covers both recency (ORDER BY memory_key) and the wider score path.
-    budget_p99_ms=150,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+memory_keys = Operation(
+    name="memory.keys",
+    maturity="experimental",
+    input_model=MemoryKeysInput,
+    output_model=MemoryKeysOutput,
+    handler=handle_memory_keys,
+    idempotent=True,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -163,7 +178,6 @@ memory_touch = Operation(
     output_model=MemoryTouchOutput,
     handler=handle_memory_touch,
     idempotent=False,  # writes a new version each call
-    budget_p99_ms=40,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -176,7 +190,6 @@ memory_apply = Operation(
     output_model=MemoryApplyOutput,
     handler=handle_memory_apply,
     idempotent=False,
-    budget_p99_ms=3000,
     required_role=Role.WRITER,
     # A wide write is exactly what an audit wants to see, with its reason.
     audit=True,
@@ -190,7 +203,6 @@ memory_sweep_expired = Operation(
     output_model=MemorySweepExpiredOutput,
     handler=handle_memory_sweep_expired,
     idempotent=True,  # a second pass finds nothing left to do
-    budget_p99_ms=2000,
     required_role=Role.ADMIN,
     audit=True,
 )
@@ -201,7 +213,6 @@ memory_get_by_id = Operation(
     output_model=MemoryGetByIdOutput,
     handler=handle_memory_get_by_id,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.VIEWER,
     audit=False,
     row_scoped=True,  # The handler authorizes the row's namespace
@@ -213,7 +224,6 @@ memory_update_by_id = Operation(
     output_model=MemoryUpdateByIdOutput,
     handler=handle_memory_update_by_id,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.WRITER,
     audit=False,
     row_scoped=True,  # The handler authorizes the row's namespace
@@ -225,7 +235,6 @@ memory_update = Operation(
     output_model=MemoryUpdateOutput,
     handler=handle_memory_update,
     idempotent=False,
-    budget_p99_ms=120,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -237,7 +246,6 @@ memory_redact = Operation(
     output_model=MemoryRedactOutput,
     handler=handle_memory_redact,
     idempotent=True,
-    budget_p99_ms=500,  # ALTER UPDATE mutation; not on hot path
     required_role=Role.ADMIN,
     audit=True,
     row_scoped=True,  # The handler authorizes the row's namespace
@@ -250,7 +258,6 @@ memory_verify = Operation(
     output_model=MemoryVerifyOutput,
     handler=handle_memory_verify,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.WRITER,
     # An attestation is a statement about truth made by a named actor —
     # the audit row is the record of who said so.
@@ -268,7 +275,6 @@ memory_statuses = Operation(
     output_model=MemoryStatusesOutput,
     handler=handle_memory_statuses,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )

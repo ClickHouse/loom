@@ -11,10 +11,10 @@ from typing import Any
 
 import httpx
 
-from server.clients._http import get_client as _http_client
+from server.clients._http import get_model_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
-from server.llm import gateway, traits
+from server.llm import customer, gateway, traits
 from server.llm._retry import retrying
 from server.llm.client import LLMResult
 
@@ -154,6 +154,9 @@ class OpenAILLMClient:
         response_format: dict[str, str] | None = None,
         temperature: float | None = 0.0,
     ) -> LLMResult:
+        # Before the gateway token and outside `recording`: a call naming no
+        # customer is the caller's to fix, not a provider failure.
+        org = await customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
         effort = self.reasoning_effort
@@ -173,7 +176,11 @@ class OpenAILLMClient:
             with recording("openai:chat"):
                 url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
                 bearer = await gateway.bearer(self._api_key, url)  # an outage is the provider's
-                headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
+                headers = {
+                    "Authorization": f"Bearer {bearer}",
+                    "Content-Type": "application/json",
+                    **customer.headers(org),
+                }
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()

@@ -33,12 +33,14 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
+from server.memory.app import after_write
 from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.drops import record_drop
 from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
 from server.memory.app.high_fence import fence_high
 from server.memory.app.set_entities import declared_entities
 from server.memory.app.triple_projections import project_stated_relations
+from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
 from server.memory.store.inserts import insert_memory_versions
@@ -238,6 +240,35 @@ class _SetWrite:
     follows: list[Follow] = field(default_factory=list)
 
 
+async def _lift_above_deletes(w: _SetWrite, ch: Any) -> None:
+    """Move the row's version just above a delete of the key that committed while it was
+    in flight (`write_fence`); the embedding row is built from it afterwards. A write with
+    `if_match_sha256` checked the row the delete removed, so it is refused."""
+    await lift_above_deletes(
+        w.input.org,
+        w.input.namespace,
+        [w.memory_row],
+        [],
+        conditional=bool(w.input.if_match_sha256),
+        ch=ch,
+    )
+    w.version = int(w.memory_row["version"])
+
+
+async def _lift_after_insert(
+    w: _SetWrite, ch: Any, embedding_rows: list[dict[str, Any]] | None = None
+) -> int:
+    """The row's version once it is in: written again above a memory.delete_version
+    tombstone that landed after the fence read (`write_fence`). A conditional write holds
+    the key lock, which the delete takes too, so it never needs this."""
+    if not w.input.if_match_sha256:
+        await lift_after_insert(
+            w.input.org, w.input.namespace, [w.memory_row], embedding_rows or [], ch=ch
+        )
+        w.version = int(w.memory_row["version"])
+    return w.version
+
+
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     """Phase 7 of memory.set: the non-embedded write — one loom.memory row, no peers.
 
@@ -267,8 +298,10 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             noop=True,
             dry_run=True,
         )
+    await _lift_above_deletes(w, ch)
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
+    version = await _lift_after_insert(w, ch)
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     try:
         await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
@@ -643,6 +676,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     import server.memory.store as memory_repo
 
+    await _lift_above_deletes(w, ch)
     # build_embedding_row fills every persisted column so a later RMT version
     # can't resurrect a default over a real value. Denormalized columns let
     # memory.search read them without a join back to loom.memory.
@@ -710,8 +744,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
 
     with traced("ch.insert.dual_write", concurrent=2):
         await asyncio.gather(_insert_memory(), _insert_embedding())
+    await _lift_after_insert(w, ch, [embedding_row])
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
-    await memory_repo.index_late_rows([embedding_row], ch=ch)
+    after_write.index_late_rows([embedding_row], ch=ch)
 
     # Post-insert (so the new row's UUID exists for the cross-link): flag
     # both the new row and every close-but-different peer as conflicted.
@@ -914,7 +949,7 @@ def _entity_projection_tail(
     Every one is fenced on the value it projects (`content_sha256`): it writes only
     while the row still holds that value, and ends its edges if a revision overtook
     them. A write with fewer than two entities projects no edge: no task, no mark."""
-    from server.memory.app import after_write, graph_write_marks
+    from server.memory.app import graph_write_marks
     from server.memory.app.set_entities import set_entities_for_projection
 
     if ents is None:

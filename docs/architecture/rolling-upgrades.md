@@ -179,7 +179,7 @@ schema. These rules keep that safe. The operator procedure is in
     rollout an N-1 pin racing an N retirement can leave the pinned row's vector
     superseded until the row's next write (or `loom reconcile-status`).
 16. **A triple row N-1 writes arrives at its whole second.** N-1 does not set
-    `entity_triples.seen_at` (migration 048), so its rows take the column's default,
+    `entity_triples.seen_at` (migration 064), so its rows take the column's default,
     their `last_seen` second (`.000000`). Two values of a single-valued relation
     starting the same day and arriving in the same second, one from each build, then
     order the N-1 row first, whichever arrived later; the next write of either fact
@@ -194,6 +194,22 @@ schema. These rules keep that safe. The operator procedure is in
     it, so a token it revokes still works on an N-1 replica. The feature that writes
     it is turned on only once no N-1 replica serves: SCIM provisioning
     (`LOOM_SCIM_TOKEN`) after the whole rollout.
+19. **A new access rule** (such as collections, [sharing](sharing.md)): N-1 does not
+    know that a `col-` namespace opens only through grants, so an org admin's wildcard
+    token reads one on an N-1 replica, and a personal collection is one too. An end-user
+    token is refused there (N-1 has no key for its `kid`), but on N its first `@me` write
+    creates a personal collection. N-1 also rewrites a document (a metadata edit, a
+    delete) without the provenance columns, so a user erasure would miss that version; it
+    registers a `col-` name that N refuses (the boot warning lists the first 20); and it
+    resumes a user purge without purging (it reads no `purge` column). Collections are
+    created (`collection.create`, which N-1 does not serve) and end-user issuers
+    registered (`LOOM_JWT_END_USER_ISSUERS_JSON`) only once no N-1 replica serves.
+
+20. **Saved conversation messages:** older builds can compact concurrently saved
+    turns and rebuild embeddings without carrying their saved state. Clients use
+    `conversation.save_message` only once every serving replica runs the build that
+    preserves saved messages. A rollback pauses saved-message writes and compaction
+    until every replica supports that state again.
 
 ## What checks them
 

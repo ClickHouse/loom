@@ -182,7 +182,7 @@ def wired(ch, monkeypatch: pytest.MonkeyPatch) -> Any:
 
     monkeypatch.setattr(conflicts, "namespace_conflict_policy", newest_wins)
     # Every pass reads the recheck: a test's flags are judged in the pass it runs.
-    monkeypatch.setattr(worker, "RECHECK_IDLE_S", 0.0)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_recheck_idle_seconds", 0.0)
     monkeypatch.setattr(worker, "_state", worker._State())  # another test's pass may have set it
     # A test that needs a second org appends it to `orgs`.
     only = _OnlyOrgs(ch, [org])
@@ -2483,7 +2483,10 @@ async def test_a_flagged_peer_the_model_keeps_leaving_out_stops_costing_calls(
         before = len(llm.calls)
         await worker.run_pass()
         calls.append(len(llm.calls) - before)
-    assert calls[-1] == 0 and sum(calls) <= 2 * worker.MAX_ATTEMPTS + 2, calls
+    assert (
+        calls[-1] == 0
+        and sum(calls) <= 2 * worker.settings.memory_conflict_resolver_max_attempts + 2
+    ), calls
     assert (await _marks(ch, org))["office_location"] == 2
 
 
@@ -2532,7 +2535,9 @@ async def test_a_namespaces_newest_owed_row_is_judged_first(ch, wired, monkeypat
 
     org, llm = wired
     monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 5)
-    monkeypatch.setattr(worker, "BURST_S", 0.0)  # one batch a pass
+    monkeypatch.setattr(
+        worker.settings, "memory_conflict_resolver_burst_seconds", 0.0
+    )  # one batch a pass
     await _pair(ch, org, "office_city", "office_location", 270)
     (row,) = await live_embedding_rows_for_key(
         ch,
@@ -2613,7 +2618,7 @@ async def test_an_undo_is_not_flagged_from_the_other_side(ch, wired, monkeypatch
 
     org, llm = wired
     monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 1)
-    monkeypatch.setattr(worker, "BURST_S", 0.0)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_burst_seconds", 0.0)
 
     async def complete(system: str, user: str, **kw: Any) -> Any:
         update = "NEW note (key office_location," in user
@@ -3545,7 +3550,7 @@ async def test_a_refused_request_every_pass_stamps_nothing(ch, wired, monkeypatc
     refuses = _Refuses()
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: refuses)
     monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
-    monkeypatch.setattr(worker, "PAUSE_AFTER_STOP_S", 0.0)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_pause_after_stop_seconds", 0.0)
     for _ in range(5):
         await worker.run_pass()
     assert refuses.calls > 0
@@ -3566,7 +3571,7 @@ async def test_an_unusable_answer_every_pass_ends_after_three_attempts(
     garbage = _Garbage()
     monkeypatch.setattr(llm_client, "get_llm_client_without_fallback", lambda m, **kw: garbage)
     monkeypatch.setattr(worker.settings, "memory_conflict_resolver_concurrency", 1)
-    monkeypatch.setattr(worker, "PAUSE_AFTER_STOP_S", 0.0)
+    monkeypatch.setattr(worker.settings, "memory_conflict_resolver_pause_after_stop_seconds", 0.0)
     per_pass = []
     for _ in range(8):
         before = garbage.calls

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from server.llm import customer
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -47,7 +48,8 @@ async def run_pass(
         )
 
         failures = await scan_active_projection_failures(
-            limit=max(1, int(cfg.max_failures_per_pass))
+            limit=max(1, int(cfg.max_failures_per_pass)),
+            exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
         )
         retries = await retry_failures(failures)
         result.scanned = len(retries)

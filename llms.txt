@@ -15,13 +15,16 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 
 ## Operations
 
+- [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup.
 - [Code index operations](docs/operations/code-index-operations.md): The code index runs only when an operator enables its workers and configures repositories.
 - [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse.
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
 - [Monitoring](docs/operations/monitoring.md): This page says what to watch.
+- [Copying a namespace to another Loom](docs/operations/okf-sync.md): A job inside the private network copies one namespace from a private Loom to a public one on a schedule: `loom export-okf` reads it from the private Loom, and `loom import-okf --prune` writes it to the public Loom.
 - [Running N replicas](docs/operations/replicas.md): Every Loom process is a full replica.
+- [Runtime settings](docs/operations/runtime-settings.md): Every setting is an environment variable `LOOM_<FIELD>` read at startup, and can also go in the YAML settings file (configuration reference).
 - [Single sign-on (OIDC)](docs/operations/sso.md): Loom can hand the human sign-in to an OpenID Connect identity provider.
 - [Troubleshooting](docs/operations/troubleshooting.md): Each entry gives a symptom, the check that confirms its cause, and the fix.
 - [Upgrades](docs/operations/upgrades.md): An upgrade replaces the image and applies the migrations the new build carries.
@@ -68,7 +71,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 ## Reference
 
 - [CLI reference](docs/reference/cli.md): `loom` is the one command-line entry point for running, maintaining and connecting to a Loom deployment.
-- [Configuration reference](docs/reference/configuration.md): Every setting is an environment variable `LOOM_<FIELD>` read once at startup into `server.settings.settings`.
+- [Configuration reference](docs/reference/configuration.md): Every setting is declared in one file, `server/settings/catalog.py`, and is an environment variable `LOOM_<FIELD>` read at startup into `server.settings.settings`.
 - [Environment variables reference](docs/reference/environment.md): Almost everything Loom is configured with is a settings field: the environment variable `LOOM_<FIELD>` of a field on `server.settings.Settings`, listed with its default and meaning in the generated [configuration…
 - [Errors reference](docs/reference/errors.md): Every refusal Loom makes carries a stable, upper-case `code`.
 - [HTTP API reference](docs/reference/http-api.md): Every Loom operation is one HTTP endpoint, `POST /v1/<operation>`, generated from the operation registry in `server/operations/` (`server/transport/http.py`, `build_router`).
@@ -111,6 +114,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
 - [Server layout](docs/architecture/server-layout.md): `server/` is organised by domain.
+- [Sharing knowledge](docs/architecture/sharing.md): A collection is a namespace that only grants open.
 - [System overview](docs/architecture/system-overview.md): Loom is a Python server (a FastAPI application plus a supervisor of background workers) and one ClickHouse database.
 
 ## Benchmarks
@@ -130,7 +134,7 @@ Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-age
 - [Add an operation](docs/development/adding-an-operation.md): An operation is declared once, in the registry.
 - [Add language support to the code index](docs/development/adding-language-support.md): The code index reads a repository in two tiers:
 - [Code generation](docs/development/code-generation.md): Several files in the repository are derived from the code: the SDKs' operation tables and wire types, the reference pages, the Codex plugin's copies, the op reach manifest, the schema dump.
-- [Dashboard design](docs/development/dashboard-design.md): The dashboard at `/` is built on ClickHouse's design system, Click UI, in its light theme.
+- [Dashboard design](docs/development/dashboard-design.md): The dashboard at `/` is built on ClickHouse's design system, Click UI, in its dark theme.
 - [Documentation style guide](docs/development/documentation-style.md): How to place a new page in the right section, write it in the house style, and pass the documentation checks on the first push.
 - [Extend Loom](docs/development/extending-loom.md): Loom has one registry per kind of thing: operations, workers, settings, providers, language lanes, extraction steps and tracker sources.
 - [Local development](docs/development/local-development.md): This page sets up a checkout for working on Loom's code.

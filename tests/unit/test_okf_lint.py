@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from server.memory.domain import okf_bundle as okf
@@ -245,6 +246,34 @@ def test_derived_needs_confidence_and_high_sensitivity() -> None:
     )
     ids = sorted(f.id for f in lint.lint_files(files).warnings)
     assert ids == ["derived_needs_confidence", "drift", "high_sensitivity_present"]
+
+
+def test_a_high_row_known_only_by_its_tag_is_reported() -> None:
+    files = _fresh_files()
+    files["semantic/deploy_window.md"] = _with_frontmatter(
+        files["semantic/deploy_window.md"], tags=["release", "sensitivity:high"]
+    )
+    assert "high_sensitivity_present" in {f.id for f in lint.lint_files(files).warnings}
+
+
+@pytest.mark.parametrize("tags", [5, "sensitivity:high"])
+def test_tags_that_are_not_a_list_are_critical(tags: Any) -> None:
+    files = _fresh_files()
+    files["semantic/deploy_window.md"] = _with_frontmatter(
+        files["semantic/deploy_window.md"], tags=tags, **{"loom.sensitivity": "high"}
+    )
+    rep = lint.lint_files(files)
+    assert "frontmatter" in {f.id for f in rep.criticals}
+    # The other checks still run on the file.
+    assert "high_sensitivity_present" in {f.id for f in rep.warnings}
+
+
+def test_an_empty_tags_line_is_not_a_finding() -> None:
+    files = _fresh_files()
+    text = _with_frontmatter(files["semantic/deploy_window.md"], tags=[])
+    files["semantic/deploy_window.md"] = text.replace("tags: []", "tags:")
+    assert "\ntags:\n" in files["semantic/deploy_window.md"]
+    assert "frontmatter" not in {f.id for f in lint.lint_files(files).criticals}
 
 
 def test_a_row_high_only_by_its_tag_is_reported() -> None:

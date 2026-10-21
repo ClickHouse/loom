@@ -24,6 +24,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+from server.core.llm_free import reads_llm_free
+from server.llm import customer
 from server.settings import settings
 from server.tracker.api.models import (
     TrackerDuplicateCheckInput,
@@ -149,7 +151,8 @@ async def _with_links(
         # under its own 3 s timeout, and the verdict must not wait on a fix
         try:
             await asyncio.wait_for(
-                _links_and_releases(rows, org, default_ns, wall, code_ns), timeout=LINKS_BUDGET_S
+                _links_and_releases(rows, org, default_ns, wall, code_ns),
+                timeout=settings.tracker_dupcheck_links_budget_s,
             )
         except Exception as e:  # noqa: BLE001 — rows keep whatever landed in time
             logger.info("tracker.duplicate_check: fix links cut short: %s", e)
@@ -158,7 +161,9 @@ async def _with_links(
     # a reported issue leads the answer: the PR search adds nothing to it
     if pr_task is not None and lead is None and str(d.get("verdict") or "") in ("none", "related"):
         try:
-            pc_out = await asyncio.wait_for(asyncio.shield(pr_task), timeout=_PR_WAIT_S)
+            pc_out = await asyncio.wait_for(
+                asyncio.shield(pr_task), timeout=settings.tracker_dupcheck_pr_wait_s
+            )
         except Exception:  # noqa: BLE001 — a slow or failed search adds nothing
             pc_out = None
         exclude = {int(lk.get("number") or 0) for r in rows for lk in (r.get("links") or [])}
@@ -171,10 +176,6 @@ async def _with_links(
     if wall is None and code_ns:
         remember_answer(org, code_ns, title, final)
     return final
-
-
-# The links and release reads together; measured p50 ~0.3 s
-LINKS_BUDGET_S = 1.5
 
 
 async def _links_and_releases(
@@ -191,15 +192,12 @@ async def _links_and_releases(
 
 # Recent full answers, so bisect's own check on a report the session already checked costs
 # nothing. Per process (a uvicorn worker), keyed by the draft's words; entries live
-# `_RECENT_TTL_S`. An answer spans every tracker record its caller could read and links
-# fixes in one code namespace, so it is served back only to the same principal asking
-# about the same code namespace.
+# `tracker_dupcheck_recent_ttl_s`. An answer spans every tracker record its caller could
+# read and links fixes in one code namespace, so it is served back only to the same
+# principal asking about the same code namespace.
 _RECENT: dict[str, tuple[float, frozenset[str], Any]] = {}
-_RECENT_TTL_S = 1800.0
 _RECENT_MAX = 256
 _RECENT_JACCARD = 0.7
-# the related-PR search started with the checks, so this bounds its tail only
-_PR_WAIT_S = 3.0
 
 
 def _words(text: str) -> frozenset[str]:
@@ -219,7 +217,7 @@ def remember_answer(org: str, code_ns: str, text: str, out: Any) -> None:
     if len(words) < 3:
         return
     now = time.monotonic()
-    for k in [k for k, v in _RECENT.items() if now - v[0] > _RECENT_TTL_S]:
+    for k in [k for k, v in _RECENT.items() if now - v[0] > settings.tracker_dupcheck_recent_ttl_s]:
         _RECENT.pop(k, None)
     if len(_RECENT) >= _RECENT_MAX:
         _RECENT.pop(min(_RECENT, key=lambda k: _RECENT[k][0]), None)
@@ -236,7 +234,7 @@ def recent_answer(org: str, code_ns: str, title: str, body: str) -> Any:
     scope = _recent_scope(org, code_ns)
     best, best_j = None, 0.0
     for key, (at, w, out) in list(_RECENT.items()):
-        if not key.startswith(scope) or now - at > _RECENT_TTL_S:
+        if not key.startswith(scope) or now - at > settings.tracker_dupcheck_recent_ttl_s:
             continue
         j = len(words & w) / max(1, len(words | w))
         if j >= _RECENT_JACCARD and j > best_j:
@@ -306,8 +304,8 @@ async def _checked(
         kept: list[Any] = []
         for inp, o in zip(inputs, outs, strict=True):
             if isinstance(o, BaseException):
-                if inp is inputs[0]:
-                    raise o
+                if inp is inputs[0] or isinstance(o, customer.HOLDS):
+                    raise o  # a held model call is the answer, from any tracker
                 logger.info(
                     "tracker.duplicate_check on %s failed inside a fan-out: %s", inp.namespace, o
                 )
@@ -530,13 +528,14 @@ def _draft_text(input: Any, run: dict[str, Any]) -> tuple[str, str]:
 
 
 async def _rerank_call(input: Any, cands: list[dict[str, Any]]) -> Any:
-    """One model call over `cands`, under its timeout; None on no candidates."""
+    """One model call over `cands`, under its timeout; None on no candidates or
+    while reads are LLM-free."""
     import asyncio as _aio
 
     from server.llm.client import get_llm_client_for_model
     from server.tracker.app import dup_rerank as dr
 
-    if not cands:
+    if not cands or reads_llm_free():
         return None
     title, body = str(input.title or "").strip(), str(input.body or "").strip()
     model = str(settings.tracker_dupcheck_rerank_model) or None
@@ -579,7 +578,6 @@ def _row_view(r: dict[str, Any], wall: datetime | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _FIT_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any] | None]] = {}
-_FIT_TTL_S = 300.0
 
 
 async def cached_fit(org: str, ns: str) -> dict[str, Any] | None:
@@ -592,7 +590,7 @@ async def cached_fit(org: str, ns: str) -> dict[str, Any] | None:
     fit = await df.stored_fit(df.state_repo(), org, ns)
     if fit is None:
         fit = await _borrowed_fit(df, org, ns)
-    _FIT_CACHE[(org, ns)] = (now + _FIT_TTL_S, fit)
+    _FIT_CACHE[(org, ns)] = (now + settings.tracker_dupcheck_fit_ttl_s, fit)
     return fit
 
 

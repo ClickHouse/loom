@@ -243,13 +243,6 @@ def _parse_topics(raw_topics: object, entities: list[str]) -> list[str]:
     return out
 
 
-# Ceiling for the enlarged-budget truncation retry: 2x the caller's
-# budget, never above this. Bounds worst-case spend on a pathological
-# transcript while clearing the common "long session, default budget
-# was not enough" case.
-_TRUNCATION_RETRY_MAX_TOKENS = 8192
-
-
 def _looks_truncated(text: str) -> bool:
     """Heuristic truncation detector for a JSON-object response: the text
     opens a JSON object but its braces/brackets never re-balance. A parse

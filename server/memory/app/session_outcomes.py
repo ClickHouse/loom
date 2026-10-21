@@ -31,10 +31,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from server.llm import customer
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.store.session_outcomes import insert_outcomes
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 OUTCOMES = ("unclear", "positive", "negative")
 REFLECTION_KEY_PREFIX = "reflection:contrast:"
@@ -243,6 +245,7 @@ _UNLABELLED_SQL = """
     WHERE s.tombstoned_at IS NULL
       AND s.created_at > now() - INTERVAL {days:UInt16} DAY
       AND length(s.summary_text) > 0
+      AND NOT has({off:Array(String)}, s.org)
     ORDER BY s.created_at DESC
     LIMIT {lim:UInt32}
 """
@@ -251,7 +254,12 @@ _UNLABELLED_SQL = """
 async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillResult) -> None:
     rows = await ch.query_all(
         _UNLABELLED_SQL,
-        params={"days": int(cfg.lookback_days), "lim": int(cfg.max_judged_per_pass)},
+        params={
+            "days": int(cfg.lookback_days),
+            "lim": int(cfg.max_judged_per_pass),
+            # an org whose model calls are switched off waits, and takes no slot
+            "off": sorted(await customer.switched_off_orgs()),
+        },
     )
     result.sessions_scanned = len(rows)
     out_rows: list[dict[str, Any]] = []
@@ -260,11 +268,16 @@ async def label_sessions(ch: Any, llm: Any, cfg: DistillConfig, result: DistillR
             system, user = judge_prompt(
                 str(r.get("summary_text") or ""), list(r.get("key_facts") or [])
             )
-            with llm_stage("session_judge"):
+            with llm_stage("session_judge"), customer.for_org(str(r["org"])):
                 res = await llm.complete(
-                    system, user, max_tokens=160, response_format={"type": "json_object"}
+                    system,
+                    user,
+                    max_tokens=llm_max_tokens("session_judge"),
+                    response_format={"type": "json_object"},
                 )
             outcome, confidence, reason = parse_judgement(getattr(res, "text", "") or "")
+        except customer.HOLDS:
+            continue  # a held call is no failure: the session is judged once the org is back
         except Exception as e:  # noqa: BLE001 — one bad judgement never stops the pass
             result.failures.append(f"judge {r.get('session_id')}: {type(e).__name__}: {e}")
             continue
@@ -312,6 +325,7 @@ _NEGATIVE_SQL = """
           AND r.user_id = s.user_id AND r.session_id = o.session_id
     WHERE o.outcome = 'negative' AND o.confidence >= {minc:Float32}
       AND o.judged_at > now() - INTERVAL {days:UInt16} DAY
+      AND NOT has({off:Array(String)}, o.org)
     ORDER BY o.judged_at DESC
     LIMIT {lim:UInt32}
 """
@@ -397,59 +411,78 @@ async def distil_contrasts(
             "minc": float(cfg.min_confidence),
             "days": int(cfg.lookback_days),
             "lim": int(cfg.max_contrasts_per_pass),
+            "off": sorted(await customer.switched_off_orgs()),
         },
     )
     result.contrast_candidates = len(negatives)
     for neg in negatives:
         sid = str(neg.get("session_id") or "")
         try:
-            vec = [float(x) for x in (neg.get("summary_embedding") or [])]
-            pos = await ch.query_one(
-                _NEAREST_POSITIVE_SQL,
-                params={
-                    "q": vec,
-                    "minc": float(cfg.min_confidence),
-                    "org": str(neg["org"]),
-                    "ns": str(neg["namespace"]),
-                    "model": str(neg.get("embedding_model") or ""),
-                    "sid": sid,
-                    # the positive's summary is handed to the LLM and its lessons
-                    # land in this user's memory: never another user's session
-                    "uid": str(neg.get("user_id") or "-"),
-                },
-            )
-            sim = float((pos or {}).get("similarity") or 0.0)
-            if not pos or sim < float(cfg.min_pair_similarity):
-                result.unpaired += 1
-                continue
-            system, user = contrast_prompt(
-                str(neg.get("summary_text") or ""),
-                str(neg.get("reason") or ""),
-                str(pos.get("summary_text") or ""),
-            )
-            with llm_stage("session_contrast"):
-                res = await llm.complete(
-                    system, user, max_tokens=400, response_format={"type": "json_object"}
-                )
-            lessons, what_failed = parse_lessons(getattr(res, "text", "") or "")
-            if not lessons:
-                result.unpaired += 1
-                continue
-            await writer(
-                org=str(neg["org"]),
-                namespace=str(neg["namespace"]),
-                agent=str(neg.get("agent") or "-"),
-                user_id=str(neg.get("user_id") or "-"),
-                neg_session=sid,
-                pos_session=str(pos.get("session_id") or ""),
-                lessons=lessons,
-                what_failed=what_failed or str(neg.get("reason") or ""),
-                confidence=min(float(neg.get("confidence") or 0.0), sim),
-                pair_similarity=sim,
-            )
-            result.reflections_written += 1
+            # The pair's LLM call and the reflection's write (which embeds) are
+            # both that org's.
+            with customer.for_org(str(neg["org"])):
+                written = await _contrast_pair(ch, llm, cfg, neg, writer)
+        except customer.HOLDS:
+            continue  # a held call is no failure: the pair is distilled once the org is back
         except Exception as e:  # noqa: BLE001 — one bad pair never stops the pass
             result.failures.append(f"contrast {sid}: {type(e).__name__}: {e}")
+            continue
+        if written:
+            result.reflections_written += 1
+        else:
+            result.unpaired += 1
+
+
+async def _contrast_pair(ch: Any, llm: Any, cfg: DistillConfig, neg: Any, writer: Any) -> bool:
+    """One failed session against its nearest success: True when a reflection
+    was written, False when there is no close pair or no lesson."""
+    sid = str(neg.get("session_id") or "")
+    vec = [float(x) for x in (neg.get("summary_embedding") or [])]
+    pos = await ch.query_one(
+        _NEAREST_POSITIVE_SQL,
+        params={
+            "q": vec,
+            "minc": float(cfg.min_confidence),
+            "org": str(neg["org"]),
+            "ns": str(neg["namespace"]),
+            "model": str(neg.get("embedding_model") or ""),
+            "sid": sid,
+            # the positive's summary is handed to the LLM and its lessons
+            # land in this user's memory: never another user's session
+            "uid": str(neg.get("user_id") or "-"),
+        },
+    )
+    sim = float((pos or {}).get("similarity") or 0.0)
+    if not pos or sim < float(cfg.min_pair_similarity):
+        return False
+    system, user = contrast_prompt(
+        str(neg.get("summary_text") or ""),
+        str(neg.get("reason") or ""),
+        str(pos.get("summary_text") or ""),
+    )
+    with llm_stage("session_contrast"):
+        res = await llm.complete(
+            system,
+            user,
+            max_tokens=llm_max_tokens("session_contrast"),
+            response_format={"type": "json_object"},
+        )
+    lessons, what_failed = parse_lessons(getattr(res, "text", "") or "")
+    if not lessons:
+        return False
+    await writer(
+        org=str(neg["org"]),
+        namespace=str(neg["namespace"]),
+        agent=str(neg.get("agent") or "-"),
+        user_id=str(neg.get("user_id") or "-"),
+        neg_session=sid,
+        pos_session=str(pos.get("session_id") or ""),
+        lessons=lessons,
+        what_failed=what_failed or str(neg.get("reason") or ""),
+        confidence=min(float(neg.get("confidence") or 0.0), sim),
+        pair_similarity=sim,
+    )
+    return True
 
 
 async def run_distillation(

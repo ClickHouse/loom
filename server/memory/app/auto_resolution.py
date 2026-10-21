@@ -29,7 +29,7 @@ NEWEST_WINS_CONTRADICTION = "newest_wins_contradiction"
 VALUE_UPDATE = "value_update"
 
 # The most retired rows one audit row lists; more are split across several rows.
-MAX_ENTRIES = 200
+MAX_ENTRIES = 200  # not a setting: the size of one stored audit row
 
 
 _ENTRY_FIELDS = (

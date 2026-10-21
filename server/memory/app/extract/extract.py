@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
-from server.llm.cache import cache_key as _cache_key
+from server.llm.cache import scoped_key
 from server.llm.client import LLMResult, get_llm_client
 from server.memory.app.extract.client import (
     _client_cache_counts,
@@ -41,7 +41,6 @@ from server.memory.app.extract.models import (
     ExtractionResult,
 )
 from server.memory.app.extract.parse import (
-    _TRUNCATION_RETRY_MAX_TOKENS,
     _looks_truncated,
     _parse_fact_list,
     _salvage_fact_objects,
@@ -65,6 +64,7 @@ from server.memory.domain.extraction_prompts import (
 from server.memory.domain.grounding import grade_facts
 from server.observability.genai import staged
 from server.settings import settings
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger("server.memory.app.extract")
 
@@ -279,7 +279,9 @@ async def _complete_and_parse(
             # re-rolling. If the enlarged attempt still truncates, salvage
             # the complete fact objects from the longer payload rather than
             # failing the whole ingest.
-            retry_tokens = max(max_tokens, min(max_tokens * 2, _TRUNCATION_RETRY_MAX_TOKENS))
+            retry_tokens = max(
+                max_tokens, min(max_tokens * 2, llm_max_tokens("extract_truncation_retry"))
+            )
             retry_result = await complete(system_prompt, retry_tokens)
             try:
                 facts = _parse(retry_result.text)
@@ -496,7 +498,7 @@ async def extract_from_messages(
     # JSON mode constrains the model to valid JSON; the try/except below
     # is a single belt-and-suspenders parse-retry on top of it.
     json_format = {"type": "json_object"}
-    prompt_key = _cache_key(system_prompt, user_prompt, max_tokens, json_format)
+    prompt_key = scoped_key(system_prompt, user_prompt, max_tokens, json_format, org=org)
     parse_discards: list[str] = []
 
     def _parse(text: str) -> list[ExtractedFact]:

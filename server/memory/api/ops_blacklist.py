@@ -36,7 +36,6 @@ blacklist_add = Operation(
     output_model=BlacklistAddOutput,
     handler=handle_blacklist_add,
     idempotent=True,
-    budget_p99_ms=50,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -47,7 +46,6 @@ blacklist_list = Operation(
     output_model=BlacklistListOutput,
     handler=handle_blacklist_list,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -59,7 +57,6 @@ blacklist_remove = Operation(
     output_model=BlacklistRemoveOutput,
     handler=handle_blacklist_remove,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.ADMIN,
     audit=True,
     row_scoped=True,  # The handler authorizes the row's namespace
@@ -79,7 +76,6 @@ blacklist_sweep = Operation(
     output_model=BlacklistSweepOutput,
     handler=handle_blacklist_sweep,
     idempotent=True,
-    budget_p99_ms=5000,
     required_role=Role.WRITER,
     audit=True,
 )

@@ -7,15 +7,35 @@ or page through recent threads.
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any, NotRequired, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from server.core.ch import sequential_reads
+from server.core import bm25
+from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
+from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
+
+
+@asynccontextmanager
+async def saved_message_write_lock(org: str, namespace: str, thread_id: str) -> AsyncIterator[None]:
+    """Serialize saved-state commits and embedding hand-offs for one thread."""
+    from server.core.leases import LeaseBusy, LeaseLost, cluster_lease
+
+    identity = json.dumps([org, namespace, thread_id], separators=(",", ":"))
+    name = "conversation-saved:" + hashlib.sha256(identity.encode()).hexdigest()
+    try:
+        async with cluster_lease(name, ttl_s=30, wait_s=30):
+            yield
+    except (LeaseBusy, LeaseLost) as exc:
+        raise OverloadedError("the conversation's saved state is busy; retry") from exc
 
 
 class MessageRow(BaseModel):
@@ -51,6 +71,9 @@ class MessageInsert(BaseModel):
     run_id: str = "-"
     metadata: str = "{}"
     tokens: int = 0
+    # Set by conversation.save_message: the user picked this turn for search.
+    is_saved: bool = False
+    saved_at: datetime | None = None
     ts: datetime | None = None  # CH supplies now() when None
 
 
@@ -101,6 +124,8 @@ class ConversationEmbeddingRow(TypedDict):
     embed_attempts: int
     embed_last_error: str
     embed_failed_at: datetime | None
+    is_saved: bool
+    saved_at: datetime | None
     ts: datetime
 
 
@@ -125,9 +150,17 @@ def _hydrate(row: dict[str, Any]) -> MessageRow:
 async def append(
     msg: MessageInsert,
     *,
+    once_per_identity: bool = False,
     ch: _CHClient | None = None,
 ) -> None:
-    """Append one message. ts defaults to now() at the CH side."""
+    """Append one message. ts defaults to now() at the CH side.
+
+    `once_per_identity` derives the insert's deduplication token from the
+    message's identity, so concurrent writers of one (thread_id, msg_id) land
+    one row: the table's deduplication window keeps the first block and drops
+    the rest. Only within a month's partition, and only while the first block's
+    token is still in the window; a block whose rows were since deleted still
+    drops a new one, which the caller re-reads to detect."""
     ch = ch or _default_client()
     row: dict[str, Any] = {
         "org": msg.org,
@@ -142,14 +175,18 @@ async def append(
         "run_id": msg.run_id,
         "metadata": msg.metadata,
         "tokens": int(msg.tokens),
+        "is_saved": msg.is_saved,
+        "saved_at": msg.saved_at,
     }
     if msg.ts is not None:
         row["ts"] = msg.ts
-    await ch.insert(
-        "loom.conversations",
-        [row],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
-    )
+    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+    if once_per_identity:
+        identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
+        settings["insert_deduplication_token"] = (
+            "conversation-turn:" + hashlib.sha256(identity.encode()).hexdigest()
+        )
+    await ch.insert("loom.conversations", [row], settings=settings)
 
 
 async def message_exists(
@@ -159,23 +196,244 @@ async def message_exists(
     thread_id: str,
     msg_id: str,
     *,
+    live_only: bool = False,
     ch: _CHClient | None = None,
 ) -> bool:
-    """Whether a (thread_id, msg_id) row already exists. Makes
-    `conversation.append` idempotent: loom.conversations is a plain MergeTree
-    (append-only, no engine dedup), so a caller re-logging the same turn — a
-    chat client self-logging via the MCP primer, a gateway retry — would
-    otherwise double-write. Known limit: read-before-write, so two *concurrent*
-    identical appends can still both land; fine for the sequential per-turn
-    logging path, and explicit unique msg_ids avoid it entirely."""
+    """Whether a turn exists, including tombstones unless `live_only` is set.
+
+    Append deduplication includes tombstones so a retry cannot recreate a deleted turn.
+    """
     ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-        SELECT 1 AS ok FROM loom.conversations
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND agent = {agent:String} AND thread_id = {tid:String}
-          AND msg_id = {mid:String}
-        LIMIT 1
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            SELECT 1 AS ok FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND thread_id = {tid:String}
+              AND msg_id = {mid:String}
+              AND (tombstoned_at IS NULL OR NOT {live_only:Bool})
+            LIMIT 1
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+                "live_only": live_only,
+            },
+        )
+    return bool(row and row.get("ok"))
+
+
+class StoredMessage(BaseModel):
+    """What conversation.save_message judges a stored (thread_id, msg_id) by,
+    over every row it has (a racing append can leave two)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    role: str
+    content: str
+    run_id: str
+    ts: datetime
+    saved_at: datetime | None = None
+    # Every distinct owner on the rows; '-' is an unowned transcript turn.
+    owners: tuple[str, ...]
+    tombstoned: bool
+    # Rows not yet saved for `user_id` (unflagged, or owned by '-').
+    unsaved: int
+
+
+async def message_state(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> StoredMessage | None:
+    """The stored rows of (thread_id, msg_id) folded into one verdict, or None
+    when no row exists. Matches the rows `message_exists` dedupes on, so
+    save_message decides on the same rows an append would skip over."""
+    ch = ch or _default_client()
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            SELECT count() AS n,
+                   argMax(role, ts) AS role,
+                   argMax(content, ts) AS content,
+                   argMax(run_id, ts) AS run_id,
+                   max(ts) AS last_ts,
+                   max(saved_at) AS last_saved_at,
+                   groupUniqArray(user_id) AS owners,
+                   countIf(tombstoned_at IS NOT NULL) > 0 AS tombstoned,
+                   countIf(NOT is_saved OR user_id != {uid:String}) AS unsaved
+            FROM loom.conversations
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND agent = {agent:String} AND thread_id = {tid:String}
+              AND msg_id = {mid:String}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+                "uid": user_id,
+            },
+        )
+    if not row or not int(row["n"]):
+        return None
+    return StoredMessage(
+        role=str(row["role"]),
+        content=str(row["content"]),
+        run_id=str(row["run_id"]),
+        ts=row["last_ts"],
+        saved_at=row.get("last_saved_at"),
+        owners=tuple(sorted(str(o) for o in row["owners"])),
+        tombstoned=bool(row["tombstoned"]),
+        unsaved=int(row["unsaved"]),
+    )
+
+
+class StoredEmbedding(BaseModel):
+    """The live embedding rows of one message, as save_message repairs them."""
+
+    model_config = ConfigDict(frozen=True)
+
+    # Rows under the embedder the saved search ranks with that hold a vector; a
+    # failed embed's placeholder (embedding_dim 0) is not one.
+    current: int
+    # Rows of any model not yet saved for `user_id`.
+    unsaved: int
+    # Rows another user owns, which a save for `user_id` must not take over.
+    foreign: int
+    # Include retired versions: a repair must replace them even on a slower clock.
+    version_ts: datetime | None = None
+
+
+async def embedding_state(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    embedding_model: str,
+    ch: _CHClient | None = None,
+) -> StoredEmbedding:
+    """Whether the message has an embedding row under `embedding_model`, and how
+    many of its live rows still lack the saved flag or the owner."""
+    ch = ch or _default_client()
+    with own_write_reads():
+        row = await ch.query_one(
+            """
+            WITH agent = {agent:String} AND tombstoned_at IS NULL AS live
+            SELECT countIf(live AND embedding_model = {model:String}
+                           AND embedding_dim > 0) AS current,
+                   countIf(live AND (NOT is_saved OR user_id != {uid:String})) AS unsaved,
+                   countIf(live AND user_id NOT IN ('-', '', {uid:String})) AS foreign,
+                   maxOrNullIf(ts, embedding_model = {model:String}) AS version_ts
+            FROM loom.conversation_embeddings FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND thread_id = {tid:String} AND msg_id = {mid:String}
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+                "uid": user_id,
+                "model": embedding_model,
+            },
+        )
+    if not row:
+        return StoredEmbedding(current=0, unsaved=0, foreign=0)
+    return StoredEmbedding(
+        current=int(row["current"]),
+        unsaved=int(row["unsaved"]),
+        foreign=int(row["foreign"]),
+        version_ts=row.get("version_ts"),
+    )
+
+
+async def saved_message_owner(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    table: str = "loom.conversations",
+    ch: _CHClient | None = None,
+) -> str | None:
+    """The owner of a live, saved row of (thread_id, msg_id), or None. A
+    transcript append asks after its embedding row landed: a save that ran
+    while the append was embedding marked the rows it could see, not this one."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    final = " FINAL" if table == "loom.conversation_embeddings" else ""
+    with own_write_reads():
+        row = await ch.query_one(
+            f"""
+            SELECT user_id FROM {table}{final}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+              AND msg_id = {{mid:String}} AND is_saved AND tombstoned_at IS NULL
+            LIMIT 1
+            """,
+            params={
+                "org": org,
+                "ns": namespace,
+                "agent": agent,
+                "tid": thread_id,
+                "mid": msg_id,
+            },
+        )
+    return str(row["user_id"]) if row else None
+
+
+SAVED_MESSAGE_TABLES = ("loom.conversations", "loom.conversation_embeddings")
+
+
+async def mark_message_saved(
+    table: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> None:
+    """Flag the live rows of a stored turn in `table` (one of
+    SAVED_MESSAGE_TABLES) as saved by `user_id`, leaving every other column —
+    run_id included — as written. A synchronous mutation, so the next
+    saved-message search sees it; rows already saved for the user are skipped.
+
+    Only rows nobody owns ('-') or `user_id` owns are claimed, in the mutation
+    itself: mutations on a table apply in order, so of two saves claiming one
+    unowned turn the first takes it and the second matches nothing."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    await ch.execute(
+        f"""
+        ALTER TABLE {table}
+        UPDATE is_saved = true, user_id = {{uid:String}},
+               saved_at = coalesce(saved_at, now64(3))
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+          AND msg_id = {{mid:String}} AND tombstoned_at IS NULL
+          AND user_id IN ('-', '', {{uid:String}})
+          AND (NOT is_saved OR user_id != {{uid:String}})
+        SETTINGS mutations_sync = 2
         """,
         params={
             "org": org,
@@ -183,9 +441,268 @@ async def message_exists(
             "agent": agent,
             "tid": thread_id,
             "mid": msg_id,
+            "uid": user_id,
         },
     )
-    return bool(row and row.get("ok"))
+
+
+async def unsave_message(
+    table: str,
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_id: str,
+    *,
+    user_id: str,
+    remove: bool,
+    when: datetime,
+    ch: _CHClient | None = None,
+) -> None:
+    """Withdraw `user_id`'s saved rows of a turn in `table` (one of
+    SAVED_MESSAGE_TABLES): clear the flag, or remove an unrecorded transcript
+    and retire its vector. Only rows saved by that user change. The synchronous
+    mutation makes the next saved-message search omit the turn."""
+    if table not in SAVED_MESSAGE_TABLES:
+        raise ValueError(f"not a saved-message table: {table}")
+    ch = ch or _default_client()
+    removing_embedding = remove and table == "loom.conversation_embeddings"
+    if removing_embedding:
+        # One vector can index another agent's live copy of this turn.
+        await tombstone_embeddings(
+            org,
+            namespace,
+            agent,
+            thread_id,
+            msg_ids=[msg_id],
+            when=when,
+            preserve_saved=False,
+            ch=ch,
+        )
+    deleting = remove and table == "loom.conversations"
+    tombstone = ", tombstoned_at = {when:DateTime}" if removing_embedding else ""
+    statement = (
+        f"DELETE FROM {table}"
+        if deleting
+        else f"ALTER TABLE {table} UPDATE is_saved = false, saved_at = NULL{tombstone}"
+    )
+    sync = "lightweight_deletes_sync" if deleting else "mutations_sync"
+    live = "" if removing_embedding else "AND tombstoned_at IS NULL"
+    await ch.execute(
+        f"""
+        {statement}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND agent = {{agent:String}} AND thread_id = {{tid:String}}
+          AND msg_id = {{mid:String}} {live}
+          AND is_saved AND user_id = {{uid:String}}
+        SETTINGS {sync} = 2
+        """,
+        params={
+            "org": org,
+            "ns": namespace,
+            "agent": agent,
+            "tid": thread_id,
+            "mid": msg_id,
+            "uid": user_id,
+            "when": when,
+        },
+    )
+
+
+async def list_saved_messages(
+    org: str,
+    namespace: str,
+    agent: str,
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    conversation_id: str | None = None,
+    before: tuple[datetime, str, str] | None = None,
+    limit: int = 50,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """One page of `user_id`'s live saved messages, newest first, keyed by
+    (saved_at, thread_id, msg_id). Grouped per message: a save racing a
+    transcript append can leave two rows of one turn, and a page lists it once.
+    `before` is the last key of the previous page."""
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "c.saved_at IS NOT NULL",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "lim": int(limit)}
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    if conversation_id:
+        where.append("thread_id = {tid:String}")
+        params["tid"] = conversation_id
+    where.extend(scope_where(scope, params))
+    having = ""
+    if before is not None:
+        having = (
+            "HAVING (saved_at, thread_id, msg_id) < "
+            "({b_ts:DateTime64(3)}, {b_tid:String}, {b_mid:String})"
+        )
+        params.update(b_ts=before[0], b_tid=before[1], b_mid=before[2])
+    return await ch.query_all(
+        f"""
+        SELECT thread_id, msg_id, any(role) AS role,
+               argMax(content, ts) AS content, max(c.saved_at) AS saved_at
+        FROM loom.conversations AS c
+        WHERE {" AND ".join(where)}
+        GROUP BY thread_id, msg_id
+        {having}
+        ORDER BY saved_at DESC, thread_id DESC, msg_id DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+
+
+async def saved_message_ids(
+    org: str,
+    namespace: str,
+    agent: str,
+    thread_id: str,
+    msg_ids: list[str],
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    ch: _CHClient | None = None,
+) -> set[str]:
+    """The ids among `msg_ids` of one thread that `user_id` has live saved rows for."""
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "thread_id = {tid:String}",
+        "msg_id IN {mids:Array(String)}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "tid": thread_id,
+        "mids": list(msg_ids),
+        "uid": user_id,
+    }
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    where.extend(scope_where(scope, params))
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT msg_id FROM loom.conversations
+        WHERE {" AND ".join(where)}
+        """,
+        params=params,
+    )
+    return {str(r["msg_id"]) for r in rows}
+
+
+async def lexical_saved_messages(
+    org: str,
+    namespace: str,
+    agent: str,
+    tokens: list[str],
+    *,
+    scope: ReadFilters,
+    user_id: str,
+    conversation_id: str | None = None,
+    role: str | None = None,
+    limit: int = 20,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """Okapi BM25 over the whole text of `user_id`'s saved messages, best
+    first, rows scoring 0 dropped. The corpus is one user's explicit saves, so
+    its statistics (size, average length, per-token document frequency) are
+    computed in the same statement rather than kept in a term-frequency view.
+    One row per message: a save racing an append can leave two rows of a turn."""
+    if not tokens:
+        return []
+    ch = ch or _default_client()
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "is_saved",
+        "tombstoned_at IS NULL",
+        "user_id = {uid:String}",
+    ]
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "toks": list(tokens),
+        "lim": int(limit),
+    }
+    if agent not in ("*", "-"):
+        where.append("agent = {agent:String}")
+        params["agent"] = agent
+    if conversation_id:
+        where.append("thread_id = {tid:String}")
+        params["tid"] = conversation_id
+    if role:
+        where.append("role = {role:String}")
+        params["role"] = role
+    where.extend(scope_where(scope, params))
+    words = f"arrayFilter(t -> length(t) >= {bm25.MIN_TERM_LEN}, splitByNonAlpha(lowerUTF8(body)))"
+    score = bm25.bm25_sum_sql(
+        "[tf]",
+        "[log(1 + (s.n - count() OVER (PARTITION BY word) + 0.5) / "
+        "(count() OVER (PARTITION BY word) + 0.5))]",
+        dl="dl",
+        avgdl="greatest(s.avgdl, 1.0)",
+    )
+    # Count matching terms as rows; capturing every document's word array in a
+    # lambda over query tokens copies that array once per token.
+    with caller_shaped():
+        return await ch.query_all(
+            f"""
+            WITH docs AS (
+                SELECT thread_id, msg_id, any(role) AS msg_role, argMax(content, ts) AS body,
+                       max(ts) AS saved_at, {words} AS words
+                FROM loom.conversations
+                WHERE {" AND ".join(where)}
+                GROUP BY thread_id, msg_id
+            ),
+            stats AS (
+                SELECT count() AS n, avg(length(words)) AS avgdl FROM docs
+            ),
+            terms AS (
+                SELECT thread_id, msg_id, word, count() AS tf,
+                       any(dl) AS dl, any(saved_at) AS saved_at
+                FROM (
+                    SELECT thread_id, msg_id, saved_at, words, length(words) AS dl FROM docs
+                )
+                ARRAY JOIN words AS word
+                WHERE word IN {{toks:Array(String)}}
+                GROUP BY thread_id, msg_id, word
+            ),
+            scored AS (
+                SELECT thread_id, msg_id, saved_at, {score} AS term_score
+                FROM terms CROSS JOIN stats AS s
+            ),
+            ranked AS (
+                SELECT thread_id, msg_id, max(saved_at) AS saved_at, sum(term_score) AS score
+                FROM scored
+                GROUP BY thread_id, msg_id
+                ORDER BY score DESC, saved_at DESC
+                LIMIT {{lim:UInt32}}
+            )
+            SELECT d.thread_id AS thread_id, d.msg_id AS msg_id, d.msg_role AS role,
+                   d.body AS content, d.saved_at AS saved_at, r.score AS score
+            FROM ranked AS r INNER JOIN docs AS d USING (thread_id, msg_id)
+            ORDER BY score DESC, saved_at DESC
+            """,
+            params=params,
+        )
 
 
 async def namespace_logging_enabled(
@@ -395,9 +912,12 @@ async def search_substring(
     agent: str,
     query: str,
     *,
+    scope: ReadFilters,
     thread_id: str | None = None,
     role: str | None = None,
     run_id: str | None = None,
+    user_id: str | None = None,
+    saved_only: bool = False,
     limit: int = 50,
     ch: _CHClient | None = None,
 ) -> list[MessageRow]:
@@ -434,6 +954,12 @@ async def search_substring(
     if run_id is not None:
         where.append("run_id = {run_id:String}")
         params["run_id"] = run_id
+    if user_id is not None:
+        where.append("user_id = {user_id:String}")
+        params["user_id"] = user_id
+    where.extend(scope_where(scope, params))
+    if saved_only:
+        where.append("is_saved")
 
     columns = """org, namespace, agent, thread_id, msg_id, role, content,
                reasoning, user_id, run_id, metadata, tokens, ts"""
@@ -700,7 +1226,7 @@ async def live_messages(
     ch = ch or _default_client()
     return await ch.query_all(
         """
-        SELECT msg_id, role, content, ts, metadata, user_id, run_id
+        SELECT msg_id, role, content, ts, metadata, user_id, run_id, is_saved
         FROM loom.conversations
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -727,10 +1253,10 @@ async def tombstone_messages(
 ) -> None:
     """Tombstone the named messages of one thread and their embeddings, so
     conversation.search stops returning them too. The messages mutation is
-    synchronous, so the next read sees a coherent thread. Embeddings are tombstoned
-    before the messages, so a retry finds the messages live and repeats both; a second
-    pass after the messages mutation closes the race `tombstone_embedding_if_message_gone`
-    describes."""
+    synchronous, so the next read sees a coherent thread. Saved rows are checked
+    by the mutation itself, including saves made while the summary was generated.
+    Embeddings are tombstoned before the messages, so a retry repeats both; a
+    second pass closes the race `tombstone_embedding_if_message_gone` describes."""
     ch = ch or _default_client()
     await tombstone_embeddings(org, namespace, agent, thread_id, msg_ids=msg_ids, when=when, ch=ch)
     for part in param_slices(msg_ids):
@@ -743,6 +1269,7 @@ async def tombstone_messages(
               AND agent = {agent:String}
               AND thread_id = {tid:String}
               AND msg_id IN {ids:Array(String)}
+              AND NOT is_saved
             SETTINGS mutations_sync = 2
             """,
             params={
@@ -766,30 +1293,30 @@ async def tombstone_embedding_if_message_gone(
     *,
     ch: _CHClient | None = None,
 ) -> None:
-    """Tombstone a just-stored embedding whose message a delete or compaction tombstoned
-    meanwhile.
+    """Retire a late embedding if its source was removed while embedding ran.
 
-    A turn written during a delete or compaction lands its message, then its embedding.
-    Those tombstone the messages, then run their last embeddings pass; the writer
-    stores the embedding, then calls this. So for a message the messages mutation
-    covered, either that last pass sees the embedding or this read sees the tombstone.
-    A message that lands after the mutation began is not covered and stays live. After
-    a compaction its embedding stays live too; a delete's last pass covers every
-    embedding of this agent's turns in the thread, so it takes one that landed before
-    that pass and leaves one that lands after it."""
+    Unsave deletes unrecorded transcripts; delete and compaction leave tombstones.
+    Reconciliation keeps a live peer's vector and identity in either case.
+    """
     ch = ch or _default_client()
     with sequential_reads():
         row = await ch.query_one(
             """
-            SELECT max(tombstoned_at) AS gone FROM loom.conversations
+            SELECT count() AS n, max(tombstoned_at) AS gone FROM loom.conversations
             WHERE org = {org:String} AND namespace = {ns:String} AND agent = {agent:String}
               AND thread_id = {tid:String} AND msg_id = {mid:String}
             """,
             params={"org": org, "ns": namespace, "agent": agent, "tid": thread_id, "mid": msg_id},
         )
-    if row and row["gone"] is not None:
+    if row and (not row["n"] or row["gone"] is not None):
         await tombstone_embeddings(
-            org, namespace, agent, thread_id, msg_ids=[msg_id], when=row["gone"], ch=ch
+            org,
+            namespace,
+            agent,
+            thread_id,
+            msg_ids=[msg_id],
+            when=row["gone"] or datetime.now(UTC),
+            ch=ch,
         )
 
 
@@ -806,18 +1333,19 @@ _THREAD_TURNS = """(agent = {agent:String} OR msg_id IN (
 # Rows written by build N-1 and by earlier builds hold the first 240 characters of the
 # turn, and a re-embed keeps that excerpt. A row's excerpt is compared whole against a
 # peer's content cut at this length and at EMBEDDED_EXCERPT_CHARS. It is not
-# HIT_EXCERPT_CHARS, the cut a search hit shows.
-_SHORT_EXCERPT_CHARS = 240
+# conversation_search_excerpt_chars, the cut a search hit shows.
+_SHORT_EXCERPT_CHARS = 240  # not a setting: stored rows are matched at this length
 
 
-# Another agent's live copies of the thread's turns that search indexes (user and
+# Live copies of the thread's turns that search indexes (user and
 # assistant turns, and compaction summaries); `full` is the text append embeds.
 _PEER_TURNS = """
-    SELECT msg_id, agent, role, run_id, user_id, ts,
+    SELECT msg_id, agent, role, run_id, user_id, is_saved, saved_at, ts,
       substringUTF8(content, 1, {embedded:UInt32}) AS full
     FROM loom.conversations
     WHERE org = {org:String} AND namespace = {ns:String}
-      AND thread_id = {tid:String} AND agent != {agent:String}
+      AND thread_id = {tid:String}
+      AND (agent != {agent:String} OR ({preserve_saved:Bool} AND is_saved))
       AND tombstoned_at IS NULL
       AND (role IN ('user', 'assistant')
            OR (role = 'system' AND notEmpty(JSONExtractArrayRaw(metadata, 'compacted_from'))))
@@ -870,6 +1398,8 @@ def _reconcile_sql(turns: str) -> str:
         f"if({keep}, p.holder.1, e.agent) AS agent, if({keep}, p.holder.2, e.role) AS role,"
         f" if({keep}, p.holder.3, e.run_id) AS run_id,"
         f" if({keep}, p.holder.4, e.user_id) AS user_id,"
+        f" if({keep}, p.holder.5, e.is_saved) AS is_saved,"
+        f" if({keep}, p.holder.6, e.saved_at) AS saved_at,"
         f" if({keep}, NULL, {{now:DateTime}}) AS tombstoned_at)"
         f" FROM (SELECT u.*, if({own}, s.src, u.content_excerpt) AS embedded,"
         f" ({own}) OR lengthUTF8(u.content_excerpt) != {{short:UInt32}} AS known"
@@ -879,7 +1409,7 @@ def _reconcile_sql(turns: str) -> str:
         " WHERE org = {org:String} AND namespace = {ns:String} AND thread_id = {tid:String}"
         " GROUP BY agent, msg_id) AS s ON u.agent = s.agent AND u.msg_id = s.msg_id) AS e"
         " LEFT JOIN (SELECT msg_id, full, 1 AS matched,"
-        " argMax((agent, role, run_id, user_id), ts) AS holder"
+        " argMax((agent, role, run_id, user_id, is_saved, saved_at), ts) AS holder"
         " FROM (" + _PEER_TURNS + ") GROUP BY msg_id, full) AS p"
         " ON e.msg_id = p.msg_id AND e.embedded = p.full"
     )
@@ -893,6 +1423,7 @@ async def tombstone_embeddings(
     *,
     msg_ids: list[str] | None,
     when: datetime,
+    preserve_saved: bool = True,
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone the embeddings of `agent`'s turns in one thread: `msg_ids`, or every
@@ -913,6 +1444,7 @@ async def tombstone_embeddings(
         "tid": thread_id,
         "embedded": EMBEDDED_EXCERPT_CHARS,
         "short": _SHORT_EXCERPT_CHARS,
+        "preserve_saved": preserve_saved,
     }
     # Sequential reads: on a multi-replica service a lagging replica could miss a turn
     # appended just before, leaving its embedding live once its message is tombstoned.
@@ -960,10 +1492,16 @@ async def tombstone_embeddings(
 
 
 async def titler_candidates(
-    *, window_hours: int, min_turns: int, limit: int, ch: _CHClient | None = None
+    *,
+    window_hours: int,
+    min_turns: int,
+    limit: int,
+    exclude_orgs: frozenset[str] = frozenset(),
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Recent threads with at least `min_turns` live messages in namespaces that
-    record conversations, untitled and not deleted, most recent first."""
+    record conversations, untitled and not deleted, most recent first; none of
+    `exclude_orgs` (orgs whose model calls are switched off)."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -975,6 +1513,7 @@ async def titler_candidates(
         WHERE n.active = true AND n.conversation_logging_enabled = true
           AND c.tombstoned_at IS NULL
           AND c.ts > now() - toIntervalHour({wh:UInt32})
+          AND NOT has({off:Array(String)}, c.org)
           -- Titled and deleted threads are not candidates: skipped after
           -- the LIMIT, they filled it every pass and older untitled
           -- threads were never reached.
@@ -987,7 +1526,7 @@ async def titler_candidates(
         ORDER BY max(c.ts) DESC
         LIMIT {lim:UInt32}
         """,
-        params={"wh": window_hours, "mt": min_turns, "lim": limit},
+        params={"wh": window_hours, "mt": min_turns, "lim": limit, "off": sorted(exclude_orgs)},
     )
 
 

@@ -260,10 +260,10 @@ _SET_ENTITY_STOPWORDS = frozenset(
 # RAW value text before lowercasing so casing survives.
 _SET_ENTITY_PROPER_RE = re.compile(r"\b[A-Z][\w'’.-]*(?:\s+[A-Z][\w'’.-]*)*")
 # Longer than a name in wide characters: a run of unspaced text ("東京に住んでいます").
-_SET_ENTITY_MAX_WIDE_LEN = 6
+_SET_ENTITY_MAX_WIDE_LEN = 6  # not a setting: algorithm shape
 # Longer than a name in Chinese characters alone: a sentence ("我住在北京"). A Chinese
 # name is two to four ("北京", "毛泽东", "乌鲁木齐").
-_SET_ENTITY_MAX_HAN_LEN = 4
+_SET_ENTITY_MAX_HAN_LEN = 4  # not a setting: algorithm shape
 # Verb endings, which end no name: Korean "살아요" (live), "입니다" (am), Japanese
 # "行きました" (went), "です" (is). A bare 요 is not one: "히데요" (Hideyo) is a name.
 _VERB_ENDINGS = (

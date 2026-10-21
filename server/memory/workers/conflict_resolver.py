@@ -19,6 +19,7 @@ import httpx
 
 from server.core.ch import set_query_tag
 from server.core.leases import LeaseUnavailable
+from server.llm import customer
 from server.memory.app import conflict_resolver as resolver
 from server.memory.store import conflict_resolver as queue
 from server.settings import settings
@@ -29,20 +30,6 @@ log = logging.getLogger(__name__)
 
 NAME = "conflict_resolver"
 
-# The recheck's read scans every `conflicted` row (its predicate prunes nothing). A
-# backlog drains a batch per pass; once a read comes back short, the next waits this long.
-RECHECK_IDLE_S = 300.0
-# A pass whose owed read came back full reads the next batch at once, for up to this
-# long (half the pass's deadline); a short read ends it, and the interval follows.
-BURST_S = 300.0
-# A row judged and left owed (a flagged peer the answer leaves out, an error after the
-# call) is paid for again every pass: after this many such attempts it is stamped,
-# errored. Counted per (identity, content hash) on this leader.
-MAX_ATTEMPTS = 3
-# A pass stopped by the model, the keys' locks or a provider outage: the next passes
-# would pay for the same answer, so the worker waits this long first. A namespace whose
-# rows got the same refusal row after row waits as long, alone.
-PAUSE_AFTER_STOP_S = 300.0
 # The same refusal (or outage) this many rows in a row is the request's fault, not the
 # rows': the rest stay owed, instead of being stamped judged unjudged. A namespace with
 # fewer owed rows than this never reaches the stop, so its refused rows are stamped at
@@ -123,7 +110,9 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     now = time.monotonic()
     paused = {ns for ns, until in _state.paused_namespaces.items() if until > now}
     _state.paused_namespaces = {ns: _state.paused_namespaces[ns] for ns in paused}
-    capped = sorted(set(capped) | paused)
+    # A switched-off org's rows stay owed and take no place while it is off.
+    off = await customer.switched_off_orgs()
+    capped = sorted(set(capped) | paused | {pair for pair in pairs if pair[0] in off})
     batch = int(settings.memory_conflict_resolver_batch)
     # A new order of the namespaces within a turn each pass, so none waits behind the rest.
     seed = random.getrandbits(32)
@@ -132,7 +121,9 @@ async def _queued(p: _Pass) -> tuple[dict[tuple[str, str], list[dict[str, Any]]]
     if due:
         found = await queue.unjudged_conflicted_rows(limit=recheck, capped=capped, seed=seed)
         if len(found) < recheck:
-            _state.recheck_after = time.monotonic() + RECHECK_IDLE_S
+            _state.recheck_after = (
+                time.monotonic() + settings.memory_conflict_resolver_recheck_idle_seconds
+            )
         rows += found
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in rows:
@@ -167,11 +158,17 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
                 return
             key = _attempt_key(r)
             shown = _state.attempts.get(key, (0, frozenset()))[1]
-            judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
+            with customer.for_org(org):
+                judged = await resolver.resolve_row(r, policy=policy, counts=counts, shown=shown)
             _after_row(p, (org, namespace), key, counts, judged)
             if judged is not None and await _out_of_attempts(r, judged):
                 counts.errored += 1
                 p.errors.append(f"{namespace}/{r.get('memory_key')}: a flagged peer never judged")
+        except customer.HOLDS:
+            # The org was switched off since the queue read, or the switch is unread: no
+            # call was sent, so the row stays owed with no attempt or error, and its
+            # namespace waits for the next pass.
+            p.stopped.add((org, namespace))
         except (resolver.ModelUnavailable, LeaseUnavailable) as e:
             # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e
@@ -183,12 +180,14 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             p.refused.append(r)
             if _refusal_streak(p, (org, namespace), e):
                 p.stopped.add((org, namespace))
-                _state.paused_namespaces[(org, namespace)] = time.monotonic() + PAUSE_AFTER_STOP_S
+                _state.paused_namespaces[(org, namespace)] = (
+                    time.monotonic() + settings.memory_conflict_resolver_pause_after_stop_seconds
+                )
             # An answer with nothing usable was paid for: it counts an attempt, so a row
             # that never gets one ends; a refused request (a 4xx) was not, and does not.
             # The pass's end may stamp it too (`_stamp_refused`): a second stamp is a no-op.
             if isinstance(e, resolver.Unanswered) and await _out_of_attempts(r):
-                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}")
+                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after its attempts")
         except (httpx.HTTPError, TimeoutError) as e:
             # A provider outage (5xx, 429, a timeout, no connection): the row stays owed,
             # no attempt; the same outage row after row stops the pass.
@@ -205,7 +204,7 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
                 # Counted only once the judge answered: an error before it paid for nothing.
                 if await _out_of_attempts(r):
                     p.errors.append(
-                        f"{namespace}/{r.get('memory_key')}: stamped after {MAX_ATTEMPTS}"
+                        f"{namespace}/{r.get('memory_key')}: stamped after its attempts"
                     )
         finally:
             p.counts.add(counts)
@@ -244,12 +243,17 @@ async def _out_of_attempts(r: Mapping[str, Any], judged: frozenset[str] = frozen
     count, before = attempts.get(key, (0, frozenset()))
     count += 1
     attempts[key] = (count, before | judged)
-    if count < MAX_ATTEMPTS:
+    if count < settings.memory_conflict_resolver_max_attempts:
         return False
     try:
         await queue.stamp_judged(r)
     except Exception as e:  # noqa: BLE001 — one row's stamp never stops the pass
-        log.warning("%s: stamp after %d attempts failed: %s", NAME, MAX_ATTEMPTS, e)
+        log.warning(
+            "%s: stamp after %d attempts failed: %s",
+            NAME,
+            settings.memory_conflict_resolver_max_attempts,
+            e,
+        )
         return False  # still at the last attempt: the next pass stamps it
     del attempts[key]
     return True
@@ -342,12 +346,14 @@ async def run_pass() -> dict[str, Any]:
                 and p.unavailable is None
                 and p.counts.judged > judged
                 and p.counts.errored == errored
-                and time.monotonic() - started < BURST_S
+                and time.monotonic() - started < settings.memory_conflict_resolver_burst_seconds
             ):
                 break
         await _stamp_refused(p)
         if p.unavailable is not None:
-            _state.paused_until = time.monotonic() + PAUSE_AFTER_STOP_S
+            _state.paused_until = (
+                time.monotonic() + settings.memory_conflict_resolver_pause_after_stop_seconds
+            )
         if not found:
             pass_context.mark_idle()
         if isinstance(p.unavailable, LeaseUnavailable):

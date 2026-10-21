@@ -3,11 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SearchHit } from "../api";
 import { axeViolations } from "../test/axe";
-import { SearchWhy } from "./SearchWhy";
+import { SearchScores, SearchWhy } from "./SearchWhy";
 
-// A ranked hit's "Why this result": an info button in the row's meta slot
-// whose popover says the rank, similarity, blended score and the signed ranking terms, so
-// the Memories list says why a row is there without a debug line under every row.
+// A ranked hit's similarity and score, shown in the row's meta line, and its "Why this
+// result": an info button after the meta whose popover says the rank, similarity, blended
+// score and the signed ranking terms.
 
 const hit = (over: Partial<SearchHit> = {}): SearchHit => ({
   memory_key: "k1",
@@ -55,6 +55,13 @@ describe("SearchWhy", () => {
     expect(await axeViolations(container.ownerDocument.body)).toEqual([]);
   });
 
+  it("shows a reranker's move in places, not as a score", async () => {
+    render(<SearchWhy rank={1} hit={hit({ score_components: { rerank_from: 4, rerank_delta: 3, semantic: 0.25 } })} />);
+    const why = await open();
+    expect(why.textContent).toMatch(/reranked \+3(?!\.)/);
+    expect(why.textContent).not.toMatch(/rerank from/);
+  });
+
   it("marks a term that pushed the hit down", async () => {
     render(<SearchWhy rank={1} hit={hit({ score_components: { reinforcement: -0.2 } })} />);
     await open();
@@ -70,5 +77,29 @@ describe("SearchWhy", () => {
   it("says a keyword row holds the typed text", async () => {
     render(<SearchWhy contains="refund" />);
     expect(await open()).toHaveTextContent('Contains "refund"');
+  });
+});
+
+describe("SearchScores", () => {
+  afterEach(cleanup);
+
+  it("shows a hit's similarity and score", () => {
+    render(<SearchScores hit={hit()} />);
+    expect(screen.getByTestId("search-score")).toHaveTextContent("similarity 0.62 · score 0.71");
+  });
+
+  it("leaves out the similarity when it is not a number", () => {
+    render(<SearchScores hit={hit({ similarity: Number.NaN })} />);
+    expect(screen.getByTestId("search-score")).toHaveTextContent(/^score 0\.71$/);
+  });
+
+  it("leaves out the score when it is not a number", () => {
+    render(<SearchScores hit={hit({ rank_score: Number.NaN })} />);
+    expect(screen.getByTestId("search-score")).toHaveTextContent(/^similarity 0\.62$/);
+  });
+
+  it("renders nothing when neither score is a number", () => {
+    render(<SearchScores hit={hit({ similarity: Number.NaN, rank_score: Number.NaN })} />);
+    expect(screen.queryByTestId("search-score")).toBeNull();
   });
 });

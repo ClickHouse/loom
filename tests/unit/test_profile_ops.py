@@ -220,6 +220,7 @@ async def test_profile_activity_aggregates_per_agent() -> None:
             assert set(params["ops"]) == {
                 "loom_activate",
                 "profile.render",
+                "profile.structured",
                 "context.pack",
                 "mcp.initialize",
             }
@@ -323,3 +324,21 @@ async def test_profile_render_serves_only_live_sections(monkeypatch) -> None:
     [sql] = [q for q in seen if "memory_type = 'profile'" in q]
     assert "(expires_at IS NULL OR expires_at > now())" in sql
     assert "status IN ('active', 'conflicted')" in sql
+
+
+def test_profile_set_refuses_the_delete_version_marker() -> None:
+    # The handler copies source_trace into memory.set; the input refuses the marker first,
+    # so the caller gets a 422 rather than a 500 from inside the handler.
+    import pydantic
+
+    from server.memory.api.models_profile import ProfileSetInput
+
+    with pytest.raises(pydantic.ValidationError, match="may not start with"):
+        ProfileSetInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            label="persona",
+            value="v",
+            source_trace="memory.delete_version:1",
+        )

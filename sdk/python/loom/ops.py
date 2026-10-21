@@ -99,6 +99,10 @@ OpName = Literal[
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.create",
+    "collection.delete",
+    "collection.list",
+    "collection.move",
     "conflicts.allowlist_list",
     "conflicts.allowlist_remove",
     "conflicts.list",
@@ -114,9 +118,14 @@ OpName = Literal[
     "conversation.delete",
     "conversation.get",
     "conversation.list",
+    "conversation.list_saved_messages",
+    "conversation.save_message",
+    "conversation.saved_status",
     "conversation.search",
+    "conversation.search_saved_messages",
     "conversation.set_logging",
     "conversation.threads",
+    "conversation.unsave_message",
     "conversation.update",
     "cost.agent_summary",
     "cost.budget_status",
@@ -181,6 +190,7 @@ OpName = Literal[
     "memory.dedup_list",
     "memory.dedup_resolve",
     "memory.delete",
+    "memory.delete_version",
     "memory.demonstrate",
     "memory.demote",
     "memory.digests",
@@ -195,6 +205,7 @@ OpName = Literal[
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.keys",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -269,6 +280,8 @@ OpName = Literal[
     "ops.projection_failures.list",
     "ops.projection_failures.resolve",
     "ops.projection_failures.retry",
+    "org.model_calls",
+    "org.set_model_calls",
     "policy.check",
     "policy.decisions",
     "policy.delete",
@@ -287,6 +300,10 @@ OpName = Literal[
     "profile.render",
     "profile.replace",
     "profile.set",
+    "profile.structured",
+    "profile_schema.clear",
+    "profile_schema.get",
+    "profile_schema.set",
     "run.begin",
     "run.complete",
     "run.get",
@@ -407,6 +424,10 @@ OP_NAMES: tuple[str, ...] = (
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.create",
+    "collection.delete",
+    "collection.list",
+    "collection.move",
     "conflicts.allowlist_list",
     "conflicts.allowlist_remove",
     "conflicts.list",
@@ -422,9 +443,14 @@ OP_NAMES: tuple[str, ...] = (
     "conversation.delete",
     "conversation.get",
     "conversation.list",
+    "conversation.list_saved_messages",
+    "conversation.save_message",
+    "conversation.saved_status",
     "conversation.search",
+    "conversation.search_saved_messages",
     "conversation.set_logging",
     "conversation.threads",
+    "conversation.unsave_message",
     "conversation.update",
     "cost.agent_summary",
     "cost.budget_status",
@@ -489,6 +515,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.dedup_list",
     "memory.dedup_resolve",
     "memory.delete",
+    "memory.delete_version",
     "memory.demonstrate",
     "memory.demote",
     "memory.digests",
@@ -503,6 +530,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.history",
     "memory.import_curated",
     "memory.import_evidence",
+    "memory.keys",
     "memory.lineage",
     "memory.link",
     "memory.list",
@@ -577,6 +605,8 @@ OP_NAMES: tuple[str, ...] = (
     "ops.projection_failures.list",
     "ops.projection_failures.resolve",
     "ops.projection_failures.retry",
+    "org.model_calls",
+    "org.set_model_calls",
     "policy.check",
     "policy.decisions",
     "policy.delete",
@@ -595,6 +625,10 @@ OP_NAMES: tuple[str, ...] = (
     "profile.render",
     "profile.replace",
     "profile.set",
+    "profile.structured",
+    "profile_schema.clear",
+    "profile_schema.get",
+    "profile_schema.set",
     "run.begin",
     "run.complete",
     "run.get",
@@ -1375,6 +1409,54 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "collection.create": OpSpec(
+        "collection.create",
+        "CollectionCreateInput",
+        "CollectionCreateBody",
+        "CollectionCreateOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
+    "collection.delete": OpSpec(
+        "collection.delete",
+        "CollectionDeleteInput",
+        "CollectionDeleteBody",
+        "CollectionDeleteOutput",
+        True,
+        "admin",
+        "experimental",
+        2000,
+        True,
+        False,
+    ),
+    "collection.list": OpSpec(
+        "collection.list",
+        "CollectionListInput",
+        "CollectionListBody",
+        "CollectionListOutput",
+        True,
+        "viewer",
+        "experimental",
+        80,
+        False,
+        True,
+    ),
+    "collection.move": OpSpec(
+        "collection.move",
+        "CollectionMoveInput",
+        "CollectionMoveBody",
+        "CollectionMoveOutput",
+        True,
+        "admin",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
     "conflicts.allowlist_list": OpSpec(
         "conflicts.allowlist_list",
         "ConflictsAllowlistListInput",
@@ -1555,6 +1637,42 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "conversation.list_saved_messages": OpSpec(
+        "conversation.list_saved_messages",
+        "ConversationListSavedMessagesInput",
+        "ConversationListSavedMessagesBody",
+        "ConversationListSavedMessagesOutput",
+        True,
+        "viewer",
+        "experimental",
+        150,
+        False,
+        True,
+    ),
+    "conversation.save_message": OpSpec(
+        "conversation.save_message",
+        "ConversationSaveMessageInput",
+        "ConversationSaveMessageBody",
+        "ConversationSaveMessageOutput",
+        True,
+        "writer",
+        "experimental",
+        250,
+        False,
+        False,
+    ),
+    "conversation.saved_status": OpSpec(
+        "conversation.saved_status",
+        "ConversationSavedStatusInput",
+        "ConversationSavedStatusBody",
+        "ConversationSavedStatusOutput",
+        True,
+        "viewer",
+        "experimental",
+        100,
+        False,
+        True,
+    ),
     "conversation.search": OpSpec(
         "conversation.search",
         "ConversationSearchInput",
@@ -1564,6 +1682,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         120,
+        False,
+        True,
+    ),
+    "conversation.search_saved_messages": OpSpec(
+        "conversation.search_saved_messages",
+        "ConversationSearchSavedMessagesInput",
+        "ConversationSearchSavedMessagesBody",
+        "ConversationSearchSavedMessagesOutput",
+        True,
+        "viewer",
+        "experimental",
+        200,
         False,
         True,
     ),
@@ -1590,6 +1720,18 @@ OPS: dict[str, OpSpec] = {
         120,
         False,
         True,
+    ),
+    "conversation.unsave_message": OpSpec(
+        "conversation.unsave_message",
+        "ConversationUnsaveMessageInput",
+        "ConversationUnsaveMessageBody",
+        "ConversationUnsaveMessageOutput",
+        True,
+        "writer",
+        "experimental",
+        250,
+        False,
+        False,
     ),
     "conversation.update": OpSpec(
         "conversation.update",
@@ -2359,6 +2501,18 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "memory.delete_version": OpSpec(
+        "memory.delete_version",
+        "MemoryDeleteVersionInput",
+        "MemoryDeleteVersionBody",
+        "MemoryDeleteVersionOutput",
+        True,
+        "writer",
+        "experimental",
+        80,
+        True,
+        False,
+    ),
     "memory.demonstrate": OpSpec(
         "memory.demonstrate",
         "MemoryDemonstrateInput",
@@ -2526,6 +2680,18 @@ OPS: dict[str, OpSpec] = {
         30000,
         True,
         False,
+    ),
+    "memory.keys": OpSpec(
+        "memory.keys",
+        "MemoryKeysInput",
+        "MemoryKeysBody",
+        "MemoryKeysOutput",
+        True,
+        "viewer",
+        "experimental",
+        2000,
+        False,
+        True,
     ),
     "memory.lineage": OpSpec(
         "memory.lineage",
@@ -3415,6 +3581,30 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "org.model_calls": OpSpec(
+        "org.model_calls",
+        "OrgModelCallsInput",
+        "OrgModelCallsBody",
+        "OrgModelCallsOutput",
+        True,
+        "org_admin",
+        "experimental",
+        50,
+        False,
+        False,
+    ),
+    "org.set_model_calls": OpSpec(
+        "org.set_model_calls",
+        "OrgSetModelCallsInput",
+        "OrgSetModelCallsBody",
+        "OrgModelCallsOutput",
+        True,
+        "org_admin",
+        "experimental",
+        100,
+        True,
+        False,
+    ),
     "policy.check": OpSpec(
         "policy.check",
         "PolicyCheckInput",
@@ -3629,6 +3819,54 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         30,
         False,
+        False,
+    ),
+    "profile.structured": OpSpec(
+        "profile.structured",
+        "ProfileStructuredInput",
+        "ProfileStructuredBody",
+        "ProfileStructuredOutput",
+        True,
+        "viewer",
+        "experimental",
+        60,
+        False,
+        True,
+    ),
+    "profile_schema.clear": OpSpec(
+        "profile_schema.clear",
+        "ProfileSchemaInput",
+        "ProfileSchemaBody",
+        "ProfileSchemaOutput",
+        True,
+        "admin",
+        "experimental",
+        100,
+        True,
+        False,
+    ),
+    "profile_schema.get": OpSpec(
+        "profile_schema.get",
+        "ProfileSchemaInput",
+        "ProfileSchemaBody",
+        "ProfileSchemaOutput",
+        True,
+        "viewer",
+        "experimental",
+        50,
+        False,
+        True,
+    ),
+    "profile_schema.set": OpSpec(
+        "profile_schema.set",
+        "ProfileSchemaSetInput",
+        "ProfileSchemaSetBody",
+        "ProfileSchemaOutput",
+        True,
+        "admin",
+        "experimental",
+        100,
+        True,
         False,
     ),
     "run.begin": OpSpec(
@@ -7041,6 +7279,101 @@ class CodeVerifyCitationsOutput(TypedDict, total=False):
     trace_run_id: NotRequired[str]
 
 
+class CollectionCreateInput(TypedDict, total=False):
+    "Create a collection: a namespace read and written only through grants."
+
+    org: Required[str]
+    namespace: Required[str]
+    parent: NotRequired[str]
+    description: NotRequired[str]
+
+
+class CollectionCreateBody(TypedDict, total=False):
+    "Create a collection: a namespace read and written only through grants."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    parent: NotRequired[str]
+    description: NotRequired[str]
+
+
+class CollectionCreateOutput(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    created: Required[bool]
+
+
+class CollectionDeleteInput(TypedDict, total=False):
+    "Delete a collection with what it holds: a purging erasure of the"
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class CollectionDeleteBody(TypedDict, total=False):
+    "Delete a collection with what it holds: a purging erasure of the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class CollectionDeleteOutput(TypedDict, total=False):
+    namespace: Required[str]
+    deleted: Required[bool]
+    erasure_id: NotRequired[str]
+    erasure_status: NotRequired[str]
+
+
+class CollectionListInput(TypedDict, total=False):
+    "List the collections the caller can read, by name."
+
+    org: Required[str]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class CollectionListBody(TypedDict, total=False):
+    "List the collections the caller can read, by name."
+
+    org: NotRequired[str]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class CollectionListOutput(TypedDict, total=False):
+    collections: Required[list["CollectionEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class CollectionEntry(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    personal: Required[bool]
+    role: Required[str]
+
+
+class CollectionMoveInput(TypedDict, total=False):
+    "Put a collection under another one, or detach it."
+
+    org: Required[str]
+    namespace: Required[str]
+    parent: NotRequired[str]
+
+
+class CollectionMoveBody(TypedDict, total=False):
+    "Put a collection under another one, or detach it."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    parent: NotRequired[str]
+
+
+class CollectionMoveOutput(TypedDict, total=False):
+    namespace: Required[str]
+    parent: Required[str]
+    moved: Required[bool]
+
+
 class ConflictsAllowlistListInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
@@ -7473,7 +7806,7 @@ class ConversationAppendOutput(TypedDict, total=False):
     msg_id: Required[str]
     ts: Required[str]  # date-time as ISO-8601 text
     stored: NotRequired[bool]
-    reason: NotRequired[Literal["", "duplicate", "logging_disabled"]]
+    reason: NotRequired[Literal["", "duplicate", "logging_disabled", "deleted"]]
 
 
 class ConversationCompactInput(TypedDict, total=False):
@@ -7644,6 +7977,107 @@ class ConversationListOutput(TypedDict, total=False):
     next_cursor: NotRequired[Optional[str]]
 
 
+class ConversationListSavedMessagesInput(TypedDict, total=False):
+    "Page through the messages a user saved, newest first, with no query: the"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    conversation_id: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+    fields: NotRequired[Optional[list[str]]]
+
+
+class ConversationListSavedMessagesBody(TypedDict, total=False):
+    "Page through the messages a user saved, newest first, with no query: the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    conversation_id: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+    fields: NotRequired[Optional[list[str]]]
+
+
+class ConversationListSavedMessagesOutput(TypedDict, total=False):
+    rows: Required[list["SavedMessageHit"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class SavedMessageHit(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content_excerpt: Required[str]
+    ts: Required[str]  # date-time as ISO-8601 text
+
+
+class ConversationSaveMessageInput(TypedDict, total=False):
+    "Save one chat message a user picked for search, whether or not the"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content: Required[str]
+    user_id: Required[str]
+
+
+class ConversationSaveMessageBody(TypedDict, total=False):
+    "Save one chat message a user picked for search, whether or not the"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    role: Required[Literal["user", "assistant"]]
+    content: Required[str]
+    user_id: NotRequired[str]
+
+
+class ConversationSaveMessageOutput(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    indexed: Required[bool]
+    reason: NotRequired[
+        Literal["", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"]
+    ]
+    ts: Required[str]  # date-time as ISO-8601 text
+
+
+class ConversationSavedStatusInput(TypedDict, total=False):
+    "Which of a conversation's messages a user has saved, in one call: a chat"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    conversation_id: Required[str]
+    message_ids: Required[list[str]]
+
+
+class ConversationSavedStatusBody(TypedDict, total=False):
+    "Which of a conversation's messages a user has saved, in one call: a chat"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    conversation_id: Required[str]
+    message_ids: Required[list[str]]
+
+
+class ConversationSavedStatusOutput(TypedDict, total=False):
+    saved: Required[list[str]]
+
+
 class ConversationSearchInput(TypedDict, total=False):
     "Rank conversation messages by embedding similarity to `query`."
 
@@ -7654,6 +8088,7 @@ class ConversationSearchInput(TypedDict, total=False):
     thread_id: NotRequired[Optional[str]]
     run_id: NotRequired[Optional[str]]
     role: NotRequired[Optional[Literal["user", "assistant", "system", "tool"]]]
+    user_id: NotRequired[Optional[str]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
 
@@ -7668,6 +8103,7 @@ class ConversationSearchBody(TypedDict, total=False):
     thread_id: NotRequired[Optional[str]]
     run_id: NotRequired[Optional[str]]
     role: NotRequired[Optional[Literal["user", "assistant", "system", "tool"]]]
+    user_id: NotRequired[Optional[str]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
 
@@ -7684,6 +8120,40 @@ class ConversationHit(TypedDict, total=False):
     content_excerpt: Required[str]
     ts: Required[str]  # date-time as ISO-8601 text
     namespace: NotRequired[str]
+
+
+class ConversationSearchSavedMessagesInput(TypedDict, total=False):
+    "Hybrid search over only the messages one user saved with"
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: Required[str]
+    query: Required[str]
+    conversation_id: NotRequired[Optional[str]]
+    role: NotRequired[Optional[Literal["user", "assistant"]]]
+    top_k: NotRequired[int]
+    search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
+    lexical_weight: NotRequired[float]
+
+
+class ConversationSearchSavedMessagesBody(TypedDict, total=False):
+    "Hybrid search over only the messages one user saved with"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    query: Required[str]
+    conversation_id: NotRequired[Optional[str]]
+    role: NotRequired[Optional[Literal["user", "assistant"]]]
+    top_k: NotRequired[int]
+    search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
+    lexical_weight: NotRequired[float]
+
+
+class ConversationSearchSavedMessagesOutput(TypedDict, total=False):
+    hits: Required[list["SavedMessageHit"]]
 
 
 class ConversationSetLoggingInput(TypedDict, total=False):
@@ -7740,6 +8210,36 @@ class ConversationThreadSummary(TypedDict, total=False):
     last_role: Required[str]
     last_content_excerpt: Required[str]
     title: NotRequired[str]
+
+
+class ConversationUnsaveMessageInput(TypedDict, total=False):
+    "Withdraw one message from a user's saved-message search."
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    user_id: Required[str]
+
+
+class ConversationUnsaveMessageBody(TypedDict, total=False):
+    "Withdraw one message from a user's saved-message search."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    conversation_id: Required[str]
+    message_id: Required[str]
+    user_id: NotRequired[str]
+
+
+class ConversationUnsaveMessageOutput(TypedDict, total=False):
+    conversation_id: Required[str]
+    message_id: Required[str]
+    found: Required[bool]
+    removed: NotRequired[bool]
+    ts: Required[str]  # date-time as ISO-8601 text
 
 
 class ConversationUpdateInput(TypedDict, total=False):
@@ -8837,6 +9337,9 @@ class KnowledgeAddInput(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeAddBody(TypedDict, total=False):
@@ -8851,6 +9354,9 @@ class KnowledgeAddBody(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeAddOutput(TypedDict, total=False):
@@ -8868,6 +9374,9 @@ class KnowledgeBulkAddInput(TypedDict, total=False):
     org: Required[str]
     namespace: Required[str]
     entries: Required[list["KnowledgeBulkEntry"]]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeBulkEntry(TypedDict, total=False):
@@ -8885,6 +9394,9 @@ class KnowledgeBulkAddBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[str]
     entries: Required[list["KnowledgeBulkEntry"]]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeBulkAddOutput(TypedDict, total=False):
@@ -9159,11 +9671,14 @@ class KnowledgeSearchInput(TypedDict, total=False):
     since_seconds: NotRequired[Optional[int]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
+    namespaces: NotRequired[list[str]]
     search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
     lexical_weight: NotRequired[float]
     narrow_spans: NotRequired[bool]
     collapse_sections: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
+    session_ids: NotRequired[list[str]]
+    source_classes: NotRequired[list[str]]
 
 
 class KnowledgeSearchBody(TypedDict, total=False):
@@ -9174,11 +9689,14 @@ class KnowledgeSearchBody(TypedDict, total=False):
     since_seconds: NotRequired[Optional[int]]
     top_k: NotRequired[int]
     namespace_scope: NotRequired[Literal["this", "all_mine"]]
+    namespaces: NotRequired[list[str]]
     search_mode: NotRequired[Literal["hybrid", "semantic", "lexical"]]
     lexical_weight: NotRequired[float]
     narrow_spans: NotRequired[bool]
     collapse_sections: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
+    session_ids: NotRequired[list[str]]
+    source_classes: NotRequired[list[str]]
 
 
 class KnowledgeSearchOutput(TypedDict, total=False):
@@ -9195,6 +9713,7 @@ class SearchHit(TypedDict, total=False):
     distance: Required[float]
     similarity: Required[float]
     namespace: NotRequired[str]
+    ingested_at: NotRequired[Optional[str]]
     section_path: NotRequired[list[str]]
     section: NotRequired[str]
     lexical_score: NotRequired[float]
@@ -9205,6 +9724,9 @@ class SearchHit(TypedDict, total=False):
     span_end: NotRequired[int]
     span_similarity: NotRequired[float]
     siblings_folded: NotRequired[int]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[str]
 
 
 class KnowledgeSynthesizeInput(TypedDict, total=False):
@@ -9290,6 +9812,9 @@ class KnowledgeUpsertInput(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeUpsertBody(TypedDict, total=False):
@@ -9306,6 +9831,9 @@ class KnowledgeUpsertBody(TypedDict, total=False):
     original_bytes_b64: NotRequired[Optional[str]]
     original_filename: NotRequired[str]
     blob_content_type: NotRequired[str]
+    agent: NotRequired[str]
+    session_id: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
 
 
 class KnowledgeUpsertOutput(TypedDict, total=False):
@@ -10022,6 +10550,7 @@ class MemoryGetOutput(TypedDict, total=False):
     memory_type: NotRequired[Optional[str]]
     confidence: NotRequired[Optional[float]]
     version: NotRequired[Optional[int]]
+    version_text: NotRequired[Optional[str]]
     created_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
     expires_at: NotRequired[Optional[str]]
@@ -10446,6 +10975,37 @@ class MemoryDeleteOutput(TypedDict, total=False):
     tombstoned: Required[bool]
     version: Required[int]
     found: NotRequired[bool]
+    dependents_tombstoned: NotRequired[int]
+    dependents_downgraded: NotRequired[int]
+
+
+class MemoryDeleteVersionInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    version: Required[Union[int, str]]
+
+
+class MemoryDeleteVersionBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    memory_key: Required[str]
+    version: Required[Union[int, str]]
+
+
+class MemoryDeleteVersionOutput(TypedDict, total=False):
+    tombstoned: Required[bool]
+    version: NotRequired[int]
+    found: NotRequired[bool]
+    reason: NotRequired[str]
     dependents_tombstoned: NotRequired[int]
     dependents_downgraded: NotRequired[int]
 
@@ -11081,6 +11641,30 @@ class MemoryImportEvidenceOutput(TypedDict, total=False):
     skipped: NotRequired[int]
 
 
+class MemoryKeysInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class MemoryKeysBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class MemoryKeysOutput(TypedDict, total=False):
+    keys: Required[list["MemoryKeyRef"]]
+    truncated: NotRequired[bool]
+
+
+class MemoryKeyRef(TypedDict, total=False):
+    agent: Required[str]
+    user_id: Required[str]
+    session_id: Required[str]
+    memory_key: Required[str]
+
+
 class MemoryLineageInput(TypedDict, total=False):
     "Assemble the provenance chain for a SHARED memory."
 
@@ -11274,6 +11858,7 @@ class MemoryListEntry(TypedDict, total=False):
     memory_type: Required[str]
     confidence: Required[float]
     version: Required[int]
+    version_text: NotRequired[str]
     source_trace: NotRequired[str]
     created_at: Required[str]  # date-time as ISO-8601 text
     updated_at: NotRequired[Optional[str]]
@@ -12468,7 +13053,7 @@ class MemorySearchOutput(TypedDict, total=False):
 
 
 class MemorySearchTraceInput(TypedDict, total=False):
-    "Same shape as memory.search; returns the per-candidate scoring"
+    "Same shape as memory.search; returns the vector leg's per-candidate scoring"
 
     org: Required[str]
     namespace: Required[str]
@@ -12556,7 +13141,7 @@ class MemorySearchTraceInput(TypedDict, total=False):
 
 
 class MemorySearchTraceBody(TypedDict, total=False):
-    "Same shape as memory.search; returns the per-candidate scoring"
+    "Same shape as memory.search; returns the vector leg's per-candidate scoring"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -14446,6 +15031,38 @@ class ProjectionFailureRetryRow(TypedDict, total=False):
     error: NotRequired[str]
 
 
+class OrgModelCallsInput(TypedDict, total=False):
+    org: Required[str]
+
+
+class OrgModelCallsBody(TypedDict, total=False):
+    org: NotRequired[str]
+
+
+class OrgModelCallsOutput(TypedDict, total=False):
+    org: Required[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+    locked: NotRequired[bool]
+    locked_by: NotRequired[str]
+
+
+class OrgSetModelCallsInput(TypedDict, total=False):
+    org: Required[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    locked: NotRequired[Optional[bool]]
+
+
+class OrgSetModelCallsBody(TypedDict, total=False):
+    org: NotRequired[str]
+    enabled: Required[bool]
+    reason: NotRequired[str]
+    locked: NotRequired[Optional[bool]]
+
+
 class PolicyCheckInput(TypedDict, total=False):
     "A hypothetical call: what would the rules decide right now?"
 
@@ -15114,6 +15731,66 @@ class ProfileSetBody(TypedDict, total=False):
     char_limit: NotRequired[int]
     source_trace: NotRequired[str]
     if_match_sha256: NotRequired[str]
+
+
+class ProfileStructuredInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    read_scope: NotRequired[Literal["namespace", "own_user"]]
+
+
+class ProfileStructuredBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    read_scope: NotRequired[Literal["namespace", "own_user"]]
+
+
+class ProfileStructuredOutput(TypedDict, total=False):
+    status: Required[Literal["ready", "stale", "pending", "no_schema"]]
+    profile: NotRequired[dict[str, Any]]
+    built_at: NotRequired[Optional[str]]
+    memory_id: NotRequired[str]
+    version: NotRequired[int]
+    version_text: NotRequired[str]
+    schema_sha256: NotRequired[str]
+
+
+class ProfileSchemaInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+
+
+class ProfileSchemaBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class ProfileSchemaOutput(TypedDict, total=False):
+    found: Required[bool]
+    json_schema: NotRequired[dict[str, Any]]
+    schema_sha256: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+
+
+class ProfileSchemaSetInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    json_schema: Required[dict[str, Any]]
+
+
+class ProfileSchemaSetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    json_schema: Required[dict[str, Any]]
 
 
 class RunBeginInput(TypedDict, total=False):

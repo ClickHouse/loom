@@ -89,7 +89,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _sections(**_kw: Any) -> dict[str, Any]:
         return {k: dict(v) for k, v in _PAYLOAD.items()}
 
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=(NS,), cap=32)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:

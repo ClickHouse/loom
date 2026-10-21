@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from server.memory.domain.search_types import RANK_SCORE_PRE_RERANK
+
 # Identifier-shaped tokens: a UUID, a hash-like hex run, a
 # token that mixes letters and digits (a build id, a handle with digits, a
 # key), and the PR / issue / @handle forms the calibrator already extracts.
@@ -276,11 +278,11 @@ def estimate_memory_search_work(
     namespace_count: int,
     top_k: int,
     pool_top_k: int,
-    query_enrichment_used: bool,
     sub_query_count: int = 0,
     entity_count: int = 0,
     graph_triples_enabled: bool = False,
     external_rerank_enabled: bool = False,
+    llm_rerank: bool = False,
 ) -> dict[str, Any]:
     """Estimate retrieval work before executing the expensive legs.
 
@@ -301,13 +303,11 @@ def estimate_memory_search_work(
         vector_queries += entities  # entity_vectors ANN lookups
 
     llm_calls = 0
-    if query_enrichment_used:
-        llm_calls += 1
     if plan.hyde:
         llm_calls += 1
     if graph_triples_enabled:
         llm_calls += 1
-    if external_rerank_enabled:
+    if llm_rerank:  # the builtin:openai reranker; a rerank service is no LLM call
         llm_calls += 1
 
     candidate_pool = ns * int(pool_top_k)
@@ -374,7 +374,9 @@ def bound_component_lift(
         comps = h.score_components
         boost = float(comps.get(component, 0.0) or 0.0)
         h.rank_score = target
-        comps[lift_key] = target - (own - boost)
+        # A reranked row holds another rank's score; its own is kept beside it.
+        unboosted = float(comps.get(RANK_SCORE_PRE_RERANK, own)) - boost
+        comps[lift_key] = target - unboosted
         comps["rank_score"] = target
         moved += 1
     return moved

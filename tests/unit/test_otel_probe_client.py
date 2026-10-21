@@ -176,3 +176,32 @@ def test_each_probe_query_is_tagged_with_its_probe(monkeypatch: pytest.MonkeyPat
     otel_probe_client._probe_client().query("SELECT 1", settings={"log_comment": "mine", "x": 1})
     assert got[0]["log_comment"] == "otel.probe.retention"
     assert got[1] == {"log_comment": "mine", "x": 1}  # a caller's own tag wins
+
+
+def test_the_database_parameters_are_bound_only_for_a_statement_that_names_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dict with no `{name:Type}` placeholder makes the driver format the
+    statement client side with `%`, so a statement without one gets none."""
+    from server.core.ch_names import database, telemetry_database
+
+    sent: list[dict[str, Any] | None] = []
+
+    class _Params(_Client):
+        def query(self, *a: Any, **k: Any) -> _Row:
+            sent.append(k.get("parameters"))
+            return super().query(*a, **k)
+
+    monkeypatch.setattr(otel_exporters, "_make_ch_client_for_otel", lambda: _Params())
+    client = otel_probe_client._probe_client()
+    client.query("SELECT 1")
+    client.query("SELECT {x:UInt8}", parameters={"x": 1})
+    client.query("SELECT {loom_db:String}")
+    client.query("SELECT {telemetry_db:String}", parameters={"loom_db": "mine"})
+    names = {"loom_db": database(), "telemetry_db": telemetry_database()}
+    assert sent == [
+        None,
+        {"x": 1},
+        names,
+        {**names, "loom_db": "mine"},  # a caller's own value wins
+    ]

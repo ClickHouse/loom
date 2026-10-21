@@ -30,15 +30,10 @@ def run(setup: list[str], sql: str, params: dict[str, Any] | None = None) -> lis
     script = ";\n".join(["CREATE DATABASE loom", *setup, sql])
     # The server's own formatter: the server binds each value through it.
     binds = [f"--param_{k}={format_bind_value(v)}" for k, v in (params or {}).items()]
+    # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
     out = subprocess.run(
-        [
-            CLICKHOUSE or "clickhouse",
-            "local",
-            "--multiquery",
-            *binds,
-            "-q",
-            script + " FORMAT JSONEachRow",
-        ],
+        [CLICKHOUSE or "clickhouse", "local", "--multiquery", *binds],
+        input=script + " FORMAT JSONEachRow",
         capture_output=True,
         text=True,
     )

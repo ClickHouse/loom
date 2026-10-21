@@ -9,6 +9,7 @@ import logging
 from dataclasses import replace
 from typing import Any
 
+from server.llm import customer
 from server.llm.client import LLMResult, get_llm_client
 from server.llm.json_text import strip_code_fence
 from server.memory.app.extract.models import ExtractedFact
@@ -79,6 +80,8 @@ async def _backfill_relations(
                 max_tokens=max_tokens,
                 response_format={"type": "json_object"},
             )
+    except customer.HOLDS:
+        raise  # a held call is not a provider failure: the extract waits
     except Exception as e:  # noqa: BLE001 — the first pass's facts stand
         log.warning("relation backfill call failed (non-fatal): %s", e)
         return facts, None, 0

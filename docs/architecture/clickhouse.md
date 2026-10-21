@@ -57,7 +57,8 @@ it is missing.
 
 **State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
 addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`). The token signing
-keys (`signing_keys`), admin runtime overrides (`runtime_overrides`), sign-in attempt
+keys (`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
+settings (`runtime_overrides`), sign-in attempt
 counts (`auth_attempts`), graph-walk marks (`graph_projections`: the projections in flight
 and each namespace's last graph write), each namespace's last write (`namespace_write_keys`) and the supervisor lease are in ClickHouse too, so a new
 Loom pointed at this database gets every feature back. On the filesystem: the code plane's git mirrors under `var/code_repos`, a cache of
@@ -100,7 +101,9 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   instants.
 - **Retries never duplicate.** Every insert carries an `insert_deduplication_token` from
   the batch and a per-batch nonce (`insert_dedup_token`), so a retry after a dropped socket
-  lands the batch once.
+  lands the batch once. A caller that passes its own token names the row's identity
+  instead, so two writers of one row land it once: `conversation.save_message` writes a
+  new transcript row this way.
 
 ## Engines and why
 
@@ -294,8 +297,13 @@ fan-out would pay each round trip and fail when any failed. The response path ke
 what the caller's next read needs: the `memory` row, its `memory_embeddings` row, the
 same-key supersession and the audit receipt. Projections are fail-open
 (`memory/app/after_write.py`), and a read of the same namespace in the same process waits
-for them (`after_write.settle`). A derived table lags its source by seconds; the BM25 legs
-merge that lag themselves.
+for the graph projection (`after_write.settle`). A derived table lags its source by
+seconds; the BM25 legs merge that lag themselves.
+
+An embedding row may land under the refresh watermark when its version is more than 5 s
+old once it is in (half the views' 10 s lag). A long embed or judge, or slow inserts, do
+that. Its own write folds such a row into the BM25 tables after the response
+(`after_write.index_late_rows`), so a slow write does not also wait on two more inserts.
 
 ## The memory_versions mirror
 

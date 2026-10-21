@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from server.code.app.index import bootstrap, mirror_locks
+from server.settings import settings
 
 
 class _Cfg:
@@ -79,7 +80,10 @@ async def test_a_failed_clone_is_not_retried_within_the_retry_interval(
     assert await bootstrap.mirror_ready(cfg) is False and len(calls) == 1
 
     task, started = bootstrap._MIRROR_JOBS["clone", cfg.git_dir]
-    bootstrap._MIRROR_JOBS["clone", cfg.git_dir] = (task, started - bootstrap._MIRROR_RETRY_S)
+    bootstrap._MIRROR_JOBS["clone", cfg.git_dir] = (
+        task,
+        started - settings.code_bootstrap_mirror_retry_s,
+    )
     assert await bootstrap.mirror_ready(cfg) is False and len(calls) == 2
 
 
@@ -442,7 +446,10 @@ async def test_a_head_no_fetch_brings_backs_off_instead_of_fetching_every_read(
     await asyncio.sleep(0.01)
     # the job interval passes: the old code fetched again on every read after it
     task, started = bootstrap._MIRROR_JOBS["fetch", cfg.git_dir]
-    bootstrap._MIRROR_JOBS["fetch", cfg.git_dir] = (task, started - bootstrap._MIRROR_AGAIN_S)
+    bootstrap._MIRROR_JOBS["fetch", cfg.git_dir] = (
+        task,
+        started - settings.code_bootstrap_mirror_refresh_s,
+    )
     for _ in range(3):
         assert await bootstrap.mirror_ready(cfg, want="gone") is False
     assert fetched == [cfg.git_dir]

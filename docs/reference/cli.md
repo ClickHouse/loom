@@ -244,7 +244,7 @@ python scripts/codegen/docs_reference.py
 | `loom code export-matrix` | Maintenance matrix from merged-PR co-change: 'when this file changes, these usually change too', with evidence, as markdown for an instructions file (AGENTS.md / copilot-instructions.md). | `--org`, `--namespace`, `--prs`, `--min-together`, `--min-conf`, `--max-partners`, `--max-rows`, `--out`, `--json` |
 | `loom code lint-instructions` | Agent-instruction files (CLAUDE.md, AGENTS.md, copilot-instructions, .claude/.md, skills) whose path or symbol references no longer resolve at the clone's head. | `--org`, `--namespace`, `--file`, `--glob`, `--symbols`, `--all`, `--json`, `--fail-on-stale` |
 | `loom export-okf` | Render a namespace as an OKF v0.2 bundle (Markdown + frontmatter) — the git-reviewable projection of Loom memory. | `--server-url`, `--token`, `--org`, `--namespace`, `--out`, `--title`, `--include-tombstoned`, `--limit`, `--dry-run`, `--no-evidence`, `--no-links`, `--include-high` |
-| `loom import-okf` | Write the concepts of an OKF v0.2 bundle into a namespace via memory.set. | `<path>`, `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--session-id`, `--keep-sessions`, `--verify`, `--dry-run`, `--no-evidence`, `--no-lint`, `--force-import`, `--no-links` |
+| `loom import-okf` | Write the concepts of an OKF v0.2 bundle into a namespace via memory.set. | `<path>`, `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--session-id`, `--keep-sessions`, `--verify`, `--dry-run`, `--no-evidence`, `--no-lint`, `--force-import`, `--no-links`, `--prune` |
 | `loom okf-lint` | Lint an OKF bundle directory offline — the compile gate a mirror repository's CI runs. | `<path>`, `--json`, `--strict` |
 | `loom up` | Boot the local stack (Loom + ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for /v1/health, then prints the… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
@@ -253,6 +253,11 @@ python scripts/codegen/docs_reference.py
 | `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
 | `loom deployment` | The configuration every replica checks itself against. |  |
 | `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes`, `--check` |
+| `loom settings` | Every setting's value in force, and overrides of the live ones. |  |
+| `loom settings list` | Each setting: value, where it came from, whether live. | `--prefix`, `--changed`, `--json` |
+| `loom settings set` | Override a live setting for the whole deployment; outlives a restart. | `<name>`, `<value>`, `--expect` |
+| `loom settings reset` | Remove the override: back to the env or the default. | `<name>`, `--expect` |
+| `loom settings history` | Recorded changes, newest first: who, the value before and after. | `<name>`, `--limit`, `--json` |
 | `loom secrets` | Credentials and signing keys stored sealed in ClickHouse. |  |
 | `loom secrets reseal` | Seal again under LOOM_JWT_SECRET what only LOOM_JWT_SECRET_PREVIOUS opens. | `--dry-run`, `--check` |
 | `loom signing-key` | The token signing keys beside LOOM_JWT_SECRET, kept in ClickHouse. |  |
@@ -262,6 +267,7 @@ python scripts/codegen/docs_reference.py
 | `loom signing-key list` | List the keys. |  |
 | `loom provider-lock` | The provider configuration lock. |  |
 | `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
+| `loom export-analytics` | Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. | `--bucket`, `--prefix`, `--day`, `--role-arn`, `--region`, `--expected-bucket-owner` |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
 | `loom reextract` | Replay a namespace's raw evidence (memory.set_from_messages turns) through a running server's write path into ANOTHER namespace — the current extractor over the stored transcripts; the source is… | `--org`, `--namespace`, `--into`, `--base-url`, `--token`, `--dates`, `--concurrency`, `--limit-sessions`, `--dry-run` |
 | `loom deploy-delta` | What a colour swap changed: the deployment's ledger rows (volume, errors, p50/p95, upstream spend per operation) and its ClickHouse statement shapes (runs, bytes, seconds) for a window on each side… | `--swap-at`, `--window-min`, `--ch-os-user`, `--cluster`, `--top`, `--json` |
@@ -284,7 +290,7 @@ python scripts/codegen/docs_reference.py
 | `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--skip`, `--keep-tokens`, `--apply`, `--dry-run` |
 | `loom sso link` | Let one person's SSO sign-ins reach their password account registered under another address (a personal one, a +tag). | `--email`, `--org`, `--namespace`, `--apply`, `--dry-run` |
 | `loom sso unlink` | Undo the links of one email. | `--email`, `--apply`, `--dry-run` |
-| `loom sso password-link` | Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
+| `loom sso password-link` | Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off. | `--email`, `--org` |
 | `loom bot` | Bots and CI jobs that sign in with a key or their CI's identity. |  |
 | `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--jwks-uri`, `--max-token-age`, `--max-agents`, `--agent-claim`, `--replace` |
 | `loom bot list` | Every bot, active or disabled. |  |

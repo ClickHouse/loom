@@ -7,6 +7,7 @@ import asyncio
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,7 +19,9 @@ from fastapi.testclient import TestClient
 from server.auth import device, jit, login, oauth, oidc, revocation, scim, sso_links
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password
+from server.identity.app import password_link
 from tests.unit.oauth_store_fake import MemoryOAuthStore, oauth_app
+from tests.unit.security_headers import assert_security_headers
 
 pytestmark = pytest.mark.usefixtures("auth_attempts")
 
@@ -276,6 +279,19 @@ def test_signing_in_shows_a_confirm_page_that_cannot_be_framed() -> None:
     assert _error(_poll(c, grant["device_code"])) == "authorization_pending"
 
 
+def test_the_server_headers_leave_the_sign_in_page_its_own_policies() -> None:
+    from server.main import attach_browser_middleware
+
+    app = oauth_app()
+    attach_browser_middleware(app)
+    page = TestClient(app, base_url="http://localhost").get("/oauth/device")
+    assert page.status_code == 200
+    # CSP is the only page header whose value differs from the middleware default.
+    csp = oauth._PAGE_HEADERS["Content-Security-Policy"]
+    assert page.headers.get_list("Content-Security-Policy") == [csp]
+    assert_security_headers(page)
+
+
 def test_approval_needs_the_ticket_from_the_signed_in_page() -> None:
     c = _client()
     grant = _start(c)
@@ -474,6 +490,24 @@ def test_revoking_another_token_revokes_its_jti_until_it_expires(_world) -> None
     _client().post("/oauth/revoke", data={"token": access, "client_id": "loom-cli"})
     assert _world["revoked"] == ["j1"]
     assert timedelta(0) < _world["expiries"][0] - datetime.now(UTC) <= timedelta(seconds=61)
+
+
+def test_an_end_user_token_revokes_nothing_here(_world, monkeypatch) -> None:
+    """Its `jti` is its issuer's to pick, and the revocation list spans the
+    deployment: revoking it here could name another org's token or subject."""
+    from server.settings import settings
+    from tests import end_user_issuer
+
+    private, public = end_user_issuer.new_key()
+    monkeypatch.setattr(
+        settings, "jwt_end_user_issuers_json", end_user_issuer.issuers_setting(public)
+    )
+    token = end_user_issuer.mint("acme", "u-1", private_pem=private, jti="bob@globex.io")
+    from server.auth.jwt import verify_token
+
+    assert verify_token(token).subject == "user:u-1", "a token this deployment accepts"
+    r = _client().post("/oauth/revoke", data={"token": token, "client_id": "loom-cli"})
+    assert r.status_code == 200 and _world["revoked"] == []
 
 
 def test_revoking_garbage_is_a_quiet_200(_world) -> None:
@@ -1709,3 +1743,99 @@ def test_logging_out_an_ended_session_revokes_the_idp_s_current_token(
         c.post("/oauth/revoke", data={"token": old, "client_id": device.DEVICE_CLIENT_ID})
     c.post("/oauth/revoke", data={"token": new, "client_id": device.DEVICE_CLIENT_ID})
     assert "idp-r1+" in revoked
+
+
+# What a browser sends when the user submits a form on this server's own page.
+_FORM_SUBMIT = {
+    "origin": "http://testserver",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-dest": "document",
+}
+
+
+def _sign_in_routes_behind_the_gate(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """The sign-in routes behind the cross-site gate, with auth on."""
+    from server.main import attach_browser_middleware
+
+    monkeypatch.setattr(oauth.settings, "auth_required", True)
+    monkeypatch.setattr(oauth.settings, "identity_provider", "gateway")
+    monkeypatch.setattr(oauth.settings, "public_base_url", "")
+    monkeypatch.setattr(oauth.settings, "cors_origins", "")
+    app = oauth_app()
+    attach_browser_middleware(app)
+    return TestClient(app)
+
+
+def _authorize_params(c: TestClient) -> dict[str, str]:
+    reg = c.post("/oauth/register", json={"redirect_uris": ["http://127.0.0.1:9/cb"]}).json()
+    return {
+        "client_id": reg["client_id"],
+        "redirect_uri": "http://127.0.0.1:9/cb",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+    }
+
+
+# Each opens one server-rendered page that holds a sign-in form.
+def _device_code_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return c.get("/oauth/device", params={"user_code": _start(c)["user_code"]})
+
+
+def _device_approval_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return _sign_in(c, _start(c)["user_code"])
+
+
+def _connect_sign_in_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    return c.get("/oauth/authorize", params=_authorize_params(c))
+
+
+def _connect_approval_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    request.getfixturevalue("sso")
+    r = c.get("/oauth/authorize", params=_authorize_params(c), follow_redirects=False)
+    state = r.headers["location"].split("state=")[1]
+    return c.get("/oauth/callback", params={"code": "idp-code", "state": state})
+
+
+def _account_link_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    request.getfixturevalue("bobs_password_account")
+    return _sso_round_trip(c, _start(c)["user_code"])
+
+
+def _set_password_page(c: TestClient, request: pytest.FixtureRequest) -> httpx.Response:
+    async def held(code: str) -> dict[str, Any]:
+        return {"kind": "set_password"}
+
+    request.getfixturevalue("monkeypatch").setattr(password_link, "_held", held)
+    return c.get("/oauth/set-password", params={"code": "c"})
+
+
+@pytest.mark.parametrize(
+    ("open_page", "action"),
+    [
+        (_device_code_page, "/oauth/device"),
+        (_device_approval_page, "/oauth/device/approve"),
+        (_connect_sign_in_page, "/oauth/authorize"),
+        (_connect_approval_page, "/oauth/authorize/approve"),
+        (_account_link_page, "/oauth/link"),
+        (_set_password_page, "/oauth/set-password"),
+    ],
+)
+def test_a_sign_in_form_posts_with_its_pages_own_origin(
+    monkeypatch,
+    request,
+    open_page: Callable[[TestClient, pytest.FixtureRequest], httpx.Response],
+    action: str,
+) -> None:
+    # A browser serializes a POST's Origin as `null` when the page's policy is no-referrer,
+    # and the gate refuses that; under same-origin it sends the server's own.
+    c = _sign_in_routes_behind_the_gate(monkeypatch)
+    r = open_page(c, request)
+    assert r.status_code == 200, r.text
+    assert f'<form method="post" action="{action}">' in r.text
+    assert r.headers["referrer-policy"] == "same-origin"
+    own = c.post(action, data={}, headers=_FORM_SUBMIT)
+    assert own.status_code == 400, own.text  # the route itself answers: no fields
+    refused = c.post(action, data={}, headers={**_FORM_SUBMIT, "origin": "null"})
+    assert refused.status_code == 403
+    assert refused.json()["detail"]["code"] == "CROSS_SITE_REQUEST"

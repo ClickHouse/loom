@@ -39,7 +39,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         seen.append(kw)
         return {k: dict(v) for k, v in PAYLOAD.items()}
 
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=("n", "team"), cap=32)
 
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
@@ -157,7 +157,7 @@ def test_an_unresolvable_fan_out_searches_every_leg_as_this(
     from server.memory.api.models_loom_search import SearchInput
     from server.memory.app.loom_search.handler import handle_search
 
-    async def _no_fanout(org: str) -> Fanout:
+    async def _no_fanout(org: str, *_: object) -> Fanout:
         raise RuntimeError("grants unreadable")
 
     async def _resolve(org: str, namespace: str) -> str:
@@ -178,7 +178,7 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
 
     seen = _consent(monkeypatch, {"n": "all"})
 
-    async def _no_fanout(org: str) -> Fanout:
+    async def _no_fanout(org: str, *_: object) -> Fanout:
         raise RuntimeError("grants unreadable")
 
     async def _run(start: str) -> None:
@@ -191,7 +191,7 @@ def test_unresolvable_consent_or_fan_out_never_widens_capture(
     asyncio.run(_run("query"))
 
     # A fanned-out namespace whose consent lookup fails captures nothing.
-    async def _unknown(org: str) -> Fanout:
+    async def _unknown(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=("n", "unknown"), cap=32)
 
     monkeypatch.setattr("server.auth.fanout.resolve_fanout", _unknown)

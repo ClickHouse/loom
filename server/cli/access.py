@@ -111,7 +111,12 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     from server.auth import keyring
     from server.auth.authz import GRANT_ROLES
     from server.auth.jwt import mint_token, new_jti
+    from server.core.principals import RESERVED_SUBJECT, is_reserved_subject
 
+    if is_reserved_subject(args.subject):
+        # Before the keyring read: no such token can be minted, connected or not.
+        print(f"  ✗ {RESERVED_SUBJECT}: {args.subject!r}", file=sys.stderr)
+        return 2
     try:
         keyring.load_for_offline_mint(run=run_connected)
     except ValueError as e:  # another root: no server would accept the token
@@ -340,7 +345,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     and its `sub` against the one revoked column, so `--jti` retires an
     IdP-minted JWT or a `loom mint-token` token (each carries one; mint-token
     prints it) and `--subject` retires every token minted for that
-    principal. Other replicas see the row on their next refresh tick.
+    principal, or, as `<org>/user:<id>`, every token of that end user in that
+    org. Other replicas see the row on their next refresh tick.
     `--subject S --issued-before T` retires only the tokens
     minted for S before T, so a token re-minted after the leak keeps working;
     with `--scim` it narrows SCIM's revocation of S instead (a subject a
@@ -349,6 +355,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     import getpass
 
     from server.auth import revocation
+    from server.core.principals import is_reserved_subject, org_of_end_user_revocation
     from server.observability import audit
     from server.settings import settings
 
@@ -363,6 +370,17 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         return 2
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
+        return 2
+    subject = args.subject or ""
+    end_user_org = org_of_end_user_revocation(subject)
+    if is_reserved_subject(subject) and not end_user_org:
+        # No token's sub is a bare principal, and an end user's key is built from
+        # a lowercase id under a named org: any other spelling cuts off no one.
+        print(
+            "  ✗ no token is revoked by that subject; revoke an end user as "
+            "<org>/user:<id>, the id as its issuer signs it (lowercase)",
+            file=sys.stderr,
+        )
         return 2
     if args.scim and (issued_before is None or expires_at is not None):
         print(
@@ -393,11 +411,11 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             )
         kind = "jti" if args.jti else "subject"
         # A CLI revoke has no request ledger row; this is its only durable
-        # record. Identifiers only, never token material. Revocations span
-        # every org, hence the '-' scope.
+        # record. Identifiers only, never token material. A revocation spans
+        # every org ('-'), but an end user's belongs to their org alone.
         await audit.emit(
             "token.revoked",
-            org="-",
+            org=end_user_org or "-",
             namespace="-",
             actor=by,
             subject={
@@ -414,12 +432,16 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         else:
             what = "narrowed SCIM's revocation of" if args.scim else "revoked"
             print(f"{what} {kind} {token_id!r}", end="")
+            end_user = bool(end_user_org)
+            where = "that org's end user" if end_user else "in every org"
             if kind == "subject" and issued_before is not None:
                 print(
                     f" for tokens issued before {issued_before.isoformat()}Z "
-                    "(in every org; a token minted after that stays valid)",
+                    f"({where}; a token minted after that stays valid)",
                     end="",
                 )
+            elif kind == "subject" and end_user:
+                print(" (that org's end user: every token its issuer signs for them)", end="")
             elif kind == "subject":
                 print(" (every token whose sub is this principal, in every org)", end="")
             print(
@@ -479,7 +501,8 @@ def _add_revoke_token_parser(sub: Any) -> None:
         default=None,
         help="The `sub` claim: retires EVERY token minted for this principal, in "
         "every org (verification checks sub against the revoked set); narrow it "
-        "with --issued-before.",
+        "with --issued-before. An end user is <org>/user:<id>: their tokens in that "
+        "org alone.",
     )
     which.add_argument("--list", action="store_true", help="Print the unexpired revocations.")
     p_revoke.add_argument(

@@ -3631,7 +3631,8 @@
         "no_evidence",
         "no_lint",
         "force_import",
-        "no_links"
+        "no_links",
+        "prune"
        ]
       }
      ],
@@ -3732,13 +3733,13 @@
        ],
        "dest": "agent",
        "action": "_StoreAction",
-       "default": "okf-import",
+       "default": null,
        "const": null,
        "choices": null,
        "nargs": null,
        "type": null,
        "required": false,
-       "help": null,
+       "help": "Writer agent of the imported rows (default: okf-import). Required with --prune; use one agent per bundle imported into a namespace.",
        "metavar": null
       },
       {
@@ -3874,6 +3875,21 @@
        "type": null,
        "required": false,
        "help": "Do not re-create the bundle's relates_to edges with memory.link.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--prune"
+       ],
+       "dest": "prune",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Delete the rows an earlier import wrote (this --agent and token, an okf: source_trace) whose key is no longer in the bundle. Refuses an empty bundle or one that does not match its loom.corpus_digest; a bundle its export did not mark complete is written but not pruned. With --dry-run, lists the rows it would delete.",
        "metavar": null
       }
      ]
@@ -4672,6 +4688,445 @@
       }
      ]
     },
+    "settings": {
+     "prog": "loom settings",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "settings_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "settings_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "list": {
+         "prog": "loom settings list",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.settings_cmd:_cmd_list"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "prefix",
+            "changed",
+            "json"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--prefix"
+           ],
+           "dest": "prefix",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Only the settings whose name starts with this",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--changed"
+           ],
+           "dest": "changed",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Only the ones off their default or overridden",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--json"
+           ],
+           "dest": "json",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "One JSON array",
+           "metavar": null
+          }
+         ]
+        },
+        "set": {
+         "prog": "loom settings set",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.settings_cmd:_cmd_change"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "name",
+            "value"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "expect"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The field name, e.g. memory_ask_recency_weight",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "value",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "Written as its LOOM_<NAME> environment value would be",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--expect"
+           ],
+           "dest": "expect",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Change nothing unless this is the value in force (written as for set)",
+           "metavar": null
+          }
+         ]
+        },
+        "reset": {
+         "prog": "loom settings reset",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.settings_cmd:_cmd_change"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "name"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "expect"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The field name, e.g. memory_ask_recency_weight",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--expect"
+           ],
+           "dest": "expect",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Change nothing unless this is the value in force (written as for set)",
+           "metavar": null
+          }
+         ]
+        },
+        "history": {
+         "prog": "loom settings history",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.settings_cmd:_cmd_history"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "name"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "limit",
+            "json"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "name",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": "?",
+           "type": null,
+           "required": false,
+           "help": "One setting; all when omitted",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--limit"
+           ],
+           "dest": "limit",
+           "action": "_StoreAction",
+           "default": 50,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--json"
+           ],
+           "dest": "json",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "One JSON array",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "list": "loom settings list",
+        "set": "loom settings set",
+        "reset": "loom settings reset",
+        "history": "loom settings history"
+       },
+       "choices_help": [
+        {
+         "dest": "list",
+         "help": "Each setting: value, where it came from, whether live.",
+         "metavar": "list"
+        },
+        {
+         "dest": "set",
+         "help": "Override a live setting for the whole deployment; outlives a restart.",
+         "metavar": "set"
+        },
+        {
+         "dest": "reset",
+         "help": "Remove the override: back to the env or the default.",
+         "metavar": "reset"
+        },
+        {
+         "dest": "history",
+         "help": "Recorded changes, newest first: who, the value before and after.",
+         "metavar": "history"
+        }
+       ]
+      }
+     ]
+    },
     "secrets": {
      "prog": "loom secrets",
      "usage": null,
@@ -5259,6 +5714,147 @@
          "metavar": "clear"
         }
        ]
+      }
+     ]
+    },
+    "export-analytics": {
+     "prog": "loom export-analytics",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "func": "server.cli.analytics_export:_cmd_export"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "bucket",
+        "prefix",
+        "day",
+        "role_arn",
+        "region",
+        "expected_bucket_owner"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--bucket"
+       ],
+       "dest": "bucket",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": true,
+       "help": "The S3 bucket to write to",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--prefix"
+       ],
+       "dest": "prefix",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "A key prefix inside the bucket",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--day"
+       ],
+       "dest": "day",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": "server.cli.analytics_export:_day",
+       "required": false,
+       "help": "The UTC day to export, YYYY-MM-DD (default: yesterday)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--role-arn"
+       ],
+       "dest": "role_arn",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "An IAM role to assume with the default credentials, once before reading and again before each upload",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--region"
+       ],
+       "dest": "region",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "The bucket's AWS region (default: AWS_DEFAULT_REGION or the AWS config file)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--expected-bucket-owner"
+       ],
+       "dest": "expected_bucket_owner",
+       "action": "_StoreAction",
+       "default": "",
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "The AWS account id that must own the bucket; a write to any other is refused",
+       "metavar": null
       }
      ]
     },
@@ -7915,7 +8511,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "The `sub` claim: retires EVERY token minted for this principal, in every org (verification checks sub against the revoked set); narrow it with --issued-before.",
+       "help": "The `sub` claim: retires EVERY token minted for this principal, in every org (verification checks sub against the revoked set); narrow it with --issued-before. An end user is <org>/user:<id>: their tokens in that org alone.",
        "metavar": null
       },
       {
@@ -8557,7 +9153,7 @@
         },
         {
          "dest": "password-link",
-         "help": "Print a one-time link (a day) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
+         "help": "Print a one-time link (valid for LOOM_PASSWORD_LINK_TTL_SECONDS, a day by default) that sets the password of an email's SSO accounts, for after single sign-on is turned off.",
          "metavar": "password-link"
         }
        ]
@@ -12188,9 +12784,11 @@
     "ch-setup": "loom ch-setup",
     "participant": "loom participant",
     "deployment": "loom deployment",
+    "settings": "loom settings",
     "secrets": "loom secrets",
     "signing-key": "loom signing-key",
     "provider-lock": "loom provider-lock",
+    "export-analytics": "loom export-analytics",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
     "deploy-delta": "loom deploy-delta",
@@ -12286,6 +12884,11 @@
      "metavar": "deployment"
     },
     {
+     "dest": "settings",
+     "help": "Every setting's value in force, and overrides of the live ones.",
+     "metavar": "settings"
+    },
+    {
      "dest": "secrets",
      "help": "Credentials and signing keys stored sealed in ClickHouse.",
      "metavar": "secrets"
@@ -12299,6 +12902,11 @@
      "dest": "provider-lock",
      "help": "The provider configuration lock.",
      "metavar": "provider-lock"
+    },
+    {
+     "dest": "export-analytics",
+     "help": "Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. Never replaces an object, so a repeated run is safe.",
+     "metavar": "export-analytics"
     },
     {
      "dest": "reembed",

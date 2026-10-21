@@ -195,7 +195,8 @@ async def _parts_footprint(ch: Any) -> dict[str, tuple[int, int]]:
         """
         SELECT table, count() AS parts, sum(rows) AS rows
         FROM system.parts
-        WHERE database = 'loom' AND table IN ('memory', 'memory_embeddings', 'memory_versions')
+        WHERE database = currentDatabase()
+          AND table IN ('memory', 'memory_embeddings', 'memory_versions')
           AND active
         GROUP BY table
         """

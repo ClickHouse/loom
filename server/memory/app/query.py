@@ -21,6 +21,9 @@ from server.identity.domain.read_scope import scope_where
 from server.memory.api.models_bulk import MemoryBulkGetInput, MemoryBulkGetOutput
 from server.memory.api.models_crud import (
     MemoryGetOutput,
+    MemoryKeyRef,
+    MemoryKeysInput,
+    MemoryKeysOutput,
     MemoryListInput,
     MemoryListOutput,
     MemoryStatus,
@@ -897,3 +900,16 @@ async def handle_memory_statuses(input: MemoryStatusesInput) -> MemoryStatusesOu
         input.org, input.namespace, ids, scope=request_scope(), ch=get_client()
     )
     return MemoryStatusesOutput(rows=[MemoryStatus(**r) for r in rows])
+
+
+async def handle_memory_keys(input: MemoryKeysInput) -> MemoryKeysOutput:
+    """Every live row's identity and key in one read: a set an exporter can check its paged
+    listing against, since a row that moves while pages are read can be skipped."""
+    import server.memory.store as memory_repo
+
+    rows = await memory_repo.live_keys(
+        input.org, input.namespace, scope=request_scope(), limit=input.limit
+    )
+    keys = [MemoryKeyRef(**r) for r in rows[: input.limit]]
+    _record_read_exposure("memory.keys", input, list(dict.fromkeys(k.memory_key for k in keys)))
+    return MemoryKeysOutput(keys=keys, truncated=len(rows) > input.limit)

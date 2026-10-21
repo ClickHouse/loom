@@ -12,6 +12,8 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
 from server.core.tag_sql import TagFilter, tag_where
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
+from server.memory.domain.delete_marks import DELETE_VERSION_TRACE
+from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
 from server.memory.domain.temporal_sql import as_of_predicate
 from server.memory.store.rows import Identity, MemoryRow, _hydrate
 from server.memory.store.sql import (
@@ -80,8 +82,9 @@ async def get_by_key(
     way search does; the default keeps expired rows visible because most
     callers are write paths that must carry the row's columns
     forward (set, touch, lock, delete) or decide about its expiry
-    (update_by_id's EXPIRED). Ignored under `as_of`: a replay read asks
-    about a past instant, not about now.
+    (update_by_id's EXPIRED). Under `as_of`, a replay serves expired rows
+    (it asks about a past instant), except a 'high' row past its retention
+    window, which stays hidden.
 
     FINAL because loom.memory is ReplacingMergeTree(version).
 
@@ -925,6 +928,96 @@ async def _locate_then_preview(
         row["value"] = by_pair.get((str(r["memory_id"]), int(r["version"])))
         out.append(_hydrate(row))
     return out
+
+
+async def versions_above(
+    org: str,
+    namespace: str,
+    rows: list[dict[str, Any]],
+    *,
+    ch: _CHClient | None = None,
+) -> dict[tuple[str, str, str, str], list[tuple[int, bool, int]]]:
+    """Every committed version of each row's key (agent, user_id, session_id, memory_key)
+    above the lowest version among `rows`, newest first, with whether it is a delete's
+    tombstone (a blacklist sweep's is not one) and, for memory.delete_version's tombstone,
+    the version it removed (0 otherwise). From loom.memory_versions, which keeps
+    every version (a merge of loom.memory keeps only the newest). Read with sequential
+    consistency, since the answer feeds the write."""
+    if not rows:
+        return {}
+    ch = ch or _default_client()
+    keys = sorted({(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in rows})
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "keys": keys,
+        "v": min(int(r["version"]) for r in rows),
+        "sweep": SWEEP_REASON_PREFIX,
+        "dv": DELETE_VERSION_TRACE,
+    }
+    found = await ch.query_all(
+        f"""
+        SELECT agent, user_id, session_id, memory_key,
+               arrayReverseSort(groupArray((version, deleted, target))) AS versions
+        FROM (
+            SELECT agent, user_id, session_id, memory_key, version,
+                   tombstoned_at IS NOT NULL
+                       AND NOT startsWith(expire_reason, {{sweep:String}}) AS deleted,
+                   if(
+                       tombstoned_at IS NOT NULL AND startsWith(source_trace, {{dv:String}}),
+                       toUInt64OrZero(substring(source_trace, length({{dv:String}}) + 1)),
+                       0
+                   ) AS target
+            FROM loom.memory_versions
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND (agent, user_id, session_id, memory_key)
+                  IN {{keys:Array(Tuple(String, String, String, String))}}
+              AND version > {{v:UInt64}}
+        )
+        GROUP BY agent, user_id, session_id, memory_key
+        {_SEQUENTIAL if read_your_writes_enabled() else ""}
+        """,
+        params=params,
+    )
+    return {
+        (f["agent"], f["user_id"], f["session_id"], f["memory_key"]): [
+            (int(v), bool(d), int(t)) for v, d, t in f["versions"]
+        ]
+        for f in found
+    }
+
+
+async def live_keys(
+    org: str,
+    namespace: str,
+    *,
+    scope: ReadFilters,
+    limit: int,
+    ch: _CHClient | None = None,
+) -> list[dict[str, Any]]:
+    """The identity and key of every live row of the namespace, as one statement reads
+    them: the rows memory.list serves with every identity at "*" and superseded and
+    duplicate rows included (a proposed row, on trial, is not). At most `limit` + 1, so a
+    caller can tell it was cut."""
+    ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "limit": int(limit) + 1}
+    where = [
+        "org = {org:String}",
+        "namespace = {ns:String}",
+        "tombstoned_at IS NULL",
+        "status != 'proposed'",
+        *scope_where(scope, params),
+    ]
+    return await ch.query_all(
+        f"""
+        SELECT agent, user_id, session_id, memory_key
+        FROM loom.memory FINAL
+        WHERE {" AND ".join(where)}
+        ORDER BY agent, user_id, session_id, memory_key
+        LIMIT {{limit:UInt32}}
+        """,
+        params=params,
+    )
 
 
 async def namespace_version(org: str, namespace: str, *, ch: _CHClient | None = None) -> int:

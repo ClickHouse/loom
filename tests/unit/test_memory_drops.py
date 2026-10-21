@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from server.memory.app import drops
+from server.settings import settings
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
@@ -277,10 +278,13 @@ async def test_entity_extractor_records_parse_failures(monkeypatch: pytest.Monke
     monkeypatch.setattr(ee, "namespaces_over_cap", _under_cap)
     monkeypatch.setattr(ee, "emit_worker_cost_event_for", lambda **kw: None)
     ee._parse_fail_streaks.clear()
-    for _ in range(ee._PARSE_FAIL_MAX):
+    for _ in range(settings.memory_entity_extract_parse_fail_max):
         await ee.run_pass(ee.EntityExtractorConfig())
     pairs = _pairs()
-    assert pairs.count(("entity.extract", "parse_failed")) == ee._PARSE_FAIL_MAX
+    assert (
+        pairs.count(("entity.extract", "parse_failed"))
+        == settings.memory_entity_extract_parse_fail_max
+    )
     assert pairs.count(("entity.extract", "parse_poisoned")) == 1
     assert all(r["item"] == "k1" for r in drops._peek_for_tests())
 

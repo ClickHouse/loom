@@ -23,7 +23,8 @@ export type View =
   | "admin:activity"
   | "admin:usage"
   | "admin:agents"
-  | "admin:users";
+  | "admin:users"
+  | "admin:settings";
 
 export const ALL_VIEWS: View[] = [
   "memories",
@@ -46,6 +47,7 @@ export const ALL_VIEWS: View[] = [
   "admin:usage",
   "admin:agents",
   "admin:users",
+  "admin:settings",
 ];
 
 /** A page's URL reads like its label. The view ids stay (they are the stable keys in

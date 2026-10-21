@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.code.domain.extract.extractor_stamp import STAGES
+from server.core.background import gather_or_cancel
+from server.llm import customer
 
 logger = logging.getLogger("loom.code_index.reconcile")
 
@@ -241,6 +243,19 @@ class HealResult:
     # denylist or its content rules, or no parser claims them).
     skipped_paths: list[str] = field(default_factory=list)
 
+    def count(self, path: str, stats: Any, *, scoped: bool) -> None:
+        """One ingested file's counts (`scoped`: the heal ran under a stage scope)."""
+        self.files += 1
+        if getattr(stats, "skipped", False):
+            self.skipped_paths.append(path)
+        self.chunks_new += stats.chunks_new
+        self.chunks_moved += stats.chunks_moved
+        self.symbols_moved += stats.symbols_moved
+        if scoped and len(getattr(stats, "stages_run", ())) < len(STAGES):
+            self.scoped += 1
+        if getattr(stats, "identical", False):
+            self.identical += 1
+
 
 async def heal(
     repo: Any,
@@ -270,7 +285,8 @@ async def heal(
     statements (`RoundReads`). `stop_after` (a monotonic instant) is checked before
     every round: past it no further round starts, the in-flight one finishes, and the
     result says how many paths were attempted and that it is partial — the caller's
-    cursor advances by `attempted`."""
+    cursor advances by `attempted`. A held model call (`customer.HOLDS`) raises
+    instead, its round's peers cancelled, so the caller's cursor stays."""
     if ingest_file is None:
         from server.code.app.index.ingest import ingest_file as _if
 
@@ -316,20 +332,13 @@ async def heal(
                     parsed=reads.parsed.get(path),
                     **scoped,
                 )
+            except customer.HOLDS:
+                raise  # the org's model calls are held: the caller keeps its cursor
             except Exception as e:  # noqa: BLE001 — per-file
                 out.errors += 1
                 logger.warning("reconcile heal: %s failed: %s", path, e)
                 return
-            out.files += 1
-            if getattr(stats, "skipped", False):
-                out.skipped_paths.append(path)
-            out.chunks_new += stats.chunks_new
-            out.chunks_moved += stats.chunks_moved
-            out.symbols_moved += stats.symbols_moved
-            if stages is not None and len(getattr(stats, "stages_run", ())) < len(STAGES):
-                out.scoped += 1
-            if getattr(stats, "identical", False):
-                out.identical += 1
+            out.count(path, stats, scoped=stages is not None)
 
     for batch in rounds(list(paths), size):
         if stop_after is not None and time.monotonic() >= stop_after:
@@ -343,7 +352,8 @@ async def heal(
         async with RoundReads(repo, cfg.org, cfg.namespace) as reads:
             if size > 0:
                 await reads.prefetch(sources, denylist, embedding_model=embedder.model_name)
-            await asyncio.gather(*(_one(reads, p, sources[p]) for p in batch if p in sources))
+            # A held file ends the heal, its peers cancelled before the reads close.
+            await gather_or_cancel(*(_one(reads, p, sources[p]) for p in batch if p in sources))
         out.read_hits += reads.hits
         out.read_misses += reads.misses
     return out

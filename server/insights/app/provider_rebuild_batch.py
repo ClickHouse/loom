@@ -11,6 +11,7 @@ from typing import Any
 
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
+from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
@@ -137,8 +138,16 @@ async def rebuild_batch(
     target: Embedder,
     *,
     source_texts: Mapping[int, str] | None = None,
+    waiting: list[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Return full staged rows; never publish partial or malformed embeddings.
+
+    A row whose org's model calls are switched off is staged without a vector
+    (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
+    the rebuild completes and counts it in its progress (`rows_waiting`). Once the
+    org is back on, memory_embeddings and code_chunks / code_summaries stubs are
+    embedded again by their recovery workers; a row of any other table has no
+    vector until a write replaces it or a later rebuild covers it.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
@@ -148,17 +157,37 @@ async def rebuild_batch(
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
     texts, slots = _inputs(table, rows, source_texts or {})
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), _CALL_BATCH):
-        batch = texts[start : start + _CALL_BATCH]
-        try:
-            produced = await target.embed_many(batch)
-        except Exception:  # noqa: BLE001 — provider errors must not expose keys or source text in status
-            raise RebuildBatchError("embedding_provider_failed") from None
-        _validate_vectors(produced, len(batch), target.dim)
-        vectors.extend(produced)
+    # One call carries one org's texts: a model call names a single customer.
+    by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
+    vectors: list[list[float]] = [[] for _ in texts]
+    left: set[int] = set()
+    for org, positions in by_org.items():
+        if await customer.switched_off(org):
+            left.update(positions)
+            continue
+        for start in range(0, len(positions), _CALL_BATCH):
+            part = positions[start : start + _CALL_BATCH]
+            try:
+                with customer.for_org(org):
+                    produced = await target.embed_many([texts[i] for i in part])
+            except customer.ModelCallsDisabled:
+                left.update(positions)  # switched off during the batch
+                break
+            except customer.SwitchUnread:
+                raise  # not a provider failure: the step waits for the switch to be read
+            except Exception:  # noqa: BLE001 — provider errors must not expose keys or source text in status
+                raise RebuildBatchError("embedding_provider_failed") from None
+            _validate_vectors(produced, len(part), target.dim)
+            for i, vector in zip(part, produced, strict=True):
+                vectors[i] = vector
     result = [_empty_target_row(table, row, target.model_name) for row in rows]
-    for (index, column), vector in zip(slots, vectors, strict=True):
+    for i in sorted(left):
+        vectors[i] = []  # staged without a vector, as the row's empty target row has
+    if waiting is not None:
+        waiting.extend(sorted({slots[i][0] for i in left}))
+    for i, ((index, column), vector) in enumerate(zip(slots, vectors, strict=True)):
+        if i in left:
+            continue
         result[index][column] = vector
         dimension_column = (
             "memory_key_embedding_dim" if column == "memory_key_embedding" else "embedding_dim"

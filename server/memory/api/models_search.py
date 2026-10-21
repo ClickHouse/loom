@@ -142,9 +142,9 @@ class MemorySearchInput(BaseModel):
     include_proposed: bool = False
     # Carry per-hit `explanation` and `score_components`.
     # None = the server default: on at top_k <= memory_search_excerpt_bodies_k
-    # (15), off above it; the full breakdown is memory.search_trace. True / False
-    # pin it for this call. Above the same k an unpinned `bodies` serves the
-    # excerpt tier (memory_search_excerpt_chars) instead of the full clip.
+    # (15), off above it. True / False pin it for this call. Above the same k an
+    # unpinned `bodies` serves the excerpt tier (memory_search_excerpt_chars)
+    # instead of the full clip.
     explain: bool | None = None
     # The legs the caller can show. None = every leg
     # (memory.ask, the MCP tools, the SDKs). The dashboard's
@@ -412,7 +412,7 @@ class MemorySearchInput(BaseModel):
     rerank: RerankName = ""
     # Cost posture. "standard" stages cheap recall first, spending expensive
     # LLM/graph/rerank legs only when the planner or fallback gates justify them.
-    # "fast" minimizes LLM/fan-out; "deep" allows upfront expensive recall.
+    # "fast" makes no LLM call (as recipe "fast"); "deep" allows upfront expensive recall.
     retrieval_budget: Literal["fast", "standard", "deep"] = "standard"
     # HyDE: embed an LLM-generated hypothetical answer instead of the raw query to
     # close the question/stored-phrasing vocabulary gap. Left unset, True means
@@ -449,6 +449,9 @@ class MemorySearchInput(BaseModel):
     # context.pack's per-section token budget, threaded down to govern the assembler
     # instead of the module default. 0 = default. Private attr; not on the wire.
     _context_pack_block_tokens: int = 0
+    # Internal: the read makes no LLM call whatever its recipe (context.pack's
+    # search), as the fast posture does, but keeps the recipe's recall width.
+    _llm_free: bool = False
 
 
 # The hit fields that ride only under `include_usage`.
@@ -554,8 +557,10 @@ class _MemorySearchHit(BaseModel):
     # served order follows, not a similarity. Under `rrf` it is the fused
     # 1/(k+rank) sum (≈ 0.03); under the cosine modes it is `similarity` plus
     # the itemised boosts, bounded to the pool (the identifier lift does not
-    # add a flat 1.0). For the full per-component
-    # decomposition use memory.search_trace.
+    # add a flat 1.0). After an external reranker that changed the order it is
+    # the pool's score for the rank the row now holds, its own in
+    # score_components.rank_score_pre_rerank; a kept order changes no score.
+    # For the per-component decomposition read score_components (explain=true).
     rank_score: float = 0.0
     # ISO datetime the fact is ABOUT (distinct from valid_at = when it became
     # true), surfaced directly for temporal reasoning. Empty when the fact has
@@ -635,7 +640,7 @@ class _MemorySearchHit(BaseModel):
     # For a digest hit (source="summary"): the memory keys it compressed;
     # empty for every other row.
     derived_from: list[str] = Field(default_factory=list)
-    # Compact score breakdown of the major ranking signals (full trace in search_trace).
+    # Score breakdown of the ranking signals and, after a reranker, its moves (rerank_*).
     score_components: dict[str, float] = Field(default_factory=dict)
     # When this hit is a canonical seated in the slot of a
     # `duplicate` row the legs ranked, the duplicate's memory_key; absent
@@ -859,9 +864,9 @@ class MemoryAggregateOutput(BaseModel):
 
 
 class MemorySearchTraceInput(MemorySearchInput):
-    """Same shape as memory.search; returns the per-candidate scoring
-    breakdown instead of just the top-k. Use this in the dashboard's Recall Lab
-    or any "why did this row rank where it did" debugging."""
+    """Same shape as memory.search; returns the vector leg's per-candidate scoring
+    breakdown (no fusion, assembly or reranker).
+    Why a served row ranked where it did: memory.search with explain=true."""
 
 
 class _SearchTraceHit(BaseModel):
@@ -880,7 +885,7 @@ class _SearchTraceHit(BaseModel):
 
 
 class MemorySearchTraceOutput(BaseModel):
-    # Every candidate the fact leg scored, in final rank order, with its breakdown.
+    # Every candidate the fact leg scored, in the leg's rank order, with its breakdown.
     results: list[_SearchTraceHit]
     # The embedding model the query was embedded with.
     embedding_model: str

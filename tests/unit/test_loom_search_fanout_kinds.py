@@ -60,20 +60,20 @@ def test_resolver_narrows_my_namespaces_by_kind(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(ctx, "resolve_my_namespaces", _mine)
     monkeypatch.setattr(nk, "kind_map", _kinds)
-    monkeypatch.setattr(nk, "fanout_kinds", lambda: frozenset({"memory"}))
+    monkeypatch.setattr(nk, "fanout_kinds", lambda _=None: frozenset({"memory"}))
     assert list(asyncio.run(fanout_mod.resolve_fanout(ORG)).namespaces) == [
         "jdoe",
         "team-alerts",
         "legacy-ns",
     ]
     # An empty setting sweeps every namespace; an unreadable directory narrows nothing.
-    monkeypatch.setattr(nk, "fanout_kinds", lambda: frozenset())
+    monkeypatch.setattr(nk, "fanout_kinds", lambda _=None: frozenset())
     assert list(asyncio.run(fanout_mod.resolve_fanout(ORG)).namespaces) == MINE
 
     async def _no_dir(org):
         return {}
 
-    monkeypatch.setattr(nk, "fanout_kinds", lambda: frozenset({"memory"}))
+    monkeypatch.setattr(nk, "fanout_kinds", lambda _=None: frozenset({"memory"}))
     monkeypatch.setattr(nk, "kind_map", _no_dir)
     assert list(asyncio.run(fanout_mod.resolve_fanout(ORG)).namespaces) == MINE
 

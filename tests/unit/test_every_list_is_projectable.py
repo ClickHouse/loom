@@ -35,6 +35,7 @@ def _wire_model_files() -> list[Path]:
 # operation ships with `fields`; an entry here needs a reason. Remove a line
 # when its operation gains the projection; never add one without a reason.
 UNPROJECTED: dict[str, str] = {
+    "CollectionListInput": "four short fields per collection; a page is read whole",
     "BlacklistListInput": "a short admin list; no page reads it in part",
     "CodeHistoryInput": "a per-file history read whole",
     "CodeSymbolHistoryInput": "a per-symbol history read whole",

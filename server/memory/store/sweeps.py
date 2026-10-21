@@ -97,10 +97,12 @@ async def find_embedding_stubs(
     max_attempts: int,
     org_filter: str | None = None,
     namespace_filter: str | None = None,
+    exclude_orgs: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """memory_embeddings rows with embedding_dim=0 (stubs) that haven't
-    been poisoned. Used by the embedding_worker.
+    been poisoned. Used by the embedding_worker. `exclude_orgs` (orgs whose
+    model calls are switched off) leaves their stubs where they are.
 
     `version` rides along so the worker can write its replacement at
     stub_version + 1: newer than the stub it read, older than any row a
@@ -114,6 +116,9 @@ async def find_embedding_stubs(
     if namespace_filter is not None:
         extra_where += " AND namespace = {ns_filter:String}"
         params["ns_filter"] = namespace_filter
+    if exclude_orgs:
+        extra_where += " AND org NOT IN {exclude_orgs:Array(String)}"
+        params["exclude_orgs"] = sorted(exclude_orgs)
 
     # Two phases. Under FINAL the WHERE is applied after the merge, so a
     # single query would read every selected column of every row (3.1 GB and

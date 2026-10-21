@@ -36,10 +36,12 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.llm import customer
 from server.memory.app.provenance import writer_actor
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import next_version
 from server.observability.genai import llm_stage
+from server.settings.budgets import llm_max_tokens
 
 log = logging.getLogger(__name__)
 
@@ -306,6 +308,11 @@ async def _fetch_namespaces(ch: Any, cfg: PeriodDigestConfig) -> list[dict[str, 
     if cfg.namespace_filter is not None:
         scope += " AND s.namespace = {ns_f:String}"
         params["ns_f"] = cfg.namespace_filter
+    # A switched-off org's sessions wait unpicked, leaving the pass's slots to others.
+    off = await customer.switched_off_orgs()
+    if off:
+        scope += " AND NOT has({off:Array(String)}, s.org)"
+        params["off"] = sorted(off)
     opt_in = (
         """
         INNER JOIN loom.namespaces AS n FINAL
@@ -428,8 +435,12 @@ async def _write_period(
 ) -> bool:
     system, user = build_period_prompt(period)
     try:
-        with llm_stage("period_digest"):
-            out = await llm.complete(system=system, user=user, max_tokens=420)
+        with llm_stage("period_digest"), customer.for_org(period.org):
+            out = await llm.complete(
+                system=system, user=user, max_tokens=llm_max_tokens("period_digest")
+            )
+    except customer.HOLDS:
+        raise  # the identity waits for the org, its other periods included
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues
         result.failures.append(f"llm {period.memory_key}: {type(e).__name__}: {e}"[:256])
         return False
@@ -439,7 +450,8 @@ async def _write_period(
     if not text:
         result.failures.append(f"empty digest {period.memory_key}")
         return False
-    embedding = await embedder.embed(text)
+    with customer.for_org(period.org):
+        embedding = await embedder.embed(text)
     try:
         source_ids, source_entities = await _source_memories(ch, period)
     except Exception as e:  # noqa: BLE001 — lineage and entities are additive
@@ -522,6 +534,8 @@ async def run_period_digest(
                 if await _write_period(ch, llm, embedder, period, result):
                     result.periods_written += 1
                     result.digests_covered += len(period.digests)
+        except customer.HOLDS:
+            continue  # a held call is no failure: its periods are written once the org is back
         except Exception as e:  # noqa: BLE001 — one identity never fails the pass
             result.failures.append(
                 f"{ident.get('org')}/{ident.get('namespace')}: {type(e).__name__}: {e}"[:256]

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import copy
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -180,7 +181,7 @@ def test_private_first_passes_put_the_addressed_namespace_first() -> None:
 def test_namespaces_to_search_leads_with_the_addressed_namespace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=("team", "mine", "wiki"), cap=1)
 
     monkeypatch.setattr(fanout_mod, "resolve_fanout", _fanout)
@@ -202,18 +203,15 @@ def test_knowledge_reads_an_addressed_public_namespace_in_the_first_pass(
     async def _visibility(org: str, namespaces: list[str]) -> dict[str, str]:
         return {"home": "private", "team": "public", "wiki": "public"}
 
-    async def _search_one(ns: str) -> tuple[str, list[ChunkHit]]:
-        read.append(ns)
-        hit = ChunkHit(source_uri=f"{ns}.md", chunk_idx=0, content="", tags=[], distance=0.2)
-        return ns, [hit]
+    async def _search(namespaces: list[str]) -> list[tuple[str, list[ChunkHit]]]:
+        read.append(namespaces)
+        return [(ns, [ChunkHit(ns, f"{ns}.md", 0, "", [], distance=0.2)]) for ns in namespaces]
 
-    read: list[str] = []
+    read: list[list[str]] = []
     monkeypatch.setattr(nv, "visibility_map", _visibility)
     search = KnowledgeSearchInput(org=ORG, namespace="team", query="q", namespace_scope="all_mine")
-    asyncio.run(
-        knowledge_search._search_private_first(search, ["team", "home", "wiki"], _search_one)
-    )
-    assert read == ["team", "home"]
+    asyncio.run(knowledge_search._search_private_first(search, ["team", "home", "wiki"], _search))
+    assert read == [["team", "home"]], "one statement for the first pass; the public one not needed"
 
 
 def test_the_loom_search_text_names_the_skipped_namespaces() -> None:
@@ -233,7 +231,7 @@ def test_the_loom_search_text_names_the_skipped_namespaces() -> None:
 def test_an_unaddressed_search_starts_at_home_even_past_the_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=("aaa-team", "alice"), cap=1)
 
     monkeypatch.setattr(fanout_mod, "resolve_fanout", _fanout)
@@ -258,7 +256,7 @@ def test_the_conversation_fallback_reads_the_same_namespaces(
         async def embed(self, text: str) -> list[float]:
             raise RuntimeError("embedder down")
 
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=("work", "home"), cap=1)
 
     read: list[list[str]] = []
@@ -289,3 +287,43 @@ def test_the_conversation_fallback_reads_the_same_namespaces(
     assert read == [["local", "work"]], "every namespace in one statement"
     assert [(h.namespace, h.msg_id) for h in out.hits] == [("work", "work"), ("local", "local")]
     assert out.namespaces_skipped == ["home"]
+
+
+def test_private_first_reads_the_public_pass_only_when_the_private_one_misses() -> None:
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from server.core.vectors.private_first import each, search_private_first
+
+    passes: list[list[str]] = []
+
+    def _searcher(distance: float) -> Any:
+        async def _search(namespaces: list[str]) -> list[tuple[str, list[Any]]]:
+            passes.append(namespaces)
+            return [(ns, [SimpleNamespace(distance=distance)]) for ns in namespaces]
+
+        return _search
+
+    async def _visibility(namespaces: list[str]) -> dict[str, str]:
+        return {"home": "private", "wiki": "public"}
+
+    async def _run(search: Any) -> list[tuple[str, list[Any]]]:
+        return await search_private_first(
+            "home",
+            ["home", "wiki"],
+            search,
+            visibility=_visibility,
+            threshold=0.5,
+            span=lambda **_k: nullcontext(),
+        )
+
+    asyncio.run(_run(_searcher(0.1)))  # a close private hit: the public pass is skipped
+    assert passes == [["home"]]
+    passes.clear()
+    asyncio.run(_run(_searcher(0.9)))  # nothing close: the public pass follows
+    assert passes == [["home"], ["wiki"]]
+
+    async def _one(ns: str) -> tuple[str, list[Any]]:
+        return ns, [SimpleNamespace(distance=0.0)]
+
+    assert [ns for ns, _ in asyncio.run(each(_one)(["a", "b"]))] == ["a", "b"]

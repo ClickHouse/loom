@@ -16,14 +16,26 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 160 tables + 18 materialized views.
+-- Counts: 167 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (160)
+-- Tables (167)
 -- ======================================================================
+
+-- loom.acl_versions
+CREATE TABLE IF NOT EXISTS loom.acl_versions
+(
+    `org` LowCardinality(String),
+    `kind` LowCardinality(String),
+    `changes` UInt64 DEFAULT 1,
+    `updated_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = SummingMergeTree(changes)
+ORDER BY (org, kind)
+SETTINGS allow_dimensions_outside_sorting_key = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.agent_cost_rollup_daily
 CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily
@@ -255,6 +267,19 @@ ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY singleton
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.blob_uploads
+CREATE TABLE IF NOT EXISTS loom.blob_uploads
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `sha256` FixedString(64),
+    `user_id` String,
+    `created_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY (org, user_id, namespace, sha256)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.carry_acks
 CREATE TABLE IF NOT EXISTS loom.carry_acks
 (
@@ -341,6 +366,10 @@ CREATE TABLE IF NOT EXISTS loom.chunks
     `embed_failed_at` Nullable(DateTime),
     `content_sha256` String DEFAULT '',
     `doc_version` UInt64 DEFAULT 0,
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `source_class` LowCardinality(String) DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1,
     INDEX content_text content_lc TYPE text(tokenizer = 'splitByNonAlpha') GRANULARITY 100000000
 )
@@ -1137,6 +1166,21 @@ ENGINE = SummingMergeTree((positive, negative))
 ORDER BY (org, namespace, unit_id)
 SETTINGS allow_dimensions_outside_sorting_key = 1, index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.collections
+CREATE TABLE IF NOT EXISTS loom.collections
+(
+    `org` LowCardinality(String),
+    `namespace` String,
+    `parent` String DEFAULT '',
+    `owner` String DEFAULT '',
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `deleted` Bool DEFAULT false,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.conflict_allowlist
 CREATE TABLE IF NOT EXISTS loom.conflict_allowlist
 (
@@ -1228,7 +1272,9 @@ CREATE TABLE IF NOT EXISTS loom.conversation_embeddings
     `embed_failed_at` Nullable(DateTime),
     `ts` DateTime64(3, 'UTC') DEFAULT now64(3),
     `run_id` String DEFAULT '-',
-    `tombstoned_at` Nullable(DateTime) DEFAULT NULL
+    `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
+    `is_saved` Bool DEFAULT false,
+    `saved_at` Nullable(DateTime64(3, 'UTC')) DEFAULT if(is_saved, ts, NULL)
 )
 ENGINE = ReplacingMergeTree(ts)
 PARTITION BY toYYYYMM(ts)
@@ -1271,12 +1317,34 @@ CREATE TABLE IF NOT EXISTS loom.conversations
     `ts` DateTime64(3, 'UTC') DEFAULT now64(3),
     `run_id` String DEFAULT '-',
     `reasoning` String DEFAULT '',
-    `tombstoned_at` Nullable(DateTime) DEFAULT NULL
+    `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
+    `is_saved` Bool DEFAULT false,
+    `saved_at` Nullable(DateTime64(3, 'UTC')) DEFAULT if(is_saved, ts, NULL)
 )
 ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, thread_id, ts, msg_id)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.delete_version_checks
+CREATE TABLE IF NOT EXISTS loom.delete_version_checks
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` String,
+    `user_id` String,
+    `session_id` String,
+    `memory_key` String,
+    `checked` UInt64,
+    `tombstone` UInt64,
+    `done` UInt8 DEFAULT 0,
+    `created_at` DateTime DEFAULT now(),
+    `updated_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (org, namespace, agent, user_id, session_id, memory_key, tombstone)
+TTL created_at + toIntervalDay(30)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.deployment_config
 CREATE TABLE IF NOT EXISTS loom.deployment_config
@@ -1352,6 +1420,11 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `description` String DEFAULT '',
     `blob_erased_at` Nullable(DateTime) DEFAULT NULL,
     `content_preview` String MATERIALIZED substring(content, 1, 220),
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT '',
     INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(version)
@@ -1380,7 +1453,8 @@ CREATE TABLE IF NOT EXISTS loom.embedding_cache
     `key` String,
     `dim` UInt16,
     `embedding` Array(Float32),
-    `created_at` DateTime DEFAULT now()
+    `created_at` DateTime DEFAULT now(),
+    `org` LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(created_at)
 ORDER BY (model, key)
@@ -1620,7 +1694,8 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
     `last_checkpoint_at` DateTime DEFAULT now(),
     `residue_count` UInt32 DEFAULT 0,
     `residue` String DEFAULT '',
-    `verified_at` Nullable(DateTime) DEFAULT NULL
+    `verified_at` Nullable(DateTime) DEFAULT NULL,
+    `purge` Bool DEFAULT false
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id
@@ -2885,6 +2960,22 @@ PARTITION BY toYYYYMM(created_at)
 ORDER BY (org, namespace, from_key, to_key, relation)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.org_model_calls
+CREATE TABLE IF NOT EXISTS loom.org_model_calls
+(
+    `org` String,
+    `enabled` UInt8,
+    `reason` String,
+    `updated_by` String,
+    `updated_at` DateTime64(3, 'UTC'),
+    `locked` UInt8,
+    `locked_by` String,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY org
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.policy_decisions
 CREATE TABLE IF NOT EXISTS loom.policy_decisions
 (
@@ -2910,6 +3001,23 @@ ORDER BY (org, namespace, ts)
 TTL toDateTime(ts) + toIntervalDay(90)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.principal_groups
+CREATE TABLE IF NOT EXISTS loom.principal_groups
+(
+    `org` LowCardinality(String),
+    `group_id` String,
+    `display_name` String DEFAULT '',
+    `external_id` String DEFAULT '',
+    `members` Array(String),
+    `deleted` Bool DEFAULT false,
+    `created_at` DateTime64(3) DEFAULT now64(3),
+    `updated_at` DateTime64(3) DEFAULT now64(3),
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, group_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.procedure_runs
 CREATE TABLE IF NOT EXISTS loom.procedure_runs
 (
@@ -2931,6 +3039,22 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (org, namespace, memory_key, ts)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.profile_schemas
+CREATE TABLE IF NOT EXISTS loom.profile_schemas
+(
+    `org` LowCardinality(String),
+    `namespace` String,
+    `schema_json` String,
+    `schema_sha256` String,
+    `updated_by` String DEFAULT '',
+    `updated_at` DateTime64(3, 'UTC'),
+    `tombstoned_at` Nullable(DateTime64(3, 'UTC')) DEFAULT NULL,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.provider_configuration
 CREATE TABLE IF NOT EXISTS loom.provider_configuration

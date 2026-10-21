@@ -68,14 +68,86 @@ class ConversationAppendOutput(BaseModel):
     msg_id: str
     # Server time of this call; the message's timestamp when it was written.
     ts: datetime
-    # Whether this call left a row in the transcript. False only when the
-    # namespace's logging switch is off: the call is accepted (a client
-    # cannot override the user's choice) but nothing is kept, and a caller
-    # that plans around the transcript needs to know that.
+    # False when recording is off or the turn was removed while embedding ran.
     stored: bool = True
     # "" (written), "duplicate" (this msg_id already landed; stored=True),
-    # "logging_disabled" (stored=False).
-    reason: Literal["", "duplicate", "logging_disabled"] = ""
+    # "logging_disabled" or "deleted" (stored=False).
+    reason: Literal["", "duplicate", "logging_disabled", "deleted"] = ""
+
+
+class ConversationSaveMessageInput(BaseModel):
+    """Save one chat message a user picked for search, whether or not the
+    namespace records transcripts.
+
+    `conversation.append` records a transcript and stores nothing while the
+    namespace's logging switch (`conversation.set_logging`) is off; this op is
+    one user's opt-in for one message and never changes that switch. The
+    message is flagged saved for its owner, and
+    `conversation.search_saved_messages` searches only flagged messages. A
+    message the transcript already holds is flagged in place (its run_id and
+    content stay as recorded), not written twice.
+    """
+
+    org: str
+    namespace: str
+    agent: str
+    # The client's conversation id; this remains the thread id in Loom.
+    conversation_id: str = Field(min_length=1, max_length=256)
+    # The client's stable message id. Re-saving it is idempotent.
+    message_id: str = Field(min_length=1, max_length=256)
+    # Only selectable user and assistant messages are embedded.
+    role: Literal["user", "assistant"]
+    # The message text; ignored when the transcript already holds the message.
+    content: str = Field(min_length=1, max_length=120_000)
+    # The owner is a hard filter on the paired search operation.
+    user_id: str = Field(min_length=1, max_length=256)
+
+
+class ConversationSaveMessageOutput(BaseModel):
+    conversation_id: str
+    message_id: str
+    # True when the turn is saved and has a vector the saved search ranks: a new
+    # write, a re-save (finishing what an interrupted save left behind), and a
+    # transcript turn that is now flagged saved. False with a `reason` otherwise,
+    # never for a disabled logging switch.
+    indexed: bool
+    # "duplicate": already saved, nothing changed. "owner_mismatch": the stored
+    # turn belongs to another user. "deleted": the stored turn was tombstoned.
+    # "unsupported_role": the stored turn is a system or tool turn, which is not
+    # embedded. "embed_failed": the turn is saved but its embed failed; saving it
+    # again retries the embed.
+    reason: Literal[
+        "", "duplicate", "owner_mismatch", "deleted", "unsupported_role", "embed_failed"
+    ] = ""
+    # The stored turn's timestamp; the time of the refusal when one is refused.
+    ts: datetime
+
+
+class ConversationUnsaveMessageInput(BaseModel):
+    """Withdraw one message from a user's saved-message search."""
+
+    org: str
+    namespace: str
+    agent: str
+    # LibreChat's conversation id, as given to conversation.save_message.
+    conversation_id: str = Field(min_length=1, max_length=256)
+    # LibreChat's message id, as given to conversation.save_message.
+    message_id: str = Field(min_length=1, max_length=256)
+    # Only this user's saved row is withdrawn.
+    user_id: str = Field(min_length=1, max_length=256)
+
+
+class ConversationUnsaveMessageOutput(BaseModel):
+    conversation_id: str
+    message_id: str
+    # False when no saved row of this user exists: never saved, already
+    # withdrawn, or saved by another user (which is not confirmed).
+    found: bool
+    # True when the turn itself was removed: the namespace does not record
+    # transcripts, so the row existed only because of the save. False keeps
+    # the turn in the recorded transcript, no longer flagged saved.
+    removed: bool = False
+    ts: datetime
 
 
 class ConversationSetLoggingInput(BaseModel):
@@ -264,6 +336,9 @@ class ConversationSearchInput(BaseModel):
     # Filter by speaker; system turns other than compaction summaries, and tool turns,
     # are not embedded, so they match only on the substring fallback.
     role: ConversationRole | None = None
+    # Optional owner filter. Integrations that serve many users from one
+    # namespace set it so a search cannot cross their user boundary.
+    user_id: str | None = None
     # At most this many hits (1-200). Across agents ("*" or "-") a turn several agents
     # logged is one hit: the embeddings hold one row per turn, and the substring path
     # collapses its copies before the limit.
@@ -289,6 +364,88 @@ class ConversationSearchOutput(BaseModel):
     # Namespaces of the caller an all_mine search did not read because it stops
     # at `memory_search_fanout_max_namespaces`; address one by name to search it.
     namespaces_skipped: list[str] = Field(default_factory=list)
+
+
+class ConversationSearchSavedMessagesInput(BaseModel):
+    """Hybrid search over only the messages one user saved with
+    conversation.save_message, not the whole transcript.
+
+    `conversation.search` ranks every recorded turn of a namespace (or of all
+    the caller's namespaces); this op stays in one namespace and returns only
+    turns flagged saved and owned by `user_id`.
+    """
+
+    org: str
+    namespace: str
+    agent: str
+    user_id: str = Field(min_length=1, max_length=256)
+    query: str = Field(min_length=1, max_length=20_000)
+    conversation_id: str | None = Field(default=None, max_length=256)
+    role: Literal["user", "assistant"] | None = None
+    top_k: int = Field(default=20, ge=1, le=200)
+    # hybrid: the vector leg and a BM25 leg over each message's whole text,
+    # fused by reciprocal rank; semantic: vector only; lexical: BM25 only.
+    search_mode: Literal["hybrid", "semantic", "lexical"] = "hybrid"
+    # Weight of the BM25 leg in the fusion (hybrid mode); 1.0 = equal weight.
+    lexical_weight: float = Field(default=1.0, ge=0.0, le=1.0)
+
+
+class _SavedMessageHit(ProjectedRow):
+    conversation_id: str
+    message_id: str
+    role: Literal["user", "assistant"]
+    content_excerpt: str
+    ts: datetime
+
+
+class ConversationSearchSavedMessagesOutput(BaseModel):
+    hits: list[_SavedMessageHit]
+
+
+class ConversationListSavedMessagesInput(BaseModel):
+    """Page through the messages a user saved, newest first, with no query: the
+    first view of a "Saved" panel before anything is typed."""
+
+    org: str
+    namespace: str
+    agent: str
+    # Only this user's saved messages are listed.
+    user_id: str = Field(min_length=1, max_length=256)
+    # Optional: only the messages saved from one conversation.
+    conversation_id: str | None = Field(default=None, max_length=256)
+    # At most this many messages per page (1-200).
+    limit: int = Field(default=50, ge=1, le=200)
+    # Opaque; pass the previous page's `next_cursor`.
+    cursor: str | None = None
+    # The output fields the caller reads (a whitelist resolved against the row model;
+    # an unknown name is a 422); unset, every field.
+    fields: list[str] | None = None
+
+
+class ConversationSavedStatusInput(BaseModel):
+    """Which of a conversation's messages a user has saved, in one call: a chat
+    client draws every message's saved state when it opens the conversation."""
+
+    org: str
+    namespace: str
+    agent: str
+    user_id: str = Field(min_length=1, max_length=256)
+    # The conversation the messages belong to; message ids are unique within it.
+    conversation_id: str = Field(min_length=1, max_length=256)
+    # The messages to check (1-500).
+    message_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class ConversationSavedStatusOutput(BaseModel):
+    # The subset of `message_ids` this user has saved, in the order asked.
+    saved: list[str]
+
+
+class ConversationListSavedMessagesOutput(BaseModel):
+    # The page, most recently saved first.
+    rows: list[_SavedMessageHit]
+    # Pass as `cursor` for the next page; None when this is the last page.
+    next_cursor: str | None = None
 
 
 # conversation.threads — recent thread list (grouped over loom.conversations),

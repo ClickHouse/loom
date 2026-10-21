@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from server.memory.domain import record_constraints
 
-_FIELD_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
+FIELD_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 _TRUE_TOKENS = {"true", "yes", "1", "t", "y"}
 _FALSE_TOKENS = {"false", "no", "0", "f", "n"}
 
@@ -61,7 +61,7 @@ def _coerce_number(value: Any, field_name: str, *, integer: bool) -> float:
     return n
 
 
-def _coerce_record_value(
+def coerce_record_value(
     value: Any,
     field_type: str,
     *,

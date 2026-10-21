@@ -31,7 +31,7 @@ from server.memory.store.rows import (
 _log = logging.getLogger(__name__)
 
 # Rows `write_versions_by_ids` reads concurrently.
-_READ_AT_ONCE = 16
+_READ_AT_ONCE = 16  # not a setting: the fan-out of one call
 
 
 async def write_versions_by_ids(

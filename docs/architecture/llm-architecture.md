@@ -60,9 +60,13 @@ The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and
   (`LOOM_EMBEDDING_CACHE_SIZE`, `LOOM_EMBEDDING_CACHE_TTL_S`), then an in-flight call for
   the same text, then `loom.embedding_cache` (texts up to
   `LOOM_EMBEDDING_CACHE_SHARED_MAX_CHARS`, matching `dim` only), then the provider. The
-  key hashes the model and the normalised text. Batch entries use a separate key over the
-  raw text, so the paths never serve each other. A cache failure falls through to the
-  provider.
+  key hashes the request's org, the model and the normalised text, so one org is never
+  served another's vector, nor shares an in-flight call with it: a fast answer would tell
+  it that another org embedded the same text. A call outside a request (a worker, a CLI,
+  the startup probe) has no org to scope by and skips the cache: a worker's identity
+  carries the org of the row it last worked on, which is no scope for the next text.
+  Batch entries use a separate key over the raw text, so the paths never serve each
+  other. A cache failure falls through to the provider.
 - **Batches.** OpenAI and Gemini take up to 100 inputs per request; `memory.set` embeds
   value and key in one request.
 - **Second vector legs.** `prefix:<dim>:<model>` (a Matryoshka prefix,
@@ -75,13 +79,13 @@ The `Embedder` protocol is `model_name`, `dim`, `async embed(text)` and
 
 OpenAI and Gemini share `server/embedding/_provider.py`:
 
-| Concern      | Behaviour                                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Retry        | Transport errors and 408, 409, 425, 429, 500, 502, 503, 504; three attempts, exponential backoff (0.5 s base, 10 s cap).                                                                            |
-| Input guard  | Inputs are token-counted first (8191 tokens for OpenAI, 2048 for Gemini); an oversize input raises instead of being truncated.                                                                      |
-| Output guard | An empty vector, a width mismatch or a non-finite value raises `MalformedEmbedding`.                                                                                                                |
-| Timeouts     | The shared HTTP client's 20 s (5 s connect). The query path uses `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) per attempt and `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` (1), then 503 `EMBED_TIMEOUT`. |
-| Health       | Calls report to `/v1/health`. A cancellation is not a provider failure.                                                                                                                             |
+| Concern      | Behaviour                                                                                                                                                                                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retry        | Transport errors and 408, 409, 425, 429, 500, 502, 503, 504; `LOOM_EMBEDDING_RETRY_ATTEMPTS` (3) attempts, exponential backoff (0.5 s base, `LOOM_EMBEDDING_RETRY_MAX_WAIT_S` cap, 10 s).                                                                                   |
+| Input guard  | Inputs are token-counted first (8191 tokens for OpenAI, 2048 for Gemini); an oversize input raises instead of being truncated.                                                                                                                                              |
+| Output guard | An empty vector, a width mismatch or a non-finite value raises `MalformedEmbedding`.                                                                                                                                                                                        |
+| Timeouts     | The shared HTTP client's `LOOM_HTTP_CLIENT_TIMEOUT_S` (20 s; `LOOM_HTTP_CLIENT_CONNECT_TIMEOUT_S`, 5 s, to connect). The query path uses `LOOM_MEMORY_SEARCH_EMBED_BOUND_S` (2.5 s) per attempt and `LOOM_MEMORY_SEARCH_EMBED_BOUND_RETRIES` (1), then 503 `EMBED_TIMEOUT`. |
+| Health       | Calls report to `/v1/health`. A cancellation is not a provider failure.                                                                                                                                                                                                     |
 
 ### Changing the embedder
 
@@ -225,10 +229,11 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
 ### Retries, timeouts, fallback
 
 - **Retry** (`server/llm/_retry.py`): transport errors and 429, 500, 502, 503, 504, 529;
-  four attempts, exponential backoff (0.5 s base, 20 s cap). The request timeout,
+  `LOOM_LLM_RETRY_ATTEMPTS` (4) attempts, exponential backoff (0.5 s base,
+  `LOOM_LLM_RETRY_MAX_WAIT_S` cap, 20 s). The request timeout,
   `LOOM_LLM_REQUEST_TIMEOUT_S`, is 300 s: it only catches a hung connection, so a slow
   model or a long output never hits it. Callers that need less wrap the call (HyDE on
-  `memory.search` waits 6 s).
+  `memory.search` waits `LOOM_MEMORY_SEARCH_HYDE_TIMEOUT_S`, 6 s).
 - **Fallback model.** `LOOM_LLM_FALLBACK_MODEL` wraps the client in `FallbackLLMClient`
   (`server/llm/fallback.py`). It hands the call to the second model on an outage
   (transport error, retryable status, timeout) or a rejected request (400, 413, 422);
@@ -239,16 +244,72 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
 ### Response cache
 
 `CachedLLMClient` (`server/llm/cache.py`) caches completions in `loom.llm_response_cache`
-(7-day TTL). The key is per model, over the system prompt, user prompt, `max_tokens`,
-`response_format` and extra arguments. Only a non-empty answer from the requested model
-is stored, so a fallback answer is never cached. Each row records the memory keys whose
-text the prompt carried (`window_keys`), so erasure and redaction can delete it by key.
+(7-day TTL). The key is per model, over the org the client serves, the system prompt, user
+prompt, `max_tokens`, `response_format` and extra arguments, so one org is never served
+another's answer; a client built with no org calls the provider. Only a non-empty answer
+from the requested model is stored, so a fallback answer is never cached. Each row records
+the memory keys whose text the prompt carried (`window_keys`), so erasure and redaction can
+delete it by key.
 
 | User         | Switch                                                                                                    |
 | ------------ | --------------------------------------------------------------------------------------------------------- |
 | `memory.ask` | `LOOM_MEMORY_ASK_LLM_CACHE_DEFAULT` (on), `LOOM_MEMORY_ASK_LLM_CACHE_NAMESPACES`, per-request `llm_cache` |
 | `code.ask`   | `LOOM_CODE_ASK_LLM_CACHE` (on); a non-zero temperature bypasses it                                        |
 | Extraction   | Off, except where `LOOM_LLM_POLICY_BY_TRAFFIC_CLASS` enables it (the `bench` class by default)            |
+
+## The customer of a model call
+
+With `LOOM_INFERENCE_CUSTOMER_HEADER` set, every request to a model (chat, embedding, rerank,
+classify) carries the org whose data it holds, and with `LOOM_INFERENCE_FEATURE_HEADER` the
+feature that made it (`server/llm/customer.py`). The senders add the headers themselves:
+the shared HTTP client also carries non-model calls, which name no customer.
+
+- **Where the org comes from.** A request: the identity the transport records after the
+  token is verified (`observability.genai`), which is the org the op addresses. A worker or
+  a CLI: `customer.for_org(org)` around the call, from the rows it works on; a CLI command
+  with `--org` is scoped to it. A worker's own identity never counts, since a pass stamps the
+  org of the row it last worked on and the next row's call must not inherit it. The
+  deployment's own calls (the startup embedder probe, the recalibration worker's fixed
+  pairs, the provider checks) run under `customer.system()` and name
+  `LOOM_INFERENCE_SYSTEM_CUSTOMER`. The sampled retrieval judge sends the judged org's query
+  and memory text, so it names that org.
+- **One customer per call.** A job that batches several orgs' rows (the embedding worker,
+  `loom reembed`, a model rebuild) splits its batches by org before calling.
+- **The gateway's names.** `LOOM_INFERENCE_CUSTOMER_FORMAT` turns an org id into the gateway's
+  customer id, and `LOOM_INFERENCE_FEATURE_MAP_JSON` maps Loom's feature names to the gateway's.
+  A cell that serves several customers sets `LOOM_INFERENCE_CUSTOMER_REQUIRED`, so it does not
+  start without the header.
+- **No customer, no call.** A call that names none raises `Unattributed`
+  (`MODEL_CALL_UNATTRIBUTED`) before anything is sent. A missed call path fails loudly
+  instead of being billed to no one. The embedding workers (memory and code) check first and
+  give up on a row that names no org at once, recording that error with no model call, since a
+  retry cannot help and the refusal is not a provider failure.
+
+- **An org switched off makes no call.** `org.set_model_calls` writes `loom.org_model_calls`;
+  `customer.require()`, first in every sender (before the gateway token, the embedding caches
+  and provider health), checks the call's org against each process's copy of the switched-off
+  orgs (`customer.switched_off_orgs`). A cached vector or answer is refused too: the switch is
+  a kill switch, so nothing model-made reaches the org. The copy is read at most every
+  `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted no longer than
+  `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`, past which every model call for an org is
+  refused (`customer.SwitchUnread`). A job treats a SwitchUnread refusal as it treats a
+  switch-off (`customer.HOLDS`): its rows stay as they are with no attempt spent, a rebuild
+  step runs again, and a fail-open reranker, classifier or judge lets it through. A call made
+  during a read waits for it when the copy is too old or a change made in this process has
+  not been read yet; otherwise it is served the copy in hand. Every job leaves a
+  switched-off org out when it selects work (in the query, so its rows neither spend attempts
+  nor fill the batch ahead of other orgs); code ingest skips its repositories, freezing its
+  whole code index. A conflict mark older than the sweep's hour when the org comes back is past
+  the sweep, as a judge lost in an outage is: the write stands as made. The check runs in
+  `require()`, before provider-health recording, so a refusal is never a provider failure. With
+  no customer header a job's batch of several orgs is one call, unless an org in it is switched
+  off: `customer.by_org` then splits it by org, so the switch refuses that org's call and the
+  others go on.
+
+**Why headers, not a token per customer.** The gateway already knows Loom as one service
+(its token); a credential per org would mean thousands to issue, rotate and revoke for no
+gain in what the gateway can check. The org in the header is the org the request addresses,
+as authorized for its token.
 
 ## Fake providers
 
@@ -278,41 +339,71 @@ through the production code path. The cost: a cosine threshold cannot tell a rev
 from a contradiction, which is why the conflict resolver exists. It judges after the
 write, on the leader, so the write's own verdict stays deterministic.
 
-| Feature                                       | LLM?          | Switch (default)                                                                                                                                                                          |
-| --------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.set`, `memory.search` core            | No            | —                                                                                                                                                                                         |
-| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`                                                                                                                                                                 |
-| Conflict resolver (after the write)           | Yes           | `conflict_resolver` worker, `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` (on unless the LLM provider or the resolver model's provider is fake); `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`) |
-| `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                                                                                                               |
-| Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                                                                                                    |
-| `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                                                                           |
-| `memory.search` HyDE and fallback helpers     | Yes, bounded  | Per-request `hyde`; `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` (2)                                                                                                                       |
-| `memory.search` rerank                        | Yes, opt-in   | Namespace `rerank_endpoint` or per-request `rerank` (`builtin:openai[:model]`, `builtin:cohere[:model]`, a `LOOM_RERANK_ENDPOINTS_JSON` name)                                             |
-| Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                                                             |
-| Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                                                                  |
-| Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                                                            |
-| Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                                                                                                    |
-| `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                                                                                                 |
-| Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                                                                                                             |
-| Retrieval-quality judge                       | Yes, sampled  | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` (0)                                                                                                                                                    |
-| Embedding recovery, calibration               | No            | —                                                                                                                                                                                         |
+| Feature                                       | LLM?          | Switch (default)                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `memory.set`, `memory.search` core            | No            | —                                                                                                                                                                                                                                                                                                            |
+| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`                                                                                                                                                                                                                                                                                    |
+| Conflict resolver (after the write)           | Yes           | `conflict_resolver` worker, `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` (on unless the LLM provider or the resolver model's provider is fake); `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`)                                                                                                                    |
+| `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                                                                                                                                                                                                                                  |
+| Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                                                                                                                                                                                                                       |
+| `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                                                                                                                                                                                              |
+| `memory.search` HyDE and fallback helpers     | Yes, bounded  | Per-request `hyde`; `LOOM_MEMORY_SEARCH_FALLBACK_MAX_LLM_CALLS` (2); [none](../features/memory/search-and-ask.md#modes-and-recipes) under `retrieval_budget: "fast"`, `recipe: "fast"` or in `context.pack`                                                                                                  |
+| `memory.search` rerank                        | Yes, opt-in   | Namespace `rerank_endpoint` or per-request `rerank` (`builtin:openai[:model]`, `builtin:cohere[:model]`, a `LOOM_RERANK_ENDPOINTS_JSON` name); `builtin:openai` makes [none](../features/memory/search-and-ask.md#modes-and-recipes) under `retrieval_budget: "fast"`, `recipe: "fast"` or in `context.pack` |
+| Entity extraction                             | Yes           | `entity_extractor` worker, `LOOM_ENTITY_EXTRACT_ENABLED` (on)                                                                                                                                                                                                                                                |
+| Conversation titles                           | Yes           | `conversation_titler` worker (on; skips on the fake LLM)                                                                                                                                                                                                                                                     |
+| Observation mining, reflection, profile folds | Yes           | `observe_extract`, `reflection_distill`, `profile_consolidation` workers (off)                                                                                                                                                                                                                               |
+| Structured profiles                           | Yes           | `structured_profile` worker (on; only for a namespace with a profile schema), `LOOM_STRUCTURED_PROFILE_MODEL`                                                                                                                                                                                                |
+| Code summaries                                | Yes           | `code_summary` worker (off), `LOOM_CODE_SUMMARY_MODEL`                                                                                                                                                                                                                                                       |
+| `code.ask`                                    | Yes           | `LOOM_CODE_ASK_LLM_MODEL`                                                                                                                                                                                                                                                                                    |
+| Session briefs (`session.brief_save`)         | Yes, optional | `LOOM_SESSION_BRIEF_LLM` (on), `LOOM_SESSION_BRIEF_LLM_MODEL`                                                                                                                                                                                                                                                |
+| Retrieval-quality judge                       | Yes, sampled  | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` (0)                                                                                                                                                                                                                                                                       |
+| Embedding recovery, calibration               | No            | —                                                                                                                                                                                                                                                                                                            |
 
 Whether an agent calls `memory.set` at all is the client model's decision. The MCP tool
 descriptions (`server/transport/mcp_descriptions.py`) describe intent, not a syntax.
+
+### LLM-free reads
+
+`LOOM_READS_LLM_FREE=true` makes every read op (`Operation.read_only`) run with no LLM
+call, so a deployment can promise that reads never reach a model. The HTTP and MCP transports mark the
+request while the handler runs (`server/core/llm_free.py`); the memory search reads the mark through the
+same gate as the fast posture and `context.pack` (`_is_llm_free`), and every other read step that could
+call a model reads `reads_llm_free()`:
+
+- `memory.search`, `search.query` (the MCP `loom_search` tool), `context.pack` and every read built on
+  them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms. The
+  spelling-fix and set-expansion embeddings are skipped, so a plain search or pack embeds its query once.
+- `code.search`: no HyDE, model-named concept expansion or query expansion; its memo keeps LLM-free
+  answers apart.
+- Reranking: a reranker is a model call, and an LLM-free read makes only the ones it names. A
+  namespace's `rerank_endpoint` and code search's default (`LOOM_CODE_SEARCH_RERANK_DEFAULT`) do not
+  run; a reranker the request names runs, except `builtin:openai`, which keeps the fused order.
+- `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
+  no rerank. Each keeps the deterministic answer it already falls back to.
+- `memory.ask` and `code.ask` answer 409 `READS_LLM_FREE` naming the setting unless the request
+  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it;
+  with that flag they return the recalled evidence with no LLM call.
+  A model's answer is the purpose of those calls, so the setting refuses it rather than answering
+  without one. `memory.brief` asks for the evidence alone and returns it with its unknowns, no answer.
+- The sampled retrieval-quality judge queues nothing: both transports record a search's quality inside
+  the same mark.
+
+Writes (`memory.set_from_messages` extraction, the conflict judge, `knowledge.synthesize`, session briefs)
+and the background workers still call models.
 
 ## Prompts
 
 Prompts are Python constants, versioned with the code:
 
-| Prompt family                                                                  | Where                                                                                                   |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`       |
-| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                |
-| Rerank                                                                         | `server/memory/app/rerank.py`                                                                           |
-| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                      |
-| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `entity_extractor`) |
+| Prompt family                                                                  | Where                                                                                                                         |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| Fact extraction, judge, retry addendum                                         | `server/memory/domain/extraction_prompts.py`; assembled in `server/memory/app/extract/prompts.py`                             |
+| Search helpers (HyDE, iterative judge, derived intent, triples, verb synonyms) | `server/memory/domain/search_prompts.py`                                                                                      |
+| Rerank                                                                         | `server/memory/app/rerank.py`                                                                                                 |
+| `memory.ask` synthesis                                                         | `server/memory/app/ask/prompts.py`                                                                                            |
+| Worker prompts                                                                 | The worker modules (`code_summary`, `conversation_titler`, `profile_consolidation`, `structured_profile`, `entity_extractor`) |
 
-Which model runs each job is set in one place, `server/settings/_models.py`
+Which model runs each job is set in one place, the `Models` section of `server/settings/catalog.py`
 ([models per job](../operations/deployment.md#models-per-job)). Recalled memory
 inside a prompt is fenced as data ([security](security.md#prompt-safety)).
 

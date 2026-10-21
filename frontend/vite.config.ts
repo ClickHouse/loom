@@ -50,9 +50,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), fontPreload()],
   resolve: {
     alias: [
-      // Click UI's light tokens and page defaults, which its exports map does not expose.
+      // Click UI's dark tokens and page defaults, which its exports map does not expose.
       // Loaded directly instead of through ClickUIProvider, whose barrel import would ship
-      // every component's CSS and the dark theme.
+      // every component's CSS and both themes.
       {
         find: "click-ui-styles",
         replacement: fileURLToPath(

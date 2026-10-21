@@ -55,13 +55,13 @@ async def test_tombstone_documents_uses_superseded_at_guard(monkeypatch) -> None
     column (so the doc stops surfacing) and shares the same WHERE for
     count + mutation."""
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 0}, {"n": 0}, {"n": 4}])
+    ch.query_one_returns.extend([{"n": 0}, {"n": 0}, {"n": 0}, {"n": 4}])
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
     n = await saga_steps._step_tombstone_documents_by_ns("clickhouse", "ns-a")
 
     assert n == 4
-    sel_sql, sel_params = ch.query_one_calls[2]
+    sel_sql, sel_params = ch.query_one_calls[3]
     assert "FROM loom.documents FINAL" in sel_sql
     assert "superseded_at IS NULL" in sel_sql
     assert sel_params["org"] == "clickhouse"
@@ -92,20 +92,22 @@ async def test_tombstone_documents_idempotent_zero_count(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_erase_blobs_deletes_and_stamps(monkeypatch) -> None:
-    """Delete the scope's rows of loom.document_blobs, then stamp
-    blob_erased_at on the documents still unstamped."""
+    """Delete the scope's rows of loom.document_blobs, stamp blob_erased_at
+    on the documents still unstamped, then delete who uploaded them."""
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 2}, {"n": 2}])
+    ch.query_one_returns.extend([{"n": 2}, {"n": 2}, {"n": 1}])
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
     n = await saga_steps._step_erase_blobs_by_ns("clickhouse", "ns-a")
 
     assert n == 2
-    blob_count, stamp_count = ch.query_one_calls
+    blob_count, stamp_count, uploads_count = ch.query_one_calls
     assert "FROM loom.document_blobs" in blob_count[0] and blob_count[1]["ns"] == "ns-a"
     assert "FROM loom.documents FINAL" in stamp_count[0]
     assert "blob_path != ''" in stamp_count[0] and "blob_erased_at IS NULL" in stamp_count[0]
-    delete_sql, stamp_sql = (sql for sql, _ in ch.execute_calls)
+    assert "FROM loom.blob_uploads" in uploads_count[0] and uploads_count[1]["ns"] == "ns-a"
+    delete_sql, stamp_sql, uploads_sql = (sql for sql, _ in ch.execute_calls)
+    assert "ALTER TABLE loom.blob_uploads" in uploads_sql and "DELETE" in uploads_sql
     assert "ALTER TABLE loom.document_blobs" in delete_sql and "DELETE" in delete_sql
     assert "ALTER TABLE loom.documents" in stamp_sql and "UPDATE blob_erased_at" in stamp_sql
     # tagged, awaited mutations like every other saga statement
@@ -163,7 +165,7 @@ async def test_tombstone_documents_erases_the_blobs_first(monkeypatch) -> None:
     """The documents step owns the census rows of both tables, so it erases
     the originals — before the rows a purge deletes."""
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 1}, {"n": 1}, {"n": 1}])
+    ch.query_one_returns.extend([{"n": 1}, {"n": 1}, {"n": 0}, {"n": 1}])
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
     n = await saga_steps._step_tombstone_documents_by_ns("o", "ns-a")
@@ -182,13 +184,13 @@ async def test_purge_deletes_documents_and_chunks(monkeypatch) -> None:
     from server.erasure.store import steps_memory as memory_steps
 
     ch = StubCH()
-    ch.query_one_returns.extend([{"n": 0}, {"n": 0}, {"n": 3}, {"n": 5}])
+    ch.query_one_returns.extend([{"n": 0}, {"n": 0}, {"n": 0}, {"n": 3}, {"n": 5}])
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(erasure_mutations, "_default_client", lambda: ch)
     with erasure_mutations.purge_scope(True):
         assert await saga_steps._step_tombstone_documents_by_ns("o", ["a", "b"]) == 3
         assert await memory_steps.supersede_chunks_by_namespace("o", ["a", "b"]) == 5
-    counts = [sql for sql, _ in ch.query_one_calls][2:]
+    counts = [sql for sql, _ in ch.query_one_calls][3:]
     assert "loom.documents" in counts[0] and "superseded_at" not in counts[0]
     assert "loom.chunks" in counts[1] and "doc_superseded_at" not in counts[1]
     deletes = [sql for sql, _ in ch.execute_calls if "DELETE" in sql]
@@ -201,12 +203,20 @@ async def test_purge_deletes_documents_and_chunks(monkeypatch) -> None:
 
 def test_knowledge_tables_are_census_rows_owned_by_their_steps() -> None:
     """loom.chunks and loom.documents hold knowledge text: the census counts
-    them for a namespace scope, and residue re-opens the step that owns it."""
+    them for a namespace scope and, by who wrote them, for a user's; an
+    original another writer may share is counted by namespace only. Residue
+    re-opens the step that owns it."""
     from server.erasure.store import census as erasure_census
 
     knowledge = {"loom.chunks", "loom.documents", "loom.document_blobs"}
     assert knowledge <= set(erasure_census.census_tables("namespace"))
-    assert not knowledge & set(erasure_census.census_tables("user_id"))
+    assert knowledge & set(erasure_census.census_tables("user_id")) == {
+        "loom.chunks",
+        "loom.documents",
+    }
+    assert erasure_census.steps_to_reopen({"loom.documents": 1}, "user_id") == {
+        "documents.tombstone"
+    }
     assert erasure_census.steps_to_reopen({"loom.chunks": 2}, "namespace") == {"chunks.supersede"}
     for table in ("loom.documents", "loom.document_blobs"):
         assert erasure_census.steps_to_reopen({table: 1}, "namespace") == {"documents.tombstone"}

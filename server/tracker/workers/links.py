@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds as _now
+from server.llm import customer
 from server.settings import settings
 from server.tracker.app import links as lk
 from server.tracker.domain import similar as sim
@@ -127,15 +128,21 @@ async def _run(
             # variant exists
             result.skipped_restricted += 1
             continue
+        if await customer.switched_off(cfg.org):
+            continue  # scoring embeds: the namespace is scored when the org is back on
         set_namespace(ns)  # Where a cut pass stopped
         src = make(cfg.org, ns)
         try:
-            await score_namespace(src, repo, cfg.org, ns, result=result, now=now or _now())
-            result.namespaces += 1
-            await refit_dupcheck(src, cfg.org, ns, result=result, now=now or _now())
+            # The refit replays the gold set through the vector leg: that org's embeds.
+            with customer.for_org(cfg.org):
+                await score_namespace(src, repo, cfg.org, ns, result=result, now=now or _now())
+                result.namespaces += 1
+                await refit_dupcheck(src, cfg.org, ns, result=result, now=now or _now())
         except TrackerUnavailable as e:
             result.errors.append(f"{ns}: tracker_unavailable: {e}")
             note_failure(e, f"tracker_links:{ns}")
+        except customer.HOLDS:
+            continue  # a held call is no failure: the namespace is scored once the org is back
         except Exception as e:
             result.errors.append(f"{ns}: {type(e).__name__}: {e}")
             note_failure(e, f"tracker_links:{ns}")
@@ -155,7 +162,8 @@ async def refit_dupcheck(
     """The weekly refit of tracker.duplicate_check's logistic fit
     for this namespace — due when the stored fit is `tracker_dupcheck_refit_interval_s`
     old; the pass counts fits, the rows fitted, the in-sample AUC and the
-    namespaces skipped (fresh, restricted, no gold, off). Never raises."""
+    namespaces skipped (fresh, restricted, no gold, off). Raises only a call the
+    model-call switch holds (`customer.HOLDS`), on which the pass skips the namespace."""
     from server.tracker.app import dupcheck_fit as df
 
     if not hasattr(src, "duplicate_gold"):

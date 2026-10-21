@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 # Values of one row a value-less close repair reads a page at a time, and the pages one
 # repair reads at most; past them it raises, and the failure stays for the next pass.
-_VALUES_PAGE = 100
+_VALUES_PAGE = 100  # not a setting: the page size of one read
 _VALUES_PAGES = 20
 
 # The repair's reads follow its own closes (async ALTER UPDATEs): one still queued must

@@ -22,14 +22,25 @@ from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.store.documents import LIVE_ORIGINAL_SQL
 
 TABLE = "loom.document_blobs"
+UPLOADS = "loom.blob_uploads"
 _KEY = "org = {org:String} AND namespace = {ns:String} AND sha256 = {sha:String}"
 
 
-async def put(org: str, namespace: str, data: bytes, *, ch: _CHClient | None = None) -> str:
+async def put(
+    org: str, namespace: str, data: bytes, *, uploader: str = "-", ch: _CHClient | None = None
+) -> str:
     """Store `data` and return its sha256, the document's `blob_path`. Committed
-    before it returns: the document row that names it is written next."""
+    before it returns: the document row that names it is written next. An end
+    user's upload is recorded first (`loom.blob_uploads`), so their erasure
+    finds every original they stored."""
     sha = hashlib.sha256(data).hexdigest()
     ch = ch or _default_client()
+    if uploader not in ("", "-"):
+        await ch.insert(
+            UPLOADS,
+            [{"org": org, "namespace": namespace, "sha256": sha, "user_id": uploader}],
+            settings={"async_insert": 0},
+        )
     await ch.insert(
         TABLE,
         [{"org": org, "namespace": namespace, "sha256": sha, "data": data, "size": len(data)}],
@@ -84,27 +95,31 @@ async def delete(
     min_age_s: int = 0,
     ch: _CHClient | None = None,
 ) -> int:
-    """Delete the originals `shas` of the namespace in one statement and return
-    how many are gone; with `min_age_s`, only rows written at least that long ago
-    (on the ClickHouse clock), so an original a concurrent write just stored
-    again survives."""
+    """Delete the originals `shas` of the namespace in one statement, and the
+    record of who uploaded the ones now gone, and return how many are gone; with
+    `min_age_s`, only rows written at least that long ago (on the ClickHouse
+    clock), so an original a concurrent write just stored again survives."""
     shas = sorted(set(shas))
     if not shas:
         return 0
     ch = ch or _default_client()
-    sql = f"DELETE FROM {TABLE} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
-    sql += "AND sha256 IN {shas:Array(String)}"
+    where = "org = {org:String} AND namespace = {ns:String} AND sha256 IN {shas:Array(String)}"
     params: dict[str, object] = {"org": org, "ns": namespace, "shas": shas}
     if min_age_s > 0:
-        sql += " AND created_at < now64(3) - INTERVAL {age:UInt32} SECOND"
+        where += " AND created_at < now64(3) - INTERVAL {age:UInt32} SECOND"
         params["age"] = int(min_age_s)
-    await ch.execute(sql, params=params)
-    left = await ch.query_one(
-        f"SELECT uniqExact(sha256) AS n FROM {TABLE} "
+    await ch.execute(f"DELETE FROM {TABLE} WHERE {where}", params=params)
+    rows = await ch.query_all(
+        f"SELECT DISTINCT toString(sha256) AS sha FROM {TABLE} "
         "WHERE org = {org:String} AND namespace = {ns:String} AND sha256 IN {shas:Array(String)}",
         params={"org": org, "ns": namespace, "shas": shas},
     )
-    return len(shas) - int((left or {}).get("n") or 0)
+    gone = sorted(set(shas) - {str(r["sha"]) for r in rows})
+    if gone:
+        # Who uploaded them goes with them; a record younger than `min_age_s`
+        # may be a re-upload's, written just before its bytes.
+        await ch.execute(f"DELETE FROM {UPLOADS} WHERE {where}", params={**params, "shas": gone})
+    return len(gone)
 
 
 async def namespaces(

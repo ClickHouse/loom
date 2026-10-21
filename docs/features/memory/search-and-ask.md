@@ -17,7 +17,7 @@ and conversations in one call. `memory.search` is not an MCP tool of its own. Se
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `memory.search`           | Ranked hits with scores, abstain and risk.                                                                                           |
 | `memory.ask`              | A synthesised, cited answer, or an abstain.                                                                                          |
-| `memory.search_trace`     | The same pool as `memory.search`, with a per-hit scoring breakdown.                                                                  |
+| `memory.search_trace`     | The vector leg of `memory.search`, with a per-hit scoring breakdown (no fusion, assembly or reranker).                               |
 | `memory.search_trace_log` | Past searches of the namespace: keys and scores returned, abstain, risk, latency.                                                    |
 | `memory.get`              | One row by exact key.                                                                                                                |
 | `memory.bulk_get`         | Up to 1,000 keys in one round trip, each as `memory.get` answers it (without `conflict_verdict` and `code`); `missing` lists misses. |
@@ -35,19 +35,19 @@ narrow to one author.
 
 ### What a hit carries
 
-| Field                           | Meaning                                                                                             |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `memory_key`, `content_excerpt` | The row and the text it matched on.                                                                 |
-| `similarity`                    | Cosine to the query in [0, 1]. Threshold on this; no boost is added to it.                          |
-| `rank_score`                    | The fused score the list is sorted by. Under `rrf` it is a reciprocal-rank sum (about 0.03).        |
-| `below_threshold`               | Under the similarity floor but kept (`floor_mode="readmit"`).                                       |
-| `source`                        | `fact` (memory embeddings), `chunk` (a passage of a long value) or `summary` (a session digest).    |
-| `parent_memory_key`             | For a chunk, the memory it belongs to.                                                              |
-| `status`, `superseded_by`       | Lifecycle state; a superseded row served on request names its successor.                            |
-| `source_class`, `verified`      | How the content entered memory, and whether a live attestation stands.                              |
-| `valid_at`, `created_at`        | Validity time and record time.                                                                      |
-| `score_components`              | The main ranking terms (`explain=true` for more; `foreign=1.0` marks a hit from another namespace). |
-| `namespace`                     | The source namespace on a cross-namespace search.                                                   |
+| Field                           | Meaning                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_key`, `content_excerpt` | The row and the text it matched on.                                                                                                                                                                                                                                                                                                                                                         |
+| `similarity`                    | Cosine to the query in [0, 1]. Threshold on this; no boost is added to it.                                                                                                                                                                                                                                                                                                                  |
+| `rank_score`                    | The score the list is sorted by: the fused score, under `rrf` a reciprocal-rank sum (about 0.03). After a reranker that changed the order it is the pool's score for the rank the row now holds (above 1.0 where the pool's own was, as a parent-boosted chunk's can be), and its own fused score is `score_components.rank_score_pre_rerank`; a kept order leaves every row its own score. |
+| `below_threshold`               | Under the similarity floor but kept (`floor_mode="readmit"`).                                                                                                                                                                                                                                                                                                                               |
+| `source`                        | `fact` (memory embeddings), `chunk` (a passage of a long value) or `summary` (a session digest).                                                                                                                                                                                                                                                                                            |
+| `parent_memory_key`             | For a chunk, the memory it belongs to.                                                                                                                                                                                                                                                                                                                                                      |
+| `status`, `superseded_by`       | Lifecycle state; a superseded row served on request names its successor.                                                                                                                                                                                                                                                                                                                    |
+| `source_class`, `verified`      | How the content entered memory, and whether a live attestation stands.                                                                                                                                                                                                                                                                                                                      |
+| `valid_at`, `created_at`        | Validity time and record time.                                                                                                                                                                                                                                                                                                                                                              |
+| `score_components`              | The main ranking terms (`explain=true` for more; `foreign=1.0` marks a hit from another namespace).                                                                                                                                                                                                                                                                                         |
+| `namespace`                     | The source namespace on a cross-namespace search.                                                                                                                                                                                                                                                                                                                                           |
 
 The response adds `abstain`, `abstain_code`, `retrieval_risk`, `candidates_total`,
 `namespaces_searched`, `pending_extraction`, `degraded` and `next`.
@@ -87,7 +87,19 @@ default applies to HTTP and MCP callers that leave it out.
 
 `retrieval_budget` (`fast`, `standard`, `deep`) sets the cost. `standard` runs cheap
 recall first and adds the LLM, graph and rerank legs only when the planner or a
-weak-result fallback calls for them.
+weak-result fallback calls for them. `fast`, like the `fast` recipe, makes no LLM call,
+whichever field asks for one: no HyDE, graph triples, retry judge or `builtin:openai`
+rerank. A count or sum question still gets its computed answer when the
+query parser reads its intent, matched on the predicate without LLM synonyms; when the
+parser cannot, the search answers from recall alone. `context.pack` runs its memory search the
+same way in every mode, keeping its recipe's planes.
+
+`LOOM_READS_LLM_FREE=true` applies the same rule to every search, whatever its recipe or budget, and
+to every other read: a search also skips the spelling-fix and set-expansion embeddings and runs no
+namespace reranker (a reranker is a model call, so only one the request names runs, and never
+`builtin:openai`), `memory.ask` answers 409 `READS_LLM_FREE` unless it asks with
+`allow_synthesis=false`, and `memory.brief` returns its evidence with no answer
+([LLM-free reads](../../architecture/llm-architecture.md#llm-free-reads)).
 
 ### Filters and scope
 
@@ -114,15 +126,15 @@ weak-result fallback calls for them.
 Each has a request field and a deployment default. `personalization="none"` turns every
 user-derived term off for one request.
 
-| Term          | Control                                                                                                                                                                                                                                                                                                                                                         |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Reinforcement | Use lifts a row, decaying with a half-life (`LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT` 0.15, `…_HALF_LIFE_DAYS` 90). Use comes from `run.complete(memories_used=…)`, `memory.outcome_run`, `memory.outcome` and the keys `memory.ask` cites; the `usage_fold` worker folds it. A `harm` event takes back earned boost but never ranks a row below its relevance. |
-| Confidence    | `confidence_weight` (default 0.1) × the row's `confidence`.                                                                                                                                                                                                                                                                                                     |
-| Metadata      | Soft tags and categories, `demote_tags`.                                                                                                                                                                                                                                                                                                                        |
-| Key match     | Rows whose key covers the question's content words, as a tie-break (`LOOM_MEMORY_SEARCH_KEY_MATCH_MODE`).                                                                                                                                                                                                                                                       |
-| Provenance    | `LOOM_MEMORY_SEARCH_TRUST_WEIGHT` (default 0, off): a bounded term for source class and attestation.                                                                                                                                                                                                                                                            |
-| Recency       | `recency_pool_weight` re-ranks a "latest" / "most recent" query by date.                                                                                                                                                                                                                                                                                        |
-| Reranker      | `rerank`, or the namespace's `rerank_endpoint`: `builtin:cohere[:model]`, `builtin:openai[:model]` or the name of an endpoint in `LOOM_RERANK_ENDPOINTS_JSON` (a URL is a 422). On timeout it keeps the input order and says so in `degraded`; it never drops a candidate.                                                                                      |
+| Term          | Control                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Reinforcement | Use lifts a row, decaying with a half-life (`LOOM_MEMORY_SEARCH_REINFORCEMENT_WEIGHT` 0.15, `…_HALF_LIFE_DAYS` 90). Use comes from `run.complete(memories_used=…)`, `memory.outcome_run`, `memory.outcome` and the keys `memory.ask` cites; the `usage_fold` worker folds it. A `harm` event takes back earned boost but never ranks a row below its relevance.                                                                                                                                                                                             |
+| Confidence    | `confidence_weight` (default 0.1) × the row's `confidence`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Metadata      | Soft tags and categories, `demote_tags`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Key match     | Rows whose key covers the question's content words, as a tie-break (`LOOM_MEMORY_SEARCH_KEY_MATCH_MODE`).                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Provenance    | `LOOM_MEMORY_SEARCH_TRUST_WEIGHT` (default 0, off): a bounded term for source class and attestation.                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Recency       | `recency_pool_weight` re-ranks a "latest" / "most recent" query by date.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Reranker      | `rerank`, or the namespace's `rerank_endpoint`: `builtin:cohere[:model]`, `builtin:openai[:model]` or the name of an endpoint in `LOOM_RERANK_ENDPOINTS_JSON` (a URL is a 422). It orders the fact pool the results are cut from (the abstain and confidence gates still read the fused order, and the similarity floor still puts rows under it last or drops them); an endpoint names rows by key, so the rows of a key it names twice keep their fused order. On timeout it keeps the input order and says so in `degraded`; it never drops a candidate. |
 
 ### Query spelling
 
@@ -210,9 +222,12 @@ as attributes. Over HTTP it is `POST /v1/memory.search`; from a terminal,
 ## `memory.search_trace`
 
 `memory.search_trace` takes the same fields as `memory.search` and returns, per hit, the
-cosine `distance` and `similarity`, `entity_boost`, `rank_score` and `rank`. Use it when a
-hit you expected ranks below one you did not. `explain=true` on a normal search returns a
-lighter `score_components` map.
+cosine `distance` and `similarity`, `entity_boost`, `rank_score` and `rank`. It scores the
+vector leg alone: no fusion, assembly or reranker, so use it to inspect what the vector
+leg found. When a hit you expected ranks below one you did not, run the search with
+`explain=true`: its `score_components` carry the ranking signals and, after a reranker,
+each row's move (`rerank_from`, `rerank_pos`, `rerank_delta`) and, when it changed the
+order, the row's own fused score (`rank_score_pre_rerank`).
 
 With `LOOM_SEARCH_TRACE_LOG_ENABLED=true`, every search appends a row to
 `loom.search_trace_log` (keys and scores returned, abstain, risk, latency, run id,

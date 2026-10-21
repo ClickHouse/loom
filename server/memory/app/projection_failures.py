@@ -20,6 +20,7 @@ from server.identity.domain.read_scope import (
     read_filters_bound,
     replayed_read_scope,
 )
+from server.llm import customer
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry, _BulkSetResult
 from server.memory.app.projection_errors import (
     LANDED_ENTRIES,
@@ -82,7 +83,7 @@ FOLLOW_OWED = "triples_follow_owed"
 # A FOLLOW_OWED intent is committed right before its supersede, and its writer records
 # and follows the retirement itself: the repair leaves it this long, so the two never
 # write the record side by side.
-FOLLOW_OWED_GRACE_S = 600
+FOLLOW_OWED_GRACE_S = 600  # not a setting: protocol timing between writer and repair
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"
 # The facts of rows a revision or an Undo changed, not yet reconciled with them.
@@ -327,7 +328,8 @@ async def retry_failures(
     done: list[Retried] = []
     try:
         for failure in failures:
-            done.append((failure, await _retry(failure, ch=ch)))
+            with customer.for_org(failure.org):
+                done.append((failure, await _retry(failure, ch=ch)))
     finally:
         await mark_retried(done, ch=ch)
     return [r for _, r in done]
@@ -423,6 +425,15 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason=reason,
             abandoned=bool(reason),
         )
+    except customer.HOLDS:
+        # Held by the model-call switch: no attempt, no error; the row stays open.
+        return ProjectionFailureRetryResult(
+            failure_id=failure.failure_id,
+            projection=failure.projection,
+            retried=False,
+            resolved=False,
+            reason="model_calls_held",
+        )
     except Exception as e:  # noqa: BLE001 — reported on the result; the row stays open
         return ProjectionFailureRetryResult(
             failure_id=failure.failure_id,
@@ -458,11 +469,13 @@ async def retry_projection_failures(
 async def scan_active_projection_failures(
     *,
     limit: int = 50,
+    exclude_orgs: frozenset[str] = frozenset(),
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker, oldest first. Failures
     a retry would only answer `pending` for are left out, so they hold no place ahead of
-    the rest: those of an org under erasure and follow intents within their grace."""
+    the rest: those of an org under erasure and follow intents within their grace, and
+    those of `exclude_orgs` (orgs whose model calls are switched off), which wait."""
     from server.memory.store.conflict_resolver import erasing_orgs
 
     ch = ch or get_client()
@@ -486,6 +499,7 @@ async def scan_active_projection_failures(
         FROM loom.memory_projection_failures
         WHERE status = 'active'
           AND org NOT IN {erasing:Array(String)}
+          AND NOT has({off:Array(String)}, org)
           AND NOT (projection = {follow_owed:String}
                    AND created_at > now() - INTERVAL {grace:UInt32} SECOND)
         ORDER BY created_at ASC, failure_id ASC
@@ -494,6 +508,7 @@ async def scan_active_projection_failures(
         params={
             "lim": int(limit),
             "erasing": await erasing_orgs(ch=ch),
+            "off": sorted(exclude_orgs),
             "follow_owed": FOLLOW_OWED,
             "grace": FOLLOW_OWED_GRACE_S,
         },

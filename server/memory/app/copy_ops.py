@@ -16,6 +16,7 @@ from server.memory.api.models_lifecycle import (
     MemoryCrossPromoteOutput,
 )
 from server.memory.app.provenance import writer_actor
+from server.memory.domain.delete_marks import carried_trace
 from server.memory.store.rows import next_version
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ def copied_memory_row(
         memory_id=memory_id,
         version=version,
         value=value,
-        source_trace=getattr(src, "source_trace", "") or "",
+        source_trace=carried_trace(getattr(src, "source_trace", "")),
         actor=actor,
         created_at=stamp,
         updated_at=stamp,

@@ -76,10 +76,17 @@ async def move_checkout(checkout: Path, bare: Path, target: str) -> None:
         checkout,
         *compiler_tier.checkout_fetch_args(bare, target),
         local_remote=bare,
-        timeout_s=1800,
+        timeout_s=settings.code_git_fetch_timeout_s,
         retries=1,
     )
-    await compiler_tier.git(checkout, "checkout", "--force", target, timeout_s=1800, retries=1)
+    await compiler_tier.git(
+        checkout,
+        "checkout",
+        "--force",
+        target,
+        timeout_s=settings.code_git_fetch_timeout_s,
+        retries=1,
+    )
     await compiler_tier.git(
         checkout,
         "submodule",
@@ -88,7 +95,7 @@ async def move_checkout(checkout: Path, bare: Path, target: str) -> None:
         "--recursive",
         "--quiet",
         network=True,
-        timeout_s=3600,
+        timeout_s=settings.code_git_fetch_timeout_s,
         retries=1,
     )
 

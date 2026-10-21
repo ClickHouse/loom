@@ -8,7 +8,7 @@ sliding-window kicks in past the configured size threshold.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -43,6 +43,16 @@ class KnowledgeAddInput(BaseModel):
     original_filename: str = ""
     # Media type of `original_bytes_b64`; empty keeps the prior blob's type when it carries over.
     blob_content_type: str = ""
+    # The agent writing the document, stored on it and on every chunk for
+    # provenance; an end-user token's signed `agent` takes its place. Empty = '-'.
+    agent: str = Field(default="", max_length=128)
+    # The session the document was written in (a chat, an agent run): stored on
+    # it and on every chunk, and `knowledge.search` filters on it. Empty = '-'.
+    session_id: str = Field(default="", max_length=256)
+    # What the content is, when it is not the writer's own: `derived` (an agent
+    # wrote it from other content), `external` (fetched: a page, a tool's
+    # result) or `imported`. The server decides every other class.
+    source_class: str | None = None
 
 
 class KnowledgeAddOutput(BaseModel):
@@ -97,6 +107,7 @@ class _SearchHit(BaseModel):
     distance: float  # cosine distance; 0=identical, 2=opposite
     similarity: float  # 1 - distance (caller-friendly)
     namespace: str = ""  # source namespace; populated on cross-namespace search
+    ingested_at: datetime | None = None  # when the document was written
     # Where in the document this chunk sits: the heading
     # breadcrumb as a list and as "A > B > C". Empty for unstructured text.
     section_path: list[str] = Field(default_factory=list)
@@ -119,6 +130,12 @@ class _SearchHit(BaseModel):
     # were folded into this one (the section is the unit; one hit per section leaves
     # room for a second section).
     siblings_folded: int = 0
+    # The document's provenance: the agent and session that wrote it ('-' for
+    # none) and its class (`asserted` for a writer's own content; `derived`,
+    # `external` or `imported` as the writer declared; '' before it was kept).
+    agent: str = "-"
+    session_id: str = "-"
+    source_class: str = ""
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -132,8 +149,15 @@ class KnowledgeSearchInput(BaseModel):
     # At most this many hits are returned (1-100).
     top_k: int = Field(default=5, ge=1, le=100)
     # "this" → input.namespace only; "all_mine" → also the caller's own
-    # namespaces, up to `memory_search_fanout_max_namespaces`.
+    # namespaces, up to `knowledge_search_max_namespaces`. Ignored when
+    # `namespaces` names the set; unset for an end-user token means "this".
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
+    # Search `namespace` and exactly these (an agent's collection, `@me`)
+    # instead of a fan-out; each must be one the caller may read, else the call
+    # is refused (403). Empty = `namespace_scope` decides.
+    namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
+        default_factory=list, max_length=100
+    )
     # hybrid: vector leg + BM25 lexical leg fused by reciprocal rank;
     # semantic: vector only;
     # lexical: BM25 only.
@@ -158,6 +182,25 @@ class KnowledgeSearchInput(BaseModel):
     # loom.chunks, so scoping is cheaper than the unscoped search, not a
     # post-filter. Empty = whole namespace.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)
+    # Only chunks of documents written in one of these sessions (a chat's own
+    # attachments, an agent run's output). Empty = every session.
+    session_ids: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
+        default_factory=list, max_length=64
+    )
+    # Only chunks of these classes, e.g. ["asserted"] for what people and their
+    # agents wrote as their own, without what an agent derived or fetched.
+    # Empty = every class.
+    source_classes: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("source_classes")
+    @classmethod
+    def _known_classes(cls, v: list[str]) -> list[str]:
+        from server.memory.domain.provenance import SOURCE_CLASSES
+
+        unknown = sorted(set(v) - set(SOURCE_CLASSES))
+        if unknown:
+            raise ValueError(f"source_classes {unknown} are not among {sorted(SOURCE_CLASSES)}")
+        return list(dict.fromkeys(v))
 
     @field_validator("uri_prefix")
     @classmethod
@@ -204,6 +247,16 @@ class KnowledgeBulkAddInput(BaseModel):
     namespace: str
     # The documents to add (1-500), each chunked and embedded like a `knowledge.add`.
     entries: list[_KnowledgeBulkEntry] = Field(..., min_length=1, max_length=500)
+    # The agent writing the documents, stored on each and on every chunk for
+    # provenance; an end-user token's signed `agent` takes its place. Empty = '-'.
+    agent: str = Field(default="", max_length=128)
+    # The session the documents were written in (a chat, an agent run): stored on
+    # each and on every chunk, and `knowledge.search` filters on it. Empty = '-'.
+    session_id: str = Field(default="", max_length=256)
+    # What the content is, when it is not the writer's own: `derived` (an agent
+    # wrote it from other content), `external` (fetched: a page, a tool's
+    # result) or `imported`. The server decides every other class.
+    source_class: str | None = None
 
 
 class _KnowledgeBulkEntryResult(BaseModel):

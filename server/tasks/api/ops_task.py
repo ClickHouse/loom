@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from server.operations.base import Operation, Role
 from server.tasks.api.models_task import (
-    MAX_WAIT_SECONDS,
     InboxListInput,
     InboxListOutput,
     InboxPolicyListInput,
@@ -97,7 +96,6 @@ def _op(
     *,
     role: Role,
     idempotent: bool,
-    budget_ms: int,
     audit: bool = False,
 ) -> Operation:
     return Operation(
@@ -107,7 +105,6 @@ def _op(
         output_model=output_model,
         handler=handler,
         idempotent=idempotent,
-        budget_p99_ms=budget_ms,
         required_role=role,
         audit=audit,
     )
@@ -120,7 +117,6 @@ inbox_register = _op(
     handle_inbox_register,
     role=Role.ADMIN,
     idempotent=True,
-    budget_ms=800,
     # An admin changing who may post and how the inbox behaves: audited like
     # policy.set and grants.create.
     audit=True,
@@ -132,7 +128,6 @@ inbox_list = _op(
     handle_inbox_list,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=800,
 )
 inbox_principals = _op(
     "inbox.principals",
@@ -141,7 +136,6 @@ inbox_principals = _op(
     handle_inbox_principals,
     role=Role.ADMIN,
     idempotent=True,
-    budget_ms=1500,
 )
 inbox_policy_set = _op(
     "inbox.policy_set",
@@ -150,7 +144,6 @@ inbox_policy_set = _op(
     handle_inbox_policy_set,
     role=Role.ADMIN,
     idempotent=True,
-    budget_ms=800,
     # An admin changing who may post and how the inbox behaves: audited like
     # policy.set and grants.create.
     audit=True,
@@ -162,7 +155,6 @@ inbox_policy_list = _op(
     handle_inbox_policy_list,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=800,
 )
 
 task_create = _op(
@@ -172,7 +164,6 @@ task_create = _op(
     handle_task_create,
     role=Role.WRITER,
     idempotent=True,
-    budget_ms=1500,
 )
 task_accept = _op(
     "task.accept",
@@ -181,9 +172,7 @@ task_accept = _op(
     handle_task_accept,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
-# Long polls hold up to MAX_WAIT_SECONDS by design; the budget says so.
 task_pull = _op(
     "task.pull",
     TaskPullInput,
@@ -191,7 +180,6 @@ task_pull = _op(
     handle_task_pull,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=(MAX_WAIT_SECONDS + 3) * 1000,
 )
 task_claim = _op(
     "task.claim",
@@ -200,7 +188,6 @@ task_claim = _op(
     handle_task_claim,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_heartbeat = _op(
     "task.heartbeat",
@@ -209,7 +196,6 @@ task_heartbeat = _op(
     handle_task_heartbeat,
     role=Role.WRITER,
     idempotent=True,
-    budget_ms=1000,
 )
 task_progress = _op(
     "task.progress",
@@ -218,7 +204,6 @@ task_progress = _op(
     handle_task_progress,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1000,
 )
 task_defer = _op(
     "task.defer",
@@ -227,7 +212,6 @@ task_defer = _op(
     handle_task_defer,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_block = _op(
     "task.block",
@@ -236,7 +220,6 @@ task_block = _op(
     handle_task_block,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_resume = _op(
     "task.resume",
@@ -245,7 +228,6 @@ task_resume = _op(
     handle_task_resume,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_unblock = _op(
     "task.unblock",
@@ -254,7 +236,6 @@ task_unblock = _op(
     handle_task_unblock,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_complete = _op(
     "task.complete",
@@ -263,7 +244,6 @@ task_complete = _op(
     handle_task_complete,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_fail = _op(
     "task.fail",
@@ -272,7 +252,6 @@ task_fail = _op(
     handle_task_fail,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_wont_do = _op(
     "task.wont_do",
@@ -281,7 +260,6 @@ task_wont_do = _op(
     handle_task_wont_do,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_cancel = _op(
     "task.cancel",
@@ -290,7 +268,6 @@ task_cancel = _op(
     handle_task_cancel,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_reopen = _op(
     "task.reopen",
@@ -299,7 +276,6 @@ task_reopen = _op(
     handle_task_reopen,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_update = _op(
     "task.update",
@@ -308,7 +284,6 @@ task_update = _op(
     handle_task_update,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=1500,
 )
 task_reassign = _op(
     "task.reassign",
@@ -317,7 +292,6 @@ task_reassign = _op(
     handle_task_reassign,
     role=Role.WRITER,
     idempotent=False,
-    budget_ms=2000,
 )
 task_get = _op(
     "task.get",
@@ -326,7 +300,6 @@ task_get = _op(
     handle_task_get,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=500,
 )
 task_list = _op(
     "task.list",
@@ -335,7 +308,6 @@ task_list = _op(
     handle_task_list,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=800,
 )
 task_counts = _op(
     "task.counts",
@@ -344,7 +316,6 @@ task_counts = _op(
     handle_task_counts,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=800,
 )
 task_history = _op(
     "task.history",
@@ -353,7 +324,6 @@ task_history = _op(
     handle_task_history,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=800,
 )
 task_updates = _op(
     "task.updates",
@@ -362,7 +332,6 @@ task_updates = _op(
     handle_task_updates,
     role=Role.VIEWER,
     idempotent=True,
-    budget_ms=(MAX_WAIT_SECONDS + 3) * 1000,
 )
 
 OPERATIONS: list[Operation] = [

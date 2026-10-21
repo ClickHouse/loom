@@ -32,7 +32,7 @@ from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_r
 OWED_MARK = datetime(1970, 1, 1, 0, 0, 1, tzinfo=UTC)
 JUDGED_MARK = datetime(1970, 1, 1, 0, 0, 2, tzinfo=UTC)
 # An older build's lost mark is owed once its own settle had this long to land.
-LEGACY_MARK_GRACE_SECONDS = 60
+LEGACY_MARK_GRACE_SECONDS = 60  # not a setting: an older build's settle timing
 
 _QUEUE_COLUMNS = """org, namespace, agent, user_id, session_id, memory_key, memory_type,
                embedding_model, embedding, version, content_sha256, status"""

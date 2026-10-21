@@ -22,8 +22,12 @@ as `relates_to` frontmatter; import re-creates them with `memory.link`
 `loom:` block carries `source_class`, `sensitivity`, `superseded_by` and
 `valid_to`; `sensitivity: high` rows stay home unless `--include-high`.
 
-Import is `memory.set` per concept (identity from the token or flags), so
-it is idempotent by content hash and subject to conflict detection. With
+Import is `memory.set` per concept (identity from the token or flags), subject
+to conflict detection. A concept whose live row already holds everything the
+set would write is skipped, as is an edge that is already live: re-sending
+them would count as reinforcement and write version and audit rows, so a
+scheduled sync stays a no-op until the source changes. `--prune` deletes the
+rows an earlier import wrote whose key has left the bundle. With
 `--verify`, concepts whose frontmatter carries a `human:` verification are
 re-attested through `memory.verify` AS THE IMPORTING CALLER — the server
 decides the actor from the token; the bundle's actor is recorded in the
@@ -34,7 +38,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -46,12 +52,43 @@ from server.cli._client import (
     refused_for_agent,
     resolve_token,
 )
+from server.core.datetimes import naive_utc_now as _now
+from server.core.datetimes import to_naive_utc
+from server.core.hashing import sha256_value
 from server.memory.domain import okf_bundle as okf
 from server.memory.domain import okf_evidence as okf_ev
-from server.memory.domain.sensitivity import is_high
+from server.memory.domain import okf_lint
+from server.memory.domain.edge_relations import canonical_edge
+from server.memory.domain.graph_quality import canonical_entities
+from server.memory.domain.provenance import class_from_trace
+from server.memory.domain.sensitivity import ATTRIBUTE_TAG_PREFIX, SENSITIVITY_TAG_PREFIX, is_high
+from server.memory.domain.trust import actor_for
 
 _PAGE = 1000
 _BULK = 500
+# Listings of a namespace that keeps changing before the export gives up calling it complete.
+_LIST_ATTEMPTS = 3  # not a setting: a CLI's consistency retry while a namespace changes
+# Every concept row the import writes carries this source_trace prefix; --prune deletes
+# nothing else.
+_TRACE_PREFIX = "okf:"
+# Tags memory.set adds itself (sensitivity tier, attribute labels); a live row carrying one
+# the bundle lacks is not a change, since the next write adds it back.
+_SERVER_TAGS = (SENSITIVITY_TAG_PREFIX, ATTRIBUTE_TAG_PREFIX)
+_LIVE_FIELDS = [
+    "session_id",
+    "memory_type",
+    "confidence",
+    "source_trace",
+    "valid_at",
+    "tags",
+    "verification",
+    "expires_at",
+    # prune deletes only the version this listing saw with the import's trace
+    "version",
+]
+# What memory.list does not return, or blanks for a high row (its hash and entities are
+# served by key only); read with memory.bulk_get.
+_BULK_FIELDS = ["valid_to", "source_class", "content_sha256", "entities"]
 
 
 def _resolve_token(args: argparse.Namespace) -> str:
@@ -107,6 +144,12 @@ class _Client:
     async def close(self) -> None:
         await self._c.aclose()
 
+    async def __aenter__(self) -> _Client:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
 
 # ------------------------------------------------------------------
 # export
@@ -121,41 +164,126 @@ async def _fetch_namespace(
     include_tombstoned: bool,
     include_high: bool = False,
     limit: int | None = None,
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], str, bool]:
     """Every live row of `namespace` (all agents, users and sessions), full
-    values, as memory_to_concept dicts, and the keys bulk_get did not answer whose
-    full value the list does not carry. `limit` caps the rows for smoke runs."""
-    entries: list[dict[str, Any]] = []
+    values, as memory_to_concept dicts; the keys left out because bulk_get did not
+    answer them; why the rows are not known to be every row ('' when they are); and
+    whether the listing stopped at `limit`, which caps the rows for smoke runs."""
+    # Offset pages shift when the namespace changes mid-listing, which can skip a live row;
+    # a bundle that says complete without it would let --prune delete its copy. An export
+    # that stopped at --limit, or keeps deleted rows, is never complete, so it is listed once.
+    for _ in range(_LIST_ATTEMPTS):
+        entries, capped = await _list_namespace(
+            client, org, namespace, include_tombstoned=include_tombstoned, limit=limit
+        )
+        if capped or include_tombstoned:
+            why = ""
+            break
+        why = await _not_listed(client, org, namespace, entries)
+        if why != _SHIFTED:
+            break
+    rows, unreadable = await _with_full_values(
+        client,
+        org,
+        namespace,
+        entries,
+        include_tombstoned=include_tombstoned,
+        include_high=include_high,
+    )
+    if unreadable and not why:
+        # Its absence says nothing about the rows around it.
+        why = "a listed row was deleted before its full read"
+    return rows, unreadable, why, capped
+
+
+_SHIFTED = "the source changed while it was read (a row was written while it was listed)"
+
+
+async def _list_namespace(
+    client: _Client,
+    org: str,
+    namespace: str,
+    *,
+    include_tombstoned: bool,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """The `memory.list` entries of every row, and whether the listing stopped at `limit`."""
+    query: dict[str, Any] = {
+        "org": org,
+        "namespace": namespace,
+        # "*" drops the predicate on each identity column (memory.list
+        # otherwise scopes to one writer identity, default '-').
+        "agent": "*",
+        "user_id": "*",
+        "session_id": "*",
+        "sort_by": "recency",
+        "include_tombstoned": include_tombstoned,
+        # memory.list hides superseded and duplicate rows by default; the
+        # bundle renders them as `status: deprecated`, and a bundle without
+        # them would let --prune delete their copies.
+        "include_superseded": True,
+        "include_duplicates": True,
+    }
+    # A row a shifted page served twice counts once, as the pages arrive: a repeat must not
+    # count toward --limit.
+    seen: dict[tuple[Any, ...], dict[str, Any]] = {}
     offset = 0
     while True:
-        page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(entries)))
-        page = await client.post(
-            "memory.list",
-            {
-                "org": org,
-                "namespace": namespace,
-                # "*" drops the predicate on each identity column (memory.list
-                # otherwise scopes to one writer identity, default '-').
-                "agent": "*",
-                "user_id": "*",
-                "session_id": "*",
-                "limit": page_size,
-                "offset": offset,
-                "sort_by": "recency",
-                "include_tombstoned": include_tombstoned,
-                # memory.list hides superseded rows by default;
-                # the bundle renders them as `status: deprecated`.
-                "include_superseded": True,
-            },
-        )
+        page_size = _PAGE if limit is None else max(1, min(_PAGE, limit - len(seen)))
+        page = await client.post("memory.list", {**query, "limit": page_size, "offset": offset})
         rows = page.get("entries") or []
-        entries.extend(rows)
-        if not page.get("truncated") or not rows or (limit is not None and len(entries) >= limit):
-            break
+        for r in rows:
+            seen.setdefault(_entry_id(r), r)
+        if not page.get("truncated") or not rows:
+            return list(seen.values()), False
+        # Stopped at the limit only when the server said more rows remain: a namespace of
+        # exactly `limit` rows was read whole.
+        if limit is not None and len(seen) >= limit:
+            return list(seen.values())[:limit], True
         offset += len(rows)
-    if limit is not None:
-        entries = entries[:limit]
 
+
+async def _not_listed(
+    client: _Client, org: str, namespace: str, entries: list[dict[str, Any]]
+) -> str:
+    """Why `entries` may miss a live row, or '' when every row memory.keys reads (one
+    statement, so the namespace at one moment) is among them. A row written after that
+    moment is a later change, which the next export carries."""
+    try:
+        got = await client.post("memory.keys", {"org": org, "namespace": namespace})
+    except RuntimeError as e:
+        return f"the source did not answer memory.keys ({e})"
+    keys = got.get("keys") or []
+    if got.get("truncated"):
+        return f"the source holds more live rows than one memory.keys answer ({len(keys)})"
+    listed = {_entry_id(r) for r in entries}
+    for k in keys:
+        if (
+            k.get("agent"),
+            k.get("user_id"),
+            k.get("session_id"),
+            k.get("memory_key"),
+        ) not in listed:
+            return _SHIFTED
+    return ""
+
+
+def _entry_id(r: dict[str, Any]) -> tuple[Any, ...]:
+    return (r.get("agent"), r.get("user_id"), r.get("session_id"), r.get("memory_key"))
+
+
+async def _with_full_values(
+    client: _Client,
+    org: str,
+    namespace: str,
+    entries: list[dict[str, Any]],
+    *,
+    include_tombstoned: bool,
+    include_high: bool,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """The entries with their full values, and the keys left out because `memory.bulk_get`
+    did not answer them: deleted since the listing, or, with `include_tombstoned`, a deleted
+    row whose list preview is a cut value. A deleted row the list carries in full keeps it."""
     # Full values (list previews are capped) grouped by the writer identity,
     # since bulk_get resolves keys within one identity tuple.
     by_ident: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -193,10 +321,18 @@ async def _fetch_namespace(
                 # A key shaped like a chunk id that bulk_get answered with its parent's row
                 # (no row held the key when it read): that is not this row's value.
                 g = None
-            if g is None and r.get("value_truncated") and r["memory_key"] not in held:
-                # Not answered by bulk_get (a tombstoned row, or one deleted since the
-                # list), and the list does not carry its full value (a cut preview, or
-                # none for a high row).
+            if g is None and r["memory_key"] not in held and _past_retention(r):
+                # bulk_get never serves a high row past its retention window; the list still
+                # does until the expiry sweep. It has left the source, as the bundle says.
+                continue
+            kept_deleted = include_tombstoned and r.get("tombstoned_at")
+            if (
+                g is None
+                and r["memory_key"] not in held
+                and not (kept_deleted and not r.get("value_truncated"))
+            ):
+                # Deleted since the listing, or a deleted row the list does not carry in full
+                # (a cut preview, or none for a high row).
                 unreadable.append(r["memory_key"])
                 continue
             merged = {**r, **{k: v for k, v in (g or {}).items() if v not in (None, "", [], {})}}
@@ -209,6 +345,14 @@ async def _fetch_namespace(
             merged["agent"] = agent if agent != "*" else (r.get("agent") or "")
             out.append(merged)
     return out, unreadable
+
+
+def _past_retention(r: dict[str, Any]) -> bool:
+    """A high row whose `expires_at` has passed: memory.bulk_get no longer serves it."""
+    expires = _when(r.get("expires_at"))
+    if not isinstance(expires, datetime) or not is_high(r.get("sensitivity"), r.get("tags")):
+        return False
+    return expires <= _now()
 
 
 def _answered_by_parent(
@@ -350,6 +494,7 @@ def _plan_export(
     title: str | None,
     include_high: bool,
     server_url: str = "",
+    complete: bool,
 ) -> tuple[dict[str, str], list[str], int]:
     """The bundle's files, its orphan concepts, and how many `high` rows stayed
     home. Digests link to the concepts they compressed."""
@@ -361,6 +506,7 @@ def _plan_export(
         title=title,
         edges=edges,
         build_commit=_server_build(server_url),
+        complete=complete,
     )
     orphans = okf.bundle_orphans(files)  # concepts only: evidence files are not concepts
     if chunks or digests:
@@ -395,13 +541,12 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
     out_dir = Path(args.out)
 
     async def _go() -> int:
-        client = _Client(args.server_url, token)
         chunks: list[okf_ev.ChunkRecord] = []
         digests: list[okf_ev.DigestRecord] = []
         edges: list[dict[str, Any]] = []
         held_evidence = 0
-        try:
-            entries, unreadable = await _fetch_namespace(
+        async with _Client(args.server_url, token) as client:
+            entries, unreadable, why, capped = await _fetch_namespace(
                 client,
                 org,
                 args.namespace,
@@ -415,8 +560,6 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
                 )
             if not args.no_links:
                 edges = await _fetch_edges(client, org, args.namespace)
-        finally:
-            await client.close()
         if not args.include_high:
             # The rows this export held home, which the server's rule may not cover (a level
             # it does not know, or a server that holds nothing back).
@@ -433,6 +576,8 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             title=args.title,
             include_high=bool(args.include_high),
             server_url=args.server_url,
+            # A bundle that keeps deleted rows says nothing about which keys left the source.
+            complete=not why and not capped and not args.include_tombstoned,
         )
         n_concepts = len(entries) - skipped_high
         evidence_note = (
@@ -468,11 +613,22 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
             )
         if unreadable:
             print(
-                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (tombstoned, "
-                "deleted since the list, or a high row past its retention window) and the "
-                "list does not carry their full value: "
+                f"  {len(unreadable)} row(s) left out: bulk_get did not answer them (deleted "
+                "since the list, a high row past its retention window, or a deleted row whose "
+                "full value the list does not carry): "
                 + ", ".join(unreadable[:5])
                 + (" …" if len(unreadable) > 5 else "")
+            )
+        if args.include_tombstoned:
+            print(
+                "  not marked complete: --include-tombstoned keeps deleted rows, so it never prunes"
+            )
+        elif capped:
+            print(f"  not marked complete: it stopped at --limit {args.limit}")
+        elif why:
+            print(
+                f"  not marked complete: {why}; an import with --prune writes it and skips "
+                "the prune"
             )
         if orphans:
             print(
@@ -492,18 +648,18 @@ def _cmd_export_okf(args: argparse.Namespace) -> int:
 # ------------------------------------------------------------------
 
 
-def _walk_bundle(root: Path) -> list[okf.Concept]:
+def _walk_bundle(files: dict[str, str]) -> list[okf.Concept]:
+    """The concepts among a bundle's files, as `okf_lint.read_bundle` read them."""
     concepts: list[okf.Concept] = []
-    for p in sorted(root.rglob("*.md")):
-        parts = p.relative_to(root).parts
+    for rel in sorted(files):
+        parts = rel.split("/")
         if any(part.startswith(".") or part == "node_modules" for part in parts):
             continue
-        if p.name in okf.RESERVED_FILES:
+        if parts[-1] in okf.RESERVED_FILES:
             continue
-        rel = p.relative_to(root).as_posix()
         if okf_ev.is_evidence_path(rel):
             continue  # raw chunks and digests: `_walk_evidence`, not concepts
-        c = okf.parse_concept(rel, p.read_text(encoding="utf-8"))
+        c = okf.parse_concept(rel, files[rel])
         if not c.type:
             print(f"  skip {rel}: no `type` in frontmatter (not an OKF concept)", file=sys.stderr)
             continue
@@ -575,7 +731,7 @@ async def _import_evidence(
         "namespace": args.namespace,
         "agent": args.agent,
         "user_id": args.user_id,
-        "source_trace": f"okf-import:{Path(args.path).name}",
+        "source_trace": "okf-import",
     }
     batches: list[dict[str, Any]] = []
     for i in range(0, len(chunks), batch):
@@ -601,8 +757,6 @@ def _lint_before_import(root: Path, args: argparse.Namespace) -> int | None:
     printed and the import proceeds. `--no-lint` skips the gate."""
     if getattr(args, "no_lint", False):
         return None
-    from server.memory.domain import okf_lint
-
     rep = okf_lint.lint_bundle(root)
     if rep.criticals or rep.warnings:
         print(rep.render(), file=sys.stderr)
@@ -616,34 +770,179 @@ def _lint_before_import(root: Path, args: argparse.Namespace) -> int | None:
     return None
 
 
+def _concept_payload(c: okf.Concept, org: str, args: argparse.Namespace) -> dict[str, Any]:
+    """The memory.set body for one concept, identity included."""
+    payload = okf.concept_to_memory(c, target_org=org, target_namespace=args.namespace)
+    bundle_actor = okf.human_verified_actor(c)
+    if bundle_actor:
+        payload["tags"] = [*payload["tags"], f"okf:verified_by:{bundle_actor}"]
+    session_id = args.session_id
+    if args.keep_sessions:
+        session_id = okf.concept_session_id(c) or args.session_id
+    payload.update(
+        {
+            "org": org,
+            "namespace": args.namespace,
+            "agent": args.agent,
+            "user_id": args.user_id,
+            "session_id": session_id,
+            # The path inside the bundle, not where the bundle sits on disk: a run that
+            # exports to a new directory must not look like a change to every row.
+            "source_trace": f"{_TRACE_PREFIX}{c.path}",
+        }
+    )
+    return payload
+
+
+async def _live_rows(
+    client: _Client, org: str, args: argparse.Namespace
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """The live rows under the import's identity in the target namespace, by
+    (session_id, memory_key), with every field memory.set writes that a read returns."""
+    ident = {"org": org, "namespace": args.namespace, "agent": args.agent, "user_id": args.user_id}
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    now = _now()
+    offset = 0
+    while True:
+        page = await client.post(
+            "memory.list",
+            {
+                **ident,
+                "session_id": "*" if args.keep_sessions else args.session_id,
+                "limit": _PAGE,
+                "offset": offset,
+                "sort_by": "recency",
+                # memory.set overwrites these rows too, so they count as live.
+                "include_duplicates": True,
+                "include_superseded": True,
+                "fields": _LIVE_FIELDS,
+            },
+        )
+        entries = page.get("entries") or []
+        for r in entries:
+            expires = _when(r.get("expires_at"))
+            if isinstance(expires, datetime) and expires <= now:
+                continue  # memory.get and search already hide it, so write it again
+            rows[(str(r.get("session_id") or "-"), str(r["memory_key"]))] = r
+        if not page.get("truncated") or not entries:
+            break
+        offset += len(entries)
+
+    by_session: dict[str, list[str]] = {}
+    for sid, key in rows:
+        by_session.setdefault(sid, []).append(key)
+    for sid, keys in by_session.items():
+        for i in range(0, len(keys), _BULK):
+            got = await client.post(
+                "memory.bulk_get",
+                {
+                    **ident,
+                    "session_id": sid,
+                    "memory_keys": keys[i : i + _BULK],
+                    "fields": _BULK_FIELDS,
+                },
+            )
+            for key, g in (got.get("results") or {}).items():
+                if g.get("resolved_from"):
+                    continue  # another row answered (the listed one is gone): not its fields
+                rows[(sid, key)].update({f: g.get(f) for f in _BULK_FIELDS})
+    return rows
+
+
+def _when(v: Any) -> datetime | str | None:
+    """A bundle or wire timestamp as naive UTC whole seconds (the column's precision)."""
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v))
+    except ValueError:
+        return str(v)  # never equal to a parsed time, so the server sees and judges it
+    return to_naive_utc(d).replace(microsecond=0)
+
+
+def _one_per_row(
+    concepts: list[okf.Concept], org: str, args: argparse.Namespace
+) -> list[tuple[okf.Concept, dict[str, Any]]]:
+    """The concepts with their payloads, one per target row. An export holds a key once
+    per writer, but the import writes every concept under its own identity: of the
+    concepts that land on one row, the most recently updated is written, so a run does
+    not alternate between them."""
+    newest: dict[tuple[str, str], tuple[okf.Concept, dict[str, Any]]] = {}
+    for c in concepts:
+        p = _concept_payload(c, org, args)
+        k = (p["session_id"], p["memory_key"])
+        if k not in newest or _updated_at(c) > _updated_at(newest[k][0]):
+            newest[k] = (c, p)
+    if len(newest) < len(concepts):
+        print(
+            f"  ! {len(concepts) - len(newest)} concept(s) share a key with a newer one "
+            f"in the bundle; only the newest is written",
+            file=sys.stderr,
+        )
+    return list(newest.values())
+
+
+def _updated_at(c: okf.Concept) -> str:
+    return str(c.loom.get("updated_at") or "")
+
+
+def _unchanged(payload: dict[str, Any], row: dict[str, Any]) -> bool:
+    """True when the live row already holds everything memory.set would write.
+    `content_sha256` covers the value only, so the metadata is compared too."""
+    if payload.get("source_resource_id"):
+        return False  # memory.list and bulk_get do not return source_resource_id
+    return (
+        row.get("content_sha256") == sha256_value(payload["value"])
+        and row.get("memory_type") == payload["memory_type"]
+        and row.get("source_trace") == payload["source_trace"]
+        and _comparable_tags(row.get("tags") or [], payload["tags"]) == set(payload["tags"])
+        and math.isclose(float(row.get("confidence") or 0), payload["confidence"], abs_tol=1e-6)
+        # A bundle without entities leaves them to the target's extractor.
+        and (
+            "entities" not in payload
+            or (row.get("entities") or []) == canonical_entities(payload["entities"])
+        )
+        and _when(row.get("valid_at")) == _when(payload.get("valid_at"))
+        and _when(row.get("valid_to")) == _when(payload.get("valid_to"))
+        and _stored_class_matches(row, payload)
+    )
+
+
+def _stored_class_matches(row: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """Whether the live row carries the class this write would store: the declared one, or,
+    without one, what the server derives from the `okf:` trace (`imported`). A source row
+    that stops declaring `derived` must not leave its copy derived."""
+    expected = payload.get("source_class") or class_from_trace(
+        str(payload.get("source_trace") or "")
+    )
+    return not expected or row.get("source_class") == expected
+
+
+def _comparable_tags(row_tags: list[str], payload_tags: list[str]) -> set[str]:
+    """The row's tags without those memory.set added that the payload does not carry."""
+    return {t for t in row_tags if t in payload_tags or not t.startswith(_SERVER_TAGS)}
+
+
 async def _import_concepts(
     client: _Client,
     org: str,
     args: argparse.Namespace,
-    concepts: list[okf.Concept],
-    root: Path,
-) -> dict[str, int]:
-    """memory.set per concept (conflict detection, blacklist and audit apply);
-    `--verify` re-attests human-verified concepts as the caller."""
-    n = {"written": 0, "conflicted": 0, "verified": 0, "failed": 0}
-    for c in concepts:
-        payload = okf.concept_to_memory(c, target_org=org, target_namespace=args.namespace)
+    planned: list[tuple[okf.Concept, dict[str, Any]]],
+    live: dict[tuple[str, str], dict[str, Any]],
+) -> Counter[str]:
+    """memory.set per changed or new concept (conflict detection, blacklist and audit
+    apply); `--verify` re-attests human-verified concepts as the caller."""
+    n: Counter[str] = Counter()
+    for c, payload in planned:
         bundle_actor = okf.human_verified_actor(c)
-        if bundle_actor:
-            payload["tags"] = [*payload["tags"], f"okf:verified_by:{bundle_actor}"]
-        session_id = args.session_id
-        if args.keep_sessions:
-            session_id = okf.concept_session_id(c) or args.session_id
-        payload.update(
-            {
-                "org": org,
-                "namespace": args.namespace,
-                "agent": args.agent,
-                "user_id": args.user_id,
-                "session_id": session_id,
-                "source_trace": payload.get("source_trace") or f"okf:{root.name}/{c.path}",
-            }
-        )
+        row = live.get((payload["session_id"], payload["memory_key"]))
+        if row is not None and _unchanged(payload, row):
+            n["unchanged"] += 1
+            # A skipped row is re-attested when no attestation binds its current content.
+            unattested = row.get("verification") in ("none", "stale")
+            if args.verify and bundle_actor and not args.dry_run and unattested:
+                n[await _verify(client, org, args, payload, c)] += 1
+            continue
         if args.dry_run:
             note = (
                 f" verify-as-caller (bundle: {bundle_actor})"
@@ -655,6 +954,7 @@ async def _import_concepts(
                 f"  {c.path} → {payload['memory_type']}:{payload['memory_key']} "
                 f"tags={payload['tags']}{cls}{note}"
             )
+            n["written"] += 1
             continue
         try:
             res = await client.post("memory.set", payload)
@@ -662,39 +962,54 @@ async def _import_concepts(
             n["failed"] += 1
             print(f"  ✗ {c.path}: {e}", file=sys.stderr)
             continue
+        verdict = res.get("conflict_verdict")
+        if verdict == "merge":
+            # Folded into another key's row, so nothing lands at this key and the next run
+            # sends it again.
+            n["merged"] += 1
+            continue
         n["written"] += 1
-        if res.get("conflict") or res.get("status") == "conflicted":
-            n["conflicted"] += 1
+        # The judge runs after the write unless asked to wait: its conflicts arrive as pending.
+        if verdict in ("conflict", "pending"):
+            n[verdict] += 1
         if args.verify and bundle_actor:
-            try:
-                v = await client.post(
-                    "memory.verify",
-                    {
-                        "org": org,
-                        "namespace": args.namespace,
-                        "agent": args.agent,
-                        "user_id": args.user_id,
-                        "session_id": args.session_id,
-                        "memory_key": payload["memory_key"],
-                    },
-                )
-                n["verified"] += int(bool(v.get("found")))
-            except RuntimeError as e:
-                print(f"  ! {c.path}: verify failed: {e}", file=sys.stderr)
+            n[await _verify(client, org, args, payload, c)] += 1
     return n
+
+
+async def _verify(
+    client: _Client, org: str, args: argparse.Namespace, payload: dict[str, Any], c: okf.Concept
+) -> str:
+    """memory.verify as the caller: the summary count it adds to."""
+    try:
+        v = await client.post(
+            "memory.verify",
+            {
+                "org": org,
+                "namespace": args.namespace,
+                "agent": args.agent,
+                "user_id": args.user_id,
+                "session_id": payload["session_id"],
+                "memory_key": payload["memory_key"],
+            },
+        )
+    except RuntimeError as e:
+        print(f"  ✗ {c.path}: verify failed: {e}", file=sys.stderr)
+        return "verify_failed"
+    return "verified" if v.get("found") else "verify_missed"
 
 
 async def _import_links(
     client: _Client,
     org: str,
     args: argparse.Namespace,
-    concepts: list[okf.Concept],
-    root: Path,
-) -> dict[str, int]:
-    """Re-create the bundle's `relates_to` edges with memory.link; the author is whoever the
-    token names. Entries that name no concept in the bundle (a `loom://` pointer, a file
-    that did not travel) are reported, never written."""
-    links, unresolved = okf.resolve_relates_to(concepts)
+    links: list[dict[str, str]],
+    unresolved: list[dict[str, str]],
+    live_edges: set[tuple[str, str, str]],
+) -> Counter[str]:
+    """Re-create the bundle's `relates_to` edges that are not live yet with memory.link; the
+    author is whoever the token names. Entries that name no concept in the bundle (a
+    `loom://` pointer, a file that did not travel) are reported, never written."""
     for u in unresolved[:10]:
         print(
             f"  ! {u['path']}: relates_to {u['kind']} → {u['target']} is not in the bundle; "
@@ -703,11 +1018,15 @@ async def _import_links(
         )
     if len(unresolved) > 10:
         print(f"  ! … {len(unresolved) - 10} more unresolved relates_to entries", file=sys.stderr)
-    n = {"links": 0, "links_failed": 0, "links_unresolved": len(unresolved)}
+    n: Counter[str] = Counter(links_unresolved=len(unresolved))
+    # One key exported for several writers carries its edges once per concept.
+    wanted = {_edge_key(e): e for e in links}
+    new = [e for k, e in wanted.items() if k not in live_edges]
+    n["links_unchanged"] = len(wanted) - len(new)
     if args.dry_run:
-        n["links"] = len(links)
+        n["links"] = len(new)
         return n
-    for e in links:
+    for e in new:
         try:
             await client.post(
                 "memory.link",
@@ -717,7 +1036,7 @@ async def _import_links(
                     "from_key": e["from_key"],
                     "to_key": e["to_key"],
                     "relation": e["relation"],
-                    "explanation": f"okf bundle {root.name}: {e['path']}",
+                    "explanation": f"okf bundle: {e['path']}",
                 },
             )
             n["links"] += 1
@@ -727,7 +1046,177 @@ async def _import_links(
     return n
 
 
+def _edge_key(e: dict[str, str]) -> tuple[str, str, str]:
+    """(from_key, to_key, relation) as memory.link stores the edge."""
+    edge = canonical_edge(e["from_key"], e["to_key"], e["relation"])
+    return edge.from_key, edge.to_key, edge.relation
+
+
+def _prune_refusal(files: dict[str, str], concepts: list[okf.Concept]) -> str:
+    """Why this bundle must not be imported with --prune at all, or ''. An empty bundle or
+    one whose files no longer hash to `loom.corpus_digest` is not what the export wrote."""
+    if not concepts:
+        return "the bundle has no concepts"
+    declared = str(okf_lint.generation_pointer(files).get("corpus_digest") or "")
+    if not declared:
+        return "index.md carries no loom.corpus_digest, so this is not a complete export"
+    if declared != okf_lint.bundle_digest(files):
+        return (
+            "the concept files do not match index.md's loom.corpus_digest: a partial or "
+            "edited export, or one written into a directory that held an older bundle"
+        )
+    return ""
+
+
+def _marked_complete(files: dict[str, str]) -> bool:
+    """Whether the export read every row: only then does the bundle say which keys have
+    left the source."""
+    return okf_lint.generation_pointer(files).get("complete") is True
+
+
+_PRUNE_SKIPPED = (
+    "not pruning this run: index.md does not mark the export complete (it stopped at "
+    "--limit, ran with --include-tombstoned, could not tell it read every row, or an "
+    "older release wrote it); "
+    "the writes go ahead"
+)
+
+
+# What prune reads of a candidate before it deletes it.
+_PRUNE_FIELDS = ["agent", "actor", "version", "lock_mode"]
+
+
+async def _prune(
+    client: _Client,
+    org: str,
+    args: argparse.Namespace,
+    live: dict[tuple[str, str], dict[str, Any]],
+    keep: set[tuple[str, str]],
+    actor: str,
+) -> Counter[str]:
+    """Delete each row an earlier import wrote whose key has left the bundle. Only rows
+    under the import's identity that this token wrote and nobody locked, still at the
+    version the listing saw with the import's source_trace, qualify. memory.delete_version
+    removes exactly that version: a row rewritten since is kept, and an older server,
+    which does not know the op, deletes nothing."""
+    gone = sorted(
+        k
+        for k, r in live.items()
+        if k not in keep and str(r.get("source_trace") or "").startswith(_TRACE_PREFIX)
+    )
+    n: Counter[str] = Counter()
+    for session_id, key in gone:
+        who = {
+            "org": org,
+            "namespace": args.namespace,
+            "agent": args.agent,
+            "user_id": args.user_id,
+            "session_id": session_id,
+        }
+        try:
+            # memory.bulk_get reads the row stored under the key itself, a key shaped like a
+            # search chunk's id too (memory.get reads those from the chunk table).
+            answer = await client.post(
+                "memory.bulk_get", {**who, "memory_keys": [key], "fields": _PRUNE_FIELDS}
+            )
+            got = (answer.get("results") or {}).get(key) or {}
+            # Gone, or answered by a chunk's parent fact rather than a row under the key.
+            if not got or got.get("resolved_from") or got.get("agent") != args.agent:
+                continue
+            listed = live[(session_id, key)].get("version")
+            # Another writer's row, a copy someone locked to keep it, or one rewritten since
+            # the listing that saw its import trace.
+            if (
+                got.get("actor") != actor
+                or got.get("lock_mode")
+                or got.get("version") is None
+                or str(got["version"]) != str(listed)
+            ):
+                n["prune_kept"] += 1
+                continue
+            if args.dry_run:
+                where = f" (session {session_id})" if session_id != "-" else ""
+                print(f"  would delete {key}{where}")
+                n["pruned"] += 1
+                continue
+            res = await client.post(
+                "memory.delete_version", {**who, "memory_key": key, "version": str(listed)}
+            )
+        except RuntimeError as e:
+            n["prune_failed"] += 1
+            print(f"  ✗ prune {key}: {e}", file=sys.stderr)
+            continue
+        if res.get("tombstoned"):
+            n["pruned"] += 1
+        else:
+            # Rewritten, or gone, since prune's read: nothing of ours was deleted.
+            n["prune_kept"] += 1
+    return n
+
+
+def _print_import_summary(
+    n: Counter[str],
+    args: argparse.Namespace,
+    org: str,
+    rows: int,
+    chunks: int,
+    digests: int,
+    *,
+    prune_skipped: bool,
+) -> None:
+    would = " would be" if args.dry_run else ""
+    if args.dry_run:
+        head = (
+            f"dry run: {n['written']} of {rows} rows ({n['unchanged']} unchanged), "
+            f"{chunks} raw chunks and {digests} session digests would be "
+            f"written to {org}/{args.namespace}"
+        )
+    else:
+        head = (
+            f"{rows} rows from the bundle into {org}/{args.namespace}: "
+            f"{n['written']} written, {n['unchanged']} unchanged, {n['failed']} failed"
+        )
+        if n["merged"]:
+            head += f", {n['merged']} merged into another key"
+        head += (
+            f" ({n['conflict']} flagged conflicted, {n['pending']} awaiting a conflict verdict, "
+            f"{n['verified']} re-attested as caller"
+        )
+        if n["verify_missed"]:
+            head += f", {n['verify_missed']} not found to re-attest"
+        if n["verify_failed"]:
+            head += f", {n['verify_failed']} failed to re-attest"
+        head += ")"
+    parts = [head]
+    if not args.no_links:
+        notes = [f"{n['links_unchanged']} unchanged"]
+        if n["links_unresolved"]:
+            notes.append(f"{n['links_unresolved']} unresolved")
+        if n["links_failed"]:
+            notes.append(f"{n['links_failed']} failed")
+        parts.append(f"{n['links']} typed edges{would} linked ({', '.join(notes)})")
+    if prune_skipped:
+        parts.append("prune skipped: the export is not complete")
+    elif args.prune:
+        notes = []
+        if n["prune_kept"]:
+            notes.append(
+                f"{n['prune_kept']} kept: written by another token under this --agent, "
+                "locked, or changed during the run"
+            )
+        if n["prune_failed"]:
+            notes.append(f"{n['prune_failed']} failed")
+        parts.append(f"{n['pruned']}{would} pruned" + (f" ({', '.join(notes)})" if notes else ""))
+    print(", ".join(parts))
+
+
 def _cmd_import_okf(args: argparse.Namespace) -> int:
+    if args.prune and not args.agent:
+        # Prune deletes every import row of its agent that this bundle lacks, so each
+        # bundle imported into a namespace needs an agent of its own.
+        print("refusing to prune: --prune needs an explicit --agent", file=sys.stderr)
+        return 2
+    args.agent = args.agent or "okf-import"
     root = Path(args.path)
     if not root.is_dir():
         print(f"{root} is not a directory", file=sys.stderr)
@@ -735,29 +1224,53 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
     refused = _lint_before_import(root, args)
     if refused is not None:
         return refused
+
+    # The keys prune keeps and the digest and marker it checks come from one read of the
+    # bundle, even when the directory changes during the run.
+    files = okf_lint.read_bundle(root)
+    concepts = _walk_bundle(files)
+    if args.prune:
+        reason = _prune_refusal(files, concepts)
+        if reason:
+            print(f"refusing to prune: {reason}", file=sys.stderr)
+            return 2
+    prune_skipped = bool(args.prune) and not _marked_complete(files)
+    if prune_skipped:
+        print(_PRUNE_SKIPPED, file=sys.stderr)
     token = _resolve_token(args)
     org = _resolve_org(args, token)
-    concepts = _walk_bundle(root)
     ev_chunks, ev_digests = ([], []) if args.no_evidence else _walk_evidence(root)
     if not concepts and not ev_chunks and not ev_digests:
         print("no concepts found")
         return 0
 
     async def _go() -> int:
-        client = _Client(args.server_url, token)
-        n = {
-            "written": 0,
-            "conflicted": 0,
-            "verified": 0,
-            "failed": 0,
-            "links": 0,
-            "links_failed": 0,
-            "links_unresolved": 0,
-        }
-        try:
-            n.update(await _import_concepts(client, org, args, concepts, root))
+        planned = _one_per_row(concepts, org, args)
+        links, unresolved = okf.resolve_relates_to(concepts)
+        n: Counter[str] = Counter()
+        async with _Client(args.server_url, token) as client:
+            live_edges: set[tuple[str, str, str]] = set()
+            try:
+                live = await _live_rows(client, org, args)
+                if links and not args.no_links:
+                    edges = await _fetch_edges(client, org, args.namespace)
+                    live_edges = {_edge_key(e) for e in edges}
+            except RuntimeError as e:
+                print(f"cannot read {org}/{args.namespace}: {e}", file=sys.stderr)
+                return 1
+            if args.prune and not prune_skipped:
+                # Before the writes: a key renamed in the source would otherwise merge into
+                # its stale row, which prune then deletes.
+                keep = {(p["session_id"], p["memory_key"]) for _, p in planned}
+                claims = jwt_claims(token)
+                # The writer the server stamped on our rows; the agent name is the client's.
+                actor = actor_for(
+                    str(claims.get("sub") or ""), is_service_account=claims.get("sa") is True
+                )
+                n.update(await _prune(client, org, args, live, keep, actor))
+            n.update(await _import_concepts(client, org, args, planned, live))
             if not args.no_links:
-                n.update(await _import_links(client, org, args, concepts, root))
+                n.update(await _import_links(client, org, args, links, unresolved, live_edges))
             if (ev_chunks or ev_digests) and not args.dry_run:
                 ev = await _import_evidence(client, org, args, ev_chunks, ev_digests)
                 print(
@@ -768,29 +1281,18 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
                     + (f", {ev['skipped']} skipped" if ev["skipped"] else "")
                     + (f", {ev['failed']} FAILED" if ev["failed"] else "")
                 )
-                n["failed"] += ev["failed"]
-        finally:
-            await client.close()
-        link_note = (
-            ""
-            if args.no_links
-            else f", {n['links']} typed edges{' would be' if args.dry_run else ''} linked"
-            + (f" ({n['links_unresolved']} unresolved)" if n["links_unresolved"] else "")
-            + (f" ({n['links_failed']} link failures)" if n["links_failed"] else "")
+                n["evidence_failed"] = ev["failed"]
+        _print_import_summary(
+            n,
+            args,
+            org,
+            len(planned),
+            len(ev_chunks),
+            len(ev_digests),
+            prune_skipped=prune_skipped,
         )
-        if args.dry_run:
-            print(
-                f"dry run: {len(concepts)} concepts, {len(ev_chunks)} raw chunks and "
-                f"{len(ev_digests)} session digests would be written to {org}/{args.namespace}"
-                f"{link_note}"
-            )
-        else:
-            print(
-                f"imported {n['written']}/{len(concepts)} concepts into {org}/{args.namespace} "
-                f"({n['conflicted']} flagged conflicted, {n['verified']} re-attested as caller, "
-                f"{n['failed']} failed){link_note}"
-            )
-        return 1 if n["failed"] or n["links_failed"] else 0
+        failures = ("failed", "links_failed", "prune_failed", "evidence_failed", "verify_failed")
+        return 1 if any(n[k] for k in failures) else 0
 
     return asyncio.run(_go())
 
@@ -803,8 +1305,6 @@ def _cmd_import_okf(args: argparse.Namespace) -> int:
 def _cmd_okf_lint(args: argparse.Namespace) -> int:
     """The compile gate for a bundle directory: no server, no ClickHouse.
     Exit 2 on a critical finding, 1 on warnings (2 under --strict), 0 clean."""
-    from server.memory.domain import okf_lint
-
     rep = okf_lint.lint_bundle(Path(args.path), strict=bool(args.strict))
     print(okf_lint.report_json(rep) if args.json else rep.render())
     return rep.exit_code
@@ -874,7 +1374,12 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     p_imp.add_argument("path", help="Bundle directory (contains index.md)")
     _common(p_imp)
-    p_imp.add_argument("--agent", default="okf-import")
+    p_imp.add_argument(
+        "--agent",
+        default=None,
+        help="Writer agent of the imported rows (default: okf-import). Required with "
+        "--prune; use one agent per bundle imported into a namespace.",
+    )
     p_imp.add_argument("--user-id", default="-")
     p_imp.add_argument("--session-id", default="-")
     p_imp.add_argument(
@@ -908,6 +1413,15 @@ def register_okf_cli(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         "--no-links",
         action="store_true",
         help="Do not re-create the bundle's relates_to edges with memory.link.",
+    )
+    p_imp.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete the rows an earlier import wrote (this --agent and token, an okf: "
+        "source_trace) whose key is no longer in the bundle. Refuses an empty bundle or "
+        "one that does not match its loom.corpus_digest; a bundle its export did not mark "
+        "complete is written but not pruned. With --dry-run, lists the rows it would "
+        "delete.",
     )
     p_imp.set_defaults(func=_cmd_import_okf)
 

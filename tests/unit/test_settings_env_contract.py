@@ -35,8 +35,13 @@ _FIELDS = Settings.model_fields
 # own tests (test_identity_mode, test_llm_provider_inference,
 # test_default_namespace*).
 _CROSS_CHECKED = {
+    # Checked against each other (test_model_calls_switch.py).
+    "model_calls_policy_refresh_seconds",
+    "model_calls_policy_max_stale_seconds",
     "default_namespace",
     "jwt_public_keys_json",
+    # Read with the issuer and the federated keys (test_sharing.py).
+    "jwt_end_user_issuers_json",
     "llm_model",
     "llm_provider",
     # Names and URLs checked by a model validator (test_rerank_names.py).
@@ -45,9 +50,15 @@ _CROSS_CHECKED = {
     "openai_base_url",
     "anthropic_base_url",
     "inference_token_url",
+    # Read with the API roots and the embedder (test_llm_gateway.py).
+    "inference_gateway_required",
+    "inference_gateway_hosts",
     # Read with the token URL, the public URL and the JWT audience and issuers
     # (test_inference_identity_token.py).
     "inference_token_audience",
+    # A template that must contain {org}, checked by a model validator
+    # (test_model_call_customer.py).
+    "inference_customer_format",
 }
 
 

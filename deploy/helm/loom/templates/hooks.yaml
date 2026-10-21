@@ -1,6 +1,6 @@
-{{- /* Hook Jobs run before the release's Secret changes, so each carries its
-revision's env itself: a hook Secret for the chart-managed keys, the config
-inline. */}}
+{{- /* Hook Jobs run before the release's Secret and settings ConfigMap change, so
+each carries its revision's env itself: a hook Secret for the chart-managed keys, a
+hook ConfigMap for the settings file, the config inline. */}}
 {{- define "loom.hookJob" -}}
 {{- $ := .root -}}
 {{- $name := include "loom.suffixed" (dict "root" $ "suffix" .name) -}}
@@ -31,6 +31,19 @@ stringData:
   {{- end }}
 ---
 {{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "loom.labels" $ | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ .hook }}
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+data:
+  {{- include "loom.settingsFileData" $ | nindent 2 }}
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -77,6 +90,8 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - name: LOOM_INSTANCE_LABEL
               value: k8s:{{ .name }}
+            - name: LOOM_SETTINGS_FILE
+              value: /app/config/loom.yaml
             {{- with $.Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -90,6 +105,9 @@ spec:
               mountPath: /tmp
             - name: cache
               mountPath: /app/var
+            - name: settings-file
+              mountPath: /app/config
+              readOnly: true
             {{- with $.Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -100,6 +118,9 @@ spec:
         - name: cache
           emptyDir:
             sizeLimit: 1Gi
+        - name: settings-file
+          configMap:
+            name: {{ $name }}
         {{- with $.Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

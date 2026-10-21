@@ -255,8 +255,15 @@ def test_a_write_under_an_unresolved_scope_is_refused() -> None:
 # does not resolve: written out, so a change to the predicate or a new op has to
 # be decided here rather than follow the rule it is checked against.
 _ACTS_AS_A_USER = [
+    "conversation.save_message",
+    "conversation.unsave_message",
     "cost.record_turns",
     "cost.summary",
+    # A document records the session it was written in: under a session ceiling
+    # with no session named, it would be written outside what the token reads.
+    "knowledge.add",
+    "knowledge.bulk_add",
+    "knowledge.upsert",
     "memory.bulk_set",
     "memory.delete",
     "memory.lock",
@@ -526,12 +533,14 @@ def test_a_conflict_verdict_names_only_peers_inside_the_scope() -> None:
 def test_two_asks_filtered_to_different_users_never_share_a_precedent() -> None:
     from server.memory.api.models_ask import MemoryAskInput
     from server.memory.app.ask.handler import ask_shape_sha256
+    from server.settings import settings
 
     set_current_auth(None)
 
     def shape(**kw: Any) -> str:
         return ask_shape_sha256(
-            MemoryAskInput(org="o", namespace="n", agent="a", query="who holds the key?", **kw)
+            MemoryAskInput(org="o", namespace="n", agent="a", query="who holds the key?", **kw),
+            settings,
         )
 
     assert shape(user_id="u1") != shape(user_id="u2")

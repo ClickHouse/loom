@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
 from server.code.domain.scope import apply_code_scope, current_code_scope
+from server.core import llm_free
 from server.core.errors import LoomServerError
 from server.identity.app.caller_home import home_namespace
 from server.operations.base import Operation
@@ -260,8 +261,8 @@ async def _call_tool(
     # The two `set_loom_attributes` calls after `op.handler(...)` (in
     # `_handler_failed` / `_record_success_telemetry`) happen once it
     # returns, which is fine for span attributes but useless for the provider
-    # spans: `set_loom_attributes` is the only caller of `genai.set_identity`, and
-    # every `llm.*` / `embed.*` span of this request is created INSIDE the handler.
+    # spans: here `set_loom_attributes` sets the identity, and every `llm.*` /
+    # `embed.*` span of this request is created INSIDE the handler.
     # Set later, MCP generations would carry no loom.org/namespace/operation
     # and no Langfuse session or user. In a JSON-RPC batch the ContextVar is
     # task-scoped, so entry N's provider spans would carry entry N-1's tenant.
@@ -282,12 +283,16 @@ async def _call_tool(
         except Exception:  # noqa: BLE001 — fail closed
             _ident["capture_level"] = "off"
         _otel_pre.set_loom_attributes(**_ident)
-    except Exception:  # noqa: BLE001 — attribution must not break a tool call
-        pass
+    except Exception:  # noqa: BLE001 — identity stamping must not fail a tool call
+        from server.observability import genai as _genai
+
+        # Not the previous batch entry's org: this entry's model calls name no org,
+        # so they skip the model caches and refuse.
+        _genai.set_identity(operation=op.name, capture_level="off")
 
     start = time.perf_counter()
     try:
-        with gates.tenant_slot(auth, target):
+        with gates.tenant_slot(auth, target), llm_free.serving(op):
             result = await op.handler(input_obj)
     except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
         return _handler_failed(

@@ -3,6 +3,7 @@ per endpoint, and the typed return shapes the OpenAPI document shows."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -75,6 +76,33 @@ class RatelimitSetInput(BaseModel):
     capacity: float | None = Field(None, gt=0, allow_inf_nan=False)
     rate: float | None = Field(None, ge=0, allow_inf_nan=False)
     clear: bool = False
+
+
+class SettingsListInput(BaseModel):
+    # Only the settings whose field name starts with this.
+    prefix: str = Field(default="", max_length=128)
+    # Only the settings off their default or overridden.
+    changed: bool = False
+
+
+class SettingSetInput(BaseModel):
+    """Install a deployment-wide override of a live setting ({name, value}), or
+    remove it ({name, clear: true})."""
+
+    name: str = Field(max_length=128)
+    # JSON, validated as the setting validates its environment value.
+    value: Any = None
+    clear: bool = False
+    # Refuse (409 PRECONDITION_FAILED) unless this is the value in force after a fresh
+    # read of the stored overrides, so a change made since through another replica or
+    # the CLI is not overwritten (two in the same instant can still both pass).
+    expected: Any = None
+
+    @model_validator(mode="after")
+    def _value_or_clear(self) -> SettingSetInput:
+        if not self.clear and "value" not in self.model_fields_set:
+            raise ValueError("value required when clear=false")
+        return self
 
 
 class FleetCostInput(BaseModel):
@@ -287,6 +315,58 @@ class RatelimitSetOutput(BaseModel):
     capacity: float | None = None
     rate: float | None = None
     cleared: bool | None = None
+
+
+class SettingRow(BaseModel):
+    name: str
+    env: str
+    # A secret shows only its length.
+    value: Any
+    default: Any
+    # override (settings.set), dashboard (Models & keys), env, env_file (the dotenv
+    # file), settings_file (the YAML settings file), inferred (filled in at load from
+    # other settings) or default.
+    source: Literal[
+        "override", "dashboard", "env", "env_file", "settings_file", "inferred", "default"
+    ]
+    # True: takes an override while Loom runs; False: read once at startup.
+    live: bool
+    description: str
+
+
+class SettingsListOutput(BaseModel):
+    settings: list[SettingRow]
+
+
+class SettingsHistoryInput(BaseModel):
+    # One setting's changes; "" = every setting's.
+    name: str = Field(default="", max_length=128)
+    limit: int = Field(default=50, ge=1, le=1000)
+
+
+class SettingChange(BaseModel):
+    ts: datetime
+    # Who made it: a token subject, or `cli:<user>`.
+    actor: str
+    name: str
+    value: Any
+    previous: Any
+    # `override`: undo by setting `previous` back. Anything else (env, default, …) was
+    # the value on the process that made the change: undo with a reset. None for a
+    # setting this build lacks (the reset of a retired setting's override).
+    previous_source: str | None
+    cleared: bool
+
+
+class SettingsHistoryOutput(BaseModel):
+    # Newest first.
+    changes: list[SettingChange]
+
+
+class SettingSetOutput(BaseModel):
+    ok: bool
+    # None after clearing the override of a setting this build does not have.
+    setting: SettingRow | None
 
 
 class FleetCostRow(BaseModel):

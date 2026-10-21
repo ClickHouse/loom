@@ -53,7 +53,7 @@ def target_marker(names: StagingNames, snapshot_uuid: UUID, embedding_fingerprin
 async def _target(names: StagingNames, client: _CHClient) -> dict[str, Any] | None:
     return await client.query_one(
         "SELECT uuid, comment, engine FROM system.tables "
-        "WHERE database = 'loom' AND name = {table:String}",
+        "WHERE database = currentDatabase() AND name = {table:String}",
         {"table": names.target},
     )
 

@@ -91,9 +91,9 @@ def oauth_error_response(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(body, status_code=exc.status_code, headers=headers)
 
 
-_ACCESS_TTL = 3600  # 1h access token
 _CODE_TTL = 60  # auth code: short-lived, single-use
-_REFRESH_TTL = 30 * 86400  # 30d refresh token; each refresh issues a new one
+# 30d refresh token; each refresh issues a new one.
+_REFRESH_TTL = 30 * 86400  # not a setting: a refresh reads the issue time back as exp minus this
 store: OAuthStore = ClickHouseStore()
 
 
@@ -165,13 +165,17 @@ def authorization_server_metadata(issuer: str) -> dict[str, Any]:
 
 
 # The sign-in pages run no script and may not be framed: a page that cannot be
-# put under another site's overlay cannot be clickjacked into approving.
+# put under another site's overlay cannot be clickjacked into approving. Pinned
+# here too, so the sign-in pages keep frame denial and their referrer policy
+# whatever the middleware sends.
 _PAGE_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"
     ),
     "X-Frame-Options": "DENY",
-    "Referrer-Policy": "no-referrer",
+    # same-origin, not no-referrer: under no-referrer a form POST carries `Origin: null`,
+    # which web_refusal refuses. No other site receives this URL.
+    "Referrer-Policy": "same-origin",
     "Cache-Control": "no-store",
 }
 
@@ -1134,10 +1138,10 @@ async def _dashboard_signed_in(identity: Identity) -> Response:
         org=org,
         namespaces=namespaces,
         roles=roles,
-        ttl_seconds=_ACCESS_TTL,
+        ttl_seconds=settings.oauth_access_token_ttl_seconds,
         is_service_account=False,
         # A sign-in session like the CLI's: revocable as one, and what it mints
-        # is bounded like the person, not by its hour.
+        # is bounded like the person, not by its access-token lifetime.
         session_id=family,
         first_party=True,
     )
@@ -1179,7 +1183,7 @@ async def issue_tokens(
         org=grant["org"],
         namespaces=list(grant["namespaces"]),
         roles=list(grant["roles"]),
-        ttl_seconds=_ACCESS_TTL,
+        ttl_seconds=settings.oauth_access_token_ttl_seconds,
         is_service_account=False,
         session_id=grant["family"] or None,
         # A third-party MCP client's session mints nothing that outlives it.
@@ -1189,7 +1193,7 @@ async def issue_tokens(
     body = {
         "access_token": access,
         "token_type": "Bearer",
-        "expires_in": _ACCESS_TTL,
+        "expires_in": settings.oauth_access_token_ttl_seconds,
         "scope": "loom",
     }
     if settings.oauth_login_provider == "oidc" and not grant["upstream_refresh"]:
@@ -1506,7 +1510,7 @@ async def _token_exchange_grant(f: dict[str, str]) -> dict[str, Any]:
 
 
 # Seconds both exchange limits count over (LOOM_WORKLOAD_EXCHANGES_PER_*).
-_EXCHANGE_WINDOW_S = 600
+_EXCHANGE_WINDOW_S = 600  # not a setting: the window both limits are stated over
 
 
 async def _admit_exchange(trust: str, agent: str) -> None:
@@ -1681,6 +1685,13 @@ async def revoke_token(request: Request) -> Response:
         info = verify_token(token_value)
     except TokenError:
         return Response(status_code=200)  # unknown, expired or already revoked
+    from server.auth.gateway import is_end_user
+
+    if is_end_user(info):
+        # Its `jti` is its issuer's choice, and the revocation list is
+        # deployment-wide: an issuer would name another org's token or subject.
+        # It lives minutes; its issuer stops signing for the user instead.
+        return Response(status_code=200)
     # A session's access token ends its whole session; any other token itself.
     key = info.session_id or info.token_id
     if key:

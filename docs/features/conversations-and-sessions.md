@@ -24,6 +24,8 @@ the Recording toggle on the dashboard's Conversations page.
 
 When logging is off the append is accepted and nothing is kept: the response says
 `stored: false, reason: "logging_disabled"`. A client cannot override the owner's choice.
+If the turn is removed while its embedding runs, append skips the late vector and
+answers `stored: false, reason: "deleted"`.
 
 ### Writing turns
 
@@ -46,6 +48,84 @@ up front.
   recorded on its embedding row. Nothing retries it: the turn stays out of vector
   search and is found only by the substring fallback.
 
+### Saving single messages
+
+A chat client can let a user save one message for later search without recording the
+namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
+`conversation.search_saved_messages` (viewer) is its search.
+
+Clients save messages only when every replica preserves saved state during
+compaction. See the
+[rolling-upgrade rules](../architecture/rolling-upgrades.md#the-rules).
+
+They differ from `conversation.append` and `conversation.search` in six ways:
+
+- **The logging switch does not apply.** The save is stored even when
+  `conversation.set_logging` is off, and it does not turn logging on.
+- **The message is flagged, not re-labelled.** The transcript row and its embedding row
+  carry `is_saved` and `saved_at`, the time the user saved the message. A message the
+  transcript already holds is flagged in place: its `run_id` and content stay as
+  recorded.
+- **The search is per user.** `conversation.search_saved_messages` returns only flagged
+  messages owned by `user_id`, in the one namespace named. `conversation.search` ranks
+  every recorded turn and fans out over the caller's namespaces by default.
+- **The search is hybrid.** The vector leg embeds a message's first 2,048 characters;
+  a BM25 leg reads its whole text, so an exact term (a ticket id, a table name) or a
+  phrase deep in a long saved answer still ranks. `search_mode="hybrid"` (default) fuses
+  the two by reciprocal rank, `semantic` and `lexical` run one leg, and `lexical_weight`
+  (0–1) scales the BM25 leg. A BM25 hit's excerpt is centred on the matched terms. The
+  corpus is one user's saved messages, so its statistics are computed per query.
+- **A token pinned to one user works here.** An integration that serves many users through
+  one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
+  user). Both saved-message ops then act as that user only: a body naming another
+  `user_id` is refused with 403, and every statement carries the token's user. The
+  conversation tables have no `session_id`, so an `own_session` token is refused.
+  `conversation.search` and `conversation.get` stay refused under such a token, because
+  a thread mixes users and has no user axis to bound.
+- **Ownership, deletion and role are checked on every save.** Saving a message stored
+  under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A
+  tombstoned message answers `reason: "deleted"`, and a stored system or tool turn,
+  which is never embedded, answers `reason: "unsupported_role"`. The checks also apply
+  to a message that is already saved.
+
+Save and unsave share a renewable thread lease with append embedding writes,
+compaction retirement and thread deletion. Append and compaction finish provider
+work before taking the lease.
+
+The transcript row decides who owns a saved message. A save claims only rows that no
+user owns or that the caller owns, in the mutation itself, so of two users saving one
+unowned message the first claims it and the second is answered `owner_mismatch`. The
+embedding row is flagged only after the transcript row reads back as the caller's.
+
+A save can be retried safely. Two concurrent saves of a new message store one transcript
+row: its insert carries a deduplication token derived from the message identity. Each
+call re-reads the message and repairs what an interrupted or concurrent write left
+behind: it writes a missing embedding row, embeds again when the last embed failed, and
+flags any row still unflagged. A save whose embed fails stores the message saved and
+answers `indexed: false, reason: "embed_failed"`; saving it again retries the embed. A
+transcript append whose embedding lands after a concurrent save flags its own embedding
+row.
+
+`conversation.list_saved_messages` (viewer) pages through one user's saved messages with
+no query, most recently saved first (`limit` up to 200, an opaque `cursor`, and an
+optional `conversation_id`). Its `ts` is when the user saved the message, independent
+of the transcript's message time. Rows written without a save timestamp use their
+message timestamp. It is the first view of a "Saved" panel; the search
+narrows it once the user types. `conversation.saved_status` (viewer) takes one
+`conversation_id` and up to 500 `message_ids` and answers which of them this user has
+saved, so a client draws every message's saved state when it opens a conversation in
+one call.
+
+`conversation.unsave_message` (writer) withdraws a saved message from its owner's
+search. Where the namespace records transcripts, the turn stays in the transcript with
+the flag cleared, because the owner chose to record it. Where it does not, the turn is
+removed with a lightweight delete, because it existed only because of the save
+(`removed: true`). The embedding keeps a tombstone so older versions cannot reappear.
+A message
+the caller's user never saved, or one another user saved, answers `found: false`; it
+never says which. Unsaving is idempotent, and saving again restores the message. Erasure
+by user removes saved messages with the rest of that user's conversation rows.
+
 ### Reading and searching
 
 | Operation              | Role   | Does                                                                                                                       |
@@ -59,7 +139,8 @@ up front.
 `conversation.search` ranks turns by cosine similarity, drops any below
 `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` (0.30) and fans out over the caller's namespaces by default
 (`namespace_scope="all_mine"`). When the embedder is unavailable it falls back to a
-substring match so the op still answers. Hits are 240-character excerpts; read the turn
+substring match so the op still answers. Hits show the first
+`LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` characters of a turn (240 by default); read the turn
 with `conversation.get` or `conversation.list`. The op is hidden from MCP;
 agents get the conversation section of [`loom_search`](./unified-search.md).
 
@@ -82,7 +163,9 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   failed run left (its turns all still live and in the window, at the first one's `ts`)
   is replaced unread. A summary further into the window takes prompt budget like any
   turn and is replaced with it.
-  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`).
+  A summary that cannot be embedded compacts nothing (`reason: "embed-failed"`). A turn
+  saved with `conversation.save_message` is never summarised or tombstoned; it stays
+  verbatim between the summary and the recent turns.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the
@@ -213,13 +296,14 @@ provider the turns are still recorded.
 
 ## Settings
 
-| Setting                                                                     | Effect                                                                                                                                   |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY`                                   | The cosine floor of `conversation.search` ([Knowledge → Conversations](../reference/configuration.md#conversations)).                    |
-| `LOOM_CONVERSATION_TITLER_*`                                                | The titler worker's switch, cadence, window and per-pass cap ([Knowledge → Conversations](../reference/configuration.md#conversations)). |
-| `LOOM_RETENTION_CONVERSATIONS_DAYS`, `LOOM_TIERING_CONVERSATIONS_WARM_DAYS` | Opt-in TTL and warm-volume move for transcripts ([Retention and tiering](../reference/configuration.md#retention-and-tiering)).          |
-| `LOOM_SESSION_BRIEF_LLM`, `…_LLM_MODEL`, `…_WINDOW_CHARS`, `…_MAX_WINDOWS`  | How briefs are condensed ([Context](../reference/configuration.md#context)).                                                             |
-| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`                                         | Closes an MCP session's implicit run after this long without a call ([Mcp](../reference/configuration.md#mcp)).                          |
+| Setting                                                                     | Effect                                                                                                                                                                    |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY`                                   | The cosine floor of `conversation.search` ([Knowledge → Conversations](../reference/configuration.md#conversations)).                                                     |
+| `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS`                                    | How much of a turn a search hit or a saved-message listing shows, live ([Knowledge → Conversations](../reference/configuration.md#conversations)).                        |
+| `LOOM_CONVERSATION_TITLER_*`                                                | The titler worker's switch, cadence, window and per-pass cap ([Knowledge → Conversations](../reference/configuration.md#conversations)).                                  |
+| `LOOM_RETENTION_CONVERSATIONS_DAYS`, `LOOM_TIERING_CONVERSATIONS_WARM_DAYS` | Opt-in TTL and warm-volume move for transcripts ([Retention](../reference/configuration.md#retention), [storage tiering](../reference/configuration.md#storage-tiering)). |
+| `LOOM_SESSION_BRIEF_LLM`, `…_LLM_MODEL`, `…_WINDOW_CHARS`, `…_MAX_WINDOWS`  | How briefs are condensed ([Context](../reference/configuration.md#context)).                                                                                              |
+| `LOOM_MCP_SESSION_RUN_IDLE_SECONDS`                                         | Closes an MCP session's implicit run after this long without a call ([Mcp](../reference/configuration.md#mcp)).                                                           |
 
 ## Limits
 

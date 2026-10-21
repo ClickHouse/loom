@@ -14,6 +14,8 @@ NS_IN = "namespace IN {ns:Array(String)}"
 
 
 ORG_NS = "org = {org:String} AND namespace = {ns:String}"
+# Every row a user wrote in the org, whatever the namespace (the knowledge plane).
+ORG_UID = "org = {org:String} AND user_id = {uid:String}"
 
 
 # A user's memory keys, namespace-qualified. The extractor mints generic keys

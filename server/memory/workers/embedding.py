@@ -22,6 +22,7 @@ from typing import Any
 
 import server.memory.store as memory_repo
 from server.embedding import get_embedder
+from server.llm import customer
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -172,6 +173,36 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _embed_rows(
+    embedder: Any, rows: list[dict[str, Any]]
+) -> list[tuple[list[float] | None, str]]:
+    """`_embed_batch` per org, in the rows' order: a pass picks stubs of every
+    org, and one model call names a single customer. An org switched off since
+    the stubs were picked gets `(None, SWITCHED_OFF)`: its rows are left as
+    they are, attempts untouched. A switch gone stale mid-pass (`SwitchUnread`)
+    stops the pass before its write."""
+    out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
+    groups = await customer.by_org(str(r.get("org") or "") for r in rows)
+    for org, positions in groups.items():
+        embedded: list[tuple[list[float] | None, str]]
+        try:
+            with customer.for_org(org):
+                if not customer.names_one():
+                    embedded = [(None, customer.NO_CUSTOMER)] * len(positions)
+                else:
+                    texts = [rows[i]["content_excerpt"] for i in positions]
+                    embedded = await _embed_batch(embedder, texts)
+        except customer.ModelCallsDisabled:
+            embedded = [(None, SWITCHED_OFF)] * len(positions)
+        for i, one in zip(positions, embedded, strict=True):
+            out[i] = one
+    return out
+
+
+# The error `_embed_rows` gives a row whose org was switched off mid-pass.
+SWITCHED_OFF = "model calls switched off"
+
+
 async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float] | None, str]]:
     """`(vector, error)` per input, batching the happy path.
 
@@ -205,6 +236,8 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
                 len(vecs),
                 len(texts),
             )
+        except customer.HOLDS:
+            raise  # the org is switched off, or may be: no row's attempt is spent
         except Exception as e:  # noqa: BLE001 — batch failure falls back to per-row
             log.info(
                 "embedding worker: batch of %d failed (%s: %s); isolating per row",
@@ -220,6 +253,8 @@ async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float
             if len(one) != 1:
                 raise RuntimeError(f"embed_many returned {len(one)} vectors for 1 input")
             out.append((one[0], ""))
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — per-row isolation is the point
             out.append((None, f"{type(e).__name__}: {e}"[:512]))
     return out
@@ -417,11 +452,16 @@ async def run_pass(
             log.warning("embedding worker: reconciliation pass failed: %s", e)
             pass_context.note_failure(e, "reconciliation")
 
+        from server.llm import customer
+
+        # An org whose model calls are switched off keeps its stubs, attempts
+        # untouched, until it is switched back on.
         rows = await memory_repo.find_embedding_stubs(
             batch_size=cfg.batch_size,
             max_attempts=cfg.max_attempts,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
+            exclude_orgs=await customer.switched_off_orgs(),
         )
 
         replacements: list[dict[str, Any]] = []
@@ -434,13 +474,15 @@ async def run_pass(
         if dropped:
             await memory_repo.insert_embedding_rows(dropped)
         if rows:
-            embedded = await _embed_batch(embedder, [r["content_excerpt"] for r in rows])
+            embedded = await _embed_rows(embedder, rows)
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):
                 content = r["content_excerpt"]
+                if vec is None and embed_err == SWITCHED_OFF:
+                    continue  # left unwritten: it waits for the org to be switched back on
                 if vec is None:
                     new_attempts = int(r.get("embed_attempts") or 0) + 1
                     err = embed_err
-                    is_poisoned = new_attempts >= cfg.max_attempts
+                    is_poisoned = new_attempts >= cfg.max_attempts or err == customer.NO_CUSTOMER
                     # Re-insert the stub with bumped failure state (stays embedding_dim=0).
                     retries.append(
                         memory_repo.build_embedding_row(

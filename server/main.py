@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from server import __version__, boot
 from server.auth.public_url import (
@@ -79,6 +79,7 @@ async def _shutdown_drains(lease: Any, supervisor: Any, emitter: Any) -> None:
     from server.transport import mcp_runs
 
     with contextlib.suppress(TimeoutError):
+        # not a setting: one shutdown step
         await asyncio.wait_for(mcp_runs.drain_ledger_writes(), 5.0)
     await boot.drain_writes()
     # The judge emits a cost event and posts scores: it stops before the
@@ -155,6 +156,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         )
     await boot.require_keeper(ch)
     await boot.warn_newer_schema()
+    await boot.warn_collection_named_namespaces()
     # Nothing here writes a column a migration just added while another process
     # still carries its version writes by the older column lists.
     from server.core import rmt_carry
@@ -299,8 +301,8 @@ from server.observability import otel as _otel  # noqa: E402
 _otel.init_otel(app)
 
 # Request-body cap — the one bounded input at the front door (413 before any
-# parser runs; LOOM_MAX_REQUEST_BYTES, 0 disables). Added before CORS so an
-# oversize preflight-free POST is refused at the outermost layer.
+# parser runs; LOOM_MAX_REQUEST_BYTES, 0 disables). Added first, so it is the
+# innermost middleware: the 413 still passes out through the header middleware.
 from server.transport.body_limit import BodyLimitMiddleware as _BodyLimit  # noqa: E402
 
 app.add_middleware(_BodyLimit, max_bytes=settings.max_request_bytes)
@@ -310,62 +312,14 @@ from server.transport.model_maintenance import ModelMaintenanceMiddleware  # noq
 app.add_middleware(ModelMaintenanceMiddleware)
 
 # gzip here (nginx does not gzip proxied bodies): the dashboard bundle and
-# JSON bodies above 1 KB. A year-long immutable cache for content-hashed
-# /assets/* names — the hash is the version — so a load does not re-validate them.
+# JSON bodies above 1 KB.
 from starlette.middleware.gzip import GZipMiddleware  # noqa: E402
 
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
-@app.middleware("http")
-async def _cache_and_nosniff_headers(request: Request, call_next: Any) -> Response:
-    response: Response = await call_next(request)
-    path = request.url.path
-    if path.startswith("/assets/") and response.status_code == 200:
-        from server.storage.frontend_assets import cache_control_for
-
-        response.headers["Cache-Control"] = cache_control_for(path)
-    # No response is ever sniffed into a type it was not served as.
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    # Draining: the balancer's kept-alive connections close one response at a
-    # time, so none is still pooled here when the port closes.
-    if _readiness.draining():
-        response.headers["Connection"] = "close"
-    return response
-
-
-# CORS — opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins).
-if settings.cors_origins:
-    from fastapi.middleware.cors import CORSMiddleware
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cors_origin_list(settings.cors_origins),
-        allow_credentials=True,
-        allow_methods=["GET", "POST"],
-        allow_headers=["*"],
-        expose_headers=[
-            "X-Request-Id",
-            "X-Schema-Version",
-            "Server-Timing",
-            "X-RateLimit-Limit",
-            "X-RateLimit-Remaining",
-            "X-RateLimit-Reset",
-            "X-Loom-Traffic-Class",
-            "Retry-After",
-            "Link",
-        ],
-    )
-
-
 def _refused(status: int, *, code: str, message: str) -> Response:
-    from fastapi.responses import JSONResponse
-
-    return JSONResponse(
-        status_code=status,
-        content={"detail": {"code": code, "message": message}},
-        headers={"X-Content-Type-Options": "nosniff"},
-    )
+    return JSONResponse(status_code=status, content={"detail": {"code": code, "message": message}})
 
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -427,11 +381,69 @@ async def _web_gate(request: Request, call_next: Any) -> Response:
     return response
 
 
-def attach_web_gate(target: FastAPI) -> None:
+async def _response_headers(request: Request, call_next: Any) -> Response:
+    """Headers every answer leaves with."""
+    response: Response = await call_next(request)
+    path = request.url.path
+    # A year-long immutable cache for content-hashed /assets/* names: the hash is the
+    # version, so a load does not re-validate them.
+    if path.startswith("/assets/") and response.status_code == 200:
+        from server.storage.frontend_assets import cache_control_for
+
+        response.headers["Cache-Control"] = cache_control_for(path)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    # same-origin keeps the real Origin on a same-origin non-GET request, which
+    # web_refusal needs; no-referrer would send `Origin: null` on a form POST.
+    response.headers.setdefault("Referrer-Policy", "same-origin")
+    # TLS ends at a terminator in front of Loom; browsers ignore HSTS over plain HTTP.
+    if settings.hsts_max_age_seconds > 0:
+        response.headers.setdefault(
+            "Strict-Transport-Security", f"max-age={settings.hsts_max_age_seconds}"
+        )
+    # Draining: the balancer's kept-alive connections close one response at a
+    # time, so none is still pooled here when the port closes.
+    if _readiness.draining():
+        response.headers["Connection"] = "close"
+    return response
+
+
+def _attach_cors(target: FastAPI) -> None:
+    """CORS, opt-in via LOOM_CORS_ORIGINS (comma-separated exact origins)."""
+    if not settings.cors_origins:
+        return
+    from fastapi.middleware.cors import CORSMiddleware
+
+    target.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origin_list(settings.cors_origins),
+        allow_credentials=True,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+        expose_headers=[
+            "X-Request-Id",
+            "X-Schema-Version",
+            "Server-Timing",
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset",
+            "X-Loom-Traffic-Class",
+            "Retry-After",
+            "Link",
+        ],
+    )
+
+
+def attach_browser_middleware(target: FastAPI) -> None:
+    """CORS, then the web gate, then the header middleware; each added one wraps the last,
+    so the gate's refusals and CORS preflights carry the headers."""
+    _attach_cors(target)
     target.middleware("http")(_web_gate)
+    target.middleware("http")(_response_headers)
 
 
-attach_web_gate(app)
+attach_browser_middleware(app)
 
 http_transport.attach(app)
 mcp_transport.attach(app)
@@ -442,6 +454,7 @@ from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
+from server.identity.app import scim_groups as _scim_groups  # noqa: E402
 
 _self_signup.attach(app)
 _login.attach(app)
@@ -449,6 +462,9 @@ _claim_release.attach(app)
 # Sign-in (device grant, SSO) wherever auth is on; MCP connect only with LOOM_OAUTH_ENABLED.
 _oauth.attach(app)
 _password_link.attach(app)
+# SCIM Groups, pushed per org with an org admin's token; ahead of the Users
+# routes, whose catch-all would answer its paths.
+_scim_groups.attach(app)
 # SCIM provisioning (deactivating people from the IdP) only with LOOM_SCIM_TOKEN.
 _scim_routes.attach(app)
 

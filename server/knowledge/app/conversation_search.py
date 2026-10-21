@@ -14,10 +14,8 @@ from typing import Any, Protocol
 
 from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
+from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
-
-# Characters of a turn a hit shows (the embedding row keeps the whole embedded text).
-HIT_EXCERPT_CHARS = 240
 
 
 class _CHClient(Protocol):
@@ -36,9 +34,14 @@ class ConversationVectorQuery:
     embedding_model: str
     query_vec: list[float]
     top_k: int
+    # The request's read scope; its predicates ride every statement.
+    scope: ReadFilters
     thread_id: str | None = None
     role: str | None = None
     run_id: str | None = None
+    user_id: str | None = None
+    # Only the turns a user saved through conversation.save_message.
+    saved_only: bool = False
     # Max cosine distance kept (1 - min_similarity). Default 2.0 = no gate
     # (full distance range), so callers that don't set it are unaffected.
     max_distance: float = 2.0
@@ -62,6 +65,8 @@ async def vector_search(
     """Vector search over loom.conversation_embeddings. Close-distance ties
     are ordered most-recent-first (ts DESC).
     """
+    from server.settings import settings
+
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -76,7 +81,7 @@ async def vector_search(
         "model": q.embedding_model,
         "q": q.query_vec,
         "lim": int(q.top_k),
-        "excerpt": HIT_EXCERPT_CHARS,
+        "excerpt": int(settings.conversation_search_excerpt_chars),
         "maxd": float(q.max_distance),
     }
     # Relevance gate: drop rows beyond max_distance so a short query doesn't
@@ -96,6 +101,12 @@ async def vector_search(
     if q.run_id is not None:
         where.append("run_id = {run_id:String}")
         params["run_id"] = q.run_id
+    if q.user_id is not None:
+        where.append("user_id = {user_id:String}")
+        params["user_id"] = q.user_id
+    where.extend(scope_where(q.scope, params))
+    if q.saved_only:
+        where.append("is_saved")
 
     # Single bare-distance sort key, ASC: a two-key sort (`ORDER BY distance
     # ASC, ts DESC`) disqualifies the query from CH's vector-search rewrite, so

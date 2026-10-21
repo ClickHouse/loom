@@ -485,6 +485,27 @@
             ]
           }
         },
+        "collection": {
+          "class": "CollectionOps",
+          "methods": {
+            "create": [
+              "body",
+              "options"
+            ],
+            "delete": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "move": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "conflicts": {
           "class": "ConflictsOps",
           "methods": {
@@ -563,7 +584,23 @@
               "body",
               "options"
             ],
+            "list_saved_messages": [
+              "body",
+              "options"
+            ],
+            "save_message": [
+              "body",
+              "options"
+            ],
+            "saved_status": [
+              "body",
+              "options"
+            ],
             "search": [
+              "body",
+              "options"
+            ],
+            "search_saved_messages": [
               "body",
               "options"
             ],
@@ -572,6 +609,10 @@
               "options"
             ],
             "threads": [
+              "body",
+              "options"
+            ],
+            "unsave_message": [
               "body",
               "options"
             ],
@@ -876,6 +917,10 @@
               "body",
               "options"
             ],
+            "delete_version": [
+              "body",
+              "options"
+            ],
             "demonstrate": [
               "body",
               "options"
@@ -929,6 +974,10 @@
               "options"
             ],
             "import_evidence": [
+              "body",
+              "options"
+            ],
+            "keys": [
               "body",
               "options"
             ],
@@ -1255,6 +1304,19 @@
             ]
           }
         },
+        "org": {
+          "class": "OrgOps",
+          "methods": {
+            "model_calls": [
+              "body",
+              "options"
+            ],
+            "set_model_calls": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "policy": {
           "class": "PolicyOps",
           "methods": {
@@ -1333,6 +1395,27 @@
               "options"
             ],
             "replace": [
+              "body",
+              "options"
+            ],
+            "set": [
+              "body",
+              "options"
+            ],
+            "structured": [
+              "body",
+              "options"
+            ]
+          }
+        },
+        "profile_schema": {
+          "class": "ProfileSchemaOps",
+          "methods": {
+            "clear": [
+              "body",
+              "options"
+            ],
+            "get": [
               "body",
               "options"
             ],
@@ -2035,16 +2118,118 @@
         "reset_models": [
           "expected_version"
         ],
+        "reset_setting": [
+          "name",
+          "expected"
+        ],
         "retry_models": [
           "config_id"
         ],
         "save_models": [
           "setup"
         ],
+        "set_setting": [
+          "name",
+          "value",
+          "expected"
+        ],
+        "setting_history": [
+          "name",
+          "limit"
+        ],
+        "settings": [
+          "prefix",
+          "changed"
+        ],
         "validate_models": [
           "setup"
         ],
         "workers_status": []
+      },
+      "nested": {
+        "routes": {
+          "class": "AdminRoutes",
+          "methods": {
+            "audit_summary": [
+              "body"
+            ],
+            "bots_create": [
+              "body"
+            ],
+            "bots_disable": [
+              "body"
+            ],
+            "bots_list": [
+              "body"
+            ],
+            "budget_set": [
+              "body"
+            ],
+            "budget_violations": [
+              "body"
+            ],
+            "claim_release": [
+              "body"
+            ],
+            "consumers": [
+              "body"
+            ],
+            "events_tail": [
+              "body"
+            ],
+            "fleet_cost": [
+              "body"
+            ],
+            "model_configuration_status": [],
+            "namespace_adopt": [
+              "body"
+            ],
+            "prompts_evaluate": [
+              "body"
+            ],
+            "ratelimit_set": [
+              "body"
+            ],
+            "reset_model_configuration": [
+              "body"
+            ],
+            "retry_model_configuration": [
+              "body"
+            ],
+            "save_model_configuration": [
+              "body"
+            ],
+            "schema_status": [],
+            "settings_history": [
+              "body"
+            ],
+            "settings_list": [
+              "body"
+            ],
+            "settings_set": [
+              "body"
+            ],
+            "sso_adopt": [
+              "body"
+            ],
+            "sso_link": [
+              "body"
+            ],
+            "sso_password_link": [
+              "body"
+            ],
+            "sso_unlink": [
+              "body"
+            ],
+            "token_mint": [
+              "body"
+            ],
+            "validate_model_configuration": [
+              "body"
+            ],
+            "workers_status": []
+          }
+        }
       }
     },
     "erasure": {

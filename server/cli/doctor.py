@@ -9,6 +9,7 @@ import sys
 from typing import Any
 
 from server import __version__
+from server.core.ch_names import database, qualify, quote
 
 
 def _version() -> str:
@@ -117,7 +118,9 @@ def _doctor_ch_query(settings: Any, sql: str, params: dict[str, Any]) -> list[di
     query = {k: str(v) for k, v in query_settings().items()}
     query.update({f"param_{k}": _ch_http_param(v) for k, v in params.items()})
     with httpx.Client(timeout=10.0) as c:
-        r = c.post(f"{base}/", params=query, content=sql, auth=auth or httpx.USE_CLIENT_DEFAULT)
+        r = c.post(
+            f"{base}/", params=query, content=qualify(sql), auth=auth or httpx.USE_CLIENT_DEFAULT
+        )
     r.raise_for_status()
     return [_json.loads(line) for line in r.text.splitlines() if line.strip()]
 
@@ -200,14 +203,14 @@ def _doctor_preflight_check() -> tuple[str, str, str]:
         return ("clickhouse_preflight", FAIL, f"{type(e).__name__}: {e}")
     warnings = []
     if not server.database:
-        warnings.append(f"database {preflight.DATABASE} does not exist yet; boot will create it")
+        warnings.append(f"database {quote(database())} does not exist yet; boot will create it")
     if line := preflight.warnings(server):
         warnings.append(line)
     if not warnings:
         return (
             "clickhouse_preflight",
             PASS,
-            f"ClickHouse {server.version}, database {preflight.DATABASE} and its grants in place",
+            f"ClickHouse {server.version}, database {quote(database())} and its grants in place",
         )
     return ("clickhouse_preflight", WARN, f"ClickHouse {server.version}: " + "; ".join(warnings))
 
@@ -309,23 +312,23 @@ def _doctor_keeper_check(settings: Any) -> tuple[str, str, str]:
 
     sql = (
         "SELECT database, name, engine FROM system.tables WHERE "
-        "(database = 'loom' AND name IN ('graph_projections', '_migration_lock')) "
+        "(database = {db:String} AND name IN ('graph_projections', '_migration_lock')) "
         "OR (database = 'system' AND name = 'zookeeper_connection') FORMAT JSONEachRow"
     )
     try:
-        rows = _doctor_ch_query(settings, sql, {})
+        rows = _doctor_ch_query(settings, sql, {"db": database()})
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return ("keeper", WARN, f"could not read system.tables: {e}")
     tables = {(str(r.get("database")), str(r.get("name"))): str(r.get("engine")) for r in rows}
     if ("system", "zookeeper_connection") not in tables:
         return ("keeper", FAIL, str(KeeperRequired("the server has no Keeper configured")))
-    if ("loom", "_migration_lock") not in tables:
+    if (database(), "_migration_lock") not in tables:
         return (
             "keeper",
             WARN,
             "Keeper present; loom._migration_lock is missing: run `loom migrate`",
         )
-    engine = tables.get(("loom", "graph_projections"))
+    engine = tables.get((database(), "graph_projections"))
     if engine is not None and engine != "KeeperMap":
         return (
             "keeper",
@@ -350,13 +353,15 @@ def _doctor_replica_consistency_check(settings: Any) -> tuple[str, str, str]:
     retry or a ready-event check on one replica can miss another's write.
     SharedMergeTree and one server are exact."""
     sql = (
-        "SELECT table, total_replicas FROM system.replicas WHERE database = 'loom' "
+        "SELECT table, total_replicas FROM system.replicas WHERE database = {db:String} "
         "AND table IN {tables:Array(String)} AND total_replicas > 1 AND table IN ("
-        "SELECT name FROM system.tables WHERE database = 'loom' "
+        "SELECT name FROM system.tables WHERE database = {db:String} "
         "AND engine LIKE 'Replicated%') FORMAT JSONEachRow"
     )
     try:
-        rows = _doctor_ch_query(settings, sql, {"tables": list(_SEQUENTIAL_TABLES)})
+        rows = _doctor_ch_query(
+            settings, sql, {"db": database(), "tables": list(_SEQUENTIAL_TABLES)}
+        )
     except Exception as e:  # noqa: BLE001 — a doctor line must never crash the doctor
         return ("replica_consistency", WARN, f"could not read system.replicas: {e}")
     if not rows:
@@ -421,7 +426,7 @@ def _doctor_reader_probe(settings: Any) -> tuple[str, str]:
         query = {k: str(v) for k, v in statement_settings(READER_PROBE_SQL).items()}
     try:
         with httpx.Client(timeout=10.0) as c:
-            r = c.post(f"{base}/", params=query, content=READER_PROBE_SQL, auth=auth)
+            r = c.post(f"{base}/", params=query, content=qualify(READER_PROBE_SQL), auth=auth)
     except httpx.HTTPError:
         return "not_probed", ""
     if r.status_code != 200:

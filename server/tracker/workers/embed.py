@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now_seconds as _now
+from server.llm import customer
 from server.settings import settings
 from server.tracker.app.embed_index import (
     KINDS,
@@ -147,6 +148,8 @@ async def _run(
     make = source_factory or tracker_source
     emb = embedder or _embedder()
     for ns, cfg in sorted(configured_namespaces().items()):
+        if await customer.switched_off(cfg.org):
+            continue  # its cursor stays put: the pages wait until the org is back on
         # every configured namespace, restricted included: its own source, its
         # own predicate, its own rows (the transport's gate decides who reads them)
         set_namespace(ns)
@@ -178,6 +181,8 @@ async def _run(
         except TrackerUnavailable as e:
             result.errors.append(f"{ns}: tracker_unavailable: {e}")
             note_failure(e, f"tracker_embed:{ns}")
+        except customer.HOLDS:
+            continue  # a held call is no failure: its cursor stays where the last page left it
         except Exception as e:
             result.errors.append(f"{ns}: {type(e).__name__}: {e}")
             note_failure(e, f"tracker_embed:{ns}")
@@ -405,7 +410,8 @@ async def _flush(
 ) -> None:
     if not pending:
         return
-    vectors = await embed_many(emb, [p["text"] for p in pending])
+    with customer.for_org(org):
+        vectors = await embed_many(emb, [p["text"] for p in pending])
     rows = build_rows(
         org,
         ns,

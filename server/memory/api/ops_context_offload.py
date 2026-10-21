@@ -18,7 +18,6 @@ context_offload = Operation(
     output_model=ContextOffloadOutput,
     handler=handle_context_offload,
     idempotent=True,
-    budget_p99_ms=300,
     required_role=Role.WRITER,
     audit=False,
 )
@@ -30,7 +29,6 @@ context_fetch = Operation(
     output_model=ContextFetchOutput,
     handler=handle_context_fetch,
     idempotent=True,
-    budget_p99_ms=150,
     required_role=Role.VIEWER,
     audit=False,
 )

@@ -31,7 +31,7 @@ package for a caller outside it, on the submodule for a call from inside.
 
 from __future__ import annotations
 
-from server.memory.store.bm25_stats import index_late_rows
+from server.memory.store.bm25_stats import index_late_rows, late_rows
 from server.memory.store.dedup import (
     canonical_rows_by_ids,
     clear_duplicate_tag,
@@ -43,6 +43,11 @@ from server.memory.store.dedup import (
     live_ids_in_scope,
     status_by_keys,
     superseded_successors,
+)
+from server.memory.store.delete_checks import (
+    find_delete_check,
+    pending_delete_checks,
+    record_delete_check,
 )
 from server.memory.store.embeddings import (
     EmbeddingKey,
@@ -83,6 +88,7 @@ from server.memory.store.history import (
     find_history_target,
     list_history,
     rollback_change_rows,
+    version_exists,
 )
 from server.memory.store.inserts import (
     check_memory_rows,
@@ -122,16 +128,19 @@ from server.memory.store.reads import (
     high_memory_ids,
     key_holds_established_fact,
     list_by_namespace,
+    live_keys,
     memory_rows_by_identity_keys,
     namespace_version,
     overlay_usage_totals_many,
     statuses_by_ids,
+    versions_above,
 )
 from server.memory.store.redaction import (
     delete_ask_precedents_by_key,
     delete_llm_response_cache_by_key,
     key_derivative_scrubs,
-    redact_row,
+    profile_keys_built_from,
+    redact_versions,
     run_scrubs,
 )
 from server.memory.store.rows import (
@@ -214,6 +223,7 @@ __all__ = [
     "find_by_key_prefix",
     "find_chunks_by_identifier",
     "find_chunks_by_session_date",
+    "find_delete_check",
     "find_duplicate_clusters",
     "find_duplicate_pairs",
     "find_embedding_stubs",
@@ -234,6 +244,7 @@ __all__ = [
     "heal_divergent_entities",
     "Identity",
     "index_late_rows",
+    "late_rows",
     "insert_embedding_rows",
     "insert_memory_versions",
     "key_holds_established_fact",
@@ -246,6 +257,7 @@ __all__ = [
     "head_sensitivities",
     "live_rows_for_keys",
     "live_ids_in_scope",
+    "live_keys",
     "live_shared_embedding_rows_for_key",
     "live_source_count",
     "MEMORY_PERSISTED_COLS",
@@ -256,12 +268,15 @@ __all__ = [
     "namespace_version",
     "normalize_key_prefix",
     "parse_memory_value",
+    "pending_delete_checks",
     "read_unentitied_rows",
     "read_your_writes_enabled",
     "reconcile_embedding_status",
+    "record_delete_check",
     "record_usage_event",
     "key_derivative_scrubs",
-    "redact_row",
+    "profile_keys_built_from",
+    "redact_versions",
     "run_scrubs",
     "reemit_embedding_rows_for_key",
     "reemit_embedding_rows_for_keys",
@@ -285,7 +300,9 @@ __all__ = [
     "tombstone_vectors_of",
     "unsupersede_embeddings",
     "uuid_or_none",
+    "version_exists",
     "version_second",
+    "versions_above",
     "write_versions_by_ids",
     "written_now",
     "ZERO_UUID",

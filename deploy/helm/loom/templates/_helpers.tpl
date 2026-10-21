@@ -64,24 +64,55 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{- /* The settings every pod must share, as env names: the embedding space and the root
+secret. A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
+{{- define "loom.guardedNames" -}}
+["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS"]
+{{- end -}}
+
+{{- /* Where a setting the chart guards is set instead: the root secret and its previous
+value through secrets.* (or the existingSecret, which then holds them, unchecked by the
+chart), the embedding space through embedding.*. Takes (dict "key" <env or
+settings-file name> "root" $). */}}
+{{- define "loom.guardedThrough" -}}
+{{- $key := upper .key | trimPrefix "LOOM_" -}}
+{{- $values := dict "JWT_SECRET" "secrets.jwtSecret" "JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious" -}}
+{{- if not (hasKey $values $key) -}}embedding.*, which the chart guards
+{{- else if .root.Values.secrets.existingSecret -}}the Secret {{ .root.Values.secrets.existingSecret }} (secrets.existingSecret)
+{{- else -}}{{ get $values $key }}, which the chart guards
+{{- end -}}
+{{- end -}}
+
 {{/* The env every Loom process of the release shares. It is written into each
 pod template rather than a ConfigMap, so a pod of the previous ReplicaSet that
 restarts mid-rollout keeps its own config instead of booting with the new one. */}}
 {{- define "loom.config" -}}
 {{- $dev := .Values.devClickhouse.enabled -}}
+{{- $guarded := include "loom.guardedNames" . | fromJsonArray -}}
 {{- range $k, $_ := .Values.env }}
-{{- if has $k (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
-{{- fail (printf "set %s through embedding.* or secrets.jwtSecret, which the chart guards, not env" $k) }}
+{{- if has $k $guarded }}
+{{- fail (printf "set %s through %s, not env" $k (include "loom.guardedThrough" (dict "key" $k "root" $))) }}
 {{- end }}
 {{- end }}
 {{- range .Values.extraEnv }}
-{{- if has .name (list "LOOM_EMBEDDING_PROVIDER" "LOOM_EMBEDDING_MODEL" "LOOM_EMBEDDING_DIM" "LOOM_EMBEDDING_BASE_URL" "LOOM_EMBEDDING_SEND_DIMENSIONS" "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS") }}
-{{- fail (printf "set %s through embedding.* or secrets.jwtSecret, which the chart guards, not extraEnv" .name) }}
+{{- if has .name $guarded }}
+{{- fail (printf "set %s through %s, not extraEnv" .name (include "loom.guardedThrough" (dict "key" .name "root" $))) }}
 {{- end }}
 {{- end }}
-{{- range list "LOOM_JWT_SECRET" "LOOM_JWT_SECRET_PREVIOUS" }}
+{{- range $guarded }}
 {{- if hasKey $.Values.secrets.extra . }}
-{{- fail (printf "set %s through secrets.jwtSecret / secrets.jwtSecretPrevious, not secrets.extra" .) }}
+{{- fail (printf "set %s through %s, not secrets.extra" . (include "loom.guardedThrough" (dict "key" . "root" $))) }}
+{{- end }}
+{{- end }}
+{{- /* The analytics export's name key reaches the export pod only. */}}
+{{- $nameKey := "LOOM_ANALYTICS_EXPORT_NAME_KEY" }}
+{{- $nameKeyRefused := printf "set %s through analyticsExport.nameKeySecret, which only the export pod reads, not env, extraEnv, secrets.extra or settingsFile" $nameKey }}
+{{- if or (hasKey .Values.env $nameKey) (hasKey .Values.secrets.extra $nameKey) (hasKey (.Values.settingsFile | default dict) "analytics_export_name_key") }}
+{{- fail $nameKeyRefused }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if eq .name $nameKey }}
+{{- fail $nameKeyRefused }}
 {{- end }}
 {{- end }}
 LOOM_DEPLOYMENT: "1"
@@ -198,6 +229,21 @@ passes and runs an overdue worker instead of restarting its interval. */}}
   mountPath: /run/user
 - name: cache
   mountPath: /app/var
+- name: settings-file
+  mountPath: /app/config
+  readOnly: true
+{{- end }}
+
+{{/* The settings file's `data`, for the release's ConfigMap and each hook Job's copy. */}}
+{{- define "loom.settingsFileData" -}}
+loom.yaml: |
+  # yaml-language-server: $schema=https://raw.githubusercontent.com/ClickHouse/loom/main/schemas/loom-settings.schema.json
+  {{- dict "version" 1 "settings" (.Values.settingsFile | default dict) | toYaml | nindent 2 }}
+{{- end }}
+
+{{/* A hash of the settings file, so a change to it rolls the pods. */}}
+{{- define "loom.settingsFileChecksum" -}}
+{{- .Values.settingsFile | toJson | sha256sum -}}
 {{- end }}
 
 {{/* The cache settings of one role: `cache`, with `workers.cache` over it
@@ -247,6 +293,9 @@ for the workers pods. */}}
 {{- else }}
 {{- fail "cache.volume must be emptyDir or ephemeral" }}
 {{- end }}
+- name: settings-file
+  configMap:
+    name: {{ include "loom.suffixed" (dict "root" . "suffix" "settings") }}
 {{- with .Values.extraVolumes }}
 {{ toYaml . }}
 {{- end }}
@@ -324,6 +373,8 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     {{- end }}
     {{- end }}
     {{- include "loom.podEnv" $ | nindent 4 }}
+    - name: LOOM_SETTINGS_FILE
+      value: /app/config/loom.yaml
     {{- if .serves }}
     - name: LOOM_BACKGROUND_WORKERS
       value: {{ ternary "off" "auto" $.Values.workers.enabled | quote }}
@@ -384,13 +435,15 @@ initContainers:
 {{- end }}
 {{- end }}
 
-{{/* Pod spec fields both Deployments share. */}}
+{{/* Pod spec fields the Deployments, the hook Jobs and the analytics export
+share; `serviceAccount` names another account than the release's. */}}
 {{/* `leads`: the pod may hold the workers lease, which alone reads the
 Kubernetes API (retireLostPods). */}}
 {{- define "loom.podCommon" -}}
 {{- $leads := .leads -}}
+{{- $sa := .serviceAccount -}}
 {{- with .root -}}
-serviceAccountName: {{ include "loom.serviceAccountName" . }}
+serviceAccountName: {{ default (include "loom.serviceAccountName" .) $sa }}
 automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken (and .Values.retireLostPods $leads) }}
 # Service links would inject LOOM_SERVICE_HOST and the like into Loom's env namespace.
 enableServiceLinks: false

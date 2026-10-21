@@ -12,7 +12,6 @@ import asyncio
 import base64
 import logging
 import math
-import os
 import re
 import sys
 import time
@@ -22,7 +21,7 @@ from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from types import FrameType
-from typing import Any
+from typing import Any, cast
 
 import clickhouse_connect
 from clickhouse_connect.driver.asyncclient import AsyncClient
@@ -32,7 +31,6 @@ from clickhouse_connect.driver.external import ExternalData
 from server.core.ch_class_settings import is_read_statement, traffic_class_settings
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
-    REPLICA_BOUND_RETRIES,
     WIDTH_MISMATCH_CODE,
     error_code,
     error_line,
@@ -41,6 +39,7 @@ from server.core.ch_errors import (
     is_unknown_quantized_setting,
     strip_quantized_setting,
 )
+from server.core.ch_names import NamedClient, qualify, split_table
 from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest
@@ -349,7 +348,7 @@ def class_timeout_s(cls: str) -> float:
     return float(settings.ch_timeout_read_s)
 
 
-_DRIVER_DEFAULT_READ_TIMEOUT_S = 300
+_DRIVER_DEFAULT_READ_TIMEOUT_S = 300  # not a setting: clickhouse-connect's own default
 
 
 def _driver_read_timeout_s() -> int:
@@ -424,8 +423,8 @@ def statement_settings(
     out = query_settings(extra)
     cls = cls or statement_class(sql)
     _apply_class_timeout(out, cls)
-    if os.environ.get("LOOM_CH_CAPTURE_STATEMENTS"):
-        capture_statement(sql)
+    if settings.ch_capture_statements:
+        capture_statement(sql, settings.ch_capture_statements)
     if settings.ch_log_comment_statement_digest:
         tag = str(out.get("log_comment") or "")
         out["log_comment"] = f"{tag} {statement_digest(sql)}".strip()
@@ -544,7 +543,7 @@ _STORED_KINDS = "('MATERIALIZED', 'ALIAS', 'EPHEMERAL')"  # as rmt_carry reads t
 def _stray_columns_sql(table: str, stored: frozenset[str]) -> str:
     """How many stored columns `table` has outside `stored`: 0 while the lists a
     carried write took still describe it."""
-    db, _, name = table.rpartition(".")
+    db, name = split_table(table)
     known = ", ".join(_sql_string(c) for c in sorted(stored))
     return (
         f"SELECT count() AS n FROM system.columns WHERE database = {_sql_string(db)} "
@@ -583,7 +582,7 @@ def _fenced_statement(
         f"{quote_identifier(c)} {t}" for c, t in zip(columns, type_names, strict=True)
     )
     return (
-        f"INSERT INTO {table} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
+        f"INSERT INTO {qualify(table)} ({cols}) SELECT {cols} FROM input({_sql_string(structure)}) "
         f"WHERE throwIf(({_stray_columns_sql(table, stored)}) != 0, "
         f"{_sql_string(FENCE_MESSAGE)}) = 0 "
         f"AND throwIf(toUnixTimestamp64Milli(now64(3)) > {round(deadline * 1000)}, "
@@ -664,7 +663,7 @@ class CHClient:
         limit = int(settings.ch_pool_maxsize)
         # Streaming reads have connections of their own beside the pool; 0 is unbounded.
         connector_limit = limit + STREAM_SLOTS if limit > 0 else 0
-        client = await clickhouse_connect.get_async_client(
+        driver = await clickhouse_connect.get_async_client(
             **connection_kwargs(),
             compress=True,
             # The driver's read timeout is the outer backstop
@@ -698,6 +697,8 @@ class CHClient:
                 "session_timezone": "UTC",
             },
         )
+        # Statements name the `loom` alias; the wrapper names the configured database.
+        client = cast(AsyncClient, NamedClient(driver))
         # The driver learns the zone it binds aware params in from the server
         # default before the session setting applies; bind them in UTC too.
         # tz_source="server" reads a bare DateTime in that zone, so reads come
@@ -903,13 +904,13 @@ class CHClient:
             if not is_replica_bound_error(e):
                 raise
             last: BaseException = e
-            for attempt in range(1, REPLICA_BOUND_RETRIES + 1):
+            for attempt in range(1, settings.ch_replica_bound_retries + 1):
                 log.warning(
                     "ch %s: replica-bound server error (%s), retry %d/%d on a new connection",
                     op_name,
                     str(last)[:80],
                     attempt,
-                    REPLICA_BOUND_RETRIES,
+                    settings.ch_replica_bound_retries,
                 )
                 await self._reconnect(int(self._generation))
                 try:
@@ -1095,7 +1096,8 @@ class CHClient:
     ) -> None:
         """Batch insert via the native typed insert path. `settings` forwards
         CH query settings; fire-and-forget settings are normalised by
-        `normalize_insert_settings`.
+        `normalize_insert_settings`. An `insert_deduplication_token` in
+        `settings` replaces the per-batch token.
 
         For the ledger tables in `PROJECTED_TABLES`, columns the live table
         does not have are dropped from the statement — one WARNING per
@@ -1217,10 +1219,12 @@ class CHClient:
         # One token per batch, drawn once here, so every
         # attempt below — loom's retry, the re-describe retries and the
         # driver's own retry after a peer close — names the same batch
-        # and ClickHouse keeps one copy.
-        settings = dedup_settings(
-            insert_dedup_token(table, list(rows[0].keys()), rows, uuid.uuid4().hex), settings
+        # and ClickHouse keeps one copy. A caller's token names the row's
+        # identity instead, so two writers of one row land it once.
+        token = (settings or {}).get("insert_deduplication_token") or insert_dedup_token(
+            table, list(rows[0].keys()), rows, uuid.uuid4().hex
         )
+        settings = dedup_settings(token, settings)
 
         async def _q() -> None:
             from server.core import rmt_carry

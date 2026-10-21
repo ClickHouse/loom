@@ -15,6 +15,7 @@ from uuid import UUID
 from server.insights.domain.provider_rebuild import REBUILD_TABLES
 from server.insights.domain.provider_rebuild_manifest import RebuildManifest
 from server.insights.store.provider_configuration import write_configuration
+from server.llm import customer
 
 Write = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -26,6 +27,8 @@ class BatchCheckpoint:
     cursor: int
     rows_written: int
     done: bool
+    # Rows staged without a vector: their org's model calls are switched off.
+    rows_waiting: int = 0
 
 
 class RebuildBackend(Protocol):
@@ -56,6 +59,7 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
     progress.setdefault("table_index", 0)
     progress.setdefault("cursor", 0)
     progress.setdefault("rows_done", 0)
+    progress.setdefault("rows_waiting", 0)
     if (
         type(progress["plan_version"]) is not int
         or progress["plan_version"] != 1
@@ -64,7 +68,7 @@ def _progress(row: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Unsupported rebuild checkpoint")
     if any(
         type(progress[name]) is not int or progress[name] < 0
-        for name in ("table_index", "cursor", "rows_done")
+        for name in ("table_index", "cursor", "rows_done", "rows_waiting")
     ):
         raise ValueError("Invalid rebuild cursor")
     if progress["table_index"] > len(REBUILD_TABLES):
@@ -113,10 +117,15 @@ async def _rebuild_page(config_id: UUID, progress: dict[str, Any], backend: Rebu
         or type(result.done) is not bool
         or result.cursor < progress["cursor"]
         or result.rows_written < 0
+        or type(result.rows_waiting) is not int
+        or result.rows_waiting < 0
         or (not result.done and result.cursor == progress["cursor"])
     ):
         raise ValueError("Rebuild backend did not advance its cursor")
     progress["rows_done"] += result.rows_written
+    # Staged without a vector (the org's model calls are off): shown, so an
+    # operator sees what the published space is missing.
+    progress["rows_waiting"] += result.rows_waiting
     progress["cursor"] = 0 if result.done else result.cursor
     progress["table_index"] += int(result.done)
     progress["table"] = REBUILD_TABLES[index]
@@ -176,6 +185,8 @@ async def run_rebuild_step(
     phase = progress["phase"]
     try:
         advanced = await _advance(UUID(str(row["config_id"])), progress, backend)
+    except customer.SwitchUnread:
+        return row  # the switch could not be read: the step runs again once it is
     except Exception:  # noqa: BLE001 — retain the last cursor and expose no provider/source secrets
         return await _checkpoint(write, row, _progress(row), "failed", f"rebuild_{phase}_failed")
     if not advanced:

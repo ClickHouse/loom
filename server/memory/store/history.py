@@ -12,7 +12,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store.rows import MEMORY_PERSISTED_COLS, Identity, MemoryRow, _hydrate
-from server.memory.store.sql import _is_full_row
+from server.memory.store.sql import _SEQUENTIAL, _is_full_row, read_your_writes_enabled
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +242,41 @@ async def find_history_target(
     return None if r is None else HistoryTarget.from_row(r)
 
 
+async def version_exists(
+    org: str,
+    target: HistoryTarget,
+    memory_id: str,
+    version: int,
+    *,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Whether the mirror holds (memory_id, version): memory.redact checks the
+    named version before it scrubs anything built from the memory. `target`
+    carries the sort-key columns, so this is a point read."""
+    ch = ch or _default_client()
+    r = await ch.query_one(
+        """
+        SELECT 1 AS found FROM loom.memory_versions
+        WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String}
+          AND user_id = {u:String} AND session_id = {s:String}
+          AND memory_key = {k:String} AND version = {v:UInt64}
+          AND memory_id = {mid:UUID}
+        LIMIT 1
+        """,
+        params={
+            "org": org,
+            "ns": target.namespace,
+            "a": target.agent,
+            "u": target.user_id,
+            "s": target.session_id,
+            "k": target.memory_key,
+            "v": version,
+            "mid": memory_id,
+        },
+    )
+    return r is not None
+
+
 async def rollback_change_rows(
     org: str,
     namespace: str,
@@ -296,18 +331,22 @@ async def fetch_version_rows(
     namespace: str,
     pairs: list[tuple[str, int]],
     *,
+    sequential: bool = False,
     ch: _CHClient | None = None,
 ) -> list[MemoryRow]:
     """The exact historical rows for (memory_key, version) pairs, hydrated
-    so build_memory_version_row can re-emit them as new heads."""
+    so build_memory_version_row can re-emit them as new heads. `sequential` reads with
+    sequential consistency, for a row another read just saw committed."""
     if not pairs:
         return []
     ch = ch or _default_client()
+    settings = _SEQUENTIAL if sequential and read_your_writes_enabled() else ""
     rows = await ch.query_all(
-        """
+        f"""
         SELECT * FROM loom.memory_versions FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-          AND (memory_key, version) IN {pairs:Array(Tuple(String, UInt64))}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND (memory_key, version) IN {{pairs:Array(Tuple(String, UInt64))}}
+        {settings}
         """,
         params={"org": org, "ns": namespace, "pairs": [(k, int(v)) for k, v in pairs]},
     )

@@ -131,7 +131,8 @@ def caller_identity(request: Request, *, prefer_bearer_in_dev: bool = False) -> 
     `prefer_bearer_in_dev` (so per-subject role lookups stay accurate on
     multi-member namespaces). A wildcard org falls back to self_signup_org.
     """
-    from server.auth.bearer import bearer_token
+    from server.auth.bearer import bearer_token, gateway_refused
+    from server.auth.gateway import is_end_user
     from server.auth.jwt import TokenError, verify_token
 
     if settings.auth_actually_required():
@@ -144,6 +145,8 @@ def caller_identity(request: Request, *, prefer_bearer_in_dev: bool = False) -> 
             token = bearer_token(request.headers.get("Authorization"))
             if token is not None:
                 info = verify_token(token)
+                if is_end_user(info):
+                    raise gateway_refused()
                 org = info.org if info.org and info.org != "*" else settings.self_signup_org
                 remember_caller(request, info.subject, org)
                 return info.subject, org

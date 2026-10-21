@@ -561,6 +561,50 @@ class CodeOps:
         )
 
 
+class CollectionOps:
+    """The `collection.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def create(
+        self, body: _ops.CollectionCreateBody | None = None, /, **options: Any
+    ) -> _ops.CollectionCreateOutput:
+        """`collection.create`."""
+        return cast(
+            "_ops.CollectionCreateOutput",
+            await self._agent.call("collection.create", body, **options),
+        )
+
+    async def delete(
+        self, body: _ops.CollectionDeleteBody | None = None, /, **options: Any
+    ) -> _ops.CollectionDeleteOutput:
+        """`collection.delete`."""
+        return cast(
+            "_ops.CollectionDeleteOutput",
+            await self._agent.call("collection.delete", body, **options),
+        )
+
+    async def list(
+        self, body: _ops.CollectionListBody | None = None, /, **options: Any
+    ) -> _ops.CollectionListOutput:
+        """`collection.list`."""
+        return cast(
+            "_ops.CollectionListOutput", await self._agent.call("collection.list", body, **options)
+        )
+
+    async def move(
+        self, body: _ops.CollectionMoveBody | None = None, /, **options: Any
+    ) -> _ops.CollectionMoveOutput:
+        """`collection.move`."""
+        return cast(
+            "_ops.CollectionMoveOutput", await self._agent.call("collection.move", body, **options)
+        )
+
+
 class ConflictsOps:
     """The `conflicts.*` operations."""
 
@@ -731,6 +775,33 @@ class ConversationOps:
             await self._agent.call("conversation.list", body, **options),
         )
 
+    async def list_saved_messages(
+        self, body: _ops.ConversationListSavedMessagesBody | None = None, /, **options: Any
+    ) -> _ops.ConversationListSavedMessagesOutput:
+        """`conversation.list_saved_messages`."""
+        return cast(
+            "_ops.ConversationListSavedMessagesOutput",
+            await self._agent.call("conversation.list_saved_messages", body, **options),
+        )
+
+    async def save_message(
+        self, body: _ops.ConversationSaveMessageBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSaveMessageOutput:
+        """`conversation.save_message`."""
+        return cast(
+            "_ops.ConversationSaveMessageOutput",
+            await self._agent.call("conversation.save_message", body, **options),
+        )
+
+    async def saved_status(
+        self, body: _ops.ConversationSavedStatusBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSavedStatusOutput:
+        """`conversation.saved_status`."""
+        return cast(
+            "_ops.ConversationSavedStatusOutput",
+            await self._agent.call("conversation.saved_status", body, **options),
+        )
+
     async def search(
         self, body: _ops.ConversationSearchBody | None = None, /, **options: Any
     ) -> _ops.ConversationSearchOutput:
@@ -738,6 +809,15 @@ class ConversationOps:
         return cast(
             "_ops.ConversationSearchOutput",
             await self._agent.call("conversation.search", body, **options),
+        )
+
+    async def search_saved_messages(
+        self, body: _ops.ConversationSearchSavedMessagesBody | None = None, /, **options: Any
+    ) -> _ops.ConversationSearchSavedMessagesOutput:
+        """`conversation.search_saved_messages`."""
+        return cast(
+            "_ops.ConversationSearchSavedMessagesOutput",
+            await self._agent.call("conversation.search_saved_messages", body, **options),
         )
 
     async def set_logging(
@@ -756,6 +836,15 @@ class ConversationOps:
         return cast(
             "_ops.ConversationThreadsOutput",
             await self._agent.call("conversation.threads", body, **options),
+        )
+
+    async def unsave_message(
+        self, body: _ops.ConversationUnsaveMessageBody | None = None, /, **options: Any
+    ) -> _ops.ConversationUnsaveMessageOutput:
+        """`conversation.unsave_message`."""
+        return cast(
+            "_ops.ConversationUnsaveMessageOutput",
+            await self._agent.call("conversation.unsave_message", body, **options),
         )
 
     async def update(
@@ -1383,6 +1472,15 @@ class MemoryOps:
             "_ops.MemoryDeleteOutput", await self._agent.call("memory.delete", body, **options)
         )
 
+    async def delete_version(
+        self, body: _ops.MemoryDeleteVersionBody | None = None, /, **options: Any
+    ) -> _ops.MemoryDeleteVersionOutput:
+        """`memory.delete_version`."""
+        return cast(
+            "_ops.MemoryDeleteVersionOutput",
+            await self._agent.call("memory.delete_version", body, **options),
+        )
+
     async def demonstrate(
         self, body: _ops.MemoryDemonstrateBody | None = None, /, **options: Any
     ) -> _ops.MemoryDemonstrateOutput:
@@ -1498,6 +1596,12 @@ class MemoryOps:
             "_ops.MemoryImportEvidenceOutput",
             await self._agent.call("memory.import_evidence", body, **options),
         )
+
+    async def keys(
+        self, body: _ops.MemoryKeysBody | None = None, /, **options: Any
+    ) -> _ops.MemoryKeysOutput:
+        """`memory.keys`."""
+        return cast("_ops.MemoryKeysOutput", await self._agent.call("memory.keys", body, **options))
 
     async def lineage(
         self, body: _ops.MemoryLineageBody | None = None, /, **options: Any
@@ -2169,6 +2273,33 @@ class OpsOps:
         )
 
 
+class OrgOps:
+    """The `org.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def model_calls(
+        self, body: _ops.OrgModelCallsBody | None = None, /, **options: Any
+    ) -> _ops.OrgModelCallsOutput:
+        """`org.model_calls`."""
+        return cast(
+            "_ops.OrgModelCallsOutput", await self._agent.call("org.model_calls", body, **options)
+        )
+
+    async def set_model_calls(
+        self, body: _ops.OrgSetModelCallsBody | None = None, /, **options: Any
+    ) -> _ops.OrgModelCallsOutput:
+        """`org.set_model_calls`."""
+        return cast(
+            "_ops.OrgModelCallsOutput",
+            await self._agent.call("org.set_model_calls", body, **options),
+        )
+
+
 class PolicyOps:
     """The `policy.*` operations."""
 
@@ -2342,6 +2473,52 @@ class ProfileOps:
         """`profile.set`."""
         return cast(
             "_ops.ProfileMutationOutput", await self._agent.call("profile.set", body, **options)
+        )
+
+    async def structured(
+        self, body: _ops.ProfileStructuredBody | None = None, /, **options: Any
+    ) -> _ops.ProfileStructuredOutput:
+        """`profile.structured`."""
+        return cast(
+            "_ops.ProfileStructuredOutput",
+            await self._agent.call("profile.structured", body, **options),
+        )
+
+
+class ProfileSchemaOps:
+    """The `profile_schema.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def clear(
+        self, body: _ops.ProfileSchemaBody | None = None, /, **options: Any
+    ) -> _ops.ProfileSchemaOutput:
+        """`profile_schema.clear`."""
+        return cast(
+            "_ops.ProfileSchemaOutput",
+            await self._agent.call("profile_schema.clear", body, **options),
+        )
+
+    async def get(
+        self, body: _ops.ProfileSchemaBody | None = None, /, **options: Any
+    ) -> _ops.ProfileSchemaOutput:
+        """`profile_schema.get`."""
+        return cast(
+            "_ops.ProfileSchemaOutput",
+            await self._agent.call("profile_schema.get", body, **options),
+        )
+
+    async def set(
+        self, body: _ops.ProfileSchemaSetBody | None = None, /, **options: Any
+    ) -> _ops.ProfileSchemaOutput:
+        """`profile_schema.set`."""
+        return cast(
+            "_ops.ProfileSchemaOutput",
+            await self._agent.call("profile_schema.set", body, **options),
         )
 
 
@@ -2854,6 +3031,7 @@ class OpsClient:
         self.blacklist = BlacklistOps(agent)
         self.calibration = CalibrationOps(agent)
         self.code = CodeOps(agent)
+        self.collection = CollectionOps(agent)
         self.conflicts = ConflictsOps(agent)
         self.consolidations = ConsolidationsOps(agent)
         self.context = ContextOps(agent)
@@ -2872,9 +3050,11 @@ class OpsClient:
         self.namespace = NamespaceOps(agent)
         self.observe = ObserveOps(agent)
         self.ops = OpsOps(agent)
+        self.org = OrgOps(agent)
         self.policy = PolicyOps(agent)
         self.procedure = ProcedureOps(agent)
         self.profile = ProfileOps(agent)
+        self.profile_schema = ProfileSchemaOps(agent)
         self.run = RunOps(agent)
         self.search = SearchOps(agent)
         self.session = SessionOps(agent)

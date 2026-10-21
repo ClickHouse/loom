@@ -14,10 +14,10 @@ from typing import Any
 
 import httpx
 
-from server.clients._http import get_client as _http_client
+from server.clients._http import get_model_client as _http_client
 from server.clients._http_errors import raise_for_status_with_detail as _raise_for_status
 from server.core.provider_keys import provider_key
-from server.llm import gateway, traits
+from server.llm import customer, gateway, traits
 from server.llm._retry import retrying
 from server.llm.client import LLMResult
 from server.llm.json_text import strip_code_fence
@@ -115,7 +115,9 @@ def _thinking_tokens(data: dict[str, Any]) -> int:
     return int(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else 0
 
 
-async def _post(client: Any, model: str, api_key: str, payload: dict[str, Any]) -> httpx.Response:
+async def _post(
+    client: Any, model: str, api_key: str, payload: dict[str, Any], org: str
+) -> httpx.Response:
     from server.settings import settings
 
     root = settings.anthropic_base_url.rstrip("/")
@@ -123,6 +125,7 @@ async def _post(client: Any, model: str, api_key: str, payload: dict[str, Any]) 
         "x-api-key": api_key,
         "anthropic-version": _API_VERSION,
         "Content-Type": "application/json",
+        **customer.headers(org),
     }
     if root != _ANTHROPIC_ROOT:
         headers["Authorization"] = f"Bearer {api_key}"  # what gateways in front of it take
@@ -155,6 +158,9 @@ class AnthropicLLMClient:
         response_format: dict[str, str] | None = None,
         temperature: float | None = 0.0,
     ) -> LLMResult:
+        # Before the gateway token and outside `recording`: a call naming no
+        # customer is the caller's to fix, not a provider failure.
+        org = await customer.require()
         client = _http_client()
         data: dict[str, Any] = {}
         json_mode = (response_format or {}).get("type") == "json_object"
@@ -181,13 +187,13 @@ class AnthropicLLMClient:
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()
-                        r = await _post(client, self.model, key, payload)
+                        r = await _post(client, self.model, key, payload, org)
                         for _ in range(traits.MAX_NEGOTIATION):
                             # A refused field: re-send without it.
                             if not _learn_from_refusal(self.model, r, payload):
                                 break
                             payload = _payload(self.model, system, user, max_tokens, temperature)
-                            r = await _post(client, self.model, key, payload)
+                            r = await _post(client, self.model, key, payload, org)
                         _raise_for_status(r, "anthropic:messages")
                         data = r.json()
                         hidden = _thinking_tokens(data)
@@ -197,7 +203,7 @@ class AnthropicLLMClient:
                             payload["max_tokens"] = traits.starved_cap(
                                 self.model, int(payload["max_tokens"]), hidden
                             )
-                            r = await _post(client, self.model, key, payload)
+                            r = await _post(client, self.model, key, payload, org)
                             _raise_for_status(r, "anthropic:messages")
                             data = r.json()
             text = "".join(

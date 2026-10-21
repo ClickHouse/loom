@@ -1809,6 +1809,73 @@ export interface CodeVerifyCitationsOutput {
   trace_run_id?: string;
 }
 
+export interface CollectionCreateInput {
+  org: string;
+  /** The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. */
+  namespace: string;
+  /** The collection it sits in and inherits grants from; '' for a top-level one. */
+  parent?: string;
+  /** What the collection holds, shown beside its name; '' for none. */
+  description?: string;
+}
+
+export interface CollectionCreateOutput {
+  namespace: string;
+  /** The collection it sits in; '' for a top-level one. */
+  parent: string;
+  created: boolean;
+}
+
+export interface CollectionDeleteInput {
+  org: string;
+  namespace: string;
+}
+
+export interface CollectionDeleteOutput {
+  namespace: string;
+  deleted: boolean;
+  /** The erasure of what the collection held; `erasure.status` follows it. */
+  erasure_id?: string;
+  /** That erasure's outcome: `completed`, or `failed` while the recovery worker retries it. */
+  erasure_status?: string;
+}
+
+export interface CollectionListInput {
+  org: string;
+  /** Collections per page. */
+  limit?: number;
+  /** The `next_cursor` of the previous page; none for the first. */
+  cursor?: string | null;
+}
+
+export interface CollectionEntry {
+  namespace: string;
+  parent: string;
+  personal: boolean;
+  role: string;
+}
+
+export interface CollectionListOutput {
+  /** The collections the caller can read on this page, by name, with its role. */
+  collections: CollectionEntry[];
+  /** Pass as `cursor` for the next page; none on the last. */
+  next_cursor?: string | null;
+}
+
+export interface CollectionMoveInput {
+  org: string;
+  namespace: string;
+  /** The new parent collection; '' detaches it, keeping only its own grants. */
+  parent?: string;
+}
+
+export interface CollectionMoveOutput {
+  namespace: string;
+  /** The collection it now sits in; '' once detached. */
+  parent: string;
+  moved: boolean;
+}
+
 export interface ConflictsAllowlistListInput {
   org: string;
   namespace: string;
@@ -2081,7 +2148,7 @@ export interface ConversationAppendOutput {
   msg_id: string;
   ts: string; // date-time
   stored?: boolean;
-  reason?: "" | "duplicate" | "logging_disabled";
+  reason?: "" | "duplicate" | "logging_disabled" | "deleted";
 }
 
 export interface ConversationCompactInput {
@@ -2187,6 +2254,62 @@ export interface ConversationListOutput {
   next_cursor?: string | null;
 }
 
+export interface ConversationListSavedMessagesInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  conversation_id?: string | null;
+  limit?: number;
+  cursor?: string | null;
+  fields?: string[] | null;
+}
+
+export interface SavedMessageHit {
+  conversation_id: string;
+  message_id: string;
+  role: "user" | "assistant";
+  content_excerpt: string;
+  ts: string; // date-time
+}
+
+export interface ConversationListSavedMessagesOutput {
+  rows: SavedMessageHit[];
+  next_cursor?: string | null;
+}
+
+export interface ConversationSaveMessageInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  conversation_id: string;
+  message_id: string;
+  role: "user" | "assistant";
+  content: string;
+  user_id: string;
+}
+
+export interface ConversationSaveMessageOutput {
+  conversation_id: string;
+  message_id: string;
+  indexed: boolean;
+  reason?: "" | "duplicate" | "owner_mismatch" | "deleted" | "unsupported_role" | "embed_failed";
+  ts: string; // date-time
+}
+
+export interface ConversationSavedStatusInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  conversation_id: string;
+  message_ids: string[];
+}
+
+export interface ConversationSavedStatusOutput {
+  saved: string[];
+}
+
 export interface ConversationSearchInput {
   org: string;
   namespace: string;
@@ -2195,6 +2318,7 @@ export interface ConversationSearchInput {
   thread_id?: string | null;
   run_id?: string | null;
   role?: "user" | "assistant" | "system" | "tool" | null;
+  user_id?: string | null;
   top_k?: number;
   namespace_scope?: "this" | "all_mine";
 }
@@ -2211,6 +2335,23 @@ export interface ConversationHit {
 export interface ConversationSearchOutput {
   hits: ConversationHit[];
   namespaces_skipped?: string[];
+}
+
+export interface ConversationSearchSavedMessagesInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id: string;
+  query: string;
+  conversation_id?: string | null;
+  role?: "user" | "assistant" | null;
+  top_k?: number;
+  search_mode?: "hybrid" | "semantic" | "lexical";
+  lexical_weight?: number;
+}
+
+export interface ConversationSearchSavedMessagesOutput {
+  hits: SavedMessageHit[];
 }
 
 export interface ConversationSetLoggingInput {
@@ -2247,6 +2388,23 @@ export interface ConversationThreadSummary {
 
 export interface ConversationThreadsOutput {
   threads: ConversationThreadSummary[];
+}
+
+export interface ConversationUnsaveMessageInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  conversation_id: string;
+  message_id: string;
+  user_id: string;
+}
+
+export interface ConversationUnsaveMessageOutput {
+  conversation_id: string;
+  message_id: string;
+  found: boolean;
+  removed?: boolean;
+  ts: string; // date-time
 }
 
 export interface ConversationUpdateInput {
@@ -2980,6 +3138,9 @@ export interface KnowledgeAddInput {
   original_bytes_b64?: string | null;
   original_filename?: string;
   blob_content_type?: string;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeAddOutput {
@@ -3004,6 +3165,9 @@ export interface KnowledgeBulkAddInput {
   org: string;
   namespace: string;
   entries: KnowledgeBulkEntry[];
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeBulkEntryResult {
@@ -3184,11 +3348,14 @@ export interface KnowledgeSearchInput {
   since_seconds?: number | null;
   top_k?: number;
   namespace_scope?: "this" | "all_mine";
+  namespaces?: string[];
   search_mode?: "hybrid" | "semantic" | "lexical";
   lexical_weight?: number;
   narrow_spans?: boolean;
   collapse_sections?: boolean;
   uri_prefix?: string[];
+  session_ids?: string[];
+  source_classes?: string[];
 }
 
 export interface SearchHit {
@@ -3199,6 +3366,7 @@ export interface SearchHit {
   distance: number;
   similarity: number;
   namespace?: string;
+  ingested_at?: string | null;
   section_path?: string[];
   section?: string;
   lexical_score?: number;
@@ -3209,6 +3377,9 @@ export interface SearchHit {
   span_end?: number;
   span_similarity?: number;
   siblings_folded?: number;
+  agent?: string;
+  session_id?: string;
+  source_class?: string;
 }
 
 export interface KnowledgeSearchOutput {
@@ -3270,6 +3441,9 @@ export interface KnowledgeUpsertInput {
   original_bytes_b64?: string | null;
   original_filename?: string;
   blob_content_type?: string;
+  agent?: string;
+  session_id?: string;
+  source_class?: string | null;
 }
 
 export interface KnowledgeUpsertOutput {
@@ -3760,6 +3934,7 @@ export interface MemoryGetOutput {
   memory_type?: string | null;
   confidence?: number | null;
   version?: number | null;
+  version_text?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
   expires_at?: string | null;
@@ -4073,6 +4248,26 @@ export interface MemoryDeleteOutput {
   tombstoned: boolean;
   version: number;
   found?: boolean;
+  dependents_tombstoned?: number;
+  dependents_downgraded?: number;
+}
+
+export interface MemoryDeleteVersionInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  memory_key: string;
+  version: number | string;
+}
+
+export interface MemoryDeleteVersionOutput {
+  tombstoned: boolean;
+  version?: number;
+  found?: boolean;
+  reason?: string;
   dependents_tombstoned?: number;
   dependents_downgraded?: number;
 }
@@ -4533,6 +4728,24 @@ export interface MemoryImportEvidenceOutput {
   skipped?: number;
 }
 
+export interface MemoryKeysInput {
+  org: string;
+  namespace: string;
+  limit?: number;
+}
+
+export interface MemoryKeyRef {
+  agent: string;
+  user_id: string;
+  session_id: string;
+  memory_key: string;
+}
+
+export interface MemoryKeysOutput {
+  keys: MemoryKeyRef[];
+  truncated?: boolean;
+}
+
 export interface MemoryLineageInput {
   org: string;
   namespace: string;
@@ -4646,6 +4859,7 @@ export interface MemoryListEntry {
   memory_type: string;
   confidence: number;
   version: number;
+  version_text?: string;
   source_trace?: string;
   created_at: string; // date-time
   updated_at?: string | null;
@@ -6763,6 +6977,27 @@ export interface OpsProjectionFailuresRetryOutput {
   abandoned?: number;
 }
 
+export interface OrgModelCallsInput {
+  org: string;
+}
+
+export interface OrgModelCallsOutput {
+  org: string;
+  enabled: boolean;
+  reason?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+  locked?: boolean;
+  locked_by?: string;
+}
+
+export interface OrgSetModelCallsInput {
+  org: string;
+  enabled: boolean;
+  reason?: string;
+  locked?: boolean | null;
+}
+
 export interface PolicyCheckInput {
   org: string;
   namespace: string;
@@ -7195,6 +7430,45 @@ export interface ProfileSetInput {
   char_limit?: number;
   source_trace?: string;
   if_match_sha256?: string;
+}
+
+export interface ProfileStructuredInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  read_scope?: "namespace" | "own_user";
+}
+
+export interface ProfileStructuredOutput {
+  status: "ready" | "stale" | "pending" | "no_schema";
+  profile?: Record<string, unknown>;
+  built_at?: string | null;
+  memory_id?: string;
+  version?: number;
+  version_text?: string;
+  schema_sha256?: string;
+}
+
+export interface ProfileSchemaInput {
+  org: string;
+  namespace: string;
+}
+
+export interface ProfileSchemaOutput {
+  found: boolean;
+  json_schema?: Record<string, unknown>;
+  schema_sha256?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+}
+
+export interface ProfileSchemaSetInput {
+  org: string;
+  namespace: string;
+  json_schema: Record<string, unknown>;
 }
 
 export interface RunBeginInput {
@@ -8466,6 +8740,10 @@ export type OpName =
   | "code.trace"
   | "code.verify"
   | "code.verify_citations"
+  | "collection.create"
+  | "collection.delete"
+  | "collection.list"
+  | "collection.move"
   | "conflicts.allowlist_list"
   | "conflicts.allowlist_remove"
   | "conflicts.list"
@@ -8481,9 +8759,14 @@ export type OpName =
   | "conversation.delete"
   | "conversation.get"
   | "conversation.list"
+  | "conversation.list_saved_messages"
+  | "conversation.save_message"
+  | "conversation.saved_status"
   | "conversation.search"
+  | "conversation.search_saved_messages"
   | "conversation.set_logging"
   | "conversation.threads"
+  | "conversation.unsave_message"
   | "conversation.update"
   | "cost.agent_summary"
   | "cost.budget_status"
@@ -8548,6 +8831,7 @@ export type OpName =
   | "memory.dedup_list"
   | "memory.dedup_resolve"
   | "memory.delete"
+  | "memory.delete_version"
   | "memory.demonstrate"
   | "memory.demote"
   | "memory.digests"
@@ -8562,6 +8846,7 @@ export type OpName =
   | "memory.history"
   | "memory.import_curated"
   | "memory.import_evidence"
+  | "memory.keys"
   | "memory.lineage"
   | "memory.link"
   | "memory.list"
@@ -8636,6 +8921,8 @@ export type OpName =
   | "ops.projection_failures.list"
   | "ops.projection_failures.resolve"
   | "ops.projection_failures.retry"
+  | "org.model_calls"
+  | "org.set_model_calls"
   | "policy.check"
   | "policy.decisions"
   | "policy.delete"
@@ -8654,6 +8941,10 @@ export type OpName =
   | "profile.render"
   | "profile.replace"
   | "profile.set"
+  | "profile.structured"
+  | "profile_schema.clear"
+  | "profile_schema.get"
+  | "profile_schema.set"
   | "run.begin"
   | "run.complete"
   | "run.get"
@@ -8774,6 +9065,10 @@ export interface OpMap {
   "code.trace": { input: CodeTraceInput; output: CodeTraceOutput };
   "code.verify": { input: CodeVerifyInput; output: CodeVerifyOutput };
   "code.verify_citations": { input: CodeVerifyCitationsInput; output: CodeVerifyCitationsOutput };
+  "collection.create": { input: CollectionCreateInput; output: CollectionCreateOutput };
+  "collection.delete": { input: CollectionDeleteInput; output: CollectionDeleteOutput };
+  "collection.list": { input: CollectionListInput; output: CollectionListOutput };
+  "collection.move": { input: CollectionMoveInput; output: CollectionMoveOutput };
   "conflicts.allowlist_list": { input: ConflictsAllowlistListInput; output: ConflictsAllowlistListOutput };
   "conflicts.allowlist_remove": { input: ConflictsAllowlistRemoveInput; output: ConflictsAllowlistRemoveOutput };
   "conflicts.list": { input: ConflictsListInput; output: ConflictsListOutput };
@@ -8789,9 +9084,14 @@ export interface OpMap {
   "conversation.delete": { input: ConversationDeleteInput; output: ConversationDeleteOutput };
   "conversation.get": { input: ConversationGetInput; output: ConversationGetOutput };
   "conversation.list": { input: ConversationListInput; output: ConversationListOutput };
+  "conversation.list_saved_messages": { input: ConversationListSavedMessagesInput; output: ConversationListSavedMessagesOutput };
+  "conversation.save_message": { input: ConversationSaveMessageInput; output: ConversationSaveMessageOutput };
+  "conversation.saved_status": { input: ConversationSavedStatusInput; output: ConversationSavedStatusOutput };
   "conversation.search": { input: ConversationSearchInput; output: ConversationSearchOutput };
+  "conversation.search_saved_messages": { input: ConversationSearchSavedMessagesInput; output: ConversationSearchSavedMessagesOutput };
   "conversation.set_logging": { input: ConversationSetLoggingInput; output: ConversationSetLoggingOutput };
   "conversation.threads": { input: ConversationThreadsInput; output: ConversationThreadsOutput };
+  "conversation.unsave_message": { input: ConversationUnsaveMessageInput; output: ConversationUnsaveMessageOutput };
   "conversation.update": { input: ConversationUpdateInput; output: ConversationUpdateOutput };
   "cost.agent_summary": { input: CostAgentSummaryInput; output: CostAgentSummaryOutput };
   "cost.budget_status": { input: CostBudgetStatusInput; output: CostBudgetStatusOutput };
@@ -8856,6 +9156,7 @@ export interface OpMap {
   "memory.dedup_list": { input: MemoryDedupListInput; output: MemoryDedupListOutput };
   "memory.dedup_resolve": { input: MemoryDedupResolveInput; output: MemoryDedupResolveOutput };
   "memory.delete": { input: MemoryDeleteInput; output: MemoryDeleteOutput };
+  "memory.delete_version": { input: MemoryDeleteVersionInput; output: MemoryDeleteVersionOutput };
   "memory.demonstrate": { input: MemoryDemonstrateInput; output: MemoryDemonstrateOutput };
   "memory.demote": { input: MemoryDemoteInput; output: MemoryDemoteOutput };
   "memory.digests": { input: MemoryDigestsInput; output: MemoryDigestsOutput };
@@ -8870,6 +9171,7 @@ export interface OpMap {
   "memory.history": { input: MemoryHistoryInput; output: MemoryHistoryOutput };
   "memory.import_curated": { input: MemoryImportCuratedInput; output: MemoryImportCuratedOutput };
   "memory.import_evidence": { input: MemoryImportEvidenceInput; output: MemoryImportEvidenceOutput };
+  "memory.keys": { input: MemoryKeysInput; output: MemoryKeysOutput };
   "memory.lineage": { input: MemoryLineageInput; output: MemoryLineageOutput };
   "memory.link": { input: MemoryLinkInput; output: MemoryLinkOutput };
   "memory.list": { input: MemoryListInput; output: MemoryListOutput };
@@ -8944,6 +9246,8 @@ export interface OpMap {
   "ops.projection_failures.list": { input: OpsProjectionFailuresListInput; output: OpsProjectionFailuresListOutput };
   "ops.projection_failures.resolve": { input: OpsProjectionFailuresResolveInput; output: OpsProjectionFailuresResolveOutput };
   "ops.projection_failures.retry": { input: OpsProjectionFailuresRetryInput; output: OpsProjectionFailuresRetryOutput };
+  "org.model_calls": { input: OrgModelCallsInput; output: OrgModelCallsOutput };
+  "org.set_model_calls": { input: OrgSetModelCallsInput; output: OrgModelCallsOutput };
   "policy.check": { input: PolicyCheckInput; output: PolicyCheckOutput };
   "policy.decisions": { input: PolicyDecisionsInput; output: PolicyDecisionsOutput };
   "policy.delete": { input: PolicyDeleteInput; output: PolicyDeleteOutput };
@@ -8962,6 +9266,10 @@ export interface OpMap {
   "profile.render": { input: ProfileRenderInput; output: ProfileRenderOutput };
   "profile.replace": { input: ProfileReplaceInput; output: ProfileMutationOutput };
   "profile.set": { input: ProfileSetInput; output: ProfileMutationOutput };
+  "profile.structured": { input: ProfileStructuredInput; output: ProfileStructuredOutput };
+  "profile_schema.clear": { input: ProfileSchemaInput; output: ProfileSchemaOutput };
+  "profile_schema.get": { input: ProfileSchemaInput; output: ProfileSchemaOutput };
+  "profile_schema.set": { input: ProfileSchemaSetInput; output: ProfileSchemaOutput };
   "run.begin": { input: RunBeginInput; output: RunBeginOutput };
   "run.complete": { input: RunCompleteInput; output: RunCompleteOutput };
   "run.get": { input: RunGetInput; output: RunGetOutput };
@@ -9082,6 +9390,10 @@ export const OPS: readonly OpSpec[] = [
   { name: "code.trace", group: "code", method: "trace", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "code.verify", group: "code", method: "verify", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 1500, audit: false, readOnly: true },
   { name: "code.verify_citations", group: "code", method: "verifyCitations", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
+  { name: "collection.create", group: "collection", method: "create", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "collection.delete", group: "collection", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
+  { name: "collection.list", group: "collection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "collection.move", group: "collection", method: "move", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.allowlist_list", group: "conflicts", method: "allowlistList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conflicts.allowlist_remove", group: "conflicts", method: "allowlistRemove", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "conflicts.list", group: "conflicts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -9097,9 +9409,14 @@ export const OPS: readonly OpSpec[] = [
   { name: "conversation.delete", group: "conversation", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 600, audit: true, readOnly: false },
   { name: "conversation.get", group: "conversation", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.list", group: "conversation", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
+  { name: "conversation.list_saved_messages", group: "conversation", method: "listSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
+  { name: "conversation.save_message", group: "conversation", method: "saveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
+  { name: "conversation.saved_status", group: "conversation", method: "savedStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "conversation.search", group: "conversation", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "conversation.search_saved_messages", group: "conversation", method: "searchSavedMessages", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "conversation.set_logging", group: "conversation", method: "setLogging", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "conversation.threads", group: "conversation", method: "threads", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
+  { name: "conversation.unsave_message", group: "conversation", method: "unsaveMessage", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
   { name: "conversation.update", group: "conversation", method: "update", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
   { name: "cost.agent_summary", group: "cost", method: "agentSummary", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
   { name: "cost.budget_status", group: "cost", method: "budgetStatus", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -9164,6 +9481,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.dedup_list", group: "memory", method: "dedupList", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.dedup_resolve", group: "memory", method: "dedupResolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "memory.delete", group: "memory", method: "delete", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 30, audit: true, readOnly: false },
+  { name: "memory.delete_version", group: "memory", method: "deleteVersion", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "memory.demonstrate", group: "memory", method: "demonstrate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.demote", group: "memory", method: "demote", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "memory.digests", group: "memory", method: "digests", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
@@ -9178,6 +9496,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.history", group: "memory", method: "history", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.import_curated", group: "memory", method: "importCurated", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "memory.import_evidence", group: "memory", method: "importEvidence", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "memory.keys", group: "memory", method: "keys", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 2000, audit: false, readOnly: true },
   { name: "memory.lineage", group: "memory", method: "lineage", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "memory.link", group: "memory", method: "link", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 60, audit: true, readOnly: false },
   { name: "memory.list", group: "memory", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
@@ -9252,6 +9571,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "ops.projection_failures.list", group: "ops", method: "projectionFailuresList", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "ops.projection_failures.resolve", group: "ops", method: "projectionFailuresResolve", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 500, audit: true, readOnly: false },
   { name: "ops.projection_failures.retry", group: "ops", method: "projectionFailuresRetry", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 3000, audit: true, readOnly: false },
+  { name: "org.model_calls", group: "org", method: "modelCalls", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
+  { name: "org.set_model_calls", group: "org", method: "setModelCalls", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "policy.check", group: "policy", method: "check", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "policy.decisions", group: "policy", method: "decisions", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
   { name: "policy.delete", group: "policy", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
@@ -9270,6 +9591,10 @@ export const OPS: readonly OpSpec[] = [
   { name: "profile.render", group: "profile", method: "render", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 60, audit: false, readOnly: true },
   { name: "profile.replace", group: "profile", method: "replace", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },
   { name: "profile.set", group: "profile", method: "set", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30, audit: false, readOnly: false },
+  { name: "profile.structured", group: "profile", method: "structured", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: true },
+  { name: "profile_schema.clear", group: "profile_schema", method: "clear", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
+  { name: "profile_schema.get", group: "profile_schema", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
+  { name: "profile_schema.set", group: "profile_schema", method: "set", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "run.begin", group: "run", method: "begin", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 150, audit: true, readOnly: false },
   { name: "run.complete", group: "run", method: "complete", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 800, audit: true, readOnly: false },
   { name: "run.get", group: "run", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: true },
@@ -9333,4 +9658,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 305;
+export const GENERATED_OP_COUNT = 322;

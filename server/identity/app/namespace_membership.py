@@ -39,6 +39,11 @@ async def handle_namespace_join(
     namespace land `pending` — zero access until an admin approves.
     Idempotent: re-joining at or below the current role is a no-op.
     """
+    from server.auth.sharing import is_collection
+    from server.core.errors import ValidationError
+
+    if is_collection(input.namespace):
+        raise ValidationError("a collection is shared by grants, not joined")
     caller = _registry.resolve_subject(input.subject)
     async with grant_change(input.org, input.namespace, caller):
         return await _join(input, caller)

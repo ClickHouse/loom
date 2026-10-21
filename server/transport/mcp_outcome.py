@@ -9,6 +9,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from server.core import llm_free
 from server.transport.lean_results import mcp_op_result
 from server.transport.mcp_config import TOOL_EXEC_FAILED, _err, _ok
 from server.transport.mcp_identity import default_namespace_note
@@ -53,14 +54,15 @@ def _record_success_telemetry(call: _AdmittedCall, result: Any, elapsed_ms: int)
                 op, input_obj, auth, request_id, mcp_session_id, org=rl_org, namespace=rl_ns
             )
         )
-        _metrics.record_search_quality(
-            op.name,
-            namespace=rl_ns or "-",
-            result=result,
-            transport="mcp",
-            org=rl_org or "",
-            query=str(getattr(input_obj, "query", "") or ""),
-        )
+        with llm_free.serving(op):  # an LLM-free read queues no judge
+            _metrics.record_search_quality(
+                op.name,
+                namespace=rl_ns or "-",
+                result=result,
+                transport="mcp",
+                org=rl_org or "",
+                query=str(getattr(input_obj, "query", "") or ""),
+            )
     except Exception as e:  # noqa: BLE001 — telemetry must never break a tool call
         log.debug("mcp otel emit failed for %s: %s", op.name, e)
 

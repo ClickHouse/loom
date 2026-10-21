@@ -51,7 +51,7 @@ async def unpublishable_rebuild_tables(
     client = ch or _default_client()
     rows = await client.query_all(
         "SELECT name, engine FROM system.tables "
-        "WHERE database = 'loom' AND name IN {tables:Array(String)} ORDER BY name",
+        "WHERE database = currentDatabase() AND name IN {tables:Array(String)} ORDER BY name",
         {"tables": list(REBUILD_TABLES)},
     )
     return tuple(
@@ -66,7 +66,7 @@ async def tables_with_vectors(*, ch: _CHClient | None = None) -> tuple[str, ...]
     client = ch or _default_client()
     rows = await client.query_all(
         "SELECT name, total_rows FROM system.tables "
-        "WHERE database = 'loom' AND name IN {tables:Array(String)} ORDER BY name",
+        "WHERE database = currentDatabase() AND name IN {tables:Array(String)} ORDER BY name",
         {"tables": list(REEMBED_TABLES)},
     )
     return tuple(str(row["name"]) for row in rows if row["total_rows"] != 0)
@@ -80,7 +80,7 @@ async def _inventory_excluding(
         "SELECT c.table AS table, c.name AS name, c.type AS type, t.uuid AS table_uuid "
         "FROM system.columns AS c "
         "INNER JOIN system.tables AS t ON c.database = t.database AND c.table = t.name "
-        "WHERE c.database = 'loom' "
+        "WHERE c.database = currentDatabase() "
         "AND (position(c.type, 'Array(') > 0 OR startsWith(c.type, 'QBit(')) "
         "AND t.engine NOT IN ('View', 'MaterializedView')"
     )

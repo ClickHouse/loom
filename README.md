@@ -113,6 +113,16 @@ Saved dashboard settings take precedence over `.env`. Follow
 [models and API keys](./docs/getting-started/models-and-keys.md) for provider recipes
 and health checks.
 
+**Everything else is in one file.** [`loom.example.yaml`](./loom.example.yaml) lists
+every setting with its default and what it does, by area: the ClickHouse connection,
+timeouts and budgets, rate limits, workers, and the `*_enabled` switches that turn
+features on and off. Set any of them as `LOOM_<NAME>` in `~/.loom/.env` and recreate the
+server; a deployment that mounts a config file can set them in a copy of this file
+instead ([how settings are read](./docs/operations/deployment.md#how-settings-are-read)). One marked
+`live` also changes while Loom runs: `loom settings set <name> <value>`, or Admin → Deployment
+settings. `loom settings list --changed` shows what differs from the defaults and
+where each value came from ([runtime settings](./docs/operations/runtime-settings.md)).
+
 ### 3. Connect your agents
 
 On the machine running a personal installation, the plugins need no token:

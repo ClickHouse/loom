@@ -87,8 +87,11 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
-   token; `source_class` is set by the server (`memory/domain/provenance.py`), and the body
-   may only request a downgrade.
+   token; a worker that sets `pipeline_actor` writes as it (the structured profile worker
+   writes `worker:structured-profile`); other workers with no auth context write an empty
+   actor.
+   `source_class` is set by the server (`memory/domain/provenance.py`), and the body may
+   only request a downgrade.
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
@@ -331,14 +334,14 @@ actions, verdicts and confidences, never the text.
   The record and the follow of a retirement run after the locks are released. A pair
   whose two rows are both owed in one pass may be judged twice, once from each side.
 - The queue reads leave out a namespace whose resolver spend has reached its share of the
-  daily LLM cost cap (`observability.budget`) and an org with an erasure queued, running or failed and due a
-  retry (an abandoned saga does not count), so their rows stay owed without taking places
-  in a pass. The erasure is read again right before each write (under the pair's locks,
-  and before each stamp): an org whose erasure was requested meanwhile gets no write,
-  and its row stays owed. The cap is read
-  again before each call, so
-  at most the calls already in flight cross it. Each call bills its namespace
-  (`worker.conflict_resolver`).
+  daily LLM cost cap (`observability.budget`), an org whose model calls are switched off,
+  and an org with an erasure queued, running or failed and due a retry (an abandoned saga
+  does not count), so their rows stay owed without taking places in a pass. The erasure
+  is read again right before each write (under the pair's locks, and before each stamp):
+  an org whose erasure was requested meanwhile gets no write, and its row stays owed. The
+  cap is read again before each call, so at most the calls already in flight cross it.
+  Each call names its org and bills its namespace (`worker.conflict_resolver`); a call
+  the model-call switch holds sends nothing, and the row stays owed with no attempt.
 - A provider that refuses the model or the key (401, 403, 404) stops the pass with no
   further call; the rows stay owed, and the worker warns once per change, not per pass.
   A transient failure (408, 409, 429, 5xx, a timeout, no connection) leaves the row owed,
@@ -926,10 +929,13 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    soft tags, categories) and the correctness tail (demotions, reinforcement,
    provenance trust) from `_fact_rank_tail`. `rrf` mode fuses the lexical and semantic
    orders by reciprocal rank instead. Reinforcement is read from `memory_reinforcement`
-   after the fetch. A configured reranker reorders the pool and fails open.
+   after the fetch. A configured reranker reorders the pool and fails open:
+   identifier-pinned rows keep their slots and are not sent to it, and a changed order
+   hands out the pool's own scores in the new order.
 7. **Verdict** (`verdict.py`, `_finalize_abstain`): empty is `no_match`, a weak top hit
-   is `below_threshold`, then the calibrator's `low_calibrated_confidence`. A query
-   naming an identifier absent from every hit abstains too
+   is `below_threshold`, then the calibrator's `low_calibrated_confidence`. After a
+   reranker, these gates read the served rows in fused order (`gate_order`), not the
+   reranker's order. A query naming an identifier absent from every hit abstains too
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.
@@ -937,8 +943,9 @@ module each. The SQL is in `server/memory/app/retrieval/` and
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the
-fallback. `memory.search_trace` runs the same SQL with extra columns. The caller's view
-of ranking is in [retrieval and ranking](../concepts/retrieval-and-ranking.md).
+fallback. `memory.search_trace` runs the vector leg's SQL with extra columns (no fusion,
+assembly or reranker). The caller's view of ranking is in [retrieval and
+ranking](../concepts/retrieval-and-ranking.md).
 
 **Why the priors are capped.** Real embedders produce a narrow cosine band. A confidence
 term plus a tag boost can exceed the gap between a good and a mediocre match.
@@ -956,12 +963,34 @@ term plus a tag boost can exceed the gap between a good and a mediocre match.
 | `memory_expiry_sweep`     | Rows past `expires_at`                                       | The `on_expire` action                                                             | No  |
 | `sensitivity_sweep`       | Recent rows from paths that skip detection                   | A labelled version; `high` rows' embedding rows tombstoned                         | No  |
 | `profile_consolidation`\* | A user's preference and decision memories (namespace opt-in) | One non-searchable `profile` section, loaded by `profile.render` / `context.pack`  | Yes |
+| `structured_profile`      | Users' facts in namespaces with a profile schema             | A new version of each user's `structured_profile` row, held to the schema          | Yes |
 | `reflection_distill`\*    | Recent sessions without an outcome                           | Outcome labels, then `reflection` memories hidden from unfiltered recall           | Yes |
 | `entity_communities`\*    | The co-occurrence graph                                      | `entity_communities`                                                               | No  |
 | `recalibration`           | The embedder's score distribution                            | Calibration thresholds                                                             | No  |
 
 \* Off by default (`LOOM_PROFILE_CONSOLIDATION_ENABLED`,
 `LOOM_REFLECTION_DISTILL_ENABLED`, `LOOM_ENTITY_COMMUNITIES_ENABLED`).
+
+`structured_profile` reads only namespaces with a row in `loom.profile_schemas`
+(`profile_schema.set`, one ReplacingMergeTree row per namespace, holding no memory
+content). A profile is a `profile` memory row, so its history, erasure and read scope are
+memory's own. It carries three tags: the hash of the schema's properties, a digest of its
+sources (an XOR of a hash of each one's id, content hash, confidence and `valid_at`
+else `updated_at`, fixed in size), and their count. The worker finds the users
+behind in one aggregate over `loom.memory FINAL` that digests every user's current facts,
+so the answer is exact: an edit, a revert, a restore, a deletion, an expiry or a passed
+`valid_to` changes a digest, a restatement (a new `updated_at`) costs one rebuild after
+the cooldown, and a recall or a backfill does not. Its cost follows the namespace's live
+rows, not their history, and it runs under `LOOM_STRUCTURED_PROFILE_SCAN_TIMEOUT_SECONDS`
+and `LOOM_STRUCTURED_PROFILE_SCAN_MAX_MEMORY_BYTES`. Each scan lists up to ten times the
+namespace's share of a pass, kept in the worker's process; later passes take from that
+list until it is drained, the schema hash changes or it is
+`LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` old, and a complete list that drained is
+not rescanned before then, so a namespace is read at most once per that age in the
+steady state. A namespace whose scan fails backs off. A build
+skips a user whose profile is already current. `profile.structured` recomputes one user's
+digest to answer `stale` without a model call ([structured
+profiles](../features/memory/working-memory-and-profiles.md#structured-profiles)).
 
 `memory.consolidate` is an op, not a worker. It clusters similar active memories by
 cosine and entity overlap and asks the LLM to merge each cluster into one row. It writes
@@ -992,6 +1021,86 @@ mirror leaves it alone, for the caller to reconcile once the head is seen; with 
 `on_unconfirmed` it is mirrored, since it most likely landed. `on_written` runs before
 the mirror, so a caller knows what changed even when the mirror then raises.
 
+A version is a wall-clock nanosecond, and `memory.set` and `memory.bulk_set` draw it
+before their slow work (the embed). A delete of the key that commits in that window draws
+a higher version, and its tombstone would hide the write that finished after it. Right
+before the insert, when every committed version of the key above the write's version is a
+delete's tombstone (read from `memory_versions`, which a merge does not thin), the write's
+rows below the newest move just above it, in their own order and without any row moving
+down, and so do their embedding rows (`memory/app/write_fence.py`). A write whose version
+is above the tombstone's by more than about a microsecond stays above them, and a write
+the key had moved past before the delete (a later version came and went) stays deleted.
+Two writes lifted over one delete rarely share a version (each is offset by a hash of its
+row). When two writes race one delete, lifted or not, which of them wins is not defined. A
+`memory.delete` that commits after the fence read wins, as it does between any two writes.
+A `memory.set` with `if_match_sha256` draws its version after the check, under the key
+lock, so a delete above it landed after the check: it answers 409 instead. A blacklist
+sweep's tombstone is not a delete: a write it caught stays under it. Only that tombstone
+carries the sweep's `expire_reason` marker; every other version drops it (a
+`namespace.rollback` to a time the tombstone held writes it back as it was), and no caller
+may write it. `memory.update` and `memory.update_by_id` revise a row and are not lifted: a
+revision that races a delete stays deleted. If the fence's read fails, the write keeps its
+version; `memory.set`'s answer names the degradation.
+
+`memory.delete_version` removes one version a caller read (`memory.get` and the list ops
+return it as `version` and, exact for a JavaScript caller, as the decimal string
+`version_text`) and nothing when the row has moved on; the key lock orders it against
+`if_match_sha256` writes. A plain `memory.set` or `memory.bulk_set` takes no lock, so both
+sides check again after their insert, and a write after the named version stays whichever
+lands first. The delete stamps the version it removed in its tombstone's `source_trace`
+(`memory.delete_version:<v>`). Only that tombstone carries the marker; every other version
+drops it (restore, move, the cross-namespace copies), a `namespace.rollback` keeps it only
+on a tombstone, and no caller may write it (`memory.set`, `memory.bulk_set` and
+`profile.set` answer 422). The delete then reads the key's newest version other than its
+own tombstone after writing it. A live row means the key moved on (`version_changed`); one
+below the tombstone, a plain write between the check and the tombstone, is written back
+above it, at a version above the tombstone whatever the writing host's clock reads.
+Another remover's tombstone (a delete, a sweep, a dedup or a conflict resolution) means it
+removed the key (`found=false`); one below this tombstone is written back above it,
+stamped as this delete's own tombstone, unless this delete's tombstone already carries
+every column of that row a copy would carry, the remover's own stamps aside (that remover
+took the very row it checked), so a restore brings back the row it removed and a write
+after it lifts over the copy as over this tombstone.
+
+Only when the key did not move on does the delete stand and retire the removed version's
+vectors and chunks: the chunks whose index and content hash its own value writes, so a
+newer value's chunks of the key stay. A newer value that repeats one of those chunks at
+the same index shares its row; the delete reads the key's newest value after the retire
+and puts the shared chunks back when search serves that value (live, and not `sensitivity:
+high`), reading the key again afterwards to retire them once more if a delete or a write
+landed in between. A `memory.delete` whose insert lands after that read can still answer
+`tombstoned` alongside it, as two racing `memory.delete` calls can. Between the tombstone
+and a write back, the key reads as deleted, and a `memory.delete` in that window answers
+`found=false`.
+
+Before its tombstone the delete records the check it owes in `loom.delete_version_checks`,
+and marks it done once the check has run; if its insert fails, the call answers the same
+503 as below: nothing is deleted unless the insert committed anyway, and then a retry or
+the worker finishes the delete. If the tombstone's insert or the read after it fails, the
+delete answers 503 and retires nothing. The transport audits only a call that succeeds, so
+a 503 writes the op's audit row itself, outcome `deferred`, after the key lock is released
+and best effort like every audit row; the worker that finishes the delete writes none, and
+a retry is its own call with its own row.
+
+A check whose tombstone is not in the key's history (its insert failed) runs against a
+retry's tombstone of the same version when one committed, or writes one first when nothing
+came after the removed version, at a new version so the namespace's watermark moves, and
+then runs as after any tombstone: the delete finishes. When the key moved on, it writes
+nothing and answers `version_changed` (a live row) or `found=false` (another remover's
+tombstone). An insert that timed out can still commit late: every tombstone aimed at the
+same version (a late or retried insert, or a copy written back) is this same delete, so
+the check judges the newest version other than those, writes a live one back above all of
+them, and copies another remover's tombstone on top unless the newest of them already
+carries that row in the same sense. A retry of the same delete runs the owed check and
+answers as the delete would have (when the tombstone's insert is what failed, the retry
+finds the row live and deletes it again); otherwise the `delete_version_check` worker runs
+it under the key lock (`memory/workers/delete_version_check.py`), by default within about
+six minutes (a 60-second grace, then a pass at most 300 seconds later). Until the check
+runs, `memory.get` and the list ops read the key as deleted (as live, when the tombstone's
+insert failed), search can still return the removed value from its vectors and chunks, and
+a write the tombstone hid is not served; it comes back when the check runs. A write that
+lands under such a tombstone, aimed at an older version, writes itself again above it.
+
 Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace's
 `retention_days`, or `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` set `expires_at` and
 `on_expire`. Reads hide an expired row at once. `memory_expiry_sweep` (or
@@ -1008,13 +1117,13 @@ Table-level retention and tiering are operator TTLs, off by default
 
 ## History, snapshot, restore and rollback
 
-| Operation            | Reads                                           | Writes                                                                                                                                 |
-| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                               |
-| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place. Refuses the live head (delete it first).                                                       |
-| `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.          |
-| `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`. |
-| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default. |
+| Operation            | Reads                                           | Writes                                                                                                                                                                     |
+| -------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.history`     | `memory_versions` for one key                   | Nothing.                                                                                                                                                                   |
+| `memory.redact`      | `memory_versions`, by org-wide `memory_id`      | Scrubs one historical version in place, and every profile version whose trace names the memory, live heads included. Refuses the memory's own live head (delete it first). |
+| `namespace.snapshot` | Live `memory` rows, type configs, curated rows  | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                              |
+| `namespace.restore`  | A snapshot payload                              | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                     |
+| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of` | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                     |
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
 at T is the largest version at or before T. Triples, records, summaries and aggregates
@@ -1050,6 +1159,13 @@ resumed saga re-runs the owning step of any table the last census found rows in.
 polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
 none of the three lists.
 
+An erasure in an org, at any scope, deletes the whole org's cached query vectors in
+`loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
+namespace or user, and hold vectors, never text. It is a derived cache, so deleting more
+than the scope costs only cache misses. The table is step-only (`idempotency.delete`), not
+counted: any search in the org refills it before the census could run. Each replica's
+process tier expires within `LOOM_EMBEDDING_CACHE_TTL_S`.
+
 ## Audit rows
 
 Every write that creates or changes memory leaves one hash-only row in `loom.audit_log`
@@ -1069,6 +1185,12 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
   (`server/memory/app/provenance.py` `writer_actor`, `server/memory/domain/provenance.py`
   `source_class_for`). A request may only
   downgrade to `derived`, `external` or `imported`.
+- A worker with no auth context writes as its pipeline actor (`pipeline_actor` in
+  `server/memory/domain/provenance.py`). `worker:<name>` is a kind no token maps to:
+  `trust.actor_for` yields only `human:` or `process:`. `profile.structured` and the
+  worker's `users_behind` trust a profile row only when its `actor` is
+  `worker:structured-profile`, so a caller who writes the profile key with `memory.set`
+  cannot forge a served profile or mark a user current.
 - A `high`-sensitivity row and a non-searchable type have no embedding row.
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM

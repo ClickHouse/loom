@@ -14,17 +14,16 @@ from typing import Any
 
 from server.core.ch import get_client, statement_timeout
 from server.core.errors import EmbedTimeoutError
+from server.core.llm_free import reads_llm_free
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.filters import read_filters
 from server.memory.domain.query_spelling import apply_spellings, pick_spellings, spelling_candidates
 from server.memory.domain.search_types import SearchQuery
 from server.memory.store.query_spellings import spelling_rows
+from server.settings import settings
 
 log = logging.getLogger(__package__)
 
-# The lookup reads every row of the namespace it may read: 100-300 ms
-# server-side for 40k rows. On a cache miss it overlaps the embed.
-_LOOKUP_BOUND_S = 0.4
 # After a respelled embed times out, how long the text as typed may take:
 # long enough for an embedding-cache hit, not for a provider call.
 _CACHE_HIT_GRACE_S = 0.25
@@ -53,9 +52,12 @@ def _lookup_key(
     input: MemorySearchInput, embedding_model: str
 ) -> tuple[SearchQuery, list[str], tuple[str, tuple[str, ...]]] | None:
     """The read bounds, the candidate words and the cache key of a lookup;
-    None when the query has no word to respell (or the feature is off)."""
+    None when the query has no word to respell, the feature is off, or reads
+    are LLM-free (`LOOM_READS_LLM_FREE`: one query embedding per read)."""
     from server.settings import settings
 
+    if reads_llm_free():
+        return None
     tokens = spelling_candidates(
         input.query, max_words=settings.memory_search_query_spelling_max_words
     )
@@ -94,8 +96,8 @@ async def _lookup(
     try:
         # The outer bound also covers the wait for a pool slot and a
         # reconnect; the inner one makes ClickHouse stop the statement.
-        async with asyncio.timeout(_LOOKUP_BOUND_S):
-            with statement_timeout(_LOOKUP_BOUND_S):
+        async with asyncio.timeout(settings.memory_search_spelling_lookup_timeout_s):
+            with statement_timeout(settings.memory_search_spelling_lookup_timeout_s):
                 rows = await spelling_rows(get_client(), q, tokens)
     except Exception as e:  # noqa: BLE001 — the spelling is a recall aid; the query embeds as typed
         # Read after the await. A failure recorded since this lookup started

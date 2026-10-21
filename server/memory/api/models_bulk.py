@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.api.models_crud import MemoryGetOutput
+from server.memory.domain.delete_marks import caller_trace
 from server.operations.base import MCP_HIDDEN
 
 # ============================================================
@@ -16,11 +17,17 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
+# The most entries one memory.bulk_set takes.
+MAX_BULK_ENTRIES = 1000  # not a setting: a wire bound the request schema and SDKs publish
+
+
 class _BulkSetEntry(BaseModel):
     memory_key: str
     memory_type: MemoryType = "semantic"
     value: dict[str, Any] | list[Any] | str | int | float | bool
     confidence: float = 1.0
+    # Provenance tag of the entry, as memory.set's; may not start with
+    # `memory.delete_version:`.
     source_trace: str = ""
     # `external` / `imported` only — a downgrade the caller may declare; the
     # server decides the rest.
@@ -74,6 +81,11 @@ class _BulkSetEntry(BaseModel):
     # Sensitivity tier; '' = detect from the value.
     sensitivity: Literal["", "low", "medium", "high"] = ""
 
+    @field_validator("source_trace")
+    @classmethod
+    def _source_trace(cls, v: str) -> str:
+        return caller_trace(v)
+
 
 class MemoryBulkSetInput(_Identity):
     """Insert many memory entries in one batched CH insert.
@@ -85,7 +97,7 @@ class MemoryBulkSetInput(_Identity):
 
     # The entries to write, each with its own key, value and per-entry fields; all
     # share the caller's identity.
-    entries: list[_BulkSetEntry] = Field(..., min_length=1, max_length=1000)
+    entries: list[_BulkSetEntry] = Field(..., min_length=1, max_length=MAX_BULK_ENTRIES)
     # Treat this call's entries as one document and prepend a
     # model-written one-line context to what each entry EMBEDS and to its
     # content_excerpt (value untouched). One model call per entry; gated by

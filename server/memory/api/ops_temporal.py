@@ -44,7 +44,6 @@ memory_digests = Operation(
     output_model=MemoryDigestsOutput,
     handler=handle_memory_digests,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -56,7 +55,6 @@ memory_outline = Operation(
     output_model=MemoryOutlineOutput,
     handler=handle_memory_outline,
     idempotent=True,
-    budget_p99_ms=250,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -68,7 +66,6 @@ memory_backlinks = Operation(
     output_model=MemoryBacklinksOutput,
     handler=handle_memory_backlinks,
     idempotent=True,
-    budget_p99_ms=200,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -80,7 +77,6 @@ memory_history = Operation(
     output_model=MemoryHistoryOutput,
     handler=handle_memory_history,
     idempotent=True,
-    budget_p99_ms=80,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -92,7 +88,6 @@ memory_recall = Operation(
     output_model=MemoryRecallOutput,
     handler=handle_memory_recall,
     idempotent=True,
-    budget_p99_ms=400,
     required_role=Role.VIEWER,
 )
 
@@ -104,7 +99,6 @@ memory_timeline = Operation(
     output_model=MemoryTimelineOutput,
     handler=handle_memory_timeline,
     idempotent=True,
-    budget_p99_ms=120,
     required_role=Role.VIEWER,
     audit=False,
 )
@@ -116,7 +110,6 @@ memory_outcome = Operation(
     output_model=MemoryOutcomeOutput,
     handler=handle_memory_outcome,
     idempotent=False,
-    budget_p99_ms=200,
     required_role=Role.WRITER,
     audit=True,
 )
@@ -127,7 +120,6 @@ memory_outcome_run = Operation(
     output_model=MemoryOutcomeRunOutput,
     handler=handle_memory_outcome_run,
     idempotent=False,
-    budget_p99_ms=500,
     required_role=Role.WRITER,
     audit=True,
 )

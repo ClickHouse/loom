@@ -276,7 +276,7 @@ def test_content_legs_need_an_explicit_opt_in(
     for stage in (
         "inline_rerank",  # retrieved memory snippets
         "iterative_judge",  # retrieved memory excerpts
-        "classify",  # the retrieval judge: query + returned excerpts
+        "retrieval_judge",  # the query and the excerpts it returned
         "extract",  # conversation messages
         "judge_facts",
         "session_summary",  # conversation turns
@@ -458,7 +458,7 @@ async def _loom_search_capture_levels_seen(
     async def _defaults(auth: Any, client_name: str | None = None) -> dict[str, str]:
         return {"org": "o", "namespace": "personal-alice", "agent": "cursor"}
 
-    async def _fanout(org: str) -> Fanout:
+    async def _fanout(org: str, *_: object) -> Fanout:
         return Fanout(org=org, namespaces=tuple(accessible), cap=32)
 
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _Client())
