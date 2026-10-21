@@ -7,7 +7,7 @@ import { useStore } from "../../lib/state";
 import { ApiError } from "../../lib/errors";
 import { axeViolations } from "../../test/axe";
 import { collectionNameError, parentChoices } from "../../flows/CreateCollectionDialog";
-import { Collections } from "./Collections";
+import { Collections, grantsCut } from "./Collections";
 
 const listCollections = vi.fn();
 const createCollection = vi.fn();
@@ -165,6 +165,36 @@ describe("Collections: a collection's details", () => {
       { org: "acme", namespace: "col-handbook" },
       expect.objectContaining({ limit: 25 }),
     );
+  });
+
+  it("reads grants.list's largest page and says when it stopped there", async () => {
+    // 499 people, one with a second spelling folded in: 500 stored grants read.
+    const rows = Array.from({ length: 499 }, (_, i) => ({
+      subject: `user:${i}`,
+      role: "viewer",
+      status: "active",
+      granted_at: "",
+      granted_by: "",
+      also: i === 0 ? ["u0@example.com"] : [],
+    }));
+    listGrants.mockResolvedValue({ rows });
+    listCollections.mockResolvedValueOnce(page(HANDBOOK));
+    render(<Collections />);
+    await userEvent.click(await screen.findByRole("button", { name: "col-handbook" }));
+    const dialog = await screen.findByRole("dialog", { name: "col-handbook" });
+    expect(await within(dialog).findByText("the newest; more not shown")).toBeInTheDocument();
+    expect(listGrants).toHaveBeenCalledWith(
+      { org: "acme", namespace: "col-handbook" },
+      expect.objectContaining({ limit: 500 }),
+    );
+  });
+
+  it("counts the stored grants a page read, each row with its folded spellings", () => {
+    const people = (n: number, also: string[] = []) => Array.from({ length: n }, () => ({ also }));
+    expect(grantsCut(people(499))).toBe(false);
+    expect(grantsCut([...people(497), ...people(1, ["a@example.com"])])).toBe(false);
+    expect(grantsCut(people(500))).toBe(true);
+    expect(grantsCut([...people(498), ...people(1, ["a@example.com"])])).toBe(true);
   });
 
   it("opens on the dialog itself, not on Close or Delete", async () => {

@@ -61,8 +61,10 @@ const DOCUMENTS_SHOWN = 25;
 const GRANTS_READ = 500;
 
 /** Whether `grants.list` stopped at its limit: it folds a person's spellings into one row
- *  after the limit, so the stored rows it read are each row plus its `also`. */
-function grantsCut(rows: GrantEntry[]): boolean {
+ *  after the limit, so the stored rows it read are each row plus its `also`. A fold of two
+ *  spellings that differ only in case adds nothing to `also`, so such a pair in a list cut
+ *  at the limit reads as one row short and the list as whole. */
+export function grantsCut(rows: Pick<GrantEntry, "also">[]): boolean {
   return rows.reduce((n, g) => n + 1 + (g.also?.length ?? 0), 0) >= GRANTS_READ;
 }
 
@@ -455,7 +457,8 @@ function CollectionDetails({
               id="collection-members-heading"
               label="Members"
               count={details.grants.length}
-              caption={details.grantsCut ? `the newest ${GRANTS_READ}` : undefined}
+              // The count is people; the limit counts stored grants, so the caption names no number.
+              caption={details.grantsCut ? "the newest; more not shown" : undefined}
               hint={
                 collection.parent
                   ? `These are the grants on this collection. Everyone who holds a grant on ${collection.parent} or a collection above it reaches it too.`

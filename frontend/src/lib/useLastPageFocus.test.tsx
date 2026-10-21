@@ -87,8 +87,10 @@ describe("useLastPageFocus", () => {
   it("leaves focus alone while a page is left, or when it did not fall to the page", async () => {
     render(<List first={["a"]} />);
     await pressLoadMore();
+    // Focus on the body, so only the page left keeps it there.
+    act(() => screen.getByRole("button", { name: "Load more" }).blur());
     act(() => finish(["a", "b"], true));
-    expect(screen.getByRole("button", { name: "Load more" })).toHaveFocus();
+    expect(document.body).toHaveFocus();
 
     await pressLoadMore();
     screen.getByRole("textbox", { name: "Search" }).focus();
