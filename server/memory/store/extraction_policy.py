@@ -1,0 +1,72 @@
+"""Repository for loom.extraction_policies: the operator's extraction policy
+per org (namespace '') and per namespace.
+
+One row per change, ReplacingMergeTree(version) keyed on (org, namespace), so
+the newest change wins; a cleared policy is a row with deleted = 1.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from server.core.repo_base import _CHClient, _default_client
+
+
+async def insert_row(row: dict[str, Any], *, ch: _CHClient | None = None) -> None:
+    """Write one change, committed before it returns (the next read must see it)."""
+    ch = ch or _default_client()
+    await ch.insert(
+        "loom.extraction_policies",
+        [row],
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
+    )
+
+
+async def get(org: str, namespace: str, *, ch: _CHClient | None = None) -> dict[str, Any] | None:
+    """The scope's live policy; None when it was never set or was cleared.
+    `deleted = 0` stays in WHERE, applied after FINAL picks the newest row; in
+    PREWHERE it would run first and serve a policy its newer clear replaced."""
+    ch = ch or _default_client()
+    row: dict[str, Any] | None = await ch.query_one(
+        "SELECT policy, updated_by, updated_at "
+        "FROM loom.extraction_policies FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND deleted = 0 LIMIT 1",
+        params={"org": org, "ns": namespace},
+    )
+    return row
+
+
+async def namespace_count(org: str, *, ch: _CHClient | None = None) -> int:
+    """How many of the org's namespaces hold a live policy of their own."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT count() AS n FROM loom.extraction_policies FINAL "
+        "WHERE org = {org:String} AND namespace != '' AND deleted = 0",
+        params={"org": org},
+    )
+    return int((row or {}).get("n") or 0)
+
+
+async def namespace_rows(org: str, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """Every namespace of the org that holds a live policy, by name.
+    `extraction_policy.set` keeps new ones at `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`,
+    but a lowered cap or two concurrent sets can leave more. `deleted = 0` stays
+    in WHERE (after FINAL), as in `get`."""
+    ch = ch or _default_client()
+    rows: list[dict[str, Any]] = await ch.query_all(
+        "SELECT namespace, updated_by, updated_at FROM loom.extraction_policies FINAL "
+        "WHERE org = {org:String} AND namespace != '' AND deleted = 0 ORDER BY namespace",
+        params={"org": org},
+    )
+    return rows
+
+
+async def live_rows(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """Every live policy of every org, one row per scope. Never cut short: a
+    missing row would let an extraction run without its policy. `deleted = 0`
+    stays in WHERE (after FINAL), never PREWHERE, as in `get`."""
+    ch = ch or _default_client()
+    rows: list[dict[str, Any]] = await ch.query_all(
+        "SELECT org, namespace, policy FROM loom.extraction_policies FINAL WHERE deleted = 0"
+    )
+    return rows

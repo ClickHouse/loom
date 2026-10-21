@@ -18,9 +18,9 @@ log = logging.getLogger(__name__)
 
 
 def recent_recall_admits_medium(seed_query: str) -> bool:
-    """memory.stack's recent_recall section carries `medium` (contact-detail) rows only when
-    the query that seeded the stack asks how to reach someone. An empty seed query (a
-    startup/bootstrap pack) never does."""
+    """memory.stack's recent_recall section carries `medium` (contact-detail or IBAN) rows
+    only when the query that seeded the stack asks for a contact detail or a bank account.
+    An empty seed query (a startup/bootstrap pack) never does."""
     from server.memory.domain.sensitivity import contact_intent
 
     return bool(seed_query) and contact_intent(seed_query)

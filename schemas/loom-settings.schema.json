@@ -2357,6 +2357,12 @@
           "type": "string",
           "description": "Agents whose set_from_messages runs deferred without the flag: comma-separated agent names, \"*\" = every service-account caller, \"\" = nobody. A call that sets `record_schema` is never deferred by this list (it reads `written` back), and an explicit defer=false still wins."
         },
+        "extraction_policy_max_namespaces": {
+          "default": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most namespaces of one org that may hold their own extraction policy; `extraction_policy.set` with scope `namespace` refuses one more."
+        },
         "extraction_queue_enabled": {
           "default": true,
           "type": "boolean",
@@ -4214,7 +4220,7 @@
         "memory_sensitivity_autodetect": {
           "default": true,
           "type": "boolean",
-          "description": "With no explicit `sensitivity`, detect it from the value with regexes: credential shapes -> 'high' (never embedded, key-only reads, audited); email/phone -> 'medium' (embedded, labelled). Off = every row stays ''."
+          "description": "With no explicit `sensitivity`, detect it from the value with regexes: credential shapes, card numbers, SSNs and stated PINs -> 'high' (never embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded, labelled). Off = every row stays ''."
         },
         "memory_session_digest_max_input_chars": {
           "default": 3000,
@@ -4321,13 +4327,13 @@
           "maximum": 300,
           "minimum": 15,
           "type": "number",
-          "description": "Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300."
+          "description": "Seconds a process trusts its copy of the org model-call switch, and of the extraction policies, when it cannot read it again; past it, every model call for an org is refused and no extraction runs (fail closed). 15 to 300."
         },
         "model_calls_policy_refresh_seconds": {
           "default": 10.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it."
+          "description": "Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls) and of the operators' extraction policies (loom.extraction_policies); a change reaches every process within it."
         },
         "namespace_audit_index_row_scan_cap": {
           "default": 20000,
@@ -4974,12 +4980,19 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Rows one sweep pass re-labels (at least 1)."
+          "description": "Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least 1)."
+        },
+        "sensitivity_sweep_pages_per_pass": {
+          "default": 10,
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000)."
         },
         "sensitivity_sweep_shapes": {
           "default": "credential,email",
           "type": "string",
-          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`."
+          "description": "Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are left to the operator's `loom sensitivity-sweep --apply`."
         },
         "sensitivity_sweep_window_days": {
           "default": 2,
@@ -4994,7 +5007,7 @@
         "session_brief_llm": {
           "default": true,
           "type": "boolean",
-          "description": "session.brief_save. `session_brief_llm` off = every brief comes from the deterministic builder (goal, status, files, errors, rules, pointers; no decisions or dead ends). The model is the deployment's LLM when `session_brief_llm_model` has no key. A save condenses its events into windows of `session_brief_window_chars` (≈6k tokens each) and revises the brief once per window, at most `session_brief_max_windows` calls per save (the last window takes the remainder, condensed harder)."
+          "description": "session.brief_save. `session_brief_llm` off = every brief comes from the deterministic builder (goal, status, files, errors, rules, pointers; no decisions or dead ends), except under an operator's extraction policy, where a save of events alone with no model to call writes nothing. The model is the deployment's LLM when `session_brief_llm_model` has no key. A save condenses its events into windows of `session_brief_window_chars` (≈6k tokens each) and revises the brief once per window, at most `session_brief_max_windows` calls per save (the last window takes the remainder, condensed harder)."
         },
         "session_brief_llm_model": {
           "default": "gpt-6-luna",

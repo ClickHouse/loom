@@ -174,6 +174,7 @@ class _FakeInput:
 class _FakeState:
     extracted_facts: list[dict[str, Any]] = field(default_factory=list)
     observation_date: str | None = None
+    operator_policy: str = ""
 
 
 class _FakeLLM:

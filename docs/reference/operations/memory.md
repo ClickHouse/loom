@@ -394,7 +394,7 @@ Periodic consolidation pass — merges fragmented memories about the same subjec
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `consolidated` | `list[MemoryConsolidateResult]` | One entry per cluster merged (or that would be, under `dry_run`). |
-| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled high nor reading as a credential (never sent to the merge model). |
+| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled `high` nor reading as `high` (never sent to the merge model). |
 | `clusters_found` | `int` | Clusters of two or more rows found. |
 | `clusters_failed` | `int` | Clusters whose merge LLM call failed or returned an unparseable / incomplete JSON object. |
 | `clusters_refused_lossy` | `int` | Of the failed clusters, those the merge guard refused because the merged text lost a date, quantity, identifier, name or negation one source carried; the sources stay as they were. |
@@ -685,7 +685,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
-| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text reads as a credential. |
+| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text holds a high shape (a credential, card number, SSN or stated PIN). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1306,7 +1306,7 @@ WHAT: Save a standing fact and protect it.
 | `classify` | `bool` | `False` | Call the namespace's classify_endpoint to derive memory_type from `value`. |
 | `if_match_sha256` | `str` | `''` | Optimistic-concurrency precondition: 409 PRECONDITION_FAILED if the live row's SHA-256 doesn't match. |
 | `char_limit` | `int \| None` | `None` | Server-enforced char cap on the stringified value (422 on exceed). |
-| `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, never in any search leg or recency pack, readable by key only with an audit row. '' lets the server detect credential / contact shapes from the value. |
+| `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, searched or in a recency pack; read by key only, audited. '' = detect from the value: credentials, card numbers, SSNs, PINs high; email, phone, IBAN medium. |
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
 | `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
@@ -1965,7 +1965,7 @@ Save a fact to Loom — shared across every AI tool the user runs; native memory
 | `classify` | `bool` | `False` | Call the namespace's classify_endpoint to derive memory_type from `value`. |
 | `if_match_sha256` | `str` | `''` | Optimistic-concurrency precondition: 409 PRECONDITION_FAILED if the live row's SHA-256 doesn't match. |
 | `char_limit` | `int \| None` | `None` | Server-enforced char cap on the stringified value (422 on exceed). |
-| `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, never in any search leg or recency pack, readable by key only with an audit row. '' lets the server detect credential / contact shapes from the value. |
+| `sensitivity` | `Literal['', 'low', 'medium', 'high']` | `''` | Sensitivity tier. 'high' = never embedded, searched or in a recency pack; read by key only, audited. '' = detect from the value: credentials, card numbers, SSNs, PINs high; email, phone, IBAN medium. |
 | `dry_run` | `bool` | `False` | Run the conflict check and return its verdict, peers and `next` WITHOUT writing — no loom.memory row, no embedding row, no audit hash, no usage event, no supersession. |
 | `await_verdict` | `bool` | `False` | The conflict judge runs AFTER the row is written and the response says `conflict_verdict: pending`; pass true to wait for it in the response (one LLM call, ~+1 s). |
 | `proposed` | `bool` | `False` | Write the fact as a PROPOSAL (`status='proposed'`): not served by default, served to a read that passes `include_proposed`, and accepted or rejected on the graded outcomes of the runs that used it (`run.grade`, `memory.proposals`… |
@@ -2055,6 +2055,7 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `deferred_by` | `str` | "" (inline) \| "flag" (the caller passed defer=true) \| "allowlist" (the deployment's extraction_defer_agents chose for the caller) |
 | `stage_ms` | `dict[str, float]` | Wall time per stage of the ingest: handler stages (evidence_write, pipeline, projections, ontology, total), pipeline steps (`step.<id>`) and bulk-write phases (`bulk.<phase>`). |
 | `observation_date_source` | `str` | Where the observation date the facts were anchored to came from: "caller" \| "request_time" \| "" (none — undated rows). |
+| `under_operator_policy` | `bool` | True when the extraction ran under an operator's extraction policy; false on a deferred request. |
 | `extract_prompt_keys` | `list[str]` | The sha256 keys of the rendered extractor prompts (one per segment; the exact-prompt cache's own key, no text) and the cache's hit / miss counts over this extraction's calls (0 / 0 = cache off). |
 | `llm_cache_hits` | `int` | Extraction calls answered from the exact-prompt response cache. |
 | `llm_cache_misses` | `int` | Extraction calls the cache could not answer. |

@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 import typing
 import uuid
 from pathlib import Path
@@ -1488,6 +1489,96 @@ def test_an_org_admin_neither_reads_nor_sets_another_orgs_model_calls(
     assert r.status_code == 200, r.text[:300]
     read = r.json()
     assert (read["enabled"], read["reason"], read["updated_by"]) == (False, "AI off", "ann")
+
+
+@pytest.mark.parametrize("who", ["writer", "ns admin", "other org admin", "end user"])
+def test_only_the_orgs_admin_sets_reads_or_clears_its_extraction_policy(
+    control_plane_url, mint_test_token, who: str
+) -> None:
+    """A writer, a namespace admin, an end user and another org's admin are each
+    refused the policy of org A and of its chat namespace, every way, and it is
+    as A's admin left it."""
+    from tests import end_user_issuer
+
+    if who == "end user" and not end_user_issuer.configured():
+        pytest.skip("no test end-user issuer: run `python -m tests.end_user_issuer <dir>`")
+    org, other = unique_org("xpol-a"), unique_org("xpol-b")
+    ns = f"chat-{uuid.uuid4().hex[:6]}"
+    policy = "Never store payment card data."
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"], subject="ann")
+    body = {"org": org, "scope": "org", "policy": policy}
+    r = _post(control_plane_url, admin, "extraction_policy.set", body)
+    assert r.status_code == 200, r.text[:300]
+    assert r.json()["effective"] == policy
+    if who == "writer":
+        token = mint_test_token(org=org, namespaces=[ns], roles=["writer"], subject="app")
+    elif who == "ns admin":
+        token = mint_test_token(org=org, namespaces=[ns], roles=["admin", "writer"], subject="l")
+    elif who == "other org admin":
+        token = mint_test_token(org=other, namespaces=["*"], roles=["org_admin"], subject="ben")
+    else:
+        token = end_user_issuer.mint(org, "u1")
+    for scope in (
+        {"org": org, "scope": "org"},
+        {"org": org, "scope": "namespace", "namespace": ns},
+    ):
+        for op, extra in (
+            ("extraction_policy.set", {"policy": "Store everything."}),
+            ("extraction_policy.clear", {}),
+            ("extraction_policy.get", {}),
+        ):
+            r = _post(control_plane_url, token, op, {**scope, **extra})
+            assert r.status_code == 403, (op, scope, r.text[:300])
+            assert policy not in r.text
+    body = {"org": org, "scope": "namespace", "namespace": ns}
+    r = _post(control_plane_url, admin, "extraction_policy.get", body)
+    assert r.status_code == 200, r.text[:300]
+    read = r.json()
+    assert (read["policy"], read["effective"]) == ("", policy)
+    r = _post(control_plane_url, admin, "extraction_policy.get", {"org": org, "scope": "org"})
+    assert (r.json()["policy"], r.json()["updated_by"]) == (policy, "ann")
+
+
+def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_it_resolves_to(
+    control_plane_url, mint_test_token
+) -> None:
+    """`namespace: "@me"` resolves to the end user's personal collection before
+    the handler reads the policy, so a policy set for that collection's name
+    applies to the user's `@me` extractions, and its clear stops applying."""
+
+    from server.core.principals import personal_name
+    from tests import end_user_issuer
+    from tests.integration._eventually import policy_change_adopted
+
+    if not end_user_issuer.configured():
+        pytest.skip("no test end-user issuer: run `python -m tests.end_user_issuer <dir>`")
+    org, user = unique_org("xpol-me"), "u-policy"
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"], subject="ann")
+    target = {"org": org, "scope": "namespace", "namespace": personal_name(org, "user:" + user)}
+
+    def key() -> str:
+        body = {
+            "org": org,
+            "namespace": "@me",
+            "agent": "chat",
+            "messages": [{"role": "user", "content": "I moved to Lisbon in 2021."}],
+            "observation_date": "2026-01-15",
+            "pipeline_steps": [{"step_id": "loom.llm_extract"}],
+        }
+        r = _post_as(control_plane_url, org, user, "memory.set_from_messages", body)
+        assert r.status_code == 200, r.text[:300]
+        return str(r.json()["extract_prompt_keys"][0])
+
+    bare = key()
+    body = {**target, "policy": "Never store home addresses."}
+    r = _post(control_plane_url, admin, "extraction_policy.set", body)
+    assert r.status_code == 200, r.text[:300]
+    policy_change_adopted(time.monotonic())
+    assert key() != bare
+    r = _post(control_plane_url, admin, "extraction_policy.clear", target)
+    assert r.status_code == 200, r.text[:300]
+    policy_change_adopted(time.monotonic())
+    assert key() == bare
 
 
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────

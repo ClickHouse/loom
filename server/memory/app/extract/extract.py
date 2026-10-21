@@ -56,6 +56,7 @@ from server.memory.app.extract.speakers import (
     attribute_assistant_introduced,
 )
 from server.memory.app.extract.sweep import _coverage_sweep
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.extraction_prompts import (
     _NO_RECITATION_ADDENDUM,
     _RETRY_PROMPT_ADDENDUM,
@@ -170,7 +171,8 @@ def _extraction_system_prompt(
 ) -> str:
     """The extractor's system prompt: the base prompt under the strict-examples
     preamble, the fence note, the namespace's categories and the caller's
-    instructions."""
+    instructions. Each call appends the operator's policy after it
+    (`with_policy`)."""
     system_prompt = with_strict_examples_preamble(
         _extraction_base_prompt(compact, agent_learnings=agent_learnings)
     )
@@ -230,22 +232,26 @@ _FILTERED_STOPS = frozenset({"content_filter", "refusal"})
 async def _complete_and_parse(
     client: Any,
     *,
-    system_prompt: str,
+    base_prompt: str,
     user_prompt: str,
     max_tokens: int,
     json_format: dict[str, str],
     parse: Any,
+    operator_policy: str,
 ) -> tuple[Any, list[ExtractedFact], str]:
     """The extraction call and its parse, with one retry on an unparseable
     answer: a larger budget when it reads as truncated (salvaging complete
     fact objects if it truncates again), else the stricter addendum. Returns
-    (accumulated LLM result, facts, truncation)."""
+    (accumulated LLM result, facts, truncation). `base_prompt` is the system
+    prompt without the operator's policy: every call, retries included, appends
+    the policy to it."""
     calls: list[Any] = []
 
-    async def complete(system: str, tokens: int) -> Any:
+    async def complete(base: str, tokens: int) -> Any:
         """One completion; a reply the provider's filter cut (a quoted passage)
         is asked again without the recitation, since a bigger budget is cut at
         the same place."""
+        system = with_policy(base, operator_policy)
         res = await client.complete(
             system=system, user=user_prompt, max_tokens=tokens, response_format=json_format
         )
@@ -262,7 +268,7 @@ async def _complete_and_parse(
             calls.append(res)
         if str(getattr(res, "stop_reason", "") or "") in _FILTERED_STOPS:
             res = await client.complete(
-                system=system + _NO_RECITATION_ADDENDUM,
+                system=with_policy(base + _NO_RECITATION_ADDENDUM, operator_policy),
                 user=user_prompt,
                 max_tokens=tokens,
                 response_format=json_format,
@@ -270,7 +276,7 @@ async def _complete_and_parse(
             calls.append(res)
         return res
 
-    result = await complete(system_prompt, max_tokens)
+    result = await complete(base_prompt, max_tokens)
     _parse = parse
     truncation = ""
     try:
@@ -285,7 +291,7 @@ async def _complete_and_parse(
             retry_tokens = max(
                 max_tokens, min(max_tokens * 2, llm_max_tokens("extract_truncation_retry"))
             )
-            retry_result = await complete(system_prompt, retry_tokens)
+            retry_result = await complete(base_prompt, retry_tokens)
             try:
                 facts = _parse(retry_result.text)
                 truncation = "retried"
@@ -298,7 +304,7 @@ async def _complete_and_parse(
                 facts = _parse(json.dumps({"facts": salvaged}))
                 truncation = "salvaged"
         else:
-            retry_result = await complete(system_prompt + _RETRY_PROMPT_ADDENDUM, max_tokens)
+            retry_result = await complete(base_prompt + _RETRY_PROMPT_ADDENDUM, max_tokens)
             facts = _parse(retry_result.text)
     return _accumulate(calls), facts, truncation
 
@@ -365,12 +371,14 @@ def _settle_facts(
     observation_date: str | None,
     existing_memories: list[dict[str, str]] | None,
     speaker_attribution: bool,
+    from_turns: bool,
 ) -> list[ExtractedFact]:
     """The deterministic passes between the model's answer and the judge:
     stable and relation keys, citation repair, temporal anchors and
     timestamps, suffix and attribute normalisation, relative-date grounding,
     speakers, code facets, index links, the grounding grade and speaker
-    attribution. Pure."""
+    attribution. Without `from_turns` (an operator policy) nothing is taken
+    from the turns past what the model wrote. Pure."""
     # Entity-stable key rewrite: turn a concept-level key
     # (`user_task_status`) into an entity-prefixed one (`pr107585_status`)
     # when the fact carries a salient identifier. Applied here so every
@@ -396,7 +404,11 @@ def _settle_facts(
     # closed-class relative qualifier verbatim and emitted no anchor.
     if facts and observation_date:
         facts = _apply_temporal_anchor_backstop(facts, observation_date, messages)
-    facts = apply_message_timestamps(_recover_rows(facts, messages), messages)
+    # The rows the model left out are recovered from the turns, unless an
+    # operator policy is in force: the model may have left them out for it.
+    if from_turns:
+        facts = _recover_rows(facts, messages)
+    facts = apply_message_timestamps(facts, messages)
     facts = strip_variant_suffixes(facts)
     if facts:
         facts = strip_value_suffixes(facts)
@@ -406,12 +418,14 @@ def _settle_facts(
     # anchor is what gets written.
     if facts:
         facts = _apply_relative_date_grounding(facts, observation_date or "")
-    facts = apply_message_speakers(facts, messages)
+    # Under a policy no speaker is copied from the turns.
+    if from_turns:
+        facts = apply_message_speakers(facts, messages)
 
     # Deterministic code-native facets: populates files[] + concepts[]
     # without touching the atomic fact value.
     if facts:
-        facts = _apply_code_facets(facts, messages)
+        facts = _apply_code_facets(facts, messages, from_turns=from_turns)
 
     if facts and existing_memories:
         facts = _resolve_index_links(facts, existing_memories)
@@ -433,6 +447,7 @@ def _settle_facts(
 async def extract_from_messages(
     messages: list[dict[str, object]],
     *,
+    operator_policy: str,
     max_tokens: int = 1024,
     observation_date: str | None = None,
     existing_memories: list[dict[str, str]] | None = None,
@@ -459,6 +474,11 @@ async def extract_from_messages(
     extractor uses for write-time deduplication and refinement linking.
     Pass the last ~20 facts under the same identity so the LLM doesn't
     re-extract things you already know.
+
+    `operator_policy` is the operator's extraction policy for the namespace
+    (`extraction_policy.effective`): it ends the system prompt of every call,
+    retries and the coverage sweep included, above `custom_instructions`. While
+    it is set, nothing is copied from the turns past what the model wrote.
 
     `judge` enables the LLM-judge gate. After extraction, a second
     LLM call grades each fact CORRECT/UNCERTAIN/WRONG against the
@@ -497,13 +517,16 @@ async def extract_from_messages(
         last_messages,
     )
     compact = _use_compact_prompt(messages) if compact_prompt is None else compact_prompt
-    system_prompt = _extraction_system_prompt(
+    # The prompt without the operator's policy; each call appends the policy
+    # last, after any retry addendum, so nothing follows it.
+    base_prompt = _extraction_system_prompt(
         compact,
         existing_memories=existing_memories,
         namespace_categories=namespace_categories,
         custom_instructions=custom_instructions,
         agent_learnings=agent_learnings,
     )
+    system_prompt = with_policy(base_prompt, operator_policy)
     # JSON mode constrains the model to valid JSON; the try/except below
     # is a single belt-and-suspenders parse-retry on top of it.
     json_format = {"type": "json_object"}
@@ -517,18 +540,19 @@ async def extract_from_messages(
 
     accumulated, facts, truncation = await _complete_and_parse(
         client,
-        system_prompt=system_prompt,
+        base_prompt=base_prompt,
         user_prompt=user_prompt,
         max_tokens=max_tokens,
         json_format=json_format,
         parse=_parse,
+        operator_policy=operator_policy,
     )
 
     # Validation gate: retry once on non-trivial-input + zero-facts.
     if not facts and _is_nontrivial(messages):
         facts, accumulated = await _zero_fact_retry(
             client,
-            system=system_prompt + _RETRY_PROMPT_ADDENDUM,
+            system=with_policy(base_prompt + _RETRY_PROMPT_ADDENDUM, operator_policy),
             user=user_prompt,
             max_tokens=max_tokens,
             response_format=json_format,
@@ -554,10 +578,12 @@ async def extract_from_messages(
     if (
         _sweep_effective(coverage_sweep, settings, messages) or _uncovered_fires
     ) and _is_nontrivial(messages):
+        # The sweep is a model call too: its own slim prompt ends with the policy.
         facts, _cs_result, coverage_swept = await _coverage_sweep(
             messages,
             facts,
-            system_prompt=system_prompt,
+            base_prompt=base_prompt,
+            operator_policy=operator_policy,
             observation_date=observation_date,
             last_messages=last_messages,
             max_tokens=max_tokens,
@@ -595,6 +621,7 @@ async def extract_from_messages(
         observation_date=observation_date,
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
+        from_turns=not operator_policy,
     ) + _repair(rules, messages)
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date

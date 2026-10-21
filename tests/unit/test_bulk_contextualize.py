@@ -10,12 +10,8 @@ from typing import Any
 import pytest
 
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
-from tests.unit.test_memory_bulk_parity import (
-    _BatchEmbedder,
-    _StubCH,
-    _wire_stubs,
-    mem_extract,
-)
+from server.memory.app.extract import handler as mem_extract
+from tests.unit.bulk_stubs import BatchEmbedder, StubCH, wire_stubs
 
 
 class _LLM:
@@ -46,8 +42,8 @@ def _input(contextualize: bool) -> MemoryBulkSetInput:
 
 @pytest.mark.asyncio
 async def test_contextualize_prefixes_embed_text_and_excerpt_not_value(monkeypatch) -> None:
-    ch, embedder, rows = _StubCH(), _BatchEmbedder(), []
-    _wire_stubs(monkeypatch, ch, embedder, rows)
+    ch, embedder, rows = StubCH(), BatchEmbedder(), []
+    wire_stubs(monkeypatch, ch, embedder, rows)
     llm = _LLM()
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: llm)
     from server.settings import settings
@@ -59,8 +55,8 @@ async def test_contextualize_prefixes_embed_text_and_excerpt_not_value(monkeypat
     plain_texts = [t for b in embedder.batches for t in b]
     assert not any(t.startswith("Debra and India") for t in plain_texts)
 
-    ch2, embedder2, rows2 = _StubCH(), _BatchEmbedder(), []
-    _wire_stubs(monkeypatch, ch2, embedder2, rows2)
+    ch2, embedder2, rows2 = StubCH(), BatchEmbedder(), []
+    wire_stubs(monkeypatch, ch2, embedder2, rows2)
     await mem_extract.handle_memory_bulk_set(_input(contextualize=True))
     assert len(llm.calls) == 2 and "<document>" in llm.calls[0]
     value_texts = embedder2.batches[0][:2]
@@ -74,8 +70,8 @@ async def test_contextualize_prefixes_embed_text_and_excerpt_not_value(monkeypat
 
 @pytest.mark.asyncio
 async def test_kill_switch_and_model_failure_leave_entries_plain(monkeypatch) -> None:
-    ch, embedder, rows = _StubCH(), _BatchEmbedder(), []
-    _wire_stubs(monkeypatch, ch, embedder, rows)
+    ch, embedder, rows = StubCH(), BatchEmbedder(), []
+    wire_stubs(monkeypatch, ch, embedder, rows)
     from server.settings import settings
 
     llm = _LLM()
@@ -90,8 +86,8 @@ async def test_kill_switch_and_model_failure_leave_entries_plain(monkeypatch) ->
 
     monkeypatch.setattr(settings, "memory_bulk_contextualize_allowed", True, raising=False)
     monkeypatch.setattr("server.llm.client.get_llm_client", lambda: Boom())
-    ch3, embedder3, rows3 = _StubCH(), _BatchEmbedder(), []
-    _wire_stubs(monkeypatch, ch3, embedder3, rows3)
+    ch3, embedder3, rows3 = StubCH(), BatchEmbedder(), []
+    wire_stubs(monkeypatch, ch3, embedder3, rows3)
     out = await mem_extract.handle_memory_bulk_set(_input(contextualize=True))
     assert (
         out is not None and embedder3.batches and len(embedder3.batches[0]) >= 2

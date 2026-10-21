@@ -25,6 +25,8 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.knowledge.store import conversations as conversation_repo
 from server.knowledge.store.conversations import ThreadInsertRow
 from server.llm import customer
+from server.memory.app import extraction_policy
+from server.memory.domain.extraction_policy import with_policy
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
 from server.settings import settings
@@ -88,6 +90,9 @@ async def _make_title(
     )
     if not snippet:
         return False
+    # A title is written from the thread's own turns and stored: the model is
+    # given the operator's extraction policy, as extraction is.
+    policy = await extraction_policy.effective(str(row["org"]), str(row["namespace"]))
 
     # Bind a cost accumulator, label the leg, and drain it into an AgentEvent
     # afterwards: `begin_op()` alone only gives `report_llm()` somewhere to
@@ -98,7 +103,9 @@ async def _make_title(
     try:
         with llm_stage("title"), customer.for_org(str(row["org"])):
             out = await llm.complete(
-                system=_TITLE_SYSTEM, user=snippet, max_tokens=llm_max_tokens("title")
+                system=with_policy(_TITLE_SYSTEM, policy),
+                user=snippet,
+                max_tokens=llm_max_tokens("title"),
             )
     finally:
         emit_worker_cost_event_for(
@@ -179,7 +186,9 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
                 if await _make_title(row, cfg, llm, existing):
                     result.titled += 1
             except customer.HOLDS:
-                continue  # a held call is no failure: the thread is titled once the org is back
+                # A held call is no failure: the thread is titled once the org is back
+                # on and the policy is read.
+                continue
             except Exception as e:
                 result.errors += 1
                 log.exception("conversation titling failed for %s", dict(row))

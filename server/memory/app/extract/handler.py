@@ -168,6 +168,8 @@ async def _set_record_from_messages(
     observation_date: str | None,
     evidence_task: asyncio.Task[list[str]],
     record_schema: dict[str, str | list[str]],
+    *,
+    operator_policy: str,
 ) -> MemorySetFromMessagesOutput:
     """Schema mode: ONE typed record matching the caller's schema, written
     through memory.bulk_set with its evidence links and inline record
@@ -182,6 +184,7 @@ async def _set_record_from_messages(
                 record_schema,
                 max_tokens=input.max_tokens,
                 observation_date=observation_date,
+                operator_policy=operator_policy,
             )
     except ExtractionError as e:
         raise HTTPException(
@@ -276,6 +279,7 @@ async def _set_record_from_messages(
         stubbed_fields=stubbed_fields,
         value_updates_linked=last_value_updates_linked.get(),
         degraded=_degradations.current(),
+        under_operator_policy=bool(operator_policy),
     )
 
 
@@ -529,6 +533,11 @@ async def _set_from_messages(
         out = await _enqueue_deferred(input, rule_agent)
         out.deferred_by = "allowlist"
         return out
+    from server.memory.app import extraction_policy
+
+    # The operator's policy, never the request's. Read before anything is
+    # written: a policy this process cannot read refuses the request, no rows left.
+    operator_policy = await extraction_policy.effective(input.org, input.namespace)
     msgs = [_message_dict(m) for m in input.messages]
     last_msgs = [_message_dict(m) for m in (input.last_messages or [])]
     from server.memory.domain.observation_date import resolve_observation_date
@@ -562,7 +571,12 @@ async def _set_from_messages(
     # Schema mode: extract ONE typed record matching the caller's schema.
     if input.record_schema is not None:
         return await _set_record_from_messages(
-            input, msgs, observation_date, evidence_task, input.record_schema
+            input,
+            msgs,
+            observation_date,
+            evidence_task,
+            input.record_schema,
+            operator_policy=operator_policy,
         )
 
     # Pipeline DAG: each step mutates a shared WorkflowState. Default is
@@ -584,6 +598,7 @@ async def _set_from_messages(
         last_messages=last_msgs,
         observation_date=observation_date,
         extraction_instructions=input.extraction_instructions,
+        operator_policy=operator_policy,
         max_tokens=input.max_tokens,
         extra_tags=list(input.extra_tags or []),
         valid_at=input.valid_at,
@@ -600,7 +615,9 @@ async def _set_from_messages(
 
         async def _draft_digest() -> Any:
             with traced("extract.session_summary_draft", messages=len(msgs)):
-                return await _draft_session_summary(input, msgs, observation_date)
+                return await _draft_session_summary(
+                    input, msgs, observation_date, operator_policy=operator_policy
+                )
 
         summary_draft_task = create_deferred_task(_draft_digest())
         summary_draft_task.add_done_callback(_observe_task_result)
@@ -667,6 +684,7 @@ async def _set_from_messages(
         value_updates_linked=last_value_updates_linked.get(),
         stage_ms={**dict(state.stage_ms), **dict(_ing_work.get("stage_ms", {}))},
         observation_date_source=observation_date_source,
+        under_operator_policy=bool(operator_policy),
         **_extract_cache_fields(state),
     )
 

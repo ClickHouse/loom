@@ -122,7 +122,8 @@ async def test_sweep_adds_only_facts_that_cite_an_uncovered_turn(monkeypatch) ->
     out, result, added = await _coverage_sweep(
         MSGS,
         FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date="2023-07-03",
         last_messages=None,
         max_tokens=512,
@@ -180,7 +181,8 @@ async def test_sweep_same_key_as_first_pass_gets_a_turn_distinct_key(monkeypatch
     out, _r, added = await _coverage_sweep(
         msgs,
         first,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date=None,
         last_messages=None,
         max_tokens=512,
@@ -199,7 +201,8 @@ async def test_sweep_is_silent_when_everything_is_cited_and_fails_open(monkeypat
     out, result, added = await _coverage_sweep(
         MSGS,
         covered,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date=None,
         last_messages=None,
         max_tokens=512,
@@ -212,7 +215,8 @@ async def test_sweep_is_silent_when_everything_is_cited_and_fails_open(monkeypat
     out, result, added = await _coverage_sweep(
         MSGS,
         FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date=None,
         last_messages=None,
         max_tokens=512,
@@ -225,7 +229,8 @@ async def test_sweep_is_silent_when_everything_is_cited_and_fails_open(monkeypat
     out, result, added = await _coverage_sweep(
         MSGS,
         FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date=None,
         last_messages=None,
         max_tokens=512,
@@ -302,7 +307,8 @@ async def test_sweep_tags_its_facts_and_filters_noise(monkeypatch) -> None:
     out, _r, added = await _coverage_sweep(
         MSGS,
         FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date="2023-07-03",
         last_messages=[{"role": "user", "content": "old"}],
         max_tokens=512,
@@ -392,7 +398,8 @@ async def test_sweep_reads_the_uncovered_sentences_of_a_cited_turn(monkeypatch) 
     out, result, added = await _coverage_sweep(
         FACT_LIST,
         LIST_FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date=None,
         last_messages=None,
         max_tokens=512,
@@ -446,9 +453,9 @@ async def test_request_level_coverage_sweep_override(monkeypatch) -> None:
             )
 
     monkeypatch.setattr(extract_client, "get_llm_client", lambda: _LLM())
-    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=True)
+    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=True, operator_policy="")
     assert calls == [True]
-    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=None)
+    await extract.extract_from_messages(MSGS, judge=False, coverage_sweep=None, operator_policy="")
     assert calls == [True]  # no override, no dense turn → no sweep
 
 
@@ -570,7 +577,8 @@ async def test_batched_sweep_reads_items_in_groups_and_merges(monkeypatch) -> No
     out, result, added = await _coverage_sweep(
         MSGS,
         FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date="2023-07-03",
         last_messages=None,
         max_tokens=512,
@@ -600,7 +608,8 @@ async def test_batched_sweep_fails_open_per_group(monkeypatch) -> None:
     out, result, added = await _coverage_sweep(
         MSGS,
         FIRST,
-        system_prompt="SYS",
+        base_prompt="SYS",
+        operator_policy="",
         observation_date="2023-07-03",
         last_messages=None,
         max_tokens=512,

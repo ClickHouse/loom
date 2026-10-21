@@ -220,6 +220,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `erasure_requests` | `ReplacingMergeTree(version)` | `id` |  | `requested_at + toIntervalDay(90)` |  |
 | `erasure_reversals` | `ReplacingMergeTree(version)` | `(org, erasure_id, memory_id)` |  | `restored_at + toIntervalYear(5)` |  |
 | `events` | `MergeTree` | `(org, namespace, kind, ts)` | `toYYYYMM(ts)` | `toDateTime(ts) + toIntervalDay(30)` |  |
+| `extraction_policies` | `ReplacingMergeTree(version)` | `(org, namespace)` |  |  |  |
 | `frontend_assets` | `ReplacingMergeTree(published_at)` | `path` |  | `published_at + toIntervalDay(30)` |  |
 | `grant_claims` | `KeeperMap('/loom/grant_claims')` |  |  |  |  |
 | `graph_projections` | `KeeperMap('/loom/graph_projections')` |  |  |  |  |
