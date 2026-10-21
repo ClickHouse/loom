@@ -154,13 +154,14 @@ The guide reaches agents without being asked for:
 Reading a guide takes read access to its namespace, since a public row's visibility
 widens no read: `namespace.browse` shows the org each public namespace's summary, and
 the whole guide is for its members (`namespace.join`). In the dashboard, the Memories
-page shows the namespace's guide above its list: the summary, the revision and who
-changed it last, with **Open guide**; a writer of a namespace with no guide gets **Write
-the guide**, which opens the editor on an outline of what a newcomer asks (what the
-namespace holds, its keys, its tags, how to use it). Spaces shows a public namespace's
-guide summary under its description; for a namespace you belong to the summary, and the
-**Guide** menu item, open the guide. A writer edits it there, saving from the revision
-they opened, as an agent does. A namespace erasure deletes every revision of its guide.
+page header has a **Guide** button beside **Add memory**, described by the guide's
+revision and summary; on a namespace with no guide it opens a writer straight into the
+editor, on an outline of what a newcomer asks (what the namespace holds, its keys, its
+tags, how to use it) that must be filled in before it saves. Spaces shows a public
+namespace's guide summary under its description; for a namespace you belong to, the
+summary and the **Guide** menu item open the guide. A writer edits it there, saving from
+the revision they opened, as an agent does. A namespace erasure deletes every revision
+of its guide.
 
 ## The mentor
 

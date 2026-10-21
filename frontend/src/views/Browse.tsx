@@ -608,19 +608,15 @@ const SpaceRow = memo(function SpaceRow({
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
           {guideSummary &&
             (canReadGuide ? (
-              // The summary is the way in: a member reads the guide it sums up.
-              <button
-                type="button"
-                onClick={() => actions.guide(namespace)}
-                className="mt-0.5 block max-w-full truncate text-left text-xs text-text-muted underline-offset-2 hover:underline"
-                aria-label={`Open the guide for ${namespace}`}
-              >
-                Guide: {guideSummary}
-              </button>
+              // Above the row's stretched open button, so it takes its own click; the
+              // summary is the link's name.
+              <span className="list-row-control mt-0.5 inline-block max-w-full truncate align-top text-xs">
+                <Link component="button" type="button" size="sm" onClick={() => actions.guide(namespace)}>
+                  Guide: {guideSummary}
+                </Link>
+              </span>
             ) : (
-              <Tip content="Join to read the whole guide">
-                <p className="mt-0.5 truncate text-xs text-text-muted">Guide: {guideSummary}</p>
-              </Tip>
+              <p className="mt-0.5 truncate text-xs text-text-muted">Guide: {guideSummary}</p>
             ))}
         </div>
         <div className="list-row-control ml-auto flex shrink-0 items-center gap-2">

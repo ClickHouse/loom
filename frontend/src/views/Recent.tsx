@@ -30,7 +30,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
-import { NamespaceGuideCard } from "../components/NamespaceGuideCard";
+import { NamespaceGuideButton } from "../components/NamespaceGuideButton";
 import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
 import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
@@ -611,14 +611,17 @@ function MemoryList() {
       <PageHeader
         title="Memories"
         actions={
-          // The empty state's own Add is the one primary while it shows.
-          !emptyNamespace && (
-            <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
-              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-                Add memory
-              </Button>
-            </Unavailable>
-          )
+          <>
+            <NamespaceGuideButton identity={identity} />
+            {/* The empty state's own Add is the one primary while it shows. */}
+            {!emptyNamespace && (
+              <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
+                <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                  Add memory
+                </Button>
+              </Unavailable>
+            )}
+          </>
         }
       >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
@@ -627,7 +630,6 @@ function MemoryList() {
         </span>
       </PageHeader>
       <MemoryTabs active="memories" />
-      <NamespaceGuideCard identity={identity} />
 
       <AddMemoryDialog
         open={addOpen}

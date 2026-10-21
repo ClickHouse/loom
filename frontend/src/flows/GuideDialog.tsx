@@ -4,7 +4,7 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { getNamespaceGuide, saveNamespaceGuide, type NamespaceGuide } from "../api";
 import { toast } from "../components/Toast";
-import { Alert, Loading } from "../components/ui";
+import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { humanizeError, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -76,7 +76,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
   }
 
   const save = async () => {
-    if (!base) return;
+    if (!base || content === STARTER) return;
     setBusy(true);
     try {
       // A summary left as the saved one is not sent, so the server keeps whatever
@@ -182,7 +182,6 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
               onChange={setContent}
               rows={16}
               maxLength={32000}
-              placeholder={"# What this namespace holds\n\nKeys: …\nTags: …"}
             />
             <TextField id="guide-note" label="What changed" value={note} onChange={setNote} maxLength={500} />
           </div>
@@ -190,9 +189,13 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
             <Button type="secondary" htmlType="button" disabled={busy} onClick={() => close(false)}>
               Cancel
             </Button>
-            <Button type="primary" htmlType="submit" loading={busy} disabled={busy}>
-              Save
-            </Button>
+            {/* The outline is questions to answer: saved as it is, every agent session would
+                start with it. */}
+            <Unavailable reason={content === STARTER ? "Fill in the outline first" : null}>
+              <Button type="primary" htmlType="submit" loading={busy} disabled={busy}>
+                Save
+              </Button>
+            </Unavailable>
           </ModalFooter>
         </form>
       )}
