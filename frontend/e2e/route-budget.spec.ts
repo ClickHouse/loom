@@ -33,6 +33,7 @@ const ROUTES: Array<[string, string]> = [
   ["Activity", "/admin/activity"],
   ["Usage", "/admin/usage"],
   ["Agents", "/admin/agents"],
+  ["Collections", "/admin/collections"],
   ["Users", "/admin/users"],
 ];
 
