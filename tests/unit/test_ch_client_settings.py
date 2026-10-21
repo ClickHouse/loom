@@ -122,7 +122,7 @@ def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_commi
 ) -> None:
     """An insert no request waits on waits up to the background bound; with
     `ch_batched_inserts` off a batched insert is sent committed, or as a waited async
-    insert on the profile's timeouts where it was one before the switch, read per call."""
+    insert on the profile's timeouts for an `async_when_off` site, read per call."""
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
     monkeypatch.setattr(settings, "ch_batched_insert_background_wait_max_ms", 200)
     s = ch_writes.batched_insert_settings(background=True)

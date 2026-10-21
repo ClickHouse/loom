@@ -124,8 +124,8 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
 
 # (module, table, background, async_when_off). `background` is the wait window every
 # insert of the table must use, None where the module writes it with both (a request's
-# flush and the timer's). `async_when_off` marks the tables that were waited async
-# inserts before the switch, so turning it off sends them that way again.
+# flush and the timer's). `async_when_off` marks the tables that are waited async
+# inserts whether or not batching is on; with it off, the others are committed.
 BATCHED_TABLES = [
     ("server/observability/audit.py", "loom.audit_log", False, False),
     ("server/observability/events.py", "loom.agent_events", False, False),
@@ -153,7 +153,8 @@ def test_tables_written_on_every_request_are_batched(
     """A committed insert per request makes one part per row in these tables;
     batched, concurrent writers share parts and each still waits for its row. A
     request-path insert keeps the short window its op budget assumes, and with the
-    switch off each table is written as it was before the switch."""
+    switch off a request-path table is committed and a ledger flush stays a waited
+    async insert on the profile's timeouts."""
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
@@ -172,7 +173,7 @@ def test_tables_written_on_every_request_are_batched(
 def test_write_marks_take_the_window_of_who_waits() -> None:
     """The request's bump waits the short window and the committed form when the
     switch is off; the timer's flush and the process-start mark take the background
-    window, and the flush was a waited async insert before the switch."""
+    window, and the flush is a waited async insert whether or not batching is on."""
     from server.core import namespace_write_marks
 
     calls = {

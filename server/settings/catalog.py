@@ -562,11 +562,12 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False puts each insert back in its form before batching:
-    # committed, one part each, where it was committed, and a waited async insert on the
-    # server profile's timeouts where it was one (auth attempts, the carry-ack, write-mark
-    # and usage flushes, policy-witness rows, projection failures, graph inserts);
-    # fire-and-forget inserts are unchanged.
+    # returns once written. False: the request-path inserts (audit rows, transcript
+    # turns and their embeddings, the agent_events flush, webhook outbox and attempt
+    # rows, evidence, the write-mark bump and start mark) are committed, one part each;
+    # the ledger flushes (auth attempts, carry acks, write-mark and usage flushes,
+    # policy-witness rows, projection failures, graph inserts) are waited async inserts
+    # on the server profile's timeouts; fire-and-forget inserts are unchanged.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript
     # turns, request ledgers) for concurrent inserts to share its part; the pooled

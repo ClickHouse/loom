@@ -98,8 +98,7 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
   (503 `OVERLOADED`). Under a sustained write rate, batched inserts (audit rows,
   transcript turns, ledgers) hold their connection for up to
-  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` ([batched inserts](../architecture/clickhouse.md#batched-inserts)):
-  raise `LOOM_CH_POOL_MAXSIZE`, or lower that wait.
+  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
   From `conversation.delete` or `conversation.compact`, `OVERLOADED` can also mean writes
   to the thread's embeddings kept landing for 8 reconcile rounds; resend once the
   thread's writes settle.

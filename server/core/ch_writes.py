@@ -11,7 +11,8 @@ from typing import Any
 
 from server.settings import settings
 
-# Insert settings that commit the rows before the insert returns.
+# Insert settings that commit the rows before the insert returns. Shared: callers
+# pass it on and never change it.
 COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
 # A waited async insert on the server profile's own flush timeouts.
@@ -24,15 +25,15 @@ def batched_insert_settings(
     """Settings of a batched insert: an async insert answered once its shared part
     is written, waiting between the live bounds for others to join it. `background`
     is for an insert no request waits on, which takes the longer
-    `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, a
-    copy of the committed settings, or, for a site that `async_when_off` marks
-    (one that was a waited async insert before the switch existed), a waited async
-    insert on the server profile's timeouts. Why it is safe:
-    docs/architecture/clickhouse.md#batched-inserts."""
+    `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, the
+    committed settings, or, for a site that `async_when_off` marks (a site that is a
+    waited async insert whether or not batching is on), a waited async insert on the
+    server profile's timeouts. Callers pass the result on and never change it. Why it
+    is safe: docs/architecture/clickhouse.md#batched-inserts."""
     if not settings.ch_batched_inserts:
         if async_when_off:
-            return dict(_PROFILE_ASYNC_INSERT_SETTINGS)
-        return dict(COMMITTED_INSERT_SETTINGS)
+            return _PROFILE_ASYNC_INSERT_SETTINGS
+        return COMMITTED_INSERT_SETTINGS
     if background:
         wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
     else:
