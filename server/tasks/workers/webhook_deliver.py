@@ -138,7 +138,7 @@ def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str] | None) -> by
             _warned_missing_secret.add(key)
             log.warning(
                 "task webhook: inbox %s/%s has a webhook_url but no usable secret in env %r "
-                "(unset, or a whsec_ value that is not base64; the name must start %s); "
+                "(unset, or a whsec_ value that is empty or not base64; the name must start %s); "
                 "notices are held until then",
                 key[0],
                 key[1],

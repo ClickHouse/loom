@@ -379,6 +379,61 @@ async def test_a_users_erasure_names_the_erasure_only(
     assert rows[0]["user_id"] == "-" and rows[0]["memory_key"] == ""
 
 
+@pytest.mark.asyncio
+async def test_a_receivers_token_cannot_turn_a_users_erasure_id_into_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user's erasure reaches every webhook of the org, so its id reaches
+    receivers whose namespaces never held the user. Their flat tokens read
+    nothing for it; the org admin who could request it reads the status."""
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.erasure.api.erasure import ErasureStatusInput
+    from server.erasure.app import handlers as erasure_handlers
+    from server.operations.base import Role
+
+    saga = {
+        "id": "er-1",
+        "org": "acme",
+        "scope_type": "user_id",
+        "scope_value": "u-gone",
+        "requester": "dpo@acme.test",
+        "status": "completed",
+        "current_step": 3,
+        "requested_at": NOW,
+        "completed_at": NOW,
+        "failure_reason": "",
+    }
+
+    async def fetch(erasure_id: str) -> dict[str, Any] | None:
+        return saga if erasure_id == "er-1" else None
+
+    monkeypatch.setattr(erasure_handlers.erasure_ledger, "fetch_request_status", fetch)
+
+    def flat(role: Role) -> AuthInfo:
+        return AuthInfo(
+            subject="notes-bot",
+            org="acme",
+            namespaces=("notes",),
+            roles=(role,),
+            is_service_account=True,
+        )
+
+    try:
+        for role in (Role.VIEWER, Role.WRITER, Role.ADMIN):
+            set_current_auth(flat(role))
+            out = await erasure_handlers.handle_erasure_status(
+                ErasureStatusInput(erasure_id="er-1")
+            )
+            assert out.found is False and out.scope_value is None, role
+            assert "u-gone" not in out.model_dump_json() and "dpo@" not in out.model_dump_json()
+        set_current_auth(flat(Role.ORG_ADMIN))
+        out = await erasure_handlers.handle_erasure_status(ErasureStatusInput(erasure_id="er-1"))
+        assert out.found is True and out.scope_value == "u-gone"
+    finally:
+        set_current_auth(None)
+
+
 @pytest.fixture
 def announced(monkeypatch: pytest.MonkeyPatch) -> list[list[tuple[str, dict[str, Any]]]]:
     """Each `announce` call with changes: its (event, change) pairs."""
@@ -1102,6 +1157,12 @@ async def test_a_malformed_secret_is_not_usable_and_is_not_logged(
     )
     result = await _pass(lambda r: httpx.Response(204), env={REF: bad})
     assert result.waiting == 1 and result.total == 0
+
+
+@pytest.mark.parametrize("value", ["whsec_", "whsec_\n", "whsec_ \n "])
+def test_an_empty_whsec_secret_is_not_usable(value: str) -> None:
+    # An empty HMAC key signs what anyone can sign: the events wait instead.
+    assert signed.read_secret("acme", REF, {REF: value}, warn=False) is None
 
 
 @pytest.mark.asyncio
@@ -1838,6 +1899,7 @@ def test_the_worker_is_registered_on_its_settings() -> None:
         ("memory_webhook_deliver_concurrency", 0),
         ("memory_webhook_ack_timeout_seconds", 0),
         ("memory_webhook_max_backoff_seconds", 0),
+        ("memory_webhook_removal_window_leases", 0),
     ],
 )
 def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str, value: float) -> None:

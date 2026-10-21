@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,13 +34,30 @@ class _CH:
 async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(monkeypatch) -> None:
     calls: dict[str, Any] = {}
 
-    async def fake_cascade(org, ids, *, when, update=None, ch=None):
+    row = SimpleNamespace(
+        org="o",
+        namespace="a",
+        agent="ag",
+        user_id="-",
+        session_id="-",
+        memory_key="k1",
+        memory_id="m1",
+    )
+
+    async def fake_cascade(org, ids, *, when, update=None, version=None, ch=None):
         calls["ids"] = list(ids)
-        calls["override"] = update(object()) if update else {}
+        calls["version"] = version
+        calls["override"] = update(row) if update else {}
         return len(ids)
+
+    announced: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_announce(changes):
+        announced.extend(changes)
 
     drops: list[tuple[str, str, str, str, int]] = []
     monkeypatch.setattr("server.memory.store.tombstone_cascade_by_ids", fake_cascade)
+    monkeypatch.setattr("server.memory.app.webhooks.announce", fake_announce)
     monkeypatch.setattr(
         "server.memory.app.drops.record_drop",
         lambda org, ns, stage, reason, *, item="", n=1: drops.append((org, ns, stage, reason, n)),
@@ -63,6 +81,11 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
     assert (res.matched, res.tombstoned, res.truncated) == (3, 3, False)
     assert calls["ids"] == ["m1", "m2", "m3"]
     assert calls["override"] == {"expire_reason": "blacklist.sweep:p1"}
+    # The tombstones and their event carry the one version the sweep took.
+    assert isinstance(calls["version"], int)
+    assert [(event, change["version"]) for event, change in announced] == [
+        ("memory.tombstoned", calls["version"])
+    ]
     assert sorted(drops) == [
         ("o", "a", "blacklist.sweep", "pattern:p1", 2),
         ("o", "b", "blacklist.sweep", "pattern:p1", 1),
@@ -73,7 +96,7 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
 
 
 async def test_sweep_reports_truncation_and_a_failed_regex(monkeypatch) -> None:
-    async def fake_cascade(org, ids, *, when, update=None, ch=None):
+    async def fake_cascade(org, ids, *, when, update=None, version=None, ch=None):
         return len(ids)
 
     monkeypatch.setattr("server.memory.store.tombstone_cascade_by_ids", fake_cascade)

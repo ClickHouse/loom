@@ -52,19 +52,25 @@ def read_secret(
     """The signing key `ref` names in `env`, the process environment when None
     (surrounding whitespace, such as a trailing newline, dropped), or None when
     the name is not one of `org`'s own, the variable is unset, or its `whsec_`
-    value is not base64. `warn=False` for a caller that says so itself."""
+    value is empty or not base64: an empty key signs what anyone can sign.
+    `warn=False` for a caller that says so itself."""
     if env is None:
         env = os.environ  # each secret is a variable a registration names, not a setting
     raw = env.get(ref, "").strip() if webhook_secret_ref_ok(org, ref) else ""
     if not raw:
         return None
     try:
-        return secret_bytes(raw)
+        key = secret_bytes(raw)
     except binascii.Error:
+        key = b""
+    if not key:
         if warn and ref not in _warned_unusable:
             _warned_unusable.add(ref)
-            log.warning("webhook: the secret in %s is not usable: whsec_ must be base64", ref)
+            log.warning(
+                "webhook: the secret in %s is not usable: whsec_ must be non-empty base64", ref
+            )
         return None
+    return key
 
 
 def secret_bytes(raw: str) -> bytes:

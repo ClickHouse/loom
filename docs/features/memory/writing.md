@@ -312,6 +312,9 @@ These writes send no event:
 - the supersessions a write makes of other rows: the older same-key rows the `newest_wins`
   conflict policy retires, and the peers a `refines` verdict supersedes. The new row's own
   event is sent.
+- the status a conflict verdict lands after the write, inline or from the deferred judge
+  (`conflicted` on the row and its peers, `duplicate` on the row). The write's own event is
+  sent.
 - the undo of an automatic supersession through `memory.restore`
 - copies into another namespace (`memory.copy_to`, `memory.cross_promote`)
 - `namespace.restore` from a snapshot
@@ -343,7 +346,9 @@ policy, sends `memory.written`.
 
 `memory.erased` carries the `erasure_id` the request returned and no key, user or
 identity: a namespace erasure goes to that namespace's webhooks, a user's erasure to
-every webhook of the org that takes the event.
+every webhook of the org that takes the event, including namespaces that never held
+the user. `erasure.status` of a user's erasure answers only a flat org admin of the
+org or a platform admin, so a receiver's token cannot read the user id from it.
 
 | Operation            | Role  | What it does                                                                                                                                                                                                                                                                             |
 | -------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -413,7 +418,7 @@ sweep, the `delete_version` check).
   defaults. A deployment that needs more raises the per-pass and concurrency settings,
   and the pass deadline with them.
 - **Waiting and dead events.** While the variable `secret_ref` names is unset or not
-  usable (a `whsec_` value that is not base64), the webhook's events wait, and the wait
+  usable (a `whsec_` value that is empty or not base64), the webhook's events wait, and the wait
   counts as no attempt; after 2.5 days they are marked `dead` with "no usable secret".
   An event of a working webhook that a receiver has not taken after 2.75 days (a
   receiver that is down, or a backlog that never reached its turn) is marked `dead` with

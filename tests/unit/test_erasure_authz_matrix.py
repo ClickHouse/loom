@@ -234,11 +234,12 @@ EXPORT: dict[str, dict[str, str]] = {
     "wildcard_viewer": {"ns_own": "403", "ns_other": "403", "user_id": "403"},
     "writer": {"ns_own": "403", "ns_other": "403", "user_id": "403"},
 }
-# A namespace saga needs VIEWER on its namespace; every other scope needs
-# flat membership of the saga's org. A refusal is found=False.
+# A namespace saga needs VIEWER on its namespace; a user_id saga names the
+# erased user, so it needs the org-wide view; a namespace list needs flat
+# membership of the saga's org. A refusal is found=False.
 STATUS: dict[str, dict[str, str]] = {
-    "admin": {"ns_own": "ok", "ns_other": "hidden", "user_id": "ok", "ns_list": "ok"},
-    "empty_subject": {"ns_own": "ok", "ns_other": "hidden", "user_id": "ok", "ns_list": "ok"},
+    "admin": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "ok"},
+    "empty_subject": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "ok"},
     "org_admin": {"ns_own": "ok", "ns_other": "hidden", "user_id": "ok", "ns_list": "ok"},
     "org_admin_other_org": {
         "ns_own": "hidden",
@@ -255,13 +256,13 @@ STATUS: dict[str, dict[str, str]] = {
     "platform_admin": {
         "ns_own": "hidden",
         "ns_other": "hidden",
-        "user_id": "hidden",
+        "user_id": "ok",
         "ns_list": "hidden",
     },
     "scoped": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "hidden"},
-    "viewer": {"ns_own": "ok", "ns_other": "hidden", "user_id": "ok", "ns_list": "ok"},
-    "wildcard_viewer": {"ns_own": "ok", "ns_other": "ok", "user_id": "ok", "ns_list": "ok"},
-    "writer": {"ns_own": "ok", "ns_other": "hidden", "user_id": "ok", "ns_list": "ok"},
+    "viewer": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "ok"},
+    "wildcard_viewer": {"ns_own": "ok", "ns_other": "ok", "user_id": "hidden", "ns_list": "ok"},
+    "writer": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "ok"},
 }
 # The org-wide view is a flat ORG_ADMIN of this org or a PLATFORM_ADMIN; a
 # wildcard flat token sees every namespace saga; everyone else, their own.

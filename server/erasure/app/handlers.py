@@ -305,9 +305,10 @@ async def _authorize_status_read(row: RequestStatusRow) -> bool:
     The op is addressed by erasure_id alone — no org in the body for the
     transport authz to scope — so the saga row itself is the authority.
     Namespace-scoped sagas require the token to cover (org, scope_value),
-    grant fallback included. user_id-scoped sagas span every namespace in
-    the org, so there is no namespace to bind a grant to: org membership
-    (or a wildcard-org service account) is the gate. False on refusal, so the
+    grant fallback included. A user_id saga's status names the erased user,
+    and its id reaches every memory webhook of the org that takes
+    `memory.erased`, so it needs the org-wide view that requesting one needs.
+    Other scopes need flat membership of the saga's org. False on refusal, so the
     caller answers found=False exactly as for an unknown id — a 403 would
     confirm the id exists and name its org. True when auth is disabled
     (LOOM_AUTH_REQUIRED=false).
@@ -323,7 +324,9 @@ async def _authorize_status_read(row: RequestStatusRow) -> bool:
         if sharing.is_collection(namespace) and _org_wide_admin(auth, row_org):
             return True
         return await authz.row_in_scope(row_org, namespace, Role.VIEWER)
-    # A user_id saga spans every namespace of the org, and a scoped token's authority is its
+    if str(row["scope_type"]) == "user_id":
+        return _org_wide_admin(auth, row_org)
+    # A namespace list spans namespaces, and a scoped token's authority is its
     # namespaces — org membership is a flat token's gate, never a scoped one's.
     return auth.org in ("*", row_org) and not auth.has_ns_roles()
 

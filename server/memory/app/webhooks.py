@@ -201,8 +201,9 @@ async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> No
 async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_id: str) -> None:
     """`memory.erased` once a saga completed: to the webhooks of `namespaces`,
     or of every namespace of the org for a user's erasure (None). The event
-    names the erasure, never the user or a key: the receiver asked for it and
-    knows what it covered."""
+    names the erasure, never the user or a key. A user's erasure reaches
+    receivers whose namespaces never held the user, so `erasure.status` of a
+    user_id saga answers only the org-wide view, never a receiver's token."""
     if namespaces is None:
         namespaces = await namespaces_with_hooks(org)
     no_memory = {
