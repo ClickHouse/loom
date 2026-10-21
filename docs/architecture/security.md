@@ -859,7 +859,9 @@ hashing are engineering primitives, not a compliance guarantee.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
 - A `high`-sensitivity value has no embedding row, and a chunk, session digest or
-  conversation turn whose text reads as a credential is written without a vector.
+  conversation turn whose text reads as a credential is written without a vector by
+  every write path (`loom reembed --in-database` excepted), and every read that serves
+  passages holds back one an earlier build embedded.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
 

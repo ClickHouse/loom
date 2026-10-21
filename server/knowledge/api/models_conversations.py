@@ -24,11 +24,12 @@ class ConversationCreateInput(BaseModel):
     namespace: str
     agent: str
     # The caller's id for the thread; re-creating the same id replaces its title,
-    # metadata and `run_id`, keeping the titler's `title_refused` mark.
+    # metadata and `run_id`.
     thread_id: str
     # Display title shown in thread lists; empty = untitled.
     title: str = ""
-    # Free-form JSON stored on the thread row; `conversation.get` returns it.
+    # Free-form JSON stored on the thread row, keeping the titler's `title_refused`
+    # mark; `conversation.get` returns it.
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"
@@ -279,7 +280,8 @@ class ConversationGetOutput(BaseModel):
     thread_id: str
     # Title from `conversation.create` or `update`; empty when none was set.
     title: str = ""
-    # Thread metadata JSON; `{}` when none was set.
+    # Thread metadata JSON; `{}` when none was set, apart from the titler's
+    # `title_refused` mark, which the server sets and keeps.
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"

@@ -1543,10 +1543,9 @@ async def titler_candidates(
     exclude_orgs: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Recent threads with at least `min_turns` live messages in namespaces that
-    record conversations, untitled, not deleted and not marked `title_refused`, most
-    recent first; none of
-    `exclude_orgs` (orgs whose model calls are switched off)."""
+    """Recent threads with at least `min_turns` live messages in namespaces that record
+    conversations, untitled, not deleted and not marked `title_refused`, most recent first;
+    none of `exclude_orgs` (orgs whose model calls are switched off)."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
