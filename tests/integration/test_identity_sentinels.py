@@ -124,10 +124,14 @@ async def test_startup_pack_with_the_identity_sentinels_reads_every_users_rows(
             user_id="u1",
             session_id="s1",
         )
-        # `Agent.call` stamps user_id and session_id "-".
-        pack = await a.call("context.pack", {"mode": "startup", "query": "", "top_k": 5})
 
-    assert "Deploys go out on Tuesday." in pack["sections"].get("memories", "")
+        # `Agent.call` stamps user_id and session_id "-".
+        async def memories() -> str:
+            pack = await a.call("context.pack", {"mode": "startup", "query": "", "top_k": 5})
+            text = pack["sections"].get("memories", "")
+            return text if "Deploys go out on Tuesday." in text else ""
+
+        await eventually(memories, description="the startup pack recalls another user's row")
 
 
 @pytest.mark.asyncio

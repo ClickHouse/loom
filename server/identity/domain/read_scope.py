@@ -27,8 +27,6 @@ from server.core.naming import named
 # (`server.auth.jwt.READ_SCOPES`), widest first.
 _NARROWNESS: dict[str, int] = {"namespace": 0, "own_user": 1, "own_session": 2}
 
-SENTINEL = "-"
-
 
 def narrower(a: str, b: str) -> str:
     """The narrower of two scopes; unknown values count as `namespace`."""

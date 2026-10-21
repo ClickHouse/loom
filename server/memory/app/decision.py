@@ -16,6 +16,7 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now as _now
 from server.core.errors import NotFoundError
+from server.core.naming import named
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_decision import (
     ChainNodeRow,
@@ -39,10 +40,6 @@ from server.memory.api.models_search import MemorySearchInput
 from server.memory.app import decisions as svc
 
 log = logging.getLogger(__name__)
-
-
-def _sentinel_none(v: str | None) -> str | None:
-    return None if not v or v == "-" else v
 
 
 # ------------------------------------------------------------------ schema
@@ -167,7 +164,7 @@ async def _write_decision(
             value=svc.memory_value(payload),
             tags=tags,
             confidence=float(conf) if isinstance(conf, (int, float)) and conf > 0 else 1.0,
-            source_trace=f"run:{run_id}" if _sentinel_none(run_id) else "decision",
+            source_trace=f"run:{run_id}" if named(run_id) else "decision",
             valid_at=valid_at,
         )
     )
@@ -190,7 +187,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
         "alternatives": svc.clean_alternatives(input.alternatives),
         "confidence": float(input.confidence) if input.confidence > 0 else None,
         "decision_maker": input.decision_maker.strip() or input.agent,
-        "run_id": _sentinel_none(input.run_id),
+        "run_id": named(input.run_id),
         "made_at": made_at,
     }
     tags = [
@@ -228,7 +225,7 @@ async def handle_decision_record(input: DecisionRecordInput) -> DecisionRecordOu
                         explanation=f"{src} {rel} the decision {payload['outcome'][:120]!r}",
                         evidence=evidence,
                         confidence=float(input.confidence) if input.confidence > 0 else 1.0,
-                        run_id=_sentinel_none(input.run_id) or "-",
+                        run_id=named(input.run_id) or "-",
                     )
                 )
                 edges += 1

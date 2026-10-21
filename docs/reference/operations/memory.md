@@ -1211,7 +1211,7 @@ Apply one outcome to many recalled memories in a single call — the bulk form o
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `outcome` | `Literal['positive', 'negative', 'used']` | required | `positive` records evidence, `negative` harm, `used` reinforcement on each key. |
 | `memory_keys` | `list[str]` | *(computed)* | The recalled keys to apply the outcome to; empty derives them from `run_id`. |
-| `run_id` | `str` | `''` | The run whose recalls the keys come from; "" or "-" names none, so no keys. |
+| `run_id` | `str` | `''` | The run whose recalls supply the keys when memory_keys is empty; "" or "-" names no run. |
 | `weight` | `int` | `1` | How many events the outcome counts as on each key. |
 | `source` | `str` | `''` | Optional caller-supplied tag; not stored on the usage events. |
 | `max_keys` | `int` | `1000` | At most this many keys are applied; the rest are dropped. |
