@@ -831,13 +831,13 @@ def _body(**extra: Any) -> Any:
 
 
 @pytest.mark.parametrize(
-    ("setting", "asked", "on", "ignored"),
+    ("setting", "asked", "applied", "on", "ignored"),
     [
-        (False, True, False, ["agent_learnings"]),
-        (True, True, True, []),
-        (True, None, True, []),
-        (True, False, False, []),
-        (False, None, False, []),
+        (False, True, None, False, ["agent_learnings"]),
+        (True, True, True, True, []),
+        (True, None, None, True, []),
+        (True, False, False, False, []),
+        (False, None, None, False, []),
     ],
 )
 @pytest.mark.asyncio
@@ -845,6 +845,7 @@ async def test_a_request_cannot_turn_filing_on(
     monkeypatch: pytest.MonkeyPatch,
     setting: bool,
     asked: bool | None,
+    applied: bool | None,
     on: bool,
     ignored: list[str],
 ) -> None:
@@ -864,7 +865,7 @@ async def test_a_request_cannot_turn_filing_on(
     monkeypatch.setattr(settings, "memory_extract_agent_learnings", setting)
     monkeypatch.setattr(handler, "_set_from_messages", fake_inner)
     out = await handler.handle_memory_set_from_messages(_body(agent_learnings=asked))
-    assert seen == [(asked, "body-bot", on)]
+    assert seen == [(applied, "body-bot", on)]
     assert out.ignored_args == ignored
 
 
