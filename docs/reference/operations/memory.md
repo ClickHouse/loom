@@ -100,7 +100,7 @@ Ask a question and get a grounded answer synthesized from the caller's recalled 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search. |
+| `agent` | `str` | `'*'` | Read ALL agents in the accessible namespaces by default (membership is the read boundary; agent is authorship metadata), matching memory.search, and serve every bot's promoted rules. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |

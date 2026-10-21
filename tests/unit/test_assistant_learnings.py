@@ -1032,6 +1032,8 @@ def test_a_bots_promoted_rule_serves_only_that_bot() -> None:
     assert serves_agent(rule, "support-bot")
     assert not serves_agent(rule, "sales-bot")
     assert not serves_agent(rule, "-")
+    # A namespace-wide read spans every agent, as memory reads under `*` do.
+    assert serves_agent(rule, "*")
     # A rule for every agent carries no agent tag; any other document is not a rule.
     assert serves_agent(["promoted-from-learning", "source-kind:assistant_turn"], "sales-bot")
     assert serves_agent(["agent:support-bot", "runbook"], "sales-bot")
@@ -1320,6 +1322,77 @@ async def test_a_pinned_tokens_ask_synthesis_serves_its_signed_bots_rules(
 
     assert await handler._maybe_route_to_synthesize(ask) is None
     assert picked == [["support-rule", "refunds.md"]]
+
+
+@pytest.fixture
+def unpinned_token() -> Iterator[None]:
+    """A server token bound to no end user: the read acts as the body's agent."""
+    from server.auth.context import current_auth_var
+
+    token = current_auth_var.set(_auth())
+    yield
+    current_auth_var.reset(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("unpinned_token")
+async def test_an_unpinned_ask_under_the_default_agent_serves_every_bots_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """memory.ask defaults to agent `*`, a namespace-wide read: support-bot asking
+    with its server token is served its own rule, in one knowledge search per leg."""
+    from server.knowledge.app import knowledge_search
+    from server.memory.api.models_ask import MemoryAskInput
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.ask import handler
+    from server.memory.app.ask.context_blocks import knowledge_passages
+    from server.memory.domain import ask_routing
+
+    asked: list[int] = []
+
+    async def search(input: Any) -> Any:
+        asked.append(input.top_k)
+        return _knowledge_hits(_RANKED, input.top_k)
+
+    picked: list[list[str]] = []
+
+    def pick(hits: list[Any], max_docs: int) -> list[str]:
+        picked.append([h.source_uri for h in hits])
+        return []
+
+    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    monkeypatch.setattr(settings, "memory_ask_knowledge_top_k", 5)
+    monkeypatch.setattr(ask_routing, "is_corpus_task", lambda _q: True)
+    monkeypatch.setattr(ask_routing, "pick_documents", pick)
+    ask = MemoryAskInput(org="o", namespace="ns", query="refund policy?")
+    assert ask.agent == "*"
+
+    block, n = await knowledge_passages(
+        MemorySearchInput(org="o", namespace="ns", agent=ask.agent, query=ask.query),
+        ask.query,
+        enabled=True,
+    )
+    assert n == 5 and "support rule" in block
+    assert await handler._maybe_route_to_synthesize(ask) is None
+    assert picked == [[uri for uri, _text, _tags in _RANKED]]
+    assert asked == [5, 20]
+
+
+@pytest.mark.asyncio
+async def test_hits_at_the_search_cap_answer_without_a_second_search() -> None:
+    """At knowledge.search's cap a wider search would send the same query again."""
+    from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
+
+    other = ["source-kind:assistant_turn", "agent:sales-bot"]
+    hits = [{"id": 0, "tags": other}] + [{"id": i, "tags": []} for i in range(1, MAX_SEARCH_TOP_K)]
+
+    async def widen(_k: int) -> list[dict[str, Any]]:
+        raise AssertionError("no second query")
+
+    served = await agent_rules.served_hits(
+        hits, widen, lambda h: h["tags"], "support-bot", MAX_SEARCH_TOP_K
+    )
+    assert served == hits[1:]
 
 
 @pytest.mark.asyncio

@@ -22,12 +22,13 @@ _USER_CHARS = 200  # not a setting: a privacy bound on a user's words kept for r
 
 def serves_agent(tags: list[str], agent: str) -> bool:
     """Whether a knowledge document reaches `agent`'s reads: a bot's promoted rule,
-    tagged `agent:<bot>`, serves only that bot; every other document, a rule for
+    tagged `agent:<bot>`, serves only that bot and a namespace-wide read (`*`),
+    which spans every agent as memory reads do; every other document, a rule for
     every agent included, serves every agent."""
     if f"source-kind:{SOURCE_KIND}" not in tags:
         return True
     bots = [tag.removeprefix("agent:") for tag in tags if tag.startswith("agent:")]
-    return not bots or agent in bots
+    return not bots or agent == "*" or agent in bots
 
 
 def hits_to_ask(top_k: int) -> int:

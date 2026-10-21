@@ -38,10 +38,11 @@ async def served_hits[H](
     top_k: int,
 ) -> list[H]:
     """The first `top_k` knowledge hits that serve `agent`. When another bot's rule
-    took a place among `hits`, `widen(n)` searches again for `n` hits; if that search
-    fails, the hits served from the first pass answer."""
+    took a place among `hits` and more can be asked for, `widen(n)` searches again
+    for `n` hits; if that search fails, the hits served from the first pass answer."""
     served = [h for h in hits if assistant_rules.serves_agent(tags_of(h), agent)]
-    if len(served) < len(hits):
+    # A wider search past the cap would send the same query again.
+    if len(served) < len(hits) and assistant_rules.hits_to_ask(top_k) > len(hits):
         try:
             wider = await widen(assistant_rules.hits_to_ask(top_k))
             served = [h for h in wider if assistant_rules.serves_agent(tags_of(h), agent)]
