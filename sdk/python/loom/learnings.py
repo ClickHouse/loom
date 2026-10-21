@@ -5,8 +5,8 @@ promote / reject them.
 
 Surface:
   - list(status='pending') → candidate rows
-  - review(candidate_id, decision) → flips status; on 'promote' fans
-    out to memory.promote (server-side)
+  - review(candidate_id, decision) → flips status; on 'promote' writes
+    it to its destination (memory or knowledge)
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class LearningsClient:
         """List candidates in the namespace's review queue.
 
         `source_kind` filter: restrict to one seeder, e.g.
-        'memory_supporters' or 'conversation_seeder'.
+        'memory_supporters', 'conversation_seeder' or 'assistant_turn'.
         """
         payload: dict[str, Any] = {
             "org": self._agent.org,
@@ -63,7 +63,9 @@ class LearningsClient:
         """Promote or reject one candidate.
 
         On 'promote', `destination` chooses where it lands:
-          - 'memory'    → loom.shared, or a memory row for a bot's rule
+          - 'memory'    → loom.shared for a supporters candidate, a namespace
+                          memory row for a conversation-seeded fact, the
+                          agent's user_id '-' row for a bot's rule (assistant_turn)
           - 'knowledge' → a document, knowledge.upsert(source_uri='learning://<cid>')
           - 'both'      → both, memory first
           - None        → 'knowledge' for a bot's rule (assistant_turn), else 'memory'
