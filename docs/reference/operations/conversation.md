@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), or summary-reads-as-credential (the summary holds a credential, so it is never embedded; a… |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), summary-reads-as-credential (do not retry: the same window gets the same summary). |
 
 ## `conversation.create`
 

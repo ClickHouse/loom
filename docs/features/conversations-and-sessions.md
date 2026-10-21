@@ -190,9 +190,8 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   anyway (`reason: "summary-reads-as-credential"`), since it is never embedded. Unlike
   `embed-failed`, that refusal is not worth a retry: the window stays the same while its
   turns are live, so a retry pays for the same summarizer call and most likely gets the
-  same summary. A
-  window that holds only such turns, saved ones or both, answers
-  `reason: "nothing-to-compact"`.
+  same summary. A window that holds only saved turns or turns that read as a credential
+  answers `reason: "nothing-to-compact"`.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and
   embeddings; `confirm_thread_id` must equal `thread_id`. A turn another agent also
   logged in the thread keeps its embedding while that agent holds a live copy with the

@@ -535,8 +535,6 @@ class ConversationCompactOutput(BaseModel):
     # Completion tokens of the summary; 0 when no call was made.
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
-    # summarizer-empty, embed-failed (retry once the embedder answers), or
-    # summary-reads-as-credential (the summary holds a credential, so it is never embedded;
-    # a retry resends the same window and most likely gets the same summary, so do not
-    # retry).
+    # summarizer-empty, embed-failed (retry once the embedder answers),
+    # summary-reads-as-credential (do not retry: the same window gets the same summary).
     reason: str = ""
