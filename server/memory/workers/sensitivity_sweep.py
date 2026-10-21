@@ -14,8 +14,8 @@ backlog is the operator's `loom sensitivity-sweep --apply`, not this worker's.
 
 A pass starts at the agent the previous one stopped in (the worker's cursor in
 `loom.worker_status`), and the next starts again at the first key once a pass reads the
-last row. Inside a pass, a full page in one agent that gives nothing to label moves the
-scan past that agent, so selected rows the detector leaves unlabelled cannot fill every
+last row. Inside a pass, a full page of current unlabelled rows in one agent that gives
+nothing to label moves the scan past that agent, so selected rows the detector leaves unlabelled cannot fill every
 pass's pages ahead of another agent's rows. A pass whose candidates all fail in `apply`
 leaves the cursor past the agent it stopped in, so a row that fails every time is retried
 when the sweep comes back round to it rather than holding every pass there. The cursor is
@@ -30,7 +30,7 @@ import logging
 from typing import Any
 
 from server.core.repo_base import _CHClient
-from server.memory.store.sensitivity_sweep_sql import SORT_KEY
+from server.memory.store.sensitivity_sweep_sql import SORT_KEY, past_key
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
@@ -94,16 +94,12 @@ def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
     long to name would have the next pass read the same pages again."""
     if not key:
         return "[]"
-    parts = [str(key[col]) for col in CURSOR_KEY]
-    text = json.dumps(parts)
+    text = json.dumps([str(key[col]) for col in CURSOR_KEY])
     if not past and len(text) <= pass_context.MAX_CURSOR:
         return text
-    for kept in range(len(parts), 0, -1):
-        # `\x01` sorts after every key under that column's value and before the next value,
-        # as no org, namespace or agent name holds a control character (a NUL would not pass
-        # as a query parameter)
-        skipped = parts[: kept - 1] + [parts[kept - 1] + "\x01"] + [""] * (len(parts) - kept)
-        text = json.dumps(skipped)
+    for column in reversed(CURSOR_KEY):
+        skipped = past_key(key, column)
+        text = json.dumps([str(skipped[col]) for col in CURSOR_KEY])
         if len(text) <= pass_context.MAX_CURSOR:
             return text
     return "[]"

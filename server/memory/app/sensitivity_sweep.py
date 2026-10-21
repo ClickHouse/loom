@@ -49,7 +49,7 @@ from server.memory.domain.sensitivity import (
     pin_grammar,
     sensitivity_tags,
 )
-from server.memory.store.sensitivity_sweep_sql import SORT_KEY, keys_sql, scan_sql
+from server.memory.store.sensitivity_sweep_sql import SORT_KEY, keys_sql, past_key, scan_sql
 
 # The scan matches JSON text: the `json.dumps` text in `value`, and `toString(value_json)`
 # for an object value. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
@@ -225,11 +225,11 @@ async def scan(
     reading past it, and starting the next pass at `resume_after`, keeps a run of them from
     hiding a later row that is high.
 
-    With `skip_noisy_agents`, a full page inside one agent that gives no candidate moves
-    the scan past that agent, so one pass crosses up to `pages` agents whose selected rows
-    the detector leaves unlabelled. A row more than a page into such an agent is read once
-    the rows ahead of it leave the window, or by the operator's run, which reads every row
-    and leaves this off."""
+    With `skip_noisy_agents`, a full page of current unlabelled rows inside one agent that
+    gives no candidate moves the scan past that agent, so one pass crosses up to `pages`
+    agents whose selected rows the detector leaves unlabelled. A row more than a page into
+    such an agent is read once the rows ahead of it leave the window, or by the operator's
+    run, which reads every row and leaves this off."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
@@ -268,12 +268,17 @@ async def scan(
             report.resume_after = None
             break
         last = keys[-1]
+        # A page moves the scan past its agent only when the FINAL read gave back a current
+        # unlabelled row for each of its keys. A key whose only match is an older version
+        # (a row `apply` labelled, or one deleted, before the parts merge) gives none, and
+        # skipping on a page of those would leave the agent's later rows unread.
         if (
             skip_noisy_agents
+            and len(rows) >= len(keys)
             and len(report.candidates) == found
             and _agent(keys[0]) == _agent(last)
         ):
-            last = _past_agent(last)
+            last = past_key(last, "agent")
         report.resume_after = last
         if len(report.candidates) >= limit:
             break
@@ -286,17 +291,6 @@ async def scan(
 
 def _agent(key: dict[str, Any]) -> tuple[str, str, str]:
     return key["org"], key["namespace"], key["agent"]
-
-
-def _past_agent(key: dict[str, Any]) -> dict[str, Any]:
-    """A sort key after every key of `key`'s agent and before the next agent's.
-
-    `\\x01` sorts after every key under that agent name and before the next name, as no
-    org, namespace or agent name holds a control character (a NUL would not pass as a
-    query parameter)."""
-    org, namespace, agent = _agent(key)
-    skipped = dict.fromkeys(SORT_KEY, "")
-    return skipped | {"org": org, "namespace": namespace, "agent": agent + "\x01"}
 
 
 def scan_text(row: dict[str, Any]) -> str:

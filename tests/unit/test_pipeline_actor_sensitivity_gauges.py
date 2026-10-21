@@ -320,12 +320,27 @@ class _Row(NamedTuple):
     agent: str = "a"
 
 
-def _local_memory(rows: list[_Row]) -> _LocalCH:
-    """loom.memory on clickhouse-local holding `rows`."""
+def _local_memory(rows: list[_Row], *later: list[_Row]) -> _LocalCH:
+    """loom.memory on clickhouse-local holding `rows`, then each list in `later` inserted
+    as its own part, as a later write would be (no merge runs between them)."""
+    # the CLI's closing invariant reads memory_embeddings, whose vector column is quantized
+    setup = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
+    params: dict[str, Any] = {}
+    for part, part_rows in enumerate([rows, *later]):
+        if part_rows:
+            insert, part_params = _insert(part_rows, prefix=f"p{part}_")
+            setup.append(insert)
+            params |= part_params
+    return _LocalCH(setup, params)
+
+
+def _insert(rows: list[_Row], *, prefix: str) -> tuple[str, dict[str, Any]]:
+    """One INSERT of `rows` into loom.memory, its parameters named after `prefix`."""
     # Each query reruns the insert, so the timestamps are fixed here rather than `now()`.
     now = int(time.time())
     values, params = [], {}
-    for i, row in enumerate(rows):
+    for n, row in enumerate(rows):
+        i = f"{prefix}{n}"
         values.append(
             f"({{org{i}:String}}, {{ns{i}:String}}, {{agent{i}:String}}, {{user{i}:String}}, '-', "
             f"{{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, toDateTime({{at{i}:UInt32}}), "
@@ -350,9 +365,7 @@ def _local_memory(rows: list[_Row]) -> _LocalCH:
         "memory_key, value, created_at, sensitivity, version, tombstoned_at) "
         f"VALUES {', '.join(values)}"
     )
-    # the CLI's closing invariant reads memory_embeddings, whose vector column is quantized
-    tables = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
-    return _LocalCH([*tables, insert], params)
+    return insert, params
 
 
 async def _run_pass_recording(
@@ -478,26 +491,39 @@ async def test_each_pass_starts_where_the_last_one_stopped(monkeypatch) -> None:
 
 
 async def _passes(
-    monkeypatch, rows: list[_Row], *, count: int, failing: tuple[int, ...] = ()
+    monkeypatch,
+    rows: list[_Row],
+    *,
+    count: int,
+    pages: int = 1,
+    failing: tuple[int, ...] = (),
 ) -> tuple[list[list[str]], list[Any]]:
-    """`count` scheduled passes of one page of two over `rows`, each starting at the cursor
-    the one before left, with the rows a pass labels stored as `high` before the next. The
-    passes numbered in `failing` fail in `apply`. Returns each pass's labelled keys and its
-    cursor."""
+    """`count` scheduled passes of `pages` pages of two over `rows`, each starting at the
+    cursor the one before left. A row a pass labels gets a new `high` version in a part of
+    its own before the next pass, as `apply` writes it, and its old unlabelled version
+    stays: no merge runs. The passes numbered in `failing` fail in `apply`. Returns each
+    pass's labelled keys and its cursor."""
     from server.workers import pass_context
 
     cursor = ""
     labelled, cursors = [], []
+    written: list[list[_Row]] = []
     for i in range(count):
         ctx = pass_context.begin("sensitivity_sweep", resume_cursor=cursor)
         try:
             applied, _out = await _run_pass_recording(
-                monkeypatch, _local_memory(rows), rows_per_pass=2, pages=1, failing=i in failing
+                monkeypatch,
+                _local_memory(rows, *written),
+                rows_per_pass=2,
+                pages=pages,
+                failing=i in failing,
             )
         finally:
             pass_context.clear()
         keys = [c.memory_key for c in applied]
-        rows = [r._replace(sensitivity="high") if r.key in keys else r for r in rows]
+        written.append(
+            [r._replace(sensitivity="high", version=r.version + 1) for r in rows if r.key in keys]
+        )
         labelled.append(keys)
         cursor = ctx.cursor
         cursors.append(json.loads(cursor))
@@ -509,16 +535,32 @@ async def _passes(
 async def test_a_pass_that_labels_rows_reads_its_agent_again_and_one_that_fails_moves_on(
     monkeypatch,
 ) -> None:
-    # Six PIN rows in agent `a`, three passes' worth, and the second pass fails in `apply`.
+    # Six PIN rows in agent `a`, three pages' worth, and the second pass fails in `apply`.
     # A pass that labelled rows leaves the cursor at `a`, so the next reads `a` again. The
     # failed pass leaves it past `a`; the next reaches the last row, and the sweep comes
     # back round to `a` and labels every row.
     pin = "badge PIN is 4471"
     rows = [_Row("o", "n", "-", _uuid(i), f"pin_{i}", pin, 600 - i) for i in range(6)]
-    labelled, cursors = await _passes(monkeypatch, rows, count=5, failing=(1,))
+    labelled, cursors = await _passes(monkeypatch, rows, count=5, pages=3, failing=(1,))
     assert labelled == [["pin_0", "pin_1"], [], [], ["pin_2", "pin_3"], ["pin_4", "pin_5"]]
     a, past_a = ["o", "n", "a"], ["o", "n", "a\x01"]
     assert cursors == [a, past_a, [], a, a]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_page_of_rows_labelled_before_the_parts_merge_never_skips_their_agent(
+    monkeypatch,
+) -> None:
+    # Five PIN rows in agent `a`, more than a page of two. The first pass labels the first
+    # page, and their old unlabelled versions stay until a merge, so the next pass's first
+    # page holds their keys and its FINAL read gives back no row. That page does not move
+    # the scan past `a`: the pass reads on and labels the rows after it.
+    pin = "badge PIN is 4471"
+    rows = [_Row("o", "n", "-", _uuid(i), f"pin_{i}", pin, 600 - i) for i in range(5)]
+    labelled, cursors = await _passes(monkeypatch, rows, count=3, pages=3)
+    assert labelled == [["pin_0", "pin_1"], ["pin_2", "pin_3"], ["pin_4"]]
+    assert cursors == [["o", "n", "a"], ["o", "n", "a"], []]
 
 
 @pytest.mark.asyncio

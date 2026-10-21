@@ -4,8 +4,23 @@ version of each of them (the paging loop is `memory.app.sensitivity_sweep`).
 
 from __future__ import annotations
 
+from typing import Any
+
 # loom.memory's sort key: a scan pages on it so each page starts where the last one ended.
 SORT_KEY = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+
+
+def past_key(key: dict[str, Any], column: str) -> dict[str, Any]:
+    """A sort key after every key that shares `key`'s values up to `column`, and before the
+    next value of `column`: `column` ends in `\x01` and the columns after it are empty.
+
+    `\x01` sorts after every key under that value and before the next value, as no org,
+    namespace or agent name holds a control character (a NUL would not pass as a query
+    parameter)."""
+    kept = SORT_KEY.index(column)
+    out = {col: key[col] for col in SORT_KEY[:kept]} | {column: key[column] + "\x01"}
+    return out | dict.fromkeys(SORT_KEY[kept + 1 :], "")
+
 
 # The texts the coarse filter matches: the bytes the writer stored in `value`, where a
 # dotted key keeps its words (`{"security.code": ...}`), and an object value as ClickHouse
@@ -84,4 +99,4 @@ def scan_sql(
     """
 
 
-__all__ = ["SORT_KEY", "keys_sql", "scan_sql"]
+__all__ = ["SORT_KEY", "keys_sql", "past_key", "scan_sql"]
