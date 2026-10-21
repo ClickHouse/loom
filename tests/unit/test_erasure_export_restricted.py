@@ -428,17 +428,27 @@ def test_the_turns_stop_at_the_byte_budget_and_say_so(max_bytes, expected, over_
 @pytest.mark.parametrize(
     ("scope_type", "scope_value", "include_tombstoned", "shown", "expected"),
     [
-        ("user_id", "u1", True, _HIDING, [("t1", "Renewal"), ("t4", "gone")]),
-        ("user_id", "u1", False, _HIDING, [("t1", "Renewal")]),
+        ("user_id", "u1", True, _HIDING, [(STD, "t1", "Renewal"), (STD, "t4", "gone")]),
+        ("user_id", "u1", False, _HIDING, [(STD, "t1", "Renewal")]),
         (
             "namespace",
             STD,
             False,
             _HIDING,
-            [("t1", "Renewal"), ("t2", "theirs"), ("t3", "moved")],
+            [(STD, "t1", "Renewal"), (STD, "t2", "theirs"), (STD, "t3", "moved")],
         ),
         # Shown everything (a platform admin): the restricted and collection threads too.
-        ("user_id", "u1", False, Shown(), [("col-hidden", "t6"), (STD, "t1"), (PRIV, "t5")]),
+        (
+            "user_id",
+            "u1",
+            False,
+            Shown(),
+            [
+                ("col-hidden", "t6", "collection"),
+                (STD, "t1", "Renewal"),
+                (PRIV, "t5", "restricted"),
+            ],
+        ),
     ],
 )
 def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
@@ -483,10 +493,7 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
             ch=_Local(),
         )
     )
-    if shown == _HIDING:
-        assert [(r["thread_id"], r["title"]) for r in got] == expected
-    else:
-        assert [(r["namespace"], r["thread_id"]) for r in got] == expected
+    assert [(r["namespace"], r["thread_id"], r["title"]) for r in got] == expected
 
 
 def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() -> None:
