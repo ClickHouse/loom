@@ -10,8 +10,11 @@ from typing import Any
 
 import pytest
 
-from server.memory.app import entity_projections as proj
+from server.memory.app import triple_follow, triple_projections
 from server.memory.app.projections import entity_triple_row
+from server.memory.domain import triples_follow_rows as tfr
+
+A, B = "00000000-0000-0000-0000-00000000000a", "00000000-0000-0000-0000-00000000000b"
 
 
 class _CH:
@@ -19,21 +22,36 @@ class _CH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+        if "pairs" in (params or {}):
+            return []  # the relation's stored values: none beyond the open ones here
+        if "FROM loom.entity_triple_rows" in sql:
+            return []  # rows written before rows were linked: matched by their text
         if "FROM loom.memory FINAL" in sql:
             return [
                 {
-                    "id": "a",
+                    "id": A,
                     "memory_key": "old",
                     "value": "The chairperson of Fatah is Mahmoud Abbas.",
                     "valid_at": None,
+                    "status": "superseded",
+                    "superseded_by": B,
+                    "tombstoned_at": None,
                 },
                 {
-                    "id": "b",
+                    "id": B,
                     "memory_key": "new",
                     "value": "The chairperson of Fatah is Moshe Kahlon.",
                     "valid_at": None,
+                    "status": "active",
+                    "superseded_by": "",
+                    "tombstoned_at": None,
+                    "holds_facts": 1,
                 },
             ]
+        if "triples" in (params or {}):
+            return []  # no successor is open yet
+        if "names" in (params or {}):
+            return []  # the closed fact's stored rows, for its edge: none here
         assert "provenance" in sql, "the open-triple read must fetch provenance"
         return [
             {
@@ -59,10 +77,10 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
     async def _no_close(*a: Any, **k: Any) -> None:
         return None
 
-    monkeypatch.setattr(proj, "close_triples", _no_close)
+    monkeypatch.setattr(triple_projections, "close_triples", _no_close)
     ch = _CH()
-    closed, inserted = await proj.follow_row_supersessions(
-        SimpleNamespace(org="o", namespace="n", agent="a"), [("a", "b")], ch=ch
+    closed, inserted, _ = await triple_follow.follow_row_supersessions(
+        SimpleNamespace(org="o", namespace="n", agent="a"), [(A, B)], ch=ch
     )
     assert (closed, inserted) == (1, 1)
     [row] = next(rows for table, rows in ch.inserts if table == "loom.entity_triples")
@@ -76,6 +94,41 @@ async def test_the_successor_triple_carries_the_predecessor_provenance(
         confidence=0.9,
         adapter_name="row-supersession",
         last_seen=row["last_seen"],
+        seen_at=row["seen_at"],
     )
     assert isinstance(row["last_seen"], datetime)
+    assert row["seen_at"].replace(microsecond=0) == row["last_seen"]
     assert row == canonical
+
+
+@pytest.mark.asyncio
+async def test_a_successor_is_repaired_when_its_old_value_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Another live row still says Abbas, so the plan closes nothing; Kahlon is still
+    # a newer value and goes through the interval repair, as a write of it would.
+    kahlon = tfr.Successor("fatah", "chairperson_of", "moshe kahlon", "new", None, 0.9, "")
+    plan = tfr.merge_plans(
+        [tfr.FollowPlan(closes=[("fatah", "chairperson_of", "mahmoud abba")], inserts=[kahlon])],
+        kept=frozenset({("fatah", "chairperson_of", "mahmoud abba")}),
+    )
+    assert plan.closes == []
+    stored = {"subject": "fatah", "relation": "chairperson_of", "object": "moshe kahlon"}
+
+    class _Stored(_CH):
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[dict]:
+            if "adapter_name" in sql:
+                return [{**stored, "valid_from": None, "seen_at": datetime(2026, 1, 1)}]
+            return []
+
+    repaired: list[Any] = []
+
+    async def _repair(input: Any, triples: list[dict[str, Any]], **k: Any) -> list[Any]:
+        repaired.extend(triples)
+        return []
+
+    monkeypatch.setattr(triple_projections, "repair_intervals", _repair)
+    await triple_projections.write_follow_plan(
+        SimpleNamespace(org="o", namespace="n"), plan, ch=_Stored()
+    )
+    assert repaired == [{**stored, "valid_from": None, "seen_at": datetime(2026, 1, 1)}]

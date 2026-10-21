@@ -9,7 +9,8 @@ import asyncio
 import json
 import logging
 import math
-from dataclasses import dataclass, field
+from collections.abc import Awaitable
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -34,10 +35,12 @@ from server.memory.api.models_crud import (
     MemorySetOutput,
 )
 from server.memory.app import after_write, webhooks
-from server.memory.app import conflict_deferred as _cd
+from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.drops import record_drop
-from server.memory.app.entity_projections import declared_entities
+from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
 from server.memory.app.high_fence import fence_high
+from server.memory.app.set_entities import declared_entities
+from server.memory.app.triple_projections import project_stated_relations
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
@@ -95,7 +98,7 @@ def _peer_in_read_scope(peer: Any) -> bool:
     return row_in_read_scope(scope, getattr(peer, "user_id", ""), getattr(peer, "session_id", ""))
 
 
-def _peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
+def peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
     """`memory_id` when the verdict peer it names is inside the read scope,
     else "". An id that names no peer is shown only to an unbounded read."""
     peer = next(
@@ -112,7 +115,7 @@ def _peer_id_in_read_scope(conflict_result: Any, memory_id: str) -> str:
     return memory_id if memory_id and _peer_in_read_scope(peer) else ""
 
 
-def _set_peers(conflict_result: Any) -> list[Any]:
+def set_peers(conflict_result: Any) -> list[Any]:
     """The rows a verdict was reached against, as the wire shape memory.set
     returns: closest first, at most SET_PEERS_MAX, the value
     clipped to an excerpt, only those inside the read scope. `refines` lists
@@ -146,12 +149,26 @@ def _set_peers(conflict_result: Any) -> list[Any]:
     return out
 
 
-def _set_next(verdict: str, peers: list[Any], *, repeated_merge: bool = False) -> str:
-    return set_next_hint(verdict, peers, repeated_merge=repeated_merge)
+def set_next(
+    verdict: str,
+    peers: list[Any],
+    *,
+    repeated_merge: bool = False,
+    relations_unlinked: bool = False,
+) -> str:
+    return set_next_hint(
+        verdict, peers, repeated_merge=repeated_merge, relations_unlinked=relations_unlinked
+    )
 
 
 async def _project_set_entities_fail_open(
-    input: MemorySetInput, *, wait_visible: bool = False, ents: list[str] | None = None
+    input: MemorySetInput,
+    *,
+    memory_id: str,
+    wait_visible: bool = False,
+    ents: list[str] | None = None,
+    content_sha256: str,
+    high: bool = False,
 ) -> None:
     """Deterministic LLM-free entity-graph projection for a committed
     `memory.set`. A point write carries no `entities` column, so without
@@ -159,17 +176,21 @@ async def _project_set_entities_fail_open(
     entity_extractor worker re-extracts it. Fail-open: any error logs a
     warning and the write still succeeds. `wait_visible` (the projection
     beside the response) returns only once its edges are readable. `ents`: the
-    entities the caller already extracted.
+    entities the caller already extracted. `content_sha256`: the value projected, so
+    a projection landing after a revision of the row leaves no edge.
     """
     try:
-        from server.memory.app.extract.handler import project_memory_set_entities
+        from server.memory.app.edge_links import project_memory_set_entities
 
         await project_memory_set_entities(
             input,
             memory_key=input.memory_key,
             value=input.value,
             wait_visible=wait_visible,
+            memory_id=memory_id,
             ents=ents,
+            content_sha256=content_sha256,
+            high=high,
         )
     except Exception as e:  # noqa: BLE001 — a projection; the write stands
         log.warning("memory.set entity projection failed (non-fatal): %s", e)
@@ -218,6 +239,8 @@ class _SetWrite:
     embedding: list[float] = field(default_factory=list)
     key_embedding: list[float] = field(default_factory=list)
     key_text: str = ""
+    # The (loser, winner) pairs this write retired, followed once its relations are in.
+    follows: list[Follow] = field(default_factory=list)
 
 
 async def _lift_above_deletes(w: _SetWrite, ch: Any) -> None:
@@ -330,9 +353,35 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
             await fence_high(
                 [(memory_repo.embedding_key(memory_row), int(memory_row["version"]))], ch=ch
             )
-    # A high value is never mined into graph nodes; the caller's own entities still project.
-    ents = declared_entities(input) if memory_row.get("sensitivity") == "high" else None
-    await _project_set_entities_fail_open(input, ents=ents)
+    # A high row's value is never mined into the graph; the entities its writer declared
+    # still project. Fenced on its value as `_set_post_insert` projects it: a revision
+    # awaits it, a first write leaves it running beside the response.
+    high = memory_row.get("sensitivity") == "high"
+    declared = declared_entities(input.entities) if high else None
+    if not high or declared:
+        await asyncio.gather(
+            *_entity_projection_tail(
+                input,
+                memory_id=memory_id,
+                content_sha256=new_sha,
+                revised=had_existing_row,
+                ents=declared,
+                high=high,
+            )
+        )
+    if high and had_existing_row and owes_undeclared_drop(w.existing, declared or []):
+        # Made high over a value it held: what its text gave the graph goes.
+        await drop_undeclared_edges_beside(
+            input, {memory_id: int(memory_row["version"])}, op="memory.set"
+        )
+    await project_stated_relations(
+        memory_row,
+        input.value,
+        input.relations,
+        revised=had_existing_row,
+        op="memory.set",
+        ch=ch,
+    )
     # Non-searchable types skip the conflict check entirely, so there is no
     # verdict to map: the insert always happened.
     _count_write(input.namespace, "updated" if had_existing_row else "created")
@@ -414,7 +463,6 @@ async def _set_conflict_verdict(
     #   merge    → canonical-form match; return peer's id, no INSERT
     #   conflict → close-but-different peers; insert + flag both conflicted
     #   rejected → close-but-different pinned peer; raise 409
-    #   pending  → the judge is deferred: insert active, settle after
     from server.memory.app.conflicts import check_on_commit
 
     with traced("conflicts.check_on_commit", memory_type=input.memory_type):
@@ -429,12 +477,11 @@ async def _set_conflict_verdict(
             new_embedding=embedding,
             new_run_id=input.run_id,
             new_valid_at=getattr(input, "valid_at", None),
-            defer_judge=_cd.wanted(input),
             **_cfg.check_kwargs(),
         )
     # The rows the verdict was reached against ride the response so the caller can act on
     # the verdict without a second read.
-    peers_out = _set_peers(conflict_result)
+    peers_out = set_peers(conflict_result)
     if conflict_result.verdict == "rejected" and input.dry_run:
         # A dry run answers the question it was asked — "what would happen?"
         # — as a verdict, not as the 409 the real write would raise. Nothing
@@ -454,7 +501,7 @@ async def _set_conflict_verdict(
                 degraded=_degradations.current(),
                 conflict_verdict="rejected",
                 peers=peers_out,
-                next=_set_next("rejected", peers_out),
+                next=set_next("rejected", peers_out),
                 noop=True,
                 dry_run=True,
             ),
@@ -462,7 +509,7 @@ async def _set_conflict_verdict(
     if conflict_result.verdict == "rejected":
         # Counted at the handler boundary via _WRITE_OUTCOME_BY_ERROR_CODE.
         # A blocker outside the read scope still blocks but is not named.
-        blocker = _peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
+        blocker = peer_id_in_read_scope(conflict_result, conflict_result.pinned_blocker_id or "")
         raise HTTPException(
             status_code=409,
             detail={
@@ -476,6 +523,11 @@ async def _set_conflict_verdict(
             },
         )
     return _cfg, conflict_result, peers_out, None
+
+
+def _writers_own(row: Any, input: MemorySetInput) -> bool:
+    """The same agent and user: another session of theirs is still theirs."""
+    return (row.agent, row.user_id) == (input.agent, input.user_id)
 
 
 async def _set_merge(
@@ -546,6 +598,15 @@ async def _set_merge(
                 similarity=1.0,
             )
         ]
+    # The facts named are the merged row's only when it is the writer's own: another's
+    # row would hold them open for as long as it lives.
+    own_row = existing if existing is not None and _writers_own(existing, input) else None
+    hint = set_next(
+        "merge",
+        merge_peers,
+        repeated_merge=repeated_merge,
+        relations_unlinked=bool(input.relations) and own_row is None,
+    )
     if input.dry_run:
         # The verdict without the side effects: no evidence event, no
         # drop counter, no write tick.
@@ -561,7 +622,7 @@ async def _set_merge(
             degraded=_degradations.current(),
             conflict_verdict="merge",
             peers=merge_peers,
-            next=_set_next("merge", merge_peers, repeated_merge=repeated_merge),
+            next=hint,
             noop=True,
             dry_run=True,
         )
@@ -569,6 +630,16 @@ async def _set_merge(
     # namespace policy is "auto_reinforce". Fire-and-forget.
     if merged_into_id:  # never a row outside the read scope
         await _cf.auto_reinforce_peer(input, merged_into_id, ch=ch, cfg=_cfg)
+    if input.relations and own_row is not None:
+        # The row keeps its value, so it dropped no fact: nothing to reconcile.
+        await project_stated_relations(
+            own_row.model_dump(),
+            own_row.value,
+            input.relations,
+            revised=False,
+            op="memory.set",
+            ch=ch,
+        )
     # Canonical-form match: the caller restated a memory Loom already had.
     # No row was inserted, so this is the outcome that separates "still
     # ingesting" from "only ever hearing the same things again".
@@ -585,7 +656,7 @@ async def _set_merge(
         degraded=_degradations.current(),
         conflict_verdict="merge",
         peers=merge_peers,
-        next=_set_next("merge", merge_peers, repeated_merge=repeated_merge),
+        next=hint,
         # The first-class noop: the store already held the fact; the row above was reinforced
         # and nothing was written.
         noop=True,
@@ -606,26 +677,27 @@ def _set_dry_run_answer(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
+        duplicate_of=peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),
         conflict_verdict=conflict_result.verdict,
         peers=peers_out,
-        next=_set_next(conflict_result.verdict, peers_out),
+        next=set_next(conflict_result.verdict, peers_out),
         noop=True,
         dry_run=True,
     )
 
 
-async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> None:
+async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> Any:
     """Phase 12 of memory.set: the version row and its embedding row, then the peer links.
 
     Builds the full-column embedding row, inserts both rows concurrently,
-    schedules the deferred settle, then flags `conflict` peers or applies a
-    `refines` supersession — after the insert, so the new id exists.
+    then flags `conflict` peers or applies a `refines` supersession — after the
+    insert, so the new id exists. Returns the verdict that landed: `clear` when no
+    peer was left live to flag.
     """
-    from server.memory.app.conflicts import mark_peers_conflicted
+    from server.memory.app.conflicts import mark_peers_conflicted, same_key_mark
     from server.observability.otel import traced
 
     input, memory_id, memory_row, expires_at = w.input, w.memory_id, w.memory_row, w.expires_at
@@ -635,6 +707,15 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     embedder, excerpt, embedding = w.embedder, w.excerpt, w.embedding
     key_embedding, key_text = w.key_embedding, w.key_text
     embedding_dim_for_insert = embedder.dim
+    # Owed a judgement when the check asks the conflict resolver to look, or another
+    # session holds this key.
+    mark = await same_key_mark(
+        conflict_result,
+        org=input.org,
+        namespace=input.namespace,
+        memory_row=memory_row,
+        policy=_cfg.policy,
+    )
 
     import server.memory.store as memory_repo
 
@@ -675,8 +756,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # defaulted to `active` while loom.memory holds a `duplicate` verdict, the search
         # pool would keep serving the duplicate.
         status=str(memory_row.get("status") or "active"),
-        # The pending mark while a deferred judge is owed: every replica reads it.
-        conflict_checked_at=_cd.checked_at_for(conflict_result),
+        conflict_checked_at=mark,
         content_sha256=str(memory_row.get("content_sha256") or ""),
         # The memory row's version, not one drawn now: a newer write's retire or fence
         # outranks this vector even when its embedding arrives late.
@@ -719,27 +799,22 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         await _announce_set(w)  # the row is in, whatever failed after it
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
-    _cd.schedule_settle(
-        input,
-        conflict_result,
-        memory_id=memory_id,
-        version=int(memory_row["version"]),
-        created_at=embedding_row["created_at"],
-        content_sha256=embedding_row["content_sha256"],
-        cfg=_cfg,
-    )
 
     # Post-insert (so the new row's UUID exists for the cross-link): flag
     # both the new row and every close-but-different peer as conflicted.
     if conflict_result.verdict == "conflict":
         with traced("conflicts.mark_peers", peers=len(conflict_result.peers)):
-            await mark_peers_conflicted(
+            landed = await mark_peers_conflicted(
                 org=input.org,
                 new_memory_id=memory_id,
                 peer_ids=[p.memory_id for p in conflict_result.peers],
             )
+        if landed != "conflict":
+            # Every peer, or the new row itself, retired before the mark:
+            # nothing was flagged.
+            conflict_result = replace(conflict_result, verdict="clear", peers=[])
     elif conflict_result.verdict == "refines" and conflict_result.refined_peers:
-        # A judged elaboration supersedes the rows it refines and links to them; nothing is
+        # A templated substitution supersedes the rows it replaces; nothing is
         # flagged, nothing is deleted.
         from server.memory.app.conflicts import apply_refines
 
@@ -751,8 +826,9 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
                 new_memory_key=input.memory_key,
                 refined_peers=conflict_result.refined_peers,
                 ch=ch,
-                relation=conflict_result.refine_relation,
+                follows=w.follows,
             )
+    return conflict_result
 
 
 async def _set_after_write(
@@ -783,6 +859,25 @@ async def _set_after_write(
         source_class=source_class,
         verdict="duplicate" if duplicate_of_id else conflict_result.verdict,
         actor=writer_actor or "-",
+        revised=had_existing_row,
+        follows=w.follows,
+    )
+    await project_stated_relations(
+        w.memory_row,
+        input.value,
+        input.relations,
+        revised=had_existing_row,
+        op="memory.set",
+        ch=ch,
+    )
+    # After the write's own relations, so the follow sees the successor they state.
+    follow_beside_response(
+        org=input.org,
+        namespace=input.namespace,
+        pairs=w.follows,
+        op="memory.set",
+        agent=input.agent,
+        user_id=input.user_id,
     )
 
     # A long value is also written as verbatim chunks under the key, after the row is in and
@@ -801,13 +896,13 @@ async def _set_after_write(
         pinned=input.pinned,
         memory_id=memory_id,
         content_sha256=new_sha,
-        duplicate_of=_peer_id_in_read_scope(conflict_result, duplicate_of_id),
+        duplicate_of=peer_id_in_read_scope(conflict_result, duplicate_of_id),
         namespace=input.namespace,
         memory_key=input.memory_key,
         degraded=_degradations.current(),
         conflict_verdict=conflict_result.verdict,
         peers=peers_out,
-        next=_set_next(conflict_result.verdict, peers_out),
+        next=set_next(conflict_result.verdict, peers_out),
         chunks_written=chunks_written,
         status=str(w.memory_row.get("status") or "active"),
     )
@@ -830,15 +925,20 @@ async def _set_post_insert(
     source_class: str,
     verdict: str,
     actor: str,
+    revised: bool = False,
+    follows: list[Follow] | None = None,
 ) -> None:
     """What a committed point write does after its row is in.
 
-    Same-key supersession changes which rows a read serves, and the
-    chained audit row is the write's receipt: both stay awaited, in ONE round trip, not two.
+    Same-key supersession changes which rows a read serves (its record awaited, its
+    graph follow left in `follows` for after the write's relations), and the chained
+    audit row is the write's receipt: both stay awaited, in ONE round trip, not two.
     The entity-graph projection is a fail-open side effect nothing on this path reads (the
     entity_extractor worker re-projects a row it missed): it is written beside the response
     instead of in it, because its canonical read + insert + edge inserts would be the serial
-    tail of every set (5–6 s when inserts are slow)."""
+    tail of every set (5–6 s when inserts are slow). A revision (`revised`) awaits it with
+    the tail: the close of what it dropped runs next, and keeps an edge open only for a
+    value whose edge links are in."""
     from server.memory.app.key_supersession import supersede_same_key_rows
     from server.observability import audit as _audit_mod
     from server.observability.otel import traced
@@ -846,7 +946,13 @@ async def _set_post_insert(
     async def _supersession() -> None:
         batch = _same_key_batch(input, memory_id)
         await supersede_same_key_rows(
-            org=input.org, namespace=input.namespace, new_rows=batch, ch=ch, policy=cfg.policy
+            org=input.org,
+            namespace=input.namespace,
+            new_rows=batch,
+            ch=ch,
+            follows=[] if follows is None else follows,
+            policy=cfg.policy,
+            agent=input.agent,
         )
 
     # Every point write leaves a hash in the chained audit log: key, id, content hash,
@@ -870,26 +976,59 @@ async def _set_post_insert(
         except Exception as e:  # noqa: BLE001 — the audit row never fails the write
             log.warning("memory.set: audit emit failed (non-fatal): %s", e)
 
-    tail = [_supersession(), _audit()]
-    from server.memory.app.entity_projections import set_entities_for_projection
-
-    # A write with fewer than two entities projects no edge: no task, no mark.
-    ents = set_entities_for_projection(input, input.value)
-    if len(ents) >= 2:
-        from server.memory.app import graph_write_marks
-
-        # Nothing waits on this task but a read of the same namespace (`after_write.settle`),
-        # so its edges wait for their flush: once it is done, they are readable.
-        task = after_write.schedule(
-            _project_set_entities_fail_open(input, wait_visible=True, ents=ents),
-            name="loom-set-entities",
-            scope=(input.org, input.namespace),
-        )
-        # In flight for every process before this write answers: a walk on another
-        # process waits for these edges.
-        tail.append(graph_write_marks.track(input.org, input.namespace, task))
+    tail = [
+        _supersession(),
+        _audit(),
+        *_entity_projection_tail(
+            input, memory_id=memory_id, content_sha256=content_sha256, revised=revised
+        ),
+    ]
     with traced("memory.set.post_insert", concurrent=len(tail)):
         await asyncio.gather(*tail)
+
+
+def _entity_projection_tail(
+    input: MemorySetInput,
+    *,
+    memory_id: str,
+    content_sha256: str,
+    revised: bool,
+    ents: list[str] | None = None,
+    high: bool = False,
+) -> list[Awaitable[Any]]:
+    """The entity-graph projection of a committed point write, as what its tail awaits.
+
+    Every one is fenced on the value it projects (`content_sha256`): it writes only
+    while the row still holds that value, and ends its edges if a revision overtook
+    them. A write with fewer than two entities projects no edge: no task, no mark."""
+    from server.memory.app import graph_write_marks
+    from server.memory.app.set_entities import set_entities_for_projection
+
+    if ents is None:
+        ents = set_entities_for_projection(input, input.value)
+    if len(ents) < 2:
+        return []
+    projection = _project_set_entities_fail_open(
+        input,
+        memory_id=memory_id,
+        wait_visible=True,
+        ents=ents,
+        content_sha256=content_sha256,
+        high=high,
+    )
+    if revised:
+        # Its edges flushed before the close runs and before the write answers, so a walk
+        # on any replica reads them and a failed flush is reported, not dropped.
+        return [projection]
+    # A first write does not wait. Nothing waits on this task but a read of the same
+    # namespace (`after_write.settle`), so its edges wait for their flush: once it is
+    # done, they are readable and the fence can see them.
+    task = after_write.schedule(
+        projection, name="loom-set-entities", scope=(input.org, input.namespace)
+    )
+    # In flight for every process before this write answers: a walk on another
+    # process waits for these edges.
+    return [graph_write_marks.track(input.org, input.namespace, task)]
 
 
 def _merged_into_key(existing: Any, input: Any) -> str:

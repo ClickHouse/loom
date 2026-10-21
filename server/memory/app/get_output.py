@@ -45,6 +45,8 @@ def row_output(
         pinned=row.pinned,
         sensitivity=row.sensitivity,
         agent=row.agent,
+        user_id=row.user_id,
+        session_id=row.session_id,
         status=row.status,
         superseded_by=superseded_by,
         duplicate_of=duplicate_of,

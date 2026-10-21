@@ -19,10 +19,16 @@ _MUTATION_RE = re.compile(
 # the inventory honest without trying to parse Python string concatenation.
 _EXPECTED_MUTATIONS = Counter(
     {
-        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 1,
+        # The contradiction repair's edge close, end_edges, which ends a dropped fact's
+        # edge with its triples (only when no live row keeps the pair), and the undo of
+        # a close's own ends (reopen_closed_by).
+        ("server/memory/app/projections.py", "entity_edges", "UPDATE"): 3,
         # One folded UPDATE per table per write (close_triples serves
-        # both the deterministic repair and the LLM judgement).
-        ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 1,
+        # both the deterministic repair and the LLM judgement), and
+        # reopen_triples, which undoes a follow's close for a triple a row
+        # written meanwhile holds (rare: only in that race), and end_triples_now,
+        # which ends now a dropped fact that ends later (only when one does).
+        ("server/memory/app/projections.py", "entity_triples", "UPDATE"): 3,
         ("server/memory/store/blacklist.py", "blacklist", "UPDATE"): 1,
         ("server/memory/store/conflicts.py", "conflict_allowlist", "UPDATE"): 1,
         ("server/knowledge/store/conversations.py", "conversation_threads", "UPDATE"): 1,
@@ -32,9 +38,12 @@ _EXPECTED_MUTATIONS = Counter(
         # ALTER UPDATE.
         # Task inbox plane: the lease table is KeeperMap, so
         # these address a Keeper znode (a compare-and-swap under strict mode
-        # and the terminal-state key drop), not a MergeTree part.
-        ("server/tasks/store/repo.py", "task_leases", "UPDATE"): 2,
-        ("server/tasks/store/repo.py", "task_leases", "DELETE"): 1,
+        # and the terminal-state key drop), not a MergeTree part; the third UPDATE moves
+        # an idle row at an older fence to a reopen's fence, and the fourth gives a
+        # row back idle (a claim that backs out, the lease reconcile); the second DELETE
+        # is the reconcile's, guarded on the holder and fence it read.
+        ("server/tasks/store/repo.py", "task_leases", "UPDATE"): 4,
+        ("server/tasks/store/repo.py", "task_leases", "DELETE"): 2,
         # run.complete drops a run id claim, also a KeeperMap key (the erasure saga's
         # drop goes through erasure.store.mutations.run_keeper_delete).
         ("server/tasks/store/runs.py", "agent_run_claims", "DELETE"): 1,
@@ -67,7 +76,9 @@ _EXPECTED_MUTATIONS = Counter(
         # memory.apply label / demote: tags or confidence
         # mirrored onto the key's embedding rows; the memory-table side is a
         # version row. One helper, one UPDATE statement, ALTER fallback inline.
-        ("server/memory/app/projection_failures.py", "memory_projection_failures", "UPDATE"): 1,
+        # The repair's operator queue, narrow by failure id: one UPDATE resolves, one
+        # abandons a failure no retry can repair, one carries a failed replay's closes.
+        ("server/memory/app/projection_failures.py", "memory_projection_failures", "UPDATE"): 3,
     }
 )
 

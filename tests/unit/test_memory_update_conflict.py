@@ -118,8 +118,9 @@ def wired(monkeypatch: pytest.MonkeyPatch):
             calls.check.append(kw)
             return verdict
 
-        async def _mark(**kw: Any) -> None:
+        async def _mark(**kw: Any) -> str:
             calls.marked.append(kw)
+            return "conflict"
 
         async def _refines(**kw: Any) -> None:
             calls.refined.append(kw)
@@ -131,6 +132,11 @@ def wired(monkeypatch: pytest.MonkeyPatch):
         async def _emb_rows(rows: list[dict[str, Any]], **_: Any) -> None:
             calls.embedding_rows.extend(rows)
 
+        async def _no_edges(*_: Any, **__: Any) -> None:
+            return None
+
+        # The new value's edges are the integration tests' to check.
+        monkeypatch.setattr("server.memory.app.update.project_revised_edges", _no_edges)
         monkeypatch.setattr(cf, "check_on_commit", _check)
         monkeypatch.setattr(cf, "mark_peers_conflicted", _mark)
         monkeypatch.setattr(cf, "apply_refines", _refines)
@@ -174,6 +180,23 @@ async def test_clear_verdict_writes_an_active_version_and_resets_the_old_mark(wi
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("landed", ["clear", "moved"])
+async def test_a_conflict_the_mark_did_not_flag_answers_clear(
+    wired, monkeypatch, landed: str
+) -> None:
+    # Nothing was flagged, so there is no conflict to report.
+    wired(ConflictResult(verdict="conflict", peers=[_peer()]))
+
+    # `clear`: every peer retired before the mark; `moved`: the new row did.
+    async def _not_flagged(**_: Any) -> str:
+        return landed
+
+    monkeypatch.setattr(cf, "mark_peers_conflicted", _not_flagged)
+    out = await update_mod.handle_memory_update(_input())
+    assert out.updated and (out.conflict_verdict, out.conflict_peers) == ("clear", 0)
+
+
+@pytest.mark.asyncio
 async def test_conflict_verdict_flags_both_sides_after_the_write(wired) -> None:
     ch, calls = wired(ConflictResult(verdict="conflict", peers=[_peer()]))
     out = await update_mod.handle_memory_update(_input())
@@ -213,21 +236,14 @@ async def test_merge_and_duplicate_are_written_as_a_duplicate_of_the_other_row(w
 
 
 @pytest.mark.asyncio
-async def test_refines_supersedes_the_refined_peers_with_the_relation(wired) -> None:
-    ch, calls = wired(
-        ConflictResult(
-            verdict="refines",
-            peers=[_peer()],
-            refined_peers=[_peer()],
-            refine_relation="supersedes",
-        )
-    )
+async def test_refines_supersedes_the_refined_peers(wired) -> None:
+    ch, calls = wired(ConflictResult(verdict="refines", peers=[_peer()], refined_peers=[_peer()]))
     out = await update_mod.handle_memory_update(_input())
     assert out.updated and out.conflict_verdict == "refines"
     assert ch.inserts[0][1][0]["status"] == "active"
     (kw,) = calls.refined
     assert kw["new_memory_id"] == _ID_A and kw["new_memory_key"] == "deploy_day"
-    assert kw["relation"] == "supersedes" and kw["namespace"] == "personal"
+    assert kw["namespace"] == "personal"
     assert not calls.marked
 
 

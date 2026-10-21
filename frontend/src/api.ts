@@ -337,25 +337,37 @@ export async function listMemories(
   return out;
 }
 
-/** Undo a tombstone within the 14-day grace window. Returns
- *  restored=true on success, expired=true if the window has closed,
- *  restored=false (no-op) if the row was already live or doesn't exist.
- *  user_id / session_id complete the row's identity tuple. */
+/** Bring a row back live: undo a tombstone within the 14-day grace window, or undo a
+ *  supersession (a row Loom retired on its own, or a later write replaced). Returns
+ *  restored=true on success, expired=true if the delete window has closed, restored=false
+ *  (no-op) if the row was already live or doesn't exist. `from_status` says what it was
+ *  restored from ("tombstoned" or "superseded"; empty on a no-op). user_id / session_id
+ *  complete the row's identity tuple. */
 export async function restoreMemory(
   id: Identity,
   key: string,
-  opts: { user_id?: string; session_id?: string } = {},
+  opts: {
+    user_id?: string;
+    session_id?: string;
+    /** Restore only a row still retired behind this memory id; otherwise restored=false. */
+    if_superseded_by?: string;
+    /** Restore only a row still retired, whatever it retired behind; never undo a delete. */
+    only_if_superseded?: boolean;
+  } = {},
 ): Promise<{
   restored: boolean;
   memory_id?: string | null;
   version?: number | null;
   expired?: boolean;
+  from_status?: "tombstoned" | "superseded" | "";
 }> {
   return post("/v1/memory.restore", {
     ...id,
     user_id: opts.user_id ?? "-",
     session_id: opts.session_id ?? "-",
     memory_key: key,
+    ...(opts.if_superseded_by ? { if_superseded_by: opts.if_superseded_by } : {}),
+    ...(opts.only_if_superseded ? { only_if_superseded: true } : {}),
   });
 }
 
@@ -363,6 +375,7 @@ export async function restoreMemory(
  *  doesn't exist; gate on it before reading the other fields. */
 export interface MemoryDetail {
   found: boolean;
+  memory_id?: string;
   value: unknown;
   memory_type: string | null;
   confidence: number | null;
@@ -383,6 +396,8 @@ export interface MemoryDetail {
    *  starts from one). */
   entities?: string[];
   status?: string;
+  /** For a `status='superseded'` row, the memory_id of the row it retired behind. */
+  superseded_by?: string;
   /** Server-enforced cap on the stringified value; NULL = no cap. The
    *  Inspector reads this to preserve the cap when editing the value,
    *  since the write path is write-through. */
@@ -419,6 +434,34 @@ export async function getMemory(
   const body: Record<string, unknown> = { ...id, memory_key: key };
   if (opts.include_recall_breakdown) body["include_recall_breakdown"] = true;
   return post<MemoryDetail>("/v1/memory.get", body, opts.signal);
+}
+
+/** One memory by its org-wide id (`memory.get_by_id`), the shape a conflict's
+ *  `conflict_with` names its peer by. `found` is false when no live row carries the id
+ *  or the caller cannot read its namespace. */
+export interface MemoryById {
+  found: boolean;
+  memory_id: string;
+  namespace: string;
+  memory_key: string;
+  value: unknown;
+  version: number | null;
+  pinned: boolean;
+  created_at: string | null;
+  /** '' | low | medium | high; a high row is read by key in Memories, not shown here. */
+  sensitivity?: string;
+}
+
+/** `omit_high_value`: a high row answers without its value, and no sensitive read is
+ *  audited, for a view that only names the row. */
+export async function getMemoryById(
+  org: string,
+  memoryId: string,
+  opts: { omit_high_value?: boolean } & RequestOpts = {},
+): Promise<MemoryById> {
+  const body: Record<string, unknown> = { org, memory_id: memoryId };
+  if (opts.omit_high_value) body["omit_high_value"] = true;
+  return post<MemoryById>("/v1/memory.get_by_id", body, opts.signal);
 }
 
 /** POST /v1/memory.bulk_get — N keys in one CH round-trip. `agent: "*"` is the
@@ -1280,6 +1323,9 @@ export async function getTaxonomy(
 export * from "./api/knowledge";
 export * from "./api/conversations";
 export * from "./api/admin";
+// The audit-log read the sidebar badge calls, kept apart from admin.ts so the shell carries only it.
+export * from "./api/audit";
+export * from "./api/autoResolve";
 export * from "./api/collections";
 export * from "./api/search";
 export * from "./api/profile";

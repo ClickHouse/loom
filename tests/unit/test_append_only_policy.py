@@ -14,7 +14,7 @@ import pytest
 
 from server.memory.app import conflicts as cf
 from server.memory.domain import conflicts as conflict_rules
-from tests.unit.test_conflict_judge_deferred import _P1, _row, _RowsCH
+from tests.unit.test_conflict_check import _P1, _row, _RowsCH
 
 
 def _peer() -> list[dict[str, Any]]:

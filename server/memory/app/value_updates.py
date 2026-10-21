@@ -37,6 +37,13 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.memory.app.auto_resolution import (
+    VALUE_UPDATE,
+    RetirementTracker,
+    record_or_owe,
+    retired_entry,
+)
+from server.memory.store.conflict_candidates import vector_param, vector_params
 
 log = logging.getLogger(__name__)
 
@@ -64,40 +71,6 @@ def value_tokens(text: str) -> set[str]:
         # Strip a trailing unit so "5k run" and "5K" compare equal, but keep
         # the digits+separators that carry the value.
         out.add(tok)
-    return out
-
-
-_SPELLED_NUM = (
-    "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|"
-    "thirty|forty|fifty|hundred|half|couple|dozen|a few|several"
-)
-_MEASURE_UNIT = (
-    "seconds?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?|times|"
-    "miles?|km|kilomet(?:er|re)s?|pages?|dollars?|bucks|pounds?|kg|percent"
-)
-_SPELLED_MEASURE_RE = re.compile(
-    rf"\b(?:{_SPELLED_NUM})(?:\s+and\s+a\s+half)?\s+(?:{_MEASURE_UNIT})\b", re.IGNORECASE
-)
-_MONTH_RE = re.compile(
-    r"\b(?:january|february|march|april|june|july|august|september|october|november|"
-    r"december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|dec)\b\.?",
-    re.IGNORECASE,
-)
-
-
-def measured_tokens(text: str) -> set[str]:
-    """The measured content of a statement: its value tokens ("27:12", "$40",
-    "5k", "2023-05-15"), its spelled measures ("three weeks", "two and a half
-    weeks", "a couple of days") and its month names. A row that carries one
-    the row replacing it lacks is not refined by it; it is truncated ("finished
-    The Nightingale, which took them three weeks" must not be superseded by
-    "enjoyed the emotional depth of The Nightingale")."""
-    t = text or ""
-    out = set(value_tokens(t))
-    for m in _SPELLED_MEASURE_RE.finditer(t):
-        words = m.group(0).lower().split()
-        out.add(f"{words[0]}_{words[-1]}")
-    out.update(m.group(0).lower().rstrip(".")[:3] for m in _MONTH_RE.finditer(t))
     return out
 
 
@@ -170,7 +143,10 @@ class UpdateLink:
 @dataclass
 class UpdateReport:
     checked: int = 0
+    # The links whose older row retired, as the re-read confirmed.
     links: list[UpdateLink] = field(default_factory=list)
+    # Those and the ones the re-read could not confirm: the triple follow re-checks them.
+    follow_links: list[UpdateLink] = field(default_factory=list)
     errors: int = 0
 
 
@@ -233,8 +209,7 @@ def _peers_sql_many(n: int, in_scope: str = "") -> str:
     over the vector column replicates it per row per fact), `LIMIT 8 BY qidx`
     for the per-row `LIMIT 8`."""
     terms = ", ".join(
-        f"({i}, 1 - cosineDistance(e.embedding, {{embs:Array(Array(Float32))}}[{i}]))"
-        for i in range(1, n + 1)
+        f"({i}, 1 - cosineDistance(e.embedding, {vector_param(i)}))" for i in range(1, n + 1)
     )
     return f"""
         SELECT hit.1 - 1 AS qidx,
@@ -280,7 +255,7 @@ async def _peers_many(
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
-        "embs": [it[2] for it in items],
+        **vector_params([it[2] for it in items]),
         "types": [it[0] for it in items],
         "keys": [it[1] for it in items],
         "dim": dim,
@@ -352,13 +327,15 @@ async def link_value_updates(
     namespace: str,
     rows: list[dict[str, Any]],
     embeddings_by_key: dict[str, list[float]],
+    agent: str,
     min_cosine: float = 0.75,
     concurrency: int = 6,
     ch: Any = None,
 ) -> UpdateReport:
     """For every freshly written memory row (dicts with memory_id, memory_key,
     memory_type, value, valid_at, created_at), find value-update peers and
-    write the supersession onto the older side. Returns what was linked."""
+    write the supersession onto the older side (`agent`: the write's, named on an owed
+    record). Returns what was linked."""
     import server.memory.store as memory_repo
 
     if ch is None:
@@ -458,15 +435,44 @@ async def link_value_updates(
     newer_at: dict[str, Any] = {str(r.get("memory_id") or ""): r.get("valid_at") for r in rows}
     for ln in links:
         by_older[ln.older_id] = ln
+    retired: list[dict[str, Any]] = []
     if by_older:
+        from server.memory.domain.lock import refuses_retirement
+
+        # As the other automatic paths: a locked, pinned or no-longer-live older row is
+        # left as it is (the peer query reads neither the lock nor the pin).
+        tracker = RetirementTracker(refuses_retirement)
         try:
             for older_id, ln in by_older.items():
                 inv = _as_dt(newer_at.get(ln.newer_id))
                 await memory_repo.write_versions_by_ids(
-                    org, [older_id], _supersession_update(ln.newer_id, inv), ch=ch
+                    org,
+                    [older_id],
+                    _supersession_update(ln.newer_id, inv),
+                    ch=ch,
+                    skip=tracker.skip,
+                    # Read-your-writes: a lagging replica's row would be rebuilt over a
+                    # revision.
+                    strong=True,
+                    on_written=tracker.written,
+                    on_unconfirmed=tracker.unconfirmed,
                 )
-            report.links = list(by_older.values())
         except Exception as e:  # noqa: BLE001 — fails open: counted in report.errors
             log.warning("value_updates: supersession write failed (open): %s", e)
             report.errors += 1
+        # Only a row whose superseded version reached loom.memory: a skipped, vanished or
+        # overtaken one retired nothing, and a failed mirror after the insert did. One the
+        # re-read could not confirm is recorded as such and still followed (the follow
+        # re-checks it); the triple plane must not close a live row's triples.
+        report.links = [ln for ln in by_older.values() if ln.older_id in tracker.ids]
+        maybe = tracker.ids | tracker.unconfirmed_ids
+        report.follow_links = [ln for ln in by_older.values() if ln.older_id in maybe]
+        for r in tracker.retired(tracker.rows):
+            ln = by_older[str(r["memory_id"])]
+            retired.append(
+                retired_entry(r, superseded_by=ln.newer_id, superseded_by_key=ln.newer_key)
+            )
+    await record_or_owe(
+        org=org, namespace=namespace, retired=retired, reason=VALUE_UPDATE, agent=agent
+    )
     return report

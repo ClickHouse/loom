@@ -3,13 +3,11 @@
 import asyncio
 import gc
 import weakref
-from datetime import datetime
-from types import SimpleNamespace
 
 import pytest
 
 from server.core import background
-from server.memory.app import after_write, conflict_deferred
+from server.memory.app import after_write
 
 
 @pytest.fixture(autouse=True)
@@ -18,23 +16,14 @@ def isolated_registry(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scheduler", ["after_write", "conflict_deferred"])
-async def test_memory_deferred_writers_are_visible_to_model_drain(monkeypatch, scheduler):
+async def test_memory_deferred_writers_are_visible_to_model_drain():
     release = asyncio.Event()
 
     async def write(*args, **kwargs):
         await release.wait()
         return "clear"
 
-    if scheduler == "after_write":
-        task = after_write.schedule(write(), name="test-memory-after-write")
-    else:
-        monkeypatch.setattr(conflict_deferred, "settle", write)
-        monkeypatch.setattr(conflict_deferred, "_PENDING", {})
-        result = SimpleNamespace(pending_judge=object(), verdict="pending")
-        task = conflict_deferred.schedule_settle(
-            None, result, memory_id="test-drain", version=1, created_at=datetime(2026, 1, 1)
-        )
+    task = after_write.schedule(write(), name="test-memory-after-write")
     assert task is not None
     try:
         assert not await background.drain_task_sets(timeout_s=0)

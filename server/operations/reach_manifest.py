@@ -270,6 +270,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
     ),
     "memory.assign_category": ("sdk_method",),
+    "memory.auto_retirements": ("plugin_hook",),
     "memory.bulk_get": (
         "sdk_method",
         "plugin_hook",
@@ -304,7 +305,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "plugin_hook",
     ),
-    "memory.get_by_id": ("sdk_method",),
+    "memory.get_by_id": (
+        "sdk_method",
+        "plugin_hook",
+    ),
     "memory.history": (
         "sdk_method",
         "plugin_hook",
@@ -375,6 +379,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_example",
         "plugin_hook",
     ),
+    "memory.statuses": ("plugin_hook",),
     "memory.timeline": ("sdk_method",),
     "memory.touch": (
         "sdk_method",

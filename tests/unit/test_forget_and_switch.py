@@ -37,7 +37,7 @@ async def _write(
     async def _bulk(inp: Any) -> Any:
         for e in inp.entries:
             written[e.memory_key] = e.value
-        return type("O", (), {"written": [], "stage_ms": {}})()
+        return type("O", (), {"written": [], "skipped_blacklisted": [], "stage_ms": {}})()
 
     async def _delete(inp: Any) -> Any:
         deleted.append(inp.memory_key)

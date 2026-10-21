@@ -27,7 +27,13 @@ vi.mock("../api", async (importOriginal) => {
     countNewAgents: vi.fn(async () => 0), // The badge asks for a number
   };
 });
+// The sidebar asks through sharedHasAutoResolved, which calls api/audit.
+vi.mock("../api/audit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api/audit")>()),
+  hasAutoResolved: vi.fn(async () => false),
+}));
 import { getBudgetStatus, countConflicts, countNewAgents } from "../api";
+import { hasAutoResolved } from "../api/audit";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace,
@@ -79,6 +85,7 @@ describe("Sidebar admin drawer", () => {
     expect(countConflicts).not.toHaveBeenCalled();
     expect(getBudgetStatus).not.toHaveBeenCalled();
     expect(countNewAgents).not.toHaveBeenCalled();
+    expect(hasAutoResolved).not.toHaveBeenCalled();
   });
 
   it("is shown for an admin grant on the current namespace, and the polls run", async () => {
@@ -170,6 +177,29 @@ describe("Sidebar admin drawer", () => {
     expect(screen.getByRole("button", { name: /Admin/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
     expect(countConflicts).toHaveBeenCalledTimes(1);
+  });
+
+  // With no open conflict, the queue's Auto-resolved tab still has something to show:
+  // the entry appears, with no count, so it is reachable without its URL.
+  it("shows the Review queue when Loom recently retired a memory on its own", async () => {
+    sessionStorage.clear();
+    vi.mocked(hasAutoResolved).mockResolvedValueOnce(true);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(hasAutoResolved).toHaveBeenCalledWith({ org: "dev", namespace: "team-a" });
+    expect(screen.getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
+  });
+
+  it("hides the Review queue with no open conflict and no recent auto-resolution", async () => {
+    sessionStorage.clear();
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(hasAutoResolved).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
   });
 
   it("is shown for a platform admin regardless of grants, with the Users entry", async () => {
