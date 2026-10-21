@@ -8,6 +8,7 @@ import { ExternalLink } from "../components/ui/ExternalLink";
 import { Panel } from "../components/ui/Panel";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { selfSignup, setToken, loginWithPassword } from "../api";
+import { SIGN_IN_FROM } from "../lib/boot";
 import { errorRequestId, humanizeError } from "../lib/format";
 import type { GateReason } from "../lib/state";
 import { Alert } from "../components/ui";
@@ -42,7 +43,19 @@ export function TokenGate({ onLogin, reason = null }: TokenGateProps) {
   return <PasswordGate onLogin={onLogin} reason={reason} />;
 }
 
-/** Sends the browser to the identity provider; it comes back to `/me#token=…`. */
+/** Remember the page a sign-in starts on: the identity provider sends the browser back to
+ *  the root, and boot opens that page again (`takeLinkToken`). */
+function rememberSignInStart(): void {
+  const from = window.location.pathname + window.location.search;
+  try {
+    if (from === "/") sessionStorage.removeItem(SIGN_IN_FROM);
+    else sessionStorage.setItem(SIGN_IN_FROM, from);
+  } catch {
+    /* no session storage: the sign-in lands on the root */
+  }
+}
+
+/** Sends the browser to the identity provider; it comes back to `/#token=…`. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   return (
     <GateShell>
@@ -50,6 +63,7 @@ function SsoGate({ reason }: { reason?: GateReason }) {
         {reason === "expired" && <Alert role="status" state="neutral" text="Your session expired — sign in again." />}
         <a
           href="/oauth/sso"
+          onClick={rememberSignInStart}
           className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-on-accent hover:opacity-90"
         >
           <Icon name="lock" size="sm" aria-hidden="true" /> Sign in with SSO

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  SIGN_IN_FROM,
   claimsFromToken,
   provisionalNamespace,
   rememberKinds,
@@ -122,7 +123,34 @@ describe("view registry", () => {
 });
 
 describe("login link token", () => {
-  afterEach(() => history.replaceState(null, "", "/"));
+  afterEach(() => {
+    history.replaceState(null, "", "/");
+    sessionStorage.clear();
+  });
+
+  it("a token back on the bare root opens the page its sign-in started on, once", () => {
+    sessionStorage.setItem(SIGN_IN_FROM, "/memories?namespace=t-1-shared&memory=k");
+    history.replaceState(null, "", "/#token=abc");
+    expect(takeLinkToken()).toBe("abc");
+    expect(window.location.pathname + window.location.search + window.location.hash).toBe(
+      "/memories?namespace=t-1-shared&memory=k",
+    );
+    expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
+  });
+
+  it("goes back only to a path on this origin, and only from the bare root", () => {
+    for (const from of ["//elsewhere.example/x", "/\\elsewhere.example", "https://elsewhere.example/"]) {
+      sessionStorage.setItem(SIGN_IN_FROM, from);
+      history.replaceState(null, "", "/#token=abc");
+      expect(takeLinkToken()).toBe("abc");
+      expect(window.location.pathname + window.location.search + window.location.hash).toBe("/");
+    }
+    // A token link that names its own page keeps it.
+    sessionStorage.setItem(SIGN_IN_FROM, "/memories");
+    history.replaceState(null, "", "/settings?tab=memory#token=abc");
+    expect(takeLinkToken()).toBe("abc");
+    expect(window.location.pathname + window.location.search).toBe("/settings?tab=memory");
+  });
 
   it("takes a #token= fragment and scrubs it from the address bar", () => {
     history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");

@@ -1,6 +1,7 @@
-import { render, screen } from "../test/rtl";
+import { fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SIGN_IN_FROM } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate } from "./TokenGate";
@@ -160,6 +161,21 @@ describe("TokenGate", () => {
       window.__LOOM_SSO = true;
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
       expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
+    });
+
+    it("remembers the page the sign-in starts on, so the way back opens it", () => {
+      window.__LOOM_SSO = true;
+      history.replaceState(null, "", "/memories?namespace=t-1-shared");
+      render(<TokenGate onLogin={() => undefined} reason="expired" />);
+      const link = screen.getByRole("link", { name: "Sign in with SSO" });
+      // jsdom does not navigate; the provider round trip is boot's test (takeLinkToken).
+      link.addEventListener("click", (e) => e.preventDefault());
+      fireEvent.click(link);
+      expect(sessionStorage.getItem(SIGN_IN_FROM)).toBe("/memories?namespace=t-1-shared");
+      // From the bare root there is nothing to come back to.
+      history.replaceState(null, "", "/");
+      fireEvent.click(link);
+      expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
     });
 
     it("shows the password gate when it is off", () => {
