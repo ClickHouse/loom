@@ -260,3 +260,25 @@ def test_both_plugins_link_the_data_handling_section() -> None:
         "#"
     )
     assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
+
+
+def test_listing_links_into_the_repository_resolve() -> None:
+    """The registry listing and both plugin manifests publish absolute links into this
+    repository, which the doc-link check does not follow; a renamed file breaks them."""
+    import re
+
+    text = "".join(
+        (ROOT / f).read_text()
+        for f in (
+            "server.json",
+            "integrations/claude-code-plugin/.claude-plugin/plugin.json",
+            "integrations/codex-plugin/.codex-plugin/plugin.json",
+        )
+    )
+    links = re.findall(
+        r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
+        text,
+    )
+    assert links
+    for path in links:
+        assert (ROOT / path).is_file(), path
