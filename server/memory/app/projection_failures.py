@@ -98,6 +98,11 @@ EDGES_CLOSE = "entity_edges_close"
 # undeclared pairs are not dropped yet: payload versions (memory_id -> the version of
 # that write, which dates the edges' end); the drop reads the row's current entities.
 EDGES_DROP_UNDECLARED = "entity_edges_drop_undeclared"
+# A drop whose restore of the links a write landing since it read them holds failed:
+# payload drop and deleted (memory_id, content_sha256, entity_a, entity_b links) and
+# close_ids, the arguments of the restore. Its own name: a replay of the drop skips a
+# row no longer 'high', and that is the row whose links went.
+EDGES_RESTORE = "entity_edges_restore"
 
 
 def projection_failure_row(
@@ -409,6 +414,8 @@ async def _retry(failure: ProjectionFailureRow, *, ch: Any) -> ProjectionFailure
             reason = await _retry_edges_close(failure, ch=ch)
         elif failure.projection == EDGES_DROP_UNDECLARED:
             reason = await _retry_edges_drop(failure, ch=ch)
+        elif failure.projection == EDGES_RESTORE:
+            reason = await _retry_edges_restore(failure, ch=ch)
         else:
             return ProjectionFailureRetryResult(
                 failure_id=failure.failure_id,
@@ -723,6 +730,22 @@ async def _retry_edges_drop(failure: ProjectionFailureRow, *, ch: Any) -> str:
         return "malformed_payload"
     scope = _failure_scope(failure)
     await drop_undeclared_links(scope, {str(mid): int(v) for mid, v in versions.items()}, ch=ch)
+    return ""
+
+
+async def _retry_edges_restore(failure: ProjectionFailureRow, *, ch: Any) -> str:
+    """Write back the links a drop deleted that their row holds now; a failure raises and
+    leaves the row active."""
+    from server.memory.app.edge_links import restore_kept_links
+
+    payload = failure.payload
+    links = (payload.get("drop"), payload.get("deleted"))
+    if not isinstance(payload.get("close_ids"), list) or not all(
+        isinstance(part, list) and all(isinstance(x, list) and len(x) == 4 for x in part)
+        for part in links
+    ):
+        return "malformed_payload"
+    await restore_kept_links(payload, _failure_scope(failure), ch=ch)
     return ""
 
 

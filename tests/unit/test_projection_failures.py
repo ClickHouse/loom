@@ -1001,3 +1001,20 @@ async def test_a_drop_payload_without_its_versions_is_malformed(payload) -> None
     failure = dataclasses.replace(_graph_failure("entity_edges_drop_undeclared"), payload=payload)
     (out,) = await retry_failures([failure], ch=_GraphCH())
     assert out.abandoned and out.reason == "malformed_payload"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"drop": [], "deleted": []},
+        {"drop": [["m", "sha", "a"]], "deleted": [], "close_ids": []},
+        {"drop": [], "deleted": "m", "close_ids": []},
+    ],
+    ids=["no-close-ids", "a-short-link", "deleted-not-a-list"],
+)
+async def test_a_restore_payload_without_its_links_is_malformed(payload) -> None:
+    """A restore replays the links and closes it records: a payload missing them is
+    abandoned, not replayed."""
+    failure = dataclasses.replace(_graph_failure("entity_edges_restore"), payload=payload)
+    (out,) = await retry_failures([failure], ch=_GraphCH())
+    assert out.abandoned and out.reason == "malformed_payload"

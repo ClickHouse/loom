@@ -20,6 +20,7 @@ from server.memory.app.projection_errors import (
 )
 from server.memory.app.projection_failures import (
     EDGES_DROP_UNDECLARED,
+    EDGES_RESTORE,
     record_projection_failure,
 )
 from server.memory.domain.temporal_sql import EDGE_HOLDER_SQL, edge_holder_sql
@@ -151,7 +152,8 @@ async def _drop_links_of(
 ) -> None:
     """`drop_undeclared_links` for the rows still 'high' (`keep`: memory_id -> the
     entities whose edges it keeps). The links read here go, and those a write since then
-    holds come back (`_restore_kept_links`)."""
+    holds come back (`_restore_kept_links`; a failed restore is recorded as
+    EDGES_RESTORE, which the projection repair replays)."""
     params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "ids": sorted(keep)}
     links = await query_all_sliced(
         ch,
@@ -195,9 +197,9 @@ async def _drop_links_of(
     )
     # Read again right before the DELETE: a row re-set plain since the first read keeps
     # its links even when the restore below fails, as its replay skips a row no longer
-    # 'high'; one re-set high naming more entities keeps those. The restore covers a write
-    # landing after this read. Parameters only: a mutation with a subquery is refused on a
-    # replicated table.
+    # 'high'; one re-set high naming more entities keeps those. The restore (or its
+    # replay) covers a write landing after this read. Parameters only: a mutation with a
+    # subquery is refused on a replicated table.
     high = await _rows_still_high(input, sorted({memory_id for memory_id, *_ in drop}), ch=ch)
     deleted = [
         (memory_id, sha, a, b)
@@ -215,7 +217,41 @@ async def _drop_links_of(
             """,
             params={**params, "ids": sorted({memory_id for memory_id, *_ in part}), "links": part},
         )
-    await _restore_kept_links(input, drop, set(deleted), close_ids, ch=ch)
+    try:
+        await _restore_kept_links(input, drop, set(deleted), close_ids, ch=ch)
+    except Exception as e:  # noqa: BLE001 — recorded; the projection repair restores them
+        log.warning("%d kept links not restored (recorded): %s", len(drop), e)
+        await record_projection_failure(
+            org=input.org,
+            namespace=input.namespace,
+            agent=str(getattr(input, "agent", "") or ""),
+            projection=EDGES_RESTORE,
+            error=e,
+            payload=restore_payload(drop, deleted, close_ids),
+            ch=ch,
+            user_id=str(getattr(input, "user_id", "") or ""),
+        )
+
+
+def restore_payload(
+    drop: list[tuple[str, str, str, str]],
+    deleted: list[tuple[str, str, str, str]],
+    close_ids: list[str],
+) -> dict[str, Any]:
+    """An EDGES_RESTORE payload: the arguments of the `_restore_kept_links` it owes."""
+    return {
+        "drop": [list(link) for link in drop],
+        "deleted": [list(link) for link in deleted],
+        "close_ids": list(close_ids),
+    }
+
+
+async def restore_kept_links(payload: Mapping[str, Any], input: Any, *, ch: Any) -> None:
+    """Replay the restore an EDGES_RESTORE `payload` records; it reads the rows as they
+    are now, so a row revised, removed or made 'high' since keeps what it holds."""
+    drop = [(str(m), str(sha), str(a), str(b)) for m, sha, a, b in payload["drop"]]
+    deleted = {(str(m), str(sha), str(a), str(b)) for m, sha, a, b in payload["deleted"]}
+    await _restore_kept_links(input, drop, deleted, [str(c) for c in payload["close_ids"]], ch=ch)
 
 
 async def _restore_kept_links(
