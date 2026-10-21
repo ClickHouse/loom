@@ -18,7 +18,7 @@ vulnerability, and for the deployment hardening checklist, see
 | One caller exhausts shared capacity                  | Token buckets per namespace, org and actor                                                                                 | `server/core/ratelimit.py`                                                                                           |
 | An agent is induced to echo or enumerate memory      | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                    | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py` |
 | Stored text carries instructions into a later prompt | Recalled memory is fenced with a per-prompt nonce                                                                          | `server/memory/domain/prompt_fence.py`                                                                               |
-| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as a credential, are never embedded            | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
+| Secrets written as memory are embedded and served    | Sensitivity detection; `high` rows, and chunks, digests and turns that read as high, are never embedded                    | `server/memory/domain/sensitivity.py`, `sensitivity_sweep` worker                                                    |
 | Audit rows are edited or deleted                     | Per-row hashes plus a hash-chained checkpoint per window                                                                   | `server/observability/audit.py`, `audit_verifier` worker                                                             |
 | Erasure leaves residue                               | Checkpointed saga ending in a residue census                                                                               | `server/erasure/app/saga.py`, `server/erasure/store/census.py`                                                       |
 | A service signs beyond its end users                 | Each issuer signs for its listed orgs alone, no two for one org; a token names one user and agent, never a group or a role | `server/auth/jwt.py` (`_verify_end_user`), `server/settings/_auth.py` (`EndUserIssuer`)                              |
@@ -799,8 +799,9 @@ no search leg returns it. The other reads that could serve its value follow thre
   extractor ran (one written unlabelled, or arriving that way through `memory.copy_to` or an
   import) keeps the entities mined from its value on the row, not served by those reads. A
   row re-set as `high` through `memory.set` carries only its declared entities. Either way
-  the graph edges an earlier version projected remain: `facts.traverse` and `facts.path`
-  still walk them, as do `memory.backlinks` (which names a `high` key's shared entities and
+  the row keeps the graph edges of the entities on it and no other: those an earlier
+  version's text gave the graph end. The edges it keeps are walked by `facts.traverse` and
+  `facts.path`, as by `memory.backlinks` (which names a `high` key's shared entities and
   neighbours from them), `namespace.summary`'s top entities, `memory.outline`,
   `namespace.taxonomy`'s communities, the graph export and search's graph mode and
   expansion.
@@ -821,11 +822,10 @@ no search leg returns it. The other reads that could serve its value follow thre
   `expires_at` until the expiry sweep.
 
 Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
-`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as a credential (in
-this section, any high shape: a credential, card number, SSN or stated PIN) is stored as
-written with no vector, and its text is never sent to the embedder. Every read
-that ranks passages reads only those with a vector (`embedding_dim > 0`), so no search leg
-returns it.
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as high (any
+high shape: a credential, card number, SSN or stated PIN) is stored as written with no
+vector, and its text is never sent to the embedder. Every read that ranks passages reads
+only those with a vector (`embedding_dim > 0`), so no search leg returns it.
 
 - Chunk writers: a verbatim chunk in `loom.memory_chunks` (a conversation chunk
   `memory.set_from_messages` writes, a chunk of a long `memory.set` value, a chunk
@@ -833,9 +833,9 @@ returns it.
   through a key, and a chunk that holds only a key's head or tail does not read as one
   on its own. The conversation and long-value writers check the chunked text once, plus
   one chunk past its end for a key that crosses it, in a worker thread, and also hold
-  every chunk whose character range overlaps a credential, and every chunk whose own
-  text reads as one (a chunk can start inside a word, where a pattern's word boundary
-  falls). A private-key block reads as a credential from its header to its closing line
+  every chunk whose character range overlaps a high shape, and every chunk whose own
+  text reads as high (a chunk can start inside a word, where a pattern's word boundary
+  falls). A private-key block reads as high from its header to its closing line
   (without one, through the base64 characters, line breaks and `Proc-Type:` /
   `DEK-Info:` lines after the header, so prose ends it), so every chunk its body covers
   is held, though a body line does not read as a key alone. A chunk of a long
@@ -849,25 +849,25 @@ returns it.
   rebuilt text touches is held, and a private-key block with no closing line holds every
   chunk its body lines cover. A session written by two calls can hold two texts at one
   index, which leaves no single text to rebuild, so each chunk of such a session is held
-  when its own text reads as a credential, or when it and a chunk at the next index that
+  when its own text reads as high, or when it and a chunk at the next index that
   it overlaps (a repeat of at least 50 characters) make a text where a key touches it;
   two chunks with no overlap are not joined. The check reads one call's chunks only (at
   most 256), so a key cut at the boundary between the last chunk of one call and the
-  first chunk of the next reads as a credential in neither, and both chunks are
+  first chunk of the next reads as high in neither, and both chunks are
   embedded. `loom okf import` sends each session's chunks whole in one call, so only a
   session of more than 256 chunks can still hit this gap. `memory.get` on a `chunk:` key
-  leaves out a neighbour with no vector, as it leaves out one that reads as a
-  credential, and audits a key read of either.
-- Digests and turns: a session digest whose text reads as a credential is written without
-  a vector. A `conversation.append` turn that reads as one is stored as written in
+  leaves out a neighbour with no vector, as it leaves out one that reads as high, and
+  audits a key read of either.
+- Digests and turns: a session digest whose text reads as high is written without
+  a vector. A `conversation.append` turn that reads as high is stored as written in
   `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
   out of vector search. `conversation.save_message` answers
-  `reason: "reads_as_credential"` for such a turn, so the saved search never indexes it.
+  `reason: "high_sensitivity"` for such a turn, so the saved search never indexes it.
 - Compaction: `conversation.compact` leaves such a turn out of its window: it stays live
-  and is never sent to the summarizer. A summary that reads as a credential anyway is
-  refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window
+  and is never sent to the summarizer. A summary that reads as high anyway is
+  refused (`reason: "summary-high-sensitivity"`) and tombstones nothing; the window
   stays the same while its turns are live, so a retry most likely gets the same refusal.
-- Provider rebuild: a chunk, digest or turn embedding whose text reads as a credential is
+- Provider rebuild: a chunk, digest or turn embedding whose text reads as high is
   staged without a vector, which covers one an earlier build embedded. A memory chunk stored
   without a vector whose own text is plain is read with the run of its session's live chunks
   around it: outward while a chunk has no vector, plus the first chunk with one on each
@@ -877,10 +877,10 @@ returns it.
   part of a cut key stays held whichever page its neighbours land on, however many chunks
   the key spans. Any other row stored without a vector (a failed embed, or a row an earlier
   rebuild staged while its org's model calls were off) is embedded. Verification reads the
-  text of every row left empty whose source held a vector and accepts those that read as a
-  credential.
+  text of every row left empty whose source held a vector and accepts those that read as
+  high.
 - `loom reembed` re-embeds only rows that have a vector, and keeps a conversation turn
-  that reads as a credential on its old model, which search does not read, until
+  that reads as high on its old model, which search does not read, until
   `--delete-old` removes it (a memory row's vector follows its sensitivity label).
   `loom reembed --in-database` runs the embedding inside ClickHouse and cannot check the
   text, so it re-embeds such a turn too.
@@ -888,7 +888,7 @@ returns it.
 Chunks, digests and turn embeddings that an earlier build embedded keep their vector, so
 the reads that serve passages check their text too. That check reads each passage's own
 text, so a chunk an earlier build embedded that holds only the head or tail of a key cut
-at a chunk boundary does not read as a credential and stays searchable until it is
+at a chunk boundary does not read as high and stays searchable until it is
 rewritten:
 
 - Left out: `memory.search`'s `chunk` and `summary` hits (and so what `memory.ask` hands
@@ -905,28 +905,27 @@ rewritten:
   row costs a granule of vectors on every search: a held-back digest leaves it one hit
   short.
 - Listed without the text: `conversation.list_saved_messages` shows an empty
-  `content_excerpt` for a saved message that reads as a credential (one an earlier build
+  `content_excerpt` for a saved message that reads as high (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
-  whose last turn reads as a credential, and an empty `title` for a title that reads as
-  one. Both listings check the excerpt they show and 1,024 characters past it, so a key
+  whose last turn reads as high, and an empty `title` for a title that reads as
+  high. Both listings check the excerpt they show and 1,024 characters past it, so a key
   that crosses the cut is caught. `memory.digests` shows an empty `summary_text`, and
-  `memory.outline` an empty `headline`, for a session digest whose text reads as a
-  credential (one an earlier build wrote), and `memory.digests` leaves out key facts that
-  read as one.
-  The conversation titler never sends a turn that reads as a credential
-  to its model and never stores a title that reads as one: it marks the thread
-  `title_refused` in its metadata instead, as it does a thread whose first eight user
-  and assistant turns all read as a credential, and later passes skip it. A thread with
-  fewer such turns stays unmarked, so a plain turn that arrives later gets it titled.
-  New `metadata` from `conversation.update` or `conversation.create` replaces the mark,
-  and the titler then asks its model once more and marks the thread again.
-- Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
-  credential serves it and writes a `memory.sensitive_read` row.
+  `memory.outline` an empty `headline`, for a session digest whose text reads as high
+  (one an earlier build wrote), and `memory.digests` leaves out key facts that read as
+  high. The conversation titler never sends a turn that reads as high to its model and
+  never stores a title that reads as high: it marks the thread `title_refused` in its
+  metadata instead, as it does a thread whose first eight user and assistant turns all
+  read as high, and later passes skip it. A thread with fewer such turns stays unmarked,
+  so a plain turn that arrives later gets it titled. New `metadata` from
+  `conversation.update` or `conversation.create` replaces the mark, and the titler then
+  asks its model once more and marks the thread again.
+- Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as high
+  serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
-  version, those whose text reads as a credential and chunks stored without a vector (which
+  version, those whose text reads as high and chunks stored without a vector (which
   includes a chunk holding only part of a key), unless asked with `include_high` (each one
   it then releases is audited). `bodies: "source"` leaves out a passage whose text
-  reads as a credential.
+  reads as high.
 
 Other raw text is served to readers of the namespace, or sent to a model, as it is: a
 caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
@@ -962,7 +961,7 @@ the chunks, digests and turns above when written and when served. The
 a new version per row and, for `high`, tombstoned embedding rows and entity vectors. Until
 the sweep labels it, an unlabelled row that holds a high shape (a credential, card
 number, SSN or stated PIN) is embedded like any other, so search serves it, and
-`memory.ask` and the conflict judge can send it to their models.
+`memory.ask` can send it to its model; the conflict resolver reads every row and peer for a high shape before its prompt and sends none that holds one.
 The worker reads only the trailing window and the shapes in
 `LOOM_SENSITIVITY_SWEEP_SHAPES` (`credential` and `email` by default); the historical
 backlog and the shapes the worker leaves out (by default IBAN-only rows, shape `other`,
@@ -1143,7 +1142,7 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
 - A `high`-sensitivity value has no embedding row; a chunk, session digest or
-  conversation turn whose text reads as a credential is written without a vector
+  conversation turn whose text reads as high is written without a vector
   (`loom reembed --in-database` and a chunk restored with the vector an earlier build
   gave it excepted), and the ranked reads (`memory.search`, `memory.ask`,
   `conversation.search` and the saved search) hold back one an earlier build embedded,

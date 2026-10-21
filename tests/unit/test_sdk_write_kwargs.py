@@ -97,3 +97,27 @@ async def test_profile_render_reads_own_user(agent: Agent) -> None:
     assert t.last("/v1/profile.render")["read_scope"] == "own_session"
     await agent.profile.render()
     assert "read_scope" not in t.last("/v1/profile.render")
+
+
+_FACT = ("alice", "likes", "tennis")
+
+
+async def test_every_point_write_carries_its_relations(agent: Agent) -> None:
+    t: Any = agent.transport
+    await agent.memory.set("k", "v", relations=[_FACT])
+    assert t.last("/v1/memory.set")["relations"] == [list(_FACT)]
+    await agent.memory.pin("k", "v", relations=[_FACT])
+    assert t.last("/v1/memory.pin")["relations"] == [list(_FACT)]
+    await agent.memory.update_by_id("m1", "v", relations=[_FACT])
+    assert t.last("/v1/memory.update_by_id")["relations"] == [list(_FACT)]
+    await agent.memory.update("k", "v", relations=[_FACT])
+    assert t.last("/v1/memory.update")["relations"] == [list(_FACT)]
+    await agent.memory.set("k", "v")
+    assert "relations" not in t.last("/v1/memory.set")
+
+
+async def test_a_set_with_relations_is_never_coalesced(agent: Agent) -> None:
+    t: Any = agent.transport
+    await asyncio.gather(*[agent.memory.set(k, "v", relations=[_FACT]) for k in "abcd"])
+    assert not [o for o, _ in t.calls if o == "/v1/memory.bulk_set"]
+    assert len([o for o, _ in t.calls if o == "/v1/memory.set"]) == 4

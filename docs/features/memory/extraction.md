@@ -44,10 +44,10 @@ flowchart LR
    projects entities.
 
 The conversation is also kept as verbatim chunks, which search returns as `chunk` hits. A
-chunk or digest whose text reads as a credential (a pasted API key, an access key id, a
-`password=` assignment) is stored as written but never embedded, so search and `memory.ask`
-never serve it; `memory.get` on its `chunk:` key does, with a `memory.sensitive_read` audit
-row ([sensitivity](../../architecture/security.md#sensitivity)).
+chunk or digest whose text reads as high (a pasted API key, a `password=` assignment,
+a card number, an SSN or a stated PIN) is stored as written but never embedded, so search
+and `memory.ask` never serve it; `memory.get` on its `chunk:` key does, with a
+`memory.sensitive_read` audit row ([sensitivity](../../architecture/security.md#sensitivity)).
 
 `pipeline_steps` reorders or skips steps, or names an in-process step an operator
 registered (at most 16; an HTTP `hook.*` step is refused). See the
@@ -63,6 +63,111 @@ the user asks to forget something, the matching rows are retired and named in
 from the observe plane. Only these run `loom.drop_non_durable` and `loom.verify_durable`.
 The rules in `server/memory/domain/durable_facts.py` match sentence shape, not topic words: what
 a release changed is kept; whether its CI was green at the time is dropped.
+
+## Rules the assistant states about itself
+
+A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
+$500 to a human", "I always answer in bullet points". With
+`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` on (off by default; a live setting:
+`loom settings set memory_extract_agent_learnings true` turns it on without a
+restart, see [runtime settings](../../operations/runtime-settings.md)), the extraction
+call also returns these, marked `"about": "agent"`, at no extra model call. The setting
+is the only way on: a request's `agent_learnings=false` turns it off for that call, and
+`agent_learnings=true` while the setting is off is ignored and named in `ignored_args`
+(and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. Turn
+it on, and review `assistant_turn` candidates, only once no replica runs a build
+without it: an older build does not erase `loom.learnings_supporters`, and on promote
+it writes the bot's rule as the approver's own memory
+([rolling upgrades](../../architecture/rolling-upgrades.md)). Before rolling back to
+such a build, turn it off, then delete the rows of `loom.learnings_supporters`, where
+users' quotes live (an older build's erasure does not cover that table), and the
+`assistant_turn` candidates
+(`ALTER TABLE loom.learnings_queue DELETE WHERE source_kind = 'assistant_turn'`).
+Coding captures never use it.
+
+Behaviour the assistant agrees to at the user's request is the user's preference, not a
+rule of the bot: "always answer me in French" answered with "I will always answer you in
+French" is a memory about the user. The extraction prompt says so, and no check after
+it reads the user's request: a rule the model still returns for such a request is filed,
+and the reviewer rejects it.
+
+Such a rule is never written as a memory. An end user can talk a bot into saying
+anything, and a memory at the agent's level would reach every user of the bot. The rule
+becomes a pending `assistant_turn` candidate in the
+[learnings review queue](./procedures-and-learnings.md#learnings-review-queue) for the
+request's `(org, namespace, agent)`:
+
+- A candidate is keyed by the agent, the rule's memory key and its text, with only case
+  and spacing folded and a trailing period dropped. A different rule under the same key
+  is a separate candidate, so a first wording never collects the support of a later
+  one. The same rule worded differently in another session is a separate candidate too,
+  so wording drift splits its support. The extractor's key rewrites leave a rule's key
+  alone. While a bot's rule promoted to knowledge is served, no new candidate is filed
+  for that bot under that key: a promoted rule is served back to the bot, which
+  restates it in its own words, and each restatement would otherwise wait for review
+  again. The skip is counted in `loom.memory_drops` (stage `learnings.file`, reason
+  `already_promoted`). Only a knowledge promotion stops new filings under its key: a
+  rule promoted with `destination="memory"` leaves no `learning://<candidate_id>`
+  document, so each restatement of it is filed as a new candidate. To revise a promoted
+  rule, delete its `learning://<candidate_id>` document with `knowledge.delete`: a new
+  wording under its key is then filed as a new candidate; the promoted wording itself
+  stays decided and its restatements are counted under reason `decided`. Rejecting a promoted rule
+  leaves its document, so the rule is still served and still stops new filings; delete
+  the document to stop serving it. A rule rejected before any promotion is never served
+  back, so it stops only its own wording: a different rule under its key is still filed.
+- The candidate row holds the rule and no user's words. Each session that states it adds
+  a row to `loom.learnings_supporters` with the end user, the session and that user's
+  own quotes: the user turn before the cited assistant turn (up to 200 characters) and
+  the rule as said, the span the extractor cited when a cited assistant turn contains
+  it, else that assistant turn (up to 400). A rule whose `source_message_indices` name no
+  assistant turn is not something the assistant said: it is never filed, and the drop is
+  counted in `loom.memory_drops` (stage `learnings.file`, reason `no_assistant_turn`).
+  A rule that reads as high is never filed either, and the drop is counted
+  under reason `sensitive`; nor is one that matches a blacklist pattern. A quote that
+  does either is stored blank. The supporter row is written first, then the candidate
+  row again, at version 1, with every new supporter. So an erasure that deletes a
+  pending candidate mid-filing never leaves that supporter without it. A review always
+  writes a newer version, so the rewrite never undoes a decision, and a decided
+  candidate takes no new supporters: its restatement is counted in `loom.memory_drops`
+  under reason `decided`, so a rejected rule that keeps coming back shows there.
+  A restatement after the first filing never changes the candidate's text; two
+  sessions that first file the same rule at once, differing only in case or a
+  trailing period, leave either wording.
+- `learnings.list` shows the earliest remaining supporter's quotes as the `rationale`.
+  A user erasure deletes that user's supporter rows, so the next supporter's quotes
+  show. A candidate left with none is deleted when pending; when decided, it keeps its
+  decision with the rule blanked.
+- Support never promotes a candidate. An admin's `learnings.review` does. By default
+  the rule is published to the namespace's knowledge (`learning://<candidate_id>`,
+  tagged `agent:<agent>`; the tag names the bot, and the document's author is the
+  reviewer). The agent reads that serve knowledge serve it to that bot only, for
+  every user, a user bounded to their own rows included: `context.pack` with
+  `include_knowledge`, `memory.stack`, `loom_search` and `memory.ask` (its knowledge
+  passages and its whole-document route). Another agent in the
+  namespace is not served it. Over HTTP, a namespace-wide read (agent `*`, the
+  `memory.ask` default) spans every agent and is served every bot's rules; a read under
+  no agent (`-`, the `loom_search` default) is served no rule promoted for a named bot,
+  so a bot names its agent there. Over MCP an unnamed `agent` is the client's
+  (`claude-code`, ...), so those reads serve that agent's rules. A rule filed for every
+  agent (`-`) carries no agent tag and is served to every read. `knowledge.search` is
+  not filtered by agent; a bot finds its own rules with
+  `knowledge.search(tags=["agent:<agent>"])`.
+  `destination="memory"` writes the agent's memory row instead (`user_id` `-`,
+  `source_trace` `learning:<candidate_id>`), which namespace-wide reads find and a read
+  bounded to one user does not.
+- A token pinned to one end user (`read_user_id`) files for the agent it names, never the
+  body's `agent`; any other token, an `own_user` token without a pin included, files for
+  the body's `agent`.
+  An end-user token names the agent its issuer signed (its `agent` claim). A token Loom
+  mints names no agent, so one pinned with `--read-user-id` files no bot's rule. Its
+  reads are served that agent's rules the same way, and no rule promoted for a named
+  bot when it names none (a rule for every agent is still served): a bot that needs
+  its own promoted rules for a user reads with an end-user token signed for it, or
+  with an unpinned token.
+
+`learning_candidates` in the response counts the rules that wrote a new candidate or this
+session's support of one. A failed queue
+write is named in `pipeline_errors` and the rule is dropped.
 
 ## Echoes: `recalled_keys` and `session_values`
 
@@ -221,17 +326,18 @@ Field lists: [operations reference](../../reference/operations.md#memory),
 
 ### Request fields
 
-| Field                          | Effect                                                                                                                     |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                     |
-| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                            |
-| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC). |
-| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                   |
-| `extraction_instructions`      | A prompt suffix (up to 4,096 characters). The [operator's policy](#operator-extraction-policy) outranks it.                |
-| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                   |
-| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                             |
-| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                          |
-| `defer`                        | Queue instead of extracting inline.                                                                                        |
+| Field                          | Effect                                                                                                                                      |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `messages`                     | 1–400 turns: `role`, `content`, optional `timestamp` (anchors facts to the turn) and `name` (speaker).                                      |
+| `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                                             |
+| `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC).                  |
+| `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                                    |
+| `extraction_instructions`      | A prompt suffix (up to 4,096 characters). The [operator's policy](#operator-extraction-policy) outranks it.                                 |
+| `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                                    |
+| `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                                              |
+| `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                                           |
+| `defer`                        | Queue instead of extracting inline.                                                                                                         |
+| `agent_learnings`              | `false` stops filing the assistant's rules for this call ([above](#rules-the-assistant-states-about-itself)); only the setting turns it on. |
 
 ### Response fields
 
@@ -239,6 +345,9 @@ Field lists: [operations reference](../../reference/operations.md#memory),
 - `tokens_in`, `tokens_out`, `cached_tokens_in`: cost attribution.
 - `segments`, `segmenter` (`whole` or `size`).
 - `forgotten`, `forgotten_keys`, `evidence_ids`.
+- `learning_candidates`: rules that wrote a new candidate or this session's support of one.
+- `ignored_args`: request fields not applied: unknown keys, and `agent_learnings=true`
+  while the setting is off.
 - `stage_ms`: wall time per stage (`step.<step_id>`, `bulk.<phase>`).
 - `observation_date_source`: `caller`, `request_time` or empty.
 - `stubbed_fields`: typed-record fields written as null after validation retries.
@@ -291,6 +400,7 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_*`                      | When a long session is split into fixed windows, and their size.                               |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Off by default: file the assistant's rules about itself for review.                            |
 | `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
 | `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |

@@ -56,7 +56,7 @@ Review comment:
 ```text
 Bad:  Great work overall! One small thing worth noting: it might be a good idea to
       consider potentially handling the case where the cursor could be empty.
-Good: P2 server/memory/workers/conflict_sweep.py:88 — an empty cursor re-reads from the start, so a
+Good: P2 server/memory/workers/usage_fold.py:88 — an empty cursor re-reads from the start, so a
       worker restart re-emits every event. Treat "" as "no cursor" and test the restart.
 ```
 

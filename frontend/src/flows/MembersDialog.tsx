@@ -43,6 +43,9 @@ interface Props {
   /** Fires after a member is added — the Setup checklist ticks "Invite a
    * teammate" on it. */
   onChanged?: () => void;
+  /** The caller is known to be an admin here though no grant row names them: a
+   *  collection's role reaches through its parents and the caller's groups. */
+  admin?: boolean;
 }
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
@@ -51,7 +54,17 @@ const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
   { value: "admin", label: "Admin", desc: "Manage members + settings + delete" },
 ];
 
-export function MembersDialog({ open, onOpenChange, org, namespace, kind, label, pendingElsewhere, onChanged }: Props) {
+export function MembersDialog({
+  open,
+  onOpenChange,
+  org,
+  namespace,
+  kind,
+  label,
+  pendingElsewhere,
+  onChanged,
+  admin = false,
+}: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
   // A code index has two roles: readers (viewer) and maintainers (admin),
@@ -114,10 +127,12 @@ export function MembersDialog({ open, onOpenChange, org, namespace, kind, label,
   }, [open, org, namespace, reloadSeq]);
 
   const me = whoami?.subject || "";
-  const canManage = holdsAdminGrant(
-    whoami,
-    rows?.find((r) => r.subject === me),
-  );
+  const canManage =
+    admin ||
+    holdsAdminGrant(
+      whoami,
+      rows?.find((r) => r.subject === me),
+    );
 
   const onAdd = async () => {
     const subj = newSubject.trim();

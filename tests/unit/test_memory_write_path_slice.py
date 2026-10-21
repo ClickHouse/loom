@@ -21,8 +21,8 @@ from server.memory.app.extract import (
     ExtractionError,
     extract_typed_record_iterative,
 )
-from server.memory.app.extract.handler import _candidate_entities_from_value
 from server.memory.app.extract.typed import _coerce_one_field, _field_empty
+from server.memory.app.set_entities import _candidate_entities_from_value
 
 # ------------------------------------------------------------------
 # (a) candidate-entity tokenizer

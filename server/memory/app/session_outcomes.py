@@ -110,7 +110,7 @@ class DistillResult:
 
 def judge_prompt(summary: str, key_facts: list[str]) -> tuple[str, str]:
     facts = (
-        # A digest an earlier build wrote may still hold a credential among its key facts.
+        # A digest an earlier build wrote may still hold a high shape among its key facts.
         "\n".join(
             f"- {str(f).strip()}"
             for f in (key_facts or [])

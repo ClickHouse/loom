@@ -39,6 +39,7 @@ from server.memory.api.models_graph import (
     _MemoryRelatedHit,
 )
 from server.memory.app import webhooks
+from server.memory.domain import assistant_rules
 
 
 def _parse_supporter(tuple_str: str) -> dict[str, str] | None:
@@ -70,7 +71,7 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
     ch = get_client()
     row = await ch.query_one(
         """
-        SELECT tags, created_at, user_id, agent, source_trace, source_resource_id
+        SELECT tags, created_at, user_id, agent, actor, source_trace, source_resource_id
         FROM loom.memory FINAL
         WHERE org = {org:String}
           AND namespace = {ns:String}
@@ -93,6 +94,8 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
             source_kind = t[len("source-kind:") :]
 
     candidate = None
+    # Seeder and supporters rows: the approver is the row's user_id.
+    promoted_by = str(row.get("user_id") or "")
     if cand_id:
         from server.memory.store import learnings as learnings_repo
 
@@ -102,10 +105,17 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
             cand_id,
         )
         if cand_row is not None:
+            supporter_count = len(cand_row.get("supporters") or [])
+            if cand_row.get("source_kind") == assistant_rules.SOURCE_KIND:
+                # Its support lives in loom.learnings_supporters: distinct users.
+                stats = await learnings_repo.supporter_stats(input.org, input.namespace, [cand_id])
+                supporter_count = int(stats[0]["users"]) if stats else 0
+                # A bot's rule is written at user_id '-'; its approver is the row's actor.
+                promoted_by = str(row.get("actor") or "") or promoted_by
             candidate = _LineageCandidate(
                 candidate_id=cand_id,
                 source_kind=cand_row.get("source_kind", "") or source_kind,
-                supporter_count=len(cand_row.get("supporters") or []),
+                supporter_count=supporter_count,
                 rationale=cand_row.get("rationale", "") or "",
                 decided_at=cand_row.get("decided_at") or row["created_at"],
                 decided_by=cand_row.get("decided_by", "") or "",
@@ -119,7 +129,7 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
         memory_key=input.memory_key,
         # No loom.shared promotion_event for memory-only rows.
         promotion_event="",
-        promoted_by=str(row.get("user_id") or ""),
+        promoted_by=promoted_by,
         promoted_at=row.get("created_at"),
         rationale=f"Imported via {source_kind}" if source_kind else "",
         source_trace=str(row.get("source_trace") or ""),

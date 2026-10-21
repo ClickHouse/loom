@@ -1,23 +1,33 @@
-"""A memory key names one attribute of one subject in a
-namespace, and under the `newest_wins` conflict policy the newest row for a
-key is the live one, whatever agent, user or session wrote it.
+"""Same-key supersession: when two rows of one key state one attribute, the newer
+statement retires the older.
 
-The write paths carry the same key from different sessions as different rows (the
-ReplacingMergeTree identity includes agent, user and session), and the semantic conflict
-check excludes the row's own key on the assumption that a re-write is last-writer-wins
-by version. Across sessions it is not: the same key can hold two live rows, the pre-edit
-value and the post-edit value, both `active`. Here the newer row retires the older ones
-through the same version re-emit dedup uses, so recall drops them and the audit trail
-keeps them (`superseded_by` points at the row that replaced them, `invalid_at` says
-when)."""
+The storage identity includes agent, user and session, so a key written again from
+another session is a second live row, and the conflict check skips same-key peers.
+Under `newest_wins` the newest row of a key retires every older one
+(`supersede_same_key_rows`). Under any other policy a shared key is not proof of one
+attribute (extraction reuses generic keys): the conflict resolver judges the rows
+(`memory.workers.conflict_resolver`); docs/architecture/memory-architecture.md has the
+rules."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
+import server.memory.store as memory_repo
+from server.core.naming import is_anonymous_user, session_spellings
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.memory.app import conflicts
+from server.memory.app.auto_resolution import (
+    SAME_KEY_NEWEST_WINS,
+    Follow,
+    RetirementTracker,
+    owe_retirements,
+    settle_retirements,
+)
+from server.memory.domain import lock
 
 log = logging.getLogger(__name__)
 
@@ -93,19 +103,63 @@ def same_key_victims(
         mid = str(m.get("memory_id") or "")
         if key not in newest_by_key or not mid or mid in new_ids or bool(m.get("pinned")):
             continue
-        out.append(
-            {
-                "memory_id": mid,
-                "namespace": str(m.get("namespace") or ""),
-                "agent": str(m.get("agent") or ""),
-                "user_id": str(m.get("user_id") or ""),
-                "session_id": str(m.get("session_id") or ""),
-                "memory_key": key,
-                "value": str(m.get("value") or ""),
-                "superseded_by": newest_by_key[key],
-            }
-        )
+        out.append(_victim(m, newest_by_key[key]))
     return out
+
+
+def _victim(row: Mapping[str, Any], superseded_by: str) -> dict[str, Any]:
+    return {
+        "memory_id": str(row.get("memory_id") or ""),
+        "namespace": str(row.get("namespace") or ""),
+        "agent": str(row.get("agent") or ""),
+        "user_id": str(row.get("user_id") or ""),
+        "session_id": str(row.get("session_id") or ""),
+        "memory_key": str(row.get("memory_key") or ""),
+        "value": str(row.get("value") or ""),
+        "superseded_by": superseded_by,
+    }
+
+
+async def keys_held_elsewhere(
+    *, org: str, namespace: str, memory_rows: list[dict[str, Any]], ch: Any
+) -> set[str]:
+    """The keys among a write's rows (one writer identity) that hold a live row of the
+    same user from another session. Outside `newest_wins` the conflict resolver judges
+    such a pair, since a shared key is not proof of one attribute. None for the
+    anonymous user (`-`, or a user_id sent empty), whose sessions are separate tasks: a
+    verdict there could only clear a flag, and a fresh write has none. Inside the
+    writer's read scope only; a 'high' row is never a peer."""
+    if not memory_rows:
+        return set()
+    # The stored values as they are: a session sent empty is stored "", so a '-'
+    # fallback would count the writer's own row as another session's.
+    writer = memory_rows[0]
+    user = str(writer["user_id"])
+    if is_anonymous_user(user):
+        return set()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "keys": sorted({str(r.get("memory_key") or "") for r in memory_rows} - {""}),
+        "own_agent": str(writer["agent"]),
+        "own_user": user,
+        "own_sessions": session_spellings(str(writer["session_id"])),
+    }
+    in_scope = scope_and(request_scope(), params)
+    rows = await ch.query_all(
+        f"""
+        SELECT DISTINCT memory_key
+        FROM loom.memory FINAL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND memory_key IN {{keys:Array(String)}} AND user_id = {{own_user:String}}
+          AND NOT (agent = {{own_agent:String}}
+                   AND session_id IN {{own_sessions:Array(String)}})
+          AND tombstoned_at IS NULL AND sensitivity != 'high'
+          AND status IN ('active', 'conflicted'){in_scope}
+        """,
+        params=params,
+    )
+    return {str(r["memory_key"]) for r in rows}
 
 
 async def supersede_same_key_rows(
@@ -114,19 +168,21 @@ async def supersede_same_key_rows(
     namespace: str,
     new_rows: list[dict[str, Any]],
     ch: Any,
+    follows: list[Follow],
     policy: str | None = None,
+    agent: str = "",
 ) -> int:
-    """Retire every older live row that shares a key with one of `new_rows`.
+    """Retire every older live row that shares a key with one of `new_rows`; the
+    retired pairs go to `follows`, for the caller to follow once its relations are in.
 
-    Only under `newest_wins`; every other policy leaves same-key rows live.
+    Only under `newest_wins`; every other policy leaves same-key rows live for the
+    conflict resolver to judge.
     Best effort, never fails the write. Returns how many retired."""
     if not new_rows:
         return 0
     try:
         if policy is None:
-            from server.memory.app.conflicts import namespace_conflict_policy
-
-            policy = await namespace_conflict_policy(org, namespace, ch=ch)
+            policy = await conflicts.namespace_conflict_policy(org, namespace, ch=ch)
         if policy != "newest_wins":
             return 0
         keys = sorted({str(r.get("memory_key") or "") for r in new_rows} - {""})
@@ -153,10 +209,36 @@ async def supersede_same_key_rows(
         victims = same_key_victims(new_rows, live)
         if not victims:
             return 0
-        from server.memory.domain.lock import refuses_retirement
-        from server.memory.store import supersede_duplicates
-
-        n = await supersede_duplicates(org, victims, ch=ch, skip=refuses_retirement)
+        # The tracker also refuses a row retired since the read (it is not re-pointed).
+        tracker = RetirementTracker(lock.refuses_retirement)
+        planned = [{**v, "superseded_by_key": v["memory_key"]} for v in victims]
+        intent = await owe_retirements(
+            org=org, namespace=namespace, victims=planned, reason=SAME_KEY_NEWEST_WINS, agent=agent
+        )
+        try:
+            # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
+            n = await memory_repo.supersede_duplicates(
+                org,
+                victims,
+                ch=ch,
+                skip=tracker.skip,
+                strong=True,
+                on_written=tracker.written,
+                on_unconfirmed=tracker.unconfirmed,
+            )
+        finally:
+            # What reached loom.memory is recorded even when the embeddings mirror failed.
+            await settle_retirements(
+                org=org,
+                namespace=namespace,
+                retired=[
+                    {**v, "superseded_by_key": v["memory_key"]} for v in tracker.retired(victims)
+                ],
+                reason=SAME_KEY_NEWEST_WINS,
+                follows=follows,
+                agent=agent,
+                intent=intent,
+            )
         log.info(
             "same-key supersession (%s): %d older rows retired behind %d keys in %s/%s",
             policy,

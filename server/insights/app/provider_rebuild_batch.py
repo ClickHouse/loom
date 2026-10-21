@@ -17,7 +17,7 @@ from server.insights.store.provider_staging import session_chunks
 from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
 from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
-from server.memory.domain.sensitivity import reads_high, split_credentials
+from server.memory.domain.sensitivity import joined_overlaps_high, reads_high
 from server.settings import settings
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
@@ -35,7 +35,7 @@ TEXT_COLUMNS = {
     "session_summaries": "summary_text",
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
-# Raw-passage tables: a credential-like row is staged without a vector (see rebuild_batch).
+# Raw-passage tables: a row whose text reads as high is staged without a vector (see rebuild_batch).
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
@@ -91,8 +91,8 @@ def _held_in_session(
     stored: Sequence[Mapping[str, Any]], page: Sequence[tuple[int, str]]
 ) -> list[bool]:
     """For each `(chunk_index, content)` page row of one session, whether it overlaps a
-    credential in the text it makes with the runs of stored chunks around the page's rows
-    (`_held_run`). The runs are joined and read once (`split_credentials`) for the whole
+    high shape in the text it makes with the runs of stored chunks around the page's rows
+    (`_held_run`). The runs are joined and read once (`joined_overlaps_high`) for the whole
     session, so a long session is not read again for every row."""
     by_index: dict[int, list[Mapping[str, Any]]] = {}
     for chunk in stored:
@@ -102,7 +102,7 @@ def _held_in_session(
         around |= _held_run(by_index, at)
     chunks = [("s", n, str(chunk["content"])) for n in sorted(around) for chunk in by_index[n]]
     chunks.extend(("s", at, text) for at, text in page)
-    return split_credentials(chunks)[len(chunks) - len(page) :]
+    return joined_overlaps_high(chunks)[len(chunks) - len(page) :]
 
 
 async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) -> set[int]:
@@ -238,7 +238,7 @@ async def rebuild_batch(
     embedded again by their recovery workers, and a row of any other table when a
     write replaces it or a later rebuild covers it.
 
-    A raw passage (`PASSAGE_TABLES`) whose text reads as a credential is staged
+    A raw passage (`PASSAGE_TABLES`) whose text reads as high is staged
     without a vector and never sent to the provider; verification reads its text
     and accepts it. A memory chunk stored without a vector is staged without one
     too when a key touches it in the text it makes with the run of its session's

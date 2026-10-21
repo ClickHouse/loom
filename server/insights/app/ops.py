@@ -635,6 +635,7 @@ async def handle_projection_failures_retry(
             projection=r.projection,
             retried=r.retried,
             resolved=r.resolved,
+            abandoned=r.abandoned,
             reason=r.reason,
             error=r.error,
         )
@@ -644,6 +645,7 @@ async def handle_projection_failures_retry(
         results=rows,
         retried=sum(1 for r in rows if r.retried),
         resolved=sum(1 for r in rows if r.resolved),
+        abandoned=sum(1 for r in rows if r.abandoned),
     )
 
 

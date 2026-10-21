@@ -13,8 +13,8 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
-from server.memory.app.credential_passages import embed_chunks_of
 from server.memory.app.projection_errors import record_input_projection_failure
+from server.memory.app.sensitive_passages import embed_chunks_of
 from server.memory.domain import chunk_shape
 
 log = logging.getLogger(__name__)

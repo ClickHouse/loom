@@ -280,6 +280,7 @@ async def test_an_older_high_set_paused_after_its_insert_does_not_retire_a_newer
 
     monkeypatch.setattr(set_commit, "insert_memory_versions", insert_then_writer_b_lands)
     monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", no_projection)
+    monkeypatch.setattr(set_commit, "project_stated_relations", no_projection)
     existing = SimpleNamespace(
         **{
             k: _LIVE[k]
@@ -423,6 +424,19 @@ async def test_a_status_retire_writes_the_memory_rows_version_and_keeps_newer_ro
     by_agent = {r["agent"]: r for r in ch.live_emb()}
     assert (by_agent["a"]["status"], by_agent["a"]["version"]) == ("superseded", 30)
     assert by_agent["b"] == newer
+
+
+@pytest.mark.asyncio
+async def test_an_active_vector_still_carrying_invalid_at_is_rewritten() -> None:
+    """Status alone matches: the vector kept a retirement's end the served head dropped."""
+    ch = _RMTCH()
+    ch.emb.append({**_LIVE, "invalid_at": datetime(2026, 1, 1, tzinfo=UTC)})
+    head = {**_LIVE, "invalid_at": None}
+    head.pop("version")
+    assert await M.mirror_status_to_embeddings([head], ch=ch) == 1
+    (live,) = ch.live_emb()
+    assert (live["status"], live["invalid_at"]) == ("active", None)
+    assert await M.mirror_status_to_embeddings([head], ch=ch) == 0, "now mirrored"
 
 
 @pytest.mark.asyncio
