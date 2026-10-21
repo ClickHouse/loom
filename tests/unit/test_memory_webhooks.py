@@ -621,6 +621,107 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("decision", "tombstoned"),
+    [("keep_canonical", "dup/key"), ("keep_duplicate", "canon/key"), ("keep_both", None)],
+)
+async def test_dedup_resolve_announces_the_side_it_tombstones(
+    monkeypatch: pytest.MonkeyPatch,
+    announced: list[Any],
+    decision: str,
+    tombstoned: str | None,
+) -> None:
+    from server.memory.api.models_graph import MemoryDedupResolveInput
+    from server.memory.app import dedup
+
+    rows = {"m-canon": _memory_row("canon/key"), "m-dup": _memory_row("dup/key")}
+    ids = {"canon/key": "m-canon", "dup/key": "m-dup"}
+    versions: list[int] = []
+
+    async def find(org: str, namespace: str, key: str, **k: Any) -> Any:
+        return SimpleNamespace(memory_id=ids[key])
+
+    async def get(memory_id: str, **k: Any) -> MemoryRow:
+        return rows[memory_id]
+
+    async def tombstone(org: str, memory_id: str, *, version: int, **k: Any) -> None:
+        versions.append(version)
+
+    async def clear(*a: Any, **k: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(memory_repo, "find_row_by_key_namespace", find)
+    monkeypatch.setattr(memory_repo, "get_by_id", get)
+    monkeypatch.setattr(memory_repo, "tombstone_by_id", tombstone)
+    monkeypatch.setattr(memory_repo, "clear_duplicate_tag", clear)
+    await dedup.handle_memory_dedup_resolve(
+        MemoryDedupResolveInput(
+            org="acme",
+            namespace="chat",
+            canonical_key="canon/key",
+            duplicate_key="dup/key",
+            decision=decision,  # type: ignore[arg-type]
+            confirm_canonical_key="canon/key",
+        )
+    )
+    if tombstoned is None:
+        assert announced == []
+        return
+    # The event carries the tombstone's own version.
+    assert [[(e, c["memory_key"], c["version"]) for e, c in call] for call in announced] == [
+        [("memory.tombstoned", tombstoned, versions[0])]
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["demote", "expire"])
+async def test_run_retention_announces_the_rows_it_revises(
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any], mode: str
+) -> None:
+    from server.memory.app import apply as memory_apply
+    from server.memory.app import run_retention
+
+    live = {"m-a": _memory_row("run/a"), "m-b": _memory_row("run/b")}
+    written: list[dict[str, Any]] = []
+
+    async def load(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        return [{"memory_id": mid, "memory_key": r.memory_key} for mid, r in live.items()]
+
+    async def no_promoted(*a: Any, **k: Any) -> set[str]:
+        return set()
+
+    async def write(org: str, ids: list[str], update: Any, **k: Any) -> int:
+        written.extend(update(live[mid]) for mid in ids)
+        return len(ids)
+
+    async def mirror(*a: Any, **k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(run_retention, "load_run_rows", load)
+    monkeypatch.setattr(run_retention, "promoted_keys_of", no_promoted)
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
+    monkeypatch.setattr(memory_apply, "_mirror", mirror)
+    await run_retention.apply(
+        org="acme",
+        namespace="chat",
+        run_id="r1",
+        mode=mode,
+        ch=object(),
+        now=NOW,
+        demote_factor=0.5,
+        demote_floor=0.1,
+        expire_days=7,
+    )
+    (call,) = announced  # one insert for the run
+    assert {(e, c["memory_key"]) for e, c in call} == {
+        ("memory.revised", "run/a"),
+        ("memory.revised", "run/b"),
+    }
+    # Each event names the version its row was written at.
+    assert {c["version"] for _, c in call} == {w["version"] for w in written}
+
+
+@pytest.mark.asyncio
 async def test_a_move_that_keeps_a_redirect_announces_the_source_revised(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
 ) -> None:
@@ -1250,6 +1351,34 @@ async def test_the_post_budget_counts_from_the_start_of_the_pass(
     result = await _pass(handler)
     assert result.delivered == 0
     assert fake.last("ev-1")["status"] == "leased"
+
+
+@pytest.mark.parametrize(("concurrency", "per_webhook"), [(4, 10), (8, 10), (4, 20)])
+def test_the_post_budget_fits_one_webhooks_whole_turn(
+    monkeypatch: pytest.MonkeyPatch, concurrency: int, per_webhook: int
+) -> None:
+    """One webhook's POSTs go one after another: more slots or a longer turn must not
+    cut a slow receiver's turn short."""
+    monkeypatch.setattr(settings, "memory_webhook_max_posts_per_pass", 40)
+    monkeypatch.setattr(settings, "memory_webhook_deliver_concurrency", concurrency)
+    monkeypatch.setattr(settings, "memory_webhook_posts_per_webhook", per_webhook)
+    monkeypatch.setattr(settings, "memory_webhook_ack_timeout_seconds", 10.0)
+    monkeypatch.setattr(settings, "memory_webhook_deliver_max_pass_seconds", 600.0)
+    monkeypatch.setattr(settings, "memory_webhook_deliver_reserve_seconds", 20.0)
+    budget = worker._post_budget_seconds()
+    assert budget >= per_webhook * 10.0
+    assert budget >= 40 / concurrency * 10.0
+    assert budget == max(40 / concurrency, per_webhook) * 10.0
+
+
+def test_the_post_budget_stops_short_of_the_pass_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "memory_webhook_posts_per_webhook", 20)
+    monkeypatch.setattr(settings, "memory_webhook_ack_timeout_seconds", 10.0)
+    monkeypatch.setattr(settings, "memory_webhook_deliver_max_pass_seconds", 120.0)
+    monkeypatch.setattr(settings, "memory_webhook_deliver_reserve_seconds", 20.0)
+    assert worker._post_budget_seconds() == 100.0
 
 
 @pytest.mark.asyncio

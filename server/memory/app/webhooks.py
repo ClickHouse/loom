@@ -12,8 +12,9 @@ Which namespaces have webhooks is a per-process copy of loom.memory_webhooks,
 read again every `memory_webhook_refresh_seconds`: a webhook registered on
 another process applies to this one's writes within that interval. A
 register or remove here reads it again on the next write, even one made while
-a read is under way. A failed read keeps the last copy; until a first read
-lands, this process's writes announce nothing.
+a read is under way. A failed read keeps the last copy. A write on a cold copy
+waits for the first read; if that read fails, writes announce nothing (noted as
+a degradation) until a read lands.
 
 An event's id is derived from what it is (`event_id`), so a repeat of one
 event to one webhook shares its id. An announcement never fails the write it
@@ -114,7 +115,8 @@ def forget_registry() -> None:
 
 async def _fresh_hooks() -> Registry:
     """This process's copy of the registry, read again once its interval is up.
-    Before the first read lands there is no copy, and the write announces nothing."""
+    A write on a cold copy waits for the first read; if that read fails, writes
+    announce nothing (noted as a degradation) until a read lands."""
     hooks = await _registry.get(
         refresh_s=settings.memory_webhook_refresh_seconds, max_stale_s=float("inf")
     )

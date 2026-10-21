@@ -12,6 +12,7 @@ durable memory. Three retentions:
             demotes when the expiry passes. The sweep has no "recalled or
             verified since" exemption; the grace window is the lever.
 
+Each row acted on is announced to the namespace's webhooks as `memory.revised`.
 Never a tombstone. Rows that are pinned, verified, promoted to the shared
 tier, locked, episodic or reflection are retained whatever the mode.
 """
@@ -24,6 +25,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
+from server.memory.app import webhooks
 
 log = logging.getLogger(__name__)
 
@@ -155,8 +157,11 @@ async def apply(
             return counts
         expires_at = now + timedelta(days=int(expire_days))
         reason = f"run {run_id} completed (retain={mode})"
+        version = memory_repo.next_version()
+        revised: list[dict[str, Any]] = []
 
         def _update(existing: Any) -> dict[str, Any]:
+            revised.append(webhooks.memory_change(existing, version))
             if mode == "demote":
                 return {
                     "confidence": demoted_confidence(
@@ -164,8 +169,14 @@ async def apply(
                         factor=demote_factor,
                         floor=demote_floor,
                     ),
+                    "version": version,
                 }
-            return {"expires_at": expires_at, "on_expire": "demote", "expire_reason": reason}
+            return {
+                "expires_at": expires_at,
+                "on_expire": "demote",
+                "expire_reason": reason,
+                "version": version,
+            }
 
         n = await memory_repo.write_versions_by_ids(
             org,
@@ -173,6 +184,7 @@ async def apply(
             _update,
             ch=ch,
         )
+        await webhooks.announce([("memory.revised", change) for change in revised])
         # The embeddings row is what search reads: mirror the same change.
         for r in act:
             row = _RowShim(

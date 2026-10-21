@@ -19,7 +19,8 @@ The sweep is the detector, run late:
      embedding rows and entity vectors are re-emitted with a tombstone — the
      sensitivity invariant, "a high row has no embedding row". A `medium`
      row's embedding rows are re-emitted with the tag, which is the only
-     place the tier rides on the table search reads.
+     place the tier rides on the table search reads. Each relabelled row
+     is announced to the namespace's webhooks as `memory.revised`.
 
 Read-only by construction until `apply`; `scan` is what `--dry-run` prints.
 """
@@ -33,6 +34,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
+from server.memory.app import webhooks
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import (
     HIGH,
@@ -253,6 +255,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     ch = ch or _default_client()
     result = ApplyResult()
     now = naive_utc_now()
+    relabelled: list[dict[str, Any]] = []
     for c in candidates:
         try:
             version = memory_repo.next_version()  # the relabel's, which the high retire carries
@@ -279,6 +282,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
             if not n:
                 continue  # gone between scan and apply
             result.relabelled += n
+            relabelled.append(webhooks.memory_change(c, version))
             if c.level == HIGH:
                 result.high += 1
                 result.embeddings_tombstoned += retired
@@ -300,6 +304,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
             result.errors.append(f"{c.namespace}/{c.memory_key}: {e}")
+    await webhooks.announce([("memory.revised", change) for change in relabelled])
     return result
 
 

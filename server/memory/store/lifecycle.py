@@ -451,10 +451,12 @@ async def tombstone_by_id(
     org: str,
     memory_id: str,
     *,
+    version: int | None = None,
     ch: _CHClient | None = None,
 ) -> None:
     """Tombstone one row by memory_id (UUID), cascading to the embeddings
-    tier (see tombstone_cascade_by_ids).
+    tier (see tombstone_cascade_by_ids). `version` is the tombstone's, a
+    fresh one when None.
 
     Used by `memory.dedup_resolve` when the decision is to kill one
     side of the duplicate pair, keyed on the surrogate UUID rather
@@ -463,6 +465,7 @@ async def tombstone_by_id(
         org,
         [memory_id],
         when=naive_utc_now(),
+        version=version,
         ch=ch,
     )
 

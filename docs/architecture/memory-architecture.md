@@ -487,8 +487,9 @@ census). For each webhook of the namespace that takes the event it inserts one
 nothing rewrites it. Which namespaces have webhooks is a per-process copy of
 `loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
 namespace with no webhook pays no insert, and the first write after each interval waits
-for one registry read (`server/core/polled_copy.py`). A failed read keeps the last copy;
-until a process's first read lands, its writes announce nothing. `memory.clear` tombstones with one mutation per table and, only
+for one registry read (`server/core/polled_copy.py`). A failed read keeps the last copy. A
+write on a cold copy waits for the first read; if that read fails, writes announce nothing
+(noted as a degradation) until a read lands. `memory.clear` tombstones with one mutation per table and, only
 when a webhook of the namespace takes `memory.tombstoned`, reads back the rows that
 mutation stamped, 1000 at a time in sort-key order, one outbox insert per page.
 

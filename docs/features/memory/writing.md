@@ -266,19 +266,21 @@ it reads, as for any other read. Copies into the namespace (`memory.copy_to`,
 the receiver reads the namespace again. The full list of writes that send none is below
 the table.
 
-| Event               | Sent after                                                                                                                                                                                                                                                                                                                                      |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row, or a proposal is accepted                                                                                                                                                                                                                                                 |
-| `memory.revised`    | a new value, type, tags, expiry, confidence, `valid_at` or `valid_to` of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes                                                                      |
-| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` for the side it tombstones, `blacklist.add` for each live row its sweep tombstones, `namespace.rollback` back to a tombstone or removing a key born later, the source of `memory.move` without `keep_redirect`, an expiry that tombstones |
-| `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                                                                                                                                                 |
-| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                                                                                                                                                     |
-| `memory.erased`     | an erasure saga completes (`erasure.request`, `collection.delete`, `code.repo.remove`)                                                                                                                                                                                                                                                          |
+| Event               | Sent after                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row, or a proposal is accepted                                                                                                                                                                                                                                                                             |
+| `memory.revised`    | a new value, type, tags, expiry, confidence, `valid_at` or `valid_to` of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes, a completed run's retention (`demote` or `expire`), the sensitivity sweep's new label           |
+| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` and `memory.dedup_resolve` for the side they tombstone, `blacklist.add` for each live row its sweep tombstones, `namespace.rollback` back to a tombstone or removing a key born later, the source of `memory.move` without `keep_redirect`, an expiry that tombstones |
+| `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                                                                                                                                                                             |
+| `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                                                                                                                                                                                 |
+| `memory.erased`     | an erasure saga completes (`erasure.request`, `collection.delete`, `code.repo.remove`)                                                                                                                                                                                                                                                                                      |
 
 Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
 events. A `memory.set` of the same value with the same type, tags, expiry, confidence,
 `valid_at` and `valid_to` (a restatement, which only reinforces the row) sends none; the same value
-with any of those changed is `memory.revised`. `memory.bulk_set` skips any entry whose
+with any of those changed is `memory.revised`. A retry with the same fields is a restatement and
+sends nothing; a retry that recomputes a relative expiry (`ttl_seconds`, a type's retention, the
+sensitive-data retention) moves `expires_at` and is `memory.revised`. `memory.bulk_set` skips any entry whose
 value equals the live row's: it writes no version and sends no event, even when the
 entry's tags, expiry or confidence differ. In one `memory.bulk_set`, a key that an
 earlier entry of the batch wrote is `memory.revised`; if the batch's lookup of live keys
@@ -289,7 +291,7 @@ built from, `memory.consolidate` and the consolidation worker, observations and 
 distillation, period digests, `memory.touch`, `memory.pin` and `memory.unpin`,
 `memory.lock` and `memory.unlock`, `memory.verify`, `memory.apply`, a proposal
 (`memory.set` with `proposed`, which is not served until it is accepted) and its
-rejection, the status change `conflicts.resolve` makes on the rows it keeps, the
+rejection, the status change `conflicts.resolve` and `memory.dedup_resolve` make on the rows they keep, the
 supersessions a write makes of other rows (the older same-key rows the `newest_wins`
 conflict policy retires, and the peers a `refines` verdict supersedes; the new row's own
 event is sent), the undo of an automatic supersession through `memory.restore`, copies into another namespace
@@ -372,8 +374,10 @@ sweep, the `delete_version` check).
   (`LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS`) and doubles up to an hour
   (`LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS`), checked before each POST; a 2xx ends it.
   The cooldown is kept per server process, so a restart or a new worker leader starts it
-  afresh. A pass POSTs until every POST could have waited its whole ack deadline
-  (40 / 4 × 10 s = 100 s after the pass starts), and at the latest until
+  afresh. A pass POSTs until every POST could have waited its whole ack deadline, for
+  the larger of an even share of the pass (40 / 4 = 10 POSTs per slot) and one webhook's
+  whole turn (10 POSTs one after another): max(40 / 4, 10) × 10 s = 100 s after the pass
+  starts, and at the latest until
   `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` (20 s) before its deadline
   (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); the reserve covers the one
   insert after the POSTs. At that point the pass cancels its POSTs still in flight: a
