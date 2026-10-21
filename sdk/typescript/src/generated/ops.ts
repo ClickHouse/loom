@@ -8564,6 +8564,73 @@ export interface UiVitalsOutput {
   route?: string;
 }
 
+export interface WebhookDeliveriesInput {
+  org: string;
+  namespace: string;
+  webhook_id?: string;
+  status?: "pending" | "delivered" | "dead" | null;
+  limit?: number;
+}
+
+export interface WebhookDelivery {
+  event_id: string;
+  webhook_id: string;
+  event_type: string;
+  memory_key: string;
+  memory_id: string;
+  version: number;
+  occurred_at: string; // date-time
+  status: "pending" | "delivered" | "dead";
+  attempts: number;
+  next_attempt_at: string; // date-time
+  last_status: number;
+  last_error: string;
+}
+
+export interface WebhookDeliveriesOutput {
+  deliveries?: WebhookDelivery[];
+}
+
+export interface WebhookListInput {
+  org: string;
+  namespace: string;
+}
+
+export interface WebhookInfo {
+  webhook_id: string;
+  url: string;
+  secret_ref: string;
+  events: Array<"memory.written" | "memory.revised" | "memory.tombstoned" | "memory.restored" | "memory.redacted" | "memory.erased">;
+  created_at: string; // date-time
+  secret_present?: boolean;
+}
+
+export interface WebhookListOutput {
+  webhooks?: WebhookInfo[];
+}
+
+export interface WebhookRegisterInput {
+  org: string;
+  namespace: string;
+  url: string;
+  secret_ref: string;
+  events?: Array<"memory.written" | "memory.revised" | "memory.tombstoned" | "memory.restored" | "memory.redacted" | "memory.erased">;
+}
+
+export interface WebhookRegisterOutput {
+  webhook: WebhookInfo;
+}
+
+export interface WebhookRemoveInput {
+  org: string;
+  namespace: string;
+  webhook_id: string;
+}
+
+export interface WebhookRemoveOutput {
+  removed: boolean;
+}
+
 export interface WorkingMemoryAppendInput {
   org: string;
   namespace: string;
@@ -9002,6 +9069,10 @@ export type OpName =
   | "tracker.source.set_mapping"
   | "tracker.test_signal"
   | "ui.vitals"
+  | "webhook.deliveries"
+  | "webhook.list"
+  | "webhook.register"
+  | "webhook.remove"
   | "working_memory.append"
   | "working_memory.delete"
   | "working_memory.get"
@@ -9329,6 +9400,10 @@ export interface OpMap {
   "tracker.source.set_mapping": { input: TrackerSourceSetMappingInput; output: TrackerSourceSetMappingOutput };
   "tracker.test_signal": { input: TrackerTestSignalInput; output: TrackerTestSignalOutput };
   "ui.vitals": { input: UiVitalsInput; output: UiVitalsOutput };
+  "webhook.deliveries": { input: WebhookDeliveriesInput; output: WebhookDeliveriesOutput };
+  "webhook.list": { input: WebhookListInput; output: WebhookListOutput };
+  "webhook.register": { input: WebhookRegisterInput; output: WebhookRegisterOutput };
+  "webhook.remove": { input: WebhookRemoveInput; output: WebhookRemoveOutput };
   "working_memory.append": { input: WorkingMemoryAppendInput; output: WorkingMemoryMutationOutput };
   "working_memory.delete": { input: WorkingMemoryDeleteInput; output: WorkingMemoryDeleteOutput };
   "working_memory.get": { input: WorkingMemoryGetInput; output: WorkingMemoryGetOutput };
@@ -9656,6 +9731,10 @@ export const OPS: readonly OpSpec[] = [
   { name: "tracker.source.set_mapping", group: "tracker", method: "sourceSetMapping", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
   { name: "tracker.test_signal", group: "tracker", method: "testSignal", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "ui.vitals", group: "ui", method: "vitals", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: false },
+  { name: "webhook.deliveries", group: "webhook", method: "deliveries", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
+  { name: "webhook.list", group: "webhook", method: "list", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: false },
+  { name: "webhook.register", group: "webhook", method: "register", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
+  { name: "webhook.remove", group: "webhook", method: "remove", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "working_memory.append", group: "working_memory", method: "append", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },
   { name: "working_memory.delete", group: "working_memory", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: false },
   { name: "working_memory.get", group: "working_memory", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
@@ -9668,4 +9747,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 324;
+export const GENERATED_OP_COUNT = 328;

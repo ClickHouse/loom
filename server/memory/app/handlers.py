@@ -44,12 +44,14 @@ from server.memory.api.models_crud import (
     MemoryUnpinOutput,
 )
 from server.memory.app import conflict_deferred as _cd
+from server.memory.app import webhooks
 from server.memory.app.get_output import duplicate_of_shown, row_output
 from server.memory.app.provenance import writer_actor
 from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.delete_marks import delete_version_trace
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import Identity, next_version
@@ -622,7 +624,15 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # The version is drawn here, right before the insert: the vector retire skips rows at
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
-    tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
+    await _write_tombstone_row(existing, version=version)
+    try:
+        tombstoned, downgraded = await _retire_derived(
+            existing, version=version, op="memory.delete"
+        )
+    finally:
+        # The tombstone is in: a retry finds no live row and returns found=False, so the
+        # event is recorded whatever fails while retiring what was derived from it.
+        await webhooks.announce([("memory.tombstoned", memory_change(existing, version))])
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -787,6 +797,9 @@ async def finish_delete_check(
             dependents_tombstoned=tombstoned,
             dependents_downgraded=downgraded,
         )
+        # Here, where every finish of the delete passes (the call itself, a retry of
+        # a deferred one, the delete_version_check worker).
+        await webhooks.announce([("memory.tombstoned", memory_change(existing, tombstone))])
     try:
         await memory_repo.record_delete_check(check, done=True)
     except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly
@@ -1021,13 +1034,6 @@ async def _write_above(row: Any, *, tombstone: int, source_trace: str | None = N
     await insert_memory_versions([back], ch=get_client())
 
 
-async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
-    """Write the tombstone of `existing` at `version` and retire what was derived from it.
-    Returns how many consolidated summaries it tombstoned and downgraded."""
-    await _write_tombstone_row(existing, version=version)
-    return await _retire_derived(existing, version=version, op=op)
-
-
 async def _write_tombstone_row(existing: Any, *, version: int, trace: str = "") -> None:
     """The loom.memory tombstone of `existing` at `version`, `trace` as its source_trace."""
     import server.memory.store as memory_repo
@@ -1165,11 +1171,17 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             },
         )
 
+    async def announce_page(rows: list[dict[str, Any]]) -> None:
+        await webhooks.announce([("memory.tombstoned", row) for row in rows])
+
+    # The tombstoned rows are read back only for a namespace with a webhook that takes them.
+    subscribed = await webhooks.subscribers(input.org, input.namespace, "memory.tombstoned")
     counts = await memory_repo.bulk_tombstone_scope(
         org=input.org,
         namespace=input.namespace,
         user_id=input.user_id,
         agent=input.agent,
+        on_tombstoned=announce_page if subscribed else None,
     )
     locked_skipped = int(counts.pop("locked_skipped", 0) or 0)
     return MemoryClearOutput(

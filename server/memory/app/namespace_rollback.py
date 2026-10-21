@@ -11,7 +11,9 @@ from typing import Any
 
 import server.memory.store as store
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.app import webhooks
 from server.memory.domain import rollback as svc
+from server.memory.domain.webhook_events import EventType
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,8 @@ async def apply_rollback(
     stub_vector: list[float] = []
 
     memory_rows: list[dict[str, Any]] = []
+    # The webhook event each memory row is, in the same order.
+    row_events: list[EventType] = []
     embedding_rows: list[dict[str, Any]] = []
     # (identity key, the new memory row's version) of each row that is not embedded.
     retire: list[tuple[store.EmbeddingKey, int]] = []
@@ -123,14 +127,15 @@ async def apply_rollback(
     # --- reinstate: the historical row becomes the head again ---------------
     pairs = [(a.memory_key, a.version_to) for a in plan.reinstate]
     wanted = {
-        (a.agent, a.user_id, a.session_id, a.memory_key, a.version_to) for a in plan.reinstate
+        (a.agent, a.user_id, a.session_id, a.memory_key, a.version_to): a for a in plan.reinstate
     }
     for i in range(0, len(pairs), _INSERT_BATCH):
         historical = await store.fetch_version_rows(
             org, namespace, pairs[i : i + _INSERT_BATCH], ch=ch
         )
         for h in historical:
-            if (h.agent, h.user_id, h.session_id, h.memory_key, h.version) not in wanted:
+            action = wanted.get((h.agent, h.user_id, h.session_id, h.memory_key, h.version))
+            if action is None:
                 continue
             new_version = store.next_version()
             memory_rows.append(
@@ -147,6 +152,7 @@ async def apply_rollback(
                     ),
                 )
             )
+            row_events.append(_reinstate_event(h, action))
             if is_embedded(h.memory_type, h.sensitivity):
                 embedding_rows.append(_stub(h, version=new_version, tombstoned_at=h.tombstoned_at))
             else:
@@ -177,13 +183,18 @@ async def apply_rollback(
                 updated_at=applied_at,
             )
         )
+        row_events.append("memory.tombstoned")
         if is_embedded(head.memory_type, head.sensitivity):
             embedding_rows.append(_stub(head, version=new_version, tombstoned_at=applied_at))
         else:
             _retire(head, new_version)
 
     for i in range(0, len(memory_rows), _INSERT_BATCH):
-        await insert_memory_versions(memory_rows[i : i + _INSERT_BATCH], ch=ch)
+        chunk = memory_rows[i : i + _INSERT_BATCH]
+        await insert_memory_versions(chunk, ch=ch)
+        # Each chunk as it lands: a retry skips the keys already at their target version.
+        events = row_events[i : i + _INSERT_BATCH]
+        await webhooks.announce(list(zip(events, chunk, strict=True)))
     for i in range(0, len(embedding_rows), _INSERT_BATCH):
         await store.insert_embedding_rows(embedding_rows[i : i + _INSERT_BATCH], ch=ch)
     # After the memory insert, as memory.set does, so no reader sees the vector
@@ -198,3 +209,11 @@ async def apply_rollback(
         len(plan.reinstate),
         len(plan.remove),
     )
+
+
+def _reinstate_event(historical: store.MemoryRow, action: svc.RollbackAction) -> EventType:
+    """What reinstating `historical` is to a webhook: back to a tombstone, a
+    revival of a key that is tombstoned now, or a revision."""
+    if historical.tombstoned_at:
+        return "memory.tombstoned"
+    return "memory.restored" if action.head_tombstoned else "memory.revised"

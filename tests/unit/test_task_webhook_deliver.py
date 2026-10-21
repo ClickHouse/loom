@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import pytest
 
+from server.core import webhooks
 from server.tasks.workers import webhook_deliver as wd
 
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
@@ -69,7 +70,7 @@ class FakeRepo:
 def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
     fr = FakeRepo()
     monkeypatch.setattr(wd, "repo", fr)
-    monkeypatch.setattr(wd, "vet_host", _public)
+    monkeypatch.setattr(webhooks, "vet_host", _public)
     wd._warned_missing_secret.clear()
     fr.inboxes.append(
         {
@@ -87,7 +88,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeRepo:
 PUBLIC = "93.184.215.14"
 
 
-async def _public(host: str) -> tuple[str, str]:
+async def _public(host: str, **_: Any) -> tuple[str, str]:
     """Every test host resolves to one public address."""
     return "", PUBLIC
 
@@ -101,15 +102,17 @@ def _client(handler) -> httpx.MockTransport:
 
 def test_signature_is_v1_base64_hmac_over_id_dot_timestamp_dot_body() -> None:
     body = b'{"a":1}'
-    key = wd.secret_bytes(SECRET)
+    key = webhooks.secret_bytes(SECRET)
     assert key == b"0123456789abcdef0123456789abcdef"  # whsec_ marks a base64 key
-    assert wd.secret_bytes("plain-secret") == b"plain-secret"
-    sig = wd.sign(key, msg_id="102", timestamp=1_758_369_600, body=body)
+    assert webhooks.secret_bytes("plain-secret") == b"plain-secret"
+    sig = webhooks.sign(key, msg_id="102", timestamp=1_758_369_600, body=body)
     expected = base64.b64encode(
         hmac.new(key, b"102.1758369600." + body, hashlib.sha256).digest()
     ).decode()
     assert sig == f"v1,{expected}"
-    headers = wd.signed_headers(key, msg_id="102", timestamp=1_758_369_600, body=body)
+    headers = webhooks.signed_headers(
+        key, msg_id="102", timestamp=1_758_369_600, body=body, user_agent="t"
+    )
     assert headers["webhook-id"] == "102"
     assert headers["webhook-timestamp"] == "1758369600"
     assert headers["webhook-signature"] == sig
@@ -157,8 +160,8 @@ async def test_a_2xx_advances_the_cursor_and_resets_attempts(fake: FakeRepo, cap
     assert body["since_seq"] == 0 and body["last_seq"] == 102 and body["count"] == 2
     assert req.headers["webhook-id"] == "102"
     ts = int(req.headers["webhook-timestamp"])
-    assert req.headers["webhook-signature"] == wd.sign(
-        wd.secret_bytes(SECRET), msg_id="102", timestamp=ts, body=req.content
+    assert req.headers["webhook-signature"] == webhooks.sign(
+        webhooks.secret_bytes(SECRET), msg_id="102", timestamp=ts, body=req.content
     )
     cursor = fake.cursors[("acme", "private-bot")]
     assert cursor["last_seq"] == 102 and cursor["attempts"] == 0 and cursor["last_status"] == 204
@@ -241,7 +244,7 @@ async def test_a_missing_secret_holds_the_notice_and_warns_once(fake: FakeRepo, 
         r1 = await wd.deliver_once(transport=client, now=NOW, env={})
         r2 = await wd.deliver_once(transport=client, now=NOW, env={})
     assert r1.skipped == 1 and r2.skipped == 1 and calls == 0 and not fake.writes
-    assert sum("no secret in env" in rec.message for rec in caplog.records) == 1
+    assert sum("no usable secret in env" in rec.message for rec in caplog.records) == 1
 
 
 @pytest.mark.asyncio
@@ -267,19 +270,99 @@ async def test_nothing_new_makes_no_request(fake: FakeRepo) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("bad_url", "bad_secret"),
-    [
-        ("https://bad.example.invalid:port/hook", SECRET),
-        ("https://bad.example.invalid/hook", "whsec_abcde"),
-    ],
-    ids=["invalid-url", "undecodable-secret"],
-)
-async def test_one_broken_inbox_does_not_stop_the_next(
-    fake: FakeRepo, bad_url: str, bad_secret: str
-) -> None:
-    # inbox 1 raises outside httpx.HTTPError (httpx.InvalidURL / binascii.Error);
+async def test_a_secret_with_a_trailing_newline_signs_with_the_secret(fake: FakeRepo) -> None:
+    """A secret read from a file into the variable ends in a newline: it is not
+    part of the key."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": SECRET + "\n"}
+    async with _client(handler) as client:
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert r.delivered == 1
+    req = seen[0]
+    assert req.headers["webhook-signature"] == webhooks.sign(
+        webhooks.secret_bytes(SECRET),
+        msg_id=req.headers["webhook-id"],
+        timestamp=int(req.headers["webhook-timestamp"]),
+        body=req.content,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_secret_wrapped_across_two_lines_signs_with_the_secret(fake: FakeRepo) -> None:
+    """A base64 tool wraps a long value at 64 characters: the line break is
+    not part of the key."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    key = bytes(range(64))
+    encoded = base64.b64encode(key).decode()
+    wrapped = "whsec_" + encoded[:64] + "\n" + encoded[64:]
+    env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": wrapped}
+    async with _client(handler) as client:
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert r.delivered == 1
+    req = seen[0]
+    assert req.headers["webhook-signature"] == webhooks.sign(
+        key,
+        msg_id=req.headers["webhook-id"],
+        timestamp=int(req.headers["webhook-timestamp"]),
+        body=req.content,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_secret_is_warned_about_once(fake: FakeRepo, caplog) -> None:
+    caplog.set_level(logging.WARNING)
+    env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": "whsec_not*base64!"}
+    async with _client(lambda r: httpx.Response(204)) as client:
+        await wd.deliver_once(transport=client, now=NOW, env=env)
+        await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert sum("secret" in rec.message for rec in caplog.records) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_undecodable_secret_holds_its_inbox_and_not_the_next(fake: FakeRepo) -> None:
+    fake.inboxes[:] = [
+        {**fake.inboxes[0], "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_ACME__BAD"},
+        {
+            "org": "acme",
+            "inbox": "good-bot",
+            "owner_namespace": "good",
+            "webhook_url": "https://good.example.invalid/hook",
+            "webhook_secret_ref": "LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT",
+        },
+    ]
+    fake.events.append({**_event(103), "inbox": "good-bot"})
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["host"])
+        return httpx.Response(204)
+
+    env = {
+        "LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": SECRET,
+        "LOOM_WEBHOOK_SECRET_ACME__BAD": "whsec_abcde",
+    }
+    async with _client(handler) as client:
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert seen == ["good.example.invalid"]
+    assert r.delivered == 1 and r.skipped == 1
+    assert ("acme", "private-bot") not in fake.cursors
+
+
+@pytest.mark.asyncio
+async def test_one_broken_inbox_does_not_stop_the_next(fake: FakeRepo) -> None:
+    # inbox 1 raises outside httpx.HTTPError (httpx.InvalidURL);
     # inbox 2 must still be delivered and inbox 1's failure lands in its cursor.
+    bad_url, bad_secret = "https://bad.example.invalid:port/hook", SECRET
     fake.inboxes[:] = [
         {
             **fake.inboxes[0],
@@ -427,7 +510,7 @@ async def test_a_webhook_to_a_non_public_address_is_never_sent(
 ) -> None:
     import server.core.hosts as hosts
 
-    monkeypatch.setattr(wd, "vet_host", hosts.vet_host)
+    monkeypatch.setattr(webhooks, "vet_host", hosts.vet_host)
     monkeypatch.setattr(hosts, "_resolve", lambda host: [resolves_to])
     fake.inboxes[0]["webhook_url"] = url
     seen: list[httpx.Request] = []
@@ -443,18 +526,18 @@ async def test_a_webhook_to_a_non_public_address_is_never_sent(
 async def test_pinned_target_connects_to_the_vetted_address_only_over_http_or_https(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def resolver(host: str) -> tuple[str, str]:
+    async def resolver(host: str, **_: Any) -> tuple[str, str]:
         return "", "2606:2800:220:1::1"
 
-    monkeypatch.setattr(wd, "vet_host", resolver)
-    assert await wd.pinned_target("https://hook.example:8443/a?b=1") == (
+    monkeypatch.setattr(webhooks, "vet_host", resolver)
+    assert await webhooks.pinned_target("https://hook.example:8443/a?b=1") == (
         "",
         "https://[2606:2800:220:1::1]:8443/a?b=1",
         "hook.example:8443",
         "hook.example",
     )
-    assert (await wd.pinned_target("ftp://hook.example/a"))[0]
-    assert (await wd.pinned_target("file:///etc/passwd"))[0]
+    assert (await webhooks.pinned_target("ftp://hook.example/a"))[0]
+    assert (await webhooks.pinned_target("file:///etc/passwd"))[0]
 
 
 @pytest.mark.asyncio
@@ -492,13 +575,13 @@ async def test_another_orgs_secret_is_never_read(fake: FakeRepo) -> None:
     ],
 )
 def test_a_secret_ref_is_bound_to_one_org(org: str, ref: str, ok: bool) -> None:
-    from server.tasks.domain.states import webhook_secret_ref_ok
+    from server.core.webhook_secrets import webhook_secret_ref_ok
 
     assert webhook_secret_ref_ok(org, ref) is ok
 
 
 def test_orgs_that_differ_only_in_punctuation_or_case_get_distinct_prefixes() -> None:
-    from server.tasks.domain.states import webhook_secret_org_prefix
+    from server.core.webhook_secrets import webhook_secret_org_prefix
 
     orgs = ["acme-x", "acme_x", "acme.x", "ACME-X", "acme_2dx", "acmex"]
     assert len({webhook_secret_org_prefix(o) for o in orgs}) == len(orgs)

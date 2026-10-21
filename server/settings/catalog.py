@@ -3154,6 +3154,108 @@ class MemorySearchSettings(BaseModel):
     memory_search_spelling_lookup_timeout_s: Annotated[float, LIVE] = Field(default=0.4, gt=0)
 
 
+# ===== MemoryWebhook ==========================================================
+
+
+def parse_backoff_steps(raw: str) -> tuple[float, ...]:
+    """`memory_webhook_backoff_steps_seconds` as seconds, in order; ValueError when a
+    step is not a number over 0 or there is no step."""
+    steps = tuple(float(step) for step in raw.split(",") if step.strip())
+    if not steps or not all(step > 0 for step in steps):
+        raise ValueError("memory webhook backoff steps: one or more numbers over 0 seconds")
+    return steps
+
+
+def _backoff_steps(raw: str) -> str:
+    parse_backoff_steps(raw)
+    return raw
+
+
+# Startup and the settings file refuse an unusable backoff schedule.
+BackoffSteps = AfterValidator(_backoff_steps)
+
+
+class MemoryWebhookSettings(BaseModel):
+    """Memory webhooks: their delivery worker and the URLs they may reach."""
+
+    # Deliver the signed memory-change events of loom.memory_webhook_outbox to
+    # each namespace's registered webhooks (the memory_webhook_deliver worker).
+    memory_webhook_deliver_enabled: bool = True
+    # Seconds between memory webhook delivery passes while events are going out.
+    memory_webhook_deliver_interval_seconds: int = Field(default=5, ge=1)
+    # Seconds between memory webhook delivery passes that found nothing due.
+    memory_webhook_deliver_idle_interval_seconds: int = Field(default=30, ge=1)
+    # Seconds a memory webhook delivery pass may run before the supervisor abandons it
+    # (at least 30).
+    memory_webhook_deliver_max_pass_seconds: float = Field(default=120.0, ge=30)
+    # Seconds before the pass deadline a memory webhook delivery pass stops its POSTs, kept
+    # for the insert after them; less than memory_webhook_deliver_max_pass_seconds.
+    memory_webhook_deliver_reserve_seconds: float = Field(default=20.0, gt=0)
+    # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
+    # leased stays passed over by other passes, so a crashed pass's events come back after it.
+    memory_webhook_lease_margin_seconds: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Leases (max pass plus lease margin each) after a webhook.remove in which delivery
+    # passes still mark the removed memory webhook's events dead.
+    memory_webhook_removal_window_leases: Annotated[int, LIVE] = Field(default=10, ge=1)
+    # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
+    memory_webhook_max_posts_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Events of one memory webhook a delivery pass POSTs at most, so every webhook with
+    # work gets its turn.
+    memory_webhook_posts_per_webhook: Annotated[int, LIVE] = Field(default=10, ge=1)
+    # Memory webhook POSTs one delivery pass has in flight at once (one per webhook at most).
+    memory_webhook_deliver_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
+    # Seconds a memory webhook receiver has to answer a POST (the name lookup, the connection
+    # and the status line) before it counts as failed; also the registration's lookup limit.
+    memory_webhook_ack_timeout_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
+    # Comma-separated seconds a failed memory webhook event waits before each retry, one
+    # step per failed attempt; every step over 0.
+    memory_webhook_backoff_steps_seconds: Annotated[str, LIVE, BackoffSteps] = "5,30,120,600,1800"
+    # Seconds a failed memory webhook event waits at most: caps each backoff step and is
+    # the wait after the last.
+    memory_webhook_max_backoff_seconds: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
+    # POSTs per memory webhook event before it is marked dead; the 2.75-day delivery
+    # deadline marks it dead sooner whatever this is.
+    memory_webhook_max_attempts: Annotated[int, LIVE] = Field(default=60, ge=1)
+    # Failed POSTs in a row after which the delivery worker passes a memory webhook over
+    # for a cooldown (kept per process; a 2xx resets it).
+    memory_webhook_failures_before_cooldown: Annotated[int, LIVE] = Field(default=5, ge=1)
+    # Seconds of a memory webhook's first cooldown; each one after it doubles, up to
+    # memory_webhook_max_cooldown_seconds.
+    memory_webhook_cooldown_seconds: Annotated[int, LIVE] = Field(default=60, ge=1)
+    # Seconds a memory webhook's cooldown grows to at most.
+    memory_webhook_max_cooldown_seconds: Annotated[int, LIVE] = Field(default=3600, ge=1)
+    # Seconds between each process's reads of the registered memory webhooks; a webhook
+    # registered or removed on another process applies to writes here within it.
+    memory_webhook_refresh_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
+    # Live memory webhooks a namespace may hold: every memory write inserts one outbox row
+    # per webhook that takes its event.
+    memory_webhook_max_per_namespace: Annotated[int, LIVE] = Field(default=10, ge=1)
+    # True lets a memory webhook use plain http (a local receiver in development);
+    # false: https only.
+    memory_webhook_allow_http: bool = False
+    # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
+    # reach although they resolve to a private, loopback or link-local address; "" = none.
+    memory_webhook_private_hosts: str = ""
+
+    @model_validator(mode="after")
+    def _check_delivery_reserve(self) -> MemoryWebhookSettings:
+        """A reserve at or over the pass deadline leaves a pass no time to POST."""
+        if (
+            self.memory_webhook_deliver_reserve_seconds
+            >= self.memory_webhook_deliver_max_pass_seconds
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS must be less than "
+                "LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS"
+            )
+        return self
+
+    def memory_webhook_private_host_set(self) -> frozenset[str]:
+        return frozenset(
+            h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()
+        )
+
+
 # ===== Model ==================================================================
 
 # `local:<alias>` embedding models: alias -> (Hugging Face id, the width it emits).
@@ -5182,6 +5284,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "tracker.source.set_mapping": 30000,
     "tracker.test_signal": 8000,
     "ui.vitals": 50,
+    # The namespace's events and an attempts scan, 62 ms at 1M events.
+    "webhook.deliveries": 400,
+    # One registry read of the namespace.
+    "webhook.list": 200,
+    # The URL's name lookup, then a registry read and one insert.
+    "webhook.register": 800,
+    # A registry read of the namespace and one insert.
+    "webhook.remove": 400,
     "working_memory.append": 80,
     "working_memory.delete": 40,
     "working_memory.get": 40,

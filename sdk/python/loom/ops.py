@@ -357,6 +357,10 @@ OpName = Literal[
     "tracker.source.set_mapping",
     "tracker.test_signal",
     "ui.vitals",
+    "webhook.deliveries",
+    "webhook.list",
+    "webhook.register",
+    "webhook.remove",
     "working_memory.append",
     "working_memory.delete",
     "working_memory.get",
@@ -684,6 +688,10 @@ OP_NAMES: tuple[str, ...] = (
     "tracker.source.set_mapping",
     "tracker.test_signal",
     "ui.vitals",
+    "webhook.deliveries",
+    "webhook.list",
+    "webhook.register",
+    "webhook.remove",
     "working_memory.append",
     "working_memory.delete",
     "working_memory.get",
@@ -4507,6 +4515,54 @@ OPS: dict[str, OpSpec] = {
         "experimental",
         50,
         False,
+        False,
+    ),
+    "webhook.deliveries": OpSpec(
+        "webhook.deliveries",
+        "WebhookDeliveriesInput",
+        "WebhookDeliveriesBody",
+        "WebhookDeliveriesOutput",
+        True,
+        "admin",
+        "experimental",
+        400,
+        False,
+        False,
+    ),
+    "webhook.list": OpSpec(
+        "webhook.list",
+        "WebhookListInput",
+        "WebhookListBody",
+        "WebhookListOutput",
+        True,
+        "admin",
+        "experimental",
+        200,
+        False,
+        False,
+    ),
+    "webhook.register": OpSpec(
+        "webhook.register",
+        "WebhookRegisterInput",
+        "WebhookRegisterBody",
+        "WebhookRegisterOutput",
+        True,
+        "admin",
+        "experimental",
+        800,
+        True,
+        False,
+    ),
+    "webhook.remove": OpSpec(
+        "webhook.remove",
+        "WebhookRemoveInput",
+        "WebhookRemoveBody",
+        "WebhookRemoveOutput",
+        True,
+        "admin",
+        "experimental",
+        400,
+        True,
         False,
     ),
     "working_memory.append": OpSpec(
@@ -17602,6 +17658,149 @@ class UiVitalsBody(TypedDict, total=False):
 class UiVitalsOutput(TypedDict, total=False):
     recorded: NotRequired[bool]
     route: NotRequired[str]
+
+
+class WebhookDeliveriesInput(TypedDict, total=False):
+    "The namespace's webhook events of the last 3 days and their delivery state."
+
+    org: Required[str]
+    namespace: Required[str]
+    webhook_id: NotRequired[str]
+    status: NotRequired[Optional[Literal["pending", "delivered", "dead"]]]
+    limit: NotRequired[int]
+
+
+class WebhookDeliveriesBody(TypedDict, total=False):
+    "The namespace's webhook events of the last 3 days and their delivery state."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    webhook_id: NotRequired[str]
+    status: NotRequired[Optional[Literal["pending", "delivered", "dead"]]]
+    limit: NotRequired[int]
+
+
+class WebhookDeliveriesOutput(TypedDict, total=False):
+    deliveries: NotRequired[list["WebhookDelivery"]]
+
+
+class WebhookDelivery(TypedDict, total=False):
+    event_id: Required[str]
+    webhook_id: Required[str]
+    event_type: Required[str]
+    memory_key: Required[str]
+    memory_id: Required[str]
+    version: Required[int]
+    occurred_at: Required[str]  # date-time as ISO-8601 text
+    status: Required[Literal["pending", "delivered", "dead"]]
+    attempts: Required[int]
+    next_attempt_at: Required[str]  # date-time as ISO-8601 text
+    last_status: Required[int]
+    last_error: Required[str]
+
+
+class WebhookListInput(TypedDict, total=False):
+    "The namespace's memory webhooks."
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class WebhookListBody(TypedDict, total=False):
+    "The namespace's memory webhooks."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class WebhookListOutput(TypedDict, total=False):
+    webhooks: NotRequired[list["WebhookInfo"]]
+
+
+class WebhookInfo(TypedDict, total=False):
+    webhook_id: Required[str]
+    url: Required[str]
+    secret_ref: Required[str]
+    events: Required[
+        list[
+            Literal[
+                "memory.written",
+                "memory.revised",
+                "memory.tombstoned",
+                "memory.restored",
+                "memory.redacted",
+                "memory.erased",
+            ]
+        ]
+    ]
+    created_at: Required[str]  # date-time as ISO-8601 text
+    secret_present: NotRequired[bool]
+
+
+class WebhookRegisterInput(TypedDict, total=False):
+    "Register a URL that is told when memory in the namespace changes."
+
+    org: Required[str]
+    namespace: Required[str]
+    url: Required[str]
+    secret_ref: Required[str]
+    events: NotRequired[
+        list[
+            Literal[
+                "memory.written",
+                "memory.revised",
+                "memory.tombstoned",
+                "memory.restored",
+                "memory.redacted",
+                "memory.erased",
+            ]
+        ]
+    ]
+
+
+class WebhookRegisterBody(TypedDict, total=False):
+    "Register a URL that is told when memory in the namespace changes."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    url: Required[str]
+    secret_ref: Required[str]
+    events: NotRequired[
+        list[
+            Literal[
+                "memory.written",
+                "memory.revised",
+                "memory.tombstoned",
+                "memory.restored",
+                "memory.redacted",
+                "memory.erased",
+            ]
+        ]
+    ]
+
+
+class WebhookRegisterOutput(TypedDict, total=False):
+    webhook: Required["WebhookInfo"]
+
+
+class WebhookRemoveInput(TypedDict, total=False):
+    "Remove one memory webhook; none of its events is sent after the call, save a"
+
+    org: Required[str]
+    namespace: Required[str]
+    webhook_id: Required[str]
+
+
+class WebhookRemoveBody(TypedDict, total=False):
+    "Remove one memory webhook; none of its events is sent after the call, save a"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    webhook_id: Required[str]
+
+
+class WebhookRemoveOutput(TypedDict, total=False):
+    removed: Required[bool]
 
 
 class WorkingMemoryAppendInput(TypedDict, total=False):

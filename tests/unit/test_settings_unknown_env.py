@@ -20,6 +20,7 @@ def test_unknown_keys_come_from_the_environment_and_the_dotenv_file(
     monkeypatch.setenv("LOOM_MEMORY_PRIOR_CAP", "0.1")  # a field
     monkeypatch.setenv("LOOM_BASE_URL", "http://x")  # a known non-settings variable
     monkeypatch.setenv("LOOM_MEMROY_ASK_TOP_K", "5")  # a typo
+    monkeypatch.setenv("LOOM_WEBHOOK_SECRET_ACME__HOOK", "s")  # a webhook secret
     env = tmp_path / ".env"
     env.write_text("LOOM_RETIRED_FLAG=secret-value\nOPENAI_API_KEY=k\nLOOM_CH_HOST=h\n")
     assert unknown_env_keys(Settings.model_fields, str(env)) == [

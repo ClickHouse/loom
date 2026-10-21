@@ -1075,6 +1075,37 @@ bound parameter, on Loom's server and on any warehouse server that joins with it
 bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
 pods, and the upload never replaces an object.
 
+## Outbound webhooks
+
+Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.py`).
+
+- **No value leaves.** A memory webhook event carries the event type, ids, the memory key,
+  the version, the identity tuple, the actor, the request id and a timestamp, never a
+  value, tags or evidence (`server/memory/domain/webhook_events.py`); a task notice
+  carries ids and kinds, never task text. The receiver reads the value with its own
+  token, so authorization of the content stays at read time. The key is sent to every
+  registered receiver, including one whose token may not read the row, so writers keep
+  secrets and facts out of keys.
+- **Signed.** HMAC-SHA256 over `"{id}.{timestamp}.{body}"` in the Standard Webhooks
+  headers; the timestamp lets a receiver refuse a replay. The secret is an environment
+  variable a registration names, never stored; only a name under the registering org's
+  own prefix (`webhook_secret_ref_ok`) is read, so no tenant can have Loom sign with
+  another's secret. The secret is the org's by design, not one webhook's: two webhooks
+  of the org that name it sign alike, so a receiver checks `org` and `namespace` in the
+  signed body.
+- **No request forgery inward.** Each delivery resolves the host, refuses loopback,
+  private, link-local and multicast addresses (`server/core/hosts.py`), connects to the
+  address it vetted and follows no redirect. Memory webhooks also refuse plain `http`
+  and refuse an inward URL at registration; `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` and
+  `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` are the operator's exceptions. A refusal does not
+  name the address, a URL with a user name or password is refused, and logs name the
+  host only.
+- **No slow receiver holds a worker.** One deadline per POST covers the name lookup, the
+  connection and the status line (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS` for memory
+  webhooks, a fixed 10 s for task inbox notices), and the answer's body is never read.
+- **No network on the request path.** A memory write leaves outbox rows; a worker sends
+  them. The outbox holds keys and user ids, so erasure clears it.
+
 ## Secrets
 
 - **Dev signing secret.** A deployment (`LOOM_DEPLOYMENT=1`) that requires auth refuses
@@ -1129,6 +1160,7 @@ pods, and the upload never replaces an object.
 | Sensitivity                 | `server/memory/domain/sensitivity.py`, `server/memory/app/sensitivity_sweep.py`                                             |
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |
+| Outbound webhooks           | `server/core/webhooks.py`, `server/memory/app/webhooks.py`, `server/memory/workers/webhook_deliver.py`                      |
 | Leakage gate                | `tests/integration/test_cross_principal_leakage.py`                                                                         |
 
 ## Related

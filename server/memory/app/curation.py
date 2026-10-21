@@ -54,9 +54,11 @@ from server.memory.api.models_temporal import (
     _OutlineHub,
     _OutlineSession,
 )
+from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.sensitivity import listed_text, value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store.history import HistoryTarget
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
@@ -660,6 +662,12 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     for key in [target.memory_key, *sorted({p.memory_key for p in profiles})]:
         cache_rows += await memory_repo.delete_llm_response_cache_by_key(input.org, key)
         precedent_rows += await memory_repo.delete_ask_precedents_by_key(input.org, key)
+    # Each profile key built from the memory had versions scrubbed too: its receivers
+    # hear of the newest one, as they hear of the memory's own.
+    await webhooks.announce(
+        [("memory.redacted", memory_change(target, input.version))]
+        + [("memory.redacted", memory_change(p.head, p.newest)) for p in profiles if p.head]
+    )
     return MemoryRedactOutput(
         redacted=True,
         redacted_at=now,

@@ -22,7 +22,7 @@ from server.memory.api.models_bulk import (
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
 )
-from server.memory.app import after_write
+from server.memory.app import after_write, webhooks
 from server.memory.app.bulk_rows import (
     _BULK_CARRIED_COLS,
     _bulk_build_rows,
@@ -47,6 +47,7 @@ from server.memory.app.projections import (
 from server.memory.app.provenance import writer_actor
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.webhook_events import EventType
 
 if TYPE_CHECKING:
     from server.memory.app.search.clock import StageClock
@@ -290,7 +291,9 @@ async def _bulk_intra_batch_pairs(
 
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes — the memory rows and their embedding
-    rows — gathered, each a committed insert."""
+    rows — gathered, each a committed insert. Once the memory rows are in, the
+    batch is announced even when the embedding insert or the tail after it fails:
+    a retry of the same values writes nothing and would announce nothing."""
     import server.memory.store as memory_repo
 
     if state.memory_rows:
@@ -312,26 +315,34 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     state.embedding_rows = [
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
-    await asyncio.gather(
+    memory_done, embedding_done = await asyncio.gather(
         _insert_memory_rows(),
         memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
+        return_exceptions=True,
     )
-    if state.memory_rows:
-        # A memory.delete_version that landed after the fence read: the rows go above it.
-        lifted = await lift_after_insert(
-            first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
-        )
-        if lifted:
-            for res in state.results:
-                res.version = lifted.get((res.memory_key, res.version), res.version)
-            retire = _vectors_to_retire(state)
-    # The entries' versions were drawn before the batch embedded: a slow batch indexes
-    # its own BM25 stats.
-    after_write.index_late_rows(state.embedding_rows, ch=ch)
-    await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
-    fences = _high_winners(state)
-    if fences:
-        await fence_high(fences, ch=ch)
+    if isinstance(memory_done, BaseException):
+        raise memory_done
+    try:
+        if isinstance(embedding_done, BaseException):
+            raise embedding_done
+        if state.memory_rows:
+            # A memory.delete_version that landed after the fence read: the rows go above it.
+            lifted = await lift_after_insert(
+                first["org"], first["namespace"], state.memory_rows, state.embedding_rows, ch=ch
+            )
+            if lifted:
+                for res in state.results:
+                    res.version = lifted.get((res.memory_key, res.version), res.version)
+                retire = _vectors_to_retire(state)
+        # The entries' versions were drawn before the batch embedded: a slow batch indexes
+        # its own BM25 stats.
+        after_write.index_late_rows(state.embedding_rows, ch=ch)
+        await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
+        fences = _high_winners(state)
+        if fences:
+            await fence_high(fences, ch=ch)
+    finally:
+        await _bulk_announce(state)  # the rows are in, whatever failed after them
 
 
 def _winners(state: _BulkWriteState) -> dict[str, dict[str, Any]]:
@@ -707,6 +718,21 @@ async def handle_memory_bulk_set(
         identity_duplicates=state.identity_duplicates,
         stage_ms=dict(_bulk_work.get("stage_ms", {})),
     )
+
+
+async def _bulk_announce(state: _BulkWriteState) -> None:
+    """The written rows, to the namespace's webhooks: a key that was live, or
+    that an earlier entry of this batch wrote, is revised; any other is
+    written. An unchanged restatement writes no row and sends nothing. When
+    the live-key lookup failed (`existing_lookup_ok` is False) every key looks
+    new, so a revision is announced as written."""
+    seen = set(state.existing_ids)
+    changes: list[tuple[EventType, dict[str, Any]]] = []
+    for row in state.memory_rows:
+        key = str(row["memory_key"])
+        changes.append(("memory.revised" if key in seen else "memory.written", row))
+        seen.add(key)
+    await webhooks.announce(changes)
 
 
 def _supersede_pairs(plan: BulkVerdictPlan) -> list[tuple[str, str]]:
