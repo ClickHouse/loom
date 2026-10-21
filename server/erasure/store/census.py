@@ -284,7 +284,8 @@ _CENSUS: tuple[Substrate, ...] = (
         "delete_version_checks.delete",
         "delete_version_checks.delete",
     ),
-    # Memory webhook events: a row's identity, key and id, never its text; 3-day TTL.
+    # Memory webhook events: a row's identity, key and id, never its text; read for 3
+    # days, a day's part dropped within about 4 (the TTL drops whole parts).
     Substrate(
         "loom.memory_webhook_outbox",
         "1",
@@ -475,12 +476,14 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.memory_webhook_attempts": (
         "The webhook worker's record per event (event id, status, attempt count, next "
         "attempt, last HTTP status and error): it holds no key or identity, so an event's "
-        "erasure leaves nothing here to send or to read back, and it expires in 3 days."
+        "erasure leaves nothing here to send or to read back; read for 3 days, a day's part "
+        "is dropped within about 4."
     ),
     "loom.memory_webhooks": (
         "A webhook a namespace admin registered (URL, the name of the environment "
         "variable holding its signing secret, event types) — configuration keyed by "
-        "(org, namespace, webhook_id), holding no memory content."
+        "(org, namespace, webhook_id), holding no memory content and no principal id: "
+        "who registered it is in the audited webhook.register row."
     ),
     "loom.task_webhook_cursor": (
         "The signed-webhook delivery cursor per inbox (last acknowledged "

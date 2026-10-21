@@ -4360,6 +4360,12 @@
           "type": "integer",
           "description": "Seconds a memory webhook's cooldown grows to at most."
         },
+        "memory_webhook_max_per_namespace": {
+          "default": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Live memory webhooks a namespace may hold: every memory write inserts one outbox row per webhook that takes its event."
+        },
         "memory_webhook_max_posts_per_pass": {
           "default": 40,
           "minimum": 1,

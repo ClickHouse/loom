@@ -153,7 +153,6 @@ def _registration(webhook_id: str, namespace: str = "chat", **over: Any) -> dict
         "url": f"https://{namespace}.example/hooks/{webhook_id}",
         "secret_ref": REF,
         "events": list(EVENT_TYPES),
-        "created_by": "user:alice",
         "created_at": NOW,
         "is_deleted": 0,
         "version": 1,
@@ -1694,12 +1693,25 @@ async def test_a_namespace_holds_ten_webhooks_and_a_url_again_replaces_its_own(
     registered: list[dict[str, Any]],
 ) -> None:
     first = await _register("https://chat.example/0")
-    for i in range(1, app.MAX_PER_NAMESPACE):
+    for i in range(1, settings.memory_webhook_max_per_namespace):
         await _register(f"https://chat.example/{i}")
     with pytest.raises(ValidationError, match="at most 10"):
         await _register("https://chat.example/10")
     again = await _register("https://chat.example/0")
     assert again.webhook_id == first.webhook_id and len(registered) == 10
+
+
+@pytest.mark.asyncio
+async def test_a_registration_keeps_no_principal_id_for_an_erasure_to_leave_behind(
+    registered: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The registrant is u-1; a user erasure of u-1 has nothing to rewrite here.
+    monkeypatch.setattr(app.provenance, "writer_actor", lambda *_: "user:u-1")
+    info = await _register("https://chat.example/h")
+    (row,) = registered
+    assert set(row) == set(store.WEBHOOK_COLS)
+    assert all("u-1" not in str(v) for v in row.values())
+    assert "u-1" not in info.model_dump_json()
 
 
 @pytest.mark.asyncio
@@ -1742,6 +1754,7 @@ def test_the_worker_is_registered_on_its_settings() -> None:
         ("memory_webhook_cooldown_seconds", 0),
         ("memory_webhook_max_cooldown_seconds", 0),
         ("memory_webhook_refresh_seconds", 0),
+        ("memory_webhook_max_per_namespace", 0),
         ("memory_webhook_max_posts_per_pass", 0),
         ("memory_webhook_posts_per_webhook", 0),
         ("memory_webhook_deliver_concurrency", 0),

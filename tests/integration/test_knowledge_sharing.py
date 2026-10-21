@@ -572,6 +572,8 @@ def test_a_deleted_collection_is_closed_even_by_name(gw: Gateway) -> None:
     assert gw.call("bob", "knowledge.search", {"namespace": col, "query": nonce}).status_code == 403
     r = gw.call("bob", "knowledge.add", {"namespace": col, "source_uri": "x", "content": "y"})
     assert r.status_code == 403
+    # The name is never a collection again: what it kept (its webhooks) opens nothing.
+    assert gw.call("alice", "collection.create", {"namespace": col}).status_code == 409
 
 
 def test_a_deleted_group_takes_no_grant_and_keeps_none(gw: Gateway) -> None:

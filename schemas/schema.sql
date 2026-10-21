@@ -2692,7 +2692,6 @@ CREATE TABLE IF NOT EXISTS loom.memory_webhooks
     `url` String,
     `secret_ref` String,
     `events` Array(LowCardinality(String)),
-    `created_by` String DEFAULT '',
     `created_at` DateTime64(3) DEFAULT now64(3),
     `is_deleted` UInt8 DEFAULT 0,
     `version` UInt64

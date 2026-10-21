@@ -60,10 +60,6 @@ from server.workers import pass_context
 
 log = logging.getLogger(__name__)
 
-# Live webhooks a namespace may hold.
-# not a setting: bounds the outbox rows a memory write inserts and each process's registry copy
-MAX_PER_NAMESPACE = 10
-
 # (org, namespace) → ((webhook_id, its event types), ...).
 Registry = dict[tuple[str, str], tuple[tuple[str, frozenset[str]], ...]]
 
@@ -279,7 +275,6 @@ def _info(row: Mapping[str, Any]) -> WebhookInfo:
         url=str(row["url"]),
         secret_ref=ref,
         events=list(row["events"]),
-        created_by=str(row["created_by"]),
         created_at=row["created_at"],
         secret_present=signed.read_secret(str(row["org"]), ref) is not None,
     )
@@ -303,15 +298,13 @@ async def handle_webhook_register(input: WebhookRegisterInput) -> WebhookRegiste
     # Read, then written: two registrations of one new URL at once can both pass, and
     # make two webhooks (one more than the cap at most); webhook.remove takes either.
     same_url = next((r for r in existing if r["url"] == input.url), None)
-    if same_url is None and len(existing) >= MAX_PER_NAMESPACE:
-        raise ValidationError(
-            f"a namespace holds at most {MAX_PER_NAMESPACE} webhooks; remove one first"
-        )
+    cap = settings.memory_webhook_max_per_namespace
+    if same_url is None and len(existing) >= cap:
+        raise ValidationError(f"a namespace holds at most {cap} webhooks; remove one first")
     now = naive_utc_now()
     # The URL registered again keeps its id and replaces its secret_ref and events.
     kept = same_url or {
         "webhook_id": _new_webhook_id(input.org, input.namespace, input.url, now),
-        "created_by": provenance.writer_actor(),
         "created_at": now,
     }
     row = {
@@ -321,7 +314,6 @@ async def handle_webhook_register(input: WebhookRegisterInput) -> WebhookRegiste
         "url": input.url,
         "secret_ref": input.secret_ref,
         "events": sorted(set(input.events)),
-        "created_by": kept["created_by"],
         "created_at": kept["created_at"],
         "is_deleted": 0,
         "version": next_version(),

@@ -39,7 +39,6 @@ class WebhookInfo(BaseModel):
     url: str
     secret_ref: str
     events: list[EventType]
-    created_by: str = ""
     created_at: datetime | None = None
     # Whether the replica that answered holds a usable secret in the variable secret_ref
     # names; events wait until the worker's does.

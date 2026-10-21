@@ -17511,7 +17511,6 @@ class WebhookInfo(TypedDict, total=False):
             ]
         ]
     ]
-    created_by: NotRequired[str]
     created_at: NotRequired[Optional[str]]
     secret_present: NotRequired[bool]
 

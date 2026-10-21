@@ -3151,6 +3151,9 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds between each process's reads of the registered memory webhooks; a webhook
     # registered or removed on another process applies to writes here within it.
     memory_webhook_refresh_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
+    # Live memory webhooks a namespace may hold: every memory write inserts one outbox row
+    # per webhook that takes its event.
+    memory_webhook_max_per_namespace: Annotated[int, LIVE] = Field(default=10, ge=1)
     # True lets a memory webhook use plain http (a local receiver in development);
     # false: https only.
     memory_webhook_allow_http: bool = False

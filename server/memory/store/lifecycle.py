@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.store.embeddings import (
@@ -317,7 +317,7 @@ async def bulk_tombstone_scope(
             f"WHERE {scope_sql} AND {locked_predicate()})"
         )
     # One timestamp for the whole clear, so the rows it tombstoned can be read back.
-    params["at"] = naive_utc_now().replace(microsecond=0)
+    params["at"] = naive_utc_now_seconds()
     counts: dict[str, int] = {}
     for table in ("loom.memory", "loom.memory_embeddings"):
         where_sql = where_by_table[table]

@@ -3791,6 +3791,10 @@ settings:
   # registered or removed on another process applies to writes here within it. [live]
   # memory_webhook_refresh_seconds: 10.0
 
+  # Live memory webhooks a namespace may hold: every memory write inserts one outbox row
+  # per webhook that takes its event. [live]
+  # memory_webhook_max_per_namespace: 10
+
   # True lets a memory webhook use plain http (a local receiver in development); false:
   # https only. [restart]
   # memory_webhook_allow_http: false

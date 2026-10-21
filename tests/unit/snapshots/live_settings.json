@@ -265,6 +265,7 @@
  "memory_webhook_max_attempts",
  "memory_webhook_max_backoff_seconds",
  "memory_webhook_max_cooldown_seconds",
+ "memory_webhook_max_per_namespace",
  "memory_webhook_max_posts_per_pass",
  "memory_webhook_posts_per_webhook",
  "memory_webhook_refresh_seconds",

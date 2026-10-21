@@ -1,6 +1,7 @@
 -- Memory webhooks (server/memory/app/webhooks.py). A namespace admin registers a URL,
 -- the name of the environment variable holding its signing secret (never the secret)
--- and the event types it wants; `webhook.remove` writes `is_deleted = 1`.
+-- and the event types it wants; `webhook.remove` writes `is_deleted = 1`. No principal
+-- id: who registered it is in the audited webhook.register row.
 CREATE TABLE IF NOT EXISTS loom.memory_webhooks
 (
     `org` LowCardinality(String),
@@ -9,7 +10,6 @@ CREATE TABLE IF NOT EXISTS loom.memory_webhooks
     `url` String,
     `secret_ref` String,
     `events` Array(LowCardinality(String)),
-    `created_by` String DEFAULT '',
     `created_at` DateTime64(3) DEFAULT now64(3),
     `is_deleted` UInt8 DEFAULT 0,
     `version` UInt64
@@ -23,7 +23,8 @@ SETTINGS non_replicated_deduplication_window = 1000;
 -- name a memory row, so erasure deletes the rows (erasure.store.steps_ledgers), and
 -- nothing the delivery worker writes can bring one back. Sorted by webhook so a pass
 -- reads only the webhooks it can send to and an admin only the namespace's events;
--- a queue, partitioned by day, so whole days expire 3 days after their events.
+-- a queue, partitioned by day: a day's part is dropped once its last row is 3 days old,
+-- so a row leaves the disk within about 4 days (reads stop at 3).
 CREATE TABLE IF NOT EXISTS loom.memory_webhook_outbox
 (
     `org` LowCardinality(String),

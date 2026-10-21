@@ -782,6 +782,7 @@
  "memory_webhook_max_attempts": 60,
  "memory_webhook_max_backoff_seconds": 3600.0,
  "memory_webhook_max_cooldown_seconds": 3600,
+ "memory_webhook_max_per_namespace": 10,
  "memory_webhook_max_posts_per_pass": 40,
  "memory_webhook_posts_per_webhook": 10,
  "memory_webhook_private_hosts": "",

@@ -1280,6 +1280,7 @@ Memory webhooks: their delivery worker and the URLs they may reach.
 | `LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS` | `int` | `60` | live | Seconds of a memory webhook's first cooldown; each one after it doubles, up to memory_webhook_max_cooldown_seconds. |
 | `LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS` | `int` | `3600` | live | Seconds a memory webhook's cooldown grows to at most. |
 | `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS` | `float` | `10.0` | live | Seconds between each process's reads of the registered memory webhooks; a webhook registered or removed on another process applies to writes here within it. |
+| `LOOM_MEMORY_WEBHOOK_MAX_PER_NAMESPACE` | `int` | `10` | live | Live memory webhooks a namespace may hold: every memory write inserts one outbox row per webhook that takes its event. |
 | `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` | `bool` | `False` |  | True lets a memory webhook use plain http (a local receiver in development); false: https only. |
 | `LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` | `str` | `''` |  | Comma-separated hostnames or IP literals (exact, any case) a memory webhook may reach although they resolve to a private, loopback or link-local address; "" = none. |
 

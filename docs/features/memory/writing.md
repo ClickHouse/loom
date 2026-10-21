@@ -289,7 +289,14 @@ no version at your key and sends no event; neither does a dry run or a refused w
 These writes send no event: the summaries `memory.delete` retires with the row they were
 built from, `memory.consolidate` and the consolidation worker, observations and their
 distillation, period digests, `memory.touch`, `memory.pin` and `memory.unpin`,
-`memory.lock` and `memory.unlock`, `memory.verify`, `memory.apply`, a proposal
+`memory.lock` and `memory.unlock`, `memory.verify`, `memory.apply`, `memory.reject` and
+the quarantine `memory.outcome` makes after repeated negative outcomes (both set the row's
+status to `rejected` in place, which takes it out of search: a receiver that mirrors what
+Loom serves reads the key again after one), `memory.resolve_orphan_duplicates` (which
+re-activates rows), `memory.dedup_collapse` (the search mirror only), `memory.promote` and
+`memory.demote` (the namespace's shared copy, not the memory row), the counters of
+`memory.outcome` and `memory.outcome_run`, `memory.assign_category`, `memory.link`,
+`memory.reindex`, a proposal
 (`memory.set` with `proposed`, which is not served until it is accepted) and its
 rejection, the status change `conflicts.resolve` and `memory.dedup_resolve` make on the rows they keep, the
 supersessions a write makes of other rows (the older same-key rows the `newest_wins`
@@ -323,12 +330,12 @@ the namespace's `auto` proposal policy, sends `memory.written`.
 identity: a namespace erasure goes to that namespace's webhooks, a user's erasure to
 every webhook of the org that takes the event.
 
-| Operation            | Role  | What it does                                                                                                                                                                                                                        |
-| -------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most 10 per namespace: two registrations of one new URL at the same moment can make two webhooks, one past the cap; remove either. |
-| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the replica that answered holds a usable secret).                                                                                                                          |
-| `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                                                                                                                                       |
-| `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                                                                                                                             |
+| Operation            | Role  | What it does                                                                                                                                                                                                                                                                             |
+| -------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most `LOOM_MEMORY_WEBHOOK_MAX_PER_NAMESPACE` per namespace (10 by default): two registrations of one new URL at the same moment can make two webhooks, one past the cap; remove either. |
+| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the replica that answered holds a usable secret).                                                                                                                                                                               |
+| `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                                                                                                                                                                                            |
+| `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                                                                                                                                                                                  |
 
 **Signing.** Each request carries the Standard Webhooks headers the task inbox webhook
 uses: `webhook-id` (the event id; drop a repeat), `webhook-timestamp` (unix seconds;
@@ -412,7 +419,8 @@ sweep, the `delete_version` check).
 - **Keeping.** An outbox insert that fails is logged and that event is not sent; the
   write still stands. A webhook registered on one server process applies to writes on the
   others within `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. Events and their delivery record
-  are kept 3 days. An erasure deletes the events in its scope; their delivery records
+  are read for 3 days and leave the disk within about 4: each day's events are dropped
+  together once the day's last one is 3 days old. An erasure deletes the events in its scope; their delivery records
   name no key or identity and expire with the rest.
 
 ## Settings
