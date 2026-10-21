@@ -2914,7 +2914,8 @@
           "confidence",
           "reason",
           "relations",
-          "revive"
+          "revive",
+          "run_id"
         ],
         "update_by_id": [
           "memory_id",

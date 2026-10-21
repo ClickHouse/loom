@@ -187,6 +187,8 @@ async def test_a_typed_update_inside_a_scope_carries_the_run(agent: Agent) -> No
     assert t.payload("/v1/memory.update")["run_id"] == "run-1"
     await agent.memory.update("k", "v2")
     assert "run_id" not in t.payload("/v1/memory.update")
+    await agent.memory.update("k", "v3", run_id="run-9")
+    assert t.payload("/v1/memory.update")["run_id"] == "run-9"
 
 
 async def test_call_keeps_an_explicit_run_id_and_reads_are_not_stamped(agent: Agent) -> None:

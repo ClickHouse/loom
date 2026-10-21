@@ -1738,6 +1738,7 @@ class MemoryClient:
         reason: str = "",
         relations: Sequence[tuple[str, str, str]] | None = None,
         revive: bool = False,
+        run_id: str | None = None,
     ) -> dict[str, Any]:
         """Update a memory by key — the fact changed or got more specific.
         Resolves `memory_key` namespace-wide unless
@@ -1776,8 +1777,8 @@ class MemoryClient:
             payload["reason"] = reason
         if relations:
             payload["relations"] = [list(f) for f in relations]
-        # Inside a run_scope the revision belongs to the run, as every other write does.
-        run_id = current_run_id()
+        # The revision belongs to the run: the one named, else the active run_scope's.
+        run_id = run_id or current_run_id()
         if run_id:
             payload["run_id"] = run_id
         return await self._agent.transport.post("/v1/memory.update", payload)
