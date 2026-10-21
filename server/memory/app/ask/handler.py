@@ -632,18 +632,24 @@ def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     by the token) never shares it with another user. The identity hashed is
     the one the read runs under: the token's read filters are pinned first,
     so a token bound to one end user never shares a precedent with another
-    user's token whatever the body names."""
+    user's token whatever the body names. The agent whose promoted rules the
+    knowledge passages serve is part of the shape when it is not the body's
+    agent, so a bot's token never reuses an answer drawn from another bot's rule."""
     import hashlib
     import json
 
     from server.auth.context import current_auth
     from server.identity.domain.read_scope import pin_read_filters
+    from server.memory.app.agent_rules import request_rule_agent
 
     input, _ = pin_read_filters(input, current_auth())
+    rule_agent = request_rule_agent(input.agent)
     exclude = set(_ASK_SHAPE_EXCLUDE)
     # Only a user or session the read filters on is part of the shape.
     exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
+    if rule_agent != input.agent:
+        shape["rule_agent"] = rule_agent
     # Absent, not empty, at every default: the shape a build without this key hashed.
     if shaped := _shape_settings(settings):
         shape["settings"] = shaped

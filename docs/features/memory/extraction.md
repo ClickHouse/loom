@@ -117,8 +117,9 @@ request's `(org, namespace, agent)`:
   passages and its whole-document route). Another agent in the
   namespace is not served it. A namespace-wide read (agent `*`, the `memory.ask`
   default) spans every agent and is served every bot's rules; a read under no agent
-  (`-`, the `loom_search` default) is served none, so a bot names its agent there. A
-  rule filed for every agent (`-`) carries no agent tag and is served to every agent. `knowledge.search` is not filtered by agent; a bot
+  (`-`, the `loom_search` default) is served no rule promoted for a named bot, so a
+  bot names its agent there. A rule filed for every agent (`-`) carries no agent tag
+  and is served to every read. `knowledge.search` is not filtered by agent; a bot
   finds its own rules with `knowledge.search(tags=["agent:<agent>"])`.
   `destination="memory"` writes the agent's memory row instead (`user_id` `-`,
   `source_trace` `learning:<candidate_id>`), which namespace-wide reads find and a read
@@ -126,8 +127,8 @@ request's `(org, namespace, agent)`:
 - A token bound to one end user files for the agent it names, never the body's `agent`.
   An end-user token names the agent its issuer signed (its `agent` claim). A token Loom
   mints names no agent, so one pinned with `--read-user-id` files no bot's rule. Its
-  reads are served that agent's rules the same way, and no bot's rules when it names
-  none: a bot that needs its own promoted rules for a user reads with an end-user token
+  reads are served that agent's rules the same way, and no rule promoted for a named
+  bot when it names none (a rule for every agent is still served): a bot that needs its own promoted rules for a user reads with an end-user token
   signed for it, or with an unpinned token.
 
 `learning_candidates` in the response counts the rules that wrote a new candidate or this

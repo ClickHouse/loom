@@ -769,6 +769,7 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     try:
         set_current_auth(_token("alice"))
         alice = ask_shape_sha256(_input(), settings)
+        named_alice = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
         set_current_auth(_token("bob"))
         bob = ask_shape_sha256(_input(), settings)
         set_current_auth(_token(""))
@@ -777,4 +778,42 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
         set_current_auth(None)
     assert alice != bob
     assert shared == ask_shape_sha256(_input(), settings)
-    assert alice == ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
+    assert alice == named_alice
+
+
+def test_ask_shape_hashes_the_agent_whose_rules_the_token_is_served() -> None:
+    """Two tokens pinned to one end user, signed for different bots, one body under the
+    default agent: each is served only its own bot's promoted rules, so the precedent
+    keys must differ; a caller with no pin keeps the shape it had."""
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.app.ask.handler import ask_shape_sha256
+    from server.memory.domain.precedents import precedent_key
+    from server.operations.base import Role
+    from server.settings import settings
+    from tests.unit.test_memory_ask import _input
+
+    def _token(agent: str) -> AuthInfo:
+        return AuthInfo(
+            subject="sa:bot",
+            org="o",
+            namespaces=("n",),
+            roles=(Role.VIEWER,),
+            is_service_account=True,
+            read_user_id="alice",
+            agent_principal=f"agent:{agent}",
+        )
+
+    def _key() -> str:
+        return precedent_key(_input().query, ask_shape_sha256(_input(), settings))
+
+    unpinned = _key()
+    try:
+        set_current_auth(_token("support-bot"))
+        support = _key()
+        set_current_auth(_token("sales-bot"))
+        sales = _key()
+    finally:
+        set_current_auth(None)
+    assert support != sales
+    assert unpinned == _key()
