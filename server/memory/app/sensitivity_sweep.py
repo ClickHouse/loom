@@ -162,8 +162,8 @@ class SweepReport:
     candidates: list[SweepCandidate] = field(default_factory=list)
     truncated: bool = False
     # The sort key the next pass starts after: the last key read, or the last candidate's
-    # when the candidates were cut to the limit. None when the scan reached the last row,
-    # so the next pass starts again at the first.
+    # when the candidates were cut to the limit. None when the scan read from the first key
+    # to the last, so the next pass starts again at the first.
     resume_after: dict[str, Any] | None = None
 
     @property
@@ -220,7 +220,9 @@ async def scan(
     Reads pages of `limit` keys in the table's sort key order, then the current version of
     each, until `limit` candidates are found, the rows run out or `pages` pages are read
     (`None`: no page cap), starting after the sort key `start_after` (the first key when
-    None). Only rows of the shapes in `only_shapes` are selected. A selected row the
+    None). A scan that started after `start_after` and reaches the last key with pages
+    left goes on from the first key up to `start_after`. Only rows of the shapes in
+    `only_shapes` are selected. A selected row the
     detector leaves unlabelled stays unlabelled and is selected again on the next run;
     reading past it, and starting the next pass at `resume_after`, keeps a run of them from
     hiding a later row that is high.
@@ -243,29 +245,26 @@ async def scan(
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
+    scope = {"org": org, "namespace": namespace, "since_days": since_days}
     last: dict[str, Any] = dict(start_after or {})  # the last key of the page before
+    stop: dict[str, Any] | None = None  # set once the scan goes back to the first key
     pages_read = 0
     while pages is None or pages_read < pages:
         pages_read += 1
-        after = bool(last)
-        page_params = dict(params)
-        if after:
-            page_params |= {f"after_{col}": last[col] for col in SORT_KEY}
-        sql = keys_sql(org=org, namespace=namespace, since_days=since_days, after=after)
-        keys = await ch.query_all(sql, params=page_params)
-        rows: list[dict[str, Any]] = []
-        if keys:
-            # The FINAL read takes the page's key range as a subquery, not its keys as a list:
-            # a list of thousands of keys is a parameter too long for the request URL.
-            page_params |= {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
-            sql = scan_sql(org=org, namespace=namespace, since_days=since_days, after=after)
-            rows = await ch.query_all(sql, params=page_params)
+        keys, rows = await _read_page(ch, params, scope, after=last, stop=stop)
         report.scanned += len(rows)
         report.truncated = bool(keys) and len(keys) >= limit
         found = len(report.candidates)
         _add_candidates(report, rows, keep)
         if not report.truncated:
-            report.resume_after = None
+            pages_left = pages is None or pages_read < pages
+            if start_after and not stop and pages_left and len(report.candidates) < limit:
+                # The scan reached the last key with pages left: read the keys before
+                # `start_after` too, or they wait for a later pass and can leave the window.
+                stop, last = dict(start_after), {}
+                continue
+            # With `stop`, every key was read: the next pass starts where this one did.
+            report.resume_after = stop
             break
         last = keys[-1]
         # A page moves the scan past its agent only when the FINAL read gave back a current
@@ -287,6 +286,32 @@ async def scan(
         report.truncated = True
         report.resume_after = report.candidates[-1].sort_key
     return report
+
+
+async def _read_page(
+    ch: _CHClient,
+    params: dict[str, Any],
+    scope: dict[str, Any],
+    *,
+    after: dict[str, Any],
+    stop: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """One page: its sort keys after `after` (from the first key when empty) and up to
+    `stop`, then the current version of each."""
+    page_params = dict(params)
+    if after:
+        page_params |= {f"after_{col}": after[col] for col in SORT_KEY}
+    if stop:
+        page_params |= {f"stop_{col}": stop[col] for col in SORT_KEY}
+    sql = keys_sql(**scope, after=bool(after), stop=bool(stop))
+    keys = await ch.query_all(sql, params=page_params)
+    if not keys:
+        return [], []
+    # The FINAL read takes the page's key range as a subquery, not its keys as a list: a
+    # list of thousands of keys is a parameter too long for the request URL.
+    page_params |= {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
+    rows = await ch.query_all(scan_sql(**scope, after=bool(after)), params=page_params)
+    return keys, rows
 
 
 def _agent(key: dict[str, Any]) -> tuple[str, str, str]:
@@ -344,6 +369,7 @@ class ApplyResult:
     embeddings_tombstoned: int = 0  # high rows' embedding rows
     embeddings_tagged: int = 0  # medium rows' embedding rows re-emitted with the tag
     errors: list[str] = field(default_factory=list)
+    failed: list[SweepCandidate] = field(default_factory=list)  # the candidates in `errors`
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -453,6 +479,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
             result.errors.append(f"{c.namespace}/{c.memory_key}: {e}")
+            result.failed.append(c)
     return result
 
 

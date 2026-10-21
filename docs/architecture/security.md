@@ -827,14 +827,18 @@ A worker pass is bounded:
 - It reads its window in the table's sort key order, in pages of
   `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys, until that many candidates are found or
   `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read.
-- It starts at the agent the pass before stopped in, and the pass after one that reads the
-  window's last row starts again at the first key. A full page inside one agent that gives
+- It starts at the agent the pass before stopped in. When it reaches the window's last row
+  with pages left, it goes on from the first key up to where it started, so the rows that
+  sort before its cursor are read in the same pass rather than left to age out of the
+  window. A full page inside one agent that gives
   nothing to label moves the pass past that agent, so one pass crosses up to its page cap of
   agents whose selected rows the detector leaves unlabelled, and a row more than a page into
   such an agent waits until the rows ahead of it leave the window, or for the operator's run.
   A pass that labelled rows leaves its cursor at the agent it stopped in, so the next reads
-  that agent again. A pass whose candidates all failed to apply leaves its cursor past that
-  agent, so a row that fails every time is retried when the sweep comes back round to it. A
+  that agent again. A pass that labelled nothing because its candidates, all in the agent it stopped in,
+  failed to apply leaves its cursor past that agent, so a row that fails every time is
+  retried when the sweep comes back round to it; failures in an earlier agent leave the
+  cursor where the pass stopped. A
   cursor past an agent that does not fit in 512 characters is past its namespace or org
   instead. The cursor, in `loom.worker_status`, holds the org, namespace and agent only, so
   it names no user or memory key that would outlive an erasure.

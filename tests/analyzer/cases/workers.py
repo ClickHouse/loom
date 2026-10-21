@@ -50,6 +50,16 @@ async def _pure_builders(ch: RecordingCH, c: dict[str, Any]) -> None:
             for build in (sweep_sql.keys_sql, sweep_sql.scan_sql)
             for after in (False, True)
         ),
+        *(  # a pass that went back to the first key
+            sweep_sql.keys_sql(
+                org=ORG if scoped else None,
+                namespace=NS if scoped else None,
+                since_days=7 if scoped else None,
+                after=after,
+                stop=True,
+            )
+            for after in (False, True)
+        ),
         sw.HIGH_WITH_EMBEDDING_SQL,
         reinforcement_lookup_sql(),
         REGISTRY_CLASS_SQL,

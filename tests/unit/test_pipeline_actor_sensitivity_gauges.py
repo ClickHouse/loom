@@ -381,7 +381,8 @@ async def _run_pass_recording(
 
     async def _apply(cands, *, ch=None):
         if failing:
-            return sweep.ApplyResult(errors=[f"{c.memory_key}: write failed" for c in cands])
+            errors = [f"{c.memory_key}: write failed" for c in cands]
+            return sweep.ApplyResult(errors=errors, failed=list(cands))
         applied.extend(cands)
         return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
 
@@ -537,14 +538,57 @@ async def test_a_pass_that_labels_rows_reads_its_agent_again_and_one_that_fails_
 ) -> None:
     # Six PIN rows in agent `a`, three pages' worth, and the second pass fails in `apply`.
     # A pass that labelled rows leaves the cursor at `a`, so the next reads `a` again. The
-    # failed pass leaves it past `a`; the next reaches the last row, and the sweep comes
-    # back round to `a` and labels every row.
+    # failed pass leaves it past `a`; the next reaches the last row with pages left, goes
+    # back to the first key and labels the rows that failed.
     pin = "badge PIN is 4471"
     rows = [_Row("o", "n", "-", _uuid(i), f"pin_{i}", pin, 600 - i) for i in range(6)]
-    labelled, cursors = await _passes(monkeypatch, rows, count=5, pages=3, failing=(1,))
-    assert labelled == [["pin_0", "pin_1"], [], [], ["pin_2", "pin_3"], ["pin_4", "pin_5"]]
+    labelled, cursors = await _passes(monkeypatch, rows, count=4, pages=3, failing=(1,))
+    assert labelled == [["pin_0", "pin_1"], [], ["pin_2", "pin_3"], ["pin_4", "pin_5"]]
     a, past_a = ["o", "n", "a"], ["o", "n", "a\x01"]
-    assert cursors == [a, past_a, [], a, a]
+    assert cursors == [a, past_a, a, a]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_failures_in_an_earlier_agent_leave_the_cursor_where_the_pass_stopped(
+    monkeypatch,
+) -> None:
+    # The first pass finds a PIN row in agent `a`, reads on to agent `d` and fails to apply
+    # it. The rest of `d` had no part in the failure, so the cursor stays at `d` and the
+    # next pass labels the PIN row there.
+    pin, spin = "badge PIN is 4471", {"spin": "4471"}
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "pin_a", pin, 60),
+        _Row("o", "n", "-", _uuid(2), "c0_spin", spin, 60, agent="c"),
+        _Row("o", "n", "-", _uuid(3), "c1_spin", spin, 60, agent="c"),
+        _Row("o", "n", "-", _uuid(4), "d0_spin", spin, 60, agent="d"),
+        _Row("o", "n", "-", _uuid(5), "d1_pin", pin, 60, agent="d"),
+    ]
+    labelled, cursors = await _passes(monkeypatch, rows, count=2, pages=2, failing=(0,))
+    assert labelled == [[], ["d1_pin"]]
+    assert cursors == [["o", "n", "d"], []]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_that_reaches_the_last_row_reads_the_rows_before_its_cursor(
+    monkeypatch,
+) -> None:
+    # The cursor is at agent `b` and a PIN row sits in agent `a`. With a page left after
+    # the last row, the pass goes back to the first key, labels the row and stops where it
+    # started; with no page left, the row waits for the next pass.
+    from server.workers import pass_context
+
+    pin_row = _Row("o", "n", "-", _uuid(1), "vault_door", "badge PIN is 4471", 60)
+    ch = _local_memory([pin_row])
+    for pages, expected in ((2, ["vault_door"]), (1, [])):
+        ctx = pass_context.begin("sensitivity_sweep", resume_cursor='["o", "n", "b"]')
+        try:
+            applied, _out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=pages)
+        finally:
+            pass_context.clear()
+        assert [c.memory_key for c in applied] == expected
+        assert json.loads(ctx.cursor) == (["o", "n", "b"] if expected else [])
 
 
 @pytest.mark.asyncio
@@ -625,7 +669,7 @@ async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> N
     rest = await sweep.scan(
         since_days=2,
         limit=2,
-        pages=3,
+        pages=1,
         start_after=first.resume_after,
         ch=ch,  # type: ignore[arg-type]
     )

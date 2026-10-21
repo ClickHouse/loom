@@ -13,26 +13,30 @@ shape matches run ids and integer limits); the historical
 backlog is the operator's `loom sensitivity-sweep --apply`, not this worker's.
 
 A pass starts at the agent the previous one stopped in (the worker's cursor in
-`loom.worker_status`), and the next starts again at the first key once a pass reads the
-last row. Inside a pass, a full page of current unlabelled rows in one agent that gives
-nothing to label moves the scan past that agent, so selected rows the detector leaves
-unlabelled cannot fill every pass's pages ahead of another agent's rows. A pass whose
-candidates all fail in `apply` leaves the cursor past the agent it stopped in, so a row
-that fails every time is retried when the sweep comes back round to it rather than
-holding every pass there. The cursor is `(org, namespace, agent)` and no more: a user id
-or a memory key in `loom.worker_status` would outlive that user's erasure.
+`loom.worker_status`), and one that reaches the last row with pages left goes on from the
+first key up to where it started. Inside a pass, a full page of current unlabelled rows in
+one agent that gives nothing to label moves the scan past that agent, so selected rows the
+detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows. A
+pass that labels nothing because its candidates, all in the agent it stopped in, fail in
+`apply` leaves the cursor past that agent, so a row that fails every time is retried when
+the sweep comes back round to it rather than holding every pass there. The cursor is
+`(org, namespace, agent)` and no more: a user id or a memory key in `loom.worker_status`
+would outlive that user's erasure.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.repo_base import _CHClient
 from server.memory.store.sensitivity_sweep_sql import SORT_KEY, past_key
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
+
+if TYPE_CHECKING:
+    from server.memory.app.sensitivity_sweep import ApplyResult, SweepReport
 
 log = logging.getLogger(__name__)
 
@@ -58,10 +62,7 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
             ch=ch,
         )
         result = await sweep.apply(report.candidates, ch=ch)
-        # after `apply`: a pass that labelled rows reads the same agent again, and one whose
-        # candidates all failed moves past it
-        stuck = bool(result.errors) and not result.relabelled
-        pass_context.set_cursor(cursor_text(report.resume_after, past=stuck))
+        pass_context.set_cursor(cursor_text(report.resume_after, past=_stuck(report, result)))
         outcome = {"scanned": report.scanned, "truncated": report.truncated, **result.as_dict()}
         rec.outcome = outcome
         if result.relabelled or result.errors:
@@ -77,6 +78,16 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
             )
         log_pass_errors(log, "sensitivity_sweep", result.errors)
     return outcome
+
+
+def _stuck(report: SweepReport, result: ApplyResult) -> bool:
+    """Whether the next pass starts past the agent this one stopped in: no candidate was
+    labelled and every one that failed is in that agent. A pass that labelled rows reads the
+    same agent again, and failures in an earlier agent leave the rest of this one to read."""
+    if not result.failed or result.relabelled or not report.resume_after:
+        return False
+    stopped_in = [report.resume_after[col] for col in CURSOR_KEY]
+    return all([c.sort_key[col] for col in CURSOR_KEY] == stopped_in for c in result.failed)
 
 
 # The sort key columns the cursor keeps. The rest name a user and a memory, which erasure

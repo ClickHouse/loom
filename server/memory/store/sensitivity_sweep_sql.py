@@ -56,15 +56,23 @@ def _where(*, org: str | None, namespace: str | None, since_days: int | None) ->
 
 
 def keys_sql(
-    *, org: str | None, namespace: str | None, since_days: int | None, after: bool = False
+    *,
+    org: str | None,
+    namespace: str | None,
+    since_days: int | None,
+    after: bool = False,
+    stop: bool = False,
 ) -> str:
     """The sort keys of one page, `{lim}` distinct keys read without FINAL: any row version
     that meets the conditions gives its key, so the page's keys include every key whose
     current version meets them. Without FINAL the window prunes partitions, every thread
-    reads, and a read in key order stops at the LIMIT."""
+    reads, and a read in key order stops at the LIMIT. With `stop`, only keys up to
+    `{stop_<column>}`."""
     where = _where(org=org, namespace=namespace, since_days=since_days)
     if after:  # the next page, after the last key of the one before
         where += f" AND ({_key_bound('after', '>', '>')})"
+    if stop:  # a pass that went back to the first key reads up to where it started
+        where += f" AND ({_key_bound('stop', '<', '<=')})"
     return f"""
         SELECT DISTINCT {", ".join(SORT_KEY)}
         FROM loom.memory
