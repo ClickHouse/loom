@@ -41,6 +41,7 @@ MIRRORED: tuple[tuple[str, str], ...] = (
     ("bin", "*.mjs"),  # the MCP header helper
     ("lib", "*.mjs"),
     ("skills", "**/*"),
+    ("assets", "*"),  # the listing icon
 )
 
 

@@ -3,19 +3,39 @@
   "owner": {
     "name": "Loom"
   },
-  "description": "Loom \u2014 memory, knowledge, and observability for AI agents.",
+  "description": "Loom: shared long-term memory and code intelligence for AI coding agents, self-hosted on ClickHouse.",
   "plugins": [
     {
       "name": "loom",
       "source": "./integrations/claude-code-plugin",
       "description": "Loom for Claude Code: the MCP memory and code tools, lifecycle hooks that capture the session with no model call, the code shunt, and the loom skills.",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
+      "category": "memory",
+      "tags": ["agent-memory", "long-term-memory", "code-intelligence", "code-search", "mcp", "clickhouse"],
+      "relevance": {
+        "topic": "Loom",
+        "signals": {
+          "cli": ["loom"],
+          "filesRead": ["**/loom.yaml", "**/loom.example.yaml", "**/.loom/config.json"],
+          "manifestDeps": [
+            {
+              "file": "[/\\\\](pyproject\\.toml|requirements[^/\\\\]*\\.txt)$",
+              "pattern": "clickhouse-loom"
+            },
+            {
+              "file": "[/\\\\]package\\.json$",
+              "pattern": "\"@clickhouse/loom\"\\s*:"
+            }
+          ]
+        }
+      }
     },
     {
       "name": "loom-code-skill",
       "source": "./",
       "description": "The loom-code Agent Skill: find the unit with code.* first, then read only that. Skill only, no hooks.",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
+      "category": "code-intelligence"
     }
   ]
 }

@@ -11,14 +11,15 @@ name: release
 # Jobs: version (derive and gate the version) -> clickhouse (the ClickHouse
 # release the installer bundle names, migrated and schema-checked) -> build ->
 # verify (inspect the exact files) -> docker -> docker-smoke -> github-release
-# -> pypi, npm (dispatch only). A re-run after a partial publish is safe: the
-# bundle keeps the ClickHouse release it was first published with, the
-# release is updated in place, PyPI skips files it already has, npm skips a
-# version it already has, and the image tags are overwritten with the same
-# build.
+# -> pypi, npm, mcp-registry (dispatch only). A re-run after a partial
+# publish is safe: the bundle keeps the ClickHouse release it was first
+# published with, the release is updated in place, PyPI skips files it
+# already has, npm and the MCP Registry skip a version they already have, and
+# the image tags are overwritten with the same build.
 #
-# The PyPI and npm jobs are dispatch-only, so a tag's GitHub Release can be
-# checked before the SDKs reach the registries.
+# The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
+# Release can be checked before the SDKs and the server listing reach the
+# registries.
 
 on:
   push:
@@ -626,3 +627,37 @@ jobs:
           TAG=latest
           [ "$PRERELEASE" = true ] && TAG=next
           npm publish "release/npm/clickhouse-loom-$VERSION.tgz" --provenance --access public --tag "$TAG"
+
+  mcp-registry:
+    name: MCP Registry (io.github.ClickHouse/loom)
+    if: github.event_name == 'workflow_dispatch' && needs.version.outputs.prerelease != 'true'
+    needs: [version, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # registry login for the io.github.ClickHouse namespace (OIDC)
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PUBLISHER_VERSION: "1.8.1"
+      PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The registry refuses a version it already lists, so a re-run stops here.
+      # A prerelease is not listed.
+      - name: Publish server.json at the tag's version
+        run: |
+          listed=$(curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom&version=$VERSION" | jq '.servers | length')
+          if [ "$listed" != 0 ]; then
+            echo "io.github.ClickHouse/loom $VERSION is already listed"
+            exit 0
+          fi
+          jq --arg v "$VERSION" '.version = $v' server.json > server.json.tmp && mv server.json.tmp server.json
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "$PUBLISHER_SHA256  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

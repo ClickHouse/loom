@@ -8,7 +8,7 @@ Bump each of these in the release commit:
 
 | Component            | Files                                                                                                                                                                                                                                                                                |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Server               | `server/__init__.py` (`__version__`) and `pyproject.toml`                                                                                                                                                                                                                            |
+| Server               | `server/__init__.py` (`__version__`), `pyproject.toml` and `server.json`                                                                                                                                                                                                             |
 | Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                        |
 | TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                   |
 | Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                             |
@@ -17,11 +17,11 @@ Bump each of these in the release commit:
 
 The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Three checks keep the numbers consistent:
 
-| Check                                    | Asserts                                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
-| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml`, and every surface reports it |
-| `npm run check:version` (TypeScript SDK) | its four version sources agree                                             |
-| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                    |
+| Check                                    | Asserts                                                                                      |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml` and `server.json`, and every surface reports it |
+| `npm run check:version` (TypeScript SDK) | its four version sources agree                                                               |
+| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                                      |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
@@ -130,12 +130,13 @@ release page never points at a missing image.
 
 **On manual dispatch** (`workflow_dispatch` on a tag ref), the same jobs run (`build`
 also runs the TypeScript SDK's `npm run check`: lint, types, version, README examples,
-tests), and then two SDK publish jobs:
+tests), and then three publish jobs:
 
-| Job    | Publishes                                       | How                                                                                                                     |
-| ------ | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `pypi` | `clickhouse-loom` (the Python SDK only) to PyPI | the verified wheel and sdist; trusted publishing (OIDC); files PyPI already has are skipped                             |
-| `npm`  | `@clickhouse/loom` to npm with provenance       | the verified tarball; a published version is skipped; a prerelease goes to the `next` dist-tag; `NPM_TOKEN` as fallback |
+| Job            | Publishes                                                        | How                                                                                                                     |
+| -------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `pypi`         | `clickhouse-loom` (the Python SDK only) to PyPI                  | the verified wheel and sdist; trusted publishing (OIDC); files PyPI already has are skipped                             |
+| `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; a prerelease goes to the `next` dist-tag; `NPM_TOKEN` as fallback |
+| `mcp-registry` | `server.json` to the MCP Registry as `io.github.ClickHouse/loom` | the tag's version; GitHub OIDC login with a pinned `mcp-publisher`; a listed version and a prerelease are skipped       |
 
 The Docker image is already published by the tag run. Manual dispatch still rebuilds the
 same immutable version safely, while publishing the SDK registries.
@@ -164,6 +165,21 @@ npm install ./clickhouse-loom-*.tgz
 ```
 
 The coding-agent plugins install from the repository's marketplaces (`claude plugin marketplace add ClickHouse/loom`, `codex plugin marketplace add ClickHouse/loom`). The zips are for machines without access to the repository.
+
+## Listings
+
+Agents and people find Loom through these listings. Each reads files in this repository:
+
+| Listing                                        | Reads                                                                                                                                                                                | How it updates                                                                                                                              |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP Registry, and the directories that copy it | `server.json`: a remote at `https://{loom_host}/mcp` with a secret `Authorization` header                                                                                            | the `mcp-registry` job on each dispatched release                                                                                           |
+| Claude plugin directory                        | `integrations/claude-code-plugin/.claude-plugin/plugin.json` (`displayName`, `description`, `keywords`, `icon`, `documentationUrl`, `supportUrl`, `privacyPolicyUrl`) and the README | submitted once in the developer portal; later versions are picked up from the tracked branch. The icon is read only on the first submission |
+| Claude Code plugin suggestions                 | the `relevance` block of the `loom` entry in `.claude-plugin/marketplace.json`: the `loom` command, Loom's config files, an SDK dependency in a manifest                             | shown only where an administrator allowlists the marketplace (`pluginSuggestionMarketplaces`)                                               |
+| Codex plugin directory                         | `integrations/codex-plugin/.codex-plugin/plugin.json` (`interface`)                                                                                                                  | submitted in the plugin portal; a plugin with lifecycle hooks is not eligible there, so the public listing needs a build without them       |
+| Docs index for coding agents                   | `context7.json`                                                                                                                                                                      | refreshed from the default branch after the repository is added once                                                                        |
+| Agent Skills index                             | the skills under `skills/`                                                                                                                                                           | ranked by `npx skills add ClickHouse/loom` installs; nothing to submit                                                                      |
+
+Run `claude plugin validate integrations/claude-code-plugin` before changing the Claude manifest or the marketplace entry: it runs the directory's structural checks.
 
 ## After the release
 

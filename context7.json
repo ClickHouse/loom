@@ -1,0 +1,13 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Loom",
+  "description": "Self-hosted shared memory, knowledge and code intelligence for AI agents on ClickHouse, served over MCP, HTTP and the Python (clickhouse-loom) and TypeScript (@clickhouse/loom) SDKs.",
+  "folders": ["docs", "examples", "sdk/python", "sdk/typescript", "integrations"],
+  "excludeFolders": ["docs/development", "docs/benchmarks", "tests", "evals", "node_modules", "dist"],
+  "rules": [
+    "Every operation is one HTTP endpoint, POST /v1/<operation>, and the same operation is an MCP tool at <server>/mcp.",
+    "Every call carries one JWT whose org and namespaces scope what it can read and write.",
+    "A memory is one claim stored under a readable key in a namespace; write it with memory.set and find it with memory.search or loom_search.",
+    "Use the code.* operations for questions about an indexed repository instead of reading whole files."
+  ]
+}

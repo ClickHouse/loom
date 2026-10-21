@@ -14,6 +14,19 @@ The `loom` plugin for Claude Code does three things in one install:
 Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
 Codex build runs the same scripts; see [codex.md](codex.md).
 
+## Data handling
+
+The plugin sends data only to the Loom server you configure (`server_url`), with the token
+you give it. Nothing goes to the plugin's authors or to any other service. What it sends is
+listed in [what the hooks do](#what-the-hooks-do): tool calls, chat turns, token usage and
+the session's working-memory note, after a client-side secret redaction. The server keeps
+them in its own ClickHouse database. It passes text to an LLM or embedding provider only if
+its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
+Chat turns are stored only when the namespace has conversation logging on. Deleting data
+is covered in [retention and erasure](../memory/retention-and-erasure.md). The `loom-status`
+skill can install Node.js from a Node.js package repository, and runs that installer
+only after you agree.
+
 ## Requirements
 
 - A reachable Loom server ([quickstart](../../getting-started/quickstart.md)).

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ClickHouse/loom",
+  "title": "Loom",
+  "description": "Shared long-term memory and code intelligence for AI agents, self-hosted on ClickHouse.",
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/ClickHouse/loom",
+  "repository": {
+    "url": "https://github.com/ClickHouse/loom",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/ClickHouse/loom/main/frontend/public/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{loom_host}/mcp",
+      "variables": {
+        "loom_host": {
+          "description": "Host name of your Loom server",
+          "isRequired": true,
+          "placeholder": "loom.example.com"
+        }
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "A writer token from the dashboard (Settings, Tokens) or `loom mint-token`",
+          "value": "Bearer {token}",
+          "isRequired": true,
+          "isSecret": true,
+          "variables": {
+            "token": {
+              "description": "Loom writer token (JWT)",
+              "isRequired": true,
+              "isSecret": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "documentation": "https://github.com/ClickHouse/loom/blob/main/docs/getting-started/connect-a-coding-agent.md",
+      "keywords": [
+        "agent-memory",
+        "long-term-memory",
+        "code-intelligence",
+        "code-search",
+        "knowledge-base",
+        "clickhouse",
+        "claude-code",
+        "codex"
+      ]
+    }
+  }
+}
