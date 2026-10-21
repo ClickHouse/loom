@@ -629,6 +629,45 @@ async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_f
 
 
 @pytest.mark.asyncio
+async def test_a_request_in_the_sessions_earlier_turns_is_never_filed(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drops: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        assistant_learnings,
+        "record_drop",
+        lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
+    )
+    state = _state(
+        "alice",
+        "s1",
+        last_messages=[{"role": "user", "content": "Please always answer me in French."}],
+        messages=[{"role": "assistant", "content": "I will always answer you in French."}],
+    )
+    fact = _rule_fact(
+        key="assistant_rule_language",
+        value="The assistant always answers the user in French.",
+        source_message_indices=[0],
+    )
+    assert await _file(state, fact) == 0
+    assert queue.rows == {} and queue.supporters == {}
+    assert drops == [("learnings.file", "user_requested", "assistant_rule_language")]
+
+
+@pytest.mark.asyncio
+async def test_the_asked_quote_comes_from_the_sessions_earlier_turns(queue: _Queue) -> None:
+    state = _state(
+        "alice",
+        "s1",
+        last_messages=[{"role": "user", "content": "Can you refund my $800 order?"}],
+        messages=[{"role": "assistant", "content": _RULE}],
+    )
+    assert await _file(state, _rule_fact(source_message_indices=[0])) == 1
+    supporter = queue.supporters[(_cid(), "alice", "s1")]
+    assert supporter["asked"] == "Can you refund my $800 order?"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "asked",
     [

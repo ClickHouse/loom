@@ -65,9 +65,13 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     if not cited:
         record_drop(state.org, state.namespace, "learnings.file", "no_assistant_turn", item=key)
         return False
+    # The user turn before a cited assistant turn may be one of the session's
+    # earlier turns, so the request and the quotes are read over both.
+    context = [*state.last_messages, *state.messages]
+    cited = [i + len(state.last_messages) for i in cited]  # indices into context
     # Behaviour the assistant agrees to at the user's request is that user's
     # preference: filed, it would reach every user of the bot.
-    if assistant_rules.user_requested(fact, state.messages, cited):
+    if assistant_rules.user_requested(fact, context, cited):
         record_drop(state.org, state.namespace, "learnings.file", "user_requested", item=key)
         return False
     # Refuse (blacklist), as memory.bulk_set does for every other extracted fact.
@@ -85,7 +89,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
         state.org, state.namespace, cid, state.user_id, state.session_id
     )
     if new_supporter:
-        asked, said = assistant_rules.cited_texts(fact, state.messages, cited)
+        asked, said = assistant_rules.cited_texts(fact, context, cited)
         # A quote that matches a blacklist pattern is left blank, as one that reads
         # as a credential is. Checked whole: the cut and the folded spacing could
         # split a pattern or change its spacing.

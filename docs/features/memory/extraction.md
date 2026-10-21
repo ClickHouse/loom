@@ -82,8 +82,8 @@ Coding captures never use it.
 Behaviour the assistant agrees to at the user's request is the user's preference, not a
 rule of the bot: "always answer me in French" answered with "I will always answer you in
 French" is a memory about the user. A rule is not filed when a sentence of the user turn
-before its first cited assistant turn opens an imperative with "always", "never",
-"don't" or "do not" (first in the sentence, after "please", after "can", "could",
+before its first cited assistant turn, in `messages` or the earlier `last_messages`,
+opens an imperative with "always", "never", "don't" or "do not" (first in the sentence, after "please", after "can", "could",
 "would" or "will" you, or after "want" or "need" you to), or opens a clause after a
 comma or semicolon with "always" ("From now on, always ..."), and the words after it
 share at least two of the rule's content words and at least half of them. A question
