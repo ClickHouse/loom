@@ -74,7 +74,7 @@ A tag containing `-` (`vX.Y.Z-rc.1`) makes a GitHub pre-release and does not mov
 
 1. `version` takes the version from the tag (`vX.Y.Z` → `X.Y.Z`) and refuses a ref that
    is not a `v*` tag or not SemVer; it fails unless `server/__init__.py` reads
-   `__version__ = "X.Y.Z"`;
+   `__version__ = "X.Y.Z"` and `server.json` carries the same version;
 2. `clickhouse` names the ClickHouse release the Compose bundle runs: the release
    `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`), or, on a
    re-run, the one this version's published bundle already names, so rerunning the
@@ -145,7 +145,7 @@ A re-run after a partial publish is safe: each publish job skips what already ex
 
 **Why publish the verified files.** A job that rebuilt its own artifact could ship unchecked bytes. Publishing what `verify` passed means the GitHub Release and the registries carry the same bytes.
 
-**Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The registry jobs need PyPI and npm trusted publishers registered for this repository (the `pypi` and `npm` GitHub environments). The `mcp-registry` job runs in the `mcp-registry` environment; give it the same protection rules as `pypi` and `npm` before the first dispatch, since GitHub creates a missing environment with none. Its login needs no secret.
+**Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The registry jobs need PyPI and npm trusted publishers registered for this repository (the `pypi` and `npm` GitHub environments).
 
 **Why SDK publishing is manual.** A registry publish cannot be undone: PyPI never accepts
 a version twice. Publishing SDKs only on dispatch lets the release files be checked first.
@@ -178,6 +178,8 @@ Agents and people find Loom through these listings. Each reads files in this rep
 | Codex plugin directory                         | `integrations/codex-plugin/.codex-plugin/plugin.json` (`interface`)                                                                                                                  | submitted in the plugin portal; a plugin with lifecycle hooks is not eligible there, so the public listing needs a build without them          |
 | Docs index for coding agents                   | `context7.json`                                                                                                                                                                      | refreshed from the default branch after the repository is added once                                                                           |
 | Agent Skills index                             | the skills under `skills/`                                                                                                                                                           | ranked by `npx skills add ClickHouse/loom` installs; nothing to submit                                                                         |
+
+The `mcp-registry` job runs in the `mcp-registry` environment. Give it the same protection rules as `pypi` and `npm` before the first dispatch: GitHub creates a missing environment with none. Its login needs no secret.
 
 Run `claude plugin validate integrations/claude-code-plugin` before changing the Claude manifest or the marketplace entry: it runs the directory's structural checks.
 

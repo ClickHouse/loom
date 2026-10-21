@@ -90,6 +90,7 @@ jobs:
           echo "Releasing v$VERSION (prerelease: $PRERELEASE)"
       # The server reports its version from server/__init__.py (= pyproject.toml);
       # a tag that disagrees would ship an image that names another release.
+      # The mcp-registry job publishes server.json as committed, so it must agree too.
       - name: Server version names this tag
         env:
           VERSION: ${{ steps.parse.outputs.version }}
@@ -652,13 +653,14 @@ jobs:
         with:
           persist-credentials: false
       # The registry refuses a version it already lists, so a re-run stops here.
-      # A prerelease is not listed. `search` matches a substring, so the name is
-      # compared exactly.
+      # A prerelease is not listed. `search` matches a substring, so the name and
+      # version are compared exactly.
       - name: Publish server.json
         shell: bash
         run: |
           listed=$(curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.ClickHouse/loom&version=$VERSION" \
-            | jq --arg n io.github.ClickHouse/loom '[.servers[] | select(.server.name == $n)] | length')
+            | jq --arg n io.github.ClickHouse/loom --arg v "$VERSION" \
+              '[.servers[] | select(.server.name == $n and .server.version == $v)] | length')
           if [ "$listed" -ne 0 ]; then
             echo "io.github.ClickHouse/loom $VERSION is already listed"
             exit 0

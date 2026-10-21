@@ -24,10 +24,11 @@ The plugin sends:
 - whatever the agent passes to a Loom MCP tool: memories it saves, search and code
   queries;
 - the repository's identity: the owner and name of each git remote, to find its code
-  index and with every observation, run record and session brief; the branch and `HEAD`
-  commit, with each session brief; the absolute working directory, with the run record;
-  and the checkout's directory name, the working subdirectory and a hash of the
-  repository, which tag observations and session memory;
+  index, and of the one that identifies the repository with every observation, run
+  record and session brief; the branch and `HEAD` commit, with each session brief; the
+  absolute working directory, with the run record; and the checkout's directory name, the
+  working subdirectory and a hash of the repository, which tag observations and session
+  memory;
 - prompts, to fetch recalled memories and code pointers for them;
 - each tool call's input, output or error (`observe.record`), and the paths of files read
   or edited, for the code shunt, file rules and blast radius; a symbol name taken from a
