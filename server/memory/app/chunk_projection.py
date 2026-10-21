@@ -4,6 +4,7 @@ from."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections.abc import Iterator, Mapping
@@ -339,10 +340,13 @@ async def write_memory_chunks(
     ]
     # A chunk that holds a credential, or a part of one cut at a chunk boundary, is written
     # without a vector: no search leg reads a chunk without one.
+    # Only the chunked text is read, plus one chunk past its end for a key that crosses the
+    # last chunk's end; the check runs in a thread, off the event loop.
+    bound = ranges[-1][1] + chunk_shape.CHUNK_SIZE
     embedded = await embed_plain(
         [chunk for _, chunk, _, _ in chunk_payloads],
         lambda texts: _embed_chunks(embedder, texts),
-        held=overlaps_credential(text, ranges),
+        held=await asyncio.to_thread(overlaps_credential, text[:bound], ranges),
     )
 
     rows: list[dict[str, Any]] = []

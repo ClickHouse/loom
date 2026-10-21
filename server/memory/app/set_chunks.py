@@ -20,6 +20,7 @@ this module lazily, at the call site.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -29,6 +30,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
 from server.memory.app.credential_passages import embed_plain
+from server.memory.domain import chunk_shape
 from server.memory.domain.sensitivity import overlaps_credential
 
 log = logging.getLogger(__name__)
@@ -427,10 +429,13 @@ async def write_set_chunks(
     # A chunk that holds a credential, or a part of one cut at a chunk boundary, is written
     # without a vector, whatever its row's label: the chunk read path and the provider rebuild
     # decide by the text too.
+    # Only the chunked text is read, plus one chunk past its end for a key that crosses the
+    # last chunk's end; the check runs in a thread, off the event loop.
+    bound = ranges[-1][1] + chunk_shape.CHUNK_SIZE
     embedded = await embed_plain(
         [c for c, _, _ in chunks],
         lambda texts: _embed_chunks(embedder, texts),
-        held=overlaps_credential(text, ranges),
+        held=await asyncio.to_thread(overlaps_credential, text[:bound], ranges),
     )
     session_id = set_chunk_session_id(input.memory_key)
     run_id = str(getattr(input, "run_id", "") or "-")

@@ -20,6 +20,7 @@ be pulled into a prompt by similarity, which is what embedding it would do.
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 from collections.abc import Callable, Hashable, Iterable, Sequence
@@ -253,21 +254,16 @@ def credential_spans(text: str) -> list[tuple[int, int]]:
     escapes = list(_JSON_ESCAPE.finditer(text))
     if not escapes:
         return spans
-    # Build the unescaped text with, for each of its characters, where it starts in `text`.
-    parts: list[str] = []
-    starts: list[int] = []
-    pos = 0
-    for m in escapes:
-        parts.append(text[pos : m.start()])
-        starts.extend(range(pos, m.start()))
-        parts.append(_JSON_ESCAPES.get(m.group(1), m.group(1)))
-        starts.append(m.start())
-        pos = m.end()
-    parts.append(text[pos:])
-    starts.extend(range(pos, len(text) + 1))
-    unescaped = "".join(parts)
+    unescaped = _JSON_ESCAPE.sub(lambda m: _JSON_ESCAPES.get(m.group(1), m.group(1)), text)
+    # Where each escape's one character sits in `unescaped`: every escape before a position
+    # shortened the text by one, so the position in `text` is the position plus that count.
+    decoded_at = [m.start() - i for i, m in enumerate(escapes)]
+
+    def in_text(pos: int) -> int:
+        return pos + bisect.bisect_left(decoded_at, pos)
+
     spans += [
-        (starts[m.start()], starts[m.end()])
+        (in_text(m.start()), in_text(m.end()))
         for pat in _HIGH_PATTERNS
         for m in pat.finditer(unescaped)
     ]
