@@ -134,8 +134,8 @@ revision, the first save lands and the second is answered `conflict: true` with 
 guide as it now stands; the agent merges its change into that text and saves again with
 the returned revision. The server never merges the text itself. A retry of a save that
 landed finds its own text current and writes nothing. A save that leaves out `summary`
-keeps the current one, and an empty `content` clears the guide. A personal namespace
-takes no guide. Every revision is kept, so `namespace.guide_get` with a `revision` reads
+keeps the current one, and an empty `content` clears the guide. An end user's personal
+collection (`col-me-…`) takes no guide. Every revision is kept, so `namespace.guide_get` with a `revision` reads
 any of them.
 
 The guide reaches agents without being asked for:

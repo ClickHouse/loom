@@ -157,7 +157,7 @@ describe("Spaces: the rows", () => {
     await waitFor(() => expect(leaveNamespace).toHaveBeenCalledWith("acme", "beta"));
   });
 
-  it("your personal namespace offers no guide: it takes none", async () => {
+  it("your personal namespace offers its guide like any namespace you manage", async () => {
     mine.push({
       namespace: "personal-alice",
       role: "admin",
@@ -174,7 +174,7 @@ describe("Spaces: the rows", () => {
       await screen.findAllByText("alpha");
       await user.click(within(row("personal-alice")).getByRole("button", { name: "Actions for personal-alice" }));
       const menu = await screen.findByRole("menu", { name: "Actions for personal-alice" });
-      expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
+      expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
     } finally {
       mine.pop();
     }

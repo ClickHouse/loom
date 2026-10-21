@@ -56,8 +56,9 @@ async def handle_namespace_guide_set(input: NamespaceGuideSetInput) -> Namespace
     guide, so two replicas cannot both pass the check. A retry of a save that
     landed finds its own text current and answers without writing again."""
     if is_personal(input.namespace):
-        # One person's namespace needs no guide, and only a user erasure removes it.
-        raise ValidationError("a personal namespace has no guide")
+        # An end user's personal collection needs no guide, and only their user
+        # erasure removes it.
+        raise ValidationError("a personal collection (col-me-…) has no guide")
     if not _every_replica_erases_guides():
         raise OverloadedError(
             "not every replica serves namespace guides yet; retry once the rollout is done",

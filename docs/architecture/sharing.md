@@ -241,8 +241,8 @@ A save's audit row records the revision it was made from and the text's length a
 SHA-256, never the text, summary or note (`Operation.audit_subject`): `loom.audit_log`
 outlives an erasure. The directory's search matches a guide's summary, the one part the
 org sees; matching the text would let someone who may not read the guide rebuild it a
-character at a time. A personal namespace takes no guide, since only its user's erasure
-removes it and that scope does not reach the table.
+character at a time. An end user's personal collection (`col-me-…`) takes no guide,
+since only their erasure removes it and that scope does not reach the table.
 
 A guide is the namespace's, not its writer's: it describes how the namespace's data is
 laid out, as a category description or a profile schema does, and carries no `user_id`.

@@ -198,7 +198,7 @@ def test_no_guide_is_written_while_a_replica_could_not_erase_it(
     assert guides.rows == []
 
 
-def test_a_personal_namespace_takes_no_guide(guides: _Guides) -> None:
+def test_an_end_user_s_personal_collection_takes_no_guide(guides: _Guides) -> None:
     from server.auth.sharing import PERSONAL_PREFIX
     from server.core.errors import ValidationError
 
@@ -208,6 +208,11 @@ def test_a_personal_namespace_takes_no_guide(guides: _Guides) -> None:
     with acting_as(WRITER), pytest.raises(ValidationError):
         asyncio.run(guide_app.handle_namespace_guide_set(body))
     assert guides.rows == []
+
+
+def test_a_person_s_personal_namespace_takes_a_guide(guides: _Guides) -> None:
+    """`personal-<slug>` is an ordinary memory namespace, which a namespace erasure reaches."""
+    assert _set("my layout", 0).written
 
 
 def test_a_save_that_cannot_claim_the_guide_asks_for_a_retry(
