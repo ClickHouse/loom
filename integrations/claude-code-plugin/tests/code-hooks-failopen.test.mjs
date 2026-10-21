@@ -360,7 +360,8 @@ test("blast radius and test gate: only the diff's paths and hunk headers reach t
   const { dir, tmp, transcript } = dirtySession();
   fs.appendFileSync(path.join(dir, "src/a.cpp"), 'const char* api_key = "s3cr3t-value";\n');
   // A user's diff settings (colour, an external tool, a textconv filter, other
-  // path prefixes) must not change what is sent.
+  // path prefixes) must not change what is sent. Each one, left on, changes or
+  // empties the +++ path or the @@ header asserted below.
   const external = path.join(tmp, "ext-diff.sh");
   fs.writeFileSync(external, "#!/bin/sh\necho external-diff-output\n", { mode: 0o755 });
   const textconv = path.join(tmp, "textconv.sh");

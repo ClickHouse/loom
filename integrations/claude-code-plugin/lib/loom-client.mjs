@@ -755,23 +755,48 @@ export function redactHead(text, max, token = resolveToken()) {
 }
 
 // What a hook's `git diff` passes so the user's diff settings cannot change what is
-// sent: no external tool, colour or textconv program, and git's own path prefixes.
-export const DIFF_ARGS = ["--no-ext-diff", "--no-color", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"];
+// sent: no external tool, colour or textconv program, git's own path prefixes, and
+// a submodule as one line rather than its commit subjects.
+export const DIFF_ARGS = [
+  "--no-ext-diff",
+  "--no-color",
+  "--no-textconv",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+  "--submodule=short",
+];
 
 // A hunk header: its ranges, then the function context git appends to it.
 const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/s;
-// What may stand before a function's `(` in that context: a return type, a
-// scope-qualified name, template arguments. No quote, `=` or other punctuation,
-// so no assignment or literal can pass.
-const FUNCTION_HEAD_RE = /^[\w\s:<>,~&*.[\]]*$/;
+const NOT_FUNCTION_NAMES = new Set(["if", "for", "while", "switch", "return", "catch", "sizeof", "decltype"]);
+
+/** The function name in a hunk header's context, as the server reads it
+ *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
+ *  the first `(`, template arguments dropped, when it is a (scope-qualified)
+ *  identifier. Empty when there is none, or when the text before it holds a single
+ *  `:` or `=` (`Password: value (`), which is a value rather than a signature. */
+export function hunkFunctionName(context) {
+  const ctx = String(context ?? "").trim();
+  if (!ctx.includes("(")) return "";
+  // two passes drop one level of nested template arguments, as the server does
+  const head = ctx
+    .slice(0, ctx.indexOf("("))
+    .replace(/<[^<>]*>/g, "")
+    .replace(/<[^<>]*>/g, "");
+  if (/(^|[^:]):(?!:)|=/.test(head)) return "";
+  const tokens = head.split(/\s+/).filter(Boolean);
+  if (!tokens.length) return "";
+  const name = tokens[tokens.length - 1].replace(/^[&*]+|[&*]+$/g, "");
+  if (NOT_FUNCTION_NAMES.has(name)) return "";
+  return /^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name) ? name : "";
+}
 
 /** The part of a unified diff that code.impact and code.test_gate read, cut to
  *  `max` chars: each file's header lines (`diff --git` up to its first hunk) and
- *  each hunk header's ranges. A hunk header keeps its function context up to the
- *  first `(`, where the server finds the function's name, only when what stands
- *  before it reads as a function head. The changed lines are left out, so nothing
- *  in them is sent: a key, a password, or a value whose name is on an unchanged
- *  line. */
+ *  each hunk header's ranges with only the function name the server would take
+ *  from its context (`@@ -1 +1 @@ name(`). The changed lines and the rest of the
+ *  context are left out, so nothing in them is sent: a key, a password, or a value
+ *  whose name is on an unchanged line. */
 export function diffHeaders(diff, max) {
   const out = [];
   let built = 0;
@@ -783,9 +808,8 @@ export function diffHeaders(diff, max) {
     const hunk = HUNK_HEADER_RE.exec(line);
     if (hunk) {
       inFileHeader = false;
-      const open = hunk[2].indexOf("(");
-      const head = open < 0 ? null : hunk[2].slice(0, open);
-      kept = hunk[1] + (head !== null && FUNCTION_HEAD_RE.test(head) ? `${head}(` : "");
+      const name = hunkFunctionName(hunk[2]);
+      kept = hunk[1] + (name ? ` ${name}(` : "");
     } else if (inFileHeader) {
       kept = line;
     }
