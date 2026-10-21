@@ -14,7 +14,7 @@
     {
       "name": "loom-code-skill",
       "source": "./",
-      "description": "The loom-code Agent Skill: find the unit with code.* first, then read only that. Skill only, no hooks.",
+      "description": "The loom and loom-code Agent Skills: how an agent uses Loom, and code.* before reading files. Skills only, no hooks.",
       "license": "Apache-2.0"
     }
   ]

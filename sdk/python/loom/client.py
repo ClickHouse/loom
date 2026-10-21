@@ -2019,6 +2019,14 @@ class MentorOps:
             "_ops.MentorBriefOutput", await self._agent.call("mentor.brief", body, **options)
         )
 
+    async def guide(
+        self, body: _ops.MentorGuideBody | None = None, /, **options: Any
+    ) -> _ops.MentorGuideOutput:
+        """`mentor.guide`."""
+        return cast(
+            "_ops.MentorGuideOutput", await self._agent.call("mentor.guide", body, **options)
+        )
+
 
 class NamespaceOps:
     """The `namespace.*` operations."""

@@ -38,4 +38,22 @@ One agent's usage profile and the store's hints.
 | `skipped` | `list[str]` | Facts the profile could not read, as "step: reason". |
 | `healthy` | `bool` | No warning or critical hint. |
 
+## `mentor.guide`
+
+The agent guide this server ships.
+
+`POST /v1/mentor.guide` · MCP `loom_mentor_guide` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | `''` | The tenant (first element of the identity tuple). |
+| `part` | `Literal['skill', 'reference', 'all']` | `'skill'` | `skill`: the loop, the write rules and how to read answers (about 2,500 tokens). |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `version` | `str` | The guide's version (`metadata.version` of skills/loom/SKILL.md). |
+| `part` | `str` |  |
+| `text` | `str` | The guide as Markdown, without the skill's frontmatter. |
+| `parts` | `list[str]` | The parts this server can return. |
+
 <!-- prettier-ignore-end -->

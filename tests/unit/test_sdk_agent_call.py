@@ -164,6 +164,8 @@ def _mock_agent(**kw: Any) -> tuple[Agent, list[tuple[str, dict[str, Any]]]]:
         if req.url.path == "/v1/mentor.brief":
             hints = [{"code": f"c{i}", "severity": "info", "text": f"hint {i}"} for i in range(4)]
             return httpx.Response(200, json={"hints": hints})
+        if req.url.path == "/v1/mentor.guide":
+            return httpx.Response(200, json={"version": "1", "part": "skill", "text": "# loom"})
         return httpx.Response(200, json={"results": []})
 
     a = Agent("acme", "support", "assistant", base_url="http://x", api_key="k", **kw)
@@ -188,6 +190,15 @@ async def test_mentor_posts_the_v1_route_and_logs_three_hints(
     assert [r.getMessage() for r in caplog.records if "loom mentor" in r.getMessage()] == [
         f"loom mentor (c{i}, info): hint {i}" for i in range(3)
     ]
+
+
+async def test_guide_returns_the_text_of_the_requested_part() -> None:
+    a, seen = _mock_agent()
+    text = await a.guide("reference")
+    await a.close()
+    path, body = seen[0]
+    assert path == "/v1/mentor.guide" and body["part"] == "reference"
+    assert text == "# loom"
 
 
 @pytest.mark.parametrize("via_env", [False, True])

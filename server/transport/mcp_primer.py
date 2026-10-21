@@ -194,7 +194,7 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
     primer never asks for a call the client cannot make."""
     listed = {op.name: op.mcp_tool_name for op in listed_ops(toolset)}
     out: dict[str, str | None] = {}
-    for name in ("context.pack", "memory.set", "knowledge.add"):
+    for name in ("context.pack", "memory.set", "knowledge.add", "mentor.guide"):
         if name in listed:
             out[name] = f"`{listed[name]}`"
         elif loom_op_reachable(OPERATIONS_BY_NAME[name], toolset):
@@ -312,6 +312,18 @@ async def _loom_primer_text(
             if tool["memory.set"]
             else ""
         )
+        + _guide_rule(tool)
+    )
+
+
+def _guide_rule(tool: dict[str, str | None]) -> str:
+    """Rule 7: where the full usage guide is, when the connection reaches it."""
+    if tool["mentor.guide"] is None:
+        return ""
+    return (
+        f"\n\n**7. Guide.** {tool['mentor.guide']} returns how to use Loom: "
+        "where each kind of state goes and how to read what comes back "
+        '(`part: "reference"` lists every plane).'
     )
 
 

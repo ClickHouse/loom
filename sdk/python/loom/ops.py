@@ -253,6 +253,7 @@ OpName = Literal[
     "memory_schema.propose",
     "memory_schema.register",
     "mentor.brief",
+    "mentor.guide",
     "namespace.audit",
     "namespace.browse",
     "namespace.cancel_request",
@@ -580,6 +581,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory_schema.propose",
     "memory_schema.register",
     "mentor.brief",
+    "mentor.guide",
     "namespace.audit",
     "namespace.browse",
     "namespace.cancel_request",
@@ -3258,6 +3260,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "stable",
         3000,
+        False,
+        True,
+    ),
+    "mentor.guide": OpSpec(
+        "mentor.guide",
+        "MentorGuideInput",
+        "MentorGuideBody",
+        "MentorGuideOutput",
+        True,
+        "viewer",
+        "experimental",
+        20,
         False,
         True,
     ),
@@ -13996,6 +14010,27 @@ class MentorAdoption(TypedDict, total=False):
     code: Required[str]
     shown_sessions: NotRequired[int]
     followed_sessions: NotRequired[int]
+
+
+class MentorGuideInput(TypedDict, total=False):
+    "The agent guide this server ships. Identity is optional: the guide"
+
+    org: NotRequired[str]
+    part: NotRequired[Literal["skill", "reference", "all"]]
+
+
+class MentorGuideBody(TypedDict, total=False):
+    "The agent guide this server ships. Identity is optional: the guide"
+
+    org: NotRequired[str]
+    part: NotRequired[Literal["skill", "reference", "all"]]
+
+
+class MentorGuideOutput(TypedDict, total=False):
+    version: Required[str]
+    part: Required[str]
+    text: Required[str]
+    parts: NotRequired[list[str]]
 
 
 class NamespaceAuditInput(TypedDict, total=False):

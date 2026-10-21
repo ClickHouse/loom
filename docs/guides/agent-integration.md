@@ -7,6 +7,18 @@ surface, the identity, what to write, and how to read. It assumes
 shipped plugin ([Claude Code](../features/integrations/claude-code.md),
 [Codex](../features/integrations/codex.md)) gets most of this from the plugin.
 
+The same rules, written for the agent rather than for you, are the `loom` Agent Skill
+(`skills/loom/`). An agent with no plugin reads it from the server: `mentor.guide` returns
+the loop, where each kind of state goes and how to read answers (`part: "skill"`), or every
+plane with its ops (`part: "reference"`). Put it in the agent's system prompt:
+
+```python
+system_prompt = base_prompt + "\n\n" + await agent.guide()
+```
+
+Over MCP the primer names the call; an Agent-Skills client installs it with
+`npx skills add ClickHouse/loom --skill loom`.
+
 ## 1. Choose the client surface
 
 | Surface                                                      | Use it when                                                                                     | What you get                                                                                                                                                                       |

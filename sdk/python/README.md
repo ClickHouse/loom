@@ -84,6 +84,18 @@ print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 
 `agent.call_with_meta(...)` is the same call returning a `CallResult`: `.data`, `.request_id` (finds the call in the server's ledger), `.schema_version`, `.server_timing_ms`, `.rate_limit` and `.attempts`. Every request identifies itself (`User-Agent` / `X-Loom-SDK: loom-py/<version>`, `X-Loom-Runtime`, `X-Loom-Retry-Count`); `Retry-After` is honoured as seconds or an HTTP-date. The credential never appears in `repr(agent.transport)` (it shows `api_key=…1234`), and a blank `LOOM_API_KEY` is treated as unset. The package ships `py.typed` and passes `mypy --strict`.
 
+## Give your agent the guide
+
+`await agent.guide()` returns how to use Loom, written for a model: the loop,
+where each kind of state goes and how to read what comes back
+(`mentor.guide`, the `loom` skill in `skills/loom/`). Put it in the system
+prompt of an agent that has no plugin to carry it; `part="reference"` returns
+every plane with its ops.
+
+```python
+system_prompt = base_prompt + "\n\n" + await agent.guide()
+```
+
 ## Ask the mentor
 
 The store reads what your agent actually calls and names the planes it never

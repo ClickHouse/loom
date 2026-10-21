@@ -8,12 +8,15 @@ whole profile — usage by op, the planes available to the namespace with a
 one-line "when", every hint with the counts that fired it, and how often
 this agent's past hints were followed — for the agent that wants the
 reasoning, or the owner reading it from the CLI or the dashboard.
+
+mentor.guide returns the agent guide the server ships (`skills/loom/`): how
+to use Loom, for an agent that has no plugin to carry it.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -88,3 +91,23 @@ class MentorBriefOutput(BaseModel):
     skipped: list[str] = Field(default_factory=list)
     # No warning or critical hint.
     healthy: bool = True
+
+
+class MentorGuideInput(BaseModel):
+    """The agent guide this server ships. Identity is optional: the guide
+    is the same for every caller."""
+
+    org: str = ""
+    # `skill`: the loop, the write rules and how to read answers (about 2,500 tokens).
+    # `reference`: every plane with its ops. `all`: both.
+    part: Literal["skill", "reference", "all"] = "skill"
+
+
+class MentorGuideOutput(BaseModel):
+    # The guide's version (`metadata.version` of skills/loom/SKILL.md).
+    version: str
+    part: str
+    # The guide as Markdown, without the skill's frontmatter.
+    text: str
+    # The parts this server can return.
+    parts: list[str] = Field(default_factory=lambda: ["skill", "reference", "all"])
