@@ -33,13 +33,9 @@ from server.memory.store import profile_schemas as repo
 from server.memory.store import profile_sources
 from server.memory.store.rows import next_version
 from server.settings import settings
-from server.settings.budgets import llm_max_tokens
 
 # A profile of 64 long properties is longer than a free-text section's default cap.
-STRUCTURED_CHAR_LIMIT = 32768  # not a setting: row bound at the default output cap
-# Characters one output token can turn into once stored as JSON, so the row bound
-# grows with a raised `structured_profile` cap instead of refusing its answers.
-CHARS_PER_OUTPUT_TOKEN = 8  # not a setting: JSON characters per output token, an upper bound
+STRUCTURED_CHAR_LIMIT = 32768  # not a setting: the row bound for a typical profile
 
 
 async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSchemaOutput:
@@ -135,10 +131,9 @@ async def write_structured_profile(
             value=value,
             tags=profile_sources.profile_tags(schema_sha256, sources_digest, source_count),
             valid_at=sources_read_at,
-            char_limit=max(
-                STRUCTURED_CHAR_LIMIT,
-                CHARS_PER_OUTPUT_TOKEN * llm_max_tokens("structured_profile"),
-            ),
+            # conform already bounds the profile's shape; a longer one (escaped
+            # non-ASCII text) gets a bound that fits it instead of a refusal.
+            char_limit=max(STRUCTURED_CHAR_LIMIT, len(json.dumps(value))),
             source_trace=f"profile.fold:{label}:" + ",".join(memory_ids),
         )
     )
