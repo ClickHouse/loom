@@ -88,6 +88,29 @@ test("typed and := assignments in a hunk body are redacted", () => {
   assert.ok(!/s3cr3t/.test(out), out);
 });
 
+test("a base64 value's padding is not read as a typed assignment", () => {
+  const diff = [
+    "diff --git a/s.yaml b/s.yaml",
+    "+++ b/s.yaml",
+    "@@ -1,0 +1,3 @@",
+    "+  password: cGFzc3dvcmQ=",
+    "+  token: abc123==",
+    "+  api_key: abc=def",
+    "+  username: admin",
+    "",
+  ].join("\n");
+  const out = redactDiff(diff, 200_000, "");
+  for (const leak of ["cGFzc3dvcmQ", "abc123", "abc="]) assert.ok(!out.includes(leak), `${leak} in:\n${out}`);
+  assert.ok(out.includes("+  username: admin"), out);
+});
+
+test("a hunk header whose context holds a line terminator still opens a redacted body", () => {
+  for (const sep of ["\r", "\u2028"]) {
+    const diff = ["diff --git a/x b/x", "+++ b/x", `@@ -1 +1 @@ f${sep}g`, "+password=hunter2", ""].join("\n");
+    assert.ok(!redactDiff(diff, 200_000, "").includes("hunter2"), JSON.stringify(sep));
+  }
+});
+
 test("a C++ scope operator in a hunk header's context is not read as an assignment", () => {
   for (const ctx of ["bool PrivateKey::verify(int x)", "AccessToken::AccessToken(const String & s)"]) {
     const diff = ["diff --git a/k.cpp b/k.cpp", "+++ b/k.cpp", `@@ -1 +1 @@ ${ctx}`, "+x();", ""].join("\n");

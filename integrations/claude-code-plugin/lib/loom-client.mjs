@@ -702,10 +702,11 @@ const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----E
 const TOKEN_SHAPES_RE =
   /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
-// A typed (`api_key: str = …`) or `:=` assignment counts; `::` is a scope
-// operator (`PrivateKey::verify`), not one.
+// A typed (`api_key: str = …`, with a space before `=`, so a base64 value's `=`
+// padding is not read as one) or `:=` assignment counts; `::` is a scope operator
+// (`PrivateKey::verify`), not one.
 const SECRET_ASSIGNMENT_RE =
-  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*(?::\s*[\w.|<>[\]]{1,64}\s*=|:=|=|:(?![:=]))\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
+  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*(?::\s*[\w.|<>[\]]{1,64}[ \t]+=[ \t]*|:=|=|:(?![:=]))\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
 const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
@@ -761,7 +762,7 @@ export function redactHead(text, max, token = resolveToken()) {
 export const DIFF_ARGS = ["--no-ext-diff", "--no-color", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"];
 
 // A hunk header: its ranges, then the function context git appends to it.
-const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
+const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/s;
 
 /** `redactSecrets` over a unified diff, cut to `max` chars. The file header
  *  lines (`diff --git` up to the first hunk) and each hunk header's ranges are
@@ -770,7 +771,8 @@ const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
  *  private key) would otherwise swallow them. The function context after a
  *  hunk header's ranges, and each hunk body on its own, are redacted, so a
  *  match never reaches past its hunk. Text before the first `diff --git` is
- *  redacted as a body. Reading stops once `max` chars are built. */
+ *  redacted as a body. Reading stops once `max` chars plus the redaction margin
+ *  are built. */
 export function redactDiff(diff, max, token = resolveToken()) {
   const out = [];
   let built = 0;
