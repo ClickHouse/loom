@@ -261,6 +261,7 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "agent": "*",
         "user_id": user_id,
         "session_id": "-",
+        "json_schema": {"type": "object", "properties": {"value": {"type": "string"}}},
         "memory_key": seed.keys_v[0],
         "memory_keys": seed.keys_v,
         "memory_id": seed.memory_ids_v[0],

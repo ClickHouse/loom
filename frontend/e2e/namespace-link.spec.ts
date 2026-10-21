@@ -46,3 +46,15 @@ test("Continue opens the page on the namespace the picker shows, with the focus 
   await expect(page.locator("main h1").first()).toBeFocused();
   await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));
 });
+
+test("sidebar navigation drops the denied namespace's task reference", async ({ page }) => {
+  await installApi(page);
+  await page.goto("/tasks?namespace=group-b-shared&task=foreign");
+  await expect(page.getByRole("heading", { name: "No access to group-b-shared" })).toBeVisible();
+  await page.getByRole("link", { name: "Tasks", exact: true }).click();
+  await expect(page).toHaveURL(
+    (url) =>
+      url.pathname === "/tasks" && url.searchParams.get("namespace") === NAMESPACE && !url.searchParams.has("task"),
+  );
+  await expect(page.locator("main h1").first()).toHaveText("Tasks");
+});

@@ -448,7 +448,7 @@ export const useStore = create<AppState>((set, get) => ({
   setView: (view) => get().navigate(view),
   navigate: (view, opts = {}) => {
     // A navigation leaves a link's unreadable namespace for the one the picker shows.
-    if (get().deniedNamespace) set({ deniedNamespace: null });
+    if (get().deniedNamespace) get().setIdentity(get().identity);
     // Mirror the view into the URL first (skipping no-op pushes): the entry being left
     // remembers the open memory before it is cleared.
     pushView(view, opts);

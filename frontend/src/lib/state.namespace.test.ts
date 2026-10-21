@@ -116,6 +116,28 @@ describe("writing the address", () => {
     expect(history.length).toBe(before);
   });
 
+  it.each([
+    ["tasks", "/tasks", "task"],
+    ["knowledge", "/library", "doc"],
+    ["sessions", "/conversations", "thread"],
+  ] as const)("navigation to %s drops a denied namespace's object", (view, path, key) => {
+    at(`${path}?namespace=unreadable&${key}=foreign`);
+    useStore.setState({
+      deniedNamespace: "unreadable",
+      pendingDocSourceUri: "foreign",
+      pendingConversationThread: { threadId: "foreign" },
+      recallRunFilter: "foreign",
+    });
+    useStore.getState().navigate(view);
+    expect(address()).toBe(`${path}?namespace=team`);
+    expect(useStore.getState()).toMatchObject({
+      deniedNamespace: null,
+      pendingDocSourceUri: null,
+      pendingConversationThread: null,
+      recallRunFilter: null,
+    });
+  });
+
   it("Back to an entry made in another namespace names the page's, and nothing of the other", () => {
     at("/conversations?namespace=old&thread=t-1", { loomNamespace: "old" });
     useStore.getState().arriveFromHistory("sessions", null);

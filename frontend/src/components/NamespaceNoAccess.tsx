@@ -6,18 +6,7 @@ import { PageContainer } from "../layout/PageContainer";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./ui";
 
-/**
- * The page a link to a namespace the account cannot read opens on, in place of any view.
- * Nothing of that namespace is read, and the namespace under the page (the one a visit
- * without the link opens, named in the header's picker) is never shown as if it were the
- * one the link asked for. Continue, a pick or any navigation leaves the page; Continue
- * hands the focus to the view's heading, as a navigation does. Its name says where it
- * continues; its label stays one word, since a namespace name can be longer than a phone's
- * width and Click UI's button does not wrap.
- *
- * When the membership read failed (no rows), the account's access is unknown, not refused:
- * the page says it could not be checked and offers Retry.
- */
+/** Keep namespace views unmounted until access is known, so they issue no reads. */
 export function NamespaceNoAccess({ namespace }: { namespace: string }) {
   const identity = useStore((s) => s.identity);
   const unchecked = useStore((s) => s.myNamespaces === null);
