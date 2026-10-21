@@ -1153,8 +1153,8 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
             detail={
                 "code": "CONFIRM_SUBJECT_MISMATCH",
                 "message": (
-                    "`confirm_subject` must equal the user_id or agent "
-                    "being cleared. This is a mid-weight defense against "
+                    "`confirm_subject` must equal the concrete user_id or agent "
+                    'being cleared ("*" never confirms). This is a mid-weight defense against '
                     "destructive UI-dropdown accidents."
                 ),
             },

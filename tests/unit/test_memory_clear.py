@@ -325,6 +325,27 @@ async def test_clear_refuses_star_as_confirm_subject() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("u1", "-")])
+async def test_clear_accepts_dash_beside_a_named_axis(
+    monkeypatch: pytest.MonkeyPatch, user_id: str, agent: str
+) -> None:
+    """'-' beside a concrete value is a literal scope: both filters reach the statement."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    named = agent if user_id == "-" else user_id
+    await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id=user_id, agent=agent, confirm_subject=named
+        )
+    )
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert "user_id = {" in memory_alter.sql and "agent = {" in memory_alter.sql
+    assert (memory_alter.params["uid"], memory_alter.params["agent"]) == (user_id, agent)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("user_id", "agent"),
     [("*", "*"), ("-", "*"), ("*", "-"), ("-", None), (None, "-")],

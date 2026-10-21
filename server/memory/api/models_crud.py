@@ -514,7 +514,8 @@ class MemoryClearInput(BaseModel):
     # The agent whose rows are cleared; `'*'` clears every agent's, and unset clears every
     # agent's over HTTP but only the calling client's over MCP.
     agent: str | None = None
-    # Must equal the `user_id` or `agent` being cleared; anything else is a 400.
+    # Must equal the concrete `user_id` or `agent` being cleared (`'*'` never confirms); anything
+    # else is a 400.
     confirm_subject: str = Field(..., min_length=1, max_length=256)
 
 
