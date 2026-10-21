@@ -246,6 +246,10 @@ settings:
   # profile; "" = `llm_model`. [restart]
   # profile_consolidation_model: ""
 
+  # Model of the structured profile builder, which fills a user's profile in the
+  # namespace's schema; "" = `llm_model`. [restart]
+  # structured_profile_model: ""
+
   # Reflection distillation: the outcome labeller and the contrast writer. [restart]
   # reflection_distill_model: ""
 
@@ -2647,6 +2651,62 @@ settings:
 
   # `memory_key` of the folded profile row. [restart]
   # profile_consolidation_label: "consolidated_profile"
+
+  # --- structured profiles ---
+
+  # Run the worker that builds each user's structured profile in the namespace's schema
+  # (LLM calls, only where `profile_schema.set` set one). [restart]
+  # structured_profile_enabled: true
+
+  # Seconds between structured profile passes. Above 0. [restart]
+  # structured_profile_interval_seconds: 120
+
+  # Seconds the structured profile worker waits after a pass that reached every
+  # namespace with a schema and took no user. Above 0. [restart]
+  # structured_profile_idle_interval_seconds: 600
+
+  # Seconds one namespace's scan for users behind their structured profile may run; past
+  # it the scan fails and the namespace backs off. Above 0. [live]
+  # structured_profile_scan_timeout_seconds: 60
+
+  # Bytes of memory one namespace's structured profile scan may use (ClickHouse
+  # max_memory_usage). At least 1 MiB. [live]
+  # structured_profile_scan_max_memory_bytes: 4294967296
+
+  # Structured profiles one pass builds; the namespaces in each page the pass reads
+  # share it equally, and the pass reads on while budget is left. At least 1. [live]
+  # structured_profile_max_users_per_pass: 20
+
+  # Seconds a structured profile pass may run before the supervisor abandons it; it
+  # takes no user in the second half. Above 0. [restart]
+  # structured_profile_max_pass_seconds: 600.0
+
+  # Memories read into one structured profile build, highest confidence then newest
+  # first. At least 1. [live]
+  # structured_profile_memory_limit: 100
+
+  # Seconds after a structured profile is built before new memories rebuild it; a schema
+  # change or a deleted source skips this wait. 0 rebuilds on the next pass. [live]
+  # structured_profile_cooldown_seconds: 600
+
+  # Seconds a user or namespace whose structured profile build failed waits before the
+  # first retry; each further failure doubles it. Above 0. [live]
+  # structured_profile_backoff_base_seconds: 300
+
+  # Longest wait, in seconds, of a user or namespace whose structured profile build
+  # keeps failing. Above 0. [live]
+  # structured_profile_backoff_cap_seconds: 21600
+
+  # Seconds a refused or cut-off structured profile build waits before it is tried again
+  # with nothing changed. Above 0. [live]
+  # structured_profile_refusal_retry_seconds: 21600
+
+  # Seconds a namespace's scan for users behind their structured profile serves later
+  # passes before it is run again. Above 0. [live]
+  # structured_profile_scan_max_age_seconds: 600
+
+  # `memory_key` of the structured profile row. [restart]
+  # structured_profile_label: "structured_profile"
 
   # --- reflection distillation ---
 

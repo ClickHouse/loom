@@ -220,6 +220,7 @@ async def test_profile_activity_aggregates_per_agent() -> None:
             assert set(params["ops"]) == {
                 "loom_activate",
                 "profile.render",
+                "profile.structured",
                 "context.pack",
                 "mcp.initialize",
             }

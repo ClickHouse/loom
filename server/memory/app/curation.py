@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -57,6 +58,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.domain.webhook_events import memory_change
+from server.memory.store.history import HistoryTarget
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
 
@@ -562,7 +564,8 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     derived copy of it (see `memory_repo.redaction` for the columns).
 
     Refuses the live head — the caller must memory.delete first, so this
-    audit-time op can't silently lose live data.
+    audit-time op can't silently lose live data. A lock on the memory's key, or
+    on a profile key built from it, refuses the whole redact.
     """
     import server.memory.store as memory_repo
 
@@ -601,12 +604,24 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         from server.memory.domain import lock as _lock
 
         _lock.assert_unlocked(head, "delete", op="memory.redact")
+    # A version that does not exist scrubs nothing, so nothing built from the memory
+    # is scrubbed either.
+    if not await memory_repo.version_exists(input.org, target, input.memory_id, input.version):
+        return MemoryRedactOutput(redacted=False)
+    # A lock on a profile key built from this memory refuses the redact before
+    # anything is scrubbed, as a lock on the memory's own key does.
+    profiles = await _profiles_built_from(input.org, target, input.memory_id)
 
     now = naive_utc_now()
     reason_blob = (input.reason or "")[:512]
     by_blob = (input.redacted_by or "")[:128]
-    await memory_repo.redact_row(
+    # The named version and every profile version built from it go in one call: two
+    # mutations. A failure after them is reported, and a retry reaches the same profile
+    # keys, since the lookup above counts redacted versions too.
+    await memory_repo.redact_versions(
         input.org,
+        target.namespace,
+        target.user_id,
         input.memory_id,
         input.version,
         when=now,
@@ -625,12 +640,17 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         live_link_inputs=await _live_link_inputs(input.org, head),
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
+    await _scrub_profile_derivatives(input.org, target, profiles)
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
     # quote in place is not a completed redaction.
-    cache_rows = await memory_repo.delete_llm_response_cache_by_key(input.org, target.memory_key)
-    precedent_rows = await memory_repo.delete_ask_precedents_by_key(input.org, target.memory_key)
+    # A scrubbed profile key may be the only row of a window that quoted the text. Windows
+    # hold bare keys and every user's profile shares its key, so this reach is org-wide.
+    cache_rows = precedent_rows = 0
+    for key in [target.memory_key, *sorted({p.memory_key for p in profiles})]:
+        cache_rows += await memory_repo.delete_llm_response_cache_by_key(input.org, key)
+        precedent_rows += await memory_repo.delete_ask_precedents_by_key(input.org, key)
     await webhooks.announce([("memory.redacted", memory_change(target, input.version))])
     return MemoryRedactOutput(
         redacted=True,
@@ -638,6 +658,79 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         cache_rows_deleted=cache_rows,
         precedent_rows_deleted=precedent_rows,
     )
+
+
+@dataclass
+class _ProfileScrub:
+    """One profile key built from a redacted memory: the newest version built from
+    it and the key's head."""
+
+    agent: str
+    session_id: str
+    memory_key: str
+    newest: int
+    head: MemoryRow | None = None
+
+
+async def _profiles_built_from(
+    org: str, target: HistoryTarget, memory_id: str
+) -> list[_ProfileScrub]:
+    """The user's profile keys with a version built from the memory, each with its
+    head; raises 423 LOCKED when a key's lock refuses a delete."""
+    import server.memory.store as memory_repo
+    from server.memory.domain import lock as _lock
+
+    rows = await memory_repo.profile_keys_built_from(
+        org, target.namespace, target.user_id, memory_id
+    )
+    profiles = [
+        _ProfileScrub(str(r["agent"]), str(r["session_id"]), str(r["memory_key"]), int(r["newest"]))
+        for r in rows
+    ]
+    for p in profiles:
+        p.head = await memory_repo.get_by_key(
+            memory_repo.Identity(
+                org=org,
+                namespace=target.namespace,
+                agent=p.agent,
+                user_id=target.user_id,
+                session_id=p.session_id,
+            ),
+            p.memory_key,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
+        )
+        _lock.assert_unlocked(p.head, "delete", op="memory.redact")
+    return profiles
+
+
+async def _scrub_profile_derivatives(
+    org: str, target: HistoryTarget, profiles: list[_ProfileScrub]
+) -> None:
+    """Scrub each listed profile key's derived rows: a model wrote them from the
+    redacted text. The caller has scrubbed the versions; the worker rebuilds a
+    scrubbed head from the user's current facts."""
+    import server.memory.store as memory_repo
+
+    for p in profiles:
+        # A scrubbed head keeps no text, so none of the key's derived rows is live. The
+        # head is the key's newest version, so it was scrubbed unless a later version
+        # was built without the memory.
+        head = p.head
+        if head is not None and head.version <= p.newest:
+            head = None
+        scrubs = await memory_repo.key_derivative_scrubs(
+            org,
+            target.namespace,
+            p.agent,
+            target.user_id,
+            p.session_id,
+            p.memory_key,
+            head_live=head is not None,
+            live_link_inputs=await _live_link_inputs(org, head),
+        )
+        await memory_repo.run_scrubs(scrubs, apply=True)
 
 
 async def _live_link_inputs(org: str, head: MemoryRow | None) -> str:

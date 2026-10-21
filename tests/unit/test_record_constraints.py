@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from server.memory.api.models_records import SchemaFieldInput
 from server.memory.app.records import _validate_schema_fields
 from server.memory.domain import record_constraints as rc
-from server.memory.domain.record_values import _coerce_record_value
+from server.memory.domain.record_values import coerce_record_value
 
 # ----------------------------------------------------------------------
 # Declaration
@@ -99,24 +99,24 @@ def test_violation_checks_the_right_surface_per_type() -> None:
 
 
 def test_coerce_enforces_constraints_after_type_and_enum() -> None:
-    ok = _coerce_record_value(
+    ok = coerce_record_value(
         "PR-7", "string", field_name="pr", constraints={"pattern": r"^PR-\d+$"}
     )
     assert ok == ("PR-7", 0.0, False)
     with pytest.raises(HTTPException) as exc:
-        _coerce_record_value("7", "string", field_name="pr", constraints={"pattern": r"^PR-\d+$"})
+        coerce_record_value("7", "string", field_name="pr", constraints={"pattern": r"^PR-\d+$"})
     assert exc.value.detail["code"] == "CONSTRAINT_VIOLATION" and exc.value.detail["field"] == "pr"
     # Numbers are range-checked on the coerced number, so "0.75" as text works.
     assert (
-        _coerce_record_value("0.75", "number", field_name="p", constraints={"max_value": 1})[1]
+        coerce_record_value("0.75", "number", field_name="p", constraints={"max_value": 1})[1]
         == 0.75
     )
     with pytest.raises(HTTPException) as exc:
-        _coerce_record_value("3", "integer", field_name="p", constraints={"max_value": 1})
+        coerce_record_value("3", "integer", field_name="p", constraints={"max_value": 1})
     assert exc.value.detail["code"] == "CONSTRAINT_VIOLATION"
     # Enum still wins first with its own code.
     with pytest.raises(HTTPException) as exc:
-        _coerce_record_value(
+        coerce_record_value(
             "z", "string", field_name="e", enum_values=["a"], constraints={"max_length": 1}
         )
     assert exc.value.detail["code"] == "ENUM_VIOLATION"
@@ -125,7 +125,7 @@ def test_coerce_enforces_constraints_after_type_and_enum() -> None:
 def test_non_value_states_skip_constraints() -> None:
     """An explicitly unknown field stores no concrete value and cannot fail a
     rule about the value it does not have."""
-    assert _coerce_record_value(
+    assert coerce_record_value(
         None,
         "string",
         field_name="pr",
