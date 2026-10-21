@@ -100,6 +100,7 @@ def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
 ) -> None:
     """A batched insert is answered once its part is written, and its wait bounds
     are read at call time (live settings); a minimum above the maximum is capped."""
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 50)
     assert ch_writes.batched_insert_settings() == {
@@ -124,6 +125,7 @@ def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_commi
     """An insert no request waits on waits up to the background bound; with
     `ch_batched_inserts` off a batched insert is sent committed, read per call, and
     `async_insert_settings` keeps its bounds."""
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
     monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 50)
     monkeypatch.setattr(settings, "ch_batched_insert_background_wait_max_ms", 200)

@@ -112,9 +112,10 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 
 A committed insert makes one part, so a table written on every request makes parts at
 the request rate, and merges fall behind ("too many parts"). The rows written on every
-request or by every process on a short interval are sent with `async_insert = 1,
-wait_for_async_insert = 1` (`server/core/ch_writes.py`, `batched_insert_settings` and
-`async_insert_settings`):
+request or by every process on a short interval are batched inserts, sent with
+`async_insert = 1, wait_for_async_insert = 1` (`server/core/ch_writes.py`,
+`batched_insert_settings` and `async_insert_settings`; most of them only with
+`ch_batched_inserts` on, see below):
 `audit_log`, the `conversations` turns of `conversation.append` and the turn
 `conversation.save_message` rewrites when deduplication dropped its first write, the
 `conversation_embeddings` rows (`conversation.append`, `conversation.save_message`,
@@ -166,16 +167,25 @@ pool (`ch_pool_maxsize`) well above the bound on top of the other statements, an
 the pool still runs out, set `ch_batched_inserts = false` or lower
 `ch_batched_insert_wait_max_ms` ([troubleshooting](../operations/troubleshooting.md)).
 
-`ch_batched_inserts` (live, on by default) switches batching off for `audit_log`, the
-`conversation.append` rows, the `agent_events` flush, the outbox, webhook attempts,
-evidence, belief sources, the write-mark bump and process-start mark: off, these
+`ch_batched_inserts` (live, off by default) switches batching on for every table in the
+list above except the ledger flushes named next: `audit_log`, the `conversations` turns
+of `conversation.append` and the turn `conversation.save_message` writes again, the
+`conversation_embeddings` rows of `conversation.append`, `conversation.save_message`
+and `conversation.compact`, the `agent_events` flush, the outbox, webhook attempts,
+evidence, belief sources, the write-mark bump and process-start mark. Off, these
 inserts are committed, one part each. The ledger flushes (`auth_attempts`, the
 carry-acknowledgement, write-mark and usage-event flushes, the policy witness's rows,
 `memory_projection_failures`, the graph Undo markers and the waited entity-graph
 inserts) are waited async inserts on the same bounds either way
-(`async_insert_settings`); fire-and-forget inserts are unchanged. Turn it off on a
-deployment with little traffic where latency matters more than parts: with writes too
-sparse to share a part, each insert still waits `ch_batched_insert_wait_min_ms`.
+(`async_insert_settings`); fire-and-forget inserts are unchanged.
+
+It is off by default because each waited insert holds its pooled connection for the
+window and the flush: one process taking 200 writes a second, two inserts each, refused
+some of them with 503 `OVERLOADED` at the default `ch_pool_maxsize = 64`, where
+committed inserts refused none. Before turning it on, raise `ch_pool_maxsize` well above
+the bound above for the process's write rate, and watch for `OVERLOADED`. Leave it off
+on a deployment with little traffic where latency matters more than parts: with writes
+too sparse to share a part, each insert still waits `ch_batched_insert_wait_min_ms`.
 
 ClickHouse keys the async buffer by table, statement shape, settings and user, so one
 flush can hold rows from several orgs, and one row that fails (a vector of the wrong

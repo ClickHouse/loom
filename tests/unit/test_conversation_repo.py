@@ -108,6 +108,7 @@ EMBEDDING = "loom.conversation_embeddings.embedding"
 def test_an_embedding_row_is_batched_only_when_its_width_cannot_fail_the_flush(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(settings, "embedding_dim", 4)
     # Never probed: ClickHouse judges the width, so the row goes alone.
     assert embedding_insert_settings([0.1] * 4) == COMMITTED
@@ -129,6 +130,7 @@ def test_an_embedding_row_is_batched_only_when_its_width_cannot_fail_the_flush(
 async def test_an_embedding_row_in_a_flush_another_width_failed_is_sent_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
     monkeypatch.setattr(
         conversations, "embedding_insert_settings", lambda _v: batched_insert_settings()
     )

@@ -179,28 +179,41 @@ def test_tables_written_on_every_request_are_batched(
         )
 
 
-def test_write_marks_take_the_window_of_who_waits() -> None:
-    """The request's bump waits the short window and the committed form when the
-    switch is off; the timer's flush and the process-start mark take the background
-    window, and the flush is a waited async insert whether or not batching is on."""
-    from server.core import namespace_write_marks
+class _WriteMarksCH:
+    def __init__(self) -> None:
+        self.settings: list[dict] = []
 
-    calls = {
-        fn.name: [
-            (
-                c.func.id,
-                {k.arg: k.value.value for k in c.keywords if isinstance(k.value, ast.Constant)},
-            )
-            for c in ast.walk(fn)
-            if isinstance(c, ast.Call)
-            and getattr(c.func, "id", "") in ("batched_insert_settings", "async_insert_settings")
-        ]
-        for fn in ast.walk(ast.parse(Path(namespace_write_marks.__file__).read_text()))
-        if isinstance(fn, ast.AsyncFunctionDef)
-    }
-    assert calls["bump"] == [("batched_insert_settings", {})]
-    assert calls["flush_now"] == [("async_insert_settings", {"background": True})]
-    assert calls["mark_process_start"] == [("batched_insert_settings", {"background": True})]
+    async def insert(self, table, rows, settings=None, **kw):
+        self.settings.append(settings)
+
+    async def execute(self, sql, params=None, **kw):
+        return None
+
+
+@pytest.mark.parametrize("switch", [True, False])
+def test_write_marks_take_the_window_of_who_waits(
+    monkeypatch: pytest.MonkeyPatch, switch: bool
+) -> None:
+    """The request's bump waits the short window (committed with the switch off);
+    the timer's flush and the process-start mark take the background window, and
+    the flush is a waited async insert whether or not batching is on."""
+    import asyncio
+
+    from server.core import namespace_write_marks as marks
+
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
+    marks._reset_for_tests()
+    try:
+        bump_ch, flush_ch, start_ch = _WriteMarksCH(), _WriteMarksCH(), _WriteMarksCH()
+        asyncio.run(marks.bump("o", "a", "memory", ch=bump_ch))
+        marks.touch("o", "a", "memory")
+        asyncio.run(marks.flush_now(ch=flush_ch))
+        asyncio.run(marks.mark_process_start(ch=start_ch))
+    finally:
+        marks._reset_for_tests()
+    assert bump_ch.settings == [batched_insert_settings()]
+    assert flush_ch.settings == [async_insert_settings(background=True)]
+    assert start_ch.settings == [batched_insert_settings(background=True)]
 
 
 class _RecordingCH:

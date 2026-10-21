@@ -831,7 +831,7 @@ async def insert_embedding(
         await ch.insert(
             "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=insert_settings
         )
-    except Exception as e:
+    except Exception as e:  # broad: only a flush width error (190) is resent; the rest re-raise
         if not (batched and error_code(e) == WIDTH_MISMATCH_CODE):
             raise
         # Another insert's vector failed the shared flush; this row is sent alone.

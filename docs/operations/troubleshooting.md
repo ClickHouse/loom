@@ -96,9 +96,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
 
 - **Cause:** a ClickHouse statement ran past its class deadline (504
   `BACKEND_TIMEOUT`), or every pooled ClickHouse connection of the process stayed busy
-  (503 `OVERLOADED`). Under a sustained write rate, batched inserts (audit rows,
-  transcript turns, ledgers) hold their connection for up to
-  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and then the flush, and background ones (webhook
+  (503 `OVERLOADED`). Under a sustained write rate, the ledger flushes, and with
+  `ch_batched_inserts` on the audit rows and transcript turns too, hold their connection
+  for up to `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and then the flush, and background ones (webhook
   delivery attempts, usage-event and write-mark flushes) for up to
   `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` and the flush
   ([batched inserts](../architecture/clickhouse.md#batched-inserts)).

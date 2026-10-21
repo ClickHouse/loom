@@ -24,7 +24,17 @@ from tests.integration._resources import unique_org
 pytestmark = pytest.mark.usefixtures("ch_target_required")
 
 
+@pytest.fixture
+def one_flush_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Batching on, with a 1 s window: the concurrent inserts of a test reach
+    ClickHouse inside one busy window however the runner schedules them."""
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 1000)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 1000)
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("one_flush_window")
 async def test_batched_inserts_are_read_back_share_parts_and_land_once_per_token() -> None:
     table = f"loom.batched_insert_{uuid.uuid4().hex[:12]}"
     c = CHClient()
@@ -106,6 +116,7 @@ def _embedding_row(org: str, msg_id: str, vector: list[float]) -> dict[str, Any]
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("one_flush_window")
 async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_flush() -> None:
     table = "loom.conversation_embeddings"
     c = CHClient()
@@ -114,8 +125,6 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         width = codes_state.stored_width(table, "embedding")
         if width is None or width != int(settings.embedding_dim):
             pytest.skip("conversation_embeddings is not coded at the served width here")
-        if not settings.ch_batched_inserts:
-            pytest.skip("ch_batched_inserts is off")
         org = unique_org("batched-width")
         resent: list[str] = []
         insert = c.insert

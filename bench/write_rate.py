@@ -8,12 +8,12 @@ conversation inserts carried each `async_insert` value, so the output shows whic
 form ran. Free with the fake embedder and LLM.
 
 `--target server` sends `memory.set` and/or `conversation.append` to a running
-server (`--op`). `--target client` runs, in this process, the two inserts a
-`conversation.append` makes (`loom.conversations`, then
-`loom.conversation_embeddings`) with the settings the store sends (the turn
-batched with `batched_insert_settings()`, the embedding row with
-`embedding_insert_settings`), or with `--committed` as two committed inserts:
-the insert path alone, at rates one server process cannot serve. Both read the
+server (`--op`). `--target client` makes, in this process, the two store calls a
+`conversation.append` makes (`conversations.append` into `loom.conversations`,
+then `conversations.insert_embedding` into `loom.conversation_embeddings`), with
+the settings the store sends under `ch_batched_inserts`; `--committed` switches
+it off, so both inserts are committed: the insert path alone, at rates one
+server process cannot serve. Both read the
 ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
 
 A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
@@ -48,8 +48,8 @@ from typing import Any
 import httpx
 
 from server.core.ch import get_client
-from server.core.ch_writes import batched_insert_settings, committed_insert_settings
-from server.knowledge.store.conversations import embedding_insert_settings
+from server.knowledge.store import conversations
+from server.settings import settings
 
 _SERVER_OPS = {
     "set": ["memory.set"],
@@ -108,45 +108,46 @@ def _server_body(op: str, i: int, run: str, args: argparse.Namespace) -> dict[st
 
 
 async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
+    # The two store calls conversation.append makes, so the run sends what the
+    # store sends, the committed resend of a failed shared flush included.
     ch = get_client()
-    settings = committed_insert_settings() if args.committed else batched_insert_settings()
     ts = datetime.now(UTC).replace(tzinfo=None)
-    turn = {
-        "org": _org(i, args),
-        "namespace": _namespace(i, args),
-        "agent": f"agent-{i % 8}",
-        "thread_id": f"{run}-thread-{i % 50}",
-        "msg_id": f"{run}-{i}",
-        "role": "user",
-        "user_id": "-",
-        "run_id": "-",
-        "is_saved": False,
-        "saved_at": None,
-        "ts": ts,
-    }
     content = f"Turn {i} of run {run}: the delivery for order {i} moved to day {i % 28}."
-    await ch.insert(
-        "loom.conversations",
-        [{**turn, "content": content, "reasoning": "", "metadata": "{}", "tokens": 0}],
-        settings=settings,
+    msg = conversations.MessageInsert(
+        org=_org(i, args),
+        namespace=_namespace(i, args),
+        agent=f"agent-{i % 8}",
+        thread_id=f"{run}-thread-{i % 50}",
+        msg_id=f"{run}-{i}",
+        role="user",
+        content=content,
+        ts=ts,
     )
-    await ch.insert(
-        "loom.conversation_embeddings",
-        [
-            {
-                **turn,
-                "content_excerpt": content,
-                # Stored as a failed embed (no vector), so the run needs no embedder
-                # and fits any column width.
-                "embedding_model": "write-rate",
-                "embedding_dim": 0,
-                "embedding": [],
-                "embed_attempts": 0,
-                "embed_last_error": "write-rate: not embedded",
-                "embed_failed_at": ts,
-            }
-        ],
-        settings=committed_insert_settings() if args.committed else embedding_insert_settings([]),
+    await conversations.append(msg, ch=ch)
+    await conversations.insert_embedding(
+        {
+            "org": msg.org,
+            "namespace": msg.namespace,
+            "agent": msg.agent,
+            "thread_id": msg.thread_id,
+            "msg_id": msg.msg_id,
+            "role": msg.role,
+            "content_excerpt": content,
+            # Stored as a failed embed (no vector), so the run needs no embedder
+            # and fits any column width.
+            "embedding_model": "write-rate",
+            "embedding_dim": 0,
+            "embedding": [],
+            "user_id": msg.user_id,
+            "run_id": msg.run_id,
+            "embed_attempts": 0,
+            "embed_last_error": "write-rate: not embedded",
+            "embed_failed_at": ts,
+            "is_saved": False,
+            "saved_at": None,
+            "ts": ts,
+        },
+        ch=ch,
     )
 
 
@@ -290,6 +291,9 @@ def main() -> None:
     args = p.parse_args()
     if args.committed and args.target == "server":
         p.error("--committed applies to --target client: a server sends what its code sends")
+    if args.committed:
+        # What the switch does on a server: every batched insert is sent committed.
+        settings.ch_batched_inserts = False
     text = json.dumps(asyncio.run(_run(args)), indent=2)
     print(text)
     if args.out:

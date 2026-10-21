@@ -562,8 +562,10 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False: these inserts are committed, one part each.
-    ch_batched_inserts: Annotated[bool, LIVE] = True
+    # returns once written, holding its pooled connection for the wait. False (the
+    # default): these inserts are committed, one part each. Size `ch_pool_maxsize` for
+    # the wait before turning it on (docs/architecture/clickhouse.md#batched-inserts).
+    ch_batched_inserts: Annotated[bool, LIVE] = False
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)

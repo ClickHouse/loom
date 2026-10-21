@@ -32,7 +32,7 @@
  "ch_batched_insert_background_wait_max_ms": 200,
  "ch_batched_insert_wait_max_ms": 50,
  "ch_batched_insert_wait_min_ms": 10,
- "ch_batched_inserts": true,
+ "ch_batched_inserts": false,
  "ch_caller_shaped_max_execution_s": 30.0,
  "ch_caller_shaped_max_memory_bytes": 4000000000,
  "ch_caller_shaped_max_rows_to_read": 500000000,
