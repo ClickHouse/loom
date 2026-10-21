@@ -36,8 +36,8 @@ from server.identity.app.request_scope import request_narrowed
 from server.identity.store import namespace_guides as repo
 from server.memory.app.provenance import writer_actor
 
-# 065_namespace_guides.sql made the table: a build below it cannot erase a guide.
-_GUIDES_MIGRATION = 65
+# 072_namespace_guides.sql made the table: a build below it cannot erase a guide.
+_GUIDES_MIGRATION = 72
 
 
 async def handle_namespace_guide_get(input: NamespaceGuideGetInput) -> NamespaceGuideGetOutput:

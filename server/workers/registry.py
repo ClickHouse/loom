@@ -221,12 +221,13 @@ _WORKERS: tuple[_Worker, ...] = (
         None,
         "keeper_sweep_interval_seconds",
     ),
-    # Always on: re-runs deferred conflict judges a dead replica left owed.
+    # One LLM call per write the conflict check marked.
     _Worker(
-        "conflict_sweep",
-        "server.memory.workers.conflict_sweep",
-        None,
-        "conflict_sweep_interval_seconds",
+        "conflict_resolver",
+        "server.memory.workers.conflict_resolver",
+        "memory_conflict_resolver_enabled",
+        "memory_conflict_resolver_interval_seconds",
+        max_pass_setting="memory_conflict_resolver_max_pass_seconds",
     ),
     _Worker(
         "orphan_vector_reconcile",

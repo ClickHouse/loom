@@ -21,6 +21,7 @@ from server.erasure.store.predicates import (
     NS_EQ,
     NS_IN,
     ORPHAN_LEARNINGS,
+    PAYLOAD_UID,
     UID,
     USER_CHUNKS,
     USER_COMMUNITY_ROWS,
@@ -130,9 +131,23 @@ _CENSUS: tuple[Substrate, ...] = (
         "graph_links.delete",
     ),
     Substrate(
+        "loom.entity_triple_rows",
+        "1",
+        UID,
+        "graph_links.delete",
+        "graph_links.delete",
+    ),
+    Substrate(
         "loom.entity_edge_memories",
         "1",
         USER_PARENT_KEYS,
+        "graph_links.delete",
+        "graph_links.delete",
+    ),
+    Substrate(
+        "loom.entity_edge_rows",
+        "1",
+        UID,
         "graph_links.delete",
         "graph_links.delete",
     ),
@@ -328,7 +343,14 @@ _CENSUS: tuple[Substrate, ...] = (
         "consolidation_runs.delete",
         "consolidation_runs.delete",
     ),
-    Substrate("loom.memory_projection_failures", "1", None, "projection_failures.delete", None),
+    # A failure's payload names its writer (a bulk write's identity).
+    Substrate(
+        "loom.memory_projection_failures",
+        "1",
+        PAYLOAD_UID,
+        "projection_failures.delete",
+        "projection_failures.delete",
+    ),
     # The repository index's two content tables — chunked
     # source text and file/directory summaries — are counted for a namespace
     # scope and owned by `code_index.purge`; no user axis (the rows are the
@@ -485,7 +507,8 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.task_leases": (
         "The live lease per task in ClickHouse Keeper (task id, owner "
-        "label, fence, lease_until) — identifiers only, deleted on the terminal transition."
+        "label, fence, lease_until) — identifiers only, deleted on the terminal transition "
+        "and by the lease sweep's reconcile for a task that is gone or ended."
     ),
     "loom.task_claims": (
         "A task claim arbitration log that no code path writes (task id, fence, "

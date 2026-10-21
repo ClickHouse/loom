@@ -44,7 +44,7 @@ async def test_task_lease_sweep_records_its_counts(monkeypatch) -> None:
     from server.tasks.app import sweep as task
     from server.tasks.workers import lease_sweep as w
 
-    counts = {"expired": 2, "blocked": 1, "resumed": 0, "escalated": 0}
+    counts = {"expired": 2, "blocked": 1, "resumed": 0, "escalated": 0, "leases": 0}
 
     async def _sweep(**_: Any) -> dict[str, int]:
         return dict(counts)

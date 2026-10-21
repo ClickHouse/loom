@@ -8,7 +8,7 @@ Covers:
   * fetch_derived_aggregate (read leg) — canonical IN-list matching
     (incl. the canonicalized scalar fallback and the object substring→exact
     gate), aggregate result shaping, empty→None.
-  * _write_derived_facts (write leg) — per-occurrence row build:
+  * write_derived_facts (write leg) — per-occurrence row build:
     category canonicalization, subject default, numeric coercion, occurred_at
     fallback, the per-memory cap, and the empty-derived no-op.
 """
@@ -198,7 +198,7 @@ async def test_aggregate_predicate_in_list_includes_class_verbs() -> None:
 
 
 # ----------------------------------------------------------------------
-# Write leg — _write_derived_facts
+# Write leg — write_derived_facts
 # ----------------------------------------------------------------------
 
 
@@ -224,14 +224,14 @@ def _input_with_derived(derived: list[dict[str, Any]]) -> MemoryBulkSetInput:
 
 
 async def _write_rows(derived: list[dict[str, Any]], **entry_over) -> list[dict[str, Any]]:
-    from server.memory.app.extract.handler import _write_derived_facts
+    from server.memory.app.triple_projections import write_derived_facts
 
     inp = _input_with_derived(derived)
     if entry_over:
         inp.entries[0] = inp.entries[0].model_copy(update=entry_over)
     ch = _InsertCH()
     # entity_map={} keeps it CH-free (no resolve_entities_for_write round-trip)
-    await _write_derived_facts(
+    await write_derived_facts(
         inp, [_BulkSetResult(memory_key="k1", version=0)], ch=ch, entity_map={}
     )
     if not ch.inserts:
@@ -287,11 +287,11 @@ async def test_write_occurred_at_falls_back_to_temporal_anchor() -> None:
 
 @pytest.mark.asyncio
 async def test_write_empty_derived_inserts_nothing() -> None:
-    from server.memory.app.extract.handler import _write_derived_facts
+    from server.memory.app.triple_projections import write_derived_facts
 
     inp = _input_with_derived([])
     ch = _InsertCH()
-    await _write_derived_facts(
+    await write_derived_facts(
         inp, [_BulkSetResult(memory_key="k1", version=0)], ch=ch, entity_map={}
     )
     assert ch.inserts == []

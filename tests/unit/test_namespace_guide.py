@@ -59,7 +59,7 @@ def guides(monkeypatch: pytest.MonkeyPatch) -> _Guides:
         yield True
 
     monkeypatch.setattr(guide_app.leases, "holding", _held)
-    monkeypatch.setattr(guide_app.instances, "live_rows", lambda: [{"schema_version": 65}])
+    monkeypatch.setattr(guide_app.instances, "live_rows", lambda: [{"schema_version": 72}])
 
     return store
 
@@ -178,7 +178,7 @@ def test_a_save_is_audited_by_its_hash_never_its_text() -> None:
     assert "first" not in repr(subject)
 
 
-@pytest.mark.parametrize("live", [[], [{"schema_version": 65}, {"schema_version": 64}]])
+@pytest.mark.parametrize("live", [[], [{"schema_version": 72}, {"schema_version": 71}]])
 def test_no_guide_is_written_while_a_replica_could_not_erase_it(
     guides: _Guides, monkeypatch: pytest.MonkeyPatch, live: list[dict[str, Any]]
 ) -> None:

@@ -70,6 +70,22 @@ schema. These rules keep that safe. The operator procedure is in
      commands (`loom reembed`) write those; run them when one build serves.
 3. **New enum or status values:** N ships readers that accept them, and only N+1
    writes them. N-1's Pydantic `Literal` would answer 500 on a value it does not know.
+   A projection failure's name is a plain string that N-1 already tolerates: its repair
+   worker leaves a name it does not know active as `unsupported_projection`. So N records
+   a triples repair that failed after its insert as `entity_triples_repair`, not
+   `entity_triples`, which N-1 would replay by inserting the triples again. A replay of
+   an `entity_triples` failure that inserts them and then fails its repair keeps the
+   failure: one mutation records that they landed and moves its `entries` and `results`
+   to keys N-1 does not read, so N-1 refuses it (no entries) and leaves it active. N
+   writes a failure's `abandoned` status because N-1 reads that status as a plain string and
+   lists only `active` ones; the `status="abandoned"` list filter works only on N
+   replicas. The conflict resolver's owed follow is `triples_follow_owed`, not
+   `triples_follow_rows`, for the same reason: N-1's follow does not check that the
+   loser is still retired. While N-1 leads, its repair re-reads every failure whose
+   name it does not know on every pass (oldest first, each answered
+   `unsupported_projection` and left active), so they take places in its batch
+   (`LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS`); past that many, N-1 replays
+   nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
    rows): N reads the old and the new format, and only N+1 writes the new one.
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
@@ -85,13 +101,101 @@ schema. These rules keep that safe. The operator procedure is in
    setting's default accepts what N-1 is configured with.
 8. **Retiring a column or table:** stop using it in N, drop it in N+1 or later.
 9. **No state outside ClickHouse.** Anything a replica must agree on (leases, runs,
-   conflict judgements, the similarity calibration, the frontend bundle of every live
-   build) is in a table, so a request can land on any replica of either build.
-10. **A new revocation key** (such as SCIM's `SCIM_PREFIX`): N-1 does not read
+   the conflict resolver's queue, the similarity calibration, the frontend bundle of every
+   live build) is in a table, so a request can land on any replica of either build.
+10. **An exclusion N adds holds only among N's replicas.** `task.create` with an
+    idempotency key and the coverage watch's ready-event delivery hold a lease from this
+    build on (`insert_created_task`, `insert_ready_event`). One whose lease ran out
+    before its insert can still race the next, so both insert under one dedup token (the
+    key, or the event's task id) and storage drops the later row. An erased row's token
+    can outlive it and drop a new row too: with nothing stored, the row goes in again
+    under a fresh token. The build before takes no lease, and its client writes a random
+    dedup token over every insert's, so the key's token drops neither build's row for
+    the other. A create of each build racing on one key can store two tasks, and two
+    deliveries two ready events, as two replicas of the previous build already can.
+    Each task is whole (its event and its lease row) and claimable: a create of N cut
+    off after its task row is finished by its retry, which under the key's lease writes
+    the created event the first one left out, and by the lease sweep, which writes its
+    lease row after its grace. The created event takes a fresh seq, so cursor readers
+    deliver it, unless the task has events since: then it goes just before the first of
+    them and is history only. A first create that was only
+    stalled past its lease, or cancelled while its insert ran on, can still land its own
+    event. Both inserts carry one token, the task's (`insert_event`), so storage keeps
+    whichever lands first. Past the dedup window both can be stored: the backfill is
+    marked `backfilled` in its patch, and N's readers drop it when the task has an
+    earlier created event, so history shows one creation and a cursor delivers at most
+    one. A reader that passed the first one's seq before it landed and reads the
+    backfill after misses the creation, as it misses any event landing behind it. A retry
+    that reads an N-1 create's task between its row and its event logs such a backfill
+    too. N-1's readers do not drop it; that ends once N-1 stops serving.
+11. **A link N adds is not yet complete.** N links each value to the triples and edges
+    it stated (`entity_triple_rows`, `entity_edge_rows`); N-1 links only keys, just after
+    it writes the row. So a value with no row link still holds by its key link when that
+    link is no older than the value and no row of the key links the fact, and a close N
+    runs keeps what an N-1 row states. A key that rows of both builds link to one fact
+    reads as N's: there an N-1 row can lose that fact until it is stated again.
+12. **A request field N adds is ignored by N-1** until N-1 stops serving: it answers the
+    call as if the field were not sent, naming it in `ignored_args`. So `memory.restore`'s
+    preconditions `if_superseded_by` and `only_if_superseded` (the dashboard's Undo sends
+    them) do not hold on an N-1 replica, which restores a deleted row or one retired
+    behind another memory, and the `relations` of `memory.set`, `memory.update` and
+    `memory.update_by_id` are dropped there, so that write graphs none of the facts it
+    names. `memory.get_by_id`'s `omit_high_value` does not hold there either: N-1 answers
+    a `high` row with its value and hash, and audits that read as a sensitive one. N's
+    conflict resolver does not read the `memory.unsupersede` record of an Undo
+    made on an N-1 replica, or before the upgrade: it carries neither the restored hash
+    nor the restore version. The restored row then reads as a statement made at the Undo,
+    newer than the memory it was retired behind, so a confident update verdict can retire
+    that memory although the person kept both. Pinning it prevents that.
+13. **A name N spells differently is a different node.** N keeps combining marks and
+    NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
+    into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do
+    Latin ones but for compatibility characters, which N folds and N-1 keeps (the
+    ligatures `ﬁ` and `ĳ`, full-width letters, superscripts, fractions, `ª`, `º`, `ſ`).
+    For the other scripts the two builds write separate nodes until N-1 stops serving,
+    and a node N-1 wrote keeps its fragment name until a write states that entity again.
+14. **An erasure N-1 runs misses the tables N adds.** N-1's saga and its census do not
+    know `entity_triple_rows` and `entity_edge_rows`, so an erasure it runs during the
+    rollout leaves their rows in its scope and still records the saga `completed`. Once
+    N-1 stops serving, re-verify the erasures completed since the rollout began:
+    `loom erasure-re-verify --completed-since <rollout start> --resume` deletes, in each
+    one's scope, the rows of those two tables whose memory has no live row and no row
+    written since the saga's census (orphan row links). It runs no saga step again and
+    touches nothing else: data written in the scope after the erasure finished, its
+    links included, stays, tombstoned by `memory.delete` or not.
+15. **A marker N writes in a column N-1 reads is not one N-1 reads as its own.** The
+    conflict resolver's queue lives on `memory_embeddings.conflict_checked_at`, where an
+    N-1 with the per-write judge on reads the epoch itself as a judgement it owes and
+    re-runs it. N writes `00:00:01` (owed) and `00:00:02` (judged), which N-1's
+    statements read as settled (they match the epoch exactly); N treats N-1's epoch
+    marks as owed once N-1's own settle had a minute. N-1's Python is wider: its
+    `is_mark` takes any time before 2000 as its pending mark, so where N-1 runs its
+    per-write judge (`LOOM_MEMORY_CONFLICT_JUDGE`, off by default) its settle of a row it
+    wrote can stamp its settle time over N's mark on that row; N then reads an older
+    build's verdict, owed again only while the row is `conflicted`, and that one row may
+    go unjudged. While N-1 holds the worker lease (a code-only release keeps it until it
+    stops) N's marks wait, and the first N leader judges them. A pin is the other way
+    round: N's `memory.pin` holds the key's write lock, N-1's does not, so during the
+    rollout an N-1 pin racing an N retirement can leave the pinned row's vector
+    superseded until the row's next write (or `loom reconcile-status`).
+16. **A triple row N-1 writes arrives at its whole second.** N-1 does not set
+    `entity_triples.seen_at` (migration 067), so its rows take the column's default,
+    their `last_seen` second (`.000000`). Two values of a single-valued relation
+    starting the same day and arriving in the same second, one from each build, then
+    order the N-1 row first, whichever arrived later; the next write of either fact
+    orders them again.
+17. **N-1 does not know N's retirement intents.** A user erasure N-1 runs deletes no
+    projection failure (N-1 erases them by namespace only), so a point-write retirement
+    intent naming that user in `retired[]` stays until N erases the user again, or the
+    intent is resolved and its TTL ends it. A projection repair on N-1 leaves every projection kind N adds
+    (rule 3), `triples_follow_owed`, `entity_edges_drop_undeclared` and
+    `entity_edges_restore` among them, active
+    as `unsupported_projection`; N's repair replays them once N-1 stops serving.
+18. **A new revocation key** (such as SCIM's `SCIM_PREFIX`): N-1 does not read
     it, so a token it revokes still works on an N-1 replica. The feature that writes
     it is turned on only once no N-1 replica serves: SCIM provisioning
     (`LOOM_SCIM_TOKEN`) after the whole rollout.
-11. **A new access rule** (such as collections, [sharing](sharing.md)): N-1 does not
+19. **A new access rule** (such as collections, [sharing](sharing.md)): N-1 does not
     know that a `col-` namespace opens only through grants, so an org admin's wildcard
     token reads one on an N-1 replica, and a personal collection is one too. An end-user
     token is refused there (N-1 has no key for its `kid`), but on N its first `@me` write
@@ -102,16 +206,16 @@ schema. These rules keep that safe. The operator procedure is in
     created (`collection.create`, which N-1 does not serve) and end-user issuers
     registered (`LOOM_JWT_END_USER_ISSUERS_JSON`) only once no N-1 replica serves.
 
-12. **Saved conversation messages:** older builds can compact concurrently saved
+20. **Saved conversation messages:** older builds can compact concurrently saved
     turns and rebuild embeddings without carrying their saved state. Clients use
     `conversation.save_message` only once every serving replica runs the build that
     preserves saved messages. A rollback pauses saved-message writes and compaction
     until every replica supports that state again.
-13. **An extraction policy** (`extraction_policy.set`): N-1 does not read
+21. **An extraction policy** (`extraction_policy.set`): N-1 does not read
     `loom.extraction_policies` and extracts without it. Set a policy only once no N-1
     replica serves. A rollback leaves the rows in place but no replica applies them
     until the build that reads them is back.
-14. **A new side effect of a write** (such as memory webhook events): N-1 does not
+22. **A new side effect of a write** (such as memory webhook events): N-1 does not
     perform it. A memory write served by an N-1 replica leaves no
     `loom.memory_webhook_outbox` row, so it sends no event, and an erasure saga run by
     N-1 has no step for the outbox and its census does not count it. Webhooks are
@@ -122,7 +226,7 @@ schema. These rules keep that safe. The operator procedure is in
     day's part once its last row is 3 days old). Rolling forward again, N's worker sends
     none of an erased user's events, because it skips an event whose key has no history
     left in `loom.memory_versions`, which every build's erasure deletes.
-15. **Assistant-turn learnings** (`memory_extract_agent_learnings`): N-1 does not
+23. **Assistant-turn learnings** (`memory_extract_agent_learnings`): N-1 does not
     erase `loom.learnings_supporters`, where a user's quotes behind a bot's rule live,
     and on `learnings.review` it promotes an `assistant_turn` candidate as the
     approver's own memory. Turn the setting on, and review `assistant_turn` candidates,
@@ -134,11 +238,11 @@ schema. These rules keep that safe. The operator procedure is in
     promoted bot rule to every agent in the namespace. To keep a rule to its bot,
     delete the documents tagged `source-kind:assistant_turn` with `knowledge.delete`
     before the rollback; otherwise accept the wider serving.
-16. **A namespace guide** (`namespace.guide_set`): N-1 does not serve the guide ops,
+24. **A namespace guide** (`namespace.guide_set`): N-1 does not serve the guide ops,
     shows no guide in `namespace.browse`, `namespace.get` or the session-start pack,
     and a namespace erasure it runs has no step for `loom.namespace_guides`. So
     `namespace.guide_set` answers 503 `OVERLOADED` while any live replica's schema
-    version (`loom.instances`) is below 65, or no heartbeat has been read: no guide is
+    version (`loom.instances`) is below 72, or no heartbeat has been read: no guide is
     written while an N-1 replica could erase its namespace. A rollback to N-1 after
     guides exist leaves them in place, and a namespace erasure N-1 runs then leaves
     them too; run that erasure again once N serves. `tests/unit/test_namespace_guide.py`
@@ -165,6 +269,6 @@ more (N+1). It checks:
   higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
-than `default` (rule 5), new revocation keys (rule 10), or a process killed
+than `default` (rule 5), new revocation keys (rule 18), or a process killed
 mid-migration. It skips with exit 0 where docker is unreachable; CI passes `--require`,
 which fails there instead.

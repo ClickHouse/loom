@@ -1,5 +1,5 @@
 """Repository for loom.namespace_guides: one row per revision of a namespace's
-guide, the highest revision current (schemas/migrations/065_namespace_guides.sql).
+guide, the highest revision current (schemas/migrations/072_namespace_guides.sql).
 """
 
 from __future__ import annotations

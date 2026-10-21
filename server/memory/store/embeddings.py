@@ -77,29 +77,20 @@ async def mirror_status_to_embeddings(
     ch: _CHClient | None = None,
     dry_run: bool = False,
     batch: int = 500,
+    strict: bool = False,
     judged: bool = False,
 ) -> int:
-    """Re-emit each identity's live memory_embeddings rows with the memory
-    row's `status` (and `invalid_at`, and `tombstoned_at` when the memory row is
-    a tombstone), at the memory row's `version` — a status that hides the row is
-    a retire — skipping embedding rows at or above it (a newer write's); a memory
-    row without a version falls back to read + 1. Every path that flips status
-    through `write_versions_by_ids` mirrors here. Returns the number
-    of embedding rows re-emitted (or, with `dry_run`, the number that would
-    be); a row already carrying the status is left alone. The mirror is read
-    by the FULL identity tuple (org, namespace, agent, user_id, session_id,
-    memory_key): one memory_key can live under hundreds of identities, each
-    with its own status, so a read by key would paint every identity's
-    mirror row with one identity's status. One keyed read per `batch`
-    identities and one insert. Never raises past a logged warning: the
-    memory write already landed, the mirror is a projection.
+    """Re-emit each identity's live vector rows with its memory row's `status` (and
+    `invalid_at`, and `tombstoned_at` for a tombstone), at the memory row's `version`, or
+    at read + 1 without one; a vector at or above that version (a newer write's) and one
+    already mirrored are left alone. Read by the full identity: a key repeats across
+    identities, each with its own status. Returns the rows re-emitted (with `dry_run`,
+    the rows it would). Never raises, unless `strict`.
 
-    `judged` (a deferred verdict, its memory row at the judged version + 1): only
-    vector rows of the memory row's `content_sha256` are copied, at a version
-    drawn before a sequential read. Every metadata copy of that vector sits at
-    its read + 1, far below, on either side of the mirror; a newer revision's
-    vector has another hash, or was written after the draw and stays newer. A
-    vector a retire hid meanwhile (status not served) is left hidden."""
+    `judged` (a verdict reached after the write): only the vectors of the memory row's
+    `content_sha256` are copied, at a version drawn before a sequential read, so a
+    metadata copy stays below it and a newer revision's vector stays above it; a vector
+    a retire hid meanwhile stays hidden."""
     ch = ch or _default_client()
     drawn = next_version() if judged else 0
     wanted: dict[EmbeddingKey, dict[str, Any]] = {}
@@ -114,7 +105,11 @@ async def mirror_status_to_embeddings(
             str(m.get("memory_key") or ""),
         )
         overrides: dict[str, Any] = {"status": m.get("status")}
-        if m.get("invalid_at") is not None:
+        # A served head's None is its value too: a vector served again loses the end a
+        # retirement stamped on it.
+        if m.get("invalid_at") is not None or (
+            "invalid_at" in m and m.get("status") in SERVED_STATUSES
+        ):
             overrides["invalid_at"] = m.get("invalid_at")
         if m.get("tombstoned_at") is not None:
             overrides["tombstoned_at"] = m.get("tombstoned_at")
@@ -131,7 +126,9 @@ async def mirror_status_to_embeddings(
         chunk = keys[start : start + step]
         try:
             rows = await _live_rows_for_keys(ch, chunk, sequential=judged)
-        except Exception as e:  # noqa: BLE001 — projection, never the write
+        except Exception as e:  # a mirror, never the write; strict re-raises
+            if strict:
+                raise
             _log.warning("status mirror: embeddings read failed for %d keys: %s", len(chunk), e)
             continue
         for r in rows:
@@ -141,7 +138,9 @@ async def mirror_status_to_embeddings(
             if judged and str(r.get("status") or "") not in SERVED_STATUSES:
                 continue  # a retire (a refines supersede) won meanwhile
             if want is None or (
-                str(r.get("status") or "") == str(want["status"]) and "tombstoned_at" not in want
+                str(r.get("status") or "") == str(want["status"])
+                and "tombstoned_at" not in want
+                and ("invalid_at" not in want or r.get("invalid_at") == want["invalid_at"])
             ):
                 continue  # not asked for, or already mirrored
             row = _copy_row(r, want)
@@ -153,7 +152,9 @@ async def mirror_status_to_embeddings(
         try:
             await insert_embedding_rows(out, ch=ch)
             await retire_copies_under_unembedded_heads(out, ch=ch)
-        except Exception as e:  # noqa: BLE001 — projection, never the write; reconcile-status repairs
+        except Exception as e:  # a mirror, never the write; strict re-raises
+            if strict:
+                raise
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)
             return 0
     return len(out)
@@ -174,7 +175,7 @@ def status_divergence_sql() -> str:
     return """
         WITH m AS (
             SELECT org, namespace, agent, user_id, session_id, memory_key,
-                   argMax(status, version) AS ms, argMax(invalid_at, version) AS invalid_at
+                   argMax(status, version) AS ms, argMax(tuple(invalid_at), version).1 AS invalid_at
             FROM loom.memory
             WHERE org = {org:String} AND namespace = {ns:String}
             GROUP BY org, namespace, agent, user_id, session_id, memory_key
@@ -733,11 +734,14 @@ async def unsupersede_embeddings(
     session_id: str,
     memory_key: str,
     *,
+    status: str = "active",
     ch: _CHClient | None = None,
 ) -> int:
     """Inverse of the supersede re-emit for one key: every live
-    memory_embeddings row goes back to status='active' with the retirement
-    stamp cleared, so recall sees it again. Returns rows re-emitted."""
+    memory_embeddings row goes back to `status` (the restored memory row's:
+    `active`, `conflicted` or `duplicate`) with the retirement
+    stamp cleared, so recall sees it again. A row already so is left as it is: an Undo
+    finished again writes nothing. Returns rows re-emitted."""
     ch = ch or _default_client()
     rows = await live_embedding_rows_for_key(
         ch,
@@ -752,10 +756,11 @@ async def unsupersede_embeddings(
         build_embedding_row(
             **(
                 {c: val for c, val in r.items() if c in EMBEDDING_PERSISTED_COLS}
-                | {"status": "active", "invalid_at": None, "version": reemit_version(r)}
+                | {"status": status, "invalid_at": None, "version": reemit_version(r)}
             )
         )
         for r in rows
+        if r.get("status") != status or r.get("invalid_at") is not None
     ]
     if out:
         await insert_embedding_rows(out, ch=ch)

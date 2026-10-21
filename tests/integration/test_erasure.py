@@ -161,6 +161,38 @@ async def test_user_id_erasure_scrubs_agent_events(admin_agent, ch_client) -> No
     assert int(rows[0][0]) == 0, "user_id should have been scrubbed from agent_events"
 
 
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_user_id_erasure_deletes_the_projection_failures_its_writes_left(
+    admin_agent, ch_client
+) -> None:
+    """A failed projection keeps the bulk write's entries, its writer in the payload:
+    a user erasure deletes that user's, and leaves another's."""
+    import json
+
+    ns = admin_agent.namespace
+    target = f"dora-{uuid.uuid4().hex[:6]}"
+    ch_client.insert(
+        "loom.memory_projection_failures",
+        [
+            [uuid.uuid4(), "erasure-test-org", ns, "entity_triples", json.dumps({"user_id": who})]
+            for who in (target, "bob")
+        ],
+        column_names=["failure_id", "org", "namespace", "projection", "payload"],
+    )
+
+    result = await admin_agent.erasure.request_user_id(target, requester="ops@example.com")
+    assert result["status"] == "completed"
+    steps = {s["step"]: s for s in result["steps"]}
+    assert steps["projection_failures.delete"]["rows_affected"] == 1
+    rows = ch_client.query(
+        "SELECT JSONExtractString(payload, 'user_id') FROM loom.memory_projection_failures"
+        " WHERE org = 'erasure-test-org' AND namespace = {ns:String}",
+        parameters={"ns": ns},
+    ).result_rows
+    assert [r[0] for r in rows] == ["bob"]
+
+
 @pytest.mark.asyncio
 async def test_erasure_writes_audit_chain(admin_agent, ch_client) -> None:
     """started + completed rows land in audit_log with consistent hashes."""

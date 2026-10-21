@@ -27,7 +27,8 @@ TrafficClassStr = Literal["production", "interactive", "bench"]
 # newest_wins: a write whose extracted triple names the same
 # subject and single-valued relation as a live memory with a different, older
 # object retires that memory (status superseded, invalid_at stamped, history
-# kept). auto_reinforce and manual_review leave both facts live.
+# kept). Under newest_wins and auto_reinforce, an update the conflict resolver is
+# sure of retires the older row too; under manual_review it is only flagged.
 # append_only: the namespace's writes are events, not claims
 # — a run's report, a finding dated by its run. Every write is its own row:
 # the gate answers `clear`, no merge / duplicate / conflict verdict against a

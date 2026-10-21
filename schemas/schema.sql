@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 171 tables + 18 materialized views.
+-- Counts: 173 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (171)
+-- Tables (173)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1527,6 +1527,22 @@ PARTITION BY toYYYYMM(seen_at)
 ORDER BY (org, namespace, entity_a, entity_b, memory_key)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.entity_edge_rows
+CREATE TABLE IF NOT EXISTS loom.entity_edge_rows
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `memory_id` UUID,
+    `user_id` String,
+    `content_sha256` FixedString(64),
+    `entity_a` LowCardinality(String),
+    `entity_b` LowCardinality(String),
+    INDEX pair_skip (entity_a, entity_b) TYPE bloom_filter(0.01) GRANULARITY 4
+)
+ENGINE = ReplacingMergeTree
+ORDER BY (org, namespace, memory_id, user_id, content_sha256, entity_a, entity_b)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.entity_edges
 CREATE TABLE IF NOT EXISTS loom.entity_edges
 (
@@ -1539,6 +1555,8 @@ CREATE TABLE IF NOT EXISTS loom.entity_edges
     `valid_from` Nullable(DateTime) DEFAULT NULL,
     `valid_to` Nullable(DateTime) DEFAULT NULL,
     `invalid_at` Nullable(DateTime) DEFAULT NULL,
+    `restore_id` String DEFAULT '',
+    `closed_by` String DEFAULT '',
     INDEX idx_valid_from_minmax valid_from TYPE minmax GRANULARITY 8,
     INDEX idx_valid_to_minmax valid_to TYPE minmax GRANULARITY 8,
     INDEX idx_invalid_at_minmax invalid_at TYPE minmax GRANULARITY 8
@@ -1591,6 +1609,24 @@ PARTITION BY toYYYYMM(seen_at)
 ORDER BY (org, namespace, subject, relation, object, memory_key)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.entity_triple_rows
+CREATE TABLE IF NOT EXISTS loom.entity_triple_rows
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `memory_id` UUID,
+    `user_id` String,
+    `content_sha256` FixedString(64),
+    `subject` LowCardinality(String),
+    `relation` LowCardinality(String),
+    `object` LowCardinality(String),
+    `inferred` Bool,
+    INDEX triple_skip (subject, relation, object) TYPE bloom_filter(0.01) GRANULARITY 4
+)
+ENGINE = ReplacingMergeTree
+ORDER BY (org, namespace, memory_id, user_id, content_sha256, subject, relation, object, inferred)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.entity_triples
 CREATE TABLE IF NOT EXISTS loom.entity_triples
 (
@@ -1607,6 +1643,8 @@ CREATE TABLE IF NOT EXISTS loom.entity_triples
     `valid_from` Nullable(DateTime) DEFAULT NULL,
     `valid_to` Nullable(DateTime) DEFAULT NULL,
     `invalid_at` Nullable(DateTime) DEFAULT NULL,
+    `seen_at` DateTime64(6) DEFAULT toDateTime64(last_seen, 6),
+    `restore_id` String DEFAULT '',
     INDEX idx_valid_from_minmax valid_from TYPE minmax GRANULARITY 8,
     INDEX idx_valid_to_minmax valid_to TYPE minmax GRANULARITY 8,
     INDEX idx_invalid_at_minmax invalid_at TYPE minmax GRANULARITY 8
@@ -2383,12 +2421,13 @@ CREATE TABLE IF NOT EXISTS loom.memory_projection_failures
     `error_type` LowCardinality(String) DEFAULT '',
     `error_message` String DEFAULT '',
     `payload` String DEFAULT '{}',
-    `status` Enum8('active' = 1, 'resolved' = 2) DEFAULT 'active',
+    `status` Enum8('active' = 1, 'resolved' = 2, 'abandoned' = 3) DEFAULT 'active',
     `created_at` DateTime DEFAULT now(),
     `resolved_at` Nullable(DateTime) DEFAULT NULL
 )
 ENGINE = MergeTree
 ORDER BY (org, namespace, projection, created_at, failure_id)
+TTL coalesce(resolved_at, created_at) + toIntervalDay(30) WHERE status = 'resolved'
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
 -- loom.memory_record_conflicts

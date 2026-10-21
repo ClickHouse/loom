@@ -42,6 +42,24 @@ def _calibration_left_as_found(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- projection_repair -----------------------------------------------------------
 
 
+def _fake_retry(monkeypatch: pytest.MonkeyPatch, retry: Any) -> list[dict[str, Any]]:
+    """Each failure retried by `retry`; the marks are recorded (their params) instead of run."""
+    from server.memory.app import projection_failures as pf
+
+    marks: list[dict[str, Any]] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            marks.append(params)
+
+    async def _retry(f: ProjectionFailureRow, **_: Any) -> ProjectionFailureRetryResult:
+        return await retry(f)
+
+    monkeypatch.setattr(pf, "_retry", _retry)
+    monkeypatch.setattr(pf, "get_client", lambda: CH())
+    return marks
+
+
 def _failure(i: int, projection: str) -> ProjectionFailureRow:
     return ProjectionFailureRow(
         failure_id=f"f{i}",
@@ -87,18 +105,111 @@ async def test_a_repair_pass_counts_each_outcome_and_survives_a_poison_row(
         return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
-    monkeypatch.setattr(pf, "retry_projection_failure", _retry)
+    _fake_retry(monkeypatch, _retry)
 
     result = await projection_repair.run_pass(
         projection_repair.ProjectionRepairConfig(max_failures_per_pass=0)
     )
-    assert limits == [1], "a zero cap still scans one row, never an unbounded batch"
+    assert limits[-1] == 1, "a zero cap still scans one row, never an unbounded batch"
     assert (result.scanned, result.retried, result.resolved, result.unsupported) == (4, 3, 2, 1)
     # The failing row is reported, bounded, and the row after it was still retried.
     (failed,) = result.failed
     assert failed["failure_id"] == "f3" and len(failed["error"]) == 512
     outcome = _own_registry.snapshot()["projection_repair"]["last_outcome"]
-    assert outcome == {"scanned": 4, "retried": 3, "resolved": 2, "unsupported": 1, "failed": 1}
+    assert outcome == {
+        "scanned": 4,
+        "retried": 3,
+        "resolved": 2,
+        "unsupported": 1,
+        "abandoned": 0,
+        "failed": 1,
+    }
+
+
+async def test_a_pass_reads_the_erasure_per_failure_and_marks_its_failures_once(
+    monkeypatch: pytest.MonkeyPatch, _own_registry: worker_status.WorkerStatusRegistry
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import projection_repair
+
+    queued = [_failure(i, "memory_chunks") for i in range(30)]
+    mutations: list[str] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            mutations.append(sql)
+
+    async def _scan(*, limit: int, **_: Any) -> list[ProjectionFailureRow]:
+        return queued
+
+    async def _mirrored(f: ProjectionFailureRow, **_: Any) -> str:
+        return ""
+
+    reads: list[str] = []
+
+    async def no(org: str, **kw: Any) -> bool:
+        reads.append(org)
+        return False
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", _scan)
+    monkeypatch.setattr(pf, "_retry_memory_chunks", _mirrored)
+    monkeypatch.setattr(pf, "_younger_than", lambda f, s: False)
+    monkeypatch.setattr(pf, "get_client", lambda: CH())
+    monkeypatch.setattr(queue, "under_erasure", no)
+    result = await projection_repair.run_pass()
+    assert result.resolved == 30
+    assert sum("ALTER TABLE" in m for m in mutations) == 1
+    assert reads == ["acme"] * 30, "the erasure is read right before each failure's write"
+
+
+async def test_an_erasure_requested_mid_batch_stops_the_remaining_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+
+    failures = [_failure(i, "memory_chunks") for i in range(5)]
+    marked: list[Any] = []
+    written: list[str] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            marked.append(params["failure_ids"])
+
+    async def _mirrored(f: ProjectionFailureRow, **_: Any) -> str:
+        written.append(f.failure_id)
+        return ""
+
+    reads = 0
+
+    async def erasing_after_two(org: str, **kw: Any) -> bool:
+        nonlocal reads
+        reads += 1
+        return reads > 2
+
+    monkeypatch.setattr(pf, "_retry_memory_chunks", _mirrored)
+    monkeypatch.setattr(pf, "_younger_than", lambda f, s: False)
+    monkeypatch.setattr(queue, "under_erasure", erasing_after_two)
+    out = await pf.retry_failures(failures, ch=CH())
+    assert written == ["f0", "f1"]
+    assert [r.reason for r in out[2:]] == ["pending"] * 3
+    assert marked == [["f0", "f1"]], "the failures left under the erasure stay active"
+
+
+async def _resolved(f: ProjectionFailureRow) -> ProjectionFailureRetryResult:
+    return ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
+
+
+async def test_a_mark_sends_at_most_mark_chunk_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The ids are one HTTP parameter, capped at 128 KiB: 3,500 UUIDs in one go is refused."""
+    from server.memory.app import projection_failures as pf
+
+    failures = [_failure(i, "memory_chunks") for i in range(3500)]
+    done = [(f, await _resolved(f)) for f in failures]
+    marks = _fake_retry(monkeypatch, _resolved)
+    await pf.mark_retried(done)
+    assert [len(m["failure_ids"]) for m in marks] == [1000, 1000, 1000, 500]
 
 
 async def test_a_repair_pass_whose_scan_fails_records_a_failure(
@@ -326,3 +437,41 @@ async def test_code_calibrate_writes_the_workers_row_through_the_attributed_inse
         **{k: row[k] for k in ("calibrated_at", "version")},
     }
     assert row["noise_floor"] == _calibration().noise_floor and row["version"] > 0
+
+
+async def test_a_fresh_follow_owed_intent_is_left_to_its_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The resolver records and follows its retirement itself, right after the supersede:
+    a repair replaying the intent then would write a second record beside the writer's."""
+    import dataclasses
+    from datetime import timedelta
+
+    from server.core.datetimes import naive_utc_now
+    from server.memory.app import projection_failures as pf
+    from server.memory.store import conflict_resolver as queue
+
+    replayed: list[str] = []
+
+    async def follow(f: ProjectionFailureRow, **_: Any) -> str:
+        replayed.append(f.failure_id)
+        return ""
+
+    monkeypatch.setattr(pf, "_retry_follow_rows", follow)
+    fresh = dataclasses.replace(_failure(1, pf.FOLLOW_OWED), created_at=naive_utc_now())
+    (out,) = await pf.retry_failures([fresh], ch=object())
+    assert (out.retried, out.reason) == (False, "pending") and replayed == []
+    past_grace = timedelta(seconds=pf.FOLLOW_OWED_GRACE_S + 1)
+    aged = dataclasses.replace(fresh, created_at=naive_utc_now() - past_grace)
+    marks: list[Any] = []
+
+    class CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            marks.append(params)
+
+    async def no(org: str, **kw: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(queue, "under_erasure", no)
+    (out,) = await pf.retry_failures([aged], ch=CH())
+    assert out.resolved and replayed == ["f1"]
