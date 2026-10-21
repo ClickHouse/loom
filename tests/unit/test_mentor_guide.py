@@ -111,6 +111,29 @@ def test_every_token_that_may_read_the_guide_is_admitted(caller: str) -> None:
     gates.read_scope(op, auth, MentorGuideInput())
 
 
+def test_loom_op_returns_the_guide_as_markdown_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    import server.transport.mcp as mcp
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "identity_provider", "single-user")
+    app = FastAPI()
+    mcp.attach(app)
+    call = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "loom_op", "arguments": {"op": "mentor.guide", "arguments": {}}},
+    }
+    body = TestClient(app).post("/mcp", json=call).json()["result"]
+    assert not body.get("isError"), body
+    assert body["content"][0]["text"] == _guide("skill").text
+    assert "†" in body["content"][0]["text"]
+    assert body["structuredContent"] == {"version": server.__version__, "part": "skill"}
+
+
 def test_the_image_ships_the_guide() -> None:
     dockerfile = (REPO_ROOT / "Dockerfile").read_text()
     assert "COPY skills/loom ./skills/loom" in dockerfile

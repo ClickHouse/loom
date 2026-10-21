@@ -52,8 +52,7 @@ change between releases, and ops MCP does not serve with ‡.
 1. **Load context once.** `context.pack` with a `query` describing the task
    (default 2,000 tokens) returns profile, working memory, relevant
    memories and procedures, rendered for your prompt. Its memories narrow
-   to the `session_id` you send; step 3 recalls what earlier sessions
-   learned. Add
+   to the `session_id` you send, if any (see Identity). Add
    `include_knowledge`, `include_conversations` or `include_runs` when the
    task needs them.
 2. **Open a run** for a task with an outcome: `run.begin(goal=...)`. Put
@@ -138,7 +137,7 @@ end user when you serve many, `session_id` to the conversation or job, and
 `run_id` to the task execution.
 
 On reads the same fields select rows, and ops differ in how; each op's
-field list (`loom_op` help, the operations reference) says how. Three rules
+field list in the operations reference says how. Three rules
 cover the loop:
 
 - **Every author: send `agent: "*"`.** A raw `agent.call` stamps your own
@@ -151,10 +150,11 @@ cover the loop:
 - **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
   read narrows it to those rows. `search.query`† has none of them; to read
   one user's rows, use `memory.ask` with `user_id`.
-- **Keep `session_id` on `context.pack`.** The pack picks this session's
-  working-memory blocks by it, and its recalled memories narrow to that
-  session too: ask `search.query`† or `memory.ask` for what earlier
-  sessions learned.
+- **`session_id` on `context.pack` picks a session.** Send it when you
+  resume one: the pack then loads that session's working-memory blocks,
+  and its recalled memories narrow to that session. A new session sends
+  `-` (the SDK default): its pack recalls every session's memories and
+  loads only your agent-level blocks.
 
 In TypeScript, `agent.call` takes `userId`, `sessionId` and `runId` in its
 scope argument, not the body.

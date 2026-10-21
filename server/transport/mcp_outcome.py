@@ -135,6 +135,20 @@ async def _success_response(
 
     if op.name == "search.query":
         return _ok(req_id, _search_answer(call, result))
+    if op.name == "mentor.guide":
+        # The guide is Markdown for the model to read: send it once, as text,
+        # not escaped inside a JSON string and repeated in structuredContent.
+        return _ok(
+            req_id,
+            {
+                "content": [{"type": "text", "text": result_dict["text"]}],
+                "isError": False,
+                "structuredContent": {
+                    "version": result_dict["version"],
+                    "part": result_dict["part"],
+                },
+            },
+        )
 
     # content[0].text is raw JSON (no prose prefix) — some clients parse it
     # for display and a prefix breaks the parse. structuredContent mirrors it
