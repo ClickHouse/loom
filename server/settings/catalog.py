@@ -3148,10 +3148,10 @@ class MemorySearchSettings(BaseModel):
 
 def parse_backoff_steps(raw: str) -> tuple[float, ...]:
     """`memory_webhook_backoff_steps_seconds` as seconds, in order; ValueError when a
-    step is not a number over 0."""
+    step is not a number over 0 or there is no step."""
     steps = tuple(float(step) for step in raw.split(",") if step.strip())
-    if not all(step > 0 for step in steps):
-        raise ValueError("every memory webhook backoff step must be over 0 seconds")
+    if not steps or not all(step > 0 for step in steps):
+        raise ValueError("memory webhook backoff steps: one or more numbers over 0 seconds")
     return steps
 
 

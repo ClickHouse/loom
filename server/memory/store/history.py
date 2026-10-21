@@ -94,8 +94,8 @@ class HistoryTarget:
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
         return cls(
-            org=str(r["org"]),
-            memory_id=str(r["memory_id"]),
+            org=str(r.get("org") or ""),
+            memory_id=str(r.get("memory_id") or ""),
             namespace=str(r.get("namespace") or ""),
             agent=str(r.get("agent") or ""),
             user_id=str(r.get("user_id") or ""),
@@ -227,10 +227,13 @@ async def find_history_target(
     by redact, which needs to know the identity tuple + tombstone state
     before mutating in place."""
     ch = ch or _default_client()
-    cols = "namespace, agent, user_id, session_id, memory_key, version, tombstoned_at"
+    cols = (
+        "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, tombstoned_at"
+    )
     r = await ch.query_one(
         f"""
-        SELECT {cols}
+        SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
+               memory_key, version, tombstoned_at
         FROM (
             SELECT {cols} FROM loom.memory_versions
             WHERE org = {{org:String}} AND memory_id = {{mid:UUID}}
@@ -243,7 +246,7 @@ async def find_history_target(
         """,
         params={"org": org, "mid": memory_id},
     )
-    return None if r is None else HistoryTarget.from_row({**r, "org": org, "memory_id": memory_id})
+    return None if r is None else HistoryTarget.from_row(r)
 
 
 async def version_exists(

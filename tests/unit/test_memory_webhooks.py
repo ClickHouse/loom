@@ -516,6 +516,7 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
         {"valid_at": NOW},
         {"valid_to": NOW},
         {"memory_type": "semantic"},
+        {"sensitivity": "high"},
     ],
 )
 async def test_memory_set_of_the_same_value_with_new_fields_is_revised(
@@ -1995,6 +1996,8 @@ def test_the_worker_is_registered_on_its_settings() -> None:
         ("memory_webhook_backoff_steps_seconds", "5,0,120"),
         ("memory_webhook_backoff_steps_seconds", "5,-30"),
         ("memory_webhook_backoff_steps_seconds", "5,soon"),
+        ("memory_webhook_backoff_steps_seconds", ""),
+        ("memory_webhook_backoff_steps_seconds", ", ,"),
     ],
 )
 def test_a_memory_webhook_setting_below_its_floor_is_refused(field: str, value: object) -> None:
