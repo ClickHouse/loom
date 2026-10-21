@@ -105,6 +105,7 @@ def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
     assert ch_writes.batched_insert_settings() == {
         "async_insert": 1,
         "wait_for_async_insert": 1,
+        "async_insert_use_adaptive_busy_timeout": 1,
         "async_insert_busy_timeout_min_ms": 10,
         "async_insert_busy_timeout_max_ms": 50,
     }

@@ -19,6 +19,9 @@ def batched_insert_settings() -> dict[str, Any]:
     return {
         "async_insert": 1,
         "wait_for_async_insert": 1,
+        # Sent so the min bound applies whatever the server profile says; with it
+        # off, every flush waits the full max.
+        "async_insert_use_adaptive_busy_timeout": 1,
         "async_insert_busy_timeout_min_ms": min(
             int(settings.ch_batched_insert_wait_min_ms), wait_max
         ),

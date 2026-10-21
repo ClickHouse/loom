@@ -98,8 +98,6 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   carries a per-batch `insert_deduplication_token` (`server/core/ch_writes.py`,
   `dedup_settings`), and an async insert is deduplicated by that token only, never by
   content: a retried batch lands once, and two identical rows in one flush window both land.
-- **Batched inserts.** Tables written on every request share parts through ClickHouse's
-  async-insert buffer ([batched inserts](#batched-inserts)).
 - **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
   client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
   in UTC: a server whose `<timezone>` is something else reads and writes the same
@@ -131,7 +129,9 @@ that stops loses nothing it acknowledged. A flush that fails as a whole fails ev
 insert waiting on it; a retry of any of them lands once, under its own token. Each
 insert waits between `ch_batched_insert_wait_min_ms` (writes are sparse) and
 `ch_batched_insert_wait_max_ms` (under load) for others to join it, and holds its pooled
-connection for the wait. Under steady load a table gets about 1000 /
+connection for the wait. The insert sends `async_insert_use_adaptive_busy_timeout = 1`
+so these bounds hold whatever the server profile sets; with it off, every flush waits
+the full maximum. Under steady load a table gets about 1000 /
 `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node, insert shape
 (ClickHouse keeps one buffer per column list and settings) and partition written: more
 when a buffer fills before the wait ends, at most one per insert when writes are sparse.

@@ -21,8 +21,8 @@ A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
 from capping the rate.
 
 The rows land in the ClickHouse the settings name, under the org `--org`
-(default `write-rate-<run>`, one per run). `--target client` deletes that org's
-conversation rows when the run ends. `--target server` keeps what it wrote (the
+(default `write-rate-<run>`, one per run). `--target client` deletes the
+conversation rows the run wrote when it ends. `--target server` keeps what it wrote (the
 memories, the transcript turns, conversation logging switched on for each org and
 namespace it wrote to), so point it at a private ClickHouse.
 
@@ -75,12 +75,14 @@ def _orgs(args: argparse.Namespace) -> list[str]:
     return [_org(i, args) for i in range(args.orgs)]
 
 
-async def _delete_client_rows(args: argparse.Namespace) -> None:
+async def _delete_client_rows(run: str, args: argparse.Namespace) -> None:
+    # Only this run's rows: an existing org given with --org keeps its own turns.
     ch = get_client()
     for table in ("conversations", "conversation_embeddings"):
         await ch.execute(
-            f"DELETE FROM loom.{table} WHERE org IN {{orgs:Array(String)}}",
-            params={"orgs": _orgs(args)},
+            f"DELETE FROM loom.{table} WHERE org IN {{orgs:Array(String)}}"
+            " AND startsWith(thread_id, {prefix:String})",
+            params={"orgs": _orgs(args), "prefix": f"{run}-thread-"},
         )
 
 
@@ -241,7 +243,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             sent = await _inserts_sent(started, time.time())
         finally:
             if args.target == "client":
-                await _delete_client_rows(args)
+                await _delete_client_rows(run, args)
 
     return {
         "target": args.target,
