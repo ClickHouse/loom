@@ -12,7 +12,8 @@
     "sdk/typescript/test",
     "integrations/codex-plugin/skills",
     "integrations/codex-plugin/lib",
-    "integrations/codex-plugin/hooks"
+    "integrations/codex-plugin/hooks",
+    "integrations/codex-plugin/bin"
   ],
   "rules": [
     "Every operation is one HTTP endpoint, POST /v1/<operation>. Most are also MCP tools at <server>/mcp, named loom_ plus the operation name with dots as underscores (memory.set is loom_memory_set); search.query is loom_search.",

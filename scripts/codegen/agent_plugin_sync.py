@@ -1,4 +1,4 @@
-"""Keep the Codex plugin's scripts and skills byte-identical to the Claude Code plugin's.
+"""Keep the Codex plugin's scripts, skills and icon byte-identical to the Claude Code plugin's.
 
 The two coding-agent plugins differ only in their manifests and hook wiring
 (`hooks/hooks.json`); the hook scripts (`hooks/*.mjs`), the shared library

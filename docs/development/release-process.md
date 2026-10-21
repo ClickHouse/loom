@@ -139,7 +139,7 @@ tests), and then three publish jobs:
 | `mcp-registry` | `server.json` to the MCP Registry as `io.github.ClickHouse/loom` | the committed file, whose version the `version` job checks against the tag; GitHub OIDC login with a pinned `mcp-publisher`; a listed version and a prerelease are skipped |
 
 The Docker image is already published by the tag run. Manual dispatch still rebuilds the
-same immutable version safely, while publishing the SDK registries.
+same immutable version safely, while publishing the SDK registries and the MCP Registry listing.
 
 A re-run after a partial publish is safe: each publish job skips what already exists.
 

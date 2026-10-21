@@ -18,12 +18,17 @@ Codex build runs the same scripts; see [codex.md](codex.md).
 
 This section covers the Claude Code plugin and the Codex plugin, which run the same
 scripts. The plugin sends data only to the Loom server it is configured with. Nothing goes
-to the plugin's authors or to any other service. The table in
-[what the hooks do](#what-the-hooks-do) lists each request. Together they send:
+to the plugin's authors or to any other service. The plugin sends:
 
+- whatever the agent passes to a Loom MCP tool: memories it saves, search and code
+  queries;
+- the repository's identity: the owner and name of each git remote, to find its code
+  index; the branch; and the checkout's directory name and a hash of the repository,
+  which tag every row the hooks write;
 - prompts, to fetch recalled memories and code pointers for them;
 - each tool call's input, output or error (`observe.record`), and the paths of files read
-  or edited, for the code shunt, file rules and blast radius;
+  or edited, for the code shunt, file rules and blast radius, with the search command a
+  redirected `gh` call carried;
 - chat turns (`conversation.append`), which the server stores only when the namespace has
   conversation logging on;
 - the session's last turns (up to 200), to `memory.set_from_messages`, which keeps them as
@@ -33,12 +38,15 @@ to the plugin's authors or to any other service. The table in
   (goal, git status, files edited, last reply), a session brief and token usage;
 - at Stop in an indexed checkout, the uncommitted diff of the files the session changed
   (up to 200,000 characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
-- with no credential, on a server that allows self-signup, your OS user name and host
-  name as the new agent's name (`LOOM_AUTO_SIGNUP=off` stops it).
+- with no credential, at the first session, your OS user name and host name, to request a
+  self-signup token (refused unless the server allows self-signup; `LOOM_AUTO_SIGNUP=off`
+  stops it).
 
-A client-side redaction removes common credential shapes from prompts, tool calls, turns,
-run records, notes and briefs before they are sent. It is best effort, not a guarantee, and
-the test gate's diff is sent without it.
+[What the hooks do](#what-the-hooks-do) lists the hooks behind these requests. A
+client-side redaction removes common credential shapes from the prompts, tool calls, turns,
+run records, notes and briefs the hooks send. It is best effort, not a guarantee. MCP tool
+arguments, a brief the `loom-session` skill saves and the test gate's diff are sent without
+it.
 
 The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
 provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
@@ -208,9 +216,8 @@ then does: keeping tool authority independent of retrieved text is the client's 
 
 The hooks' temp files (turn journal, cursors, stashes, flush jobs) are created `0600`,
 never written through a symlink or into another user's file, and the turn journal and
-stashes are removed at SessionEnd. Captured tool input, output and errors pass through a
-client-side secret redaction before they are sent; it catches common credential shapes and
-is best effort, not a guarantee.
+stashes are removed at SessionEnd. What the hooks redact before sending is in
+[data handling](#data-handling).
 
 ### Tuning knobs
 
