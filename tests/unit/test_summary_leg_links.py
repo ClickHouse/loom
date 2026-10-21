@@ -20,7 +20,7 @@ def test_digest_row_carries_links_and_session_into_the_hit() -> None:
             return [
                 {
                     "session_id": "s1",
-                    "content_excerpt": "On 2023-05-08 the user …",
+                    "summary_text": "On 2023-05-08 the user …",
                     "distance": 0.3,
                     "valid_at_iso": "2023-05-08 00:00:00",
                     "derived_from": ["caroline_trip", "caroline_hobby"],

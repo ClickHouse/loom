@@ -4,12 +4,16 @@ agent's turns."""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import pytest
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.knowledge.domain.conversations import LISTED_MARGIN_CHARS, THREAD_EXCERPT_CHARS
 from server.knowledge.store import conversations as conversation_repo
+
+_AT = datetime(2026, 6, 1, 9, 0)
 
 
 class StubCH:
@@ -114,7 +118,10 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     ch = StubCH(
         [
             [{"thread_id": "t-1", "msg_count": 5}, {"thread_id": "t-2", "msg_count": 2}],
-            [{"thread_id": "t-1", "n": 4}],
+            [
+                {"thread_id": "t-1", "n": 4, "last_turn": ("bot", "user", "hi")},
+                {"thread_id": "t-2", "n": 2, "last_turn": ("bot", "user", "hi")},
+            ],
         ]
     )
     rows = await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
@@ -124,8 +131,102 @@ async def test_the_thread_list_counts_turns_as_an_opened_thread_does() -> None:
     assert "thread_id IN {tids:Array(String)}" in counted
     assert "toIntervalDay" not in counted
     assert ch.calls[1][1]["tids"] == ["t-1", "t-2"]
-    # A thread the count answers for takes its distinct count; one it does not keeps its own.
     assert [(r["thread_id"], r["msg_count"]) for r in rows] == [("t-1", 4), ("t-2", 2)]
+    assert rows[0]["last_agent"] == "bot" and rows[0]["last_content"] == "hi"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fields", "keyed_read", "reads_last_turn", "served"),
+    [
+        # Only the title: no keyed read, and the last turn's fields are empty.
+        (["title"], False, False, (1, "", "", "Titled")),
+        # The role: the keyed read takes the last turn.
+        (["last_role"], True, True, (1, "user", "hi", "Titled")),
+        # The count alone: the keyed read counts, and reads no last turn.
+        (["msg_count"], True, False, (7, "", "", "Titled")),
+    ],
+)
+async def test_a_thread_list_reads_the_last_turn_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+    fields: list[str],
+    keyed_read: bool,
+    reads_last_turn: bool,
+    served: tuple[int, str, str, str],
+) -> None:
+    """`fields` without the agent, role, excerpt or count is one statement over the
+    transcript; asking for the count or the last turn adds the keyed read, which reads
+    the last turn only when one of its fields is asked for."""
+    from server.knowledge.api.models_conversations import ConversationThreadsInput
+    from server.knowledge.app.conversations import handle_conversation_threads
+
+    grouped = [{"thread_id": "t-1", "msg_count": 1, "first_seen": _AT, "last_seen": _AT}]
+    keyed_row = {"thread_id": "t-1", "n": 7}
+    if reads_last_turn:
+        keyed_row["last_turn"] = ("bot", "user", "hi")
+    titles = [{"thread_id": "t-1", "title": "Titled"}]
+    ch = StubCH([grouped, [keyed_row], titles] if keyed_read else [grouped, titles])
+    monkeypatch.setattr(conversation_repo, "_default_client", lambda: ch)
+    out = await handle_conversation_threads(
+        ConversationThreadsInput(org="o", namespace="ns", agent="a", fields=fields)
+    )
+    transcript = [sql for sql, _ in ch.calls if "FROM loom.conversations\n" in sql]
+    assert len(transcript) == (2 if keyed_read else 1)
+    if keyed_read:
+        assert ("argMax" in transcript[1]) is reads_last_turn
+    [thread] = out.threads
+    assert (
+        thread.msg_count,
+        thread.last_role,
+        thread.last_content_excerpt,
+        thread.title,
+    ) == served
+
+
+@pytest.mark.asyncio
+async def test_the_saved_list_reads_the_prefix_it_checks() -> None:
+    """The saved list never carries a long message whole: the aggregate reads the first
+    `listed` characters, which the listing checks and cuts."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    ch = StubCH()
+    await conversation_repo.list_saved_messages(
+        "o", "ns", "a", scope=WHOLE_NAMESPACE, user_id="u-1", listed=1264, ch=ch
+    )
+    sql, params = ch.calls[0]
+    assert "argMax(substringUTF8(content, 1, {listed:UInt32}), ts) AS content" in sql
+    assert "argMax(content," not in sql and params["listed"] == 1264
+
+
+@pytest.mark.asyncio
+async def test_a_thread_gone_from_the_keyed_read_is_left_out() -> None:
+    # Its last live turn was deleted between the two statements.
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}, {"thread_id": "t-2", "msg_count": 2}],
+            [{"thread_id": "t-1", "n": 4, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
+    rows = await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, ch=ch)
+    assert [r["thread_id"] for r in rows] == ["t-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_thread_list_that_asks_for_no_turn_or_count_is_one_statement() -> None:
+    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}]])
+    rows = await conversation_repo.recent_threads(
+        "o", "ns", window_days=30, limit=10, count_turns=False, last_turn=False, ch=ch
+    )
+    assert len(ch.calls) == 1
+    assert rows == [
+        {
+            "thread_id": "t-1",
+            "msg_count": 5,
+            "last_agent": "",
+            "last_role": "",
+            "last_content": "",
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -147,11 +248,22 @@ async def test_a_read_across_agents_orders_two_turns_that_tie_on_time_and_id() -
 
 @pytest.mark.asyncio
 async def test_a_thread_list_that_asks_no_count_reads_no_count() -> None:
-    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}]])
+    # The keyed read still runs, for the last turn the listing checks for a credential,
+    # but selects no count: the page keeps the window's.
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}],
+            [{"thread_id": "t-1", "n": 9, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
     rows = await conversation_repo.recent_threads(
         "o", "ns", window_days=30, limit=10, count_turns=False, ch=ch
     )
-    assert len(ch.calls) == 1
+    keyed, params = ch.calls[1]
+    # No count is selected, and the last turn is read only as far as the listing checks.
+    assert " AS n" not in keyed and "uniqExact" not in keyed
+    assert "substringUTF8(content, 1, {listed:UInt32})" in keyed
+    assert params["listed"] == THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS
     assert rows[0]["msg_count"] == 5
 
 
@@ -233,7 +345,12 @@ async def test_a_shared_turns_first_copy_is_the_same_row_on_every_read() -> None
 async def test_the_thread_list_counts_one_agents_rows_as_its_opened_thread_does() -> None:
     # conversation.get counts a named agent's rows as stored (count_thread_msgs); the list
     # counts them the same way, so a raced double append reads N+1 in both.
-    ch = StubCH([[{"thread_id": "t-1", "msg_count": 5}], [{"thread_id": "t-1", "n": 5}]])
+    ch = StubCH(
+        [
+            [{"thread_id": "t-1", "msg_count": 5}],
+            [{"thread_id": "t-1", "n": 5, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
     await conversation_repo.recent_threads("o", "ns", window_days=30, limit=10, agent="bot", ch=ch)
     counted = ch.calls[1][0]
     assert "count() AS n" in counted
@@ -244,7 +361,12 @@ async def test_the_thread_list_counts_one_agents_rows_as_its_opened_thread_does(
 async def test_the_thread_list_pages_past_its_first_page() -> None:
     """`offset` skips the threads earlier pages showed, in the same most-recent-first
     order, so a namespace's every thread in the window can be listed page by page."""
-    ch = StubCH([[{"thread_id": "t-3", "msg_count": 1}], [{"thread_id": "t-3", "n": 1}]])
+    ch = StubCH(
+        [
+            [{"thread_id": "t-3", "msg_count": 1}],
+            [{"thread_id": "t-3", "n": 1, "last_turn": ("bot", "user", "hi")}],
+        ]
+    )
     rows = await conversation_repo.recent_threads(
         "o", "ns", window_days=30, limit=2, offset=2, ch=ch
     )

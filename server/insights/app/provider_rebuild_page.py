@@ -81,7 +81,7 @@ async def rebuild_snapshot_page(
         )
     waiting: list[int] = []
     rebuilt = await rebuild_batch(
-        names.table, rows, embedder, source_texts=source_texts, waiting=waiting
+        names.table, rows, embedder, source_texts=source_texts, waiting=waiting, ch=ch
     )
     await write_target_page(
         names,

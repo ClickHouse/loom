@@ -21,7 +21,13 @@ from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.identity.domain.read_scope import ReadFilters, scope_where
-from server.knowledge.domain.conversations import EMBEDDED_EXCERPT_CHARS, ConversationRole
+from server.knowledge.domain.conversations import (
+    EMBEDDED_EXCERPT_CHARS,
+    LISTED_MARGIN_CHARS,
+    THREAD_EXCERPT_CHARS,
+    TITLE_REFUSED,
+    ConversationRole,
+)
 
 
 @asynccontextmanager
@@ -516,6 +522,7 @@ async def list_saved_messages(
     *,
     scope: ReadFilters,
     user_id: str,
+    listed: int,
     conversation_id: str | None = None,
     before: tuple[datetime, str, str] | None = None,
     limit: int = 50,
@@ -524,7 +531,8 @@ async def list_saved_messages(
     """One page of `user_id`'s live saved messages, newest first, keyed by
     (saved_at, thread_id, msg_id). Grouped per message: a save racing a
     transcript append can leave two rows of one turn, and a page lists it once.
-    `before` is the last key of the previous page."""
+    `before` is the last key of the previous page. `content` is the message's first
+    `listed` characters, what the listing checks and cuts."""
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -534,7 +542,13 @@ async def list_saved_messages(
         "tombstoned_at IS NULL",
         "user_id = {uid:String}",
     ]
-    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "lim": int(limit)}
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "uid": user_id,
+        "lim": int(limit),
+        "listed": int(listed),
+    }
     if agent not in ("*", "-"):
         where.append("agent = {agent:String}")
         params["agent"] = agent
@@ -552,7 +566,8 @@ async def list_saved_messages(
     return await ch.query_all(
         f"""
         SELECT thread_id, msg_id, any(role) AS role,
-               argMax(content, ts) AS content, max(c.saved_at) AS saved_at
+               argMax(substringUTF8(content, 1, {{listed:UInt32}}), ts) AS content,
+               max(c.saved_at) AS saved_at
         FROM loom.conversations AS c
         WHERE {" AND ".join(where)}
         GROUP BY thread_id, msg_id
@@ -1122,13 +1137,17 @@ async def recent_threads(
     offset: int = 0,
     agent: str | None = None,
     count_turns: bool = True,
+    last_turn: bool = True,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The namespace's threads with a live message in the window. Most recent first, ties
-    by thread_id; `offset` skips that many. Each carries its message count, first/last seen
-    and the latest message's agent (`last_agent`), role and 240-character excerpt.
-    `count_turns`: the message count is the thread's distinct turns, as an opened thread
-    shows; off, the window's raw row count (for a caller that does not read the count)."""
+    by thread_id; `offset` skips that many. Each carries its message count and first/last
+    seen. `count_turns`: the message count is the thread's distinct turns, as an opened
+    thread shows; off, the window's raw row count (for a caller that does not read the
+    count). `last_turn`: the latest message's agent (`last_agent`), role and first
+    `THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS` characters (`last_content`, so the listing
+    can check them for a credential before it cuts the excerpt); off, they are empty. With
+    both off the page is one statement."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,
@@ -1137,8 +1156,6 @@ async def recent_threads(
         "lim": limit,
         "off": offset,
     }
-    # The aggregate is aliased `last_agent`, not `agent`: the analyzer would resolve a bare
-    # `agent` in WHERE to the alias and reject the statement (code 184) under an agent filter.
     agent_clause = ""
     if agent:
         agent_clause = " AND agent = {agent:String}"
@@ -1147,12 +1164,9 @@ async def recent_threads(
         f"""
         SELECT
             thread_id,
-            argMax(agent, ts)                                AS last_agent,
             count()                                          AS msg_count,
             min(ts)                                          AS first_seen,
-            max(ts)                                          AS last_seen,
-            argMax(toString(role), ts)                       AS last_role,
-            argMax(substring(content, 1, 240), ts)           AS last_content_excerpt
+            max(ts)                                          AS last_seen
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -1165,15 +1179,26 @@ async def recent_threads(
         """,
         params=params,
     )
-    if not rows or not count_turns:
-        return rows
+    blank = {"last_agent": "", "last_role": "", "last_content": ""}
+    if not rows or not (count_turns or last_turn):
+        return [{**r, **blank} for r in rows]
     # The count an opened thread shows (each thread whole, one per turn however many agents
-    # logged it), for the page's threads only: an exact distinct count over the whole
-    # window would hold every turn's key in memory to rank threads it then drops.
-    per_thread = "count()" if agent else f"uniqExact({TURN})"
+    # logged it) and the last turn, for the page's threads only: an exact distinct count,
+    # or every thread's last turn, over the whole window would hold every turn's key or
+    # text in memory to rank threads it then drops. The last turn's agent, role and text
+    # come from one argMax, `msg_id` breaking a `ts` tie, so they name the same turn.
+    selected = ["thread_id"]
+    if count_turns:
+        count = "count()" if agent else f"uniqExact({TURN})"
+        selected.append(f"{count} AS n")
+    if last_turn:
+        selected.append(
+            "argMax((agent, toString(role), substringUTF8(content, 1, {listed:UInt32})),"
+            " (ts, msg_id)) AS last_turn"
+        )
     counted = await ch.query_all(
         f"""
-        SELECT thread_id, {per_thread} AS n
+        SELECT {", ".join(selected)}
         FROM loom.conversations
         WHERE org = {{org:String}}
           AND namespace = {{ns:String}}
@@ -1182,10 +1207,29 @@ async def recent_threads(
           {agent_clause}
         GROUP BY thread_id
         """,
-        params={**params, "tids": [r["thread_id"] for r in rows]},
+        params={
+            **params,
+            "tids": [r["thread_id"] for r in rows],
+            "listed": THREAD_EXCERPT_CHARS + LISTED_MARGIN_CHARS,
+        },
     )
-    turns = {r["thread_id"]: r["n"] for r in counted}
-    return [{**r, "msg_count": turns.get(r["thread_id"], r["msg_count"])} for r in rows]
+    by_thread = {r["thread_id"]: r for r in counted}
+    out = []
+    for r in rows:
+        keyed = by_thread.get(r["thread_id"])
+        if keyed is None:
+            continue  # its last live turn was deleted between the two statements
+        last_agent, last_role, last_content = keyed["last_turn"] if last_turn else ("", "", "")
+        out.append(
+            {
+                **r,
+                "msg_count": keyed["n"] if count_turns else r["msg_count"],
+                "last_agent": last_agent,
+                "last_role": last_role,
+                "last_content": last_content,
+            }
+        )
+    return out
 
 
 async def thread_titles(
@@ -1499,9 +1543,9 @@ async def titler_candidates(
     exclude_orgs: frozenset[str] = frozenset(),
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Recent threads with at least `min_turns` live messages in namespaces that
-    record conversations, untitled and not deleted, most recent first; none of
-    `exclude_orgs` (orgs whose model calls are switched off)."""
+    """Recent threads with at least `min_turns` live messages in namespaces that record
+    conversations, untitled, not deleted and not marked `title_refused`, most recent first;
+    none of `exclude_orgs` (orgs whose model calls are switched off)."""
     ch = ch or _default_client()
     return await ch.query_all(
         """
@@ -1516,17 +1560,25 @@ async def titler_candidates(
           AND NOT has({off:Array(String)}, c.org)
           -- Titled and deleted threads are not candidates: skipped after
           -- the LIMIT, they filled it every pass and older untitled
-          -- threads were never reached.
+          -- threads were never reached. Nor is a thread whose generated
+          -- title was refused as a credential.
           AND (c.org, c.namespace, c.thread_id) NOT IN (
               SELECT org, namespace, thread_id FROM loom.conversation_threads FINAL
               WHERE tombstoned_at IS NOT NULL OR title != ''
+                 OR JSONExtractBool(metadata, {refused:String})
           )
         GROUP BY c.org, c.namespace, c.thread_id
         HAVING n >= {mt:UInt32}
         ORDER BY max(c.ts) DESC
         LIMIT {lim:UInt32}
         """,
-        params={"wh": window_hours, "mt": min_turns, "lim": limit, "off": sorted(exclude_orgs)},
+        params={
+            "wh": window_hours,
+            "mt": min_turns,
+            "lim": limit,
+            "off": sorted(exclude_orgs),
+            "refused": TITLE_REFUSED,
+        },
     )
 
 
@@ -1565,7 +1617,7 @@ async def thread_rows(
 
 
 async def opening_turns(
-    org: str, namespace: str, thread_id: str, *, limit: int = 8, ch: _CHClient | None = None
+    org: str, namespace: str, thread_id: str, *, limit: int, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
     """The first live user/assistant turns of a thread (any agent), oldest first."""
     ch = ch or _default_client()

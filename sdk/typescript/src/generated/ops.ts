@@ -2293,7 +2293,7 @@ export interface ConversationSaveMessageOutput {
   conversation_id: string;
   message_id: string;
   indexed: boolean;
-  reason?: "" | "duplicate" | "owner_mismatch" | "deleted" | "unsupported_role" | "embed_failed";
+  reason?: "" | "duplicate" | "owner_mismatch" | "deleted" | "unsupported_role" | "embed_failed" | "reads_as_credential";
   ts: string; // date-time
 }
 

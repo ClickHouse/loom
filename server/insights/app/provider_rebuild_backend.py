@@ -6,6 +6,7 @@ from uuid import UUID
 
 from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
+from server.insights.app.provider_rebuild_batch import PASSAGE_TABLES, TEXT_COLUMNS
 from server.insights.app.provider_rebuild_page import rebuild_snapshot_page
 from server.insights.app.provider_rebuild_runner import BatchCheckpoint
 from server.insights.app.provider_rebuild_snapshot import snapshot_rebuild_manifest
@@ -109,7 +110,11 @@ class ClickHouseRebuildBackend:
                 ch=self.ch,
             )
         return await verify_reembedded_target(
-            *args, model=self.target.model_name, dimensions=self.target.dim, ch=self.ch
+            *args,
+            model=self.target.model_name,
+            dimensions=self.target.dim,
+            text_column=TEXT_COLUMNS[table.table] if table.table in PASSAGE_TABLES else None,
+            ch=self.ch,
         )
 
     async def verify(self, config_id: UUID, manifest: RebuildManifest) -> RebuildManifest:
