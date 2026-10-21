@@ -41,7 +41,7 @@ describe("opening a tracker source", () => {
     const before = history.length;
     act(() => result.current.open(ns));
     expect(history.length).toBe(before + 1);
-    expect(location.pathname + location.search).toBe("/graph?mode=patterns");
+    expect(location.pathname + location.search).toBe("/graph?namespace=tracker-clickhouse&mode=patterns");
     expect(history.state).toMatchObject({ loomBack: "Repositories" });
     expect(useStore.getState()).toMatchObject({ view: "graph", identity: { namespace: "tracker-clickhouse" } });
     expect(toast).toHaveBeenCalledWith("Switched to tracker-clickhouse", "info");
@@ -55,10 +55,13 @@ describe("opening a tracker source", () => {
       history.back();
       await new Promise((r) => window.addEventListener("popstate", r, { once: true }));
     });
-    expect(location.pathname + location.search).toBe("/repositories?repo=loom");
+    // The switch was made on this entry, so its address names the tracker until the page
+    // switches back.
+    expect(location.pathname + location.search).toBe("/repositories?namespace=tracker-clickhouse&repo=loom");
     // The Repositories page mounts again on the entry it left.
     renderHook(() => useRecordActions("dev", async () => {}));
     expect(useStore.getState().identity?.namespace).toBe("code-loom");
+    expect(location.pathname + location.search).toBe("/repositories?namespace=code-loom&repo=loom");
     expect(toast).toHaveBeenLastCalledWith("Switched back to code-loom", "info");
     // Said once: the entry no longer asks for it, so a later switch made here survives a reload.
     expect((history.state as Record<string, unknown>).loomNamespaceLeft).toBeUndefined();

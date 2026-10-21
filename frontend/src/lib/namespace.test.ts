@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry } from "../api";
 import {
+  canReadNamespace,
   deepLinkNamespace,
   isMemoryNamespace,
   isPersonalNamespace,
@@ -267,6 +268,29 @@ describe("isMemoryNamespace: what a memory view may read from", () => {
     expect(isMemoryNamespace("team", mine)).toBe(true);
     expect(isMemoryNamespace("unlisted", mine)).toBe(true);
     expect(isMemoryNamespace("anything", null)).toBe(true);
+  });
+});
+
+describe("canReadNamespace: whether a link's namespace may open", () => {
+  it("is true for a claim and for an active grant, whatever its role or kind", () => {
+    const mine = [entry("joined", { status: "active" }), CODE("code-clickhouse"), entry("legacy")];
+    expect(canReadNamespace("team", ["team"], [])).toBe(true);
+    expect(canReadNamespace("joined", ["team"], mine)).toBe(true);
+    expect(canReadNamespace("code-clickhouse", ["team"], mine)).toBe(true);
+    // A row without a status is an active grant.
+    expect(canReadNamespace("legacy", [], mine)).toBe(true);
+  });
+
+  it("is false for a namespace the account only asked for, or holds nothing on", () => {
+    const mine = [entry("asked", { status: "pending", pending_role: null })];
+    expect(canReadNamespace("asked", ["team"], mine)).toBe(false);
+    expect(canReadNamespace("t-other-shared", ["team"], mine)).toBe(false);
+    // `*` in the claims is no namespace the picker lists.
+    expect(canReadNamespace("t-other-shared", [WILDCARD_NAMESPACE], mine)).toBe(false);
+  });
+
+  it("refuses nothing when the rows are unknown (list_mine failed): the server answers the reads", () => {
+    expect(canReadNamespace("t-other-shared", ["team"], null)).toBe(true);
   });
 });
 

@@ -171,10 +171,10 @@ describe("the object a page shows is in its URL", () => {
 
   it("Memories, Library and Conversations own ?memory=, ?doc= and ?thread=", () => {
     setLocation("/memories?memory=a%2Fb&doc=x&thread=t");
-    expect(navigationHref("memories")).toBe("/memories?memory=a%2Fb");
-    expect(navigationHref("knowledge")).toBe("/library?doc=x");
-    expect(navigationHref("sessions")).toBe("/conversations?thread=t");
-    expect(navigationHref("graph")).toBe("/graph");
+    expect(navigationHref("memories")).toBe("/memories?namespace=team&memory=a%2Fb");
+    expect(navigationHref("knowledge")).toBe("/library?namespace=team&doc=x");
+    expect(navigationHref("sessions")).toBe("/conversations?namespace=team&thread=t");
+    expect(navigationHref("graph")).toBe("/graph?namespace=team");
   });
 
   it("inspecting on Memories writes ?memory= into the entry, without a new one; closing drops it", () => {
@@ -192,7 +192,7 @@ describe("the object a page shows is in its URL", () => {
     useStore.getState().bootView("memories");
     // No remembered writer: every agent's row, as Runs opens a key it knows by name.
     expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "api/rate-limit", inspectedAgent: "*" });
-    expect(window.location.search).toBe("?memory=api%2Frate-limit");
+    expect(window.location.search).toBe("?namespace=team&memory=api%2Frate-limit");
     setLocation("/library?doc=docs%2Fa.md");
     useStore.getState().bootView("knowledge");
     expect(useStore.getState().pendingDocSourceUri).toBe("docs/a.md");
@@ -216,10 +216,10 @@ describe("the object a page shows is in its URL", () => {
     useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
     useStore.getState().navigate("memories");
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?namespace=team");
     useStore.getState().inspect("api/rate-limit", { agent: "claude-code" });
     useStore.getState().searchByTag("api");
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?namespace=team");
   });
 
   // A memory belongs to its namespace: switching namespace, from any picker, closes it.
@@ -236,15 +236,15 @@ describe("the object a page shows is in its URL", () => {
   it("navigating to Memories drops its tab from the URL", () => {
     setLocation("/memories?section=insights");
     useStore.getState().navigate("memories");
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?namespace=team");
   });
 
   it("opening a document or a thread from elsewhere pushes its URL", () => {
     setLocation("/memories");
     useStore.getState().openDocument("docs/a.md");
-    expect(window.location.pathname + window.location.search).toBe("/library?doc=docs%2Fa.md");
+    expect(window.location.pathname + window.location.search).toBe("/library?namespace=team&doc=docs%2Fa.md");
     useStore.getState().openConversationThread("t-1");
-    expect(window.location.pathname + window.location.search).toBe("/conversations?thread=t-1");
+    expect(window.location.pathname + window.location.search).toBe("/conversations?namespace=team&thread=t-1");
   });
 });
 
@@ -273,7 +273,7 @@ describe("a navigation leaves a place for Back to restore", () => {
       loomPlace: { scrollTop: 420, focusKey: "memory:k", inspected: "k", inspectedAgent: "bot" },
     });
     expect(history.state).toMatchObject({ loomBack: "memory k" });
-    expect(window.location.pathname + window.location.search).toBe("/graph?seed=x");
+    expect(window.location.pathname + window.location.search).toBe("/graph?namespace=team&seed=x");
     expect(useStore.getState()).toMatchObject({
       view: "graph",
       inspectedMemoryKey: null,
@@ -327,7 +327,7 @@ describe("a navigation leaves a place for Back to restore", () => {
     history.replaceState(null, "", "/memories?memory=k");
     useStore.getState().inspect("k", { agent: "bot" });
     useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?namespace=other");
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
     useStore.getState().bootView("memories");
     expect(useStore.getState().inspectedMemoryKey).toBeNull();
@@ -356,7 +356,7 @@ describe("a navigation leaves a place for Back to restore", () => {
     useStore.setState({ view: "tasks", identity: { org: "dev", namespace: "team", agent: "loom-ui" } });
     history.replaceState(null, "", "/tasks?task=t-1");
     useStore.getState().setIdentity({ org: "dev", namespace: "other", agent: "loom-ui" });
-    expect(window.location.search).toBe("");
+    expect(window.location.search).toBe("?namespace=other");
   });
 
   it("boot's namespace correction keeps a deep link's memory open", () => {
@@ -367,7 +367,7 @@ describe("a navigation leaves a place for Back to restore", () => {
     useStore.getState().bootView("memories");
     useStore.getState().bootIdentity({ org: "dev", namespace: "joined", agent: "loom-ui" });
     useStore.getState().bootView("memories");
-    expect(window.location.search).toBe("?memory=k");
+    expect(window.location.search).toBe("?namespace=joined&memory=k");
     expect(useStore.getState().inspectedMemoryKey).toBe("k");
   });
 

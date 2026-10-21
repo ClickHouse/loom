@@ -17,12 +17,18 @@ import {
   storedToken,
   type MyNamespaceEntry,
 } from "./api";
-import { deepLinkNamespace, isMemoryNamespace, landingTarget, needsMemoryNamespace } from "./lib/namespace";
+import {
+  canReadNamespace,
+  deepLinkNamespace,
+  isMemoryNamespace,
+  landingTarget,
+  needsMemoryNamespace,
+} from "./lib/namespace";
 import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity, takeLinkToken } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
-import { useStore, pathnameView } from "./lib/state";
+import { useStore, pathnameView, linkedNamespace } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -72,12 +78,16 @@ const ProfileSectionDialog = lazy(() =>
 );
 const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
+const NamespaceNoAccess = lazy(() =>
+  import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
+);
 
 export default function App() {
   const authed = useStore((s) => s.authed);
   const whoami_ = useStore((s) => s.whoami);
   const identity = useStore((s) => s.identity);
   const view = useStore((s) => s.view);
+  const denied = useStore((s) => s.deniedNamespace);
   // Scroll to top when the view changes — once per navigation, not per commit of <main>:
   // each scrollTo forces a synchronous layout (~40 ms at 4x CPU).
   const mainRef = useRef<HTMLElement | null>(null);
@@ -302,16 +312,20 @@ export default function App() {
         // from the JWT `namespaces` claim AND namespaces JOINed via Discover
         // (loom.namespace_grants, not in the JWT), so list_mine is consulted too — else a
         // refresh flips joined-namespace users back. The claim's ORDER is never a
-        // preference, and `*` is never a namespace name.
+        // preference, and `*` is never a namespace name. A link's `?namespace=` comes
+        // before the saved pick, for this tab only.
         const saved = getSavedNamespace();
+        const linked = linkedNamespace();
         const claims = w.namespaces || [];
         const effectiveOrg = w.org || "dev";
         // A deep link whose namespace the token's own claims already settle paints its
         // shell and starts its reads now, before the membership list answers; the answer
         // below replaces the namespace only when it differs (a joined namespace the
         // claims do not carry). The bare root waits: its landing view depends on the kinds
-        // only list_mine knows.
-        const provisional = initial ? provisionalNamespace(initial, saved, claims) : null;
+        // only list_mine knows. So does a link to a namespace the claims do not name.
+        const provisional = initial
+          ? provisionalNamespace(initial, linked ?? saved, linked && !claims.includes(linked) ? [] : claims)
+          : null;
         if (initial && provisional) {
           bootIdentity({ org: effectiveOrg, namespace: provisional, agent: "loom-ui" });
           bootView(initial);
@@ -327,6 +341,13 @@ export default function App() {
         } catch {
           /* fail-quiet: fall back to the JWT claim alone */
         }
+        // A link's namespace opens when the account can read it, and is never saved as the
+        // pick. One it cannot read leaves the page on the namespace a visit without the
+        // link opens, behind a page that says so (`ViewSwitch`).
+        const readable = linked !== null && canReadNamespace(linked, claims, useStore.getState().myNamespaces);
+        const denied = linked !== null && !readable ? linked : null;
+        const pick = readable ? linked : saved;
+        const reach = readable ? [linked] : claims;
         // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
         // view only for the bare root. A deep link keeps its view; its namespace is the
         // default-namespace chain's answer, else the first reachable namespace of the
@@ -334,13 +355,13 @@ export default function App() {
         // and the admin views; nothing for a memory view, which renders its own empty
         // state — see `ViewSwitch`). No deep link is redirected to Setup.
         if (initial) {
-          const ns = deepLinkNamespace(initial, saved, claims, mine);
+          const ns = deepLinkNamespace(initial, pick, reach, mine);
           // An empty namespace is the honest "nothing selected" state; every
           // view's ScopeBadge names it. The identity object is replaced only
           // when it changed: views key their reads on it, and the
           // provisional paint above usually already holds this answer.
           const next = { org: effectiveOrg, namespace: ns ?? "", agent: "loom-ui" };
-          if (!sameIdentity(useStore.getState().identity, next)) bootIdentity(next);
+          if (denied || !sameIdentity(useStore.getState().identity, next)) bootIdentity(next, denied);
           bootView(initial);
         } else {
           // The bare root: the default-namespace chain (saved pick → own memory namespace →
@@ -349,8 +370,8 @@ export default function App() {
           // or a token that reaches only code/tracker namespaces, lands on Repositories
           // with the picker on that namespace; only a token that reaches nothing lands on
           // Setup, whose notice says how to get in.
-          const target = landingTarget(saved, claims, mine);
-          bootIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" });
+          const target = landingTarget(pick, reach, mine);
+          bootIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" }, denied);
           if (target.namespace === null) {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
@@ -452,11 +473,13 @@ export default function App() {
           <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
             <ProblemsBanner />
             <PendingRequestBanner />
-            {/* Keyed by view so each navigation replays the fade-in. `h-full`
+            {/* Keyed by view so each navigation replays the fade-in, and the no-access
+                page is a page of its own: leaving it mounts the view afresh, never under
+                the hidden old page. `h-full`
                 gives a view that wants the page's height (the Explorer's
                 three panes) something to resolve against;
                 taller views overflow it and scroll <main> as before. */}
-            <div key={view} className="animate-view-in h-full">
+            <div key={denied ? "no-access" : view} className="animate-view-in h-full">
               {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
               <Suspense
                 fallback={
@@ -508,6 +531,10 @@ export default function App() {
 function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view"] }) {
   const namespace = useStore((s) => s.identity?.namespace ?? "");
   const mine = useStore((s) => s.myNamespaces);
+  const denied = useStore((s) => s.deniedNamespace);
+  // A link to a namespace the account cannot read shows that, never the view: on the
+  // namespace under it the view would read data the link did not ask for.
+  if (denied) return <NamespaceNoAccess namespace={denied} />;
   // A view that reads the memory plane never mounts on a code or tracker namespace, or on
   // no namespace — it would fire memory.* reads the token cannot make against a namespace
   // that holds no memories. One empty state, one place, says what the namespace is and

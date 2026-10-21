@@ -68,6 +68,15 @@ public namespaces to browse and join, opened from the namespace picker) and **Gr
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)).
 
+A page's URL also names the namespace it shows, first in its query
+(`/memories?namespace=team-notes&memory=api%2Frate-limit`), so a reload or a shared link
+opens the same namespace. A link opens its namespace in that tab only and never saves it
+as the picked namespace; a URL without `?namespace=` opens the saved pick. A namespace the
+account cannot read opens a page that says so, with the namespace picker in the header and
+a way to continue in the namespace the account would otherwise open. On the bare root,
+`?view=` names the page by view id or path (`/?view=memories`, `/?view=admin/health`) and
+`?memory=<key>` opens that memory on Memories.
+
 ### The admin drawer
 
 Admins of the current namespace get a drawer with three groups. A viewer never sees an

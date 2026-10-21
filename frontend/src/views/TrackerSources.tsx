@@ -139,7 +139,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
   const navigate = useStore((s) => s.navigate);
   const [busy, setBusy] = useState<string | null>(null);
   // Back from a tracker's Patterns board: the entry Open left names the namespace it was
-  // in (the namespace is not in the URL), and arriving on it switches back, once.
+  // in (the switch made on it rewrote its address), and arriving on it switches back, once.
   useEffect(() => {
     const left = (history.state as Record<string, unknown> | null)?.loomNamespaceLeft;
     if (typeof left !== "string") return;

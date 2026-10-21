@@ -100,6 +100,22 @@ export function reachableNamespaces(claims: readonly string[], mine: readonly My
   return allowed;
 }
 
+/** Whether the caller can read `namespace`, from what the picker lists: a claim names it,
+ *  or a list_mine row is an active grant on it (a pending request reads nothing). With no
+ *  rows (list_mine failed) a name the claims lack is not refused: the server still answers
+ *  every read. */
+export function canReadNamespace(
+  namespace: string,
+  claims: readonly string[],
+  mine: readonly MyNamespaceEntry[] | null,
+): boolean {
+  return (
+    claims.includes(namespace) ||
+    !mine ||
+    mine.some((m) => m.namespace === namespace && (m.status ?? "active") === "active")
+  );
+}
+
 /** The auto-claimed personal namespace (`personal-<subject>`), the one row a
  *  brand-new account has before it creates or joins anything. */
 export function isPersonalNamespace(ns: string): boolean {
