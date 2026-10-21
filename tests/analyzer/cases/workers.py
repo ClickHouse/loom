@@ -173,9 +173,28 @@ async def _first_pass(ch: RecordingCH, c: dict[str, Any]) -> None:
         await fp.held_namespaces(owned, [(ORG, NS)], ch=ch)
 
 
+async def _profile_fold(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The profile fold's scan, with an identity held (its NOT IN) and without."""
+    from server.memory.workers import profile_consolidation as pc
+    from server.workers import holds
+
+    if c["held"]:
+        pc._HELD.hold([(ORG, NS, "alice")], 600)
+    try:
+        await pc.run_pass(pc.ProfileConsolidationConfig(max_identities_per_pass=2))
+    finally:
+        holds._reset_for_tests()
+
+
 def cases() -> list[Case]:
     return [
         Case("workers.first_pass", "server.workers.first_pass", _first_pass, {}),
+        Case(
+            "workers.profile_fold",
+            "server.memory.workers.profile_consolidation",
+            _profile_fold,
+            {"held": (False, True)},
+        ),
         Case(
             "builders.pure",
             "server.memory.store.integrity",
