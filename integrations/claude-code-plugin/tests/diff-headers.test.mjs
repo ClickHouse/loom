@@ -56,6 +56,8 @@ test("only the function name the server reads is kept from a hunk's context", ()
     ["Deploy with token ghp_0123456789abcdefghijABCDEFGHIJ0123 (rotate monthly)", ""],
     ["key AKIA" + "IOSFODNN7EXAMPLE (prod)", ""],
     ["const handler = function handler(req)", "handler"],
+    ["public: Foo(int x)", "Foo"],
+    ["  private: static Bar* make(int)", "make"],
     ["password = getpass(prompt)", ""],
     ["    if (ready) {", ""],
     ["DB_PASSWORD=hunter2", ""],
@@ -123,6 +125,45 @@ test("the hunks of a file whose header is dropped are not filed under the file b
     "diff --git a/c.py b/c.py",
     "+++ b/c.py",
     "@@ -9 +9 @@ h(",
+  ]);
+});
+
+test("a line end in a file's first hunk context cuts that header, not the file", () => {
+  const diff = [
+    "diff --git a/a.py b/a.py",
+    "--- a/a.py",
+    "+++ b/a.py",
+    "@@ -3 +3 @@ def f(x):  # a\u2028b",
+    "+y",
+    "@@ -9 +9 @@ def g():",
+    "+z",
+    "",
+  ].join("\n");
+  assert.deepEqual(diffHeaders(diff, 200_000, "").split("\n"), [
+    "diff --git a/a.py b/a.py",
+    "--- a/a.py",
+    "+++ b/a.py",
+    "@@ -3 +3 @@ f(",
+    "@@ -9 +9 @@ g(",
+  ]);
+});
+
+test("an added line that starts with ++ is not taken for a new file", () => {
+  const diff = [
+    "diff --git a/a.cpp b/a.cpp",
+    "+++ b/a.cpp",
+    "@@ -1 +1,2 @@ void f(int)",
+    "+++ x",
+    "+y",
+    "@@ -9 +10 @@ void g(int)",
+    "+z",
+    "",
+  ].join("\n");
+  assert.deepEqual(diffHeaders(diff, 200_000, "").split("\n"), [
+    "diff --git a/a.cpp b/a.cpp",
+    "+++ b/a.cpp",
+    "@@ -1 +1,2 @@ f(",
+    "@@ -9 +10 @@ g(",
   ]);
 });
 

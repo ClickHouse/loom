@@ -770,6 +770,7 @@ export const DIFF_ARGS = [
 const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
 // TOKEN_SHAPES_RE without its global flag, so `test` keeps no position between calls.
 const TOKEN_SHAPE_RE = new RegExp(TOKEN_SHAPES_RE.source);
+const ACCESS_SPECIFIERS = new Set(["public:", "protected:", "private:"]);
 const NOT_FUNCTION_NAMES = new Set(["if", "for", "while", "switch", "return", "catch", "sizeof", "decltype"]);
 // Python's whitespace (`str.split()`, `str.strip()`) and line ends other than `\n`
 // (`str.splitlines()`), so the client reads a header the way the server does.
@@ -789,7 +790,8 @@ const FUNCTION_FILE_RE =
  *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
  *  the first `(`, template arguments dropped, when it is a (scope-qualified)
  *  identifier. Empty when there is none; when the word before it ends in a single
- *  `:` or in `=` (`Password: value (`, `x = getpass(`), which makes it a value; and
+ *  `:` (other than a C++ access specifier) or in `=` (`Password: value (`,
+ *  `x = getpass(`), which makes it a value; and
  *  when it has a credential's shape or holds `token` (`token ghp_… (`). */
 export function hunkFunctionName(context, token = "") {
   const ctx = String(context ?? "").replace(PY_TRIM_RE, "");
@@ -803,7 +805,7 @@ export function hunkFunctionName(context, token = "") {
   if (!tokens.length) return "";
   const name = tokens[tokens.length - 1].replace(/^[&*]+|[&*]+$/g, "");
   const before = tokens[tokens.length - 2] ?? "";
-  if (/(^|[^:]):$|=$/.test(before)) return "";
+  if (/(^|[^:]):$|=$/.test(before) && !ACCESS_SPECIFIERS.has(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
   if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
   // the identifier test above already rejects `=` and `:`, so of the redaction
@@ -831,11 +833,11 @@ export function diffHeaders(diff, max, token = resolveToken()) {
       skipFile = false;
     }
     const end = line.search(PY_LINE_END_RE);
-    // a header line the server would split is dropped with the file's hunks, which
-    // would otherwise be read as the previous file's
-    if (inFileHeader && end >= 0) skipFile = true;
-    if (skipFile) continue;
     const hunk = HUNK_HEADER_RE.exec(end < 0 ? line : line.slice(0, end));
+    // a file header line the server would split is dropped with the file's hunks,
+    // which would otherwise be read as the previous file's
+    if (inFileHeader && end >= 0 && !hunk) skipFile = true;
+    if (skipFile) continue;
     if (hunk) {
       inFileHeader = false;
       const name = FUNCTION_FILE_RE.test(path) ? hunkFunctionName(hunk[2], token) : "";

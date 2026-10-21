@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 CLIENT = ROOT / "integrations" / "claude-code-plugin" / "lib" / "loom-client.mjs"
 
 HEADS = [
+    # first, so a line end in a file's first hunk header is covered
+    "def first(x):  # a\u2028b",
     "bool PrivateKey::verify(const std::string & data)",
     "template <class T> void Foo<T>::bar(int x)",
     "std::vector<int> BaseSettings<TTraits>::write(WriteBuffer & out)",
