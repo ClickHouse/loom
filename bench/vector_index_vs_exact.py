@@ -19,9 +19,13 @@ single-part graph again once they have.
 Needs no provider and no Loom server, only a ClickHouse you started for this. It writes
 the `vb_*` tables into `--database` (created if missing, left in place) and drops the
 tables at the end, failed runs included, unless `--keep`. The run in
-docs/architecture/clickhouse.md#why-there-is-no-vector-index (about 40 minutes and
-12 GiB of disk):
+docs/architecture/clickhouse.md#why-there-is-no-vector-index takes about 40 minutes and
+about 15 GiB of disk, plus room for `OPTIMIZE ... FINAL` to rewrite the largest table
+(about 4.5 GiB). `dev/ci_start_clickhouse.sh` starts a ClickHouse with user `loom`,
+password `loomdev`:
 
+    LOOM_CH_CONTAINER=ch-vbench LOOM_CH_HOST_PORT=18433 LOOM_CH_NATIVE_HOST_PORT=19433 \
+        bash dev/ci_start_clickhouse.sh
     PYTHONPATH=$PWD .venv/bin/python bench/vector_index_vs_exact.py \
         --port 18433 --user loom --password loomdev --rows 1000000 --dim 1536 --build
 """
@@ -228,7 +232,7 @@ def main() -> None:
             build(ch, args.rows, args.dim)
         measure(ch, args)
     finally:
-        # Also on a failed or interrupted run: the 1M-row tables take about 12 GiB.
+        # Also on a failed or interrupted run: the 1M-row tables take about 15 GiB.
         if not args.keep:
             for kind in KINDS:
                 ch.command(f"DROP TABLE IF EXISTS vb_{kind} SYNC")
