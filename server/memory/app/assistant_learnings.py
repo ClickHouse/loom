@@ -21,7 +21,7 @@ from server.memory.app.drops import record_drop
 from server.memory.app.pipeline_state import WorkflowState
 from server.memory.app.provenance import writer_actor
 from server.memory.domain import assistant_rules
-from server.memory.domain.extracted_facts import judged_confidence
+from server.memory.domain.extracted_facts import judge_verdict, judged_confidence
 from server.memory.domain.sensitivity import reads_high
 from server.memory.store import learnings as learnings_repo
 
@@ -111,7 +111,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
                 "session_id": state.session_id,
                 # The request's token, or in a replay the enqueuer stamped on it.
                 "actor": writer_actor(),
-                "confidence": judged_confidence(fact),
+                "confidence": judged_confidence(judge_verdict(fact)),
                 "asked": asked,
                 "said": said,
                 "created_at": naive_utc_now(),

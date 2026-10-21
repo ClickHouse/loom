@@ -23,6 +23,7 @@ from server.memory.domain.extracted_facts import (
     _merge_extractions,
     _source_role_tags,
     foresight_end,
+    judge_verdict,
     judged_confidence,
     keep_latest_per_key,
     keep_latest_relation_keyed,
@@ -897,8 +898,8 @@ async def _step_bulk_write(
                 rels.append((str(r[0]), str(r[1]), str(r[2])))
         derived = [d for d in (fact.get("derived") or []) if isinstance(d, dict)]
         # The judge verdict goes to source_trace (audit/UI) and nudges confidence.
-        verdict = str(fact.get("judge_verdict") or "").upper()
-        fact_confidence = judged_confidence(fact)
+        verdict = judge_verdict(fact)
+        fact_confidence = judged_confidence(verdict)
         # A coverage-sweep fact fills a gap; at equal similarity
         # the first pass's fact ranks first (0.1 * confidence in the score).
         if "coverage_sweep" in (fact.get("tags") or []):

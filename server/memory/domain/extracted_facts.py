@@ -17,10 +17,14 @@ from server.memory.domain.forget_requests import (
 UNCERTAIN_CONFIDENCE = 0.75  # not a setting: a ranking weight a benchmark changes
 
 
-def judged_confidence(fact: dict[str, Any]) -> float:
-    """A fact's stored confidence from its judge verdict: UNCERTAIN is lowered,
+def judge_verdict(fact: dict[str, Any]) -> str:
+    """The write-time judge's verdict on a fact, upper-cased; "" when unjudged."""
+    return str(fact.get("judge_verdict") or "").upper()
+
+
+def judged_confidence(verdict: str) -> float:
+    """A fact's stored confidence from its judge_verdict(): UNCERTAIN is lowered,
     CORRECT and unjudged keep 1.0."""
-    verdict = str(fact.get("judge_verdict") or "").upper()
     return UNCERTAIN_CONFIDENCE if verdict == "UNCERTAIN" else 1.0
 
 

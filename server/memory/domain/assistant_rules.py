@@ -1,8 +1,10 @@
 """Learnings queue candidates from rules an assistant states about itself.
 
-Pure: the candidate's id, the quotes one supporter's conversation gives, the
-rationale a reviewer reads from them, and which agent's reads a promoted rule
-serves (serves_agent, hits_to_ask).
+Pure: the candidate's id, the assistant turns a rule cites and the bounded
+quotes one supporter's conversation gives, whether the user asked for the
+behaviour (user_requested, which drops the rule as the user's own request),
+the rationale a reviewer reads, and which agent's reads a promoted rule serves
+(serves_agent, hits_to_ask).
 """
 
 from __future__ import annotations

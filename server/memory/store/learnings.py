@@ -97,7 +97,10 @@ async def rule_promoted(
     `learning://<candidate_id>` document is live. Only a knowledge promotion writes
     that document, and a later reject leaves it, so the status is not read. A rule
     whose document was deleted no longer counts, so a revised rule under its key is
-    filed again."""
+    filed again.
+
+    The queue is read without FINAL: every version of a candidate carries the
+    agent, key and source_kind its id is derived from, so any version names it."""
     ch = ch or _default_client()
     row = await ch.query_one(
         """
@@ -105,7 +108,7 @@ async def rule_promoted(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND source_uri IN (
             SELECT concat('learning://', toString(candidate_id))
-            FROM loom.learnings_queue FINAL
+            FROM loom.learnings_queue
             WHERE org = {org:String} AND namespace = {ns:String}
               AND agent = {agent:String} AND memory_key = {k:String}
               AND source_kind = 'assistant_turn'
