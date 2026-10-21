@@ -114,10 +114,17 @@ for (const { width, touch } of [
       test(`${path}: a row's placeholder size is its drawn height`, async ({ page }) => {
         await open(page, path);
         const row = page.locator(LOADED_ROW).first();
-        const { drawn, intrinsic } = await row.evaluate((el) => ({
-          drawn: el.getBoundingClientRect().height,
-          intrinsic: parseFloat(getComputedStyle(el).containIntrinsicHeight.replace("auto", "")),
-        }));
+        await row.locator("[data-row-open]").first().focus();
+        const { drawn, intrinsic } = await row.evaluate((el) => {
+          const drawn = el.getBoundingClientRect().height;
+          // A fresh skipped row uses the estimate, without a remembered content size.
+          const skipped = el.cloneNode(true) as HTMLElement;
+          skipped.style.contentVisibility = "hidden";
+          el.after(skipped);
+          const intrinsic = skipped.getBoundingClientRect().height;
+          skipped.remove();
+          return { drawn, intrinsic };
+        });
         expect(Math.abs(drawn - intrinsic), `drawn ${drawn}, placeholder ${intrinsic}`).toBeLessThanOrEqual(8);
       });
 

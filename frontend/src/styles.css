@@ -457,10 +457,6 @@ body {
 .animate-view-in {
   animation: viewIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-/* Keep scroll anchoring active as focused rows replace their offscreen size estimates. */
-.animate-view-in:focus-within {
-  transform: none !important;
-}
 
 .animate-slide-in {
   animation: slideIn 200ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -1221,6 +1217,7 @@ textarea[aria-invalid="true"]:focus-visible {
    and under 640 px, where a row's meta takes its own line, 99, 123 and 148 (below). */
 @layer components {
   .list-row {
+    --list-row-height: 73px;
     position: relative;
     display: flex;
     align-items: flex-start;
@@ -1231,7 +1228,8 @@ textarea[aria-invalid="true"]:focus-visible {
     background: var(--click-card-horizontal-default-color-background-default);
     scroll-margin-block: var(--spaces-2);
     content-visibility: auto;
-    contain-intrinsic-size: auto 73px;
+    /* Containment estimates content; row and skeleton heights include padding and borders. */
+    contain-intrinsic-size: auto calc(var(--list-row-height) - 2 * var(--click-card-horizontal-space-md-y) - 2px);
   }
 
   /* A row's open button: plain text whose click target stretches over the whole row, under
@@ -1264,41 +1262,30 @@ textarea[aria-invalid="true"]:focus-visible {
       z-index: 1;
     }
   }
-  .list-row[data-doc-row] {
-    contain-intrinsic-size: auto 101px;
+  .list-row[data-doc-row],
+  .list-row-skeleton[data-kind="document"] {
+    --list-row-height: 101px;
   }
-  .list-row[data-card] {
-    contain-intrinsic-size: auto 126px;
+  .list-row[data-card],
+  .list-row-skeleton[data-kind="memory"] {
+    --list-row-height: 126px;
   }
   /* ui/RowSkeleton: the rows' measured heights, so a list's rows land without moving it. */
   .list-row-skeleton {
-    height: 73px;
+    height: var(--list-row-height);
     pointer-events: none;
-  }
-  .list-row-skeleton[data-kind="document"] {
-    height: 101px;
-  }
-  .list-row-skeleton[data-kind="memory"] {
-    height: 126px;
   }
   @media (max-width: 639px) {
     .list-row {
-      contain-intrinsic-size: auto 99px;
+      --list-row-height: 99px;
     }
-    .list-row[data-doc-row] {
-      contain-intrinsic-size: auto 123px;
-    }
-    .list-row[data-card] {
-      contain-intrinsic-size: auto 148px;
-    }
-    .list-row-skeleton {
-      height: 99px;
-    }
+    .list-row[data-doc-row],
     .list-row-skeleton[data-kind="document"] {
-      height: 123px;
+      --list-row-height: 123px;
     }
+    .list-row[data-card],
     .list-row-skeleton[data-kind="memory"] {
-      height: 148px;
+      --list-row-height: 148px;
     }
   }
   .list-row:hover {
