@@ -250,7 +250,7 @@ def blacklist(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     async def find_match(*, org: str, namespace: str, value: str) -> Any:
         for p in patterns:
             if p.lower() in value.lower():
-                return SimpleNamespace(pattern_id=p, scope="namespace")
+                return SimpleNamespace(pattern_id=p, scope="namespace", reason="")
         return None
 
     async def note_hit(pattern_id: str) -> None:
@@ -908,6 +908,59 @@ async def test_promoting_a_rule_publishes_it_where_every_users_reads_find_it(
     (status,) = status_rows
     assert status["status"] == "promoted" and status["supporters"] == []
     assert status["agent"] == "support-bot"
+
+
+@pytest.mark.asyncio
+async def test_a_pattern_added_after_filing_refuses_the_knowledge_promotion(
+    monkeypatch: pytest.MonkeyPatch, blacklist: list[str]
+) -> None:
+    """The rule was filed before the pattern existed: promoting it to knowledge
+    answers the 422 a memory write gives and publishes nothing."""
+    from fastapi import HTTPException
+
+    from server.memory.api.models_learnings import LearningsReviewInput
+    from server.memory.app import learnings as h
+
+    row = {
+        "candidate_id": _cid(),
+        "agent": "support-bot",
+        "memory_key": "assistant_rule_refund_escalation",
+        "proposed_value": json.dumps(_VALUE),
+        "source_kind": "assistant_turn",
+        "status": "pending",
+    }
+    writes: list[Any] = []
+
+    async def fake_find(*_a: Any) -> dict[str, Any]:
+        return row
+
+    async def fake_stats(*_a: Any) -> list[dict[str, Any]]:
+        return [{"candidate_id": _cid(), "users": 1, "sessions": 1, "confidence": 0.9}]
+
+    async def record(doc: Any) -> None:
+        writes.append(doc)
+
+    monkeypatch.setattr("server.knowledge.app.writes.handle_knowledge_upsert", record)
+    monkeypatch.setattr(learnings_repo, "find_candidate", fake_find)
+    monkeypatch.setattr(learnings_repo, "supporter_stats", fake_stats)
+    monkeypatch.setattr(learnings_repo, "insert_row", record)
+    blacklist.append("refund over $500")
+
+    with pytest.raises(HTTPException) as refused:
+        await h.handle_learnings_review(
+            LearningsReviewInput(
+                org="o",
+                namespace="ns",
+                candidate_id=_cid(),
+                decision="promote",
+                approver="admin",
+                destination="knowledge",
+            )
+        )
+
+    assert refused.value.status_code == 422
+    assert refused.value.detail["code"] == "BLACKLISTED"
+    assert writes == []
 
 
 @pytest.mark.asyncio

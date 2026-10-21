@@ -18,6 +18,7 @@ from server.memory.api.models_learnings import (
     _LearningEntry,
 )
 from server.memory.api.models_lifecycle import MemoryPromoteInput
+from server.memory.app import blacklist_guard
 from server.memory.domain import assistant_rules
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
@@ -231,6 +232,12 @@ async def handle_learnings_review(
         # the status row below keeps the candidate's own columns.
         promoted = {**row, "confidence_avg": float(support[0]["confidence"])} if support else row
         destination = input.destination or ("knowledge" if agent_rule else "memory")
+        if agent_rule:
+            # A pattern added after the rule was filed still refuses it, on every
+            # destination: memory.set checks the blacklist, knowledge.upsert does not.
+            await blacklist_guard.enforce_on_insert(
+                org=input.org, namespace=input.namespace, value=str(_proposed_value(row))
+            )
         wants_memory = destination in ("memory", "both")
         wants_knowledge = destination in ("knowledge", "both")
         if wants_memory:
@@ -289,6 +296,15 @@ async def handle_learnings_review(
         knowledge_source_uri=knowledge_source_uri,
         decided_at=now,
     )
+
+
+def _proposed_value(candidate_row: dict[str, Any]) -> Any:
+    """The candidate's value: `proposed_value` is JSON-encoded, or a plain string."""
+    raw_value = candidate_row["proposed_value"]
+    try:
+        return json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+    except (ValueError, TypeError):
+        return raw_value
 
 
 async def _do_promote(
@@ -381,11 +397,7 @@ async def _promote_via_memory_set(
     reads bounded to one user do not serve, with the supporters' mean confidence."""
     from server.memory.app.write import handle_memory_set
 
-    raw_value = candidate_row["proposed_value"]
-    try:
-        deserialized = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-    except (ValueError, TypeError):
-        deserialized = raw_value
+    deserialized = _proposed_value(candidate_row)
 
     # In both cases the approver is the row's `actor`, stamped from the review's token.
     if candidate_row.get("source_kind") == assistant_rules.SOURCE_KIND:
@@ -438,11 +450,7 @@ async def _do_promote_to_knowledge(
 
     # Deserialize JSON-encoded proposed_value; pretty-print non-strings
     # so the chunker has readable content.
-    raw_value = candidate_row["proposed_value"]
-    try:
-        deserialized = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-    except (ValueError, TypeError):
-        deserialized = raw_value
+    deserialized = _proposed_value(candidate_row)
     if isinstance(deserialized, str):
         content = deserialized
     else:
