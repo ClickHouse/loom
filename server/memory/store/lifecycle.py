@@ -297,13 +297,9 @@ async def bulk_tombstone_scope(
         scope.append("agent = {agent:String}")
         params["agent"] = agent
     scope_sql = " AND ".join([*scope, "tombstoned_at IS NULL"])
-    # Locked rows survive a clear: the memory table filters
-    # on the lock in force; memory_embeddings has no lock columns, so it
-    # excludes the locked rows by subquery, by full identity: a key locked under
-    # one agent or session must not keep another identity's cleared vectors live.
-    # What was left behind is reported
-    # under the `locked_skipped` key (the handler lifts it out of the
-    # per-table counts).
+    # Locked rows survive a clear. memory_embeddings has no lock columns, so it excludes
+    # them by full identity: a lock under one identity must not keep another's vectors live.
+    # The skipped rows are counted under `locked_skipped`.
     from server.memory.domain.lock import locked_predicate, unlocked_predicate
 
     locked_row = await ch.query_one(

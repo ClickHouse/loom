@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+
 
 @pytest.mark.asyncio
 async def test_clear_with_user_id_tombstones_across_tables(
@@ -271,6 +273,55 @@ async def test_clear_keeps_vectors_only_for_the_locked_identity(
     (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
     assert "(agent, user_id, session_id, memory_key) NOT IN" in emb_alter.sql
     assert "SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL" in emb_alter.sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not CLICKHOUSE, reason="clickhouse binary not installed")
+async def test_the_vector_exclusion_spares_only_the_locked_identity_in_clickhouse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Key K locked under agent A, live under B, and J under B: the embeddings
+    statement a star-agent clear runs matches B's K and J, never A's K."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 1}])
+    ch.install(monkeypatch)
+    await handle_memory_clear(
+        MemoryClearInput(org="o", namespace="n", user_id="u1", agent="*", confirm_subject="u1")
+    )
+    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
+    where = emb_alter.sql.split("WHERE", 1)[1].split("SETTINGS", 1)[0]
+
+    ids = "'o', 'n', 'u1', '-'"
+    rows = [("A", "K", "read_only"), ("B", "K", ""), ("B", "J", "")]
+    setup = [
+        "SET enable_quantized_codec = 1",
+        ddl("memory"),
+        ddl("memory_embeddings"),
+        *(
+            "INSERT INTO loom.memory (org, namespace, user_id, session_id, agent, memory_key,"
+            f" memory_id, version, lock_mode) VALUES ({ids}, '{a}', '{k}', generateUUIDv4(), 1,"
+            f" '{mode}')"
+            for a, k, mode in rows
+        ),
+        *(
+            "INSERT INTO loom.memory_embeddings (org, namespace, user_id, session_id, agent,"
+            f" memory_key, version, embedding, memory_key_embedding) SELECT {ids}, '{a}', '{k}',"
+            # Both vector columns at the codec's declared dimension.
+            " 1, arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
+            for a, k, _ in rows
+        ),
+    ]
+    got = run(
+        setup,
+        f"SELECT agent, memory_key FROM loom.memory_embeddings FINAL WHERE {where}"
+        " ORDER BY agent, memory_key",
+        {k: v for k, v in emb_alter.params.items() if k != "at"},
+    )
+    assert [(r["agent"], r["memory_key"]) for r in got] == [("B", "J"), ("B", "K")]
 
 
 @pytest.mark.asyncio

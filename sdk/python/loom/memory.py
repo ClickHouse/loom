@@ -1218,7 +1218,8 @@ class MemoryClient:
         `confirm_subject` must equal a concrete value (or one of them, when
         both are set) — defense against accidental clears.
 
-        Returns `{cleared_at, rows_affected: {table: count}, total}`.
+        Returns `{cleared_at, rows_affected: {table: count}, total, locked_skipped}`;
+        locked rows stay and are counted in `locked_skipped`.
         Tombstone-not-hard-delete: cleared rows are recoverable for the
         14-day grace window by re-writing the same key. For
         cross-system erasure use `erasure.request_user_id` or
