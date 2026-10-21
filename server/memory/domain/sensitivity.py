@@ -168,8 +168,11 @@ def _has_card(text: str) -> bool:
     """Whether `text` holds a card number, ungrouped or in a printed grouping. The digits
     of an IBAN are left out: its printed groups can read as a card grouping that passes
     Luhn ("DE24 4005 0150 0000 0005 00"), and an IBAN is medium."""
+    parts, prev = [], 0
     for start, end in _iban_spans(text):
-        text = text[:start] + "x" * (end - start) + text[end:]
+        parts += [text[prev:start], "x" * (end - start)]
+        prev = end
+    text = "".join(parts) + text[prev:]
     for m in _DIGIT_GROUPS.finditer(text):
         groups = re.split(r"[ -]", m.group())
         if any(len(group) in (15, 16) and _is_card(group) for group in groups):

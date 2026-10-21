@@ -114,8 +114,9 @@ _COARSE_BY_SHAPE = {
         # A card number, as `_has_card` reads one: a lone 15- or 16-digit group, or a
         # printed grouping that starts with a 4-digit group, each with a network's leading
         # digit. So epoch milliseconds and 19-digit ids are not selected.
-        r"|(?:^|[^0-9])[2-6][0-9]{14,15}(?:[^0-9]|$)"
-        r"|(?:^|[^0-9])[2-6][0-9]{3}[ -][0-9]{4,6}[ -][0-9]{4}"
+        # The left edge may be a `\uXXXX` escape, whose last hex digit can be a digit.
+        r"|(?:^|[^0-9]|\\u[0-9a-fA-F]{4})[2-6][0-9]{14,15}(?:[^0-9]|$)"
+        r"|(?:^|[^0-9]|\\u[0-9a-fA-F]{4})[2-6][0-9]{3}[ -][0-9]{4,6}[ -][0-9]{4}"
         r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
         rf"|{_COARSE_PIN}"
         rf"|{_COARSE_KEYED}"

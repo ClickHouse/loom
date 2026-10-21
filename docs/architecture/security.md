@@ -794,8 +794,8 @@ send their model, `memory.recall`'s raw turns, and the turns `conversation.searc
 `conversation.search_saved_messages` rank, which are embedded whatever card number, SSN or
 stated PIN they hold.
 
-Search demotes labelled rows on questions that did not ask for a contact detail
-(`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
+Search demotes labelled rows on questions that did not ask for a contact detail or a bank
+account (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
 The detector runs on `memory.set`, `memory.bulk_set`, `memory.update` and extraction when
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`detector_text`): each

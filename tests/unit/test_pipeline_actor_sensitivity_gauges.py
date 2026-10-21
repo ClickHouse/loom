@@ -491,7 +491,7 @@ def test_the_cursor_keeps_the_agent_and_resumes_at_or_before_it() -> None:
     long_agent = key | {"agent": "a" * MAX_CURSOR, "memory_key": "k"}
     assert cursor_key(cursor_text(long_agent)) == start | {"agent": "", "memory_key": ""}
     assert cursor_text(None) == "[]" and cursor_key("[]") is None and cursor_key("") is None
-    # a cursor an older build wrote, with the whole sort key, starts at the first key
+    # a cursor that is not this worker's three-column form reads as none
     assert cursor_key(json.dumps(["o", "n", "a", "u", "s", "k"])) is None
 
 

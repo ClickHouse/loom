@@ -684,6 +684,7 @@ def test_long_runs_are_read_in_linear_time() -> None:
     assert not reads_high('"pin": "' + " " * 200_000 + "x")
     assert detect_sensitivity("PIN for" + " " * 200_000 + "x") == ""
     assert detect_sensitivity("PIN for the" + " " * 200_000 + "door") == ""
+    assert detect_sensitivity("GB82WEST12345698765432 " * 20_000) == "medium"
     assert time.perf_counter() - started < 2.0
     # escaped quotes, each a possible key start: a key reads at most 200 characters
     started = time.perf_counter()
@@ -844,6 +845,11 @@ _PREFILTER_TEXTS = [
     "client_secret = " + "9f8e7d6c5b4a3210ffee",
     "mastercard 5500000000000004",
     "amex 378282246310005",
+    # after a non-ASCII character, whose `\uXXXX` escape in `value` ends in a digit
+    "番号4111111111111111",
+    "番号4111 1111 1111 1111",
+    "\u00a04111111111111111",
+    "\u30004111111111111111",
 ]
 
 
