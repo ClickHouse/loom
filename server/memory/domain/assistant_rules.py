@@ -105,6 +105,8 @@ def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
 _ASKS = {"always", "never", "don't", "dont"}  # not a setting: a word list
 # Words that open a question asking for a behaviour ("could you always ...?").
 _POLITE = {"can", "could", "would", "will"}  # not a setting: a word list
+# Words that name the user as the one a question asks something done to.
+_ME = {"me", "my", "us", "our"}  # not a setting: a word list
 # Words that ask for a behaviour before "you to" ("I want you to always ...").
 _WANTS = {"want", "need"}  # not a setting: a word list
 # Words a rule and a request share without naming the same behaviour.
@@ -141,11 +143,20 @@ def _requested_words(sentence: str) -> list[str]:
     A clause after a comma or semicolon opens one only with "always" ("From now on,
     always ..."): one that opens with never or don't usually leaves out its subject
     ("I called twice, never got my refund"). A question asks for a behaviour only
-    when it opens with can, could, would or will you ("Could you always answer me in
-    French?"); "Do you always escalate refunds?" asks about a policy."""
+    when it opens with can, could, would or will you and asks for something done to
+    the user ("Could you always answer me in French?"); "Do you always escalate
+    refunds?" and "Will you always escalate refunds?" ask about a policy."""
     words = _words(sentence)
-    if sentence.endswith("?") and not (words[:1] and words[0] in _POLITE and words[1:2] == ["you"]):
+    if not sentence.endswith("?"):
+        return _imperative_words(sentence, words)
+    if not (words[:1] and words[0] in _POLITE and words[1:2] == ["you"]):
         return []
+    requested = _imperative_words(sentence, words)
+    return requested if _ME & set(requested) else []
+
+
+def _imperative_words(sentence: str, words: list[str]) -> list[str]:
+    """The words after the ask word that opens an imperative in `sentence`, or none."""
     for i, word in enumerate(words):
         if word in _ASKS and _opens_imperative(words, i):
             return words[i + 1 :]
