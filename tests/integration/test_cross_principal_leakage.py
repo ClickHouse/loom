@@ -223,6 +223,7 @@ _CORE = {
     "conversation.list",
     "conversation.search",
     "conversation.search_saved_messages",
+    "conversation.saved_status",
     "conversation.threads",
     "run.get",
     "run.list",
@@ -379,6 +380,8 @@ def _synth_payload(model: type, *, seed: _Seed, namespace: str) -> dict[str, Any
         "task_id": seed.task_id or str(uuid.uuid4()),
         "blob_key": seed.blob_key or "canary-blob",
         "label": "canary",
+        # The saved canary's message, in the conversation the str default names.
+        "message_ids": ["m1"],
     }
     out: dict[str, Any] = {}
     for fname, field in model.model_fields.items():
@@ -1708,7 +1711,12 @@ def test_positive_control_the_grantees_read_the_shared_canary(
 
 
 @pytest.mark.parametrize(
-    "op_name", ["conversation.list_saved_messages", "conversation.search_saved_messages"]
+    "op_name",
+    [
+        "conversation.list_saved_messages",
+        "conversation.search_saved_messages",
+        "conversation.saved_status",
+    ],
 )
 def test_positive_control_the_owner_reads_the_saved_canary_with_the_walks_body(
     control_plane_url, shared, op_name
@@ -1720,6 +1728,10 @@ def test_positive_control_the_owner_reads_the_saved_canary_with_the_walks_body(
     assert payload is not None
     r = _post_as(control_plane_url, shared.org, "owner", op_name, payload)
     assert r.status_code == 200, r.text
+    if op_name == "conversation.saved_status":
+        # The answer is the saved ids, which carry no nonce.
+        assert r.json()["saved"] == ["m1"], r.text
+        return
     assert shared.seed.leaked(r.text), f"{op_name} misses the saved canary: the walk is vacuous"
 
 
@@ -1759,6 +1771,9 @@ def test_every_read_op_against_a_collection_leaks_nothing(
                 if r.status_code not in _OK_STATUSES:
                     bad_status[label] = r.status_code
                 found = shared.seed.leaked(r.text)
+                # saved_status answers ids, not text: any saved id is the owner's.
+                if op.name == "conversation.saved_status" and r.status_code == 200:
+                    found = found or r.json()["saved"]
                 if found:
                     leaks[label] = found
     assert not leaks, f"{who}: canary nonces in responses: {leaks}"

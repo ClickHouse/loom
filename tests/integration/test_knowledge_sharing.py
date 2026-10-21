@@ -7,6 +7,7 @@ Skips without LOOM_BASE_URL."""
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
@@ -266,6 +267,10 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
         ("c9", "m9", "assistant")
     ], rows
     assert rows[0]["content_excerpt"] == content, rows
+    # The save stamps the row and answers within one call, not the wall clock.
+    listed_at = datetime.fromisoformat(rows[0]["ts"]).replace(tzinfo=None)
+    saved_at = datetime.fromisoformat(saved["ts"]).replace(tzinfo=None)
+    assert abs(listed_at - saved_at) < timedelta(seconds=1), (rows, saved)
     status = {**mine, "message_ids": ["m9", "m8"]}
     assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]
     search = {"user_id": "alice", "query": nonce}
