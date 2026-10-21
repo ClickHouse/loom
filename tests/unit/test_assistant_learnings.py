@@ -1396,6 +1396,27 @@ async def test_hits_at_the_search_cap_answer_without_a_second_search() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_short_first_pass_at_the_search_cap_runs_one_search() -> None:
+    """A first pass short of top_k found every hit there is: asking again for the
+    cap would send the same query."""
+    from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
+
+    other = ["source-kind:assistant_turn", "agent:sales-bot"]
+    hits = [{"id": 0, "tags": other}] + [{"id": i, "tags": []} for i in range(1, 40)]
+    searches: list[int] = []
+
+    async def widen(k: int) -> list[dict[str, Any]]:
+        searches.append(k)
+        return hits
+
+    served = await agent_rules.served_hits(
+        hits, widen, lambda h: h["tags"], "support-bot", MAX_SEARCH_TOP_K
+    )
+    assert served == hits[1:]
+    assert searches == []
+
+
+@pytest.mark.asyncio
 async def test_a_failed_wider_search_answers_the_first_pass_served_hits() -> None:
     other = ["source-kind:assistant_turn", "agent:sales-bot"]
     hits = [{"id": 1, "tags": other}, {"id": 2, "tags": []}]
