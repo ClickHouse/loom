@@ -75,7 +75,9 @@ as the picked namespace; a URL without `?namespace=` opens the saved pick. A nam
 account cannot read opens a page that says so, with the namespace picker in the header and
 a way to continue in the namespace the account would otherwise open. On the bare root,
 `?view=` names the page by view id or path (`/?view=memories`, `/?view=admin/health`) and
-`?memory=<key>` opens that memory on Memories.
+`?memory=<key>` opens that memory on Memories. The namespace picker shows each namespace's
+description, and folds code indexes, tracker records and every three or more memory
+namespaces whose names share a prefix (`col-`, `u-`) into groups of their own.
 
 ### The admin drawer
 

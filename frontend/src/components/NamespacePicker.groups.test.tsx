@@ -179,6 +179,74 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getByRole("button", { name: /acme\/repo8 @ main/ })).toHaveFocus();
   });
 
+  it("folds memory namespaces sharing a name prefix, three or more, into a group per prefix", async () => {
+    seed("team", [
+      row("team", { role: "admin" }),
+      row("t-1-shared", { description: "Acme" }),
+      row("t-2-shared", { description: "Globex" }),
+      row("t-3-shared"),
+      row("agent-1-a", { description: "Support bot" }),
+      row("agent-1-b", { description: "Sales bot" }),
+      row("agent-2-c"),
+      row("col-one"),
+      row("col-two"),
+      row("idx-ch", { kind: "code", role: "jwt" }),
+    ]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    // Named by the prefix, with the last segment every member shares.
+    const shared = group(dialog, /^t-…-shared/);
+    const agents = group(dialog, /^agent-…/);
+    expect(shared).toHaveAttribute("aria-expanded", "false");
+    expect(shared).toHaveTextContent("3");
+    expect(agents).toHaveTextContent("3");
+    expect(within(dialog).queryByRole("button", { name: /t-1-shared/ })).toBeNull();
+    // Two of a prefix stay with the rest, by role.
+    expect(within(dialog).getByRole("button", { name: /col-one/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^col-…/ })).toBeNull();
+    // The name families come first, by prefix, then the code indexes.
+    const order = [...dialog.querySelectorAll("[data-nav^='group:']")].map((b) => b.getAttribute("data-nav"));
+    expect(order).toEqual(["group:agent-", "group:t-", "group:code"]);
+    fireEvent.click(agents);
+    const body = document.getElementById(agents.getAttribute("aria-controls") ?? "");
+    // A member reads like a code index: its description, then its name as code.
+    const bot = within(body as HTMLElement).getByRole("button", { name: /agent-1-a/ });
+    expect(bot.textContent).toMatch(/^Support bot.*agent-1-a/);
+    expect(within(bot).getByText("agent-1-a").tagName).toBe("CODE");
+  });
+
+  it("opens the name family the current namespace is in, and the one a search matches", async () => {
+    const rows = [
+      row("team", { role: "admin" }),
+      row("agent-1-a", { description: "Support bot" }),
+      row("agent-1-b"),
+      row("agent-2-c"),
+    ];
+    seed("agent-1-b", rows);
+    const user = userEvent.setup();
+    const { unmount } = render(<NamespacePicker />);
+    let dialog = await openPicker();
+    expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true");
+    expect(within(dialog).getByRole("button", { name: /agent-1-b/ })).toHaveAttribute("aria-current", "true");
+    unmount();
+    seed("team", rows);
+    render(<NamespacePicker />);
+    dialog = await openPicker();
+    expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "false");
+    await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "support");
+    expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true");
+    expect(group(dialog, /^agent-…/)).toHaveTextContent("1 of 3");
+    expect(within(dialog).getByRole("button", { name: /Support bot/ })).toBeInTheDocument();
+  });
+
+  it("keeps the footer's Spaces link for someone whose joined namespaces all sit in a family", async () => {
+    seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    expect(within(dialog).getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join in Spaces" })).toBeNull();
+  });
+
   it("folds a group a search opened when its button is pressed, and opens it again", async () => {
     seed("team");
     const user = userEvent.setup();

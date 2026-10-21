@@ -35,7 +35,8 @@ const CreateNamespaceDialog = lazy(() =>
  * A flat hover-dropdown works for ~3 namespaces and is unusable past ~20. Sections by
  * role (you own → joined → other), sort by recency within section, badges for visibility,
  * and a hide- system-namespaces toggle so bench artefacts don't drown out a user's actual
- * namespaces.
+ * namespaces. Memory namespaces whose names share a prefix (`col-`, `u-`, a deployment's
+ * own scheme) fold into a group per prefix, as code indexes and tracker records do.
  */
 export function NamespacePicker() {
   const identity = useStore((s) => s.identity);
@@ -73,11 +74,12 @@ function NamespacePickerMenu() {
   const [showSystem, setShowSystem] = useState(false);
   const [rows, setRows] = useState<MyNamespaceEntry[] | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Record<KindGroup, boolean>>({ code: false, tracker: false });
-  const [showAll, setShowAll] = useState<Record<KindGroup, boolean>>({ code: false, tracker: false });
+  // Keyed by group: "code", "tracker" or a name prefix ("team-").
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   // A group someone folded or opened while searching: it overrides the search's own opening
   // until the search is cleared.
-  const [searchOpen, setSearchOpen] = useState<Partial<Record<KindGroup, boolean>>>({});
+  const [searchOpen, setSearchOpen] = useState<Record<string, boolean>>({});
   // The row "Show all" hands the focus to, once it is drawn (the button itself goes away).
   const [focusNav, setFocusNav] = useState<string | null>(null);
   // The option that holds the list's one tab stop (the last one focused).
@@ -99,13 +101,12 @@ function NamespacePickerMenu() {
 
   const current = identity?.namespace || "—";
   const known = rows ?? stored;
-  const currentGroup = kindGroup(known?.find((r) => r.namespace === current));
 
   // Each open starts folded, except the group the current namespace is in.
   useEffect(() => {
     if (open) {
-      setOpenGroups({ code: currentGroup === "code", tracker: currentGroup === "tracker" });
-      setShowAll({ code: false, tracker: false });
+      setOpenGroups(currentGroup ? { [currentGroup]: true } : {});
+      setShowAll({});
       setSearchOpen({});
       setActive(null);
     } else setQuery("");
@@ -158,15 +159,28 @@ function NamespacePickerMenu() {
   const matches = (r: MyNamespaceEntry) =>
     !q || r.namespace.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q);
 
-  // Memory namespaces by role; code indexes and tracker records each in a folded group of
-  // their own, told apart by the server's `kind` alone (a name is free text).
-  const memory = listed.filter((r) => kindGroup(r) === null);
+  // Code indexes and tracker records each fold into a group of their own, told apart by the
+  // server's `kind` alone (a name is free text); memory namespaces whose names share a
+  // prefix fold into one per prefix once there are FAMILY_MIN of them.
+  const families = new Map<string, MyNamespaceEntry[]>();
+  for (const r of listed) {
+    const p = namePrefix(r.namespace);
+    if (p && !kindGroup(r)) families.set(p, [...(families.get(p) ?? []), r]);
+  }
+  for (const [p, members] of families) if (members.length < FAMILY_MIN) families.delete(p);
+  const groupOf = (r: MyNamespaceEntry | undefined): string | null => {
+    const p = r ? namePrefix(r.namespace) : "";
+    return kindGroup(r) ?? (families.has(p) ? p : null);
+  };
+  const currentGroup = groupOf(listed.find((r) => r.namespace === current));
+  // The memory namespaces outside every group, by role.
+  const memory = listed.filter((r) => groupOf(r) === null);
   const byRole = (roles: MyNamespaceEntry["role"][]) => memory.filter((r) => roles.includes(r.role));
   const owned = byRole(["admin"]);
   const joined = byRole(["writer", "viewer"]);
   const transient = byRole(["jwt"]);
-  const inGroup = (g: KindGroup) => listed.filter((r) => kindGroup(r) === g);
-  const kinds = { code: inGroup("code"), tracker: inGroup("tracker") };
+  // Joined anything, grouped or not: the Spaces link moves from the list to the footer.
+  const hasJoined = listed.some((r) => !kindGroup(r) && r.role !== "admin");
 
   // Sort each group: current selection first, then most-recently-joined.
   const sort = (arr: MyNamespaceEntry[]) =>
@@ -177,7 +191,7 @@ function NamespacePickerMenu() {
       const bt = parseChTime(b.joined_at)?.getTime() ?? 0;
       return bt - at;
     });
-  // Code indexes and tracker records: current first, then by name.
+  // A group's rows: current first, then by name.
   const sortByName = (arr: MyNamespaceEntry[]) =>
     arr
       .filter(matches)
@@ -191,13 +205,16 @@ function NamespacePickerMenu() {
     { title: "From your token", all: transient, rows: sort(transient) },
   ];
   // A group is open while a search has matches in it (unless someone folded it), or once
-  // someone opened it.
-  const groups = KIND_GROUPS.map((g) => {
-    const rows = sortByName(kinds[g]);
-    const expanded = q ? (searchOpen[g] ?? rows.length > 0) : openGroups[g];
-    const shown = expanded ? (showAll[g] ? rows : rows.slice(0, GROUP_CAP)) : [];
-    return { g, all: kinds[g], rows, expanded, shown, more: expanded && rows.length > shown.length };
-  }).filter((x) => (q ? x.rows.length > 0 : x.all.length > 0));
+  // someone opened it. Name families come first, by prefix: they are memory namespaces.
+  const groups = [...[...families.keys()].sort(), ...KIND_GROUPS]
+    .map((g) => {
+      const all = listed.filter((r) => groupOf(r) === g);
+      const rows = sortByName(all);
+      const expanded = q ? (searchOpen[g] ?? rows.length > 0) : !!openGroups[g];
+      const shown = expanded ? (showAll[g] ? rows : rows.slice(0, GROUP_CAP)) : [];
+      return { g, all, rows, expanded, shown, more: expanded && rows.length > shown.length };
+    })
+    .filter((x) => (q ? x.rows.length > 0 : x.all.length > 0));
   const nothing = sections.every((s) => s.rows.length === 0) && groups.length === 0;
 
   // One roving tab stop over the options and the group buttons, in the order drawn. A
@@ -365,7 +382,7 @@ function NamespacePickerMenu() {
               ))}
             </Section>
           ))}
-          {known != null && joined.length === 0 && transient.length === 0 && !query && (
+          {known != null && !hasJoined && !query && (
             // 4 px of room on each side: the list clips its overflow, and the button's ring is
             // drawn outside it.
             <div className="p-1">
@@ -388,6 +405,7 @@ function NamespacePickerMenu() {
             <GroupDisclosure
               key={x.g}
               group={x.g}
+              {...groupMeta(x.g, x.all)}
               total={x.all.length}
               matched={x.rows.length}
               searching={!!q}
@@ -436,7 +454,7 @@ function NamespacePickerMenu() {
           {/* Browsing and joining spaces is part of picking one,
               so the Spaces page is reached from here, not from the rail. One
               call to action: the empty list above already carries it. */}
-          {known != null && (joined.length > 0 || transient.length > 0 || !!query) && (
+          {known != null && (hasJoined || !!query) && (
             <Button
               type="empty"
               htmlType="button"
@@ -493,18 +511,34 @@ function NamespacePickerMenu() {
 
 type KindGroup = "code" | "tracker";
 const KIND_GROUPS: KindGroup[] = ["code", "tracker"];
-const GROUP_META: Record<KindGroup, { title: string; icon: IconName }> = {
+const GROUP_META: Record<string, { title: string; icon: IconName }> = {
   code: { title: "Code indexes", icon: "code" },
   tracker: { title: "Tracker records", icon: "flag" },
 };
 // An open group shows this many rows, then "Show all N".
 const GROUP_CAP = 8;
+// Memory namespaces sharing a name prefix fold into a group from this many on.
+const FAMILY_MIN = 3;
 
 /** The folded group a row belongs in, from the server's `kind` only — never its name. */
 function kindGroup(r: MyNamespaceEntry | undefined): KindGroup | null {
   if (r?.kind === "code") return "code";
   if (r?.kind === "qa" || r?.kind === "tracker") return "tracker";
   return null;
+}
+
+/** A name's first segment with its hyphen ("team-" for "team-a-b"), or "" without one. */
+function namePrefix(namespace: string): string {
+  return namespace.slice(0, namespace.indexOf("-") + 1);
+}
+
+/** A group's title and icon: a kind's own, or a name family's prefix, with the last
+ *  segment every member shares ("t-…-shared"). */
+function groupMeta(group: string, rows: MyNamespaceEntry[]): { title: string; icon: IconName } {
+  const name = rows[0]?.namespace ?? "";
+  const tail = name.slice(name.lastIndexOf("-"));
+  const shared = rows.every((r) => r.namespace.endsWith(tail) && r.namespace.length > group.length + tail.length);
+  return GROUP_META[group] ?? { title: `${group}…${shared ? tail : ""}`, icon: "folder-closed" };
 }
 
 /** "3" — or, while searching, "1 of 3": the group's total, never only the matches. */
@@ -554,6 +588,8 @@ function Section({
 /** A folded group: a native disclosure button, then its rows when open. */
 function GroupDisclosure({
   group,
+  title,
+  icon,
   total,
   matched,
   searching,
@@ -562,7 +598,9 @@ function GroupDisclosure({
   onToggle,
   children,
 }: {
-  group: KindGroup;
+  group: string;
+  title: string;
+  icon: IconName;
   total: number;
   matched: number;
   searching: boolean;
@@ -572,7 +610,6 @@ function GroupDisclosure({
   children: ReactNode;
 }) {
   const id = useId();
-  const meta = GROUP_META[group];
   return (
     <section aria-labelledby={`${id}-label`} className="mb-2 last:mb-0">
       <button
@@ -584,9 +621,9 @@ function GroupDisclosure({
         onClick={onToggle}
         className="ns-row w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-left text-sm text-text"
       >
-        <Icon name={meta.icon} size="sm" aria-hidden="true" />
+        <Icon name={icon} size="sm" aria-hidden="true" />
         <span id={`${id}-label`} className="font-medium">
-          {meta.title}
+          {title}
         </span>
         <span className="text-xs text-text-muted tabular">{countLabel(matched, total, searching)}</span>
         <Icon name="chevron-right" size="xs" aria-hidden="true" className={`ml-auto ${expanded ? "rotate-90" : ""}`} />
@@ -611,8 +648,8 @@ function NamespaceRow({
   onPick: (ns: string) => void;
   onCancelPending: (ns: string, role: string) => void;
   tabIndexOf: (key: string) => number;
-  /** A code index or tracker record: its name is an identifier, in code, on the second line
-   *  under its description when it has one. */
+  /** A grouped row (a code index, a tracker record, a member of a name family): its name is
+   *  an identifier, in code, on the second line under its description when it has one. */
   kindRow?: boolean;
 }) {
   const active = r.namespace === current;
