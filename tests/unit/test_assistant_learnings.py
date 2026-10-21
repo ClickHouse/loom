@@ -1012,6 +1012,16 @@ _RANKED = [
     ("refunds.md", "Refunds take five days.", ["runbook"]),
 ]
 
+# support-bot's own rule and the document, with no other bot's rule among them.
+_OWN_FIRST = _RANKED[3:]
+
+# Each read asks for top_k once; only another bot's rule in the first pass asks for more.
+_FIRST_PASSES = pytest.mark.parametrize(
+    ("ranked", "asked_for"),
+    [(_RANKED, [2, assistant_rules.hits_to_ask(2)]), (_OWN_FIRST, [2])],
+    ids=["another-bots-rule-first", "no-other-bots-rule"],
+)
+
 
 @pytest.fixture
 def support_bot_token() -> Iterator[None]:
@@ -1024,22 +1034,23 @@ def support_bot_token() -> Iterator[None]:
     current_auth_var.reset(token)
 
 
-def _knowledge_hits(top_k: int) -> Any:
+def _knowledge_hits(ranked: list[Any], top_k: int) -> Any:
     from server.knowledge.api.models_knowledge import KnowledgeSearchOutput, _SearchHit
 
     hits = [
         _SearchHit(
             source_uri=uri, chunk_idx=0, content=text, tags=tags, distance=0.1, similarity=0.9
         )
-        for uri, text, tags in _RANKED[:top_k]
+        for uri, text, tags in ranked[:top_k]
     ]
     return KnowledgeSearchOutput(results=hits, embedding_model="fake")
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("support_bot_token")
+@_FIRST_PASSES
 async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, ranked: list[Any], asked_for: list[int]
 ) -> None:
     from server.knowledge.app import knowledge_search
     from server.memory.api.models_context import ContextPackInput
@@ -1049,7 +1060,7 @@ async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
 
     async def search(input: Any) -> Any:
         asked.append(input.top_k)
-        return _knowledge_hits(input.top_k)
+        return _knowledge_hits(ranked, input.top_k)
 
     monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
     st = context_pack._PackState(
@@ -1068,14 +1079,14 @@ async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
     section = st.sections["knowledge"]
     assert "support rule" in section and "Refunds take five days." in section
     assert "sales rule" not in section
-    # The first pass asks for top_k; only the dropped rules ask for more.
-    assert asked == [2, assistant_rules.hits_to_ask(2)]
+    assert asked == asked_for
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("support_bot_token")
+@_FIRST_PASSES
 async def test_a_pinned_tokens_stack_serves_its_signed_bots_rules(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, ranked: list[Any], asked_for: list[int]
 ) -> None:
     from server.knowledge.app import search as knowledge_store
     from server.knowledge.app.search import ChunkHit
@@ -1096,7 +1107,7 @@ async def test_a_pinned_tokens_stack_serves_its_signed_bots_rules(
             ChunkHit(
                 namespace="ns", source_uri=uri, chunk_idx=0, content=text, tags=tags, distance=0.1
             )
-            for uri, text, tags in _RANKED[: q.top_k]
+            for uri, text, tags in ranked[: q.top_k]
         ]
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Embedder())
@@ -1115,13 +1126,14 @@ async def test_a_pinned_tokens_stack_serves_its_signed_bots_rules(
     )
 
     assert [e.memory_key for e in fill.entries] == ["support-rule", "refunds.md"]
-    assert asked == [2, assistant_rules.hits_to_ask(2)]
+    assert asked == asked_for
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("support_bot_token")
+@_FIRST_PASSES
 async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, ranked: list[Any], asked_for: list[int]
 ) -> None:
     from server.memory.app import search as memory_search
     from server.memory.app.loom_search import fanout
@@ -1130,7 +1142,7 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 
     async def knowledge(input: Any) -> Any:
         asked.append(input.top_k)
-        return _knowledge_hits(input.top_k)
+        return _knowledge_hits(ranked, input.top_k)
 
     async def leg_down(*_a: Any, **_kw: Any) -> Any:
         raise RuntimeError("not under test")
@@ -1162,13 +1174,14 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 
     uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
     assert uris == ["support-rule", "refunds.md"]
-    assert asked == [2, assistant_rules.hits_to_ask(2)]
+    assert asked == asked_for
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("support_bot_token")
+@_FIRST_PASSES
 async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, ranked: list[Any], asked_for: list[int]
 ) -> None:
     from server.knowledge.app import knowledge_search
     from server.memory.api.models_search import MemorySearchInput
@@ -1178,7 +1191,7 @@ async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
 
     async def search(input: Any) -> Any:
         asked.append(input.top_k)
-        return _knowledge_hits(input.top_k)
+        return _knowledge_hits(ranked, input.top_k)
 
     monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
     monkeypatch.setattr(settings, "memory_ask_knowledge_top_k", 2)
@@ -1190,7 +1203,7 @@ async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
 
     assert n == 2 and "support rule" in block and "Refunds take five days." in block
     assert "sales rule" not in block
-    assert asked == [2, assistant_rules.hits_to_ask(2)]
+    assert asked == asked_for
 
 
 @pytest.mark.asyncio
@@ -1204,7 +1217,7 @@ async def test_a_pinned_tokens_ask_synthesis_serves_its_signed_bots_rules(
     from server.memory.domain import ask_routing
 
     async def search(input: Any) -> Any:
-        return _knowledge_hits(input.top_k)
+        return _knowledge_hits(_RANKED, input.top_k)
 
     picked: list[list[str]] = []
 
@@ -1231,6 +1244,18 @@ async def test_a_failed_wider_search_answers_the_first_pass_served_hits() -> Non
 
     served = await agent_rules.served_hits(hits, widen, lambda h: h["tags"], "support-bot", 2)
     assert served == [{"id": 2, "tags": []}]
+
+
+@pytest.mark.asyncio
+async def test_first_pass_hits_that_all_serve_the_agent_answer_without_a_second_search() -> None:
+    own = ["source-kind:assistant_turn", "agent:support-bot"]
+    hits = [{"id": 1, "tags": own}, {"id": 2, "tags": []}]
+
+    async def widen(_k: int) -> list[dict[str, Any]]:
+        raise AssertionError("no second query")
+
+    served = await agent_rules.served_hits(hits, widen, lambda h: h["tags"], "support-bot", 2)
+    assert served == hits
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
