@@ -43,6 +43,12 @@ flowchart LR
 3. The handler then links each memory to its evidence, drafts a session digest and
    projects entities.
 
+The conversation is also kept as verbatim chunks, which search returns as `chunk` hits. A
+chunk or digest whose text reads as a credential (a pasted API key, an access key id, a
+`password=` assignment) is stored as written but never embedded, so search and `memory.ask`
+never serve it; `memory.get` on its `chunk:` key does, with a `memory.sensitive_read` audit
+row ([sensitivity](../../architecture/security.md#sensitivity)).
+
 `pipeline_steps` reorders or skips steps, or names an in-process step an operator
 registered (at most 16; an HTTP `hook.*` step is refused). See the
 [extraction pipeline guide](../../guides/extraction-pipeline.md).

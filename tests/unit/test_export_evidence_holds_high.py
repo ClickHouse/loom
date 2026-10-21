@@ -1,6 +1,7 @@
 """memory.export_evidence leaves out the raw chunks and digests behind a key with any
-version labelled 'high', and those whose text reads as a credential: raw text has no sensitivity
-column, and a bundle reaches a wider audience than the namespace's grants."""
+version labelled 'high', those whose text reads as a credential, and chunks written without a
+vector: raw text has no sensitivity column, and a bundle reaches a wider audience than the
+namespace's grants."""
 
 from __future__ import annotations
 
@@ -25,16 +26,22 @@ class _CH:
                 {"session_id": "s3", "summary_text": f"the key is {_KEY}", "derived_from": []},
             ]
         return [
-            {"session_id": "s", "chunk_index": 0, "content": "plain talk"},
-            {"session_id": "s", "chunk_index": 1, "content": "about the vault"},
-            {"session_id": "s", "chunk_index": 2, "content": f"the key is {_KEY}"},
+            {"session_id": "s", "chunk_index": 0, "content": "plain talk", "embedding_dim": 2},
+            {"session_id": "s", "chunk_index": 1, "content": "about the vault", "embedding_dim": 2},
+            {
+                "session_id": "s",
+                "chunk_index": 2,
+                "content": f"the key is {_KEY}",
+                "embedding_dim": 2,
+            },
+            {"session_id": "s", "chunk_index": 3, "content": "plain words", "embedding_dim": 0},
         ]
 
 
 @pytest.fixture
 def evidence(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, Any]]]:
     async def _links(_ch: Any, **_k: Any) -> dict[tuple[str, int], list[str]]:
-        return {("s", 0): ["k"], ("s", 1): ["vault"], ("s", 2): []}
+        return {("s", 0): ["k"], ("s", 1): ["vault"], ("s", 2): [], ("s", 3): []}
 
     async def _high_keys(_org: str, _ns: str, keys: Any, **_k: Any) -> set[str]:
         # `vault` had a high version, and has since been deleted
@@ -57,19 +64,23 @@ def _input(kind: str, **over: Any) -> MemoryExportEvidenceInput:
 
 
 @pytest.mark.asyncio
-async def test_chunks_behind_a_high_key_or_holding_a_credential_stay_home(evidence) -> None:
+async def test_chunks_behind_a_high_key_holding_a_credential_or_unembedded_stay_home(
+    evidence,
+) -> None:
+    # chunk 2 has a vector, so only its text holds it; chunk 3 is plain but has no vector
     out = await evidence_transfer.handle_memory_export_evidence(_input("chunks"))
     assert [c.chunk_index for c in out.chunks] == [0]
-    assert out.held_high == 2
+    assert out.held_high == 3
     every = await evidence_transfer.handle_memory_export_evidence(
         _input("chunks", include_high=True)
     )
-    assert [c.chunk_index for c in every.chunks] == [0, 1, 2] and every.held_high == 0
+    assert [c.chunk_index for c in every.chunks] == [0, 1, 2, 3] and every.held_high == 0
     # released on request, and audited as key reads of a high row are
     assert evidence == [
         [
             {"kind": "chunks", "session_id": "s", "chunk_index": 1, "memory_keys": ["vault"]},
             {"kind": "chunks", "session_id": "s", "chunk_index": 2, "memory_keys": []},
+            {"kind": "chunks", "session_id": "s", "chunk_index": 3, "memory_keys": []},
         ]
     ]
 
