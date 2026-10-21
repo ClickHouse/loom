@@ -13,7 +13,7 @@ from server.insights.store.provider_staging import (
     completion_marker,
 )
 from server.insights.store.provider_target import _identity, _target, target_marker, updated_fields
-from server.memory.domain.sensitivity import reads_high, split_credentials
+from server.memory.domain.sensitivity import reads_high
 
 
 def _vector_checks(schema: SourceSchema, columns: list[str]) -> str:
@@ -87,39 +87,14 @@ async def _holds_plain_emptied(
                 f" WHERE {_ORDINAL} IN {{ordinals:Array(UInt64)}}",
                 {"ordinals": sorted(emptied)},
             )
-            plain = []
             for r in sources:
                 pairs = zip(emptied[int(r["ordinal"])], r["has_vector"], strict=True)
                 lost_vector = any(e and v for e, v in pairs)
                 if lost_vector and r["live"] and not reads_high(str(r["text"])):
-                    plain.append(int(r["ordinal"]))
-            if plain and names.table == "memory_chunks":
-                plain = await _not_split(names, plain, client)
-            if plain:
-                return True
+                    return True
         if len(page) < _EMPTIED_PAGE:
             return False
         after = int(page[-1]["ordinal"])
-
-
-async def _not_split(names: StagingNames, ordinals: list[int], client: _CHClient) -> list[int]:
-    """The memory chunks among `ordinals` that hold no part of a key cut at a chunk
-    boundary, read from the live chunks of each one's session in the snapshot, as
-    provider_rebuild_batch reads a page's."""
-    rows = await client.query_all(
-        f"SELECT {_ORDINAL} AS ordinal, org, namespace, session_id, chunk_index, content"
-        f" FROM loom.{names.snapshot}"
-        " WHERE isNull(tombstoned_at) AND (org, namespace, session_id) IN ("
-        f"SELECT org, namespace, session_id FROM loom.{names.snapshot}"
-        f" WHERE {_ORDINAL} IN {{ordinals:Array(UInt64)}})",
-        {"ordinals": ordinals},
-    )
-    chunks = [
-        ((r["org"], r["namespace"], r["session_id"]), int(r["chunk_index"]), str(r["content"]))
-        for r in rows
-    ]
-    held = {int(r["ordinal"]) for r, h in zip(rows, split_credentials(chunks), strict=True) if h}
-    return [o for o in ordinals if o not in held]
 
 
 async def verify_reembedded_target(
@@ -137,9 +112,9 @@ async def verify_reembedded_target(
     """Verify exact row coverage, preserved metadata and the new vector space.
 
     `text_column` names the text column of a raw-passage table: a row there that the
-    rebuild staged without a vector is accepted when that text reads as a credential,
-    or for a memory chunk when it holds part of a key cut at a chunk boundary, as its
-    write path leaves it (`provider_rebuild_batch.PASSAGE_TABLES`).
+    rebuild staged without a vector, though its source held one, is accepted when that
+    text reads as a credential, as its write path leaves it
+    (`provider_rebuild_batch.PASSAGE_TABLES`).
 
     Returns the logical row count. Prefix derivation and cache invalidation have
     different completeness rules and must not use this verifier. The coordinator
@@ -202,7 +177,7 @@ async def verify_reembedded_target(
     ):
         raise ValueError("Cannot establish rebuild verification result")
     # A raw-passage row the rebuild left empty is accepted when its text reads as a
-    # credential, or holds part of a key cut at a chunk boundary, as its write path leaves it.
+    # credential, as its write path leaves it.
     vector_lost = bool(result["emptied"])
     if vector_lost and text_column:
         vector_lost = await _holds_plain_emptied(names, schema, vectors, text_column, client)

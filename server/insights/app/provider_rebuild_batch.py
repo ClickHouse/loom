@@ -13,7 +13,7 @@ from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
-from server.memory.domain.sensitivity import reads_high, split_credentials
+from server.memory.domain.sensitivity import reads_high
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -30,10 +30,11 @@ TEXT_COLUMNS = {
     "session_summaries": "summary_text",
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
-# Raw passages the write path leaves without a vector when they read as a credential
-# (`reads_high`); a rebuild stages such a row without one. A memory chunk that holds part
-# of a key cut at a chunk boundary (`split_credentials` over its session's chunks in the
-# page) stays empty too. Any other passage is embedded, one stored without a vector too.
+# Raw passages the write path leaves without a vector when they read as a credential,
+# or, for a memory chunk, when it holds part of a key cut at a chunk boundary. A rebuild
+# stages a passage without a vector when its source has none, so a held chunk stays held
+# whichever page its neighbours fall on, and when its text reads as a credential
+# (`reads_high`), which covers a row an earlier build embedded.
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
@@ -61,27 +62,6 @@ def _source_text(
     return value
 
 
-def _split_chunks(rows: Sequence[Mapping[str, Any]]) -> list[bool]:
-    """For each memory chunk row, whether it holds part of a key cut at a chunk boundary,
-    read from the live chunks of its session in this page."""
-    live = [i for i, row in enumerate(rows) if row.get("tombstoned_at") is None]
-    try:
-        chunks = [
-            (
-                (rows[i]["org"], rows[i]["namespace"], rows[i]["session_id"]),
-                int(rows[i]["chunk_index"]),
-                str(rows[i]["content"]),
-            )
-            for i in live
-        ]
-    except KeyError:
-        raise RebuildBatchError("incomplete_source_row") from None
-    split = [False] * len(rows)
-    for i, held in zip(live, split_credentials(chunks), strict=True):
-        split[i] = held
-    return split
-
-
 def _inputs(
     table: str, rows: Sequence[Mapping[str, Any]], source_texts: Mapping[int, str]
 ) -> tuple[list[str], list[tuple[int, str]]]:
@@ -90,15 +70,16 @@ def _inputs(
         raise RebuildBatchError("unsupported_rebuild_table")
     texts: list[str] = []
     slots: list[tuple[int, str]] = []
-    split = _split_chunks(rows) if table == "memory_chunks" else [False] * len(rows)
     for index, row in enumerate(rows):
         if "embedding_model" not in row or any(column not in row for column in columns):
             raise RebuildBatchError("incomplete_source_row")
         if row.get("tombstoned_at") is not None:
             continue
         text = _source_text(table, row, index, source_texts)
-        if table in PASSAGE_TABLES and (reads_high(text) or split[index]):
-            continue
+        if table in PASSAGE_TABLES:
+            has_vector = any(any(row[column]) for column in columns)
+            if not has_vector or reads_high(text):
+                continue
         for column in columns:
             value = text
             if column == "memory_key_embedding":
@@ -176,13 +157,15 @@ async def rebuild_batch(
     (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
     the rebuild completes and counts it in its progress (`rows_waiting`). Once the
     org is back on, memory_embeddings and code_chunks / code_summaries stubs are
-    embedded again by their recovery workers; a row of any other table has no
-    vector until a write replaces it or a later rebuild covers it.
+    embedded again by their recovery workers. A raw passage stays without a vector
+    until a write replaces it, and a row of any other table until a write replaces
+    it or a later rebuild covers it.
 
-    A raw passage whose text reads as a credential, or a memory chunk that holds
-    part of a key cut at its boundary with a neighbour in the page, is staged
-    without a vector, as its write path leaves it; verification reads the text
-    (a memory chunk's with its session's) and accepts it.
+    A raw passage (`PASSAGE_TABLES`) stored without a vector is staged without one:
+    the write path may have held it as a credential, or as part of a key cut at a
+    chunk boundary, and the rebuild never sends it to the provider. One whose text
+    reads as a credential is staged without a vector too; verification reads its
+    text and accepts it.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.

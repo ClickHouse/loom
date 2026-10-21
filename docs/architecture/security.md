@@ -710,47 +710,48 @@ leg returns it. The other reads that could serve its value follow three rules:
   `expires_at` until the expiry sweep.
 
 Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
-`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A verbatim chunk in `loom.memory_chunks` (a
-conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.set`
-value, a chunk `memory.import_evidence` writes) whose text reads as a credential is stored
-as written with no vector, and its text is never sent to the embedder; every chunk read
-that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns
-it. Chunks overlap and can be cut through a key, so the conversation and long-value
-writers check the whole text once and also hold every chunk whose character range
-overlaps a credential: a chunk that holds only a key's head or tail does not read as one
-on its own. `memory.import_evidence` checks each session's imported chunks the same way: each chunk is
-joined with every chunk of its session at the next `chunk_index`, the overlap the second
-repeats from the first dropped (a repeat of at least 50 characters; chunks with no overlap
-are joined whole). A session written twice holds two chunks at an index, and every pair is
-read. The
-check reads one call's chunks only (at most 256), so a key cut at the boundary between the
-last chunk of one call and the first chunk of the next reads as a credential in neither, and
-both chunks are embedded; an importer that sends a session's chunks in one call, or splits
-them where no key is cut, avoids it. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
-leaves out one that reads as a credential, and audits a key read of either. This holds for
-a chunk of a long `memory.set` value whatever its row's label; a `low` row stays findable
-through its own embedding. A session digest whose text reads as a
-credential is likewise written without a vector, and so is a `conversation.append` turn:
-the message is stored as written in `loom.conversations` and gets no row in
-`loom.conversation_embeddings`. A missing embedding row keeps the turn out of vector
-search. `conversation.save_message` answers `reason: "reads_as_credential"` for such a
-turn, so the saved search never holds it.
-`conversation.compact` leaves such a turn out of its window: it stays live and is never
-sent to the summarizer. A summary that reads as a credential anyway is refused (`reason:
-"summary-reads-as-credential"`) and tombstones nothing; the window stays the same while
-its turns are live, so a retry most likely gets the same refusal.
-A provider rebuild stages a chunk, digest or turn embedding that reads as a credential,
-or a chunk that holds part of a key cut at its boundary with a neighbour (its session's
-chunks in the same page, joined at their overlap), without a vector; a page that holds
-only one side of the cut misses the key, and that chunk is embedded. Any other passage
-stored without one (a failed embed, or a row an earlier rebuild left empty while its org's
-model calls were off) is embedded. Verification reads the text of every row left empty
-whose source held a vector and accepts those that read as a credential, and a chunk whose
-session's chunks, joined, hold a key across its boundary. `loom reembed` keeps a conversation turn that reads as
-a credential on its old model, which search does not read, until `--delete-old` removes it
-(a memory row's vector follows its sensitivity label). `loom reembed --in-database` runs
-the embedding inside ClickHouse and cannot check the text, so it re-embeds such a turn
-too.
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as a credential is
+stored as written with no vector, and its text is never sent to the embedder. Every read
+that ranks passages reads only those with a vector (`embedding_dim > 0`), so no search leg
+returns it.
+
+- Chunk writers: a verbatim chunk in `loom.memory_chunks` (a conversation chunk
+  `memory.set_from_messages` writes, a chunk of a long `memory.set` value, a chunk
+  `memory.import_evidence` writes) is held this way. Chunks overlap and can be cut through
+  a key, and a chunk that holds only a key's head or tail does not read as one on its own.
+  The conversation and long-value writers check the whole text once and also hold every
+  chunk whose character range overlaps a credential. `memory.import_evidence` joins each
+  chunk with every chunk of its session at the next `chunk_index`, the overlap the second
+  repeats from the first dropped (a repeat of at least 50 characters; chunks with no
+  overlap are joined whole). A session written twice holds two chunks at an index, and
+  every pair is read. The check reads one call's chunks only (at most 256), so a key cut
+  at the boundary between the last chunk of one call and the first chunk of the next
+  reads as a credential in neither, and both chunks are embedded; an importer that sends
+  a session's chunks in one call, or splits them where no key is cut, avoids it.
+  `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it leaves out
+  one that reads as a credential, and audits a key read of either. This holds for a chunk
+  of a long `memory.set` value whatever its row's label; a `low` row stays findable
+  through its own embedding.
+- Digests and turns: a session digest whose text reads as a credential is written without
+  a vector. A `conversation.append` turn that reads as one is stored as written in
+  `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
+  out of vector search. `conversation.save_message` answers `reason:
+"reads_as_credential"` for such a turn, so the saved search never holds it.
+- Compaction: `conversation.compact` leaves such a turn out of its window: it stays live
+  and is never sent to the summarizer. A summary that reads as a credential anyway is
+  refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window
+  stays the same while its turns are live, so a retry most likely gets the same refusal.
+- Provider rebuild: a chunk, digest or turn embedding stored without a vector is staged
+  without one, so a chunk its writer held as part of a cut key stays held whichever page
+  its neighbours land on; a failed embed stays empty too, until a write replaces the row.
+  One that an earlier build embedded and whose text reads as a credential is staged
+  without a vector. Verification reads the text of every row left empty whose source held
+  a vector and accepts those that read as a credential.
+- `loom reembed` re-embeds only rows that have a vector, and keeps a conversation turn
+  that reads as a credential on its old model, which search does not read, until
+  `--delete-old` removes it (a memory row's vector follows its sensitivity label).
+  `loom reembed --in-database` runs the embedding inside ClickHouse and cannot check the
+  text, so it re-embeds such a turn too.
 
 Chunks, digests and turn embeddings that an earlier build embedded keep their vector, so
 the reads that serve passages check their text too. That check reads each passage's own

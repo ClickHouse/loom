@@ -11,7 +11,7 @@ from server.insights.store.provider_verify import (
     verify_live_key_uniqueness,
     verify_reembedded_target,
 )
-from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
+from tests.unit._fake_credentials import AWS_KEY_ID
 
 
 def _verification(table: str = "memory_embeddings"):
@@ -152,62 +152,6 @@ async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monk
     assert count == 3
     afters = [c.args[1].get("after") for c in client.query_all.await_args_list]
     assert afters == [0, None, 5, None]
-
-
-def _split_chunks() -> list[str]:
-    from server.memory.app.chunk_projection import chunk_text_with_ranges
-
-    text = ("plain words here " * 60)[:784] + f" {OPENAI_KEY} " + "more plain words " * 60
-    chunks, _, _ = chunk_text_with_ranges(text, max_chunks=64)
-    return [c for c, _, _ in chunks]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("emptied", "verifies"), [([0, 1], True), ([0, 2], False)])
-async def test_an_emptied_memory_chunk_verifies_when_it_holds_part_of_a_split_key(
-    emptied, verifies
-):
-    """The first chunk holds only the key's head, which reads as plain text: it is accepted
-    empty because its session's chunks, joined, hold the key. The third holds none of it."""
-    args, client, result = _verification("memory_chunks")
-    result["emptied"] = len(emptied)
-    contents = _split_chunks()
-    ordinals = [4 + i for i in emptied]
-    client.query_all.side_effect = [
-        [{"ordinal": o, "emptied": [True, False]} for o in ordinals],
-        [
-            {"ordinal": 4 + i, "text": contents[i], "has_vector": [True, True], "live": True}
-            for i in emptied
-        ],
-        [
-            {
-                "ordinal": 4 + i,
-                "org": "o",
-                "namespace": "n",
-                "session_id": "s",
-                "chunk_index": i,
-                "content": c,
-            }
-            for i, c in enumerate(contents)
-        ],
-    ]
-    if verifies:
-        count = await verify_reembedded_target(
-            *args, model="target", dimensions=3, text_column="content", ch=client
-        )
-        assert count == 3
-    else:
-        with pytest.raises(ValueError, match="failed verification"):
-            await verify_reembedded_target(
-                *args, model="target", dimensions=3, text_column="content", ch=client
-            )
-    session_sql, params = client.query_all.await_args_list[2].args
-    assert (
-        "(org, namespace, session_id) IN" in session_sql and "isNull(tombstoned_at)" in session_sql
-    )
-    from server.memory.domain.sensitivity import reads_high
-
-    assert params == {"ordinals": [4 + i for i in emptied if not reads_high(contents[i])]}
 
 
 @pytest.mark.asyncio

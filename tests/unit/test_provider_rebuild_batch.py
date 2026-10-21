@@ -239,45 +239,43 @@ async def test_a_memory_row_is_rebuilt_whatever_its_text(target):
     assert result[0]["embedding_dim"] == 2
 
 
-def _without_vector(table: str, text: str) -> dict:
+def _without_vector(table: str, text: str, stored: list[float] | None = None) -> dict:
+    """A row stored with no vector: empty, or the all-zero placeholder `stored`."""
     row = {**row_for(table), TEXT_COLUMNS[table]: text, "embedding_dim": 0}
     for surface in EMBEDDING_SURFACES:
         if surface.table == table:
-            row[surface.column] = []
+            row[surface.column] = stored or []
     return row
 
 
 @pytest.mark.asyncio
-async def test_a_plain_memory_chunk_stored_without_a_vector_is_embedded_again(target):
-    # Left empty by an earlier rebuild that ran while its org's model calls were off.
-    row = _without_vector("memory_chunks", "source text")
-    result = (await rebuild_batch("memory_chunks", [row], target))[0]
-    target.embed_many.assert_awaited_once_with(["source text"])
-    assert result["embedding_dim"] == 2
+@pytest.mark.parametrize("table", sorted(PASSAGE_TABLES))
+@pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
+async def test_a_plain_passage_stored_without_a_vector_stays_without_one(table, stored, target):
+    # The write path may have held it, or its embed failed: a rebuild never sends it.
+    row = _without_vector(table, "source text", stored)
+    result = (await rebuild_batch(table, [row], target))[0]
+    target.embed_many.assert_not_awaited()
+    assert result["embedding_dim"] == 0
 
 
 @pytest.mark.asyncio
-async def test_memory_chunks_cut_through_a_key_are_rebuilt_without_a_vector(target):
+async def test_memory_chunks_cut_through_a_key_stay_without_a_vector_on_separate_pages(target):
     from server.memory.app.chunk_projection import chunk_text_with_ranges
     from server.memory.domain.sensitivity import reads_high
 
     text = ("plain words here " * 60)[:784] + f" {OPENAI_KEY} " + "more plain words " * 60
     chunks, _, _ = chunk_text_with_ranges(text, max_chunks=64)
     contents = [c for c, _, _ in chunks]
-    assert not reads_high(contents[0])  # only the key's head
+    assert len(contents) == 3 and not reads_high(contents[0])  # only the key's head
+    # Stored as the write path leaves them: the two halves without a vector.
     rows = [
         {**row_for("memory_chunks"), "chunk_index": i, "content": c}
-        for i, c in reversed(list(enumerate(contents)))
+        if i == 2
+        else {**_without_vector("memory_chunks", c), "chunk_index": i}
+        for i, c in enumerate(contents)
     ]
-    result = await rebuild_batch("memory_chunks", rows, target)
-    assert [r["embedding_dim"] for r in result] == [2, 0, 0]
+    first_page = await rebuild_batch("memory_chunks", rows[:1], target)
+    second_page = await rebuild_batch("memory_chunks", rows[1:], target)
+    assert [r["embedding_dim"] for r in first_page + second_page] == [0, 0, 2]
     target.embed_many.assert_awaited_once_with([contents[2]])
-
-
-@pytest.mark.asyncio
-async def test_a_turn_whose_embed_failed_is_embedded_by_a_rebuild(target):
-    # A failed conversation.append embed keeps the plain excerpt and no vector.
-    row = _without_vector("conversation_embeddings", "source text")
-    result = (await rebuild_batch("conversation_embeddings", [row], target))[0]
-    target.embed_many.assert_awaited_once_with(["source text"])
-    assert result["embedding_dim"] == 2
