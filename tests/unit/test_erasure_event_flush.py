@@ -6,9 +6,12 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from server.erasure.store import steps_ledgers as steps
 from server.observability import events_stream as stream
+from server.settings import settings
+from server.settings.catalog import ErasureSettings
 
 
 @pytest.fixture
@@ -133,7 +136,7 @@ async def test_a_failed_telemetry_insert_leaves_nothing_to_reappear(event_store,
 
 @pytest.mark.asyncio
 async def test_erasure_times_out_without_losing_its_pending_event(event_store, monkeypatch):
-    monkeypatch.setattr(steps, "_EVENT_DRAIN_S", 0.01)
+    monkeypatch.setattr(settings, "erasure_event_drain_timeout_s", 0.01)
     _record()
     with pytest.raises(TimeoutError):
         await _erase("namespace")
@@ -183,3 +186,9 @@ def test_flushes_can_contend_on_successive_event_loops(event_store):
     asyncio.run(contend())
     asyncio.run(contend())
     assert len(event_store.rows) == 2
+
+
+@pytest.mark.parametrize("seconds", [0, -1, float("inf"), float("-inf"), float("nan")])
+def test_event_drain_timeout_is_positive_and_finite(seconds):
+    with pytest.raises(ValidationError, match="erasure_event_drain_timeout_s"):
+        ErasureSettings(erasure_event_drain_timeout_s=seconds)

@@ -424,6 +424,7 @@
  "entity_extract_interval_seconds": 60,
  "entity_extract_recent_seconds": 7200,
  "entity_heal_interval_seconds": 900,
+ "erasure_event_drain_timeout_s": 5.0,
  "erasure_mutation_wait_s": 3600,
  "erasure_reclaim_enabled": true,
  "erasure_reclaim_interval_seconds": 3600,

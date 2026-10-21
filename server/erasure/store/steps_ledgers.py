@@ -22,10 +22,9 @@ from server.erasure.store.predicates import (
     UID,
 )
 from server.observability import events_stream
+from server.settings import settings
 
 log = logging.getLogger(__name__)
-
-_EVENT_DRAIN_S = 5.0  # bound the wait for this replica's buffered telemetry
 
 # ---------------------------------------------------------------------------
 # Steps for the ledger, trace and queue tables. Every `loom.*` table is a census row,
@@ -212,7 +211,9 @@ async def _delete_events(
     org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
 ) -> int:
     # A timer may have popped a batch already: wait for its insert before counting.
-    await asyncio.wait_for(events_stream.flush_now(), timeout=_EVENT_DRAIN_S)
+    await asyncio.wait_for(
+        events_stream.flush_now(), timeout=settings.erasure_event_drain_timeout_s
+    )
     return await delete_scoped(
         "loom.events", org=org, scope_where=scope_where, params=params, ch=ch
     )

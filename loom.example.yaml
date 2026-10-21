@@ -2151,6 +2151,10 @@ settings:
   # polled in system.mutations); past it the saga fails naming the mutation. [restart]
   # erasure_mutation_wait_s: 3600
 
+  # Seconds erasure waits for this replica's buffered events before deleting them; a
+  # timeout leaves the saga retryable. Must be positive and finite. [restart]
+  # erasure_event_drain_timeout_s: 5.0
+
   # --- external erasure backends ---
 
   # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse

@@ -1728,6 +1728,9 @@ class ErasureSettings(BaseModel):
     # mutations_sync=0, polled in system.mutations); past it the saga fails
     # naming the mutation.
     erasure_mutation_wait_s: int = 3600
+    # Seconds erasure waits for this replica's buffered events before deleting them;
+    # a timeout leaves the saga retryable. Must be positive and finite.
+    erasure_event_drain_timeout_s: float = Field(default=5.0, gt=0, allow_inf_nan=False)
 
     # ---- external erasure backends ----
     # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse

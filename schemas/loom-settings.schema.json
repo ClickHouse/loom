@@ -2301,6 +2301,12 @@
           "type": "integer",
           "description": "Seconds between the entity extractor's mirror divergence heal, a FINAL-to-FINAL join of loom.memory and loom.memory_embeddings (343 GB/day if run every pass). Divergence arrives a few rows a day."
         },
+        "erasure_event_drain_timeout_s": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds erasure waits for this replica's buffered events before deleting them; a timeout leaves the saga retryable. Must be positive and finite."
+        },
         "erasure_mutation_wait_s": {
           "default": 3600,
           "type": "integer",
