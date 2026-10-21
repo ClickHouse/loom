@@ -319,7 +319,8 @@ export function Sidebar() {
             }),
         );
       }
-      if (canCall("memory.auto_retirements", roleHere, whoami)) {
+      // The Review queue shows the Auto-resolved tab only to a role that reaches both.
+      if (canCall("memory.auto_retirements", roleHere, whoami) && canCall("audit.list", roleHere, whoami)) {
         tasks.push(
           // Whether the Auto-resolved tab has a row (`hasAutoResolved` says what it reads).
           // Shared with the Review queue page, which asks the same question.
