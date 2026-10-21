@@ -719,7 +719,8 @@ it. Chunks overlap and can be cut through a key, so the conversation and long-va
 writers check the whole text once and also hold every chunk whose character range
 overlaps a credential: a chunk that holds only a key's head or tail does not read as one
 on its own. `memory.import_evidence` checks each session's imported chunks the same way, joined in
-`chunk_index` order with the overlap each chunk repeats from the one before it dropped. The
+`chunk_index` order with the overlap each chunk repeats from the one before it dropped (a
+repeat of at least 50 characters; chunks with no overlap are joined whole). The
 check reads one call's chunks only (at most 256), so a key cut at the boundary between the
 last chunk of one call and the first chunk of the next reads as a credential in neither, and
 both chunks are embedded; an importer that sends a session's chunks in one call, or splits

@@ -235,6 +235,34 @@ def test_credential_spans_map_an_escaped_match_back_to_the_text() -> None:
     assert text[start:end] == "password=hunter2hunter2"
 
 
+_KEY_HEAD = "the staging account uses " + AWS_KEY_ID[:10]
+_KEY_TAIL = AWS_KEY_ID[10:] + " for uploads"
+
+
+def test_split_credentials_joins_only_neighbouring_chunks_of_one_session() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # A gap in chunk_index: the two chunks were never neighbours, so no key is rebuilt.
+    assert split_credentials([("s", 0, _KEY_HEAD), ("s", 2, _KEY_TAIL)]) == [False, False]
+    # Neighbours: the key cut at the boundary reads as one when joined.
+    assert split_credentials([("s", 0, _KEY_HEAD), ("s", 1, _KEY_TAIL)]) == [True, True]
+    # Chunks of another session that share an index are never joined with this one's.
+    assert split_credentials([("a", 0, _KEY_HEAD), ("b", 1, _KEY_TAIL), ("b", 0, _KEY_HEAD)]) == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_split_credentials_keeps_a_boundary_character_that_only_happens_to_repeat() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # Imported chunks with no overlap: the head ends in "X" and the tail starts with one.
+    key = "AKIA" + "IOSFOX" + "XN7EXAMPLE"
+    head, tail = "the staging account uses " + key[:10], key[10:] + " for uploads"
+    assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
+
+
 @pytest.mark.asyncio
 async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,

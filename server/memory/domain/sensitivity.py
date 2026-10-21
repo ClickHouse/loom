@@ -281,8 +281,12 @@ def _overlap(previous: str, chunk: str) -> int:
     chunk repeats from the one before it (`chunk_shape.CHUNK_OVERLAP`, less the whitespace a chunk
     is trimmed of). The chunker repeats at most that many characters; the search
     stops at twice that, a margin that still keeps the scan short and leaves a longer
-    repeated run as new text."""
-    for size in range(min(len(previous), len(chunk), 2 * chunk_shape.CHUNK_OVERLAP), 0, -1):
+    repeated run as new text. A match shorter than half the overlap is a coincidence,
+    not a repeat (an imported chunk need not overlap at all), so it counts as none and
+    the boundary keeps every character."""
+    longest = min(len(previous), len(chunk), 2 * chunk_shape.CHUNK_OVERLAP)
+    shortest = chunk_shape.CHUNK_OVERLAP // 2
+    for size in range(longest, shortest - 1, -1):
         if previous.endswith(chunk[:size]):
             return size
     return 0
