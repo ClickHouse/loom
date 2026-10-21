@@ -100,6 +100,7 @@ the same routes), and the curated `agent.deployment` methods over them.
 | `POST /v1/admin/bots.create` | `platform_admin` | Register a bot. |
 | `POST /v1/admin/bots.disable` | `platform_admin` | Disable a bot: its proofs are refused and the tokens it holds revoked. |
 | `POST /v1/admin/bots.list` | `platform_admin` | Every registered bot: its namespaces and roles, key or issuer, and limits. |
+| `POST /v1/admin/bots.provision_agent` | `platform_admin` | Make the namespace of a trust's agent before its first exchange, as that exchange would, so grants can name the agent first. |
 | `POST /v1/admin/budget.set` | `platform_admin` | Install or clear a per-operation latency-budget override. |
 | `POST /v1/admin/budget.violations` | `platform_admin` | Aggregate recent `budget.violated` events (loom.events) for ops alerting. |
 | `POST /v1/admin/claim_release` | `org_admin` | Release a self-signup claim: revoke its grants, clear the owner, deactivate it; the name stays reserved. |
@@ -114,6 +115,8 @@ the same routes), and the curated `agent.deployment` methods over them.
 | `POST /v1/admin/namespace.adopt` | `org_admin` | Install a new admin on a namespace that has no remaining active admin grant. |
 | `POST /v1/admin/prompts.evaluate` | `platform_admin` | Compute a should-promote verdict for one prompt version. |
 | `POST /v1/admin/ratelimit.set` | `platform_admin` | Install a per-(namespace\|org) rate-limit override. |
+| `GET /v1/admin/revocations` | `platform_admin` | The unexpired revocations, newest first, at most `limit` (1000 by default); `?subject=` narrows them to one subject's own row, an operator cutoff's and SCIM's, `?since=` to those written since (see `loom revoke-token --list`). |
+| `POST /v1/admin/revoke_subject` | `platform_admin` | Revoke every token and sign-in session of a subject, in every org and for good, and list the tokens it made revoked (see `loom revoke-token --subject`). |
 | `GET /v1/admin/schema.status` | `platform_admin` | Report the gap between what migrations expect and what's in CH. |
 | `POST /v1/admin/settings.history` | `platform_admin` | The recorded changes of one setting, or of every setting, newest first: who made each, the value before and after. |
 | `POST /v1/admin/settings.list` | `platform_admin` | Every setting with its value in force in this process, its default, where the value came from (override, dashboard, env, env_file, settings_file, inferred, default) and whether it is live. |
@@ -207,7 +210,7 @@ each gate and the handler do.
 | response  | `Retry-After`                                 | Seconds to wait, on `429 RATE_LIMITED`, `503 OVERLOADED` and `503 AUTH_UNAVAILABLE`.                                                            |
 | response  | `X-Loom-Traffic-Class`                        | The traffic class the call ran as and where it came from, `<class>;source=<source>`.                                                            |
 | response  | `X-Idempotent-Replay: true`                   | The body is a stored replay, not a fresh execution.                                                                                             |
-| response  | `X-Loom-Ignored-Args`                         | Body keys the op does not read (see below).                                                                                                     |
+| response  | `X-Loom-Ignored-Args`                         | Body keys the op did not apply: fields the op itself declined, then keys it does not read (see below).                                          |
 | response  | `X-Loom-Hint` / `X-Loom-Hint-Code`            | Advice about how the caller uses Loom, when one applies to this call. The body is unchanged; the SDKs log it once per distinct text.            |
 | response  | `X-Trace-Id`                                  | The OpenTelemetry trace id of the call, when tracing is on.                                                                                     |
 
@@ -221,8 +224,8 @@ policy exposes when `LOOM_CORS_ORIGINS` is set: `X-Request-Id`,
 Input models ignore keys they have no field for, so Loom names them instead of
 dropping them silently (`server/transport/arg_check.py`):
 
-- A successful response carries `ignored_args` (the unread top-level keys) and,
-  when one is a near miss for a real field, `did_you_mean`
+- A successful response carries `ignored_args` (the top-level keys the op did
+  not apply) and, when one is a near miss for a real field, `did_you_mean`
   (`{"namepsace": "namespace"}`). The identity keys (`org`, `namespace`,
   `agent`, `user_id`, `session_id`, `run_id`), `consumer`, `traffic_class`,
   `explain` and the idempotency keys are never reported.
@@ -232,6 +235,10 @@ dropping them silently (`server/transport/arg_check.py`):
   write it would have made is not the one asked for.
 - A field removed from the wire is treated as unknown: served, and named in
   `ignored_args`, so an older client keeps running without the feature.
+- An op may report a field it reads but did not apply. That field is listed
+  first in `ignored_args` and in the header, before the unread keys.
+  `memory.set_from_messages` does this for `agent_learnings=true` while
+  `memory_extract_agent_learnings` is off.
 
 Operations and fields can change between releases. Nothing keeps a registry of removed
 fields: `ignored_args` is how a client finds out that the server no longer reads something it

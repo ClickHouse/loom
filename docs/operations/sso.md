@@ -238,9 +238,21 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   namespace for good (that agent is refused after). An agent the control
   plane retires keeps its namespace and data until you release or erase it.
 
+  An agent's namespace exists from its first exchange. To grant the agent
+  something before then, such as a namespace a control plane attaches as it
+  creates the agent, a platform admin makes it ahead:
+  `loom call /v1/admin/bots.provision_agent --data '{"name":"fleet","agent":"a"}'`
+  makes `fleet-a` as that exchange would (the trust's mark, the agent as its
+  one owner, counted against `--max-agents`) and answers its org, namespace
+  and subject (`sa:fleet:a`). It audits `auth.agent_provisioned` with the
+  admin as actor, makes no namespace the trust would refuse, and a repeat
+  changes nothing; the agent's first exchange takes the namespace as its own.
+
   Every trust bounds what it takes: a workload token living longer than
   `--max-token-age` seconds (exp less iat, default 3600) is refused, an agent
-  trust makes at most `--max-agents` agents (default 1000), and a trust needs
+  trust holds at most `--max-agents` live agents (default 1000; a released
+  agent's namespace gives its place back, though its name is never made again),
+  and a trust needs
   one claim with an exact value besides `iss`, `aud`, `exp`, `iat`, `nbf` and
   `jti`, which every token its issuer signs for Loom carries. Two trusts of one
   issuer that a single token could meet, one of them telling agents apart, are
@@ -326,7 +338,8 @@ of the above, so they do not stop with someone's offboarding.
   its next provisioning run (Okta when the person is deactivated, Entra within
   its cycle), and Loom revokes the person and every token they made. Without it,
   revoke the person when offboarding, which ends every token they made too:
-  `loom revoke-token --subject <their subject>`.
+  `loom revoke-token --subject <their subject>`, or
+  [`POST /v1/admin/revoke_subject`](#deprovisioning-without-scim) from anywhere.
 - Every sign-in, device approval and denial, MCP consent, JIT account and
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
@@ -557,6 +570,87 @@ What happens to the old account:
 - An account made at an SSO sign-in has no command to move it: the person's
   first sign-in with the new address makes a new account. Grant it the old
   account's namespaces; the old account and its data stay, revoked.
+
+## Deprovisioning without SCIM
+
+A system that knows when a person leaves, such as a control plane that also
+issues their sign-in, revokes them over the admin API instead. A platform admin
+sends:
+
+```bash
+loom call /v1/admin/revoke_subject --data \
+  '{"org":"acme","subject":"lee@acme.io","reason":"left","issued_before":"2026-01-31T12:00:00Z"}'
+```
+
+Loom revokes the subject and every spelling the org's directory ties to it, the
+same pairing grants are read under: an email reaches the login handle of the
+account it signs in to (an SSO account's subject is its namespace, `u-…`), and a
+handle reaches its email. For each, every token whose subject it is, every token
+it made or that descends from one of its tokens, and every refresh of its sign-in
+sessions are refused at once by the process that took the request, and by every
+other process at its next revocation refresh. Every mint reads revocations from
+ClickHouse, so a sign-in, a device approval or an MCP connect for it gets no token
+either. The service accounts and MCP tokens it ends show as revoked in the Tokens
+list, by `admin:<you>`, and their names are free again, as after a SCIM
+deactivation. The accounts, their grants and their data stay; this is not
+erasure.
+
+`issued_before` (RFC 3339, with its offset) limits the revocation to what was
+issued before that instant, for good: a platform deprovisioning someone sends the
+current time, so that if the person is invited back later, their next sign-in, a
+new device approval or a new MCP connect works. Loom takes the instant to its next
+second, plus the 5 s replica clocks may differ by, so nothing issued before it on
+any replica survives; a token issued in those few seconds after it is refused too.
+An instant ahead of the server's clock counts as now, so a caller's clock running
+ahead never sets a cutoff that refuses sign-ins still to come. Without
+`issued_before` the revocation is outright, as `loom revoke-token --subject`
+writes it: every token of the subject, issued before or after, is refused for
+good, which is the form for a permanent ban. A request never weakens what the
+subject already has. A cutoff is recorded beside the subject's own revocation (as
+an operator cutoff, `kind: cutoff` in the list below) and only ever moves later,
+so an outright revocation stays in force, a time-boxed one
+(`loom revoke-token --expires-at`) until it lapses, and the cutoff holds after
+that; an outright request leaves a revocation that is already outright for good
+as it is.
+
+```json
+{
+  "subjects": ["lee@acme.io", "u-lee-1a2b3c4d"],
+  "org": "acme",
+  "revoked_at": "2026-01-31T12:00:00",
+  "reason": "left",
+  "issued_before": "2026-01-31T12:00:06Z",
+  "outright": [],
+  "sessions": 2,
+  "tokens": 3
+}
+```
+
+`issued_before` in the answer is the cutoff now in force for the subjects not
+revoked outright, the earliest when theirs differ: the one the request asked for,
+or a later one an earlier request set; it is `null` for an outright request, and
+when every subject is revoked outright. `outright` names the subjects refused
+outright now: all of them after an outright request, and after a cutoff those an
+outright revocation (their own, time-boxed or not, or SCIM's) still holds. `sessions` counts the sign-in sessions of those subjects the revocation
+ends (each refreshed before the cutoff), and `tokens` the tokens they made,
+directly or through their tokens, that it ends. A subject is a name, not an
+org's, so the revocation holds in every org; `org` picks the directory the
+spellings come from and the audit log each `token.revoked` row lands in, and an
+end user's subject, `<org>/user:<id>`, must name its own org. When the directory
+cannot be read, nothing is revoked and the request fails. A repeat answers the
+same and writes nothing more, so a caller retries until it gets a 200; a failure
+after the revocations landed (marking the tokens did not finish) is finished by
+the retry.
+
+`GET /v1/admin/revocations?subject=<subject>` lists a subject's revocations:
+its own, an operator cutoff's and SCIM's (`kind`). Without `subject` it lists
+every unexpired one, as `loom revoke-token --list` does, newest first; `since`
+(RFC 3339) keeps those written since, and `limit` (1 to 10000, default 1000)
+bounds the answer. The Python SDK passes them as
+`agent.deployment.routes.revocations(params={"subject": ...})`. To let a person
+revoked outright back in, narrow the revocation rather than remove it: with
+`loom revoke-token --subject <it> --issued-before <now>`, tokens made from then
+on work and everything from before stays dead.
 
 ## Behind a proxy
 

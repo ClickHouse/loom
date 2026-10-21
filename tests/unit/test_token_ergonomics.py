@@ -5,7 +5,7 @@ revoked by name, and an unreachable server is named in the error.
   a 0700 `~/.loom`, prints the path and never the token; without `--save`
   stdout is still the bare token.
 - `loom revoke-token --jti|--subject` goes through `server.auth.revocation`
-  (one insert, then the snapshot refresh) so `is_revoked` flips at once;
+  (one insert and a local snapshot update) so `is_revoked` flips at once;
   `--list` prints the unexpired rows.
 - The Python SDK raises `BackendUnavailable("cannot reach <base_url>: …",
   code="NETWORK")` for a connection or timeout failure instead of leaking the
@@ -155,8 +155,7 @@ def test_ttl_help_recommends_an_expiry_without_changing_the_default(
 
 
 class _FakeCH:
-    """The calls the revoke path makes, with `query_all` answering from
-    what `insert` wrote, so the snapshot refresh sees the new row."""
+    """Capture revocation and audit writes, and answer revocation list reads."""
 
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
@@ -186,6 +185,9 @@ class _FakeCH:
 
 @pytest.fixture
 def fake_ch(monkeypatch: pytest.MonkeyPatch) -> _FakeCH:
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)
     ch = _FakeCH()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     # audit binds get_client at import, so the module attribute is patched too.
@@ -213,9 +215,6 @@ def test_revoke_by_jti_goes_through_the_module_and_flips_is_revoked(
     # No exp on the token → the row outlives it by years, inside the TTL's range.
     assert timedelta(days=3000) < row["expires_at"] - row["revoked_at"]
     assert row["expires_at"] < datetime(2106, 1, 28)  # inside the TTL's DateTime range
-    # The insert was followed by the snapshot refresh — the cache is invalid
-    # the moment the command returns, not on the next worker tick.
-    assert any("FROM loom.revoked_tokens FINAL" in q for q in fake_ch.queries)
     assert revocation.is_revoked("abc-123")
     assert fake_ch.connected == 1 and fake_ch.disconnected == 1
     out, err = capsys.readouterr()

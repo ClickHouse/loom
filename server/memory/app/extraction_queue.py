@@ -73,15 +73,20 @@ ENQUEUED_BY_KEY = "enqueued_by"
 # The request's resolved read scope, so the replay's lookups stay inside it as
 # the inline call's would. Stamped by the server like `enqueued_by`.
 READ_SCOPE_KEY = "read_filters"
+# The agent a filed assistant rule is for, resolved from the enqueuing token
+# (`agent_rules.request_rule_agent`), so the replay files as the inline
+# call would; '' (or a payload without it) files nothing.
+RULE_AGENT_KEY = "rule_agent"
 
 
 def payload_for(
-    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None
+    input: Any, *, scope: ReadFilters, enqueued_by: str | None = None, rule_agent: str = ""
 ) -> tuple[str, int, int]:
     """Serialize a MemorySetFromMessagesInput for storage: the request minus
     `defer` (the replay must run inline), plus the enqueuing principal
     (`enqueued_by`, else the current request's `writer_actor()`) and the
-    request's resolved read `scope`. Returns (json, messages, chars)."""
+    request's resolved read `scope` and the agent a filed rule is for
+    (`rule_agent`, '' files nothing). Returns (json, messages, chars)."""
     from server.memory.app.provenance import writer_actor
 
     data = input.model_dump(mode="json", exclude={"defer"})
@@ -90,6 +95,7 @@ def payload_for(
     actor = writer_actor() if enqueued_by is None else str(enqueued_by)
     if actor:
         data[ENQUEUED_BY_KEY] = actor
+    data[RULE_AGENT_KEY] = rule_agent
     data[READ_SCOPE_KEY] = {
         "scope": scope.scope,
         "user_id": scope.user_id,
@@ -107,13 +113,16 @@ def enqueued_actor(row: dict[str, Any]) -> str:
         return ""
 
 
-async def enqueue(input: Any, *, scope: ReadFilters, ch: Any | None = None) -> str:
-    """Persist one deferred set_from_messages request. Returns the queue_id
-    the caller can poll with `memory.extraction_status`."""
+async def enqueue(
+    input: Any, *, scope: ReadFilters, rule_agent: str = "", ch: Any | None = None
+) -> str:
+    """Persist one deferred set_from_messages request, with the agent a rule it
+    files is for ('' files nothing). Returns the queue_id the caller can poll with
+    `memory.extraction_status`."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
-    payload, n_msgs, chars = payload_for(input, scope=scope)
+    payload, n_msgs, chars = payload_for(input, scope=scope, rule_agent=rule_agent)
     now = _now()
     qid = uuid.uuid4().hex
     row = {
@@ -422,6 +431,7 @@ __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
     "READ_SCOPE_KEY",
+    "RULE_AGENT_KEY",
     "STATUS_DONE",
     "STATUS_FAILED",
     "STATUS_PENDING",
@@ -444,6 +454,7 @@ def rebuild_input(row: dict[str, Any]) -> Any:
     data["defer"] = False
     data.pop(ENQUEUED_BY_KEY, None)  # server stamps, not request fields
     data.pop(READ_SCOPE_KEY, None)
+    data.pop(RULE_AGENT_KEY, None)
     return MemorySetFromMessagesInput.model_validate(data)
 
 
@@ -479,6 +490,12 @@ def replay_actor(row: dict[str, Any]) -> str:
     return enqueued_actor(row) or _prov.EXTRACTION_WORKER_ACTOR
 
 
+def queued_rule_agent(row: dict[str, Any]) -> str:
+    """The rule agent stored at enqueue time; '' (nothing is filed) for a row
+    that stored none."""
+    return str(json.loads(row["payload"]).get(RULE_AGENT_KEY) or "")
+
+
 async def replay_row(row: dict[str, Any]) -> int:
     """Run one queued request through the inline handler under the enqueuer's
     principal and read scope; returns memories written."""
@@ -492,5 +509,7 @@ async def replay_row(row: dict[str, Any]) -> int:
         read_filters_bound(None, replay_scope(row)),
         customer.for_org(str(row.get("org") or "")),
     ):
-        out = await handle_memory_set_from_messages(rebuild_input(row))
+        out = await handle_memory_set_from_messages(
+            rebuild_input(row), rule_agent=queued_rule_agent(row)
+        )
     return len(out.written)

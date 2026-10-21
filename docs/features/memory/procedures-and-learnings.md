@@ -189,31 +189,65 @@ with `memory.search(memory_type="reflection")`.
 
 ## Learnings review queue
 
-No worker files candidates into the queue; it stays empty unless your process writes to
-`loom.learnings_queue`.
-
 A learning is a candidate fact with its supporters (`supporter_count`, `supporters`,
 `confidence_avg`, `rationale`, `source_kind`), waiting for a person to decide. Loom
-records the reviewer's choice and never makes it.
+records the reviewer's choice and never makes it. Any candidate other than a bot's rule
+(below) is written by your own process to `loom.learnings_queue`.
 
-| Op                  | Role   | Does                                                                                                               |
-| ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                           |
-| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone), `knowledge` or `both`. |
-| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                          |
+Extraction files one kind of candidate itself. With assistant-turn learnings on
+(`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`, off by default), a rule a bot states about its
+own behaviour in a conversation becomes an `assistant_turn` candidate for that agent
+(`agent`), never a memory ([extraction](./extraction.md#rules-the-assistant-states-about-itself)). The candidate
+row holds the rule and no user's words. Each session that states the rule adds a row to
+`loom.learnings_supporters` with that user's own quotes. When the candidate is listed,
+`supporter_count` is the distinct end users, `supporter_sessions` the distinct
+sessions, `supporter_writers` the distinct principals that wrote those rows (a token
+not pinned to one user can send any `user_id`, so many users from one writer is one
+source), and the `rationale` the earliest remaining supporter's quotes. Support never
+promotes it; promoting it publishes the rule to the namespace's knowledge, tagged
+`agent:<agent>`. `context.pack` with `include_knowledge`, `memory.stack`, `loom_search`
+and `memory.ask` serve it to that agent's reads for every user and leave it out of other
+agents' reads. Over HTTP, a namespace-wide read (agent `*`, the `memory.ask` default)
+is served every bot's rules, and a read under no agent (`-`, the `loom_search`
+default) is served no rule promoted for a named bot. Over MCP an unnamed `agent` is the
+client's (`claude-code`, ...), so those reads serve that agent's rules. A rule for
+every agent is served to every read. A token pinned to one end user
+(`read_user_id`) acts as the agent it names, never the body's `agent`; any other token,
+an `own_user` token without a pin included, acts as the body's `agent`. A token Loom mints with a
+`read_user_id` pin names no agent, so it files no bot's rule and is served no rule
+promoted for a named bot. `knowledge.search` is not filtered by agent: any agent that
+can read the namespace finds it there.
+
+A user erasure deletes that user's supporter rows, and their quotes with them. A
+candidate left with no supporter is deleted when pending. When decided, it keeps its
+status row with the rule blanked, so a rejected rule never comes back as pending.
+
+`learnings.quality` counts the conversation seeder by default, since it reports
+extraction quality; pass `source_kind="assistant_turn"` for the bot rules.
+
+| Op                  | Role   | Does                                                                                                                                                                                                                                                                                                                                     |
+| ------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `learnings.list`    | viewer | Candidates by `status` (`pending` by default, `promoted`, `rejected`) and `source_kind`.                                                                                                                                                                                                                                                 |
+| `learnings.review`  | admin  | `decision` `promote` or `reject`, with `reason`. `destination`: `memory` (the shared zone for a supporters candidate, a namespace row under the approver's `user_id` for a conversation-seeded fact, the agent's `user_id` '-' row for a bot's rule), `knowledge` or `both`; unset, `knowledge` for a bot's rule and `memory` otherwise. |
+| `learnings.quality` | viewer | Per-namespace pending / promoted / rejected counts and the approve ratio.                                                                                                                                                                                                                                                                |
 
 `learnings.list` and `learnings.review` are HTTP and SDK only (`bot.learnings`). A
-promotion to `memory` goes through the `memory.promote` path, so
+promotion to `memory` carries the candidate id, so
 [`memory.lineage`](./history-and-provenance.md#lineage) traces it back to the candidate.
-Reviewing a decided candidate again is a no-op. Field lists:
+Reviewing a candidate again with the decision it already holds is a no-op; rejecting a
+promoted candidate marks it rejected and leaves what the promotion wrote (delete a
+knowledge promotion's `learning://<candidate_id>` document with `knowledge.delete` to
+stop serving it). A bot's rule whose last supporter was erased answers 404, as a missing
+candidate does. Field lists:
 [operations reference](../../reference/operations.md#learnings).
 
 ## Settings
 
-| Setting                       | Effect                                                                                                |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `LOOM_PROCEDURE_STRIKE_LIMIT` | Consecutive failed runs before quarantine ([Workers](../../reference/configuration.md#workers)).      |
-| `LOOM_REFLECTION_DISTILL_*`   | The reflection distillation worker ([Consolidation](../../reference/configuration.md#consolidation)). |
+| Setting                               | Effect                                                                                                                                                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_PROCEDURE_STRIKE_LIMIT`         | Consecutive failed runs before quarantine ([Workers](../../reference/configuration.md#workers)).                                                                |
+| `LOOM_REFLECTION_DISTILL_*`           | The reflection distillation worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                           |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` | Off by default: extraction files the assistant's rules about itself as `assistant_turn` candidates ([Extraction](../../reference/configuration.md#extraction)). |
 
 ## Limits
 
@@ -228,5 +262,6 @@ Reviewing a decided candidate again is a no-op. Field lists:
 - [Runs](../runs.md): `run.complete`, `memories_used` and reflections.
 - [Working memory and profiles](./working-memory-and-profiles.md): how `context.pack`
   shows procedures.
-- [Namespaces and sharing](../namespaces-and-sharing.md): the shared zone learnings
-  promote into.
+- [Namespaces and sharing](../namespaces-and-sharing.md): the shared zone a supporters
+  candidate promotes into.
+- [Knowledge](../knowledge.md): where a bot's rule promotes by default.

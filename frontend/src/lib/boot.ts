@@ -46,24 +46,27 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
   }
 }
 
-/** The token a login link carries in its `#token=` fragment, or null. A
- *  fragment never reaches the server or its logs; a `?token=` query does, so it
- *  is not accepted. Both are scrubbed from the address bar (and history) so a
- *  token never lingers in a copied link. */
-export function takeLinkToken(): string | null {
+/** The session key for where a single sign-on started, `{ path, at }`: the sign-in gate
+ *  writes it, and the return to it (`lib/linkToken.ts`) reads it. */
+export const SIGN_IN_FROM = "loom_sign_in_from_v1";
+
+/** Accept fragment tokens only; scrub both token forms before boot can fail.
+ * Query tokens reach server logs and are never accepted. */
+export function takeLinkToken(): { token: string | null; atRoot: boolean } | null {
   const { hash, search, pathname } = window.location;
   const fromHash = hash.startsWith("#token=");
   const query = new URLSearchParams(search);
   if (!fromHash && !query.has("token")) return null;
   query.delete("token");
   const qs = query.toString();
-  history.replaceState(null, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
-  if (!fromHash) return null;
+  history.replaceState(history.state, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
+  let token: string | null = null;
   try {
-    return decodeURIComponent(hash.slice("#token=".length)) || null;
+    token = fromHash ? decodeURIComponent(hash.slice("#token=".length)) || null : null;
   } catch {
-    return null;
+    /* a fragment that does not decode carries no token */
   }
+  return { token, atRoot: fromHash && !qs && (pathname === "/" || pathname === "/me") };
 }
 
 /** Namespace kinds from the last membership answer this browser saw, so a

@@ -122,6 +122,18 @@ schema. These rules keep that safe. The operator procedure is in
     day's part once its last row is 3 days old). Rolling forward again, N's worker sends
     none of an erased user's events, because it skips an event whose key has no history
     left in `loom.memory_versions`, which every build's erasure deletes.
+15. **Assistant-turn learnings** (`memory_extract_agent_learnings`): N-1 does not
+    erase `loom.learnings_supporters`, where a user's quotes behind a bot's rule live,
+    and on `learnings.review` it promotes an `assistant_turn` candidate as the
+    approver's own memory. Turn the setting on, and review `assistant_turn` candidates,
+    only once no N-1 replica serves. Before a rollback, turn it off and delete the rows
+    of `loom.learnings_supporters` and the `assistant_turn` rows of
+    `loom.learnings_queue`
+    ([extraction](../features/memory/extraction.md#rules-the-assistant-states-about-itself)).
+    N-1 has no per-agent filter on knowledge reads, so after a rollback it serves a
+    promoted bot rule to every agent in the namespace. To keep a rule to its bot,
+    delete the documents tagged `source-kind:assistant_turn` with `knowledge.delete`
+    before the rollback; otherwise accept the wider serving.
 
 ## What checks them
 

@@ -35,8 +35,8 @@ def world(monkeypatch) -> dict[str, Any]:
 
     class _CH:
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
-            if "count()" in sql:
-                return {"n": len(state["rows"])}
+            if "count()" in sql:  # the trust's live agent namespaces
+                return {"n": sum(bool(r.get("active")) for r in state["rows"].values())}
             if "namespace_grants" in sql:
                 return {"x": 1} if (params["ns"], params["who"]) in state["grant_rows"] else None
             return state["rows"].get(params["ns"])

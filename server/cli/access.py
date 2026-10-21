@@ -278,21 +278,47 @@ def _parse_expires_at(value: str | None) -> Any:
     return dt
 
 
-async def _warn_about_a_narrowing(subject: str) -> None:
-    """Say what a cutoff on `subject`'s own row replaces, and what it leaves."""
+def _revocation_floor(current: dict[str, Any]) -> Any:
+    from server.auth import revocation
+    from server.core.datetimes import as_aware_utc, to_naive_utc
+
+    return to_naive_utc(
+        current["issued_before"]
+        or revocation.past_every_token_before(as_aware_utc(current["revoked_at"]))
+    )
+
+
+async def _revise_revocation(
+    subject: str, *, expires_at: Any, issued_before: Any, reason: str, by: str
+) -> dict[str, Any] | None:
+    """Keep previously retired tokens dead when changing a revocation."""
     from server.auth import revocation
 
-    if await revocation.has_outright_row(subject):
-        print(
-            f"  ! {subject!r} is revoked outright; this replaces that, and its tokens "
-            "issued after the cutoff work again",
-            file=sys.stderr,
-        )
-    scim_row = (await revocation.scim_revocations([subject])).get(subject)
-    if scim_row is not None and scim_row["issued_before"] is None:
-        print(
-            f"  ! SCIM also revokes {subject!r} outright, which this leaves: --scim gives it back",
-            file=sys.stderr,
+    async with revocation.subject_change(subject):
+        current = await revocation.stored(subject)
+        if current is not None and revocation.never_lapses(current):
+            if expires_at is not None or (
+                issued_before is not None and issued_before < _revocation_floor(current)
+            ):
+                print(
+                    "  ✗ a permanent revocation cannot expire or restore previously retired tokens",
+                    file=sys.stderr,
+                )
+                return None
+        if issued_before is not None:
+            scim_row = (await revocation.scim_revocations([subject])).get(subject)
+            if scim_row is not None and scim_row["issued_before"] is None:
+                print(
+                    f"  ! SCIM also revokes {subject!r} outright, which this leaves: "
+                    "--scim gives it back",
+                    file=sys.stderr,
+                )
+        return await revocation.revoke(
+            subject,
+            expires_at=expires_at,
+            issued_before=issued_before,
+            reason=reason,
+            revoked_by=by,
         )
 
 
@@ -303,7 +329,6 @@ async def _scim_give_back(
     before `issued_before`. The row written, or None and the exit code."""
     from server.auth import revocation, scim
     from server.core import leases
-    from server.core.datetimes import as_aware_utc, to_naive_utc
 
     try:  # SCIM's own lease on the subject: never amid its lift of it
         async with scim.subject_leases([subject]):
@@ -311,14 +336,7 @@ async def _scim_give_back(
             if current is None:
                 print(f"  ✗ SCIM has not revoked {subject!r}", file=sys.stderr)
                 return None, 1
-            # Earlier would revive tokens SCIM has listed revoked and whose
-            # names are free: a token made under one would hide a live one.
-            # Past every token issued before an outright revocation, on any
-            # replica: its own second, and a clock ahead of the one that wrote it.
-            floor = to_naive_utc(
-                current["issued_before"]
-                or revocation.past_every_token_before(as_aware_utc(current["revoked_at"]))
-            )
+            floor = _revocation_floor(current)
             if issued_before < floor:
                 print(
                     f"  ✗ --issued-before must be at or after {floor.isoformat()}Z: "
@@ -351,13 +369,15 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     minted for S before T, so a token re-minted after the leak keeps working;
     with `--scim` it narrows SCIM's revocation of S instead (a subject a
     deactivation caught that is someone else's), waiting up to 10 s while SCIM
-    changes S. `--list` prints the unexpired revocations."""
+    changes S. `--list` prints the unexpired revocations. A `--subject`
+    revocation with neither `--issued-before` nor `--expires-at` is for good,
+    as `POST /v1/admin/revoke_subject` writes it (`server.auth.subject_revocation`):
+    the tokens the subject made are also listed revoked. Run again, it writes
+    nothing and says the subject is already revoked; the first reason stays."""
     import getpass
 
-    from server.auth import revocation
-    from server.core.principals import is_reserved_subject, org_of_end_user_revocation
-    from server.observability import audit
-    from server.settings import settings
+    from server.auth import revocation, subject_revocation
+    from server.core.principals import org_of_end_user_revocation
 
     try:
         expires_at = _parse_expires_at(args.expires_at)
@@ -371,16 +391,11 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
         return 2
-    subject = args.subject or ""
+    subject = (args.subject or "").strip()
     end_user_org = org_of_end_user_revocation(subject)
-    if is_reserved_subject(subject) and not end_user_org:
-        # No token's sub is a bare principal, and an end user's key is built from
-        # a lowercase id under a named org: any other spelling cuts off no one.
-        print(
-            "  ✗ no token is revoked by that subject; revoke an end user as "
-            "<org>/user:<id>, the id as its issuer signs it (lowercase)",
-            file=sys.stderr,
-        )
+    problem = subject_revocation.refusal(subject) if args.subject is not None else None
+    if problem:
+        print(f"  ✗ {problem}", file=sys.stderr)
         return 2
     if args.scim and (issued_before is None or expires_at is not None):
         print(
@@ -389,65 +404,45 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    for_good = bool(args.subject) and not args.scim and expires_at is None and issued_before is None
 
     async def _run(ch: Any) -> int:
         if args.list:
             return _print_revocations(await revocation.list_active(), as_json=args.json)
-        token_id = args.jti or args.subject
+        token_id = (args.jti or subject).strip()
         by = f"cli:{getpass.getuser()}"
+        kind = "jti" if args.jti else "subject"
+        # A CLI revoke has no request ledger row; its audit row is its only
+        # durable record. A revocation spans every org ('-'), but an end
+        # user's belongs to their org alone.
+        org = end_user_org or "-"
+        counts: dict[str, int] = {}
+        kept = False
         if args.scim:
             row, failed = await _scim_give_back(token_id, issued_before, args.reason or "", by)
             if row is None:
                 return failed
+        elif for_good:
+            done = await _revoke_for_good(token_id, by=by, org=org, reason=args.reason or "")
+            if isinstance(done, int):
+                return done
+            row, kept = done.row, done.kept
+            counts = {"sessions": done.sessions, "tokens": done.tokens}
         else:
-            if issued_before is not None:
-                await _warn_about_a_narrowing(token_id)
-            row = await revocation.revoke(
+            row = await _revise_revocation(
                 token_id,
                 expires_at=expires_at,
                 reason=args.reason or "",
-                revoked_by=by,
+                by=by,
                 issued_before=issued_before,
             )
-        kind = "jti" if args.jti else "subject"
-        # A CLI revoke has no request ledger row; this is its only durable
-        # record. Identifiers only, never token material. A revocation spans
-        # every org ('-'), but an end user's belongs to their org alone.
-        await audit.emit(
-            "token.revoked",
-            org=end_user_org or "-",
-            namespace="-",
-            actor=by,
-            subject={
-                "matched_claim": kind,
-                "token_id": token_id,
-                "scim": args.scim,
-                "issued_before": row["issued_before"],
-                "expires_at": row["expires_at"],
-                "reason": row["reason"],
-            },
-        )
-        if args.json:
-            print(json.dumps({**row, "jti": token_id, "matched_claim": kind}, default=str))
-        else:
-            what = "narrowed SCIM's revocation of" if args.scim else "revoked"
-            print(f"{what} {kind} {token_id!r}", end="")
-            end_user = bool(end_user_org)
-            where = "that org's end user" if end_user else "in every org"
-            if kind == "subject" and issued_before is not None:
-                print(
-                    f" for tokens issued before {issued_before.isoformat()}Z "
-                    f"({where}; a token minted after that stays valid)",
-                    end="",
-                )
-            elif kind == "subject" and end_user:
-                print(" (that org's end user: every token its issuer signs for them)", end="")
-            elif kind == "subject":
-                print(" (every token whose sub is this principal, in every org)", end="")
-            print(
-                f"; other replicas pick it up within "
-                f"{settings.jwt_revocation_cache_ttl_seconds:g} s"
+            if row is None:
+                return 2
+        if not for_good:
+            await subject_revocation.audit_revocation(
+                row, token_id=token_id, kind=kind, by=by, org=org, scim=args.scim
             )
+        _print_revoked(args, row, kind, token_id, end_user_org, issued_before, counts, kept)
         return 0
 
     try:
@@ -455,6 +450,81 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so
         print(f"  ✗ revocation not recorded: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
+
+
+async def _revoke_for_good(subject: str, *, by: str, org: str, reason: str) -> Any:
+    """`revoke-token --subject` for good through the shared steps: the
+    `Revoked`, or the exit code once a failure is said as what it left."""
+    from server.auth import subject_revocation
+
+    try:
+        row, kept = await subject_revocation.record(subject, by=by, reason=reason)
+    except Exception as e:  # noqa: BLE001 — nothing was written, and it must say so
+        print(
+            f"  ✗ revocation not recorded, nothing was written: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        return await subject_revocation.finish(subject, row, kept, by=by, org=org)
+    except Exception as e:  # noqa: BLE001 — the revocation holds; the marking must be finished
+        print(
+            f"  ✗ revoked {subject!r}, but marking the tokens it made revoked did not finish "
+            f"({type(e).__name__}: {e}); run it again to finish",
+            file=sys.stderr,
+        )
+        return 1
+
+
+def _print_revoked(
+    args: argparse.Namespace,
+    row: dict[str, Any],
+    kind: str,
+    token_id: str,
+    end_user_org: str,
+    issued_before: Any,
+    counts: dict[str, int],
+    kept: bool = False,
+) -> None:
+    """What `revoke-token` wrote, as JSON or one line; `counts` are a revocation
+    for good's sessions and tokens, and `kept` says it found one already."""
+    from server.settings import settings
+
+    if args.json:
+        extra = {**counts, "already_revoked": kept} if counts else {}
+        print(json.dumps({**row, "jti": token_id, "matched_claim": kind, **extra}, default=str))
+        return
+    if kept:  # written before, by whoever and for whatever reason it was
+        why = f": {row['reason']}" if row["reason"] else ""
+        print(
+            f"already revoked {kind} {token_id!r} for good, since "
+            f"{str(row['revoked_at'])[:19]} by {row['revoked_by']}{why}; nothing written; "
+            f"{counts['sessions']} sign-in session(s) and {counts['tokens']} token(s) it made "
+            "are refused, those tokens listed revoked"
+        )
+        return
+    what = "narrowed SCIM's revocation of" if args.scim else "revoked"
+    print(f"{what} {kind} {token_id!r}", end="")
+    end_user = bool(end_user_org)
+    where = "that org's end user" if end_user else "in every org"
+    if kind == "subject" and issued_before is not None:
+        print(
+            f" for tokens issued before {issued_before.isoformat()}Z "
+            f"({where}; a token minted after that stays valid)",
+            end="",
+        )
+    elif kind == "subject" and end_user:
+        print(" (that org's end user: every token its issuer signs for them)", end="")
+    elif kind == "subject":
+        print(" (every token whose sub is this principal, in every org", end="")
+        if counts:
+            print(
+                f"; {counts['sessions']} sign-in session(s) and {counts['tokens']} token(s) "
+                "it made end with it, those tokens listed revoked",
+                end="",
+            )
+        print(")", end="")
+    print(f"; other replicas pick it up within {settings.jwt_revocation_cache_ttl_seconds:g} s")
 
 
 def _print_revocations(rows: list[dict[str, Any]], *, as_json: bool) -> int:

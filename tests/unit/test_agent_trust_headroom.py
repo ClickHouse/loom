@@ -1,6 +1,6 @@
 """How far each agent trust is towards its --max-agents: counted as the cap
-counts (every namespace of the trust's org carrying its mark, released ones
-too), for active agent trusts only, and exported per trust."""
+counts (every live namespace of the trust's org carrying its mark; a released
+one does not count), for active agent trusts only, and exported per trust."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def test_the_census_counts_what_the_cap_counts() -> None:
             _trust("gone", active=0),
             _namespace("fleet-a1", ["machine:fleet"]),
             _namespace("fleet-a2", ["machine:fleet", "x"]),
-            _namespace("fleet-a3", ["machine:fleet"], active="false"),  # released: still counted
+            _namespace("fleet-a3", ["machine:fleet"], active="false"),  # released: gives way
             _namespace("fleet-a9", ["machine:fleet"], org="other"),  # another org's
             _namespace("fleet-x", ["machine:fleetwood"]),
             _namespace("team", ["x"]),
@@ -55,7 +55,7 @@ def test_the_census_counts_what_the_cap_counts() -> None:
         f"SELECT * FROM ({otel_probes._AGENT_TRUSTS_SQL}) ORDER BY trust",
     )
     assert rows == [
-        {"org": "acme", "trust": "fleet", "max_agents": 4, "made": 3},
+        {"org": "acme", "trust": "fleet", "max_agents": 4, "made": 2},
         {"org": "acme", "trust": "idle", "max_agents": 10, "made": 0},
     ]
 

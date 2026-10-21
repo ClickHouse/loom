@@ -3548,6 +3548,11 @@
           "type": "boolean",
           "description": "Read-side exposure ledger in loom.memory_exposures: one row per read (token subject, returned keys, query digest never the text, scope) plus an hourly per-actor roll-up. Carries no user content."
         },
+        "memory_extract_agent_learnings": {
+          "default": false,
+          "type": "boolean",
+          "description": "Whether extraction files an assistant's rules about itself as learnings to review; a request can only turn it off. Turn on once every replica's build erases loom.learnings_supporters."
+        },
         "memory_extract_coding_sweep_min_user_turns": {
           "default": 4,
           "type": "integer",

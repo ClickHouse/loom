@@ -161,10 +161,21 @@ export interface LearningEntry {
   memory_key: string;
   memory_type: string;
   proposed_value: unknown;
+  // Supporters behind the candidate; for `assistant_turn`, the distinct end users.
   supporter_count: number;
+  // `assistant_turn` rows: distinct sessions that stated the rule. Absent from a
+  // server a release behind.
+  supporter_sessions?: number;
+  // `assistant_turn` rows: distinct principals that wrote the supporter rows; one
+  // token can send many user_ids. Absent from a server a release behind.
+  supporter_writers?: number;
   confidence_avg: number;
   supporters: string[];
   rationale: string;
+  // Which producer filed it; `assistant_turn` is a rule a bot stated about itself.
+  source_kind?: string;
+  // The agent an `assistant_turn` rule is for; "" otherwise.
+  agent?: string;
   status: LearningStatus;
   proposed_at: string;
   decided_at: string | null;

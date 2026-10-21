@@ -4,15 +4,18 @@ do on the host, for an admin signed in from anywhere (`loom call`, the SDK)."""
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
+from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
-from server.auth import machines, oauth
+from server.auth import agents, machines, oauth, revocation, subject_revocation
 from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
 from server.core.errors import GrantBusyError
+from server.core.principals import org_of_end_user_revocation
 from server.identity.app import account_admin
 from server.insights.app.admin_routes import require_admin
 
@@ -205,3 +208,101 @@ class NameInput(_Input):
 async def bots_disable(input: NameInput, info: Admin) -> dict[str, Any]:
     """Disable a bot: its proofs are refused and the tokens it holds revoked."""
     return {"disabled": await account_admin.disable_bot(input.name, by=_by(info))}
+
+
+class ProvisionAgentInput(_Input):
+    name: str
+    agent: str
+
+
+@router.post("/v1/admin/bots.provision_agent")
+async def bots_provision_agent(input: ProvisionAgentInput, info: Admin) -> dict[str, Any]:
+    """Make the namespace of a trust's agent before its first exchange, as that
+    exchange would, so grants can name the agent first.
+
+    `name` is a bot registered with an agent claim, `agent` the value its
+    workloads' claim will carry. The namespace counts against the trust's
+    `max_agents`; a repeat changes nothing.
+    """
+    try:
+        org, namespace = await account_admin.provision_agent(input.name, input.agent, by=_by(info))
+    except ValueError as e:
+        raise _invalid(e) from None
+    return {"org": org, "namespace": namespace, "subject": agents.subject(input.name, input.agent)}
+
+
+class RevokeSubjectInput(_Input):
+    org: str
+    subject: str
+    reason: str = ""
+    # Only the tokens issued before this instant (RFC 3339, with its offset); omitted: all.
+    issued_before: datetime | None = None
+
+
+@router.post("/v1/admin/revoke_subject")
+async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, Any]:
+    """Revoke every token and sign-in session of a subject, in every org and for
+    good, and list the tokens it made revoked (see `loom revoke-token --subject`).
+
+    Outright by default; with `issued_before`, only those issued before it on any
+    replica (to its next second, plus the clock skew replicas may have; an
+    instant ahead of the server counts as now), so a later sign-in works. A
+    revocation already there is never weakened: a cutoff is recorded beside the
+    subject's own revocation and only ever moves later. The spellings `org`'s
+    directory ties to the subject are revoked with it, as grants read them: a
+    person's email and the login handle of the account it signs in to. `org` is
+    also where the audit rows land; an end user's subject, `<org>/user:<id>`, must
+    name it. `sessions` and `tokens` count the sign-in sessions and the tokens made
+    by those subjects that the revocation ends, so a repeat answers the same.
+    """
+    org, subject = input.org, input.subject.strip()
+    if not org.strip() or "*" in org or org != org.strip():
+        raise _invalid(ValueError(f"org must name one org, got {org!r}"))
+    problem = subject_revocation.refusal(subject)
+    if input.issued_before is not None and input.issued_before.tzinfo is None:
+        problem = "issued_before needs its UTC offset (RFC 3339), e.g. 2026-01-31T12:00:00Z"
+    end_user_org = org_of_end_user_revocation(subject)
+    if problem is None and end_user_org and end_user_org != org:
+        problem = f"an end user's revocation is their org's: send org {end_user_org!r}"
+    if problem:
+        raise _invalid(ValueError(problem))
+    # Taken once: an instant ahead of the server is clamped to its clock.
+    at = None if input.issued_before is None else subject_revocation.cutoff(input.issued_before)
+    done = await subject_revocation.revoke_in_org(
+        org, subject, by=_by(info), reason=input.reason, at=at
+    )
+    return {
+        "subjects": [s for s, _ in done],
+        "org": org,
+        "revoked_at": max(d.row["revoked_at"] for _, d in done),
+        "reason": input.reason,
+        # The cutoff in force for the subjects not revoked outright, the earliest
+        # when theirs differ: the one asked for, or a later one set before.
+        "issued_before": None if at is None else _earliest(d.cutoff for _, d in done),
+        # The subjects revoked outright now: all of them after an outright
+        # request, and after a cutoff those an outright revocation still holds.
+        "outright": [s for s, d in done if d.outright],
+        "sessions": sum(d.sessions for _, d in done),
+        "tokens": sum(d.tokens for _, d in done),
+    }
+
+
+def _earliest(cutoffs: Iterable[datetime | None]) -> datetime | None:
+    """The earliest of the cutoffs in force; None when every subject is revoked outright."""
+    return min((c for c in cutoffs if c is not None), default=None)
+
+
+@router.get("/v1/admin/revocations")
+async def revocations(
+    subject: str | None = None,
+    since: datetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=10000)] = 1000,
+) -> dict[str, Any]:
+    """The unexpired revocations, newest first, at most `limit` (1000 by default);
+    `?subject=` narrows them to one subject's own row, an operator cutoff's and
+    SCIM's, `?since=` to those written since (see `loom revoke-token --list`)."""
+    if since is not None and since.tzinfo is None:
+        raise _invalid(ValueError("since needs its UTC offset (RFC 3339)"))
+    narrowed = None if subject is None else subject.strip()
+    rows = await revocation.list_active(narrowed, since=since, limit=limit)
+    return {"revocations": rows}
