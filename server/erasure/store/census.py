@@ -20,6 +20,7 @@ from server.erasure.store.predicates import (
     LIVE,
     NS_EQ,
     NS_IN,
+    ORPHAN_LEARNINGS,
     PAYLOAD_UID,
     UID,
     USER_CHUNKS,
@@ -311,7 +312,20 @@ _CENSUS: tuple[Substrate, ...] = (
         final=False,
     ),
     Substrate("loom.entity_degree", "1", None, "entity_graph.delete", None),
-    Substrate("loom.learnings_queue", "1", None, "learnings_queue.delete", None),
+    Substrate(
+        "loom.learnings_queue",
+        "1",
+        ORPHAN_LEARNINGS,
+        "learnings_queue.delete",
+        "learnings_queue.delete",
+    ),
+    Substrate(
+        "loom.learnings_supporters",
+        "1",
+        UID,
+        "learnings_queue.delete",
+        "learnings_queue.delete",
+    ),
     # Task inbox plane: the brief and the notes quote source
     # and issue text; keyed on the inbox's owner namespace, no user axis.
     Substrate("loom.tasks", "is_deleted = 0", None, "tasks.delete", None),

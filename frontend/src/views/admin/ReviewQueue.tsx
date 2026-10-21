@@ -601,6 +601,42 @@ const LEARNINGS_READ = 50;
 const LEARNING_STATUSES: readonly LearningStatus[] = ["pending", "promoted", "rejected"];
 const STATUS_LABEL: Record<LearningStatus, string> = { pending: "Pending", promoted: "Promoted", rejected: "Rejected" };
 
+const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
+
+// A rule a bot stated about itself in conversations (`assistant_turn`).
+const isAgentRule = (r: LearningEntry) => r.source_kind === "assistant_turn";
+
+// What filed a candidate, in words; an unknown producer shows its own name.
+const SOURCE_LABEL: Record<string, string> = {
+  assistant_turn: "A bot's rule about itself",
+  conversation_seeder: "Seen in conversations",
+  memory_supporters: "Backed by several writers",
+};
+const sourceLabel = (r: LearningEntry) => SOURCE_LABEL[r.source_kind || "memory_supporters"] ?? r.source_kind;
+
+// Who a promoted rule applies to: its agent, or the namespace when it names none.
+const agentLabel = (r: LearningEntry) =>
+  r.agent && r.agent !== "-" ? `agent ${r.agent}` : "every agent in this namespace";
+
+// What promoting does: a named bot's reads serve the rule, and so do reads under
+// agent * and knowledge.search, which are not filtered by agent.
+const promoteNote = (r: LearningEntry) =>
+  r.agent && r.agent !== "-"
+    ? `Promote publishes this rule to the namespace's knowledge for ${r.agent}, for every user; reads under agent * and knowledge.search also find it.`
+    : "Promote publishes this rule to the namespace's knowledge for every agent and every user.";
+
+// A bot's rule is backed by distinct users, its sessions and writers beside them
+// (one token can send many user_ids); every other candidate by its supporters. A
+// server a release behind sends no supporter_sessions, so its rows show the stored
+// supporter count.
+function supportLabel(r: LearningEntry): string {
+  if (isAgentRule(r) && r.supporter_sessions !== undefined) {
+    const support = `${plural(r.supporter_count, "user")}, ${plural(r.supporter_sessions, "session")}`;
+    return r.supporter_writers === undefined ? support : `${support}, ${plural(r.supporter_writers, "writer")}`;
+  }
+  return plural(r.supporter_count, "supporter");
+}
+
 function LearningsPanel({
   initialPending,
   onSeedUsed,
@@ -695,24 +731,39 @@ function LearningsPanel({
           kind="empty"
           icon="sparkle"
           title={`No ${status} learnings`}
-          description="Learnings are facts noticed across several agents in your organisation and proposed as shared knowledge for everyone. Solo and development setups usually have none."
+          description="A learning is a candidate waiting for a person's decision: a fact several writers back, a fact seen in conversations, or a rule a bot stated about itself (when the deployment files those). Nothing is promoted without a review."
         />
       )}
       {!error && rows !== null && rows.length > 0 && (
         <div className="space-y-2" aria-busy={refreshing || undefined}>
           {rows.map((r) => (
             <Panel key={r.candidate_id}>
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <span className="font-mono text-sm text-text-muted">{r.memory_key}</span>
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                <span className="min-w-0 break-all font-mono text-sm text-text-muted">{r.memory_key}</span>
                 <span className="text-xs text-text-muted tabular">
-                  {r.supporter_count} supporters · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
+                  {supportLabel(r)} · conf {(r.confidence_avg ?? 0).toFixed(2)} ·{" "}
                   <ListTime time={r.proposed_at} quiet />
                 </span>
               </div>
-              <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
-              {r.rationale && <div className="text-sm text-text-muted mb-2 italic">{r.rationale}</div>}
+              <div className="text-xs text-text-muted mb-2">
+                {sourceLabel(r)}
+                {isAgentRule(r) && r.agent !== undefined && <> · {agentLabel(r)}</>}
+              </div>
+              {isAgentRule(r) && (r.proposed_value === null || r.proposed_value === "") ? (
+                // A user erasure took the rule's last supporter: only the decision is kept.
+                <div className="text-sm text-text-muted mb-2">Rule removed by a user erasure; the decision stands.</div>
+              ) : (
+                <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
+              )}
+              {/* A bot rule's rationale quotes the user turn, then what the assistant said, one per line. */}
+              {r.rationale && (
+                <div className="text-sm text-text-muted mb-2 italic whitespace-pre-line">{r.rationale}</div>
+              )}
               {status === "pending" && (
                 <>
+                  {isAgentRule(r) && r.agent !== undefined && (
+                    <div className="text-sm text-text-muted mb-2">{promoteNote(r)}</div>
+                  )}
                   <TextAreaField
                     label="Reason for the decision"
                     value={reason[r.candidate_id] || ""}

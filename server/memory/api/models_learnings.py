@@ -26,11 +26,20 @@ class _LearningEntry(BaseModel):
     memory_key: str
     memory_type: str
     proposed_value: Any
+    # Supporters behind the candidate; for `assistant_turn`, the distinct end users.
     supporter_count: int
+    # `assistant_turn` only (0 otherwise): distinct (user, session) pairs that
+    # stated the rule.
+    supporter_sessions: int = 0
+    # `assistant_turn` only (0 otherwise): distinct principals that wrote its
+    # supporter rows. One token can send many user_ids.
+    supporter_writers: int = 0
     confidence_avg: float
     supporters: list[str]
     rationale: str
     source_kind: str = "memory_supporters"
+    # The agent an `assistant_turn` candidate is a rule for; '' for other producers.
+    agent: str = ""
     status: LearningStatus
     proposed_at: datetime
     decided_at: datetime | None = None
@@ -56,9 +65,10 @@ class LearningsReviewInput(BaseModel):
     decision: ReviewDecision
     # Why; stored as `decision_reason` and carried into the promoted row's provenance.
     reason: str = ""
-    # On 'promote': 'memory' → loom.shared, 'knowledge' → knowledge.upsert,
-    # 'both' → both in sequence.
-    destination: PromotionDestination = "memory"
+    # Where a promotion lands: 'memory' (loom.shared for a supporters candidate, else a
+    # memory row), 'knowledge' (knowledge.upsert) or 'both'; unset is 'knowledge' for an
+    # assistant_turn rule and 'memory' otherwise.
+    destination: PromotionDestination | None = None
     # Captured into the audit subject + shared.promoted_by.
     approver: str = "learnings-reviewer"
 
@@ -68,8 +78,8 @@ class LearningsReviewOutput(BaseModel):
     candidate_id: str
     # The status the candidate holds after this call.
     new_status: LearningStatus
-    # True when this call wrote the memory destination: `loom.shared` for a
-    # supporters candidate, a namespace memory row for a seeder one.
+    # True when this call wrote memory: `loom.shared` for a supporters candidate, a
+    # namespace row for a seeder, the agent's `user_id` '-' row for a bot's rule.
     promoted_to_shared: bool = False
     # True when this call upserted the candidate as a knowledge document.
     promoted_to_knowledge: bool = False
@@ -84,8 +94,9 @@ class LearningsReviewOutput(BaseModel):
 class LearningsQualityInput(BaseModel):
     org: str
     namespace: str | None = None  # None = org-wide rollup
-    # Only candidates from this producer; the default counts the conversation
-    # seeder, None counts every producer.
+    # Only candidates from this producer; None counts every producer. The default
+    # counts the conversation seeder, the extraction quality the Health panel reports;
+    # `assistant_turn` is a bot's rules about itself, not extraction quality.
     source_kind: str | None = "conversation_seeder"
 
 

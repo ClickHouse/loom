@@ -1771,6 +1771,9 @@ class ExtractionSettings(BaseModel):
     # a structured-answer block and assistant-answer facts get a higher content_excerpt
     # ceiling. The value column is untouched; takes effect only on (re-)ingest.
     memory_capture_structured_answers: Annotated[bool, LIVE] = True
+    # Whether extraction files an assistant's rules about itself as learnings to review; a request
+    # can only turn it off. Turn on once every replica's build erases loom.learnings_supporters.
+    memory_extract_agent_learnings: Annotated[bool, LIVE] = False
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short
     # statement can match, no structured-answer block); longer ones keep the full
@@ -5173,8 +5176,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.import_evidence": 30000,
     # Bounded by namespace size.
     "memory.keys": 2000,
-    # Three bounded queries: shared point-lookup, audit by request_id, learnings_queue
-    # match.
+    # Bounded queries: shared point-lookup, audit by request_id, learnings_queue
+    # match, and for a bot's rule its supporter count (one candidate's rows).
     "memory.lineage": 150,
     "memory.link": 60,
     # Covers both recency (ORDER BY memory_key) and the wider score path.

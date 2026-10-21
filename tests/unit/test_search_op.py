@@ -81,12 +81,15 @@ def test_http_and_mcp_run_the_same_fan_out(calls: list[dict[str, Any]]) -> None:
     from server.memory.app.loom_search.handler import handle_search
 
     asyncio.run(
-        handle_search(SearchInput(org="o", namespace="n", query="coffee", tags=["x"], top_k=3))
+        handle_search(
+            SearchInput(org="o", namespace="n", agent="a", query="coffee", tags=["x"], top_k=3)
+        )
     )
     params = {"name": "loom_search", "arguments": {"query": "coffee", "tags": ["x"], "top_k": 3}}
     out = asyncio.run(mcp_call._call_tool(1, params, auth=None))["result"]
     assert out["isError"] is False
     assert calls[0] == calls[1]
+    assert calls[0]["agent"] == "a"
 
 
 def test_the_listing_carries_one_loom_search() -> None:

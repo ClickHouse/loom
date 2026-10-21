@@ -282,7 +282,7 @@ async def live_holders(
 
 # The migration that started linking rows to triples: a value first written before it
 # was applied has no links of its own.
-_ROW_LINKS_MIGRATION = "064_entity_triple_rows.sql"
+_ROW_LINKS_MIGRATION = "065_entity_triple_rows.sql"
 
 
 async def held_by_unlinked_rows(

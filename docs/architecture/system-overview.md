@@ -139,7 +139,8 @@ at most once a minute (`gates._fail_open`). Authentication and authorization fai
 
 **Unknown arguments.** Input models ignore unknown keys, so `server/transport/arg_check.py`
 names them: the response carries `ignored_args` (and `did_you_mean` for a close field
-name), and HTTP sets `X-Loom-Ignored-Args`. A write op refuses a close match with 422
+name), and HTTP sets `X-Loom-Ignored-Args`. Both list first any field the op read but
+declined to apply, then the unread keys. A write op refuses a close match with 422
 `UNKNOWN_ARGUMENT`. Identity keys and keys the transport reads itself (`consumer`,
 `traffic_class`, `explain`, the idempotency key) are never reported.
 

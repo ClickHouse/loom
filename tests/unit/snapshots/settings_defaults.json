@@ -658,6 +658,7 @@
  "memory_expiry_sweep_enabled": true,
  "memory_expiry_sweep_interval_seconds": 300,
  "memory_exposure_ledger_enabled": true,
+ "memory_extract_agent_learnings": false,
  "memory_extract_coding_sweep_min_user_turns": 4,
  "memory_extract_compact_prompt_max_chars": 1200,
  "memory_extract_coverage_sweep_auto_min_statements": 10,

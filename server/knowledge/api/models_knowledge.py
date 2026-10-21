@@ -12,6 +12,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 
@@ -147,7 +148,7 @@ class KnowledgeSearchInput(BaseModel):
     tags: list[str] = Field(default_factory=list)
     since_seconds: int | None = None  # optional recency filter
     # At most this many hits are returned (1-100).
-    top_k: int = Field(default=5, ge=1, le=100)
+    top_k: int = Field(default=5, ge=1, le=MAX_SEARCH_TOP_K)
     # "this" → input.namespace only; "all_mine" → also the caller's own
     # namespaces, up to `knowledge_search_max_namespaces`. Ignored when
     # `namespaces` names the set; unset for an end-user token means "this".

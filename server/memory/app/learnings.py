@@ -18,6 +18,8 @@ from server.memory.api.models_learnings import (
     _LearningEntry,
 )
 from server.memory.api.models_lifecycle import MemoryPromoteInput
+from server.memory.app import blacklist_guard
+from server.memory.domain import assistant_rules
 from server.memory.store import learnings as learnings_repo
 from server.memory.store.rows import next_version
 
@@ -35,8 +37,10 @@ async def handle_learnings_list(
         limit=input.limit,
         source_kind=input.source_kind,
     )
+    support = await _assistant_turn_support(input.org, input.namespace, rows)
     entries = []
     for r in rows:
+        r = {**r, **support.get(str(r["candidate_id"]), {})}
         try:
             proposed_value = json.loads(r["proposed_value"]) if r["proposed_value"] else None
         except (ValueError, TypeError):
@@ -48,10 +52,13 @@ async def handle_learnings_list(
                 memory_type=r["memory_type"],
                 proposed_value=proposed_value,
                 supporter_count=int(r["supporter_count"]),
+                supporter_sessions=int(r.get("supporter_sessions") or 0),
+                supporter_writers=int(r.get("supporter_writers") or 0),
                 confidence_avg=float(r["confidence_avg"]),
                 supporters=list(r["supporters"]),
                 rationale=r["rationale"],
                 source_kind=r.get("source_kind", "memory_supporters"),
+                agent=str(r.get("agent") or ""),
                 status=r["status"],
                 proposed_at=r["proposed_at"],
                 decided_at=r["decided_at"],
@@ -60,6 +67,37 @@ async def handle_learnings_list(
             )
         )
     return LearningsListOutput(rows=entries)
+
+
+async def _assistant_turn_support(
+    org: str, namespace: str, rows: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """The support of each `assistant_turn` row, counted from
+    loom.learnings_supporters: the headline count is distinct users, with the
+    distinct sessions and writers beside it, the six-part supporter entries, and the earliest
+    remaining supporter's quotes as the rationale (the candidate row holds none)."""
+    by_id = {
+        str(r["candidate_id"]): r
+        for r in rows
+        if r.get("source_kind") == assistant_rules.SOURCE_KIND
+    }
+    if not by_id:
+        return {}
+    stats = await learnings_repo.supporter_stats(org, namespace, list(by_id))
+    out: dict[str, dict[str, Any]] = {}
+    for s in stats:
+        cid = str(s["candidate_id"])
+        row = by_id[cid]
+        prefix = f"{org}/{namespace}/{row.get('agent') or '-'}"
+        out[cid] = {
+            "supporter_count": int(s["users"]),
+            "supporter_sessions": int(s["sessions"]),
+            "supporter_writers": int(s["writers"]),
+            "rationale": assistant_rules.rationale(str(s["asked"]), str(s["said"])),
+            "confidence_avg": float(s["confidence"]),
+            "supporters": [f"{prefix}/{u}/{sid}/{row['memory_key']}" for _, u, sid in s["pairs"]],
+        }
+    return out
 
 
 async def handle_learnings_quality(
@@ -136,13 +174,16 @@ async def handle_learnings_quality(
 async def handle_learnings_review(
     input: LearningsReviewInput,
 ) -> LearningsReviewOutput:
-    """Flip a candidate's status. On 'promote', fan out via the existing
-    `handle_memory_promote` path so the institutional row in
-    `loom.shared` gets the same provenance + reversal-window the
-    explicit promotion flow gives it.
+    """Flip a candidate's status. On 'promote', write it to `destination`, or
+    when unset to knowledge for an `assistant_turn` rule and to memory
+    otherwise: `loom.shared` through memory.promote for a supporters
+    candidate, a new row through memory.set for the rest.
 
-    Idempotent: re-reviewing an already-decided candidate is a no-op
-    (returns the existing status).
+    Reviewing a candidate again with the decision it already holds is a
+    no-op (returns the existing status); rejecting a promoted candidate marks
+    it rejected and leaves what the promotion wrote (delete a knowledge
+    promotion's `learning://<candidate_id>` document with knowledge.delete to
+    stop serving it). A bot's rule whose last supporter was erased answers 404.
     """
     from fastapi import HTTPException
 
@@ -151,6 +192,18 @@ async def handle_learnings_review(
         input.namespace,
         input.candidate_id,
     )
+    # A bot rule with no supporter left (blanked once decided, deleted once pending
+    # by the erasure that took its last supporter): there is no rule left to review,
+    # so it answers as a missing candidate does.
+    agent_rule = False
+    support: list[dict[str, Any]] = []
+    if row is not None and row.get("source_kind") == assistant_rules.SOURCE_KIND:
+        agent_rule = True
+        support = await learnings_repo.supporter_stats(
+            input.org, input.namespace, [str(row["candidate_id"])]
+        )
+        if not row.get("proposed_value") or not support:
+            row = None
     if row is None:
         raise HTTPException(
             status_code=404,
@@ -178,13 +231,24 @@ async def handle_learnings_review(
     promoted_to_knowledge = False
     knowledge_source_uri = ""
     if input.decision == "promote":
-        wants_memory = input.destination in ("memory", "both")
-        wants_knowledge = input.destination in ("knowledge", "both")
+        # A bot rule is promoted with the confidence the reviewer saw: the mean over
+        # its supporters, not the filing session's own. Only the promotion reads it;
+        # the status row below keeps the candidate's own columns.
+        promoted = {**row, "confidence_avg": float(support[0]["confidence"])} if support else row
+        destination = input.destination or ("knowledge" if agent_rule else "memory")
+        if agent_rule:
+            # A pattern added after the rule was filed still refuses it, on every
+            # destination: memory.set checks the blacklist, knowledge.upsert does not.
+            await blacklist_guard.enforce_on_insert(
+                org=input.org, namespace=input.namespace, value=str(_proposed_value(row))
+            )
+        wants_memory = destination in ("memory", "both")
+        wants_knowledge = destination in ("knowledge", "both")
         if wants_memory:
             await _do_promote(
                 input.org,
                 input.namespace,
-                row,
+                promoted,
                 input.approver,
                 input.reason,
             )
@@ -193,7 +257,7 @@ async def handle_learnings_review(
             knowledge_source_uri = await _do_promote_to_knowledge(
                 input.org,
                 input.namespace,
-                row,
+                promoted,
                 input.approver,
                 input.reason,
             )
@@ -216,6 +280,7 @@ async def handle_learnings_review(
             "supporters": list(row["supporters"]),
             "rationale": row["rationale"],
             "source_kind": row.get("source_kind", "memory_supporters"),
+            "agent": str(row.get("agent") or ""),
             "seeded_from_thread_id": row.get("seeded_from_thread_id"),
             "seeded_from_msg_id": row.get("seeded_from_msg_id"),
             "status": target_status,
@@ -237,6 +302,15 @@ async def handle_learnings_review(
     )
 
 
+def _proposed_value(candidate_row: dict[str, Any]) -> Any:
+    """The candidate's value: `proposed_value` is JSON-encoded, or a plain string."""
+    raw_value = candidate_row["proposed_value"]
+    try:
+        return json.loads(raw_value) if isinstance(raw_value, str) else raw_value
+    except (ValueError, TypeError):
+        return raw_value
+
+
 async def _do_promote(
     org: str,
     namespace: str,
@@ -246,7 +320,7 @@ async def _do_promote(
 ) -> None:
     """Promote a candidate to a live memory.
 
-    Two source flavors:
+    Three source flavors:
     - `memory_supporters`: an underlying loom.memory row already exists
       (multiple writers supported the same key) — route through
       `handle_memory_promote` so the institutional loom.shared row gets
@@ -256,6 +330,7 @@ async def _do_promote(
       Route through `handle_memory_set` so the row lands in loom.memory
       AND check_on_commit fires (enforces pinned-conflict reject + the
       semantic-conflict / canonical-merge / duplicate verdicts).
+    - `assistant_turn` takes the same `handle_memory_set` path.
     """
     source_kind = candidate_row.get("source_kind") or "memory_supporters"
 
@@ -316,32 +391,33 @@ async def _promote_via_memory_set(
     approver: str,
     reason: str,
 ) -> None:
-    """Seeder path: candidate has no source memory yet. Write it as a
-    new memory via handle_memory_set so check_on_commit enforces the
-    same pinned-reject / dedup / canonical-merge verdicts a regular
-    write would get."""
+    """Seeder and bot-rule path: the candidate has no source memory yet. Write it
+    as a new memory via handle_memory_set so check_on_commit enforces the same
+    pinned-reject / dedup / canonical-merge verdicts a regular write would get. A
+    seeder candidate lands at namespace scope under the approver; a bot rule
+    (`assistant_turn`) as its agent's namespace-wide row (`user_id` '-'), which
+    reads bounded to one user do not serve, with the supporters' mean confidence."""
     from server.memory.app.write import handle_memory_set
 
-    raw_value = candidate_row["proposed_value"]
-    try:
-        deserialized = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-    except (ValueError, TypeError):
-        deserialized = raw_value
+    deserialized = _proposed_value(candidate_row)
 
-    # Seeder supporters encode the originating thread, not a memory row.
-    # Sentinel "-" puts the row at namespace scope; approver lands as
-    # user_id so audit retains accountability.
-    # Persist the originating conversation on the durable memory row's
-    # source_trace (the seeded_from link otherwise lives only on the
-    # learnings_queue candidate, which ages out) — so a promoted fact keeps a
-    # path back to the thread that produced it, for audit + "memories from this
-    # thread".
-    seeded_thread = candidate_row.get("seeded_from_thread_id")
+    # In both cases the approver is the row's `actor`, stamped from the review's token.
+    if candidate_row.get("source_kind") == assistant_rules.SOURCE_KIND:
+        agent, user_id = str(candidate_row.get("agent") or "-"), "-"
+        # The candidate, not one supporter's session, is where it came from.
+        source_trace = f"learning:{candidate_row['candidate_id']}"
+    else:
+        # A seeder candidate: namespace scope, under the approver's user_id.
+        agent, user_id = "-", approver or "-"
+        # The originating conversation, so the row keeps a path back to its thread
+        # once the candidate ages out.
+        seeded_thread = candidate_row.get("seeded_from_thread_id")
+        source_trace = f"conversation:{seeded_thread}" if seeded_thread else ""
     set_input = MemorySetInput(
         org=org,
         namespace=namespace,
-        agent="-",
-        user_id=approver or "-",
+        agent=agent,
+        user_id=user_id,
         session_id="-",
         memory_key=candidate_row["memory_key"],
         memory_type=candidate_row.get("memory_type") or "semantic",
@@ -351,7 +427,7 @@ async def _promote_via_memory_set(
             f"candidate-id:{candidate_row['candidate_id']}",
         ],
         confidence=float(candidate_row.get("confidence_avg") or 1.0),
-        source_trace=f"conversation:{seeded_thread}" if seeded_thread else "",
+        source_trace=source_trace,
     )
     # 409 PINNED_CONFLICT bubbles up through learnings.review.
     await handle_memory_set(set_input)
@@ -374,11 +450,7 @@ async def _do_promote_to_knowledge(
 
     # Deserialize JSON-encoded proposed_value; pretty-print non-strings
     # so the chunker has readable content.
-    raw_value = candidate_row["proposed_value"]
-    try:
-        deserialized = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-    except (ValueError, TypeError):
-        deserialized = raw_value
+    deserialized = _proposed_value(candidate_row)
     if isinstance(deserialized, str):
         content = deserialized
     else:
@@ -387,6 +459,21 @@ async def _do_promote_to_knowledge(
     source_uri = f"learning://{candidate_row['candidate_id']}"
     title = candidate_row.get("memory_key", "") or "promoted-learning"
     source_kind = candidate_row.get("source_kind", "") or "memory_supporters"
+    tags = ["promoted-from-learning", f"source-kind:{source_kind}"]
+    # A bot's rule names its agent in a tag: context.pack, memory.stack, loom_search and
+    # memory.ask serve it to that agent and to namespace-wide (`*`) reads
+    # (assistant_rules.serves_agent); knowledge.search is not filtered by agent, and a bot
+    # finds its own rules with knowledge.search(tags=["agent:<id>"]). The document's
+    # author is the reviewer's identity, stamped from the review's token.
+    agent = (
+        str(candidate_row.get("agent") or "") if source_kind == assistant_rules.SOURCE_KIND else ""
+    )
+    # The agent '-' is every agent in the namespace, so it names no bot to tag.
+    if agent and agent != "-":
+        tags.append(f"agent:{agent}")
+    # A model extracted a bot's rule from users' conversations, so it is not the reviewer's
+    # own content: `derived` is the nearest class a knowledge write may declare.
+    source_class = "derived" if source_kind == assistant_rules.SOURCE_KIND else None
     rationale = f"reviewed-and-promoted-to-knowledge by {approver}" + (
         f": {reason}" if reason else ""
     )
@@ -398,7 +485,8 @@ async def _do_promote_to_knowledge(
             content=content,
             source_uri=source_uri,
             title=title,
-            tags=["promoted-from-learning", f"source-kind:{source_kind}"],
+            tags=tags,
+            source_class=source_class,
             metadata={
                 "promoted_from_candidate_id": str(candidate_row["candidate_id"]),
                 "rationale": rationale,

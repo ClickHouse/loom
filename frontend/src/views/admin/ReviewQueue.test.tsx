@@ -733,6 +733,76 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(listLearnings).toHaveBeenCalledTimes(2), WAIT);
   });
 
+  it("shows a bot's rule with its agent, its users, sessions and writers, and what promoting it does", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValue({
+      rows: [
+        {
+          ...learning("assistant_rule_refunds"),
+          source_kind: "assistant_turn",
+          agent: "support-bot",
+          supporter_count: 2,
+          supporter_sessions: 3,
+          supporter_writers: 1,
+        },
+        // Filed with no agent ("-"): it applies namespace-wide, and says so.
+        { ...learning("assistant_rule_any"), source_kind: "assistant_turn", agent: "-", supporter_count: 1 },
+        // A server a release behind sends no agent and no user count: no agent line.
+        { ...learning("assistant_rule_old"), source_kind: "assistant_turn", supporter_count: 1 },
+      ],
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await screen.findByText("assistant_rule_refunds", {}, WAIT);
+    expect(screen.getByText(/2 users, 3 sessions, 1 writer/)).toBeTruthy();
+    expect(screen.getAllByText(/A bot's rule about itself/)).toHaveLength(3);
+    expect(screen.getByText(/agent support-bot/)).toBeTruthy();
+    expect(screen.getAllByText(/1 supporter ·/)).toHaveLength(2);
+    expect(screen.getAllByText(/every agent in this namespace/)).toHaveLength(1);
+    // The rows that name an agent ("-" included) say which agents Promote reaches; the old one does not.
+    expect(screen.getAllByText(/Promote publishes this rule to the namespace's knowledge/)).toHaveLength(2);
+    expect(
+      screen.getByText(
+        "Promote publishes this rule to the namespace's knowledge for support-bot, for every user; reads under agent * and knowledge.search also find it.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(/knowledge for every agent and every user\./)).toBeTruthy();
+  });
+
+  it("says a bot rule's text went with a user erasure and its decision stands", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValueOnce({ rows: [learning("k/pending")] });
+    vi.mocked(listLearnings).mockResolvedValue({
+      rows: [
+        {
+          ...learning("assistant_rule_refunds"),
+          source_kind: "assistant_turn",
+          agent: "support-bot",
+          status: "rejected",
+          proposed_value: null,
+        },
+      ],
+    });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Rejected" }, WAIT));
+    expect(await screen.findByText("Rule removed by a user erasure; the decision stands.", {}, WAIT)).toBeTruthy();
+  });
+
+  it("says what a learning is when the queue is empty", async () => {
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listLearnings).mockResolvedValueOnce({ rows: [learning("k/pending")] });
+    vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
+    seed("ns-a");
+    render(<ReviewQueue />);
+    await userEvent.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+    await userEvent.click(await screen.findByRole("button", { name: "Rejected" }, WAIT));
+    expect(await screen.findByText("No rejected learnings", {}, WAIT)).toBeTruthy();
+    expect(screen.getByText(/Nothing is promoted without a review/)).toBeTruthy();
+  });
+
   it("falls back to Conflicts when the new namespace hides the open sub-tab", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listLearnings).mockImplementation(async (id) => ({

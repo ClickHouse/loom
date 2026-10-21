@@ -10049,10 +10049,13 @@ class LearningEntry(TypedDict, total=False):
     memory_type: Required[str]
     proposed_value: Required[Any]
     supporter_count: Required[int]
+    supporter_sessions: NotRequired[int]
+    supporter_writers: NotRequired[int]
     confidence_avg: Required[float]
     supporters: Required[list[str]]
     rationale: Required[str]
     source_kind: NotRequired[str]
+    agent: NotRequired[str]
     status: Required[Literal["pending", "promoted", "rejected"]]
     proposed_at: Required[str]  # date-time as ISO-8601 text
     decided_at: NotRequired[Optional[str]]
@@ -10090,7 +10093,7 @@ class LearningsReviewInput(TypedDict, total=False):
     candidate_id: Required[str]
     decision: Required[Literal["promote", "reject"]]
     reason: NotRequired[str]
-    destination: NotRequired[Literal["memory", "knowledge", "both"]]
+    destination: NotRequired[Optional[Literal["memory", "knowledge", "both"]]]
     approver: NotRequired[str]
 
 
@@ -10100,7 +10103,7 @@ class LearningsReviewBody(TypedDict, total=False):
     candidate_id: Required[str]
     decision: Required[Literal["promote", "reject"]]
     reason: NotRequired[str]
-    destination: NotRequired[Literal["memory", "knowledge", "both"]]
+    destination: NotRequired[Optional[Literal["memory", "knowledge", "both"]]]
     approver: NotRequired[str]
 
 
@@ -13532,6 +13535,7 @@ class MemorySetFromMessagesInput(TypedDict, total=False):
     last_messages: NotRequired[list["Message"]]
     extraction_instructions: NotRequired[str]
     coverage_sweep: NotRequired[Optional[bool]]
+    agent_learnings: NotRequired[Optional[bool]]
     pipeline_steps: NotRequired[list[dict[str, Any]]]
     valid_at: NotRequired[Optional[str]]
     defer: NotRequired[bool]
@@ -13567,6 +13571,7 @@ class MemorySetFromMessagesBody(TypedDict, total=False):
     last_messages: NotRequired[list["Message"]]
     extraction_instructions: NotRequired[str]
     coverage_sweep: NotRequired[Optional[bool]]
+    agent_learnings: NotRequired[Optional[bool]]
     pipeline_steps: NotRequired[list[dict[str, Any]]]
     valid_at: NotRequired[Optional[str]]
     defer: NotRequired[bool]
@@ -13588,6 +13593,8 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     forget_requests: NotRequired[int]
     about_other: NotRequired[int]
     premise_facts: NotRequired[int]
+    learning_candidates: NotRequired[int]
+    ignored_args: NotRequired[list[str]]
     segmenter: NotRequired[str]
     cached_tokens_in: NotRequired[int]
     ontology_warnings: NotRequired[list[str]]

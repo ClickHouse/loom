@@ -1,6 +1,7 @@
-"""Erasure steps for the tables outside the census: conversations, parked
+"""Erasure steps for the ledger, trace and queue tables: conversations, parked
 context, session briefs, the idempotency cache, traces, events, tasks, agent
-runs and the curation, consolidation and projection-failure ledgers."""
+runs, the curation, consolidation and projection-failure ledgers, and the
+learnings queue and its supporters."""
 
 from __future__ import annotations
 
@@ -11,19 +12,27 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store.mutations import delete_scoped, namespaces_of, tombstone_scoped
-from server.erasure.store.predicates import NS_EQ, NS_IN, PAYLOAD_UID, UID
+from server.erasure.store.predicates import (
+    NS_EQ,
+    NS_IN,
+    ORPHAN_LEARNINGS,
+    PAYLOAD_UID,
+    SUPPORTED_LEARNINGS,
+    UID,
+)
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Steps for tables outside the census. Every `loom.*` table is a census row,
+# Steps for the ledger, trace and queue tables. Every `loom.*` table is a census row,
 # a documented step-only table or a NO_MEMORY_CONTENT entry (the registry
 # test holds schema.sql to the three lists). These steps reach the readable
 # tables that fall outside both lists: raw conversation
 # turns, parked context, search/exposure/code traces and the events stream
 # they come from, the ingest drop ledger, code anchors, chunk-derived entity
-# rows, the learnings queue, agent runs, curation tables, the
-# consolidation and projection-failure ledgers. All are keyed on
+# rows, agent runs, curation tables, the consolidation and
+# projection-failure ledgers. The learnings queue and its supporters are
+# census rows whose steps live here too. All are keyed on
 # (org, namespace) and reach the user axis where the table carries one.
 # ---------------------------------------------------------------------------
 
@@ -269,13 +278,85 @@ async def delete_tasks_by_namespace(
     return await _delete_many(_TASK_TABLES, org, NS_EQ, {"ns": namespace}, ch)
 
 
+_LEARNINGS_TABLES = ("loom.learnings_supporters", "loom.learnings_queue")
+
+
 async def delete_learnings_queue_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    """Promotion candidates quote the proposed value and its supporters."""
-    return await delete_scoped(
-        "loom.learnings_queue", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    """Promotion candidates quote the proposed value; their supporters name users."""
+    return await _delete_many(_LEARNINGS_TABLES, org, NS_EQ, {"ns": namespace}, ch)
+
+
+async def delete_learnings_queue_by_user(
+    org: str, user_id: str, *, ch: _CHClient | None = None
+) -> int:
+    """The user's supporter rows, which hold every word of theirs the learnings queue
+    keeps; then the bot-rule candidates left with no supporter
+    (`predicates.ORPHAN_LEARNINGS`). A pending one is deleted. A decided one keeps
+    its decision on a status row with the rule blanked, so a rejected rule never
+    comes back as pending; its rows that still hold the rule are deleted after the
+    blank row is written, so a retry finds whatever a failed step left.
+
+    Each delete is bounded to what was read, so a review landing after the read
+    survives (holding the rule) and the census's residue reopens this step to blank
+    it: a pending candidate loses only its `pending` rows, a decided one only its
+    rows that hold the rule at a version no newer than the one it read for that
+    candidate. A pending candidate a supporter backed after the read is kept: the
+    delete re-checks for supporter rows, and a filing writes its supporter row before
+    its candidate row."""
+    ch = ch or _default_client()
+    n = await delete_scoped(
+        "loom.learnings_supporters", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
     )
+    rows = await ch.query_all(
+        "SELECT DISTINCT candidate_id FROM loom.learnings_queue "
+        f"WHERE org = {{org:String}} AND {ORPHAN_LEARNINGS}",
+        params={"org": org},
+    )
+    cids = [str(r["candidate_id"]) for r in rows]
+    if not cids:
+        return n
+    latest = await ch.query_all(
+        "SELECT * FROM loom.learnings_queue FINAL "
+        "WHERE org = {org:String} AND candidate_id IN {cids:Array(UUID)}",
+        params={"org": org, "cids": cids},
+    )
+    pending = [str(r["candidate_id"]) for r in latest if r["status"] == "pending"]
+    decided = [r for r in latest if r["status"] != "pending"]
+    blank = [
+        {**r, "proposed_value": "", "version": int(r["version"]) + 1}
+        for r in decided
+        if r["proposed_value"]
+    ]
+    if blank:
+        await ch.insert(
+            "loom.learnings_queue", blank, settings={"async_insert": 0, "wait_for_async_insert": 1}
+        )
+    if pending:
+        n += await delete_scoped(
+            "loom.learnings_queue",
+            org=org,
+            scope_where=(
+                "candidate_id IN {cids:Array(UUID)} AND status = 'pending' "
+                f"AND candidate_id NOT IN {SUPPORTED_LEARNINGS}"
+            ),
+            params={"cids": pending},
+            ch=ch,
+        )
+    if decided:
+        n += await delete_scoped(
+            "loom.learnings_queue",
+            org=org,
+            # Each candidate is bounded by its own version read, never another's.
+            scope_where=(
+                "proposed_value != '' AND arrayExists(r -> r.1 = candidate_id "
+                "AND version <= r.2, {read:Array(Tuple(UUID, UInt64))})"
+            ),
+            params={"read": [(str(r["candidate_id"]), int(r["version"])) for r in decided]},
+            ch=ch,
+        )
+    return n
 
 
 async def _delete_run_claims(

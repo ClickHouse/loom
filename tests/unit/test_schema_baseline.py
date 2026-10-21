@@ -116,13 +116,14 @@ def test_the_journal_files() -> None:
         "061_profile_schemas.sql",
         "062_extraction_policies.sql",
         "063_memory_webhooks.sql",
-        "064_entity_triple_rows.sql",
-        "065_projection_failure_abandoned.sql",
-        "066_entity_triple_seen_at.sql",
-        "067_graph_restore_id.sql",
-        "068_entity_edge_rows.sql",
-        "069_entity_edge_close_id.sql",
-        "070_projection_failure_ttl.sql",
+        "064_learnings_agent_and_supporters.sql",
+        "065_entity_triple_rows.sql",
+        "066_projection_failure_abandoned.sql",
+        "067_entity_triple_seen_at.sql",
+        "068_graph_restore_id.sql",
+        "069_entity_edge_rows.sql",
+        "070_entity_edge_close_id.sql",
+        "071_projection_failure_ttl.sql",
     ]
 
 

@@ -91,6 +91,10 @@ checkout.
    in each erasure's scope whose memory has no live row and no row written since the
    erasure's census. Without `--resume` it counts them and exits 1 if any are left.
    Data written after the erasure stays.
+8. Turn on a feature the previous build cannot honour only once every replica runs
+   the new build: `memory_extract_agent_learnings`, since the previous build does not
+   erase `loom.learnings_supporters`
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
@@ -98,10 +102,18 @@ The rules that let the two builds serve side by side are in
 
 ## Rollback
 
-Redeploy the previous image; with the pair, `./redeploy.sh --rollback`. There is no
-schema step: the previous build reads and writes the newer schema. Its version writes to
-`loom.memory` and the other `ReplacingMergeTree` memory tables keep the columns it does
-not know ([rolling upgrades](../architecture/rolling-upgrades.md)).
+Redeploy the previous image; with the pair, `./redeploy.sh --rollback`. Before rolling
+back to a build without assistant-turn learnings, turn `memory_extract_agent_learnings`
+off and delete the rows of `loom.learnings_supporters` and the `assistant_turn` rows of
+`loom.learnings_queue`
+([extraction](../features/memory/extraction.md#rules-the-assistant-states-about-itself)).
+The previous build serves a promoted bot rule to every agent in the namespace, not only
+its bot. To prevent that, delete the documents tagged `source-kind:assistant_turn` with
+`knowledge.delete` before rolling back; otherwise accept the wider serving.
+There is no migration to undo: the previous build reads and writes the newer schema.
+Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
+keep the columns it does not know
+([rolling upgrades](../architecture/rolling-upgrades.md)).
 
 There are no down-migrations. To return to an earlier schema, restore a backup taken
 before the upgrade ([backup and recovery](./backup-and-recovery.md)).

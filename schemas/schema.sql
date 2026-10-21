@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 171 tables + 18 materialized views.
+-- Counts: 172 tables + 18 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (171)
+-- Tables (172)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1874,12 +1874,32 @@ CREATE TABLE IF NOT EXISTS loom.learnings_queue
     `version` UInt64,
     `source_kind` LowCardinality(String) DEFAULT 'memory_supporters',
     `seeded_from_msg_id` Nullable(String) DEFAULT NULL,
-    `seeded_from_thread_id` Nullable(String) DEFAULT NULL
+    `seeded_from_thread_id` Nullable(String) DEFAULT NULL,
+    `agent` LowCardinality(String) DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(proposed_at)
 ORDER BY (org, namespace, candidate_id)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.learnings_supporters
+CREATE TABLE IF NOT EXISTS loom.learnings_supporters
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `candidate_id` UUID,
+    `user_id` String,
+    `session_id` String,
+    `actor` LowCardinality(String) DEFAULT '',
+    `confidence` Float32,
+    `asked` String,
+    `said` String,
+    `created_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = MergeTree
+ORDER BY (org, namespace, candidate_id, user_id, session_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.llm_response_cache
 CREATE TABLE IF NOT EXISTS loom.llm_response_cache
