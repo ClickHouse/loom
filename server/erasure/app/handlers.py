@@ -136,8 +136,6 @@ async def _export_memory(
 _MEMORY_SUBJECT = ("memory_key", "memory_id", "version")
 # Conversation rows carry no label; their text decides, as for raw evidence.
 _CONVERSATION_TEXT = ("content", "reasoning", "metadata")
-# The audit subject of a turn is its agent, thread_id and msg_id; of a thread, its agent
-# and thread_id.
 _CONVERSATION_SUBJECT = ("agent", "thread_id", "msg_id")
 _THREAD_TEXT = ("title", "metadata")
 _THREAD_SUBJECT = ("agent", "thread_id")
@@ -272,9 +270,10 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit,
         shown=shown,
     )
-    scope = (input.org, input.scope_type, input.scope_value)
     turns, over_budget = await erasure_exports.export_conversations(
-        *scope,
+        input.org,
+        input.scope_type,
+        input.scope_value,
         include_tombstoned=input.include_tombstoned,
         limit=input.section_limit + 1,
         max_bytes=settings.erasure_export_conversation_max_bytes,
@@ -286,7 +285,9 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     )
     conv_trunc = conv_trunc or over_budget
     threads = await erasure_exports.export_conversation_threads(
-        *scope,
+        input.org,
+        input.scope_type,
+        input.scope_value,
         include_tombstoned=input.include_tombstoned,
         limit=input.section_limit + 1,
         shown=shown,

@@ -169,42 +169,28 @@ async def test_export_user_id_includes_agent_events(admin_agent, ch_client) -> N
     assert all(r["user_id"] == user for r in archive["agent_events"]["rows"])
 
 
-def _post(base: str, token: str, op: str, body: dict) -> dict:
-    import httpx
-
-    r = httpx.post(
-        f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=30
-    )
-    assert r.status_code == 200, r.text
-    return r.json()
-
-
 @pytest.mark.asyncio
 async def test_export_user_id_includes_their_saved_messages_and_turns(
-    admin_agent, control_plane_url: str, mint_test_token, ch_client
+    admin_agent, ch_client
 ) -> None:
     """A user's saved message, their transcript turns and their thread export with the
     columns stored; another user's do not, and a turn holding a key is labelled high."""
     ns = admin_agent.namespace
     org = "export-test-org"
-    tok = mint_test_token(org=org, namespaces=[ns], roles=["admin", "writer"])
     grace = f"grace-{uuid.uuid4().hex[:6]}"
     heidi = f"heidi-{uuid.uuid4().hex[:6]}"
     thread = f"t-{uuid.uuid4().hex[:6]}"
     base = {"org": org, "namespace": ns, "agent": "chat"}
     key = "AKIA" + "ABCDEFGHIJKLMNOP"
 
-    _post(control_plane_url, tok, "conversation.set_logging", {**base, "enabled": True})
-    _post(
-        control_plane_url,
-        tok,
-        "conversation.create",
+    post = admin_agent.transport.post
+    await post("/v1/conversation.set_logging", {"org": org, "namespace": ns, "enabled": True})
+    await post(
+        "/v1/conversation.create",
         {**base, "thread_id": thread, "title": "Renewal terms", "user_id": grace},
     )
-    _post(
-        control_plane_url,
-        tok,
-        "conversation.append",
+    await post(
+        "/v1/conversation.append",
         {
             **base,
             "thread_id": thread,
@@ -214,10 +200,8 @@ async def test_export_user_id_includes_their_saved_messages_and_turns(
             "user_id": grace,
         },
     )
-    saved = _post(
-        control_plane_url,
-        tok,
-        "conversation.save_message",
+    saved = await post(
+        "/v1/conversation.save_message",
         {
             **base,
             "conversation_id": thread,
@@ -228,10 +212,8 @@ async def test_export_user_id_includes_their_saved_messages_and_turns(
         },
     )
     assert saved["indexed"] is True
-    _post(
-        control_plane_url,
-        tok,
-        "conversation.save_message",
+    await post(
+        "/v1/conversation.save_message",
         {
             **base,
             "conversation_id": f"t-{heidi}",
