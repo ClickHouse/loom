@@ -41,6 +41,7 @@ from server.memory.store import MemoryRow
 from server.memory.store import webhooks as store
 from server.memory.workers import webhook_deliver as worker
 from server.settings import settings
+from server.settings.catalog import parse_backoff_steps
 from server.workers import pass_context
 from tests.unit.ch_fake import RecordingCH
 from tests.unit.clock_fake import ManualClock
@@ -1470,7 +1471,7 @@ async def test_a_receiver_that_is_always_down_has_every_event_dead_before_the_tt
 
 
 def test_the_backoff_levels_off_at_its_ceiling() -> None:
-    steps = settings.memory_webhook_backoff_steps()
+    steps = parse_backoff_steps(settings.memory_webhook_backoff_steps_seconds)
     assert steps == (5, 30, 120, 600, 1800)
     assert [backoff_seconds(n, steps, 3600) for n in (0, 1, 5, 6, 60)] == [5, 5, 1800, 3600, 3600]
     assert [backoff_seconds(n, steps, 60) for n in (1, 3, 9)] == [5, 60, 60]

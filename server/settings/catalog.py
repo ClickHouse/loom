@@ -3239,9 +3239,6 @@ class MemoryWebhookSettings(BaseModel):
             )
         return self
 
-    def memory_webhook_backoff_steps(self) -> tuple[float, ...]:
-        return parse_backoff_steps(self.memory_webhook_backoff_steps_seconds)
-
     def memory_webhook_private_host_set(self) -> frozenset[str]:
         return frozenset(
             h.strip().lower() for h in self.memory_webhook_private_hosts.split(",") if h.strip()

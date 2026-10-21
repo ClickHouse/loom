@@ -51,6 +51,7 @@ from server.memory.domain.webhook_events import backoff_seconds, event_body
 from server.memory.store import webhooks as store
 from server.memory.store.rows import next_version
 from server.settings import settings
+from server.settings.catalog import parse_backoff_steps
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -194,7 +195,7 @@ def _outcome(row: Mapping[str, Any], delivery: signed.Delivery) -> dict[str, Any
         status = "pending"
         wait = backoff_seconds(
             attempts,
-            settings.memory_webhook_backoff_steps(),
+            parse_backoff_steps(settings.memory_webhook_backoff_steps_seconds),
             settings.memory_webhook_max_backoff_seconds,
         )
         next_at = naive_utc_now() + timedelta(seconds=wait)
@@ -372,9 +373,10 @@ async def deliver_once(
     secrets = {_hook(h): signed.read_secret(str(h["org"]), str(h["secret_ref"]), env) for h in live}
     urls = {_hook(h): str(h["url"]) for h in live}
     usable = {k: s for k, s in secrets.items() if s is not None}
-    unsecured = [k for k in secrets if k not in usable]
+    unsecured = []
     for h in live:
         if secrets[_hook(h)] is None:
+            unsecured.append(_hook(h))
             _warn_missing_secret(str(h["org"]), str(h["secret_ref"]))
     sendable = [k for k in usable if _cooling_until(k[2]) is None]
 

@@ -770,6 +770,7 @@
  "memory_value_advisory_chars": 30000,
  "memory_webhook_ack_timeout_seconds": 10.0,
  "memory_webhook_allow_http": false,
+ "memory_webhook_backoff_steps_seconds": "5,30,120,600,1800",
  "memory_webhook_cooldown_seconds": 60,
  "memory_webhook_deliver_concurrency": 4,
  "memory_webhook_deliver_enabled": true,
