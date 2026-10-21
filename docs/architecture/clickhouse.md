@@ -392,9 +392,10 @@ reads candidates with no `FINAL` or `JOIN`, then looks them up by primary key un
 A `vector_similarity` index is one HNSW graph per part. It does not fit Loom's reads, for
 four reasons. Unless a paragraph says otherwise, the figures come from ClickHouse 26.9
 with 1M synthetic 1536-dimension vectors in tables shaped like `memory_embeddings` (its
-sort key, `ReplacingMergeTree`, `index_granularity = 256`, one merged part), an index
-built as `vector_similarity('hnsw', 'cosineDistance', 1536, 'bf16', 16, 128)`, and 30
-queries per filter; the command is in `bench/vector_index_vs_exact.py`.
+sort key, `ReplacingMergeTree`, `index_granularity = 256`, one merged part per
+partition), an index built as
+`vector_similarity('hnsw', 'cosineDistance', 1536, 'bf16', 16, 128)`, and 30 queries per
+filter; the command is in `bench/vector_index_vs_exact.py`.
 
 **A tenant read never uses it.** ClickHouse searches the graph only when the primary-key
 condition keeps every granule of the part. Every Loom vector read filters on

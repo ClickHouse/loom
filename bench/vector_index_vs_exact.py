@@ -288,6 +288,9 @@ def measure(ch, args: argparse.Namespace) -> None:
     passes = [(VARIANTS, filters), (PARTITIONED, ["all"] + TENANT_NAMES), (CACHE_CHECK, ["all"])]
     for variants, names in passes:
         for name in names:
+            if not queries[name]:
+                print(f"| {name} | 0 | (no rows admitted; skipped) |", flush=True)
+                continue
             for label, table, final, limit, st in variants:
                 nearest(ch, table, name, queries[name][0], final=final, limit=limit, settings=st)
                 tag = f"vb:{run}:{name}:{label}"

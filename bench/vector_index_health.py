@@ -6,7 +6,8 @@ Read-only probe, over TLS, of `--table`: a table shaped like `loom.memory_embedd
 so and exits. On an indexed table it reports part-count shape, HNSW index bytes, and,
 for a few namespaces and the whole org, how many granules the index lets the read skip
 (EXPLAIN indexes=1), the latency of the production-shaped query (FINAL, bare distance
-ORDER BY) against exact search, and recall of the indexed read against exact. A sample
+ORDER BY) against exact search, recall of the indexed read against exact, and the rows
+an indexed read returns short of `LIMIT` after a lightweight DELETE. A sample
 reading: 83 parts (61 under 1,000 rows), 2.74 GiB of HNSW for 596k rows, ≤17% of
 granules pruned org-wide, 0% inside a namespace, latency identical to exact at every
 size, FINAL doubling the read (526 vs 271 ms org-wide).
