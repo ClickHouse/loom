@@ -18,7 +18,7 @@ import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { listMine, setSavedNamespace, cancelNamespaceRequest, isAuthDisabled, type MyNamespaceEntry } from "../api";
 import { invalidateShared, sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
-import { WILDCARD_NAMESPACE } from "../lib/namespace";
+import { WILDCARD_NAMESPACE, nameFamilies } from "../lib/namespace";
 import { isSystemKind, parseChTime } from "../lib/format";
 import { toast, toastError } from "./Toast";
 import { confirmAction } from "./ConfirmDialog";
@@ -36,7 +36,8 @@ const CreateNamespaceDialog = lazy(() =>
  * role (you own → joined → other), sort by recency within section, badges for visibility,
  * and a hide- system-namespaces toggle so bench artefacts don't drown out a user's actual
  * namespaces. Memory namespaces whose names share a prefix (`col-`, `u-`, a deployment's
- * own scheme) fold into a group per prefix, as code indexes and tracker records do.
+ * own scheme, per owner when the names carry its uuid) fold into a group per prefix, as
+ * code indexes and tracker records do.
  */
 export function NamespacePicker() {
   const identity = useStore((s) => s.identity);
@@ -161,17 +162,10 @@ function NamespacePickerMenu() {
 
   // Code indexes and tracker records each fold into a group of their own, told apart by the
   // server's `kind` alone (a name is free text); memory namespaces whose names share a
-  // prefix fold into one per prefix once there are FAMILY_MIN of them.
-  const families = new Map<string, MyNamespaceEntry[]>();
-  for (const r of listed) {
-    const p = namePrefix(r.namespace);
-    if (p && !kindGroup(r)) families.set(p, [...(families.get(p) ?? []), r]);
-  }
-  for (const [p, members] of families) if (members.length < FAMILY_MIN) families.delete(p);
-  const groupOf = (r: MyNamespaceEntry | undefined): string | null => {
-    const p = r ? namePrefix(r.namespace) : "";
-    return kindGroup(r) ?? (families.has(p) ? p : null);
-  };
+  // token prefix fold into one per prefix (`nameFamilies`).
+  const families = nameFamilies(listed.filter((r) => !kindGroup(r)).map((r) => r.namespace));
+  const groupOf = (r: MyNamespaceEntry | undefined): string | null =>
+    kindGroup(r) ?? (r && families.get(r.namespace)) ?? null;
   const currentGroup = groupOf(listed.find((r) => r.namespace === current));
   // The memory namespaces outside every group, by role.
   const memory = listed.filter((r) => groupOf(r) === null);
@@ -206,7 +200,7 @@ function NamespacePickerMenu() {
   ];
   // A group is open while a search has matches in it (unless someone folded it), or once
   // someone opened it. Name families come first, by prefix: they are memory namespaces.
-  const groups = [...[...families.keys()].sort(), ...KIND_GROUPS]
+  const groups = [...[...new Set(families.values())].sort(), ...KIND_GROUPS]
     .map((g) => {
       const all = listed.filter((r) => groupOf(r) === g);
       const rows = sortByName(all);
@@ -405,7 +399,7 @@ function NamespacePickerMenu() {
             <GroupDisclosure
               key={x.g}
               group={x.g}
-              {...groupMeta(x.g, x.all)}
+              {...groupMeta(x.g)}
               total={x.all.length}
               matched={x.rows.length}
               searching={!!q}
@@ -517,8 +511,6 @@ const GROUP_META: Record<string, { title: string; icon: IconName }> = {
 };
 // An open group shows this many rows, then "Show all N".
 const GROUP_CAP = 8;
-// Memory namespaces sharing a name prefix fold into a group from this many on.
-const FAMILY_MIN = 3;
 
 /** The folded group a row belongs in, from the server's `kind` only — never its name. */
 function kindGroup(r: MyNamespaceEntry | undefined): KindGroup | null {
@@ -527,18 +519,9 @@ function kindGroup(r: MyNamespaceEntry | undefined): KindGroup | null {
   return null;
 }
 
-/** A name's first segment with its hyphen ("team-" for "team-a-b"), or "" without one. */
-function namePrefix(namespace: string): string {
-  return namespace.slice(0, namespace.indexOf("-") + 1);
-}
-
-/** A group's title and icon: a kind's own, or a name family's prefix, with the last
- *  segment every member shares ("t-…-shared"). */
-function groupMeta(group: string, rows: MyNamespaceEntry[]): { title: string; icon: IconName } {
-  const name = rows[0]?.namespace ?? "";
-  const tail = name.slice(name.lastIndexOf("-"));
-  const shared = rows.every((r) => r.namespace.endsWith(tail) && r.namespace.length > group.length + tail.length);
-  return GROUP_META[group] ?? { title: `${group}…${shared ? tail : ""}`, icon: "folder-closed" };
+/** A group's title and icon: a kind's own, or a name family's shared prefix ("team-…"). */
+function groupMeta(group: string): { title: string; icon: IconName } {
+  return GROUP_META[group] ?? { title: `${group}…`, icon: "folder-closed" };
 }
 
 /** "3" — or, while searching, "1 of 3": the group's total, never only the matches. */
@@ -622,7 +605,7 @@ function GroupDisclosure({
         className="ns-row w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-left text-sm text-text"
       >
         <Icon name={icon} size="sm" aria-hidden="true" />
-        <span id={`${id}-label`} className="font-medium">
+        <span id={`${id}-label`} className="min-w-0 truncate font-medium">
           {title}
         </span>
         <span className="text-xs text-text-muted tabular">{countLabel(matched, total, searching)}</span>

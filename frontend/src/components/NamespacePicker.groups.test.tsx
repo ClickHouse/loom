@@ -182,11 +182,11 @@ describe("NamespacePicker groups", () => {
   it("folds memory namespaces sharing a name prefix, three or more, into a group per prefix", async () => {
     seed("team", [
       row("team", { role: "admin" }),
-      row("t-1-shared", { description: "Acme" }),
-      row("t-2-shared", { description: "Globex" }),
-      row("t-3-shared"),
-      row("agent-1-a", { description: "Support bot" }),
-      row("agent-1-b", { description: "Sales bot" }),
+      row("group-a-shared", { description: "Workspace A" }),
+      row("group-b-shared", { description: "Workspace B" }),
+      row("group-c-shared"),
+      row("agent-1-a", { description: "Support agent" }),
+      row("agent-1-b", { description: "Sales agent" }),
       row("agent-2-c"),
       row("col-one"),
       row("col-two"),
@@ -194,31 +194,47 @@ describe("NamespacePicker groups", () => {
     ]);
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    // Named by the prefix, with the last segment every member shares.
-    const shared = group(dialog, /^t-…-shared/);
+    // Titled by the prefix the group shares.
+    const shared = group(dialog, /^group-…/);
     const agents = group(dialog, /^agent-…/);
     expect(shared).toHaveAttribute("aria-expanded", "false");
     expect(shared).toHaveTextContent("3");
     expect(agents).toHaveTextContent("3");
-    expect(within(dialog).queryByRole("button", { name: /t-1-shared/ })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: /group-a-shared/ })).toBeNull();
     // Two of a prefix stay with the rest, by role.
     expect(within(dialog).getByRole("button", { name: /col-one/ })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: /^col-…/ })).toBeNull();
     // The name families come first, by prefix, then the code indexes.
     const order = [...dialog.querySelectorAll("[data-nav^='group:']")].map((b) => b.getAttribute("data-nav"));
-    expect(order).toEqual(["group:agent-", "group:t-", "group:code"]);
+    expect(order).toEqual(["group:agent-", "group:group-", "group:code"]);
     fireEvent.click(agents);
     const body = document.getElementById(agents.getAttribute("aria-controls") ?? "");
     // A member reads like a code index: its description, then its name as code.
-    const bot = within(body as HTMLElement).getByRole("button", { name: /agent-1-a/ });
-    expect(bot.textContent).toMatch(/^Support bot.*agent-1-a/);
-    expect(within(bot).getByText("agent-1-a").tagName).toBe("CODE");
+    const support = within(body as HTMLElement).getByRole("button", { name: /agent-1-a/ });
+    expect(support.textContent).toMatch(/^Support agent.*agent-1-a/);
+    expect(within(support).getByText("agent-1-a").tagName).toBe("CODE");
+  });
+
+  it("folds names that carry an owner's uuid per owner, the uuid one part of the prefix", async () => {
+    const OWNER_1 = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
+    const OWNER_2 = "6f1c2b7e-0d4a-4c1b-9e8f-1a2b3c4d5e6f";
+    const agent = (owner: string, n: number) => row(`agent-${owner}-00000000-0000-4000-8000-00000000000${n}`);
+    seed("team", [
+      row("team", { role: "admin" }),
+      ...[1, 2, 3].map((n) => agent(OWNER_1, n)),
+      ...[4, 5, 6].map((n) => agent(OWNER_2, n)),
+    ]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    expect(group(dialog, new RegExp(`^agent-${OWNER_1}-…`))).toHaveTextContent("3");
+    expect(group(dialog, new RegExp(`^agent-${OWNER_2}-…`))).toHaveTextContent("3");
+    expect(within(dialog).queryByRole("button", { name: /^agent-… / })).toBeNull();
   });
 
   it("opens the name family the current namespace is in, and the one a search matches", async () => {
     const rows = [
       row("team", { role: "admin" }),
-      row("agent-1-a", { description: "Support bot" }),
+      row("agent-1-a", { description: "Support agent" }),
       row("agent-1-b"),
       row("agent-2-c"),
     ];
@@ -236,7 +252,7 @@ describe("NamespacePicker groups", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "support");
     expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true");
     expect(group(dialog, /^agent-…/)).toHaveTextContent("1 of 3");
-    expect(within(dialog).getByRole("button", { name: /Support bot/ })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Support agent/ })).toBeInTheDocument();
   });
 
   it("keeps the footer's Spaces link for someone whose joined namespaces all sit in a family", async () => {

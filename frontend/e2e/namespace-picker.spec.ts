@@ -67,16 +67,18 @@ test("Up and Down rove from the search field through the options and the group b
 });
 
 test("an open name family is axe-clean, each member led by its description", async ({ page }) => {
-  const family = ["1", "2", "3"].map((t) => row(`t-${t}-shared`, "memory", "writer", `Tenant ${t}`));
+  const family = ["A", "B", "C"].map((w) =>
+    row(`group-${w.toLowerCase()}-shared`, "memory", "writer", `Workspace ${w}`),
+  );
   await installApi(page, { mine: [...MINE, ...family], claims: MINE.map((r) => r.namespace) });
   await page.goto("/memories");
   await expect(page.locator("main h1").first()).toBeVisible();
   await page.getByRole("button", { name: /^Namespace: / }).click();
   const dialog = page.getByRole("dialog", { name: "Namespaces" });
-  const shared = dialog.getByRole("button", { name: /^t-…-shared/ });
+  const shared = dialog.getByRole("button", { name: /^group-…/ });
   await expect(shared).toHaveAttribute("aria-expanded", "false");
   await shared.click();
-  await expect(dialog.getByRole("button", { name: /Tenant 2/ })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Workspace B/ })).toBeVisible();
   expect(await violations(page)).toEqual([]);
 });
 
