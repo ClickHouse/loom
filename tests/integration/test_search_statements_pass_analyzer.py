@@ -1446,6 +1446,7 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
         ledger_steps.delete_code_search_trace_by_user,
         ledger_steps.delete_events_by_user,
         ledger_steps.delete_agent_runs_by_user,
+        ledger_steps.delete_learnings_queue_by_user,
         ledger_steps.delete_consolidation_runs_by_user,
     ):
         await fn("o", "alice", ch=ch)  # type: ignore[arg-type]

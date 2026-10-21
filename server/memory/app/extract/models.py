@@ -68,7 +68,9 @@ class ExtractedFact:
     foresight: dict[str, Any] | None = None
     # Whose fact this is: "user" (default) or "other" — a
     # friend's preference, a colleague's schedule. Rides the row as the tag
-    # `about:other`; the profile fold and the reader read it.
+    # `about:other`; the profile fold and the reader read it. "agent" is a
+    # standing rule the assistant states about itself, asked for only under
+    # `agent_learnings`: it is filed to loom.learnings_queue, never written.
     about: str = "user"
     # The user asked the assistant not to remember / to forget this.
     # The entry is NOT written; the memories it names in

@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -48,22 +49,33 @@ async def knowledge_passages(
         from server.knowledge.api.models_knowledge import KnowledgeSearchInput
         from server.knowledge.app.knowledge_search import handle_knowledge_search
 
-        res = await handle_knowledge_search(
-            KnowledgeSearchInput(
-                org=search_input.org,
-                namespace=search_input.namespace,
-                query=question,
-                top_k=int(settings.memory_ask_knowledge_top_k),
-                namespace_scope="this",
-                # The ask's hard tag filter reaches this leg too.
-                tags=(
-                    []
-                    if bool(getattr(search_input, "tags_soft", False))
-                    else [str(t) for t in (getattr(search_input, "tags", None) or []) if t]
-                ),
+        async def search(top_k: int) -> list[Any]:
+            res = await handle_knowledge_search(
+                KnowledgeSearchInput(
+                    org=search_input.org,
+                    namespace=search_input.namespace,
+                    query=question,
+                    top_k=top_k,
+                    namespace_scope="this",
+                    # The ask's hard tag filter reaches this leg too.
+                    tags=(
+                        []
+                        if bool(getattr(search_input, "tags_soft", False))
+                        else [str(t) for t in (getattr(search_input, "tags", None) or []) if t]
+                    ),
+                )
             )
+            return list(getattr(res, "results", None) or [])
+
+        top_k = int(settings.memory_ask_knowledge_top_k)
+        # Another bot's promoted rule is not a rule about this agent.
+        hits = await served_hits(
+            await search(top_k),
+            search,
+            lambda h: list(getattr(h, "tags", None) or []),
+            request_rule_agent(str(getattr(search_input, "agent", "") or "")),
+            top_k,
         )
-        hits = list(getattr(res, "results", None) or [])
     except Exception as e:  # noqa: BLE001 — additive plane
         logger.warning("knowledge plane on ask failed (non-fatal): %s", e)
         return "", 0

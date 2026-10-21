@@ -97,3 +97,13 @@ USER_COMMUNITY_ROWS = (
 # table with a user_id column.
 LIVE = "tombstoned_at IS NULL"
 UID = "user_id = {uid:String}"
+
+# Candidates any supporter row in the org names.
+SUPPORTED_LEARNINGS = (
+    "(SELECT candidate_id FROM loom.learnings_supporters WHERE org = {org:String})"
+)
+# Bot-rule candidates nobody supports that still hold their rule, counted org-wide.
+ORPHAN_LEARNINGS = (
+    "source_kind = 'assistant_turn' AND proposed_value != '' AND candidate_id NOT IN "
+    + SUPPORTED_LEARNINGS
+)

@@ -14,6 +14,70 @@ The `loom` plugin for Claude Code does three things in one install:
 Source: `integrations/claude-code-plugin/`, Node ESM scripts with no dependencies. The
 Codex build runs the same scripts; see [codex.md](codex.md).
 
+## Data handling
+
+This section covers the Claude Code plugin and the Codex plugin, which run the same
+scripts; Codex wires all but the token-usage hook. The hooks and the plugin's scripts send
+data only to the Loom server the plugin is configured with; the two skills named at the
+end of this section are the exceptions. The plugin sends:
+
+- whatever the agent passes to a Loom MCP tool: memories it saves, search and code
+  queries;
+- the repository's identity. The owner and name of each git remote go to `code.repos`
+  to find its code index. The owner and name of the matched remote go with every
+  observation, run record and session brief; the branch and `HEAD` commit go with each
+  brief, and the absolute working directory with the run record. Observations and session
+  memory are tagged with the checkout's directory name and a hash of the repository, and
+  observations also carry the working subdirectory;
+- prompts, to fetch recalled memories and code pointers for them;
+- each tool call's input, output or error (`observe.record`), and the paths of files read
+  or edited, for the code shunt, file rules and blast radius; a symbol name taken from a
+  redirected grep pattern (`code.symbol`); and the search query of a `gh` issue search the
+  tracker shunt answers (`tracker.duplicate_check`), with the owner and name of a repository
+  the command names (`code.repos`);
+- chat turns (`conversation.append`), which the server stores only when the namespace has
+  conversation logging on;
+- the session's last turns (up to 200), to `memory.set_from_messages`, which keeps them as
+  source evidence for the facts it extracts whatever the logging setting is, with up to
+  80,000 characters of the session's Loom tool arguments and results
+  (`LOOM_SESSION_MEMORY=off` stops it);
+- a run record (the first prompt as its goal, the last reply) and a working-memory note
+  (goal, git status, files edited, last reply);
+- a session brief at each compaction and at session end: the client's compaction summary
+  of the whole context window (up to 15,000 characters) and a log of the session's events,
+  with each ask and reply, command, file read or edited, search pattern, web address or
+  query, subagent prompt, error, todo list, other tool's name, and pull request and commit
+  identifier. The server stores none of it, summary or log, when the namespace has
+  conversation logging off (`LOOM_SESSION_BRIEF=off` stops sending it);
+- token usage and the model name (Claude Code only);
+- after each edit in an indexed checkout, that file's uncommitted diff against `HEAD` (up to
+  200,000 characters), to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
+- at Stop in an indexed checkout, the uncommitted diff of the files the session changed,
+  or of the whole uncommitted tree when the client gives no transcript (up to 200,000
+  characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
+- with no credential, at the first session, your OS user name and host name, to request a
+  self-signup token (refused unless the server allows self-signup; `LOOM_AUTO_SIGNUP=off`
+  stops it);
+- in agent mode, the workload's identity token and `LOOM_CLIENT_ID`, to the server's
+  `/oauth/token`, in exchange for a Loom token.
+
+[What the hooks do](#what-the-hooks-do) lists the hooks behind these requests. A
+client-side redaction removes common credential shapes from the prompts, tool calls, turns,
+run records, notes and briefs the hooks send. It is best effort, not a guarantee. MCP tool
+arguments, a brief the `loom-session` skill saves and the blast-radius and test-gate diffs are
+sent without it.
+
+The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
+provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
+Deleting data is covered in [retention and erasure](../memory/retention-and-erasure.md).
+Two skills reach other services, each only when you ask for it. The `loom-status` skill
+can install Node.js from NodeSource through apt, dnf or yum, or from apk or Homebrew, and
+runs that installer only after you agree. The `improve-loom-for-my-repo` skill searches
+the ClickHouse/loom GitHub issues for each finding it reports and, after you approve,
+files its report there, or adds it as a comment on the issue that already reports it.
+The issue is public, and names the namespace and the symbols and queries behind each
+finding.
+
 ## Requirements
 
 - A reachable Loom server ([quickstart](../../getting-started/quickstart.md)).
@@ -119,7 +183,7 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | Event                                             | Script                      | Effect                                                                                                                                                                                                                                               | Off switch                                                                     |
 | ------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | SessionStart                                      | `loom-session-start.mjs`    | one budgeted `context.pack` primer (working-memory note, pins, profile, memories, decisions, procedures, recent runs), the code map for an indexed checkout, a line naming the project's saved session briefs, and a task-inbox line (`task.counts`) | `LOOM_INJECT_CONTEXT=false`, `LOOM_CODE_MAP=false`, `LOOM_TASK_INBOX_LINE=off` |
-| UserPromptSubmit                                  | `loom-prompt-pack.mjs`      | up to three `code.search` pointers for the prompt, only when the index does not abstain                                                                                                                                                              | opt-in: `LOOM_PROMPT_PACK=on`                                                  |
+| UserPromptSubmit                                  | `loom-prompt-pack.mjs`      | up to three `code.search` pointers for the prompt, only when the index does not abstain                                                                                                                                                              | `LOOM_PROMPT_PACK=off`                                                         |
 | UserPromptSubmit                                  | `loom-prompt-recall.mjs`    | one bounded `context.pack` recall for the prompt (memories, decisions, procedures), injected only when memory does not abstain                                                                                                                       | `LOOM_PROMPT_RECALL=first` (default) / `on` / `off`                            |
 | UserPromptSubmit                                  | `loom-run.mjs`              | opens the session's run (`run.begin`, `run_id = cc-<session_id>`, goal = the first prompt)                                                                                                                                                           | `LOOM_RUN_LEDGER=off`                                                          |
 | PreToolUse (Read, Grep, Bash)                     | `loom-code-shunt.mjs`       | the code shunt and the tracker shunt ([next section](#the-code-shunt))                                                                                                                                                                               | `LOOM_CODE_SHUNT=off`, `LOOM_TRACKER_SHUNT=off`                                |
@@ -151,7 +215,7 @@ that knows its outcome calls `run.complete` itself.
   `observe_extract` worker (`LOOM_OBSERVE_EXTRACT_ENABLED=true`, which needs LLM and
   embedder credentials; see [configuration](../../reference/configuration.md#extraction)).
 - Session memory is independent of logging: `memory.set_from_messages` writes facts and
-  a summary, not the transcript.
+  a summary, and keeps the turns it was given as their source evidence.
 
 **Safety.** A hook never blocks the agent on the network.
 
@@ -176,9 +240,8 @@ then does: keeping tool authority independent of retrieved text is the client's 
 
 The hooks' temp files (turn journal, cursors, stashes, flush jobs) are created `0600`,
 never written through a symlink or into another user's file, and the turn journal and
-stashes are removed at SessionEnd. Captured tool input, output and errors pass through a
-client-side secret redaction before they are sent; it catches common credential shapes and
-is best effort, not a guarantee.
+stashes are removed at SessionEnd. What the hooks redact before sending is in
+[data handling](#data-handling).
 
 ### Tuning knobs
 
