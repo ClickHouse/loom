@@ -14,17 +14,17 @@ Like the free-text fold, the facts come from `profile_sources`: never a
 gets an all-null profile without a model call.
 
 A pass reaches namespaces in (org, namespace) order from where the last one
-stopped (the pass cursor), and each gets an equal share of the pass's
-budget. A namespace with nothing to build spends none of it, so the pass reads
-on until its budget is spent or it has reached every namespace. Past half of
-`structured_profile_max_pass_seconds` it takes no more users, so its last build
-ends before the supervisor's deadline. A user whose
-build failed is skipped for a while, longer after each failure, and so is a
-namespace whose scan or stored schema failed, until its wait is over or its
-schema changes. A user whose profile row refuses the
-write (locked, pinned, over a limit, blacklisted) is skipped until their
-sources digest or the profile row's version changes (an unpin, an unlock),
-or `structured_profile_refusal_retry_seconds` pass.
+stopped (the pass cursor), and each gets an equal share of the pass's budget.
+A namespace with nothing to build spends none of it, so the pass reads on
+until its budget is spent or it has reached every namespace. Past half of
+`structured_profile_max_pass_seconds` it takes no more users, which leaves the
+build in flight the second half to finish. A user whose build failed is
+skipped for a while, longer after each failure, and so is a namespace whose
+scan or stored schema failed, until its wait is over or its schema changes. A
+user whose profile row refuses the write (locked, pinned, labelled `high`,
+over a limit, blacklisted) is skipped until their sources digest or the
+profile row's version changes (an unpin, an unlock), or
+`structured_profile_refusal_retry_seconds` pass.
 """
 
 from __future__ import annotations
