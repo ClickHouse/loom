@@ -664,7 +664,7 @@ function LearningsPanel({
           kind="empty"
           icon="sparkle"
           title={`No ${status} learnings`}
-          description="A learning is a candidate waiting for a person's decision: a fact several writers back, or a rule a bot stated about itself in conversations (when the deployment files those). Nothing is promoted without a review."
+          description="A learning is a candidate waiting for a person's decision: a fact several writers back, a fact seen in conversations, or a rule a bot stated about itself (when the deployment files those). Nothing is promoted without a review."
         />
       )}
       {!error && rows !== null && rows.length > 0 && (

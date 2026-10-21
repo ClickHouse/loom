@@ -108,7 +108,8 @@ See [knowledge documents](features/knowledge.md).
 
 **Learning** — a candidate waiting in `loom.learnings_queue` for a person's decision
 (`learnings.list`, `learnings.review`): a fact several writers back, promoted to the shared
-layer, or a rule a bot stated about itself, promoted to the namespace's knowledge.
+layer; a conversation-seeded fact, promoted to a namespace memory row; or a rule a bot stated
+about itself, promoted to the namespace's knowledge.
 
 **`log_comment`** — the ClickHouse query setting Loom fills with the calling op, worker
 or CLI command, so `system.query_log` attributes every statement.

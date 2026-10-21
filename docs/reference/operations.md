@@ -391,7 +391,7 @@ Fields for every `learnings` op: [operations/learnings.md](operations/learnings.
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`learnings.list`](operations/learnings.md#learningslist) | List candidate learnings waiting for review: memories several writers back (promoting one writes it to shared), and rules a bot stated about itself in conversations (source_kind=assistant_turn). | viewer | read | no |  |
+| [`learnings.list`](operations/learnings.md#learningslist) | List candidate learnings waiting for review: memories several writers back (promoted to shared), conversation-seeded facts (promoted to a namespace memory row), and rules a bot stated about itself… | viewer | read | no |  |
 | [`learnings.quality`](operations/learnings.md#learningsquality) | Per-namespace approve-ratio rollup of the learnings queue. | viewer | read | no |  |
 | [`learnings.review`](operations/learnings.md#learningsreview) | Approve or reject a pending learning. | admin | idempotent | no | yes |
 
