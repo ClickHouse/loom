@@ -976,14 +976,18 @@ class MemoryRedactInput(BaseModel):
 
 
 class MemoryRedactOutput(BaseModel):
-    redacted: bool  # False if memory_id not found
+    # False when memory_id or that version is not found, or the caller is not admin of
+    # its namespace.
+    redacted: bool
     refused_head: bool = False  # True when the target was the live head
     # UTC time of the scrub; None when nothing was redacted.
     redacted_at: datetime | None = None
-    # The cached answers and precedents whose window held the
-    # redacted key, deleted with it — the stored text that quoted the value.
+    # The cached answers whose window held the redacted key or a profile key the redact
+    # reached, deleted with it: the stored text that quoted the value. A profile key is
+    # shared by every user's profile, so its rows are deleted across the org.
     cache_rows_deleted: int = 0
-    # Stored `memory.ask` precedents that quoted the key, deleted with it.
+    # Stored `memory.ask` precedents that quoted the redacted key or a profile key the
+    # redact reached, deleted with it, across the org for a profile key.
     precedent_rows_deleted: int = 0
 
 

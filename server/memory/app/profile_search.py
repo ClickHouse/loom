@@ -63,6 +63,8 @@ PREWHERE org = {org:String}
   AND (namespace, agent, user_id, session_id, memory_key)
       IN {keys:Array(Tuple(String, String, String, String, String))}
 WHERE memory_type = 'profile' AND tombstoned_at IS NULL
+  -- a head scrubbed by memory.redact is no section to find
+  AND redacted_at IS NULL
   -- a 'high' section is never embedded or ranked: no stub, no vector, no hit
   AND sensitivity != 'high'
 """

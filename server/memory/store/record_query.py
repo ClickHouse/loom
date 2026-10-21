@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.memory.domain.record_values import _FIELD_RE
+from server.memory.domain.record_values import FIELD_RE
 
 _OP_SQL = {"eq": "=", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
@@ -15,7 +15,7 @@ _OP_SQL = {"eq": "=", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="
 def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
     """Build (sql, params) for memory.record.query. Pure (no I/O) so the
     predicate logic is unit-testable. Every value is parameterized; field names
-    are validated against _FIELD_RE; ops and states come from fixed allowlists,
+    are validated against FIELD_RE; ops and states come from fixed allowlists,
     so no caller input is interpolated into SQL.
 
     Predicates are AND-composed as one `sumIf(...) > 0` HAVING term each over a
@@ -62,7 +62,7 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
     i = 0
     # Exact-string filters: field == value, value_state='value'.
     for field_name, value in input.filters.items():
-        if not _FIELD_RE.match(field_name):
+        if not FIELD_RE.match(field_name):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -78,7 +78,7 @@ def _build_record_query(input: Any) -> tuple[str, dict[str, Any]]:
 
     # Typed predicates: numeric/bool/string comparisons + state/negative queries.
     for pred in input.predicates:
-        if not _FIELD_RE.match(pred.field):
+        if not FIELD_RE.match(pred.field):
             raise HTTPException(
                 status_code=400,
                 detail={
