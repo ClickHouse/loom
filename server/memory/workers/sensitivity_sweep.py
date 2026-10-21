@@ -83,7 +83,7 @@ def _resume_past_agent(report: SweepReport, result: ApplyResult) -> bool:
     if result.relabelled or not report.resume_after:
         return False
     if not report.candidates:
-        return report.last_page_short
+        return report.last_page_had_stale_key
     if not result.failed:
         return False
     stopped_in = [report.resume_after[col] for col in CURSOR_KEY]

@@ -4976,7 +4976,7 @@
           "maximum": 1000,
           "minimum": 1,
           "type": "integer",
-          "description": "Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). The cap keeps a pass's pages well inside its 900 s deadline: a pass cancelled before it stores its cursor would read the same pages again on every later pass."
+          "description": "Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). At the default page size the cap keeps a pass's pages inside its pass deadline (900 s at the default interval); with larger pages or a shorter interval, lower it. A pass cancelled before it stores its cursor reads the same pages again on every later pass."
         },
         "sensitivity_sweep_shapes": {
           "default": "credential,email",

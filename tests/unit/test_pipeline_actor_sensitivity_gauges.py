@@ -842,7 +842,9 @@ async def test_a_key_written_inside_a_page_between_its_reads_is_read_once_and_no
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-async def test_a_page_short_one_key_never_skips_its_agent_when_a_new_key_fills_the_count() -> None:
+async def test_a_page_with_a_stale_key_never_skips_its_agent_when_a_new_key_fills_the_count() -> (
+    None
+):
     # The first page's keys are k1 and k3. k1 was labelled and its old unlabelled version
     # waits for a merge, so the FINAL read gives no row for it; k2, written between the
     # reads, gives one instead. Two rows for two keys, but not one for each key, so the scan
