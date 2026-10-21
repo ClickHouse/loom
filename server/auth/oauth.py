@@ -1574,7 +1574,7 @@ async def _machine_tokens(
     subject = agents.subject(m["name"], agent) if agent else trust
     if await subjects_revoked([trust, subject], issued_at=since):
         raise OAuthError("invalid_client", 401, description="this bot is revoked")
-    admin = m["platform_admin"] and not agent  # never an agent's (`bot_from`)
+    admin = bool(m.get("platform_admin", False)) and not agent  # never an agent's
     ns_roles: list[tuple[str, str]] = []
     if not admin:
         ns_roles = ([(own, "writer")] if own else []) + await machines.live_roles(m)

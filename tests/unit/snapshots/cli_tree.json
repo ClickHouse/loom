@@ -8277,7 +8277,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Mint the platform_admin role, which spans every org, instead of --roles: for a service account (--subject sa:<name>) and with --ttl-days; the token covers every namespace unless --namespaces names some.",
+       "help": "Mint the platform_admin role, which spans every org, instead of --roles: for a service account (--subject sa:<name>, never an agent's) and with --ttl-days (at most 90); each mint is audited, and the token covers every namespace unless --namespaces names some.",
        "metavar": null
       },
       {

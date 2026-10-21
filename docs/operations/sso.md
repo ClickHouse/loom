@@ -320,27 +320,33 @@ trusts and grants for its tenants, holds the `platform_admin` role as a bot.
 **Platform admin spans every org**: a token holding it passes every admin route
 and acts in any org, so give it to as few identities as you can, and prefer a
 trust (no secret to leak) to a key. `--platform-admin` registers such a bot; it
-takes no `--namespace-role` (its tokens cover every namespace) and no
-`--agent-claim` (it is one identity, never an agent's):
+takes no `--namespace-role` (its tokens cover every namespace), no
+`--agent-claim` (it is one identity, never an agent's), and only exact `--claim`
+values (a prefix would hand the role to every token it matches). Give it an
+audience of its own, so no token meant for another trust can meet it:
 
 ```bash
 loom bot create --name controlplane --org acme --platform-admin \
-  --issuer https://cp.example/workload-identity --audience loom \
+  --issuer https://cp.example/workload-identity --audience loom-admin \
   --claim sub=controlplane
 ```
 
 Each proof still gets an hour-long token, for `sa:controlplane`, carrying the
-role; `loom bot disable` ends them as it ends any bot's. The flag can be set
-only by a platform admin (`"platform_admin": true` on `/v1/admin/bots.create`)
-or on the host, the `auth.machine_created` audit row records it, and
+role; `loom bot disable` ends them as it ends any bot's. Only a person signed in
+as a platform admin (`"platform_admin": true` on `/v1/admin/bots.create`) or an
+operator on the host sets the flag: the route refuses it to every service
+account's token, a platform-admin bot's included, so a leaked token never mints
+itself a lasting successor. The `auth.machine_created` audit row records it, and
 `loom bot list` and `/v1/admin/bots.list` show it. A trust of the same issuer
 that tells agents apart must not be able to take the platform-admin trust's
 token: give each a claim the other's tokens cannot meet, such as distinct `sub`
 values (`sub=controlplane` for this one, `sub=tenants/<id>/agents/*` beside an
 exact `tenant_id` for a tenant's), or registration refuses the second one.
 Where a trust cannot be used, an operator mints an expiring platform-admin token
-for a service account instead; `--platform-admin` refuses a token without
-`--ttl-days`:
+for a service account instead. `--platform-admin` refuses a token without
+`--ttl-days` or for longer than 90 days, refuses an agent's subject
+(`sa:<trust>:<agent>`), and records each mint as an `auth.platform_admin_minted`
+audit row:
 
 ```bash
 loom mint-token --platform-admin --subject sa:controlplane --org acme --ttl-days 30 --json
@@ -382,7 +388,7 @@ of the above, so they do not stop with someone's offboarding.
   ended session writes an `auth.*` row to the audit log:
   `auth.sso_signin`, `auth.signin_denied`, `auth.device_approved`,
   `auth.device_denied`, `auth.connect_approved`, `auth.connect_denied`,
-  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`,
+  `auth.jit_provisioned`, `auth.sso_linked`, `auth.sso_unlinked`, `auth.sso_link_declined`, `auth.password_set`, `auth.machine_created`, `auth.machine_token`, `auth.machine_disabled`, `auth.agent_provisioned`, `auth.platform_admin_minted`,
   `auth.session_revoked`, `auth.scim_deactivated`, `auth.scim_reactivated`,
   `auth.scim_deleted`, `auth.scim_collateral`.
 

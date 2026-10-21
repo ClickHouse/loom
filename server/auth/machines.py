@@ -107,7 +107,7 @@ def _machine(row: dict[str, Any]) -> Machine:
         "jwks_uri": row["jwks_uri"],
         "max_token_s": int(row["max_token_s"]),
         "max_agents": int(row["max_agents"]),
-        "platform_admin": bool(row["platform_admin"]),
+        "platform_admin": bool(row.get("platform_admin", 0)),  # a row of a build before it
     }
 
 
@@ -181,7 +181,7 @@ async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> N
         [
             {
                 **m,
-                "platform_admin": int(m["platform_admin"]),
+                "platform_admin": int(m.get("platform_admin", False)),
                 "active": int(active),
                 "updated_by": by,
                 "updated_at": datetime.now(UTC),

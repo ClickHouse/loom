@@ -150,7 +150,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
                 os.remove(args.generate_key)
             return _fail(str(e))
         print(f"bot {args.name}: tokens for {machines.subject(args.name)} in {args.org}")
-        if bot["platform_admin"]:
+        if bot.get("platform_admin", False):
             print("  ! platform_admin: its tokens act in every org")
         if bot["public_keys"]:
             key_file = args.generate_key or "<its private key>"
@@ -171,7 +171,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
             proofs += [f"agents by {r['agent_claim']}"] * bool(r["agent_claim"])
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
-            roles = "platform_admin (every org)" if r["platform_admin"] else roles
+            roles = "platform_admin (every org)" if r.get("platform_admin") else roles
             print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}")
         return 0
 

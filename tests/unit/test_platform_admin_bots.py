@@ -174,7 +174,8 @@ def test_loom_bot_create_takes_the_flag(registry, monkeypatch, capsys) -> None:
 
 
 @pytest.fixture
-def minting(monkeypatch: pytest.MonkeyPatch) -> None:
+def minting(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """The mints recorded in the audit log."""
     from server.cli import access
     from server.settings import settings
 
@@ -182,6 +183,14 @@ def minting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "jwt_secret", _SECRET, raising=False)
     # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
     monkeypatch.setattr(access, "run_connected", lambda run: None)
+    recorded: list[dict[str, Any]] = []
+
+    def audited(args: Any, summary: dict[str, Any]) -> bool:
+        recorded.append({"subject": args.subject, "jti": summary["jti"]})
+        return True
+
+    monkeypatch.setattr(access, "_audit_platform_admin_mint", audited)
+    return recorded
 
 
 _MINT = ["mint-token", "--org", "acme", "--platform-admin"]
@@ -195,6 +204,8 @@ _MINT = ["mint-token", "--org", "acme", "--platform-admin"]
         (["--subject", "lee", "--ttl-days", "7"], "sa:<name>"),  # a person signs in instead
         (["--subject", "sa:cp", "--ttl-days", "7", "--user-token"], "--user-token"),
         (["--subject", "sa:cp", "--ttl-days", "7", "--namespace-role", "a=admin"], "flat"),
+        (["--subject", "sa:cp", "--ttl-days", "91"], "at most 90 days"),
+        (["--subject", "sa:fleet:a1", "--ttl-days", "7"], "an agent's token"),
     ],
 )
 def test_a_platform_admin_mint_must_expire_and_be_a_service_accounts(
@@ -215,3 +226,116 @@ def test_a_platform_admin_mint_holds_the_role_until_it_expires(minting, capsys) 
     assert claims["exp"] - claims["iat"] == 7 * 86400
     info = verify_token(summary["token"], secret=_SECRET)
     assert info.has_role(Role.PLATFORM_ADMIN) and not info.has_ns_roles()
+    assert minting == [{"subject": "sa:cp", "jti": summary["jti"]}]  # recorded before handed out
+
+
+def test_a_platform_admin_mint_the_audit_log_misses_is_not_handed_out(
+    minting, monkeypatch, capsys
+) -> None:
+    from server.cli import access
+
+    monkeypatch.setattr(access, "_audit_platform_admin_mint", lambda args, summary: False)
+    assert cli.main([*_MINT, "--subject", "sa:cp", "--ttl-days", "7"]) == 1
+    out, err = capsys.readouterr()
+    assert out == "" and "no token" in err
+
+
+def test_the_mint_is_recorded_as_its_own_audit_event(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from server.cli import access
+    from server.observability import audit
+
+    rows: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(event: str, **kw: Any) -> str:
+        rows.append((event, kw))
+        return "row-hash"
+
+    monkeypatch.setattr(audit, "emit", emit)
+    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(None)))
+    args = SimpleNamespace(subject="sa:cp", org="acme", ttl_days=7)
+    assert access._audit_platform_admin_mint(args, {"jti": "j1", "namespaces": ["*"]})
+    [(event, kw)] = rows
+    assert event == "auth.platform_admin_minted" and kw["org"] == "acme"
+    assert kw["subject"] == {"subject": "sa:cp", "jti": "j1", "namespaces": ["*"], "ttl_days": 7}
+
+    async def lost(event: str, **kw: Any) -> str:
+        return ""  # audit.emit's answer when its insert failed
+
+    monkeypatch.setattr(audit, "emit", lost)
+    assert not access._audit_platform_admin_mint(args, {"jti": "j2", "namespaces": ["*"]})
+
+
+_CP_BODY = {
+    "name": "controlplane",
+    "org": "acme",
+    "namespace_roles": [],
+    "issuer": _ISSUER,
+    "audience": "loom-admin",
+    "claims": ["sub=controlplane"],
+    "platform_admin": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("subject", "service_account", "status"),
+    [
+        ("sa:cp", True, 403),  # a platform-admin bot's own hour-long token
+        ("ops", True, 403),  # a token minted from a person's session: a service account
+        ("sa:cp", False, 403),  # an `sa:` subject is a machine's, whatever the token says
+        ("ops", False, 200),  # a person signed in as a platform admin
+    ],
+)
+def test_only_a_person_registers_a_platform_admin_bot(
+    registry, monkeypatch, subject: str, service_account: bool, status: int
+) -> None:
+    """A leaked platform-admin token must not mint itself a lasting successor."""
+    from server.auth.jwt import mint_token
+    from server.insights.app import admin_routes
+
+    monkeypatch.setattr(type(admin_routes.settings), "auth_actually_required", lambda self: True)
+    token = mint_token(
+        subject, "acme", ["*"], ["platform_admin"], is_service_account=service_account
+    )
+    app = FastAPI()
+    app.include_router(admin_account_routes.router)
+    c, auth = TestClient(app), {"Authorization": f"Bearer {token}"}
+    bodies = [{**_CP_BODY, "generate_key": True}, {**_CP_BODY, "replace": True}, _CP_BODY]
+    for body in bodies if status == 403 else bodies[:1]:
+        r = c.post("/v1/admin/bots.create", json=body, headers=auth)
+        assert r.status_code == status, r.text
+        if status == 403:
+            assert "private_key_pem" not in r.text and "controlplane" not in registry["bots"]
+    if status == 200:
+        assert registry["bots"]["controlplane"]["platform_admin"] is True
+    # A service account still registers a bot without the role.
+    plain = {**_CP_BODY, "name": "ci", "platform_admin": False, "namespace_roles": ["d=viewer"]}
+    monkeypatch.setattr(machines, "active_namespaces", _all_active)
+    from server.identity.store import namespaces as namespaces_store
+
+    monkeypatch.setattr(namespaces_store, "is_active", _is_active)
+    assert c.post("/v1/admin/bots.create", json=plain, headers=auth).status_code == 200
+
+
+async def _all_active(org: str, names: list[str]) -> set[str]:
+    return set(names)
+
+
+async def _is_active(org: str, namespace: str, **_: Any) -> bool:
+    return True
+
+
+def test_a_platform_admin_trust_names_every_claim_exactly(registry, monkeypatch) -> None:
+    """A prefix would hand the role to every token it matches, such as every
+    agent of a tenant whose trust a replace turned into this one."""
+    with pytest.raises(ValueError, match="every claim exactly"):
+        _trust("cp", claims=["tenant_id=t1", "sub=tenants/t1/agents/*"], platform_admin=True)
+    from server.insights.app import admin_routes
+
+    monkeypatch.setattr(type(admin_routes.settings), "auth_actually_required", lambda self: False)
+    app = FastAPI()
+    app.include_router(admin_account_routes.router)
+    body = {**_CP_BODY, "claims": ["sub=tenants/t1/agents/*"], "replace": True}
+    r = TestClient(app).post("/v1/admin/bots.create", json=body)
+    assert r.status_code == 422 and "every claim exactly" in r.text

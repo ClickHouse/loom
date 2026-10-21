@@ -29,6 +29,11 @@ def _by(info: AuthInfo | None) -> str:
     return f"admin:{info.subject}" if info else "admin:local"
 
 
+def _is_machine(info: AuthInfo) -> bool:
+    """A service account's token: a bot's, an agent's, or one minted from a session."""
+    return info.is_service_account or info.subject.startswith("sa:")
+
+
 def _invalid(e: ValueError) -> HTTPException:
     return HTTPException(status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)})
 
@@ -137,6 +142,18 @@ class BotInput(_Input):
 async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
     """Register a bot. With `generate_key` the answer carries its private key,
     once: Loom keeps only the public half."""
+    if input.platform_admin and info is not None and _is_machine(info):
+        # A token that carries platform_admin must not mint itself a lasting
+        # successor: a leaked hour-long token would become a permanent one.
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AUTH_INSUFFICIENT",
+                "message": "a platform-admin bot is registered by a person signed in as a "
+                "platform admin, or on the host (`loom bot create`), never with a service "
+                "account's token",
+            },
+        )
     if input.generate_key and input.public_key_pem:
         raise _invalid(ValueError("give a public key or ask for one to be generated, not both"))
     private, public = machines.generate_key() if input.generate_key else (b"", b"")
@@ -196,7 +213,7 @@ async def bots_list() -> dict[str, Any]:
                 "jwks_uri": r["jwks_uri"],
                 "max_token_s": int(r["max_token_s"]),
                 "max_agents": int(r["max_agents"]),
-                "platform_admin": bool(r["platform_admin"]),
+                "platform_admin": bool(r.get("platform_admin", 0)),
                 "updated_by": r["updated_by"],
             }
             for r in rows

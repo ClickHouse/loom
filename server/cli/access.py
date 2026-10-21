@@ -229,7 +229,15 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "consumer": args.consumer or "",
         }
 
+    if args.platform_admin and not _audit_platform_admin_mint(args, summary):
+        # Never handed out unrecorded: the role spans every org.
+        print("  ✗ the mint could not be recorded in the audit log; no token", file=sys.stderr)
+        return 1
     return _emit_minted_token(args, token, summary)
+
+
+# not a setting: the longest a minted platform-admin token may live; longer is a bot's job
+_PLATFORM_ADMIN_MAX_DAYS = 90
 
 
 def _platform_admin_refusal(args: argparse.Namespace) -> str | None:
@@ -241,9 +249,46 @@ def _platform_admin_refusal(args: argparse.Namespace) -> str | None:
         return "--platform-admin mints a service account's token, never a --user-token"
     if not args.ttl_days or args.ttl_days < 1:
         return "--platform-admin needs --ttl-days: a token holding it may not live for ever"
+    if args.ttl_days > _PLATFORM_ADMIN_MAX_DAYS:
+        return (
+            f"--platform-admin mints for at most {_PLATFORM_ADMIN_MAX_DAYS} days; for longer, "
+            "register a bot (`loom bot create --platform-admin`)"
+        )
+    from server.auth import agents
+
+    if agents.parse(args.subject) is not None:
+        return "--platform-admin never mints an agent's token (sa:<trust>:<agent>)"
     if args.namespace_role:
         return "--platform-admin mints a flat token: pass no --namespace-role"
     return None
+
+
+def _audit_platform_admin_mint(args: argparse.Namespace, summary: dict[str, Any]) -> bool:
+    """Record a platform-admin mint before it is handed out; False when the
+    audit row could not be written."""
+    import getpass
+
+    from server.observability import audit
+
+    async def _emit(ch: Any) -> str:
+        return await audit.emit(
+            "auth.platform_admin_minted",
+            org=args.org,
+            namespace="-",
+            actor=f"cli:{getpass.getuser()}",
+            subject={
+                "subject": args.subject,
+                "jti": summary["jti"],
+                "namespaces": summary["namespaces"],
+                "ttl_days": args.ttl_days,
+            },
+        )
+
+    try:
+        return bool(run_connected(_emit))
+    except Exception as e:  # noqa: BLE001 — an unrecorded mint is refused, never handed out
+        print(f"  ✗ audit log not reached: {type(e).__name__}: {e}", file=sys.stderr)
+        return False
 
 
 def _emit_minted_token(args: argparse.Namespace, token: str, summary: dict[str, Any]) -> int:
@@ -644,8 +689,9 @@ def _add_mint_token_parser(sub: Any) -> None:
         "--platform-admin",
         action="store_true",
         help="Mint the platform_admin role, which spans every org, instead of --roles: "
-        "for a service account (--subject sa:<name>) and with --ttl-days; the token "
-        "covers every namespace unless --namespaces names some.",
+        "for a service account (--subject sa:<name>, never an agent's) and with --ttl-days "
+        "(at most 90); each mint is audited, and the token covers every namespace unless "
+        "--namespaces names some.",
     )
     p_mint.add_argument(
         "--namespace-role",

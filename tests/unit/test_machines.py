@@ -1042,3 +1042,25 @@ def test_a_revoked_platform_admin_bot_gets_nothing(bots, monkeypatch) -> None:
     monkeypatch.setattr(revocation, "subjects_revoked", revoked)
     r = _exchange(TestClient(oauth_app()), _ci_token(bots, sub="controlplane"), client_id="cp")
     assert r.status_code == 401 and "revoked" in r.text
+
+
+def test_a_bot_without_the_flag_is_one_without_the_role(bots, monkeypatch) -> None:
+    """A row or dict from a build before the flag carries no `platform_admin`:
+    it saves as 0 and its exchange is an ordinary bot's, never a KeyError."""
+    del bots["registered"]["deploy"]["platform_admin"]
+    r = _exchange(TestClient(oauth_app()), _ci_token(bots))
+    claims = pyjwt.decode(r.json()["access_token"], options={"verify_signature": False})
+    assert r.status_code == 200 and claims["ns_roles"] and claims["roles"] == []
+    saved: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_one(self, sql: str, params: dict[str, Any]) -> dict[str, Any]:
+            return {"v": 1}
+
+        async def insert(self, table: str, batch: list[dict[str, Any]]) -> None:
+            saved.extend(batch)
+
+    monkeypatch.setattr(machines, "get_client", lambda: _CH())
+    asyncio.run(machines.save(bots["registered"]["deploy"], by="op"))
+    assert saved[0]["platform_admin"] == 0
+    assert machines._machine({**saved[0], "platform_admin": None})["platform_admin"] is False
