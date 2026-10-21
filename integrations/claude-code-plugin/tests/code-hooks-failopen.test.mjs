@@ -348,3 +348,40 @@ test("shunt: a tracker search reaches tracker.duplicate_check redacted", async (
   assert.ok(check, JSON.stringify(bodies.map((b) => b.url)));
   assert.equal(check.body.title, "login fails password=[redacted]");
 });
+
+test("blast radius and test gate: the diff reaches the server redacted", async () => {
+  const { dir, tmp, transcript } = dirtySession();
+  fs.appendFileSync(path.join(dir, "src/a.cpp"), 'const char* api_key = "s3cr3t-value";\n');
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      bodies.push({ url: req.url, body: raw ? JSON.parse(raw) : null });
+      res.statusCode = 500;
+      res.end("{}");
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}`;
+    const edit = {
+      tool_name: "Edit",
+      tool_input: { file_path: path.join(dir, "src/a.cpp") },
+      cwd: dir,
+      session_id: "s",
+    };
+    await run("loom-blast-radius.mjs", edit, { tmp, url });
+    await run("loom-test-gate.mjs", { cwd: dir, session_id: "s", transcript_path: transcript }, { tmp, url });
+  } finally {
+    server.closeAllConnections();
+    server.close();
+  }
+  for (const op of ["/v1/code.impact", "/v1/code.test_gate"]) {
+    const sent = bodies.find((b) => b.url === op);
+    assert.ok(sent, `${op} not called: ${JSON.stringify(bodies.map((b) => b.url))}`);
+    assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
+    assert.match(sent.body.diff, /api_key = "\[redacted\]"/, op);
+    assert.match(sent.body.diff, /int g\(\) \{ return 1; \}/, `${op} keeps the rest of the diff`);
+  }
+});

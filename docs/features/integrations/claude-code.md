@@ -176,8 +176,9 @@ then does: keeping tool authority independent of retrieved text is the client's 
 
 The hooks' temp files (turn journal, cursors, stashes, flush jobs) are created `0600`,
 never written through a symlink or into another user's file, and the turn journal and
-stashes are removed at SessionEnd. Captured tool input, output and errors pass through a
-client-side secret redaction before they are sent; it catches common credential shapes and
+stashes are removed at SessionEnd. Captured tool input, output and errors, and the diffs the
+blast-radius and test-gate hooks send, pass through a client-side secret redaction before
+they are sent; it catches common credential shapes and
 is best effort, not a guarantee.
 
 ### Tuning knobs
