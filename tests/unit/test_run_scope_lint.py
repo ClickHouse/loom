@@ -106,11 +106,9 @@ def test_every_merge_verdict_consults_the_run() -> None:
     """A run's write is the run's row. Every `merge`
     verdict (no insert; another row's id returned) is constructed in ONE
     helper, `merge_or_run_duplicate`, which decides it with the writer's run
-    in view; both restatement sites (the canonical match and the judged
-    restatement) call it, so neither can drop a run's own write as another
-    row's duplicate."""
-    # The verdict rules (the helper, the judged restatement) and the check that
-    # calls them live in two modules.
+    in view; the canonical match calls it, so it cannot drop a run's own write
+    as another row's duplicate."""
+    # The verdict rule and the check that calls it live in two modules.
     sources = [
         (ROOT / "server" / "memory" / sub / "conflicts.py").read_text() for sub in ("app", "domain")
     ]
@@ -137,4 +135,4 @@ def test_every_merge_verdict_consults_the_run() -> None:
         for n, seg in functions
         if n.name != "merge_or_run_duplicate" and "merge_or_run_duplicate(" in seg
     ]
-    assert {"check_on_commit", "_fold_judged"} <= set(callers), callers
+    assert {"check_on_commit"} <= set(callers), callers

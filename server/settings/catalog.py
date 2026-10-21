@@ -1771,6 +1771,9 @@ class ExtractionSettings(BaseModel):
     # a structured-answer block and assistant-answer facts get a higher content_excerpt
     # ceiling. The value column is untouched; takes effect only on (re-)ingest.
     memory_capture_structured_answers: Annotated[bool, LIVE] = True
+    # Whether extraction files an assistant's rules about itself as learnings to review; a request
+    # can only turn it off. Turn on once every replica's build erases loom.learnings_supporters.
+    memory_extract_agent_learnings: Annotated[bool, LIVE] = False
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short
     # statement can match, no structured-answer block); longer ones keep the full
@@ -1912,7 +1915,7 @@ class KnowledgeSettings(BaseModel):
     # it changes no stored row. At most 2048, the most an embedding row stores
     # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message
     # listing reads this many characters and a fixed margin past them, and checks them
-    # all for a credential before it cuts the excerpt.
+    # all for a high shape before it cuts the excerpt.
     conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled
@@ -2113,20 +2116,73 @@ class MemorySettings(BaseModel):
     # for text-embedding-3-*; 1.0 disables. Per-namespace override:
     # loom.namespaces.conflict_threshold.
     conflict_threshold: float = 0.85
-    # When the cosine check would flag a write, one cheap LLM call labels the
-    # closest peers (contradiction / elaboration / restatement / unrelated) and
-    # the verdict follows: conflict / refines (supersedes with a `refines`
-    # edge) / merge / clear. One call per flagged write.
-    memory_conflict_judge: bool = False
-    # Closest peers the conflict judge labels in its one call per flagged write.
-    memory_conflict_judge_max_peers: int = Field(default=3, ge=1)
-    # With the judge on, peers down to this cosine are judged too (never
-    # flagged on cosine alone), catching knowledge updates filed under a
-    # different key.
-    memory_conflict_judge_min_similarity: float = Field(default=0.70, gt=0.0, le=1.0)
+    # The conflict resolver: a leader-only worker that judges each write marked for it
+    # (a live peer of its type at cosine >= memory_conflict_resolver_min_similarity, or
+    # flagged `conflicted`) against its nearest peers in one LLM call, then retires,
+    # flags or clears. Unset, it is resolved at load: off when the LLM provider or
+    # conflict_resolver_model's provider is `fake`, else on (without the key, writes are
+    # marked and judged once it is set); true / false force it. ~$0.005 per judged write
+    # on gpt-6.1-sol.
+    memory_conflict_resolver_enabled: bool = False
+    # Peers down to this cosine (same memory_type) mark a write for the resolver and
+    # join the cluster it is judged in. The cosine `conflicted` flag stays at the
+    # conflict threshold. A peer at this cosine or above can be an update of the row;
+    # below it, almost never.
+    memory_conflict_resolver_min_similarity: float = Field(default=0.60, gt=0.0, le=1.0)
+    # Most peers judged with a row in one call, nearest first.
+    memory_conflict_resolver_max_peers: Annotated[int, LIVE] = Field(default=8, ge=1, le=8)
+    # An update at or above this confidence retires the older row (auto_reinforce, newest_wins);
+    # one between the flag confidence and this is flagged for review.
+    memory_conflict_resolver_retire_confidence: float = Field(default=0.98, ge=0.0, le=1.0)
+    # An update or a contradiction at or above this confidence acts: it flags the pair for
+    # review, or retires where the retire confidence and the policy allow; below it, it
+    # changes nothing. Between the clear confidence and the retire confidence.
+    memory_conflict_resolver_flag_confidence: float = Field(default=0.95, ge=0.0, le=1.0)
+    # Below this confidence a verdict changes nothing. At or above it a compatible
+    # verdict clears the pair's flag.
+    memory_conflict_resolver_clear_confidence: float = Field(default=0.90, ge=0.0, le=1.0)
+    # Marked rows read per batch; a full batch with no errors is followed at once by the
+    # next, for up to memory_conflict_resolver_burst_seconds of a pass.
+    memory_conflict_resolver_batch: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's
+    # judge) re-checked per pass, after the marked rows. 0 = no re-check.
+    memory_conflict_resolver_recheck_batch: Annotated[int, LIVE] = Field(default=8, ge=0)
+    # The share of a namespace's daily LLM cost cap the conflict resolver may spend,
+    # counted over its own calls; the rest stays for the requests.
+    memory_conflict_resolver_cap_share: Annotated[float, LIVE] = Field(default=0.25, gt=0.0, le=1.0)
+    # Days a write stays owed a judgement: an owed row older than this is no longer judged,
+    # and stays as it was written.
+    memory_conflict_resolver_max_owed_age_days: Annotated[int, LIVE] = Field(default=30, ge=1)
+    # Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time;
+    # doubling it roughly doubles the rows judged a minute, up to the provider's rate limit.
+    memory_conflict_resolver_concurrency: int = Field(default=8, ge=1)
+    # Seconds the resolver waits after a pass before the next one; at least 1.
+    memory_conflict_resolver_interval_seconds: float = Field(default=10.0, ge=1.0)
+    # Seconds a conflict-resolver pass may run before the supervisor abandons it.
+    memory_conflict_resolver_max_pass_seconds: float = Field(default=600.0, gt=0)
+    # Seconds a pass whose owed read came back full keeps reading the next batch at once; a
+    # short read ends it. 0 = one batch a pass. At most half of
+    # memory_conflict_resolver_max_pass_seconds, so a pass ends before its deadline.
+    memory_conflict_resolver_burst_seconds: float = Field(default=300.0, ge=0)
+    # Times a row is judged and left owed (a flagged peer the answer leaves out, an error
+    # after the call) before it is stamped, errored: each is a paid call.
+    memory_conflict_resolver_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
+    # Seconds the resolver waits after a pass the model, the locks or a provider outage
+    # stopped, and a namespace whose rows got the same refusal row after row waits alone.
+    memory_conflict_resolver_pause_after_stop_seconds: Annotated[float, LIVE] = Field(
+        default=300.0, ge=0
+    )
+    # Seconds before the re-check of unjudged `conflicted` rows runs again once its read
+    # came back short; the read scans every `conflicted` row.
+    memory_conflict_resolver_recheck_idle_seconds: Annotated[float, LIVE] = Field(
+        default=300.0, ge=0
+    )
     # Entries per bulk call that get the conflict check; later entries are written unchecked
     # and counted. 0 = none are checked.
     bulk_conflict_check_max_entries: int = 200
+    # Supersession pairs one bulk write follows on the triple plane in the request; the
+    # rest are recorded for the projection repair to follow. 0 = the repair follows all.
+    memory_bulk_follow_max_pairs: Annotated[int, LIVE] = Field(default=1024, ge=0)
     # Bulk-path conflict checks run at once (at least 1).
     bulk_conflict_check_concurrency: int = Field(default=8, ge=1)
     # Facts per batched candidate lookup (conflict and value-update peers) on
@@ -2174,9 +2230,6 @@ class MemorySettings(BaseModel):
     usage_fold_enabled: bool = True
     # Seconds between usage-fold passes.
     usage_fold_interval_seconds: int = Field(default=300, ge=1)
-    # Seconds between passes of the always-on sweep that re-runs the deferred
-    # conflict judges a stopped replica left owed.
-    conflict_sweep_interval_seconds: float = Field(default=30.0, gt=0)
 
     # Re-emit, with a tombstone, vector rows still live after their loom.memory
     # row was tombstoned or erased, so search stops offering them. Bounded per
@@ -2487,8 +2540,6 @@ class MemorySettings(BaseModel):
     # Seconds one usage-fold pass may run before it stops and leaves the rest to the
     # next.
     memory_usage_fold_pass_time_budget_s: float = Field(default=120.0, gt=0)
-    # Most unresolved conflicts one conflict-sweep pass re-judges.
-    memory_conflict_sweep_max_rows_per_pass: Annotated[int, LIVE] = Field(default=50, ge=1)
     # Seconds a namespace's open-conflict count is cached between reads.
     memory_conflicts_count_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
     # Seconds a namespace's coverage-sweep override is cached.
@@ -2557,8 +2608,32 @@ class MemorySettings(BaseModel):
     # on a large table can expire replicas' Keeper sessions and leave them read-only.
     memory_usage_fold_max_pending_mutations: int = Field(default=20, ge=1)
 
+    # ===== MemoryAsk ==============================================================
 
-# ===== MemoryAsk ==============================================================
+    @model_validator(mode="after")
+    def _check_resolver_settings(self) -> MemorySettings:
+        """Retiring takes more confidence than flagging, and flagging than clearing: the
+        band between the flag and the retire confidence is the one that goes to review. A
+        pass's burst ends before the supervisor's deadline would cut its bookkeeping."""
+        if not (
+            self.memory_conflict_resolver_clear_confidence
+            <= self.memory_conflict_resolver_flag_confidence
+            <= self.memory_conflict_resolver_retire_confidence
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE must lie between "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE and "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE"
+            )
+        if (
+            self.memory_conflict_resolver_burst_seconds
+            > self.memory_conflict_resolver_max_pass_seconds / 2
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_CONFLICT_RESOLVER_BURST_SECONDS must be at most half of "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PASS_SECONDS"
+            )
+        return self
 
 
 class MemoryAskSettings(BaseModel):
@@ -3278,9 +3353,9 @@ class ModelSettings(BaseModel):
     """
 
     # --- defaults ---------------------------------------------------------------
-    # The deployment's LLM: memory extraction, the conflict judge, rerank and every
-    # job whose own model setting (the other *_model settings) is left "". Empty takes the
-    # resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    # The deployment's LLM: memory extraction, rerank and every job whose own model
+    # setting (the other *_model settings) is left "". Empty takes the resolved
+    # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
     llm_model: str = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
@@ -3309,6 +3384,9 @@ class ModelSettings(BaseModel):
     # paraphrases and replaced states. A fact is dropped only when every model says
     # drop; folds come from the first. Fails open. "" turns it off.
     memory_extract_verify_models: str = "claude-opus-5-5"
+    # The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence
+    # thresholds were set on this model; a cheaper one is only safe for clears.
+    conflict_resolver_model: str = "gpt-6.1-sol"
     # Model of the profile fold, which consolidates an identity's memories into its
     # profile; "" = `llm_model`.
     profile_consolidation_model: str = ""
@@ -4397,7 +4475,9 @@ class StorageSettings(BaseModel):
     # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
     # rows older than that many days.
     # ---- retention ----
-    # Days `loom.audit_log` rows are kept; 0 = forever.
+    # Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a
+    # retirement holds by its record there: one aged out stops holding, and the
+    # conflict resolver may judge and retire that pair again.
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
     retention_agent_events_days: int = 0
@@ -4461,7 +4541,8 @@ class TaskSettings(BaseModel):
 
     # ---- task inbox ----
     # Lease sweeper: return expired leases to todo, resume deferred tasks at
-    # resume_at, escalate stale triage. One read per pass.
+    # resume_at, escalate stale triage, and put right lease rows a race left out of
+    # step with their task.
     task_lease_sweep_enabled: bool = True
     # Seconds between task-lease sweep passes while there is work.
     task_lease_sweep_interval_seconds: int = 60
@@ -5052,6 +5133,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # call; a retrieval_only / abstained call pays no LLM latency.
     "memory.ask": 8000,
     "memory.assign_category": 60,
+    # One audit_log page of the namespace's auto_supersede records, as audit.list reads.
+    "memory.auto_retirements": 200,
     "memory.backlinks": 200,
     "memory.brief": 4000,
     "memory.bulk_get": 80,
@@ -5093,8 +5176,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.import_evidence": 30000,
     # Bounded by namespace size.
     "memory.keys": 2000,
-    # Three bounded queries: shared point-lookup, audit by request_id, learnings_queue
-    # match.
+    # Bounded queries: shared point-lookup, audit by request_id, learnings_queue
+    # match, and for a bot's rule its supporter count (one candidate's rows).
     "memory.lineage": 150,
     "memory.link": 60,
     # Covers both recency (ORDER BY memory_key) and the wider score path.
@@ -5142,6 +5225,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.
     "memory.stack": 200,
+    "memory.statuses": 80,
     "memory.sweep_expired": 2000,
     "memory.timeline": 120,
     "memory.touch": 40,
@@ -5167,6 +5251,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "namespace.cancel_request": 80,
     "namespace.delete": 60,
     "namespace.get": 30,
+    "namespace.guide_get": 40,
+    "namespace.guide_history": 60,
+    # A claim on the guide (two KeeperMap writes), one point read, one insert.
+    "namespace.guide_set": 250,
     "namespace.join": 80,
     "namespace.leave": 80,
     "namespace.list": 80,

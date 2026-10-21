@@ -106,9 +106,9 @@ def test_a_memory_namespace_pays_one_count_per_table_and_issues_nothing() -> Non
 
 
 def test_the_step_is_in_the_namespace_saga_and_owns_the_content_tables() -> None:
-    names = [name for name, _ in saga_steps._UNCOUNTED_STEPS_NS]
+    names = [name for name, _ in saga_steps._LATE_STEPS_NS]
     assert names[-1] == "code_index.purge"
-    assert "code_index.purge" not in {name for name, _ in saga_steps._UNCOUNTED_STEPS_USER}
+    assert "code_index.purge" not in {name for name, _ in saga_steps._LATE_STEPS_USER}
     owners = erasure_census.step_owners("namespace")
     assert set(owners["code_index.purge"]) == {"loom.code_chunks", "loom.code_summaries"}
     assert "code_index.purge" not in erasure_census.step_owners(

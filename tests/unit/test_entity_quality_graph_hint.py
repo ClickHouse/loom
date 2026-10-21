@@ -18,7 +18,7 @@ import pytest
 
 from server.insights.app import mentor as m
 from server.insights.app import mentor_rules
-from server.memory.app.entity_projections import set_entities_for_projection
+from server.memory.app.set_entities import set_entities_for_projection
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL, is_transcript_row
 
 _STEP = (

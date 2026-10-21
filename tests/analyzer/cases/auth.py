@@ -48,7 +48,7 @@ async def _scim(ch: RecordingCH, c: dict[str, Any]) -> None:
     await scim._held_by_another_inactive("id", "alice")
     await revocation.refresh()
     await revocation.revoked_outright("alice")
-    await revocation.has_outright_row("alice")
+    await revocation.stored("alice")
     await revocation._next_version("alice")
     await service_accounts.revoke_created_by(["alice"], revoked_by="scim")
     # A new token's version, past every row its name held, and the ancestry its

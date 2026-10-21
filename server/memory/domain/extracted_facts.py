@@ -11,6 +11,22 @@ from server.memory.domain.forget_requests import (
     is_forget_request,
 )
 
+# Stored confidence for facts the write-time judge graded UNCERTAIN.
+# An ordering nudge only — bounded by the +0.1*confidence retrieval
+# tiebreak, not a calibrated probability.
+UNCERTAIN_CONFIDENCE = 0.75  # not a setting: a ranking weight a benchmark changes
+
+
+def judge_verdict(fact: dict[str, Any]) -> str:
+    """The write-time judge's verdict on a fact, upper-cased; "" when unjudged."""
+    return str(fact.get("judge_verdict") or "").upper()
+
+
+def judged_confidence(verdict: str) -> float:
+    """A fact's stored confidence from its judge_verdict(): UNCERTAIN is lowered,
+    CORRECT and unjudged keep 1.0."""
+    return UNCERTAIN_CONFIDENCE if verdict == "UNCERTAIN" else 1.0
+
 
 def foresight_end(raw: Any, *, start: Any) -> Any:
     """The end of a foresight window from the extractor's

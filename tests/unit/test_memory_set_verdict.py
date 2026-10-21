@@ -138,8 +138,9 @@ def _wire(
         calls.check.append(kw)
         return verdict
 
-    async def _mark(**kw: Any) -> None:
+    async def _mark(**kw: Any) -> str:
         calls.marked.append(kw)
+        return "conflict"
 
     monkeypatch.setattr(cf, "check_on_commit", _check)
     monkeypatch.setattr(cf, "mark_peers_conflicted", _mark)
@@ -244,6 +245,21 @@ async def test_dry_run_on_a_non_searchable_type_inserts_nothing(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("landed", ["clear", "moved"])
+async def test_a_conflict_the_mark_did_not_flag_answers_clear(monkeypatch, landed: str) -> None:
+    # Nothing was flagged, so there is no conflict to report or resolve.
+    _wire(monkeypatch, ConflictResult(verdict="conflict", peers=[_peer()]))
+
+    # `clear`: every peer retired before the mark; `moved`: the new row did.
+    async def _not_flagged(**_: Any) -> str:
+        return landed
+
+    monkeypatch.setattr(cf, "mark_peers_conflicted", _not_flagged)
+    out = await write_mod.handle_memory_set(_input())
+    assert (out.conflict_verdict, out.peers, out.next) == ("clear", [], "")
+
+
+@pytest.mark.asyncio
 async def test_a_conflict_write_carries_verdict_peers_and_the_update_hint(monkeypatch) -> None:
     ch, calls = _wire(monkeypatch, ConflictResult(verdict="conflict", peers=[_peer()]))
     out = await write_mod.handle_memory_set(_input())
@@ -334,14 +350,14 @@ def test_peers_are_closest_first_and_capped_at_five() -> None:
     peers = [
         _peer(memory_id=f"id{i}", memory_key=f"k{i}", similarity=0.85 + i / 100) for i in range(7)
     ]
-    out = set_commit._set_peers(NS(verdict="conflict", peers=peers, refined_peers=[]))
+    out = set_commit.set_peers(NS(verdict="conflict", peers=peers, refined_peers=[]))
     assert len(out) == 5
     assert [p.memory_key for p in out] == ["k6", "k5", "k4", "k3", "k2"]
 
 
 def test_refined_peers_are_listed_once() -> None:
     p = _peer()
-    out = set_commit._set_peers(NS(verdict="refines", peers=[p], refined_peers=[p]))
+    out = set_commit.set_peers(NS(verdict="refines", peers=[p], refined_peers=[p]))
     assert [x.memory_id for x in out] == [_PEER_ID]
 
 
@@ -361,6 +377,14 @@ def test_next_hint_is_empty_on_the_common_cases() -> None:
     assert set_next_hint("conflict", []) == ""
     assert "memory.update(memory_key='k'" in set_next_hint("conflict", [peer])
     assert "memory.pin(memory_key='k'" in set_next_hint("merge", [peer], repeated_merge=True)
+    unlinked = set_next_hint("merge", [peer], relations_unlinked=True)
+    # Restating them would merge again: no call is suggested.
+    assert (
+        unlinked == "verdict=merge: relations not linked: this merged into a row that is not yours."
+    )
+    both = set_next_hint("merge", [peer], repeated_merge=True, relations_unlinked=True)
+    assert both.startswith(unlinked) and "memory.pin(memory_key='k'" in both
+    assert both.count("verdict=merge") == 1
 
 
 def test_the_noop_lands_on_the_agent_events_row() -> None:
@@ -385,7 +409,11 @@ def test_bulk_rows_carry_the_verdict_peers_and_next() -> None:
             verdict="merge", peers=[_peer(similarity=0.99)], existing_memory_id=_PEER_ID
         ),
     }
-    apply_bulk_verdicts(memory_rows, embedding_rows, [0, 1, 2], results, verdicts)
+    # The merged row (1) does not land.
+    landed = {id(memory_rows[0]), id(memory_rows[2])}
+    apply_bulk_verdicts(
+        memory_rows, embedding_rows, [0, 1, 2], results, verdicts, stale_rows=(), landed_rows=landed
+    )
     assert results[0].conflict_verdict == "conflict"
     assert results[0].peers[0].memory_key == "deploy_day"
     assert "memory.update(memory_key='deploy_day'" in results[0].next

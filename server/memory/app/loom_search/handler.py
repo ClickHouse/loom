@@ -32,6 +32,7 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     payload = await search_sections(
         org=input.org,
         namespace=input.namespace,
+        agent=input.agent,
         query=input.query,
         top_k=input.top_k,
         tags=[t for t in input.tags if t],

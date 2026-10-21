@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, replayed_read_scope
 from server.memory.api.models_bulk import MemorySetFromMessagesInput, _Message
 from server.memory.app import extraction_queue as q
 from server.memory.app import extraction_queue as queue
@@ -130,7 +130,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 ) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, *, scope, ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         assert input.defer is True
         return "abc123"
 
@@ -151,7 +151,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, *, scope, ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         raise RuntimeError("ch down")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -224,7 +224,7 @@ async def test_replay_runs_under_the_stored_scope_and_unbinds_after(
 
     seen: list[Any] = []
 
-    async def _handler(input):
+    async def _handler(input, **_kw):
         seen.append(request_scope())
         return MemorySetFromMessagesOutput()
 
@@ -241,7 +241,7 @@ def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> 
     payload, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE)
     data = json.loads(payload)
     data.pop(q.READ_SCOPE_KEY)
-    assert queue.replay_scope({"payload": json.dumps(data)}).narrowed is False
+    assert replayed_read_scope(data.get(q.READ_SCOPE_KEY)).narrowed is False
 
 
 @pytest.mark.parametrize(
@@ -252,12 +252,12 @@ def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> 
         {"scope": "everyone", "user_id": "u1", "session_id": None},
     ],
 )
-def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
+async def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
     payload = json.dumps(
         {**json.loads(q.payload_for(_input(), scope=WHOLE_NAMESPACE)[0]), q.READ_SCOPE_KEY: stored}
     )
     with pytest.raises(ValueError):
-        queue.replay_scope({"payload": payload})
+        await queue.replay_row({"payload": payload})
 
 
 def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
@@ -268,7 +268,7 @@ def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
     import server.memory.app.extract.handler as mx
     from server.core.errors import IdentityIncompleteError
 
-    async def _enqueue(input, *, scope, ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         raise AssertionError("nothing is queued")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -379,7 +379,7 @@ async def test_worker_replays_claimed_rows_and_marks_state(
 
     seen: list[MemorySetFromMessagesInput] = []
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         seen.append(inp)
         if inp.messages[0].content.startswith("FAIL"):
             raise RuntimeError("extractor down")
@@ -595,7 +595,7 @@ async def test_worker_is_serial_within_a_namespace_and_parallel_across(
     in_flight: dict[str, int] = {"n": 0, "m": 0}
     overlap_seen = {"value": False}
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         ns = inp.namespace
         in_flight[ns] += 1
         assert in_flight[ns] == 1, "two batches of one namespace ran at once"
@@ -636,7 +636,7 @@ async def test_namespace_concurrency_one_is_fully_serial(monkeypatch: pytest.Mon
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     active = {"n": 0}
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         active["n"] += 1
         assert active["n"] == 1
         await asyncio.sleep(0.005)
@@ -670,7 +670,7 @@ async def test_one_group_raising_still_waits_for_every_other_group(
     ]
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         if inp.namespace == "b":
             await asyncio.sleep(0.05)
 

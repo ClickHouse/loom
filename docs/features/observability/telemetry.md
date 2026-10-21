@@ -179,7 +179,7 @@ first exchange, up to `--max-agents` ([bots and CI](../../operations/sso.md#bots
 | Metric                              | Type    | Meaning                                                                                                                                                                  |
 | ----------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `loom.auth.agents_provisioned`      | counter | first exchanges of a trust's agents, by `loom.org`, `loom.trust` and `outcome`: `made` (its namespace was made) or `at_cap` (refused: the trust has made `--max-agents`) |
-| `loom.auth.trust_agents`            | gauge   | agents an active trust has made, released ones included, as the cap counts them; computed by the workers-lease holder every five minutes                                 |
+| `loom.auth.trust_agents`            | gauge   | live agents of an active trust (a released one does not count), as the cap counts them; computed by the workers-lease holder every five minutes                          |
 | `loom.auth.trust_agents_used_ratio` | gauge   | `loom.auth.trust_agents` over the trust's `--max-agents`; at 1 every new agent is refused                                                                                |
 
 ### Retrieval quality

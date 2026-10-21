@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
@@ -22,6 +23,12 @@ from server.memory.api.models_common import MemorySetPeer, MemoryType, _Identity
 from server.memory.domain.code_change import CodeState
 from server.memory.domain.delete_marks import caller_trace
 from server.memory.domain.expire_reasons import caller_reason
+from server.memory.domain.graph_quality import (
+    MAX_TRIPLES_PER_ROW,
+    canonical_entity_text,
+    canonical_relation,
+)
+from server.memory.domain.search_text import canonicalize_verb
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.operations.read_projection import project as _project_fields
@@ -163,6 +170,10 @@ class MemoryGetOutput(ProjectedRow):
     # (agent="*") can tell callers which agent owns the row — the dashboard's search
     # re-fetch needs it to render + re-open a hit found outside the preload.
     agent: str = ""
+    # The resolved row's user and session: a write back to this row (restore, verify)
+    # names them, since a key repeats across users and sessions.
+    user_id: str = ""
+    session_id: str = ""
     # Lifecycle state from loom.memory.status.
     status: str | None = None
     # The code this memory is linked to: each link's path, symbol, state (`fresh`,
@@ -173,11 +184,10 @@ class MemoryGetOutput(ProjectedRow):
     # `supersedes` edge on the newer row.
     superseded_by: str = ""
     # The row this one duplicates (status='duplicate'), and the
-    # verdict the row shows on read — `pending` while a deferred judge still
-    # holds it, else derived from `status` (active → clear, conflicted →
-    # conflict, duplicate, superseded).
+    # verdict the row shows on read, derived from `status` (active → clear,
+    # conflicted → conflict, duplicate, superseded).
     duplicate_of: str = ""
-    # pending | clear | conflict | duplicate | superseded, as described above.
+    # clear | conflict | duplicate | superseded, as described above.
     conflict_verdict: str = ""
     # For a `status='duplicate'` row, the memory_key of the
     # canonical that answers for it ("" when that row is no longer active —
@@ -226,6 +236,60 @@ class MemoryGetOutput(ProjectedRow):
     sensitivity: str = ""
 
 
+# A (subject, relation, object) fact a point write names: at most MAX_TRIPLES_PER_ROW a
+# row, each part capped at 256. The lengths the triple writer needs are checked on the
+# canonical form it stores, so "I" (stored as "user") is a subject and "  " is refused
+# rather than dropped. A bulk entry's `relations` stay unchecked: an extractor's surplus
+# is cut, not refused. When the canonical form dropped something, the refusal says what
+# it was stored as and why, since "has" and "is a" look long enough until the copula is
+# dropped; a part that is only too short ("x") just says so.
+def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str) -> AfterValidator:
+    def check(raw: str) -> str:
+        stored = canonical(raw)
+        if len(stored) >= min_chars:
+            return raw
+        if stored == raw.strip().lower():  # nothing dropped, only lowercased
+            raise ValueError(f"{raw!r} is too short: {needs}")
+        raise ValueError(f"{raw!r} is stored as {stored!r} ({dropped} are dropped); {needs}")
+
+    return AfterValidator(check)
+
+
+def _relation_verb(raw: str) -> str:
+    return canonical_relation(canonicalize_verb(raw)).verb
+
+
+_ENTITY_DROPS = "articles, possessives and punctuation"
+_FactSubject = Annotated[
+    str,
+    Field(max_length=256),
+    _canonical_at_least(
+        2,
+        canonical_entity_text,
+        _ENTITY_DROPS,
+        "a subject needs at least 2 characters, such as a name",
+    ),
+]
+_FactRelation = Annotated[
+    str,
+    Field(max_length=256),
+    _canonical_at_least(
+        2,
+        _relation_verb,
+        "copulas, auxiliaries and punctuation",
+        "a relation needs at least 2 characters: name it with a content verb such as 'owns'",
+    ),
+]
+_FactObject = Annotated[
+    str,
+    Field(max_length=256),
+    _canonical_at_least(
+        1, canonical_entity_text, _ENTITY_DROPS, "an object needs at least 1 character"
+    ),
+]
+Fact = tuple[_FactSubject, _FactRelation, _FactObject]
+
+
 class MemorySetInput(_Identity):
     # The key to write; a write to a key that already holds a row adds a new version.
     memory_key: str
@@ -241,6 +305,15 @@ class MemorySetInput(_Identity):
     # row so memory.timeline / entity_filter can find it without waiting on LLM
     # extraction — which never tags a point write under a fake/keyless provider.
     entities: list[str] = Field(default_factory=list)
+    # The (subject, relation, object) facts the value states, written to the fact
+    # graph and linked to the row as a `memory.bulk_set` entry's are: a single-valued
+    # fact closes the older one it replaces and, under `newest_wins`, retires the rows
+    # behind it. A revision that names a fact keeps it however it is worded; one naming
+    # none keeps a fact only while it repeats the old words. A 'high' row's facts, and a
+    # proposal's, are not graphed. Not in the MCP listing.
+    relations: list[Fact] = Field(
+        default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
+    )
     # The repo files this memory is about (repo-relative path
     # or bare filename); memory.for_file serves it before an edit of them.
     # Unset = detected from the value; a rewrite that detects none keeps the
@@ -300,11 +373,6 @@ class MemorySetInput(_Identity):
     # For "would this be a new fact, a restatement or a contradiction?" before
     # committing to a key.
     dry_run: bool = False
-    # The conflict judge runs AFTER the row is written and the
-    # response says `conflict_verdict: pending`; pass true to wait for it in
-    # the response (one LLM call, ~+1 s). Deterministic verdicts
-    # (merge, duplicate, rejected) are never deferred.
-    await_verdict: bool = False
     # Write the fact as a PROPOSAL (`status='proposed'`): not
     # served by default, served to a read that passes `include_proposed`, and
     # accepted or rejected on the graded outcomes of the runs that used it
@@ -367,11 +435,6 @@ class MemorySetOutput(BaseModel):
     # A short machine hint naming the op to reach for: memory.update(key) on a
     # conflict, memory.pin on a merge the store has seen before, "" otherwise.
     next: str = ""
-    # `inline` when `conflict_verdict` was settled in this
-    # response, `deferred` when it is `pending` (the judge runs after the
-    # write; `memory.get` shows the settled `status` / `duplicate_of`), ""
-    # when no check ran.
-    verdict_at: str = ""
     # True when this call wrote nothing: a `merge` (the store already held the
     # fact; its row was reinforced instead) or a dry run.
     noop: bool = False
@@ -475,10 +538,18 @@ class MemoryDeleteVersionOutput(BaseModel):
 
 
 class MemoryRestoreInput(_Identity):
-    """Restore a tombstoned memory within its 14-day grace window."""
+    """Bring back a deleted memory (within 14 days) or one Loom retired on its own."""
 
     # The key to restore, under this exact identity (no namespace-wide fallback).
     memory_key: str
+    # Precondition: restore only a row still retired behind this memory, as a
+    # `memory.auto_supersede` record names it; a row deleted, revived or retired
+    # behind another memory since is left as it is.
+    if_superseded_by: str = ""
+    # Precondition: restore only a row still retired (`superseded`), never undo a
+    # delete. For a caller that cannot see which memory the row retired behind;
+    # `if_superseded_by` implies it, so either is enough and both are harmless.
+    only_if_superseded: bool = False
 
 
 class MemoryRestoreOutput(BaseModel):
@@ -491,9 +562,85 @@ class MemoryRestoreOutput(BaseModel):
     # Surfaces "you missed the window" cleanly rather than 404-ing.
     expired: bool = False
     # What the row was restored FROM: "tombstoned" (a delete undone) or
-    # "superseded" (an automatic dedup/maintenance retirement reversed — the
-    # undo the dedup fuse counts). Empty on a no-op.
+    # "superseded" (an automatic retirement reversed). Empty on a no-op.
     from_status: str = ""
+
+
+class MemoryStatusesInput(BaseModel):
+    """The current status of some memories, by id: which automatic retirements still
+    stand (the Review queue's Auto-resolved tab reads it)."""
+
+    org: str
+    namespace: str
+    # Ids this namespace does not hold are left out, including one replaced by a racing
+    # first write of the same key. An id past 64 characters refuses the request; a
+    # malformed one is left out.
+    memory_ids: list[Annotated[str, Field(max_length=64)]] = Field(
+        ..., min_length=1, max_length=5000
+    )
+
+
+class MemoryStatus(BaseModel):
+    memory_id: str
+    # The row's status now (`active`, `conflicted`, `superseded`, ...); `deleted` when
+    # tombstoned.
+    status: str
+    # The memory a `superseded` row is retired behind; empty otherwise.
+    superseded_by: str = ""
+
+
+class MemoryStatusesOutput(BaseModel):
+    # One entry per id the namespace holds inside the read scope.
+    rows: list[MemoryStatus] = Field(default_factory=list)
+
+
+class MemoryAutoRetirementsInput(BaseModel):
+    """The memories Loom retired on its own (the conflict resolver, `newest_wins`),
+    newest record first, inside the request's read scope."""
+
+    org: str
+    namespace: str
+    # Only records written at or after this time; unset, the last 30 days.
+    since: datetime | None = None
+    # Retired memories per page, 1 to 200 (default 50). A record's entries are never split
+    # across pages, so a page can hold more; under a narrowed read scope it can hold fewer,
+    # even none, with `next_cursor` set.
+    limit: int = Field(default=50, ge=1, le=200)
+    # The `next_cursor` of the previous page; unset, the newest page.
+    cursor: str | None = None
+
+
+class MemoryAutoRetirement(BaseModel):
+    # When the retirement was recorded.
+    ts: datetime
+    # Why it retired: `conflict_resolver`, `same_key_newest_wins`,
+    # `newest_wins_contradiction` or `value_update`.
+    reason: str
+    memory_id: str
+    memory_key: str
+    agent: str = "-"
+    user_id: str = "-"
+    session_id: str = "-"
+    # The memory it retired behind, and that memory's key.
+    superseded_by: str = ""
+    superseded_by_key: str = ""
+    # The conflict resolver's label for the pair (`update`); empty on other paths.
+    label: str = ""
+    # The re-read after the write could not confirm the retirement took effect.
+    unconfirmed: bool = False
+    # The conflict resolver's judgement; empty (None for the confidence) on other paths.
+    judge_verdict: str = ""
+    judge_confidence: float | None = None
+    judge_model: str = ""
+    judge_prompt_version: str = ""
+
+
+class MemoryAutoRetirementsOutput(BaseModel):
+    # One row per retired memory, newest record first. `memory.statuses` tells which
+    # still stand; `memory.restore` undoes one.
+    rows: list[MemoryAutoRetirement] = Field(default_factory=list)
+    # Pass back as `cursor` for the next, older page; None when this page is the last.
+    next_cursor: str | None = None
 
 
 class MemoryClearInput(BaseModel):
@@ -774,6 +921,8 @@ class MemoryGetByIdInput(BaseModel):
     memory_id: str  # UUID returned by memory.set
     # As-of replay filter — see MemoryGetInput.as_of.
     as_of: datetime | None = None
+    # True answers a 'high' row without its value or hash, and audits no sensitive read.
+    omit_high_value: bool = False
 
 
 class MemoryGetByIdOutput(BaseModel):
@@ -859,6 +1008,10 @@ class MemoryUpdateByIdInput(BaseModel):
     # An expired row answers 409 EXPIRED unless the caller says revive=True,
     # which also clears the expiry.
     revive: bool = False
+    # The facts the new value states, as MemorySetInput.relations; [] states none.
+    relations: list[Fact] = Field(
+        default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
+    )
 
 
 class MemoryUpdateByIdOutput(BaseModel):
@@ -922,6 +1075,10 @@ class MemoryUpdateInput(BaseModel):
     char_limit: int | None = None
     # Allow updating an expired row (else 409 EXPIRED); the update clears its expiry.
     revive: bool = False
+    # The facts the new value states, as MemorySetInput.relations; [] states none.
+    relations: list[Fact] = Field(
+        default_factory=list, max_length=MAX_TRIPLES_PER_ROW, json_schema_extra=MCP_HIDDEN
+    )
 
 
 class MemoryUpdateCandidate(BaseModel):

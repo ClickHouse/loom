@@ -236,7 +236,7 @@ def _register_agent_trust_gauges(meter: Any, probe: Callable[[], CodeSeries] | N
     meter.create_observable_gauge(
         name="loom.auth.trust_agents",
         callbacks=[_cached_series(cache, "agent_trust_agents")],
-        description="Agents an active workload trust has made, released ones included, "
+        description="Live agents of an active workload trust (a released one does not count), "
         "as its --max-agents counts them, by loom.org and loom.trust",
         unit="1",
     )
@@ -555,7 +555,7 @@ def _register_integrity_gauges(meter: Any, _reading: Callable[[str], Callable[[A
         name="loom.integrity.high_with_embedding",
         callbacks=[_reading("high_with_embedding")],
         description="Live high-sensitivity memory rows that still have a live "
-        "embedding row — a credential one similarity query away. "
+        "embedding row — a high value one similarity query away. "
         "Should be 0.",
         unit="1",
     )

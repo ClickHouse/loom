@@ -1,5 +1,5 @@
 """memory.export_evidence leaves out the raw chunks and digests behind a key with any
-version labelled 'high', those whose text reads as a credential, and chunks written without a
+version labelled 'high', those whose text reads as high, and chunks written without a
 vector: raw text has no sensitivity column, and a bundle reaches a wider audience than the
 namespace's grants."""
 

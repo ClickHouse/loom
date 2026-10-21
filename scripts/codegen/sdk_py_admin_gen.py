@@ -92,9 +92,11 @@ def _method(r: AdminRoute) -> list[str]:
     doc = f"`{r.method} {r.path}` ({r.gate}). {r.doc}".rstrip()
     if r.method == "GET":
         return [
-            f"    async def {r.name}(self) -> Any:",
-            f'        """{doc}"""',
-            f'        return await self._agent.transport.request_json("GET", "{r.path}")',
+            f"    async def {r.name}(self, params: dict[str, Any] | None = None) -> Any:",
+            f'        """{doc} `params` are its query parameters."""',
+            "        return await self._agent.transport.request_json(",
+            f'            "GET", "{r.path}", params=params',
+            "        )",
             "",
         ]
     return [

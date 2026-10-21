@@ -93,7 +93,7 @@ def test_no_api_route_uses_a_page_segment() -> None:
         ("/metrics", 404, {"detail": "Not Found"}),
         ("/robots.txt", 404, {"detail": "Not Found"}),
         ("/memoriesx", 404, {"detail": "Not Found"}),
-        ("/me", 404, {"detail": "Not Found"}),
+        ("/me/", 404, {"detail": "Not Found"}),  # `/me` alone is the sign-in landing
         ("/me/tokens", 404, {"detail": "Not Found"}),
     ],
 )
@@ -129,6 +129,7 @@ def test_get_routes_still_answer_json(client, path: str, statuses: tuple[int, ..
     "path",
     [
         "/",
+        "/me",
         "/memories",
         "/memories/",
         "/memories/m-1",
@@ -143,6 +144,18 @@ def test_page_paths_serve_the_dashboard(client, path: str) -> None:
     assert r.headers["cache-control"] == "no-store"
     [csp] = r.headers.get_list("content-security-policy")
     assert "nonce-" in csp
+
+
+def test_the_sign_in_landing_never_follows_the_aggregator_redirect(client, monkeypatch) -> None:
+    """A sign-in lands on `/me#token=…`; the browser would carry that fragment
+    through a redirect, so `/me` serves the page whatever the root does."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "dashboard_redirect_url", "https://aggregator.example/")
+    root = client.get("/", follow_redirects=False)
+    assert root.status_code == 302 and root.headers["location"] == "https://aggregator.example/"
+    landing = client.get("/me", follow_redirects=False)
+    assert landing.status_code == 200 and _PAGE_MARK in landing.text
 
 
 def test_assets_are_served_immutable(client) -> None:

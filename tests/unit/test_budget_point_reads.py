@@ -52,3 +52,22 @@ def test_default_cap_applies_without_a_namespace_row(monkeypatch: pytest.MonkeyP
 
 def test_a_read_error_fails_open(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _read(monkeypatch, _CH(cap=1.0, spent=5.0, boom=True), default_cap=1.0) == (False, 0.0)
+
+
+def test_a_failed_read_is_under_the_cap_unless_the_caller_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A request keeps working through a budget-read blip; a background spender (the
+    conflict resolver) stops paying instead."""
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _CH(cap=1.0, spent=0.0, boom=True))
+    assert asyncio.run(budget.namespace_over_cap("o", "n")) is False
+    assert asyncio.run(budget.namespace_over_cap("o", "n", fail_open=False)) is True
+
+    class Boom:
+        async def query_all(self, *a: Any, **k: Any) -> Any:
+            raise RuntimeError("ch down")
+
+    pairs = [("o", "n")]
+    assert asyncio.run(budget.namespaces_over_cap(pairs, ch=Boom())) == {("o", "n"): False}
+    over = asyncio.run(budget.namespaces_over_cap(pairs, fail_open=False, ch=Boom()))
+    assert over == {("o", "n"): True}

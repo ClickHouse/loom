@@ -27,7 +27,8 @@ TrafficClassStr = Literal["production", "interactive", "bench"]
 # newest_wins: a write whose extracted triple names the same
 # subject and single-valued relation as a live memory with a different, older
 # object retires that memory (status superseded, invalid_at stamped, history
-# kept). auto_reinforce and manual_review leave both facts live.
+# kept). Under newest_wins and auto_reinforce, an update the conflict resolver is
+# sure of retires the older row too; under manual_review it is only flagged.
 # append_only: the namespace's writes are events, not claims
 # — a run's report, a finding dated by its run. Every write is its own row:
 # the gate answers `clear`, no merge / duplicate / conflict verdict against a
@@ -299,6 +300,11 @@ class NamespaceGetOutput(BaseModel):
     # updated only by a named-namespace ADMIN token with a direct grant; clients mirror
     # that to hide settings they would be refused. None when not found.
     classification: Literal["standard", "restricted"] | None = None
+    # The current revision of the namespace's guide, the `expected_revision` of its next
+    # `namespace.guide_set`; 0 when it never had one.
+    guide_revision: int | None = None
+    # The guide's one-line summary; empty when there is no guide or it was cleared.
+    guide_summary: str | None = None
     # When the namespace was first registered (UTC).
     created_at: datetime | None = None
     # When the registry row was last written (UTC).
@@ -319,7 +325,9 @@ class NamespaceDeleteOutput(BaseModel):
 
 class NamespaceBrowseInput(BaseModel):
     org: str
-    query: str = ""  # substring match on namespace name or description
+    # Substring match on the namespace name or description, or on a public
+    # namespace's guide summary.
+    query: str = ""
     # At most this many rows, most members first; `closed` rows are dropped after the limit.
     limit: int = Field(default=50, ge=1, le=500)
     # `closed` rows (bench/scratch) are omitted unless asked for;
@@ -346,6 +354,11 @@ class _BrowseEntry(BaseModel):
     my_role: str = ""
     repo: str = ""
     branch: str = ""
+    # The current revision of the namespace's guide (the `expected_revision` of its next
+    # `namespace.guide_set`) and its one-line summary, for a public row or one the caller
+    # belongs to; 0 and "" when it never had a guide, and "" when the guide was cleared.
+    guide_revision: int = 0
+    guide_summary: str = ""
 
 
 class NamespaceBrowseOutput(BaseModel):

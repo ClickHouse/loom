@@ -21,6 +21,7 @@ from server.memory.api.models_procedure import ProcedureMatchInput
 from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
@@ -118,6 +119,38 @@ async def _advisory_health(
                 "codes": [f.code for f in health.findings],
             },
         )
+
+
+async def _pack_namespace_guide(st: _PackState) -> None:
+    """The namespace's guide (`namespace.guide_get`): what the namespace holds and
+    how to use it, cut to the section budget, under a line naming its revision,
+    writer and summary. Nothing when the namespace has none."""
+    from server.identity.app.namespace_guide import current_guide
+    from server.identity.app.request_scope import request_narrowed
+
+    input = st.input
+    if not st.wanted("namespace_guide"):
+        return
+    guide = await current_guide(input.org, input.namespace)
+    if not guide.found:
+        return
+    # A token narrowed to one user is not told the writer; say so rather than `unknown`.
+    writer = " by=hidden" if request_narrowed() else author_label([guide.updated_by])
+    head = f"- [guide/{guide.revision}{writer}] {guide.summary}"
+    # One item: every line of the guide indented under its head, so a line of the
+    # stored text cannot pass as an item with its own by=.
+    body = one_item(f"{head}\n{guide.content}")
+    budget = _section_budget(input, "namespace_guide", st.default_section_tokens["namespace_guide"])
+    # Measured as `put` stores it (escaped), which is what its trim cuts.
+    if len(escape_data(body)) > budget:
+        body = one_item(f"{head} (full text: namespace.guide_get)\n{guide.content}")
+    st.put(
+        "namespace_guide",
+        body,
+        citations=[f"guide:{guide.revision}"],
+        source_count=1,
+        extra_meta={"revision": guide.revision},
+    )
 
 
 async def _advisory_mentor(
@@ -687,16 +720,25 @@ async def _pack_knowledge(st: _PackState) -> None:
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
     from server.knowledge.app.knowledge_search import handle_knowledge_search
 
-    out = await handle_knowledge_search(
-        KnowledgeSearchInput(
-            org=input.org,
-            namespace=input.namespace,
-            query=input.query,
-            top_k=input.top_k,
-            namespace_scope="all_mine",
+    agent = request_rule_agent(input.agent)
+
+    async def search(top_k: int) -> list[Any]:
+        out = await handle_knowledge_search(
+            KnowledgeSearchInput(
+                org=input.org,
+                namespace=input.namespace,
+                query=input.query,
+                top_k=top_k,
+                namespace_scope="all_mine",
+            )
         )
+        return list(out.results)
+
+    # Another bot's promoted rule is not a rule about this agent.
+    results = await served_hits(
+        await search(input.top_k), search, lambda h: h.tags, agent, input.top_k
     )
-    if out.results:
+    if results:
         evidence = [
             EvidenceItem(
                 # Cite the section, not just the document, when the chunk
@@ -710,7 +752,7 @@ async def _pack_knowledge(st: _PackState) -> None:
                 group=h.source_uri,
                 score=float(getattr(h, "score", 0.0) or 0.0),
             )
-            for h in out.results
+            for h in results
         ]
         packed = pack_evidence(
             evidence,
@@ -821,6 +863,7 @@ async def _gather_sections(st: _PackState) -> None:
         _pack_working_memory(st),
         _pack_profile(st),
         _advisory_health(input, st.wanted, st.put),
+        _pack_namespace_guide(st),
         _advisory_mentor(input, st.wanted, st.put),
         _pack_memory_stack(st),
         _pack_memories(st),

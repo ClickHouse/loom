@@ -52,6 +52,14 @@ from server.identity.api.models_namespace_catalog import (
     NamespaceValidateInput,
     NamespaceValidateOutput,
 )
+from server.identity.api.models_namespace_guide import (
+    NamespaceGuideGetInput,
+    NamespaceGuideGetOutput,
+    NamespaceGuideHistoryInput,
+    NamespaceGuideHistoryOutput,
+    NamespaceGuideSetInput,
+    NamespaceGuideSetOutput,
+)
 from server.identity.app.namespace import (
     handle_namespace_browse,
     handle_namespace_delete,
@@ -65,6 +73,12 @@ from server.identity.app.namespace_catalog import (
     handle_namespace_register_category,
     handle_namespace_search_categories,
     handle_namespace_taxonomy,
+)
+from server.identity.app.namespace_guide import (
+    guide_audit_subject,
+    handle_namespace_guide_get,
+    handle_namespace_guide_history,
+    handle_namespace_guide_set,
 )
 from server.identity.app.namespace_membership import (
     handle_namespace_cancel_request,
@@ -365,6 +379,44 @@ namespace_list_ontology = Operation(
 )
 
 
+namespace_guide_get = Operation(
+    name="namespace.guide_get",
+    maturity="experimental",
+    input_model=NamespaceGuideGetInput,
+    output_model=NamespaceGuideGetOutput,
+    handler=handle_namespace_guide_get,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+
+namespace_guide_set = Operation(
+    name="namespace.guide_set",
+    maturity="experimental",
+    input_model=NamespaceGuideSetInput,
+    output_model=NamespaceGuideSetOutput,
+    handler=handle_namespace_guide_set,
+    # A retry of a save that landed finds its own text current and writes nothing.
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=True,
+    audit_subject=guide_audit_subject,
+)
+
+
+namespace_guide_history = Operation(
+    name="namespace.guide_history",
+    maturity="experimental",
+    input_model=NamespaceGuideHistoryInput,
+    output_model=NamespaceGuideHistoryOutput,
+    handler=handle_namespace_guide_history,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+
 OPERATIONS: list[Operation] = [
     namespace_register,
     namespace_list,
@@ -388,4 +440,7 @@ OPERATIONS: list[Operation] = [
     namespace_audit,
     namespace_register_ontology,
     namespace_list_ontology,
+    namespace_guide_get,
+    namespace_guide_set,
+    namespace_guide_history,
 ]

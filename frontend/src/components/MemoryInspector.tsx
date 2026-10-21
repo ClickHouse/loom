@@ -35,9 +35,10 @@ import {
   conflictKeys,
   getProvenance,
   moveMemory,
+  restoreMemory,
   relatedFacts,
 } from "../api";
-import { useStore } from "../lib/state";
+import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
@@ -145,6 +146,8 @@ export function MemoryInspector({
   const [provenance, setProvenance] = useState<MemoryProvenance | null>(null);
   const [conflictCount, setConflictCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  // A Restore in flight for the memory on screen; reset when the drawer moves on.
+  const [restoring, setRestoring] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [diffVersion, setDiffVersion] = useState<number | null>(null);
@@ -167,7 +170,11 @@ export function MemoryInspector({
   );
   const [done, setDone] = useState<Set<SectionId>>(() => new Set());
   const requested = useRef<Set<SectionId>>(new Set());
-  const keyRef = useRef(memoryKey);
+  // Bumped whenever the drawer moves to another memory or identity, or closes.
+  const inspection = useRef(0);
+  // The memory the drawer has open, so a restore that answers late can tell
+  // whether the drawer came back to it. Compared by value: parents rebuild identity.
+  const shown = useRef<string | null>(null);
   const toggleSection = (id: SectionId) =>
     setSections((cur) => {
       const next = { ...cur, [id]: !cur[id] };
@@ -285,12 +292,14 @@ export function MemoryInspector({
   useEffect(() => {
     setLoading(true);
     setRenaming(false);
+    setRestoring(false);
     setDetail(null);
     setHistory(null);
     setRelated(null);
     setLineage(null);
     setProvenance(null);
-    keyRef.current = memoryKey;
+    inspection.current += 1;
+    shown.current = shownAs(identity, memoryKey);
     requested.current = new Set();
     setDone(new Set());
     // A read for a key the drawer has moved off must not land: its value under the new
@@ -312,13 +321,18 @@ export function MemoryInspector({
     // costs seven reads and about 118 MB of ClickHouse for six kilobytes on the screen.
     return () => {
       live = false;
+      // Closing the drawer leaves this memory too, so a restore still in flight is stale.
+      inspection.current += 1;
+      shown.current = null;
     };
   }, [identity, memoryKey]);
 
   useEffect(() => {
     const k = memoryKey;
+    const mine = inspection.current;
+    const fresh = () => inspection.current === mine;
     const finish = (id: SectionId) => {
-      if (keyRef.current === k) setDone((d) => new Set(d).add(id));
+      if (fresh()) setDone((d) => new Set(d).add(id));
     };
     const want = (id: SectionId, run: () => Promise<void>) => {
       if (!sections[id] || requested.current.has(id)) return;
@@ -329,7 +343,6 @@ export function MemoryInspector({
         })
         .finally(() => finish(id));
     };
-    const fresh = () => keyRef.current === k;
     want("history", () =>
       memoryHistory(identity, k, 8)
         .then((r) => {
@@ -379,6 +392,7 @@ export function MemoryInspector({
   // viewer never sees a button the server would refuse.
   const canMove = canCall("memory.move", role, whoami);
   const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
+  const canRestore = canCall("memory.restore", role, whoami);
   const verified = detail?.verification === "human" || detail?.verification === "process";
   useEffect(() => {
     setConflictCount(0);
@@ -579,6 +593,57 @@ export function MemoryInspector({
     }
   };
 
+  // A superseded row (Loom retired it, or a later write replaced it) comes back live.
+  const onRestore = async () => {
+    if (!detail || restoring) return;
+    const mine = inspection.current;
+    const stale = () => inspection.current !== mine;
+    setRestoring(true);
+    try {
+      const r = await restoreMemory({ ...identity, agent: detail.agent || identity.agent }, memoryKey, {
+        user_id: detail.user_id || undefined,
+        session_id: detail.session_id || undefined,
+        // Only the retirement on screen, never a delete since. A row retired behind one
+        // outside the reader's scope shows no successor, so it is guarded by status.
+        if_superseded_by: detail.superseded_by,
+        only_if_superseded: true,
+      });
+      // Either way the row changed, so the list behind the drawer is stale too,
+      // even if the drawer has moved on to another memory.
+      onChanged();
+      if (stale()) {
+        // Toasts are app-wide, so still report it, naming the key the drawer has left.
+        toast(r.restored ? `Restored ${memoryKey}` : `Nothing to restore for ${memoryKey}`, r.restored ? "ok" : "info");
+        // Back on this memory (A, B, A): its load read may have shown the row before the
+        // restore, so read it again.
+        if (r.restored && shown.current === shownAs(identity, memoryKey)) {
+          const now = inspection.current;
+          getMemory(identity, memoryKey, { include_recall_breakdown: true })
+            .then((fresh) => {
+              if (inspection.current === now) setDetail(fresh);
+            })
+            .catch(() => {
+              /* the restore was reported; the drawer keeps what it shows */
+            });
+        }
+        return;
+      }
+      // Nothing to restore means the row changed since it was read: show it as it is now.
+      toast(r.restored ? "Restored" : "Nothing to restore", r.restored ? "ok" : "info");
+      try {
+        const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
+        if (!stale()) setDetail(fresh);
+      } catch (e) {
+        if (!stale()) toast(`Reload failed: ${humanizeError(e)}`, "error");
+      }
+    } catch (e) {
+      if (stale()) toast(`Restore of ${memoryKey} failed: ${humanizeError(e)}`, "error");
+      else toast(`Restore failed: ${humanizeError(e)}`, "error");
+    } finally {
+      if (!stale()) setRestoring(false);
+    }
+  };
+
   const onDelete = async () => {
     if (
       !(await confirmAction({
@@ -720,7 +785,25 @@ export function MemoryInspector({
                         </dd>
                       </>
                     )}
-                    <Row label="Status" value={statusLabel(detail.status)} />
+                    {detail.status === "superseded" && canRestore ? (
+                      <>
+                        <dt className="text-text-muted">Status</dt>
+                        <dd className="text-text flex items-center gap-2 flex-wrap">
+                          {statusLabel(detail.status)}
+                          <Button
+                            type="secondary"
+                            htmlType="button"
+                            iconLeft="refresh"
+                            onClick={onRestore}
+                            disabled={restoring}
+                          >
+                            Restore
+                          </Button>
+                        </dd>
+                      </>
+                    ) : (
+                      <Row label="Status" value={statusLabel(detail.status)} />
+                    )}
                     <Row label="Created" value={detail.created_at ? relativeTime(detail.created_at) : "—"} />
                     {detail.updated_at && detail.updated_at !== detail.created_at && (
                       <Row label="Updated" value={relativeTime(detail.updated_at)} />
@@ -1108,7 +1191,7 @@ export function MemoryInspector({
             actions={
               sourceThread && (
                 <Link
-                  href={`/conversations?thread=${encodeURIComponent(sourceThread.thread_id)}`}
+                  href={navigationHref("sessions", { thread: sourceThread.thread_id })}
                   size="sm"
                   onClick={(e: React.MouseEvent) => {
                     if (isModifiedClick(e)) return;
@@ -1128,6 +1211,10 @@ export function MemoryInspector({
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+function shownAs(identity: Identity, memoryKey: string): string {
+  return `${identity.org}/${identity.namespace}/${identity.agent}/${memoryKey}`;
 }
 
 /** Map the backend's status enum to a human label. */

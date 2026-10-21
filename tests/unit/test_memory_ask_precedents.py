@@ -769,6 +769,8 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     try:
         set_current_auth(_token("alice"))
         alice = ask_shape_sha256(_input(), settings)
+        # Under alice's token a body that already names alice hashes as the pinned default does.
+        named_alice = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
         set_current_auth(_token("bob"))
         bob = ask_shape_sha256(_input(), settings)
         set_current_auth(_token(""))
@@ -777,4 +779,59 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
         set_current_auth(None)
     assert alice != bob
     assert shared == ask_shape_sha256(_input(), settings)
-    assert alice == ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
+    assert alice == named_alice
+    # With no token the same body is served every bot's rules, and the pinned token
+    # (which signs no agent) none, so the two never share a shape.
+    assert alice != ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
+
+
+def test_ask_shape_hashes_the_agent_whose_rules_the_token_is_served() -> None:
+    """Two tokens pinned to one end user, signed for different bots, one body under the
+    default agent: each is served only its own bot's promoted rules, so the precedent
+    keys must differ; a caller with no pin hashes the shape without a rule_agent key."""
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.memory.app.ask.handler import (
+        _ASK_SHAPE_EXCLUDE,
+        _shape_settings,
+        ask_shape_sha256,
+    )
+    from server.memory.domain.precedents import precedent_key
+    from server.operations.base import Role
+    from server.settings import settings
+    from tests.unit.test_memory_ask import _input
+
+    def _token(agent: str) -> AuthInfo:
+        return AuthInfo(
+            subject="sa:bot",
+            org="o",
+            namespaces=("n",),
+            roles=(Role.VIEWER,),
+            is_service_account=True,
+            read_user_id="alice",
+            agent_principal=f"agent:{agent}",
+        )
+
+    def _key() -> str:
+        return precedent_key(_input().query, ask_shape_sha256(_input(), settings))
+
+    unpinned = _key()
+    try:
+        set_current_auth(_token("support-bot"))
+        support = _key()
+        set_current_auth(_token("sales-bot"))
+        sales = _key()
+    finally:
+        set_current_auth(None)
+    assert support != sales
+    # With no pin the shape hashes as a build without the rule_agent key did, so
+    # precedents stored before an upgrade still match. That build's shape, by hand:
+    body = _input()
+    exclude = set(_ASK_SHAPE_EXCLUDE)
+    exclude |= {f for f in ("user_id", "session_id") if getattr(body, f) in (None, "-")}
+    shape = body.model_dump(exclude=exclude, exclude_defaults=True)
+    if shaped := _shape_settings(settings):
+        shape["settings"] = shaped
+    canonical = json.dumps(shape, sort_keys=True, default=str, separators=(",", ":"))
+    older_build = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert unpinned == precedent_key(body.query, older_build)

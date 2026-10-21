@@ -33,6 +33,11 @@ export function setSavedNamespace(ns: string): void {
   });
 }
 
+/** Forget the saved pick in this browser. The server-side default stays: no call clears it. */
+export function forgetSavedNamespace(): void {
+  localStorage.removeItem(KEY_NAMESPACE);
+}
+
 // Auth-disabled mode: when LOOM_AUTH_REQUIRED=false, the server accepts
 // all calls without auth. The SPA skips the TokenGate and synthesises an
 // identity for the server-configured default namespace.
@@ -332,25 +337,37 @@ export async function listMemories(
   return out;
 }
 
-/** Undo a tombstone within the 14-day grace window. Returns
- *  restored=true on success, expired=true if the window has closed,
- *  restored=false (no-op) if the row was already live or doesn't exist.
- *  user_id / session_id complete the row's identity tuple. */
+/** Bring a row back live: undo a tombstone within the 14-day grace window, or undo a
+ *  supersession (a row Loom retired on its own, or a later write replaced). Returns
+ *  restored=true on success, expired=true if the delete window has closed, restored=false
+ *  (no-op) if the row was already live or doesn't exist. `from_status` says what it was
+ *  restored from ("tombstoned" or "superseded"; empty on a no-op). user_id / session_id
+ *  complete the row's identity tuple. */
 export async function restoreMemory(
   id: Identity,
   key: string,
-  opts: { user_id?: string; session_id?: string } = {},
+  opts: {
+    user_id?: string;
+    session_id?: string;
+    /** Restore only a row still retired behind this memory id; otherwise restored=false. */
+    if_superseded_by?: string;
+    /** Restore only a row still retired, whatever it retired behind; never undo a delete. */
+    only_if_superseded?: boolean;
+  } = {},
 ): Promise<{
   restored: boolean;
   memory_id?: string | null;
   version?: number | null;
   expired?: boolean;
+  from_status?: "tombstoned" | "superseded" | "";
 }> {
   return post("/v1/memory.restore", {
     ...id,
     user_id: opts.user_id ?? "-",
     session_id: opts.session_id ?? "-",
     memory_key: key,
+    ...(opts.if_superseded_by ? { if_superseded_by: opts.if_superseded_by } : {}),
+    ...(opts.only_if_superseded ? { only_if_superseded: true } : {}),
   });
 }
 
@@ -358,6 +375,7 @@ export async function restoreMemory(
  *  doesn't exist; gate on it before reading the other fields. */
 export interface MemoryDetail {
   found: boolean;
+  memory_id?: string;
   value: unknown;
   memory_type: string | null;
   confidence: number | null;
@@ -378,6 +396,8 @@ export interface MemoryDetail {
    *  starts from one). */
   entities?: string[];
   status?: string;
+  /** For a `status='superseded'` row, the memory_id of the row it retired behind. */
+  superseded_by?: string;
   /** Server-enforced cap on the stringified value; NULL = no cap. The
    *  Inspector reads this to preserve the cap when editing the value,
    *  since the write path is write-through. */
@@ -414,6 +434,34 @@ export async function getMemory(
   const body: Record<string, unknown> = { ...id, memory_key: key };
   if (opts.include_recall_breakdown) body["include_recall_breakdown"] = true;
   return post<MemoryDetail>("/v1/memory.get", body, opts.signal);
+}
+
+/** One memory by its org-wide id (`memory.get_by_id`), the shape a conflict's
+ *  `conflict_with` names its peer by. `found` is false when no live row carries the id
+ *  or the caller cannot read its namespace. */
+export interface MemoryById {
+  found: boolean;
+  memory_id: string;
+  namespace: string;
+  memory_key: string;
+  value: unknown;
+  version: number | null;
+  pinned: boolean;
+  created_at: string | null;
+  /** '' | low | medium | high; a high row is read by key in Memories, not shown here. */
+  sensitivity?: string;
+}
+
+/** `omit_high_value`: a high row answers without its value, and no sensitive read is
+ *  audited, for a view that only names the row. */
+export async function getMemoryById(
+  org: string,
+  memoryId: string,
+  opts: { omit_high_value?: boolean } & RequestOpts = {},
+): Promise<MemoryById> {
+  const body: Record<string, unknown> = { org, memory_id: memoryId };
+  if (opts.omit_high_value) body["omit_high_value"] = true;
+  return post<MemoryById>("/v1/memory.get_by_id", body, opts.signal);
 }
 
 /** POST /v1/memory.bulk_get — N keys in one CH round-trip. `agent: "*"` is the
@@ -600,18 +648,20 @@ export interface GrantEntry {
   pending_since?: string | null;
   granted_at: string;
   granted_by: string;
+  /** The person's other spellings whose rows folded onto this one. */
+  also?: string[];
 }
 
 export async function listGrants(
   id: Pick<Identity, "org" | "namespace">,
-  opts: RequestOpts = {},
+  opts: { limit?: number } & RequestOpts = {},
 ): Promise<{ rows: GrantEntry[] }> {
   return post<{ rows: GrantEntry[] }>(
     "/v1/grants.list",
     {
       org: id.org,
       namespace: id.namespace,
-      limit: 100,
+      limit: opts.limit ?? 100,
     },
     opts.signal,
   );
@@ -1130,6 +1180,9 @@ export interface BrowseEntry {
   my_role?: string;
   repo?: string;
   branch?: string;
+  /** The namespace's guide, on a public row or one the caller belongs to: its current revision (0 = none) and one-line summary. */
+  guide_revision?: number;
+  guide_summary?: string;
 }
 
 export async function browseNamespaces(
@@ -1143,6 +1196,41 @@ export async function browseNamespaces(
   if (opts.includeClosed) body["include_closed"] = true;
   const r = await post<{ rows: BrowseEntry[] }>("/v1/namespace.browse", body, opts.signal);
   return r.rows;
+}
+
+/** A namespace's guide (`namespace.guide_get`); `revision` 0 when it never had one. */
+export interface NamespaceGuide {
+  found: boolean;
+  revision: number;
+  content: string;
+  summary: string;
+  note: string;
+  updated_by: string;
+  updated_at: string | null;
+}
+
+export interface GuideSaveResult {
+  written: boolean;
+  /** The guide moved past `expected_revision`: nothing was written, `current` is what is there now. */
+  conflict: boolean;
+  revision: number;
+  current: NamespaceGuide | null;
+}
+
+export async function getNamespaceGuide(
+  org: string,
+  namespace: string,
+  opts: RequestOpts = {},
+): Promise<NamespaceGuide> {
+  return post<NamespaceGuide>("/v1/namespace.guide_get", { org, namespace }, opts.signal);
+}
+
+export async function saveNamespaceGuide(
+  org: string,
+  namespace: string,
+  edit: { content: string; summary?: string; note: string; expected_revision: number },
+): Promise<GuideSaveResult> {
+  return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit });
 }
 
 export interface JoinResponse {
@@ -1273,6 +1361,10 @@ export async function getTaxonomy(
 export * from "./api/knowledge";
 export * from "./api/conversations";
 export * from "./api/admin";
+// The audit-log read the sidebar badge calls, kept apart from admin.ts so the shell carries only it.
+export * from "./api/audit";
+export * from "./api/autoResolve";
+export * from "./api/collections";
 export * from "./api/search";
 export * from "./api/profile";
 export * from "./api/code";

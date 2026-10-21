@@ -172,9 +172,8 @@ async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
 UserStep = tuple[str, Callable[[str, str], Awaitable[int]]]
 NamespaceStep = tuple[str, Callable[[str, _NS], Awaitable[int]]]
 
-# The tables the census does not count, one step each, run after the
-# counted steps; the registry test holds them to `_CENSUS`.
-_UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
+# The steps that run after the memory steps; each deletes or tombstones its own tables.
+_LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("conversations.tombstone", ledger_steps.tombstone_conversations_by_namespace),
     ("context_blobs.tombstone", ledger_steps.tombstone_context_blobs_by_namespace),
     ("session_briefs.delete", ledger_steps.delete_session_briefs_by_namespace),
@@ -186,6 +185,7 @@ _UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
     ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_namespace),
     ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_namespace),
+    ("namespace_guides.delete", ledger_steps.delete_namespace_guides_by_namespace),
     ("tasks.delete", ledger_steps.delete_tasks_by_namespace),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_namespace),
     ("curation.tombstone", ledger_steps.tombstone_curation_by_namespace),
@@ -194,7 +194,7 @@ _UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("idempotency.delete", ledger_steps.delete_idempotency_by_namespace),
     ("code_index.purge", _step_purge_code_index_by_ns),
 )
-_UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
+_LATE_STEPS_USER: tuple[UserStep, ...] = (
     ("conversations.tombstone", ledger_steps.tombstone_conversations_by_user),
     ("context_blobs.tombstone", ledger_steps.tombstone_context_blobs_by_user),
     ("session_briefs.delete", ledger_steps.delete_session_briefs_by_user),
@@ -204,7 +204,9 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_user),
     ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_user),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_user),
+    ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_user),
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_user),
+    ("projection_failures.delete", ledger_steps.delete_projection_failures_by_user),
     # Org-wide, not by the stamped subject: a replay a service account stored
     # while acting for the user carries the user's text under the account's
     # subject. A cache, so deleting more costs only misses.
@@ -258,7 +260,7 @@ USER_STEPS: tuple[UserStep, ...] = (
     # That is a bound in time, not an order: one still running could write the
     # row back, and the user's later calls write a new one.
     ("subject_last_seen.delete", memory_steps.delete_last_seen_by_user),
-    *_UNCOUNTED_STEPS_USER,
+    *_LATE_STEPS_USER,
 )
 
 # The loom-side steps of a namespace erasure over (org, namespace or list), in
@@ -294,5 +296,5 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     # deletes the original blob bytes and tombstones the whole-document rows.
     ("chunks.supersede", memory_steps.supersede_chunks_by_namespace),
     ("documents.tombstone", _step_tombstone_documents_by_ns),
-    *_UNCOUNTED_STEPS_NS,
+    *_LATE_STEPS_NS,
 )

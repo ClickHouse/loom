@@ -205,7 +205,7 @@ def _invariants_sql() -> str:
             -- Row-level invariants: a live vector row with `embedding_dim = 0` and a
             -- vector (never returned); a tombstoned memory whose status is not
             -- `tombstoned`; an active memory past its own `valid_to`; a live `high`
-            -- memory with a live embedding row (a credential one similarity query away).
+            -- memory with a live embedding row (a high value one similarity query away).
             sum(s.dim0_vec) AS dim0_with_vector,
             sum(s.drift) AS tombstone_status_drift,
             sum(s.past) AS active_past_valid_to,
@@ -675,10 +675,10 @@ def _probe_storage() -> dict[str, list[tuple[float, dict[str, str]]]]:
     return series
 
 
-# How many agents each agent trust has made against its --max-agents, counted
-# as `server.auth.agents._made` counts them for the cap: every namespace in
-# the trust's org carrying its mark (`agents.tag`), released ones too. One
-# row per trust and per marked namespace, so the census is small.
+# How many agents each agent trust has against its --max-agents, counted as
+# `server.auth.agents._made` counts them for the cap: every live namespace in
+# the trust's org carrying its mark (`agents.tag`); a released one does not
+# count. One row per trust and per marked namespace, so the census is small.
 _AGENT_TRUSTS_SQL = f"""
         SELECT t.org AS org, t.name AS trust, t.max_agents AS max_agents,
                countIf(n.namespace != '') AS made
@@ -691,7 +691,7 @@ _AGENT_TRUSTS_SQL = f"""
             SELECT org, namespace, mark
             FROM loom.namespaces FINAL
             ARRAY JOIN tags AS mark
-            WHERE startsWith(mark, 'machine:')
+            WHERE startsWith(mark, 'machine:') AND active = 1
         ) AS n ON n.org = t.org AND n.mark = t.mark
         GROUP BY t.org, t.name, t.max_agents
         SETTINGS {_FINAL_SINGLE_PASS}

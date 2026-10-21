@@ -1407,6 +1407,15 @@ class MemoryOps:
             await self._agent.call("memory.assign_category", body, **options),
         )
 
+    async def auto_retirements(
+        self, body: _ops.MemoryAutoRetirementsBody | None = None, /, **options: Any
+    ) -> _ops.MemoryAutoRetirementsOutput:
+        """`memory.auto_retirements`."""
+        return cast(
+            "_ops.MemoryAutoRetirementsOutput",
+            await self._agent.call("memory.auto_retirements", body, **options),
+        )
+
     async def backlinks(
         self, body: _ops.MemoryBacklinksBody | None = None, /, **options: Any
     ) -> _ops.MemoryBacklinksOutput:
@@ -1889,6 +1898,14 @@ class MemoryOps:
             "_ops.MemoryStackOutput", await self._agent.call("memory.stack", body, **options)
         )
 
+    async def statuses(
+        self, body: _ops.MemoryStatusesBody | None = None, /, **options: Any
+    ) -> _ops.MemoryStatusesOutput:
+        """`memory.statuses`."""
+        return cast(
+            "_ops.MemoryStatusesOutput", await self._agent.call("memory.statuses", body, **options)
+        )
+
     async def sweep_expired(
         self, body: _ops.MemorySweepExpiredBody | None = None, /, **options: Any
     ) -> _ops.MemorySweepExpiredOutput:
@@ -2070,6 +2087,33 @@ class NamespaceOps:
         """`namespace.get`."""
         return cast(
             "_ops.NamespaceGetOutput", await self._agent.call("namespace.get", body, **options)
+        )
+
+    async def guide_get(
+        self, body: _ops.NamespaceGuideGetBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceGuideGetOutput:
+        """`namespace.guide_get`."""
+        return cast(
+            "_ops.NamespaceGuideGetOutput",
+            await self._agent.call("namespace.guide_get", body, **options),
+        )
+
+    async def guide_history(
+        self, body: _ops.NamespaceGuideHistoryBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceGuideHistoryOutput:
+        """`namespace.guide_history`."""
+        return cast(
+            "_ops.NamespaceGuideHistoryOutput",
+            await self._agent.call("namespace.guide_history", body, **options),
+        )
+
+    async def guide_set(
+        self, body: _ops.NamespaceGuideSetBody | None = None, /, **options: Any
+    ) -> _ops.NamespaceGuideSetOutput:
+        """`namespace.guide_set`."""
+        return cast(
+            "_ops.NamespaceGuideSetOutput",
+            await self._agent.call("namespace.guide_set", body, **options),
         )
 
     async def join(

@@ -112,6 +112,10 @@ docker exec loom-server loom revoke-token --jti <jti> --reason "leaked"
 docker exec loom-server loom revoke-token --subject my-bot --issued-before 2030-01-01T00:00:00Z
 ```
 
+A permanent revocation cannot be given an expiry or narrowed to restore tokens
+retired before it. Choose a cutoff at or after its existing cutoff, or the
+permanent revocation time plus the token clock-skew allowance.
+
 `--save` writes the token to `~/.loom/token` (or a path you give) instead of
 printing it. Without `--ttl-days` the token has no expiry and can only be
 retired with `loom revoke-token`. `--read-scope own_user` limits reads to the
@@ -300,7 +304,7 @@ python scripts/codegen/docs_reference.py
 | `loom report` | Print the bug form's Environment field: versions and the `loom doctor` checks. | `--open` |
 | `loom drops` | Print the memory ingest drop ledger (loom.memory_drops) for a namespace, by stage/reason — what the pipeline discarded, truncated or gave up on. | `--namespace`, `--org`, `--hours` |
 | `loom namespaces-gc` | List (default) or erase throwaway namespaces — finished bench runs under the bench prefixes that nobody registered and nobody has written to for --idle-hours — in one list-scoped erasure saga per… | `--org`, `--prefix`, `--namespace`, `--exclude-prefix`, `--idle-hours`, `--include-registered`, `--erase`, `--no-purge`, `--skip-external`, `--batch`, `--show`, `--requester`, `--worker-pass` |
-| `loom erasure-re-verify` | Re-verify failed erasure sagas: print each one's last step-named reason and a fresh residue census (default, read-only); --resume re-runs them from their checkpoint past the recovery worker's… | `--org`, `--id`, `--resume`, `--skip-external`, `--orphan-graph`, `--erase`, `--batch`, `--show`, `--requester` |
+| `loom erasure-re-verify` | Re-verify failed erasure sagas: print each one's last step-named reason and a fresh residue census (default, read-only); --resume re-runs them from their checkpoint past the recovery worker's… | `--org`, `--id`, `--resume`, `--skip-external`, `--completed-since`, `--orphan-graph`, `--erase`, `--batch`, `--show`, `--requester` |
 | `loom tracker-probe` | Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces. |  |
 | `loom tracker-contract-check` | Read-only: does each tracker source's schema meet the record contract (docs/features/tracker/record-contract.md)? | `--source`, `--namespace`, `--json` |
 | `loom tracker-dupcheck-fit` | Refit tracker.duplicate_check's calibrated confidence for one tracker namespace now: replays the duplicate gold at filing time, fits, stores the fit. | `--namespace`, `--org`, `--negatives`, `--dry-run`, `--out` |

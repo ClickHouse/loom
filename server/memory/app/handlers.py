@@ -23,6 +23,7 @@ from server.core.errors import BackendUnavailableError, ValidationError
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     CodeLink,
     MemoryClearInput,
@@ -43,7 +44,6 @@ from server.memory.api.models_crud import (
     MemoryUnpinInput,
     MemoryUnpinOutput,
 )
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app import webhooks
 from server.memory.app.get_output import duplicate_of_shown, row_output
 from server.memory.app.provenance import writer_actor
@@ -255,10 +255,10 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     if target is None:
         return MemoryGetOutput(found=False)
 
-    # A chunk that reads as a credential, or that was written without a vector for holding
-    # part of one, is served only when its own key is read, and that read is audited as a
-    # key read of a 'high' row is. A neighbour is context the caller did not name: a held
-    # one is left out of the passage.
+    # A chunk that reads as high, or that was written without a vector for holding part
+    # of a high shape, is served only when its own key is read, and that read is audited
+    # as a key read of a 'high' row is. A neighbour is context the caller did not name: a
+    # held one is left out of the passage.
     def held(row: dict[str, Any]) -> bool:
         return int(row["embedding_dim"]) == 0 or reads_high(str(row["content"]))
 
@@ -345,6 +345,27 @@ async def _point_lookup(identity: Any, input: MemoryGetInput) -> Any:
             scope=request_scope(),
         )
     return row if row is not None and same_user(row, identity) else None
+
+
+# What `memory.get` reports for a row from its lifecycle status.
+_STATUS_VERDICT = {
+    "active": "clear",
+    "conflicted": "conflict",
+    "duplicate": "duplicate",
+    "superseded": "superseded",
+    "rejected": "rejected",
+    "tombstoned": "tombstoned",
+}
+
+
+def _verdict_from_status(status: Any, duplicate_of: Any = "") -> str:
+    """The verdict a row shows on read, from its lifecycle status (`active` →
+    `clear`, `conflicted` → `conflict`, an active row pointing at its original →
+    `duplicate`, …)."""
+    s = str(status or "")
+    if s == "active" and str(duplicate_of or ""):
+        return "duplicate"
+    return _STATUS_VERDICT.get(s, s)
 
 
 async def handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
@@ -501,8 +522,8 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
     async def code() -> list[CodeLink]:
         return await links_of(input.org, head_of(row)) if wants_code else []
 
-    successors, links, judge_pending = await asyncio.gather(
-        shown_successors(input.org, input.namespace, [row]), code(), _cd.row_pending(row)
+    successors, links = await asyncio.gather(
+        shown_successors(input.org, input.namespace, [row]), code()
     )
     return row_output(
         row,
@@ -514,9 +535,7 @@ async def _handle_memory_get(input: MemoryGetInput) -> MemoryGetOutput:
         superseded_by=successors.get(str(row.memory_id), ""),
         code=links,
         resolved_from=resolved_from,
-        conflict_verdict=_cd.verdict_from_row(
-            str(row.memory_id), row.status, duplicate_of, pending=judge_pending
-        ),
+        conflict_verdict=_verdict_from_status(row.status, duplicate_of),
         recall_by_agent=recall_by_agent,
     )
 
@@ -525,7 +544,7 @@ async def handle_memory_pin(input: MemorySetInput) -> MemorySetOutput:
     """Explicit-save variant. Forces `pinned=True`; otherwise shares the
     `memory.set` write path."""
     input.pinned = True
-    return await handle_memory_set(input)
+    return await handle_memory_set(input, op="memory.pin", retry_what="the pin")
 
 
 async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
@@ -559,25 +578,35 @@ async def handle_memory_unpin(input: MemoryUnpinInput) -> MemoryUnpinOutput:
     if existing is None:
         return MemoryUnpinOutput(unpinned=False, reason="not_found")
     assert_own_row(existing, op="memory.unpin")
-    if not bool(getattr(existing, "pinned", False)):
-        return MemoryUnpinOutput(
-            unpinned=False,
-            reason="not_pinned",
-            memory_id=str(existing.memory_id),
+    # Read again and written under the key's lock, as a pin and a resolver write are: a
+    # retirement landing between the read and the unpinned copy would be written over.
+    from server.memory.store.key_write_lock import key_lock_for
+
+    async with key_lock_for(
+        input.org,
+        existing.namespace,
+        existing.agent,
+        existing.user_id,
+        existing.session_id,
+        existing.memory_key,
+        what="the unpin",
+        operation="memory.unpin",
+    ):
+        head = await memory_repo.get_by_id(
+            str(existing.memory_id), org=input.org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
         )
-    version = next_version()
-    row = memory_repo.build_memory_version_row(
-        existing,
-        version=version,
-        updated_at=memory_repo.written_now(),
-        pinned=False,
-    )
-    await insert_memory_versions([row], ch=ch)
-    return MemoryUnpinOutput(
-        unpinned=True,
-        memory_id=str(existing.memory_id),
-        version=version,
-    )
+        if head is None:
+            return MemoryUnpinOutput(unpinned=False, reason="not_found")
+        if not bool(getattr(head, "pinned", False)):
+            return MemoryUnpinOutput(
+                unpinned=False, reason="not_pinned", memory_id=str(head.memory_id)
+            )
+        version = next_version()
+        row = memory_repo.build_memory_version_row(
+            head, version=version, updated_at=memory_repo.written_now(), pinned=False
+        )
+        await insert_memory_versions([row], ch=ch)
+    return MemoryUnpinOutput(unpinned=True, memory_id=str(head.memory_id), version=version)
 
 
 async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
@@ -1328,12 +1357,16 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
 
     if not await row_in_scope(input.org, row.namespace):
         return MemoryGetByIdOutput(found=False)
+    high = str(getattr(row, "sensitivity", "") or "") == "high"
+    # A caller that only names the row (the dashboard's conflict peer) never reads a
+    # high value, so nothing sensitive was read and nothing is audited.
+    omit_value = high and input.omit_high_value
     sha = (
         _content_sha256_of_stored(json.dumps(row.value, default=str))
         if row.value is not None
         else ""
     )
-    if str(getattr(row, "sensitivity", "") or "") == "high":
+    if high and not omit_value:
         # Key-only read of a 'high' row: audited. Never raises.
         from server.observability import audit as _audit
 
@@ -1355,7 +1388,7 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         session_id=row.session_id,
         memory_key=row.memory_key,
         memory_type=row.memory_type,
-        value=row.value,
+        value=None if omit_value else row.value,
         confidence=row.confidence,
         version=row.version,
         created_at=row.created_at,
@@ -1365,12 +1398,14 @@ async def handle_memory_get_by_id(input: MemoryGetByIdInput) -> MemoryGetByIdOut
         valid_at=getattr(row, "valid_at", None),
         valid_to=getattr(row, "valid_to", None),
         pinned=row.pinned,
-        content_sha256=sha,
+        # The hash of a short secret names it as well as the value does.
+        content_sha256="" if omit_value else sha,
         verified_by=getattr(row, "verified_by", "") or "",
         actor=getattr(row, "actor", "") or "",
         source_class=getattr(row, "source_class", "") or "",
         **_lock.lock_state(row),
         verified_at=getattr(row, "verified_at", None),
+        # From the stored hash, also when the answer omits it.
         verification=_trust.verification_state(
             getattr(row, "verified_by", ""), getattr(row, "verified_sha256", ""), sha
         ),

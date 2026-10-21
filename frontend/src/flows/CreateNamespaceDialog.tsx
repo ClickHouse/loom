@@ -9,6 +9,7 @@ import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
 import { humanizeError } from "../lib/format";
+import { NAMESPACE_NAME } from "../lib/namespace";
 
 interface Props {
   open: boolean;
@@ -54,7 +55,7 @@ export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) 
   // Namespaces are lowercase + kebab-case by convention; reject obviously
   // malformed input before round-tripping to the server.
   const trimmed = name.trim();
-  const nameValid = /^[a-z0-9][a-z0-9-]{0,127}$/.test(trimmed);
+  const nameValid = NAMESPACE_NAME.test(trimmed);
   const canSubmit = nameValid && !busy;
 
   const onSubmit = async () => {
