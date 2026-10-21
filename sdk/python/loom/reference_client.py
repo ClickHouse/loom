@@ -255,11 +255,12 @@ class ReferenceClient:
 
     # -- the one call path ---------------------------------------------------
 
-    def _run_label(self, op: str) -> dict[str, str]:
-        """The open run as the label header on a recall read, where a body run_id
-        would filter; nothing on any other call."""
+    def _run_label(self, op: str) -> dict[str, Any]:
+        """`post_with_meta` keyword arguments labelling a recall read with the open
+        run, where a body run_id would filter. Empty on any other call, so an
+        injected transport that takes no `extra_headers` keeps working."""
         if self.run_id and f"/v1/{op}" in RECALL_READ_PATHS:
-            return {AMBIENT_RUN_HEADER: self.run_id}
+            return {"extra_headers": {AMBIENT_RUN_HEADER: self.run_id}}
         return {}
 
     def identity(self, op: str) -> dict[str, Any]:
@@ -320,7 +321,7 @@ class ReferenceClient:
                 f"/v1/{op}",
                 body,
                 timeout_s=timeout_s if timeout_s is not None else self.timeout_s,
-                extra_headers=self._run_label(op),
+                **self._run_label(op),
             )
         except Exception as e:  # noqa: BLE001 — fail-soft: never crash the host session
             # A failed call reports no attempt count; it is counted once.

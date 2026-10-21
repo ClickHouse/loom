@@ -356,6 +356,18 @@ async def test_an_open_run_stamps_writes_and_leaves_reads_unfiltered() -> None:
     assert not r2.ok and r2.code == "NO_RUN"
 
 
+async def test_an_injected_transport_without_extra_headers_still_works() -> None:
+    """The label goes only on a recall read under an open run; every other call keeps the
+    plain `post_with_meta` signature a caller's own transport may have."""
+
+    class _Plain:
+        async def post_with_meta(self, op_path: str, payload: dict[str, Any], *, timeout_s=None):
+            return WireResult({"results": []}, 200, "rid", "", None, None, 1)
+
+    c = ReferenceClient("o", "ns", consumer="test", agent="ag", transport=_Plain())
+    assert (await c.search("q")).ok
+
+
 async def test_stats_and_close() -> None:
     c, t = client({"memory.search": {"results": []}})
     async with c:

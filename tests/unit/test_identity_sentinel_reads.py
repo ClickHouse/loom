@@ -242,6 +242,10 @@ async def test_search_trace_log_reads_the_run_sentinel_as_every_run(monkeypatch)
     monkeypatch.setattr(trace, "get_client", lambda: _CH())
     await trace.handle_memory_search_trace_log(SearchTraceLogInput(**_ID, run_id="-"))
     assert seen and "rid" not in seen[0]
+    for agent in ("*", "-"):
+        seen.clear()
+        await trace.handle_memory_search_trace_log(SearchTraceLogInput(**_ID, agent=agent))
+        assert seen and "agent" not in seen[0]
 
 
 async def test_an_outcome_for_the_run_sentinel_derives_no_keys(monkeypatch):

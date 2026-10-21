@@ -131,7 +131,7 @@ async def handle_memory_search_trace_log(input: SearchTraceLogInput) -> SearchTr
             return SearchTraceLogOutput(rows=[])
         where.append("actor IN {actors:Array(String)}")
         params["actors"] = actors
-    if getattr(input, "agent", ""):
+    if named(input.agent, wildcard=True):
         where.append("agent = {agent:String}")
         params["agent"] = input.agent
     if named(input.run_id):
