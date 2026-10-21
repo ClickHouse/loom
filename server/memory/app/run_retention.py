@@ -26,6 +26,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.memory.app import webhooks
+from server.memory.domain.webhook_events import memory_change
 
 log = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ async def apply(
         revised: list[dict[str, Any]] = []
 
         def _update(existing: Any) -> dict[str, Any]:
-            revised.append(webhooks.memory_change(existing, version))
+            revised.append(memory_change(existing, version))
             if mode == "demote":
                 return {
                     "confidence": demoted_confidence(

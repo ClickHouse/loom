@@ -56,6 +56,7 @@ from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.sensitivity import value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store.rows import MemoryRow
 from server.observability import audit as _audit
 
@@ -630,7 +631,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # quote in place is not a completed redaction.
     cache_rows = await memory_repo.delete_llm_response_cache_by_key(input.org, target.memory_key)
     precedent_rows = await memory_repo.delete_ask_precedents_by_key(input.org, target.memory_key)
-    await webhooks.announce([("memory.redacted", webhooks.memory_change(target, input.version))])
+    await webhooks.announce([("memory.redacted", memory_change(target, input.version))])
     return MemoryRedactOutput(
         redacted=True,
         redacted_at=now,

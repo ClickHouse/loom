@@ -15,7 +15,8 @@ The write paths leave one loom.memory_webhook_outbox row per (event, webhook)
   overlapping copy of the pass passes over them), then POSTs them,
   `memory_webhook_deliver_concurrency` at a time and one at a time per
   webhook, so a slow receiver holds one slot. Before each POST it checks the
-  webhook's cooldown and the key's history. Each body is signed as the task
+  webhook's cooldown, that it was not removed since the pass began, and the
+  key's history. Each body is signed as the task
   webhooks' are (`server.core.webhooks`);
 - appends every outcome to loom.memory_webhook_attempts in one insert:
   `delivered` on a 2xx, else `pending` with backoff until
@@ -239,22 +240,30 @@ def _wait_row(row: Mapping[str, Any], *, until: datetime, why: str) -> dict[str,
     )
 
 
-async def _skip_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    """The attempt row to record instead of a POST (a cooldown wait, an erased key),
-    or None to send it."""
+def _dead_row(row: Mapping[str, Any], why: str) -> dict[str, Any]:
+    """An event given up without a POST; the receiver's last status stays."""
+    return _attempt_row(
+        str(row["event_id"]),
+        status="dead",
+        attempts=int(row["attempts"]),
+        last_status=int(row["last_status"]),
+        last_error=why,
+    )
+
+
+async def _skip_row(row: Mapping[str, Any], started: datetime) -> dict[str, Any] | None:
+    """The attempt row to record instead of a POST (a cooldown wait, a webhook
+    removed since the pass `started`, an erased key), or None to send it."""
     until = _cooling_until(_hook(row)[2])
     if until is not None:  # failed its last POSTs earlier in this pass
         return _wait_row(row, until=until, why="the webhook is cooling down")
+    # The pass read the registrations once; a webhook.remove since then stops its sends.
+    if _hook(row) in await store.removed_webhooks(started):
+        return _dead_row(row, "the webhook was removed")
     # memory.erased names no key; any other event names the memory it is about.
     # Read right before the POST: only an erasure during the POST can let it out.
     if row["memory_key"] and not await store.keys_with_history([_key(row)]):
-        return _attempt_row(
-            str(row["event_id"]),
-            status="dead",
-            attempts=int(row["attempts"]),
-            last_status=int(row["last_status"]),
-            last_error="the memory was erased",
-        )
+        return _dead_row(row, "the memory was erased")
     return None
 
 
@@ -264,9 +273,11 @@ async def _send(
     urls: Mapping[store.Hook, str],
     secrets: Mapping[store.Hook, bytes],
     deadline: float,
+    started: datetime,
 ) -> tuple[list[dict[str, Any]], int]:
     """POST the leased `due` events: memory_webhook_deliver_concurrency at a time,
-    one at a time per webhook, until `deadline` (event-loop time). Returns the
+    one at a time per webhook, until `deadline` (event-loop time); the pass read the
+    registrations at `started`. Returns the
     attempt rows of the events that finished (recorded even when the budget or
     an error cut the pass) and the number of POSTs that failed and will be
     retried."""
@@ -280,7 +291,7 @@ async def _send(
         hook = _hook(row)
         async with slots:
             try:
-                skipped = await _skip_row(row)
+                skipped = await _skip_row(row, started)
             except Exception as e:  # noqa: BLE001 — one event's check must not stop the pass
                 # It keeps its lease and goes again once the lease ends.
                 log.warning("memory_webhook_deliver: %s not checked: %s", row["event_id"], e)
@@ -390,7 +401,7 @@ async def deliver_once(
             for r in due
         ]
     )
-    finished, failed = await _send(transport, due, urls, usable, deadline)
+    finished, failed = await _send(transport, due, urls, usable, deadline, now)
     return DeliverResult(
         delivered=sum(out["status"] == "delivered" for out in finished),
         failed=failed,

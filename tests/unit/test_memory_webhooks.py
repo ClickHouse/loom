@@ -1099,6 +1099,22 @@ async def test_events_of_a_removed_webhook_are_dead_in_one_batch_without_a_send(
 
 
 @pytest.mark.asyncio
+async def test_a_webhook_removed_during_a_pass_gets_no_further_post(fake: FakeStore) -> None:
+    fake.outbox += [_outbox_row(event_id=f"ev-{i}") for i in range(2, 5)]
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        fake.removed = [("acme", "chat", "wh1")]  # webhook.remove while the turn is out
+        fake.removed_at = NOW + timedelta(seconds=1)
+        return httpx.Response(204)
+
+    result = await _pass(handler)
+    assert len(seen) == 1 and result.delivered == 1 and result.dead == 3
+    assert fake.last("ev-4")["last_error"] == "the webhook was removed"
+
+
+@pytest.mark.asyncio
 async def test_a_webhook_removed_before_the_window_costs_no_statement(
     fake: FakeStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

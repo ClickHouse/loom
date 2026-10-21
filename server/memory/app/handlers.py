@@ -51,6 +51,7 @@ from server.memory.app.write import handle_memory_set
 from server.memory.domain import lock as _lock
 from server.memory.domain import trust as _trust
 from server.memory.domain.delete_marks import delete_version_trace
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store import key_write_lock
 from server.memory.store.inserts import insert_memory_versions
 from server.memory.store.rows import Identity, next_version
@@ -613,7 +614,7 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     finally:
         # The tombstone is in: a retry finds no live row and returns found=False, so the
         # event is recorded whatever fails while retiring what was derived from it.
-        await webhooks.announce([("memory.tombstoned", webhooks.memory_change(existing, version))])
+        await webhooks.announce([("memory.tombstoned", memory_change(existing, version))])
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -780,9 +781,7 @@ async def finish_delete_check(
         )
         # Here, where every finish of the delete passes (the call itself, a retry of
         # a deferred one, the delete_version_check worker).
-        await webhooks.announce(
-            [("memory.tombstoned", webhooks.memory_change(existing, tombstone))]
-        )
+        await webhooks.announce([("memory.tombstoned", memory_change(existing, tombstone))])
     try:
         await memory_repo.record_delete_check(check, done=True)
     except Exception as e:  # noqa: BLE001 — a check left open runs again, harmlessly

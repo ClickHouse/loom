@@ -39,6 +39,7 @@ from server.memory.api.models_graph import (
     _MemoryRelatedHit,
 )
 from server.memory.app import webhooks
+from server.memory.domain.webhook_events import memory_change
 
 
 def _parse_supporter(tuple_str: str) -> dict[str, str] | None:
@@ -367,7 +368,7 @@ async def handle_memory_dedup_resolve(input: MemoryDedupResolveInput) -> MemoryD
         version = memory_repo.next_version()
         await memory_repo.tombstone_by_id(input.org, memory_id, version=version)
         if row is not None:
-            await webhooks.announce([("memory.tombstoned", webhooks.memory_change(row, version))])
+            await webhooks.announce([("memory.tombstoned", memory_change(row, version))])
 
     if input.decision == "keep_canonical":
         await _tombstone(dup_row.memory_id)

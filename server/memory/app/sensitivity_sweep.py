@@ -43,6 +43,7 @@ from server.memory.domain.sensitivity import (
     detector_text,
     sensitivity_tags,
 )
+from server.memory.domain.webhook_events import memory_change
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
 # `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
@@ -283,7 +284,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
             result.relabelled += n
             # Announced now: a pass cut short later would lose it, since the next
             # scan reads only unlabelled rows.
-            await webhooks.announce([("memory.revised", webhooks.memory_change(c, version))])
+            await webhooks.announce([("memory.revised", memory_change(c, version))])
             if c.level == HIGH:
                 result.high += 1
                 result.embeddings_tombstoned += retired

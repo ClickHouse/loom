@@ -26,6 +26,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.delete_marks import carried_trace
+from server.memory.domain.webhook_events import memory_change
 
 
 async def list_conflicted(
@@ -245,18 +246,7 @@ async def tombstone_ids(
     tombstoned: list[dict[str, Any]] = []
 
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
-        tombstoned.append(
-            {
-                "org": row.org,
-                "namespace": row.namespace,
-                "agent": row.agent,
-                "user_id": row.user_id,
-                "session_id": row.session_id,
-                "memory_key": row.memory_key,
-                "memory_id": row.memory_id,
-                "version": version,
-            }
-        )
+        tombstoned.append(memory_change(row, version))
         trace = carried_trace(row.source_trace)  # the delete_version marker is not carried
         return {"source_trace": f"{trace} | {audit_note}" if trace else audit_note}
 

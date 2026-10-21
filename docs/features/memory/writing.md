@@ -259,9 +259,11 @@ They answer predicate questions without parsing text.
 A product built on Loom (a chat service that shows a user what the assistant remembers,
 say) can be told when memory in a namespace changes instead of polling for it. A
 namespace admin registers a URL with `webhook.register`; Loom then POSTs one signed event
-per change. The event names the change and never its content: the receiver reads the
-memory back with its own token (`memory.get_by_id`), so what it may read is decided when
-it reads, as for any other read. Copies into the namespace (`memory.copy_to`,
+per change. The event carries ids, the memory key and the identity tuple, never a value,
+tags or evidence: the receiver reads the memory back with its own token
+(`memory.get_by_id`), so what it may read is decided when it reads, as for any other read.
+A key reaches every registered receiver, including one whose token may not read the row,
+so a secret or a fact never goes in a key. Copies into the namespace (`memory.copy_to`,
 `memory.cross_promote`) and `namespace.restore` from a snapshot send no event: after one,
 the receiver reads the namespace again. The full list of writes that send none is below
 the table.
@@ -334,7 +336,7 @@ every webhook of the org that takes the event.
 | -------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most `LOOM_MEMORY_WEBHOOK_MAX_PER_NAMESPACE` per namespace (10 by default): two registrations of one new URL at the same moment can make two webhooks, one past the cap; remove either. |
 | `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the replica that answered holds a usable secret).                                                                                                                                                                               |
-| `webhook.remove`     | admin | Removes one by `webhook_id`; its pending events are not sent.                                                                                                                                                                                                                            |
+| `webhook.remove`     | admin | Removes one by `webhook_id`; none of its events is sent after the call, save a POST already in flight.                                                                                                                                                                                   |
 | `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                                                                                                                                                                                  |
 
 **Signing.** Each request carries the Standard Webhooks headers the task inbox webhook
@@ -402,6 +404,8 @@ sweep, the `delete_version` check).
   An event of a working webhook that a receiver has not taken after 2.75 days (a
   receiver that is down, or a backlog that never reached its turn) is marked `dead` with
   "not delivered in time".
+  A pass checks before each POST that the webhook was not removed since it began, so
+  after `webhook.remove` only a POST already in flight goes out.
   The events of a removed webhook are marked `dead` by the next delivery pass that runs
   within about 30 minutes of the removal; after that they stay listed as `pending` until
   they expire. Registering the same URL

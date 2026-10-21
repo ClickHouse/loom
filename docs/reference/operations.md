@@ -693,7 +693,7 @@ Fields for every `webhook` op: [operations/webhook.md](operations/webhook.md).
 | [`webhook.deliveries`](operations/webhook.md#webhookdeliveries) | The namespace's webhook events of the last 3 days and their delivery state. | admin | idempotent | no |  |
 | [`webhook.list`](operations/webhook.md#webhooklist) | The namespace's memory webhooks. | admin | idempotent | no |  |
 | [`webhook.register`](operations/webhook.md#webhookregister) | Register a URL that is told when memory in the namespace changes. | admin | idempotent | no | yes |
-| [`webhook.remove`](operations/webhook.md#webhookremove) | Remove one memory webhook; its undelivered events are not sent. | admin | idempotent | no | yes |
+| [`webhook.remove`](operations/webhook.md#webhookremove) | Remove one memory webhook; none of its events is sent after the call, save a POST already in flight. | admin | idempotent | no | yes |
 
 ### working_memory
 

@@ -1,4 +1,4 @@
-"""Memory webhook events: the fixed event types and the body a receiver gets.
+"""Memory webhook events: the fixed event types, the change `announce` takes and the body a receiver gets.
 
 A body names what changed — the event, the memory's key, id and version, its
 identity tuple, who changed it, when and in which request — and never what it
@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, Literal, get_args
+from typing import Any, Literal, Protocol, get_args
 
 EventType = Literal[
     "memory.written",
@@ -82,3 +82,42 @@ def event_body(row: Mapping[str, Any]) -> bytes:
         "occurred_at": _iso(row["occurred_at"]),
     }
     return json.dumps(body, separators=(",", ":")).encode("utf-8")
+
+
+class MemoryRef(Protocol):
+    """What names a memory version for an event: a memory row, a history target."""
+
+    @property
+    def org(self) -> str: ...
+
+    @property
+    def namespace(self) -> str: ...
+
+    @property
+    def agent(self) -> str: ...
+
+    @property
+    def user_id(self) -> str: ...
+
+    @property
+    def session_id(self) -> str: ...
+
+    @property
+    def memory_key(self) -> str: ...
+
+    @property
+    def memory_id(self) -> str: ...
+
+
+def memory_change(memory: MemoryRef, version: int) -> dict[str, Any]:
+    """The change `announce` takes, for a memory row object at `version`."""
+    return {
+        "org": memory.org,
+        "namespace": memory.namespace,
+        "agent": memory.agent,
+        "user_id": memory.user_id,
+        "session_id": memory.session_id,
+        "memory_key": memory.memory_key,
+        "memory_id": memory.memory_id,
+        "version": version,
+    }

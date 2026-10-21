@@ -61,7 +61,7 @@ Register a URL that is told when memory in the namespace changes.
 
 ## `webhook.remove`
 
-Remove one memory webhook; its undelivered events are not sent.
+Remove one memory webhook; none of its events is sent after the call, save a POST already in flight.
 
 `POST /v1/webhook.remove` · MCP `loom_webhook_remove` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 

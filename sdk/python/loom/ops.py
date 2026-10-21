@@ -17562,7 +17562,7 @@ class WebhookRegisterOutput(TypedDict, total=False):
 
 
 class WebhookRemoveInput(TypedDict, total=False):
-    "Remove one memory webhook; its undelivered events are not sent."
+    "Remove one memory webhook; none of its events is sent after the call, save a"
 
     org: Required[str]
     namespace: Required[str]
@@ -17570,7 +17570,7 @@ class WebhookRemoveInput(TypedDict, total=False):
 
 
 class WebhookRemoveBody(TypedDict, total=False):
-    "Remove one memory webhook; its undelivered events are not sent."
+    "Remove one memory webhook; none of its events is sent after the call, save a"
 
     org: NotRequired[str]
     namespace: NotRequired[str]

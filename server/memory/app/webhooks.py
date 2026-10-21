@@ -29,7 +29,7 @@ import hashlib
 import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 from urllib.parse import urlsplit
 
 from server.core import webhooks as signed
@@ -194,45 +194,6 @@ async def announce(changes: Sequence[tuple[EventType, Mapping[str, Any]]]) -> No
     except Exception as e:  # noqa: BLE001 — the write is in; its announcement must not fail it
         degradations.note("memory.webhook", "not_announced", e)
         log.warning("memory webhooks: %d changes not announced: %s", len(changes), e)
-
-
-class MemoryRef(Protocol):
-    """What names a memory version for an event: a memory row, a history target."""
-
-    @property
-    def org(self) -> str: ...
-
-    @property
-    def namespace(self) -> str: ...
-
-    @property
-    def agent(self) -> str: ...
-
-    @property
-    def user_id(self) -> str: ...
-
-    @property
-    def session_id(self) -> str: ...
-
-    @property
-    def memory_key(self) -> str: ...
-
-    @property
-    def memory_id(self) -> str: ...
-
-
-def memory_change(memory: MemoryRef, version: int) -> dict[str, Any]:
-    """The change `announce` takes, for a memory row object at `version`."""
-    return {
-        "org": memory.org,
-        "namespace": memory.namespace,
-        "agent": memory.agent,
-        "user_id": memory.user_id,
-        "session_id": memory.session_id,
-        "memory_key": memory.memory_key,
-        "memory_id": memory.memory_id,
-        "version": version,
-    }
 
 
 async def announce_erasure(org: str, namespaces: Sequence[str] | None, erasure_id: str) -> None:

@@ -506,8 +506,8 @@ all. It appends a lease (an attempt row whose `next_attempt_at` is the lease's e
 POSTs the signed bodies (`server/core/webhooks.py`, one
 `memory_webhook_ack_timeout_seconds` deadline per POST)
 `memory_webhook_deliver_concurrency` at a time and one at a time per webhook, checking before each POST the webhook's
-cooldown and the key's history in `loom.memory_versions` (an erased key's event is marked
-dead), and appends every outcome in one insert: `delivered`, `pending` with its next
+cooldown, that it was not removed since the pass began, and the key's history in
+`loom.memory_versions` (the event of a removed webhook or an erased key is marked dead), and appends every outcome in one insert: `delivered`, `pending` with its next
 attempt, or `dead`. Attempt rows hold
 event ids and counters only, so an erasure that deletes an event while a pass is in
 flight leaves nothing a later pass can send. An outbox insert that fails never fails the

@@ -772,11 +772,13 @@ hashing are engineering primitives, not a compliance guarantee.
 
 Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.py`).
 
-- **No content leaves.** A memory webhook event carries the event type, ids, the version,
-  the identity tuple, the actor, the request id and a timestamp, never a value, tags or
-  evidence (`server/memory/domain/webhook_events.py`); a task notice carries ids and
-  kinds, never task text. The receiver reads with its own token, so authorization stays
-  at read time.
+- **No value leaves.** A memory webhook event carries the event type, ids, the memory key,
+  the version, the identity tuple, the actor, the request id and a timestamp, never a
+  value, tags or evidence (`server/memory/domain/webhook_events.py`); a task notice
+  carries ids and kinds, never task text. The receiver reads the value with its own
+  token, so authorization of the content stays at read time. The key is sent to every
+  registered receiver, including one whose token may not read the row, so writers keep
+  secrets and facts out of keys.
 - **Signed.** HMAC-SHA256 over `"{id}.{timestamp}.{body}"` in the Standard Webhooks
   headers; the timestamp lets a receiver refuse a replay. The secret is an environment
   variable a registration names, never stored; only a name under the registering org's

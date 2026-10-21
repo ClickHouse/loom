@@ -63,7 +63,8 @@ class WebhookListOutput(BaseModel):
 
 
 class WebhookRemoveInput(BaseModel):
-    """Remove one memory webhook; its undelivered events are not sent."""
+    """Remove one memory webhook; none of its events is sent after the call, save a
+    POST already in flight."""
 
     org: str
     namespace: str

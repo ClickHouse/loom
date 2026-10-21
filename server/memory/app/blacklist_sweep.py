@@ -26,6 +26,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.memory.app import webhooks
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
+from server.memory.domain.webhook_events import memory_change
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ async def sweep_pattern(
     tombstoned: list[dict[str, Any]] = []
 
     def _reason(existing: memory_repo.MemoryRow) -> dict[str, Any]:
-        tombstoned.append(webhooks.memory_change(existing, version))
+        tombstoned.append(memory_change(existing, version))
         return {"expire_reason": f"{SWEEP_REASON_PREFIX}{pattern_id}"[:512]}
 
     written = await memory_repo.tombstone_cascade_by_ids(
