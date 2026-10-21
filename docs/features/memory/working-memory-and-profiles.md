@@ -145,12 +145,12 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
     #  "languages": ["en", "de"]}, "built_at": "...", ...}
 ```
 
-| `status`    | Means                                                                                                |
-| ----------- | ---------------------------------------------------------------------------------------------------- |
-| `ready`     | Built from the user's current memories under the current schema; all `null` once every fact is gone. |
-| `stale`     | A memory or the schema changed since it was built; served as built until a pass rebuilds it.         |
-| `pending`   | Not built yet; every property reads `null`.                                                          |
-| `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.                  |
+| `status`    | Means                                                                                                                                                                                                 |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ready`     | Built from the user's current memories under the current schema; all `null` once every fact is gone.                                                                                                  |
+| `stale`     | A memory or the schema changed since it was built; served as built until a pass rebuilds it.                                                                                                          |
+| `pending`   | No live profile: not built yet, or the built row expired, was redacted (until the worker rebuilds it) or is labelled `high` (held until the key moves to a new version); every property reads `null`. |
+| `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.                                                                                                                   |
 
 - **Storage.** The profile is the user's `profile` row with key `structured_profile`
   (`agent` `-`), so `profile.render` and `context.pack` carry it too, and

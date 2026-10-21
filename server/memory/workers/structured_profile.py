@@ -142,10 +142,11 @@ _SYSTEM = (
 
 
 class Refused(Exception):
-    """The user's profile row will not take this build: a lock, a pin, a `high` label
-    or a 4xx refusal.
-    `digest` and `profile_version` (the version of the profile key's head, redacted
-    or not) are what the build saw; the user waits until either moves on."""
+    """The profile row will not take this build: a lock, a pin, a `high` label or a 4xx.
+
+    `digest` and `profile_version` (the version of the key's head, redacted or not)
+    are what the build saw; the user waits until either moves on.
+    """
 
     def __init__(self, digest: str, profile_version: int, status: int) -> None:
         # status: the write's HTTP status, 0 for a hold seen before the model call.
