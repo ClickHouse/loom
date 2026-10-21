@@ -787,6 +787,7 @@
  "memory_webhook_posts_per_webhook": 10,
  "memory_webhook_private_hosts": "",
  "memory_webhook_refresh_seconds": 10.0,
+ "memory_webhook_removal_window_leases": 10,
  "memory_write_candidate_batch": 6,
  "mentor_max_hints_per_session": 6,
  "mentor_ttl_seconds": 3600,

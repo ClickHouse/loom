@@ -93,10 +93,11 @@ def _lease_seconds() -> float:
 
 def _removal_window() -> timedelta:
     """How long after a webhook.remove a pass still marks the webhook's events dead:
-    several passes, so one that fails or runs late is caught up by the next. An event
-    of a removed webhook is never due, so after the window it waits for the TTL at no
-    cost instead of a statement over all its events every pass."""
-    return timedelta(seconds=10 * _lease_seconds())  # not a setting: derived from the lease
+    several leases, so a pass that fails or runs late is caught up by the next. An
+    event of a removed webhook is never due, so after the window it waits for the TTL
+    at no cost instead of a statement over all its events every pass."""
+    leases = settings.memory_webhook_removal_window_leases
+    return timedelta(seconds=leases * _lease_seconds())
 
 
 @dataclass
@@ -277,10 +278,9 @@ async def _send(
 ) -> tuple[list[dict[str, Any]], int]:
     """POST the leased `due` events: memory_webhook_deliver_concurrency at a time,
     one at a time per webhook, until `deadline` (event-loop time); the pass read the
-    registrations at `started`. Returns the
-    attempt rows of the events that finished (recorded even when the budget or
-    an error cut the pass) and the number of POSTs that failed and will be
-    retried."""
+    registrations at `started`. Returns the attempt rows of the events that finished
+    (recorded even when the budget or an error cut the pass) and the number of POSTs
+    that failed and will be retried."""
     slots = asyncio.Semaphore(settings.memory_webhook_deliver_concurrency)
     finished: list[dict[str, Any]] = []
     failed = 0
@@ -337,10 +337,9 @@ async def deliver_once(
     org: str = "",
     namespace: str = "",
 ) -> DeliverResult:
-    """One pass over the due events. `transport` replaces the network, `env`
-    the environment the secrets are read from, and `org` / `namespace` narrow
-    the pass (tests). Every time comes from
-    `naive_utc_now()`, read when it is needed."""
+    """One pass over the due events. `transport` replaces the network, `env` the
+    environment the secrets are read from, and `org` / `namespace` narrow the pass
+    (tests). Every time comes from `naive_utc_now()`, read when it is needed."""
     # Counted from the start of the pass: the reads below come out of the POST budget.
     deadline = asyncio.get_running_loop().time() + _post_budget_seconds()
     now = naive_utc_now()

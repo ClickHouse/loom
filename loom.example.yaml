@@ -3748,6 +3748,11 @@ settings:
   # it. [live]
   # memory_webhook_lease_margin_seconds: 60.0
 
+  # Event leases (memory_webhook_deliver_max_pass_seconds plus
+  # memory_webhook_lease_margin_seconds each) after a webhook.remove during which
+  # delivery passes still mark the removed memory webhook's events dead. [live]
+  # memory_webhook_removal_window_leases: 10
+
   # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
   # [live]
   # memory_webhook_max_posts_per_pass: 40

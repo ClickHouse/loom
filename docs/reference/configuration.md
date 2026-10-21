@@ -1270,6 +1270,7 @@ Memory webhooks: their delivery worker and the URLs they may reach.
 | `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a memory webhook delivery pass may run before the supervisor abandons it (at least 30). |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` | `float` | `20.0` |  | Seconds before the pass deadline a memory webhook delivery pass stops its POSTs, kept for the insert after them; less than memory_webhook_deliver_max_pass_seconds. |
 | `LOOM_MEMORY_WEBHOOK_LEASE_MARGIN_SECONDS` | `float` | `60.0` | live | Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass leased stays passed over by other passes, so a crashed pass's events come back after it. |
+| `LOOM_MEMORY_WEBHOOK_REMOVAL_WINDOW_LEASES` | `int` | `10` | live | Event leases (memory_webhook_deliver_max_pass_seconds plus memory_webhook_lease_margin_seconds each) after a webhook.remove during which delivery passes still mark the removed memory webhook's events dead. |
 | `LOOM_MEMORY_WEBHOOK_MAX_POSTS_PER_PASS` | `int` | `40` | live | Due memory webhook events one delivery pass POSTs at most; the rest go next pass. |
 | `LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK` | `int` | `10` | live | Events of one memory webhook a delivery pass POSTs at most, so every webhook with work gets its turn. |
 | `LOOM_MEMORY_WEBHOOK_DELIVER_CONCURRENCY` | `int` | `4` | live | Memory webhook POSTs one delivery pass has in flight at once (one per webhook at most). |

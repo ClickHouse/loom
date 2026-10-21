@@ -3121,6 +3121,10 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
     # leased stays passed over by other passes, so a crashed pass's events come back after it.
     memory_webhook_lease_margin_seconds: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Event leases (memory_webhook_deliver_max_pass_seconds plus
+    # memory_webhook_lease_margin_seconds each) after a webhook.remove during which
+    # delivery passes still mark the removed memory webhook's events dead.
+    memory_webhook_removal_window_leases: Annotated[int, LIVE] = Field(default=10, ge=1)
     # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
     memory_webhook_max_posts_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Events of one memory webhook a delivery pass POSTs at most, so every webhook with

@@ -4389,6 +4389,12 @@
           "type": "number",
           "description": "Seconds between each process's reads of the registered memory webhooks; a webhook registered or removed on another process applies to writes here within it."
         },
+        "memory_webhook_removal_window_leases": {
+          "default": 10,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Event leases (memory_webhook_deliver_max_pass_seconds plus memory_webhook_lease_margin_seconds each) after a webhook.remove during which delivery passes still mark the removed memory webhook's events dead."
+        },
         "memory_write_candidate_batch": {
           "default": 6,
           "type": "integer",

@@ -408,9 +408,9 @@ sweep, the `delete_version` check).
   A pass checks before each POST that the webhook was not removed since it began, so
   after `webhook.remove` only a POST already in flight goes out.
   The events of a removed webhook are marked `dead` by the next delivery pass that runs
-  within about 30 minutes of the removal; after that they stay listed as `pending` until
-  they expire. Registering the same URL
-  again creates a new webhook that does not inherit them. An event whose memory was
+  within about 30 minutes of the removal (`memory_webhook_removal_window_leases` widens
+  it); after that they stay listed as `pending` until they expire. Registering the same
+  URL again creates a new webhook that does not inherit them. An event whose memory was
   erased before it went out is marked `dead` and not sent: the key's history is read just
   before each POST, so only an erasure that lands during that POST can let one out.
 - **Repeats.** An event in the outbox is delivered at least once, in no order; a change
