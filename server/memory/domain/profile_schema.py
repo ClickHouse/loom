@@ -36,9 +36,21 @@ MAX_ENUM_VALUES = 64  # not a setting: schema bound, each value is prompt text
 # An array property holds at most this many items unless it says fewer.
 MAX_ITEMS = 50  # not a setting: schema bound on a stored profile's arrays
 # A full answer holds at most this many values (a scalar property is one, an array its
-# maxItems), so the worker's output cap, an allowance per value, stays within what a
-# model writes in one answer.
+# maxItems).
 MAX_ANSWER_VALUES = 256  # not a setting: schema bound on the model's answer
+# The worker's output cap is an estimate of a full answer's tokens (`answer_tokens`):
+# each key and value pays FRAMING_TOKENS for its quotes, colon, separator and
+# whitespace; a string runs to its maxLength or its longest enum value at
+# CHARS_PER_TOKEN, else to STRING_TOKENS; a number or boolean to SCALAR_TOKENS.
+FRAMING_TOKENS = 4  # not a setting: JSON punctuation around one key or value
+CHARS_PER_TOKEN = 2  # not a setting: a low estimate, so text in any script fits
+# A string with no maxLength is a short phrase; a longer value declares its maxLength.
+STRING_TOKENS = 48  # not a setting: the answer's shape, part of the schema contract
+SCALAR_TOKENS = 12  # not a setting: the longest JSON number is about 24 characters
+# A full answer's estimate stays within what a model writes in one answer. Any schema
+# within MAX_PROPERTIES and MAX_ANSWER_VALUES that sets no maxLength is under it; a
+# large maxLength can pass it.
+MAX_ANSWER_TOKENS = 16384  # not a setting: schema bound on the model's answer
 SCALAR_TYPES = ("string", "number", "integer", "boolean")
 MAX_SAFE_INTEGER = 2**53 - 1  # not a setting: JSON's exact-integer range
 
@@ -76,6 +88,29 @@ class ProfileProperty:
 def answer_values(props: list[ProfileProperty]) -> int:
     """How many values a full answer to these properties holds."""
     return sum(p.max_items if p.type == "array" else 1 for p in props)
+
+
+def _value_tokens(prop: ProfileProperty) -> int:
+    """The tokens one value of the property may take, framing included."""
+    if prop.scalar_type != "string":
+        return SCALAR_TOKENS + FRAMING_TOKENS
+    max_length = dict(prop.constraints).get("max_length")
+    if prop.enum:
+        max_length = max(len(v) for v in prop.enum)
+    if max_length is None:
+        return STRING_TOKENS + FRAMING_TOKENS
+    return math.ceil(max_length / CHARS_PER_TOKEN) + FRAMING_TOKENS
+
+
+def answer_tokens(props: list[ProfileProperty]) -> int:
+    """An estimate of the most tokens a full answer to these properties takes: each
+    property's key, and its value or maxItems values."""
+    total = 0
+    for p in props:
+        key = math.ceil(len(p.name) / CHARS_PER_TOKEN) + FRAMING_TOKENS
+        count = p.max_items if p.type == "array" else 1
+        total += key + count * _value_tokens(p)
+    return total
 
 
 def stored_form(schema: dict[str, Any]) -> str:
@@ -194,6 +229,11 @@ def parse(schema: Any) -> list[ProfileProperty]:
         raise _bad(
             f"a full answer holds {answer_values(out)} values (one per property, maxItems"
             f" per array), at most {MAX_ANSWER_VALUES}: lower maxItems"
+        )
+    if answer_tokens(out) > MAX_ANSWER_TOKENS:
+        raise _bad(
+            f"a full answer may take {answer_tokens(out)} tokens, at most"
+            f" {MAX_ANSWER_TOKENS}: lower maxLength or maxItems"
         )
     return out
 

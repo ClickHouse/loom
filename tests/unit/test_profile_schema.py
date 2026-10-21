@@ -94,6 +94,19 @@ def test_a_schema_whose_full_answer_is_too_long_is_refused() -> None:
         ps.parse(_schema(**{f"p{i}": tags for i in range(ps.MAX_PROPERTIES)}))
 
 
+def test_a_schema_whose_full_answer_may_take_too_many_tokens_is_refused() -> None:
+    """A maxLength sizes its value in the worker's output cap, so the estimate is
+    bounded; every schema with no maxLength is within the bound."""
+    tags = {"type": "array", "items": {"type": "string"}, "description": "tags"}
+    arrays = ps.MAX_ANSWER_VALUES // ps.MAX_ITEMS
+    widest = {f"a{i:0>63}": tags for i in range(arrays)}
+    widest.update({f"s{i:0>63}": _TZ for i in range(ps.MAX_ANSWER_VALUES - arrays * ps.MAX_ITEMS)})
+    assert ps.answer_tokens(ps.parse(_schema(**widest))) <= ps.MAX_ANSWER_TOKENS
+    long = {"type": "string", "description": "d", "maxLength": 2 * ps.MAX_ANSWER_TOKENS}
+    with pytest.raises(ValidationError, match="lower maxLength"):
+        ps.parse(_schema(summary=long))
+
+
 def test_the_hash_follows_what_a_profile_depends_on() -> None:
     def sha(schema: dict[str, Any]) -> str:
         return ps.schema_sha256(ps.parse(schema))

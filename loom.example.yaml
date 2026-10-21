@@ -2698,7 +2698,8 @@ settings:
   # structured_profile_backoff_cap_seconds: 21600
 
   # Seconds before a structured profile build its profile row refused (a lock, a pin, a
-  # 4xx) is tried again with nothing changed. Above 0. [live]
+  # 4xx) or whose answer was cut off at the output cap is tried again with nothing
+  # changed. Above 0. [live]
   # structured_profile_refusal_retry_seconds: 21600
 
   # Seconds a namespace's scan for users behind their structured profile serves later

@@ -175,8 +175,12 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   (it turns `high`, changes type, gains or loses an `about:other`, `attribute:` or
   `forget` tag, expires or passes its `valid_to`) changes the digest. A restatement or a
   reinforcement does too, since it moves the fact to the newest place in what the model
-  reads: it costs one rebuild after the cooldown. A recall or a backfill, which keeps the
-  row's last change, does not. The digest covers every source,
+  reads: it costs one rebuild after the cooldown. So does a `memory.lock` or
+  `memory.unlock` of a source fact: it writes a new version with the same content, which
+  dates the fact at the lock and moves it to the newest place in what the model reads
+  and into the newest of the facts a build reads. Of two facts that disagree under
+  different keys, the one locked or unlocked last then reads as the most recent. A recall
+  or a backfill, which keeps the row's last change, does not. The digest covers every source,
   while a build reads only the `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` (100) most confident
   and newest: for a user with more facts than that, a change to one outside that set still
   costs a model call that cannot change the answer. A schema change is rebuilt from the
@@ -190,6 +194,14 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   or redacted profile row reads as no profile (`pending`) and is rebuilt. A `high`
   profile row also reads as no profile, but the worker leaves it as it is: it holds
   like a pin until the key moves to a new version.
+- **Output cap.** The model may write the `structured_profile` entry of `LLM_MAX_TOKENS`
+  (32, changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`) plus the schema's estimate of a
+  full answer: each key with its punctuation, and each value (one per property, `maxItems`
+  per array) sized by its `maxLength` or its longest `enum` value at two characters a
+  token, 48 tokens for a string with neither, 12 for a number or a boolean.
+  `profile_schema.set` refuses a schema whose estimate passes 16,384 tokens. A string
+  longer than its estimate can still be cut off; give a free-text property a `maxLength`
+  to make room for it.
 - **Validation.** The model's answer is held to the schema before it is written: a value
   of the wrong type, outside its enum or constraints, a number that is not finite (or an
   integer past 2^53), or a property the schema does not declare is dropped (`null`).
@@ -207,9 +219,7 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) old; a scan that found every user
   behind (fewer than it asked for) is not repeated before then once drained, so a
   namespace is scanned at most once per that age while nobody else is behind. A user
-  whose build failed (a model error, an answer that is not a JSON object, including one
-  cut off at its cap of 32 tokens per value of a full answer (the `structured_profile`
-  entry of `LLM_MAX_TOKENS`, changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`)) waits
+  whose build failed (a model error, an answer that is not a JSON object) waits
   `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` (300), doubling up to
   `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600). It is left out of the namespace
   scans made while it waits, so it is tried again at the first scan after the wait ends:
@@ -217,8 +227,9 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   failure. A namespace whose scan or stored schema fails is counted and backs off the
   same way until the wait is over or its schema changes; a namespace that is waiting
   takes no place in the pass. A build the profile row refuses (locked, pinned, labelled
-  `high`, blacklisted) is not retried until the user's memories or the profile row
-  change (an unpin or an unlock, also on a redacted row), or
+  `high`, blacklisted), or whose answer the model cut off at the output cap, is not
+  retried until the user's memories, the profile row (an unpin or an unlock, also on a
+  redacted row) or the schema change, or
   `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so a lock that lapses on
   its own is retried. These waits and the scan lists are kept in the worker's process
   and start over when another process takes the worker lease. A pass that reaches every

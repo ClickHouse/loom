@@ -26,9 +26,9 @@ build in flight the second half to finish. A user whose build failed is
 skipped for a while, longer after each failure, and so is a namespace whose
 scan or stored schema failed, until its wait is over or its schema changes. A
 user whose profile row refuses the write (locked, pinned, labelled `high`,
-blacklisted) is skipped until their sources digest or the
-profile row's version changes (an unpin, an unlock), or
-`structured_profile_refusal_retry_seconds` pass.
+blacklisted), or whose answer the model cut off at the output cap, is skipped
+until their sources digest, the profile row's version (an unpin, an unlock) or
+the schema changes, or `structured_profile_refusal_retry_seconds` pass.
 """
 
 from __future__ import annotations
@@ -73,6 +73,8 @@ log = logging.getLogger(__name__)
 # it until it drains or is `structured_profile_scan_max_age_seconds` old, whichever
 # comes first.
 SCAN_FACTOR = 10  # not a setting: the scan's shape, sized with the scan-cost measurement
+# The stop reasons of a reply cut off at max_tokens, as the providers name them.
+_CUT_OFF = ("length", "max_tokens")  # not a setting: provider wire values
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,7 @@ class _Wait:
 class _Refusal:
     """What a refused build saw, held until it lapses."""
 
+    schema_sha256: str
     digest: str
     profile_version: int
     # Monotonic time it lapses.
@@ -143,16 +146,21 @@ _SYSTEM = (
 )
 
 
+class CutOff(Exception):
+    """The model's answer stopped at the output cap."""
+
+
 class Refused(Exception):
-    """The profile row will not take this build: a lock, a pin, a `high` label or a 4xx.
+    """The profile row will not take this build (a lock, a pin, a `high` label or a
+    4xx), or the model's answer to it was cut off at the output cap.
 
     `digest` and `profile_version` (the version of the key's head, redacted or not)
-    are what the build saw; the user waits until either moves on.
+    are what the build saw; the user waits until either or the schema moves on.
     """
 
-    def __init__(self, digest: str, profile_version: int, status: int) -> None:
-        # status: the write's HTTP status, 0 for a hold seen before the model call.
-        what = f"status {status}" if status else "held: locked, pinned or high"
+    def __init__(self, digest: str, profile_version: int, status: int, why: str = "") -> None:
+        # status: the write's HTTP status, 0 for a refusal seen without a write.
+        what = why or (f"status {status}" if status else "held: locked, pinned or high")
         super().__init__(f"{what}, at digest {digest!r}, profile version {profile_version}")
         self.digest = digest
         self.profile_version = profile_version
@@ -281,13 +289,16 @@ def backing_off(org: str, namespace: str) -> tuple[str, ...]:
     return tuple(sorted(waiting))
 
 
-def refused_at(org: str, namespace: str) -> dict[str, tuple[str, int]]:
-    """User -> the (digest, profile version) their refused build saw, while it holds."""
+def refused_at(org: str, namespace: str, schema_sha256: str) -> dict[str, tuple[str, int]]:
+    """User -> the (digest, profile version) their refused build under this schema
+    saw, while it holds."""
     now = time.monotonic()
     return {
         u: (refusal.digest, refusal.profile_version)
         for (o, n, u), refusal in _refused.items()
-        if (o, n) == (org, namespace) and refusal.lapses > now
+        if (o, n) == (org, namespace)
+        and refusal.schema_sha256 == schema_sha256
+        and refusal.lapses > now
     }
 
 
@@ -328,7 +339,7 @@ async def _build_users(
             result.refused += 1
             log.info("structured profile refused for %s/%s: %s", schema.namespace, user_id, e)
             lapses = time.monotonic() + settings.structured_profile_refusal_retry_seconds
-            _refused[key] = _Refusal(e.digest, e.profile_version, lapses)
+            _refused[key] = _Refusal(schema.sha256, e.digest, e.profile_version, lapses)
             continue
         except Exception as e:  # one user's build must not stop the pass
             result.errors += 1
@@ -359,7 +370,7 @@ def _take(schema: ActiveSchema, limit: int) -> list[Behind] | None:
     ):
         return None
     waiting = set(backing_off(schema.org, schema.namespace))
-    refused = refused_at(schema.org, schema.namespace)
+    refused = refused_at(schema.org, schema.namespace, schema.sha256)
     out: list[Behind] = []
     while scanned.behind and len(out) < limit:
         b = scanned.behind.popleft()
@@ -390,7 +401,7 @@ async def _scan(
             cooldown_seconds=settings.structured_profile_cooldown_seconds,
             limit=asked,
             skip=backing_off(schema.org, schema.namespace),
-            refused=refused_at(schema.org, schema.namespace),
+            refused=refused_at(schema.org, schema.namespace, schema.sha256),
             timeout_seconds=settings.structured_profile_scan_timeout_seconds,
             max_memory_bytes=settings.structured_profile_scan_max_memory_bytes,
             scope=WHOLE_NAMESPACE,
@@ -557,7 +568,11 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     answer: Any = {}
     with customer.for_org(org), pipeline_actor(profile_sources.WORKER_ACTOR):
         if facts:
-            answer = await _ask(org, ns, schema.props, facts)
+            try:
+                answer = await _ask(org, ns, schema.props, facts)
+            except CutOff as e:
+                # The same facts under the same schema are cut off again.
+                raise Refused(digest, profile_version, 0, str(e)) from e
         # Sources that moved while the model ran (a fact edited, redacted, erased,
         # deleted or added) stop the write: the model may have read text that is gone,
         # and the next pass rebuilds from what is current. This narrows the window in
@@ -612,15 +627,17 @@ async def _ask(
                 system=system_prompt(props),
                 # The facts are what agents wrote: data, never instructions.
                 user=fence("facts", facts, new_nonce(facts)),
-                # An allowance per value, so the largest schema's full answer fits.
+                # Room for a full answer: the schema's estimate of it, and the object.
                 max_tokens=llm_max_tokens("structured_profile")
-                * profile_schema.answer_values(props),
+                + profile_schema.answer_tokens(props),
                 response_format={"type": "json_object"},
             )
     finally:
         emit_worker_cost_event_for(
             org=org, namespace=ns, operation="worker.structured_profile", started=started
         )
+    if out.stop_reason in _CUT_OFF:
+        raise CutOff(f"the answer was cut off at {out.tokens_out} tokens")
     answer = parse_answer(out.text)
     if answer is None:
         raise ValueError("the profile model's answer is not a JSON object")

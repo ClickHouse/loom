@@ -5092,7 +5092,7 @@
           "default": 21600,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Seconds before a structured profile build its profile row refused (a lock, a pin, a 4xx) is tried again with nothing changed. Above 0."
+          "description": "Seconds before a structured profile build its profile row refused (a lock, a pin, a 4xx) or whose answer was cut off at the output cap is tried again with nothing changed. Above 0."
         },
         "structured_profile_scan_max_age_seconds": {
           "default": 600,

@@ -47,8 +47,9 @@ STRUCTURED_TYPES = ["semantic", "preference", "decision"]
 # The aggregate that digests a user's source rows: an XOR of each row's hash over
 # what a build reads and ranks by (the row, its content, its confidence, and the date
 # the build reads and orders by, `valid_at` else `updated_at`), so it is fixed in size
-# and the order of rows does not matter. A restatement writes a new `updated_at`, so it
-# changes the digest and costs one rebuild after the cooldown; a recall or a backfill
+# and the order of rows does not matter. A restatement, a `memory.lock` or a
+# `memory.unlock` writes a new `updated_at`, so it changes the digest and costs one
+# rebuild after the cooldown, and the fact reads as the newest; a recall or a backfill
 # carries `updated_at` forward and changes nothing. `hex` drops leading zeros, so it
 # is padded to 16 hex characters.
 SOURCES_DIGEST = (

@@ -285,7 +285,9 @@ async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses
     settings_override(structured_profile_max_users_per_pass=10)
     result = await w.run_pass(_cfg(("o2", "a")))
     assert (result.refused, result.errors, result.profiles_written) == (1, 0, 4)
-    assert w.refused_at("o2", "a") == {"u0": ("d1", 3)}
+    assert w.refused_at("o2", "a", "h" * 64) == {"u0": ("d1", 3)}
+    # A new schema is another build: the refusal does not hold under it.
+    assert w.refused_at("o2", "a", "g" * 64) == {}
 
     # While it holds the user is not tried; a lock that ran out with no write is
     # tried again once the refusal lapses.
@@ -305,8 +307,8 @@ def test_waits_that_are_over_are_pruned() -> None:
     cap = settings.structured_profile_backoff_cap_seconds
     w._backoff[("o", "n", "old")] = w._Wait(until=-2 * cap, wait=cap)
     w._backoff[("o", "n", "new")] = w._Wait(until=1e18, wait=300.0)
-    w._refused[("o", "n", "lapsed")] = w._Refusal(digest="d", profile_version=1, lapses=0.0)
-    w._refused[("o", "n", "held")] = w._Refusal(digest="d", profile_version=1, lapses=1e18)
+    w._refused[("o", "n", "lapsed")] = w._Refusal("h", digest="d", profile_version=1, lapses=0.0)
+    w._refused[("o", "n", "held")] = w._Refusal("h", digest="d", profile_version=1, lapses=1e18)
     w._prune()
     assert list(w._backoff) == [("o", "n", "new")] and list(w._refused) == [("o", "n", "held")]
     w._backoff.clear()
@@ -554,8 +556,8 @@ async def test_the_configured_model_answers(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_the_largest_accepted_schema_gets_room_for_a_full_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The cap is an allowance per value times the values a full answer holds, so a
-    schema at the answer bound is not cut off at a fixed cap."""
+    """The cap is the schema's estimate of a full answer, so a schema at the answer
+    bound is not cut off at a fixed cap."""
     from server.llm import customer
     from server.llm.fake import FakeLLMClient
     from server.settings.budgets import llm_max_tokens
@@ -585,7 +587,73 @@ async def test_the_largest_accepted_schema_gets_room_for_a_full_answer(
     monkeypatch.setattr(w, "emit_worker_cost_event_for", lambda **kw: None)
     with customer.for_org("o"):
         await w._ask("o", "n", props, "- [2026-01-01] My tz is UTC.")
-    assert caps == [llm_max_tokens("structured_profile") * ps.MAX_ANSWER_VALUES]
+    assert caps == [llm_max_tokens("structured_profile") + ps.answer_tokens(props)]
+    assert caps[0] > ps.MAX_ANSWER_VALUES * ps.STRING_TOKENS
+
+
+async def _cap_for(monkeypatch: pytest.MonkeyPatch, schema: dict[str, Any]) -> int:
+    """The output cap `_ask` asks for under `schema`."""
+    from server.llm import customer
+    from server.llm.fake import FakeLLMClient
+
+    caps: list[int] = []
+
+    class Recording(FakeLLMClient):
+        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any) -> Any:
+            caps.append(max_tokens)
+            return await super().complete(system, user, max_tokens, **kw)
+
+    monkeypatch.setattr(settings, "structured_profile_model", "")
+    monkeypatch.setattr(w.llm_client, "get_llm_client", Recording)
+    monkeypatch.setattr(w, "emit_worker_cost_event_for", lambda **kw: None)
+    with customer.for_org("o"):
+        await w._ask("o", "n", ps.parse(schema), "- [2026-01-01] I grew up in Lyon.")
+    return caps[0]
+
+
+@pytest.mark.asyncio
+async def test_a_free_text_property_gets_room_for_its_max_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A long string value fits: the cap pays for the key and its punctuation as well as
+    a value of maxLength characters, and gives a string with no maxLength a default."""
+    summary = {"type": "string", "description": "A short summary of the user's background"}
+    bounded = {"type": "object", "properties": {"summary": {**summary, "maxLength": 600}}}
+    # A value of 600 characters, at a low estimate of 2 characters per token, and the
+    # tokens of `{"summary": "` and `"}` around it.
+    assert await _cap_for(monkeypatch, bounded) >= 600 // 2 + 10
+    free = {"type": "object", "properties": {"summary": summary}}
+    assert await _cap_for(monkeypatch, free) >= ps.STRING_TOKENS + 10
+
+
+@pytest.mark.asyncio
+async def test_an_answer_cut_off_at_the_cap_is_refused_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same facts under the same schema are cut off again, so a cut-off answer is a
+    refusal held until the user's memories or the schema change, never a backoff."""
+    from server.llm import customer
+    from server.llm.client import LLMResult
+
+    class CutOff:
+        async def complete(self, system: str, user: str, max_tokens: int = 1024, **kw: Any) -> Any:
+            return LLMResult('{"tz": "Eur', 10, max_tokens, "fake", "m", stop_reason="length")
+
+    monkeypatch.setattr(settings, "structured_profile_model", "")
+    monkeypatch.setattr(w.llm_client, "get_llm_client", CutOff)
+    monkeypatch.setattr(w, "emit_worker_cost_event_for", lambda **kw: None)
+    with customer.for_org("o"), pytest.raises(w.CutOff):
+        await w._ask("o", "n", _PROPS, "- [2026-01-01] My tz is Europe/Berlin.")
+
+    written = _one_user(monkeypatch)
+
+    async def ask(*a: Any) -> dict[str, Any]:
+        raise w.CutOff("the answer was cut off at 32 tokens")
+
+    monkeypatch.setattr(w, "_ask", ask)
+    with pytest.raises(w.Refused, match="cut off"):
+        await w.build_profile(_ONE, "u1")
+    assert written == []
 
 
 @pytest.mark.asyncio
