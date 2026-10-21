@@ -40,10 +40,12 @@ change between releases, and ops MCP does not serve with ‡.
 - **You stop re-learning.** A decision, a constraint, an owner or a fix
   stored once is recalled by meaning in every later session, yours or
   another agent's.
-- **You can trust what comes back.** Every hit says who wrote it, when and
-  from which source; a read by key also says whether a person verified it
-  (`verification` and `verified_by` on `memory.get`) and whether a newer fact
-  contradicts it. A search that finds nothing says so (`abstain`).
+- **You can trust what comes back.** A read by key (`memory.get`) says
+  when the fact was written (`created_at`, `updated_at`), who wrote it
+  (`actor`), whose memory it is (`agent`, `user_id`), how it entered memory
+  (`source_class`), whether a person verified it (`verification`,
+  `verified_by`) and whether a newer fact contradicts it. A search with no
+  hit strong enough to answer from says so (`abstain`).
 - **Your context stays small.** One `context.pack` call loads what matters
   for the task inside a token budget; large logs go to `context.offload`†
   and come back by pattern.

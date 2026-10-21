@@ -46,11 +46,36 @@ flowchart LR
 - **Personal collections.** Each end user has one, `col-me-<hash of org and user>`; a
   request names it `namespace: "@me"`, which only the server maps. Its name says whose it
   is: it admits that user (as admin) and no one else (an org admin's export of that user
-  reads it, see below), takes no grant, sits in no tree, and
-  needs no setup (its directory row appears with its first write). A chat service's saved
-  messages are documents there, at
-  `chat/<conversation>/<message>`: `knowledge.upsert` saves one, `knowledge.delete`
-  removes it, `knowledge.search` and `knowledge.list` (with `uri_prefix`) find them.
+  reads it, see below), takes no grant, sits in no tree, and needs no setup (its
+  directory row appears with its first write). It holds the user's own documents (their
+  files, a chat's attachments), chunked and embedded whatever their text holds, and the
+  memories a chat writes for them. A message the user saves from a chat is not a
+  document there; see [Saved messages](#saved-messages).
+
+## Saved messages
+
+A chat's saved message is a conversation turn flagged for its user:
+`conversation.save_message` saves one, `conversation.unsave_message` withdraws it,
+`conversation.list_saved_messages`, `conversation.saved_status` and
+`conversation.search_saved_messages` read them
+([Saving single messages](../features/conversations-and-sessions.md#saving-single-messages)).
+The same five ops serve both ways a chat runs in front of Loom:
+
+- **A chat that records its conversations** in its own namespace writes the transcript
+  with a namespace-scoped writer token and calls these ops with a token pinned to the
+  user (`read_user_id`). Saving a turn the transcript holds flags it in place, so the
+  message is stored and embedded once; the transcript row decides its owner, so two
+  users never both save one turn, and compaction keeps a saved turn.
+- **A chat that signs end-user tokens** calls them with `namespace: "@me"`. The other
+  conversation ops refuse an end-user token (it is pinned to one user, and a thread has
+  no user axis to bound), so no transcript lives in a personal collection: a save there
+  stores the text the request sends as a saved-only row, and unsaving it removes the row.
+  As under the pinned token above, a body naming another user is refused with 403.
+
+A save that is not indexed answers `indexed: false` with a `reason` (listed on the
+feature page). A client draws a conversation's saved state with one
+`conversation.saved_status` call, and a user erasure takes the user's conversation rows,
+saved ones included.
 
 ## Identity
 
@@ -276,9 +301,16 @@ One text serves agents and people, so there is no second copy to drift.
 - **An owner column on documents.** Every read path would add a row predicate, one miss
   would leak, and the column would not prune (it is not in the sort key), so a user's
   search would still read the whole tenant.
-- **A saved-items table with `user_id` in the sort key.** It fixes the cost of one
-  feature by building a second document store: chunking, lexical statistics, embedding
-  retries and erasure twice, and saved items that can never join a collection.
+- **A personal-documents table with `user_id` in the sort key.** It fixes the cost of
+  a user's own documents by building a second document store: chunking, lexical
+  statistics, embedding retries and erasure twice, and documents that can never join a
+  collection.
+- **Saved messages as documents in the personal collection**
+  (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its
+  own, but it serves only a chat that signs end-user tokens, so a chat that records its
+  conversations would need the conversation ops anyway: two ways to save one message. A
+  document gets no role or sensitivity check, and a client finds a conversation's saved
+  state by listing a URI prefix. A saved message is a conversation row in both setups.
 - **One namespace per tenant with row-level ACLs.** Every read filters rows one by one and
   prunes nothing, and a move or a revoke rewrites every affected chunk row.
 - **An ACL key in the sort order.** A request's readable set is a union over its

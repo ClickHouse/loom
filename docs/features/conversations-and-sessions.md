@@ -66,7 +66,9 @@ up front.
 
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
-`conversation.search_saved_messages` (viewer) is its search.
+`conversation.search_saved_messages` (viewer) is its search. A saved message is a
+conversation row, never a document in the user's personal collection
+([sharing](../architecture/sharing.md#saved-messages)).
 
 Clients save messages only when every replica preserves saved state during
 compaction. See the
@@ -91,11 +93,13 @@ They differ from `conversation.append` and `conversation.search` in six ways:
   corpus is one user's saved messages, so its statistics are computed per query.
 - **A token pinned to one user works here.** An integration that serves many users through
   one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
-  user). Both saved-message ops then act as that user only: a body naming another
-  `user_id` is refused with 403, and every statement carries the token's user. The
-  conversation tables have no `session_id`, so an `own_session` token is refused.
-  `conversation.search` and `conversation.get` stay refused under such a token, because
-  a thread mixes users and has no user axis to bound.
+  user). The saved-message ops then act as that user only: a body naming another
+  `user_id` is refused with 403, and every statement carries the token's user. An
+  end-user token calls these ops with `namespace: "@me"`
+  ([sharing](../architecture/sharing.md#saved-messages)). The conversation tables have no
+  `session_id`, so an `own_session` token is refused.
+  Every other conversation op (`append`, `get`, `list`, `search`, `threads`, ...) stays
+  refused under such a token, because a thread mixes users and has no user axis to bound.
 - **Ownership, deletion and role are checked on every save.** Saving a message stored
   under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A tombstoned
   message answers `reason: "deleted"`, and a stored system or tool turn, which is never

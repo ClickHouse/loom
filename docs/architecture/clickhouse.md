@@ -245,12 +245,16 @@ with `LOOM_TIERING_<TABLE>_WARM_DAYS` plus `LOOM_TIERING_WARM_VOLUME_NAME`. Per-
 A part count that keeps rising almost always means merges are failing. A skip index a
 merge cannot build fails every merge of that table until inserts get `TOO_MANY_PARTS`.
 Loom keeps such indexes out of merges with `exclude_materialize_skip_indexes_on_merge`
-(the text index `content_text` on `chunks`, the vector-index name on `memory_embeddings`):
-inserted parts still build the index, merged parts do without it. The `clickhouse_parts`
-check of `ops.health` (`_clickhouse_parts_check`) reads `system.part_log` for failed
-`MergeParts` events in the last quarter hour and reports the exception and this repair.
-For the same reason memory-content tables carry no rows TTL. The runbook is in
+(the text index `content_text` on `chunks`): inserted parts still build the index, merged
+parts do without it. The `clickhouse_parts` check of `ops.health`
+(`_clickhouse_parts_check`) reads `system.part_log` for failed `MergeParts` events in the
+last quarter hour and reports the exception and this repair. For the same reason
+memory-content tables carry no rows TTL. The runbook is in
 [troubleshooting](../operations/troubleshooting.md).
+
+`memory_embeddings` also names `embedding_hnsw_idx` in that setting, an index no migration
+declares. The setting does nothing unless an operator adds a vector index of that name by
+hand, and then keeps merges from rebuilding its graph, so no migration resets it.
 
 ## The write → derive loop
 
@@ -416,9 +420,9 @@ MiB read and p50 per query, every read under `FINAL`:
 Compare the bytes: the 10% tenant's read was slower than the 50% tenant's in both runs,
 so the milliseconds do not rank by size. The `vector_search_filter_strategy`,
 `vector_search_index_fetch_multiplier` and `hnsw_candidate_list_size_for_search`
-settings change nothing here: the index is never opened. The codes-first column is the
-fact leg's shape (60 rows, codes multiplier 1); recall@10 of those 60 rows against the
-exact top 10 was 0.95-1.00.
+settings change nothing here: the index is never opened. The codes-first column reads
+the fact leg's 60 rows at codes multiplier 1 (the leg's default is 3); recall@10 of those
+60 rows against the exact top 10 was 0.95-1.00.
 
 **Where it does run, a selective filter loses recall.** With a predicate outside the sort
 key the graph runs first and the predicate drops its candidates afterwards. recall@10

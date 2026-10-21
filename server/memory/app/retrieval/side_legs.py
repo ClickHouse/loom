@@ -25,10 +25,10 @@ async def _lexical_recall_fallback(
     limit: int = 50,
     max_distance: float = 0.9,
 ) -> list[SearchHit]:
-    """BM25-only candidate pool — catches term-rich rows HNSW missed.
+    """BM25-only candidate pool — catches term-rich rows the vector leg missed.
 
     Pulls candidates from the lexical index even when their embedding sits
-    outside the vector index's neighborhood. Wins on terminology-heavy
+    outside the vector leg's nearest rows. Wins on terminology-heavy
     workloads (API names, error codes) the embedder under-weights.
 
     `max_distance` is the semantic guard: a lexically-matched row whose cosine
