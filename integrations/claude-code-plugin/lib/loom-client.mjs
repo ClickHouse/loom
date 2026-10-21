@@ -779,9 +779,11 @@ const PY_TRIM_RE = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "g");
 const PY_LINE_END_RE = /[\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
 // Files whose hunk headers can name a function the code index holds. A hunk
 // header elsewhere (Markdown, YAML, `.env`) quotes whatever line came before the
-// change, so no name is sent for it. A language left out loses only the name.
+// change, so no name is sent for it. The list errs short: a code file left out
+// (an extensionless script) loses only the name, and the server matches its hunks
+// by line range.
 const FUNCTION_FILE_RE =
-  /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|py|pyi|pyw|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|go|java|vue|svelte|astro|proto|sh|bash|zsh|ksh|bats|command)$/i;
+  /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|py|pyi|pyw|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|go|java|vue|svelte|astro|proto|prisma|jsonnet|libsonnet|sh|bash|zsh|ksh|dash|mksh|bats|command)$/i;
 
 /** The function name in a hunk header's context, as the server reads it
  *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
