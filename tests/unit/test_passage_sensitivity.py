@@ -721,7 +721,10 @@ async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
     monkeypatch.setattr(llm_client, "get_llm_client", lambda: _LLM())
     monkeypatch.setattr(session_summary, "get_embedder", lambda: emb)
     draft = await session_summary._draft_session_summary(
-        SimpleNamespace(session_id="s"), [{"role": "user", "content": "x"}], None
+        SimpleNamespace(session_id="s"),
+        [{"role": "user", "content": "x"}],
+        None,
+        operator_policy="",
     )
     assert draft is not None
     assert draft.embedding == [] and emb.seen == []
