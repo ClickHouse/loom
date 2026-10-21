@@ -47,8 +47,8 @@ end of this section are the exceptions. The plugin sends:
   of the whole context window (up to 15,000 characters) and a log of the session's events,
   with each ask and reply, command, file read or edited, search pattern, web address or
   query, subagent prompt, error, todo list, other tool's name, and pull request and commit
-  identifier, which the server keeps only when the namespace has conversation logging on
-  (`LOOM_SESSION_BRIEF=off` stops it);
+  identifier. The server stores none of it, summary or log, when the namespace has
+  conversation logging off (`LOOM_SESSION_BRIEF=off` stops sending it);
 - token usage and the model name (Claude Code only);
 - after each edit in an indexed checkout, that file's uncommitted diff against `HEAD` (up to
   200,000 characters), to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);

@@ -32,7 +32,7 @@
     "websiteURL": "https://github.com/ClickHouse/loom",
     "defaultPrompt": [
       "What did we decide about this repository last week?",
-      "Remember that deploys run only on Tuesdays and Thursdays.",
+      "Remember that I prefer squash merges on this repository.",
       "Who calls this function, and what breaks if I change it?"
     ],
     "composerIcon": "./assets/icon.png",
