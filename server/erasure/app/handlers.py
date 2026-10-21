@@ -176,14 +176,12 @@ def _label_high(rows: list[dict[str, object]], fields: tuple[str, ...]) -> None:
         r["sensitivity"] = "high" if any(reads_high(str(r[f])) for f in fields) else ""
 
 
-async def _labelled_page(
-    rows: list[Any], limit: int, fields: tuple[str, ...]
-) -> tuple[list[dict[str, object]], int, bool]:
-    """`_page` of a conversation read, each served row labelled by its text. A turn
-    can be megabytes long, so the check runs off the event loop."""
-    page = _page(rows, limit)
-    await asyncio.to_thread(_label_high, page[0], fields)
-    return page
+async def _labelled(rows: list[Any], fields: tuple[str, ...]) -> list[dict[str, object]]:
+    """Conversation rows serialized, each labelled by its text. A turn can be megabytes
+    long, so the check runs off the event loop."""
+    served = [_serialize_row(r) for r in rows]
+    await asyncio.to_thread(_label_high, served, fields)
+    return served
 
 
 async def _export_agent_events(
@@ -280,7 +278,9 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         as_of=now,
         shown=shown,
     )
-    conv_rows, conv_count, _ = await _labelled_page(turns, input.section_limit, _CONVERSATION_TEXT)
+    # The read is already capped at `section_limit` and says whether it cut rows.
+    conv_rows = await _labelled(turns, _CONVERSATION_TEXT)
+    conv_count = len(conv_rows)
     threads = await erasure_exports.export_conversation_threads(
         input.org,
         input.scope_type,
@@ -289,9 +289,8 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit + 1,
         shown=shown,
     )
-    thread_rows, thread_count, thread_trunc = await _labelled_page(
-        threads, input.section_limit, _THREAD_TEXT
-    )
+    thread_rows, thread_count, thread_trunc = _page(threads, input.section_limit)
+    thread_rows = await _labelled(thread_rows, _THREAD_TEXT)
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,
         input.scope_type,
