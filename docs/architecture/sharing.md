@@ -46,11 +46,11 @@ flowchart LR
 - **Personal collections.** Each end user has one, `col-me-<hash of org and user>`; a
   request names it `namespace: "@me"`, which only the server maps. Its name says whose it
   is: it admits that user (as admin) and no one else (an org admin's export of that user
-  reads it, see below), takes no grant, sits in no tree, and
-  needs no setup (its directory row appears with its first write). It holds the user's
-  own documents (their files, a chat's attachments), chunked and embedded whatever their
-  text holds, and the memories a chat writes for them. A message the user saves from a chat is not a document there; see
-  [Saved messages](#saved-messages).
+  reads it, see below), takes no grant, sits in no tree, and needs no setup (its
+  directory row appears with its first write). It holds the user's own documents (their
+  files, a chat's attachments), chunked and embedded whatever their text holds, and the
+  memories a chat writes for them. A message the user saves from a chat is not a
+  document there; see [Saved messages](#saved-messages).
 
 ## Saved messages
 

@@ -267,10 +267,10 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     assert [(r["conversation_id"], r["message_id"], r["role"]) for r in rows] == [
         ("c9", "m9", "assistant")
     ], rows
-    assert nonce in rows[0]["content_excerpt"], rows
+    assert rows[0]["content_excerpt"] == content, rows
     saved_at = datetime.fromisoformat(rows[0]["ts"].replace("Z", "+00:00"))
     saved_at = saved_at.replace(tzinfo=saved_at.tzinfo or UTC)
-    # The save time, not a turn time: the row was written by this save.
+    # The row this save wrote, stamped with its save time.
     assert before <= saved_at <= datetime.now(UTC) + timedelta(minutes=5), rows
     status = {**mine, "message_ids": ["m9", "m8"]}
     assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]

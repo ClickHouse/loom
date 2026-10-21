@@ -1585,7 +1585,7 @@ def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_i
 #
 # A service's end users, signed in with end-user tokens, own collections: a parent shared with a group and one
 # user, a child that inherits it, and a personal collection holding a
-# document. A user once granted and then revoked, a member once listed and then
+# document and a saved message. A user once granted and then revoked, a member once listed and then
 # removed, a stranger, the owner's id in another tenant, an org admin and a
 # writer of another namespace then drive every read op against each of them.
 
@@ -1664,7 +1664,8 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
         s.seed.nonces.append(nonce)
         content = f"{nonce} quarterly renewal plan"
         s.ok("owner", "knowledge.upsert", {"namespace": ns, "source_uri": uri, "content": content})
-    # A saved message in the owner's `@me`, where the probes' conversation id points.
+    # A saved message in the owner's `@me`, which the walk's saved-message listing and
+    # search reach (they read every saved message of the user).
     nonce = _canary()
     s.seed.nonces.append(nonce)
     turn = {"conversation_id": "canary", "message_id": "m1", "role": "user", "user_id": "owner"}
@@ -1704,6 +1705,22 @@ def test_positive_control_the_grantees_read_the_shared_canary(
     )
     assert r.status_code == 200, r.text
     assert shared.seed.leaked(r.text), f"{user} cannot read the canary: the suite would be vacuous"
+
+
+@pytest.mark.parametrize(
+    "op_name", ["conversation.list_saved_messages", "conversation.search_saved_messages"]
+)
+def test_positive_control_the_owner_reads_the_saved_canary_with_the_walks_body(
+    control_plane_url, shared, op_name
+) -> None:
+    from server.operations.registry import ALL_OPERATIONS
+
+    op = next(o for o in ALL_OPERATIONS if o.name == op_name)
+    payload = _synth_payload(op.input_model, seed=shared.seed, namespace="@me")
+    assert payload is not None
+    r = _post_as(control_plane_url, shared.org, "owner", op_name, payload)
+    assert r.status_code == 200, r.text
+    assert shared.seed.leaked(r.text), f"{op_name} misses the saved canary: the walk is vacuous"
 
 
 @pytest.mark.parametrize(
