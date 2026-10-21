@@ -225,3 +225,16 @@ def test_both_plugins_ship_one_version() -> None:
         ).read_text()
     )["version"]
     assert codex == claude
+
+
+def test_listing_fields_name_files_the_plugins_ship() -> None:
+    """The directory listings read these fields; a path that does not exist ships a listing
+    with no icon, and Codex shows at most three default prompts."""
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
+    assert (CLAUDE / claude["icon"]).is_file()
+    face = codex["interface"]
+    assert (CODEX / face["logo"]).is_file() and (CODEX / face["composerIcon"]).is_file()
+    assert 1 <= len(face["defaultPrompt"]) <= 3
+    assert all(len(p) <= 128 for p in face["defaultPrompt"])
+    assert claude["privacyPolicyUrl"] == face["privacyPolicyURL"]

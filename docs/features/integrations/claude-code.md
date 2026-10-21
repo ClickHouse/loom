@@ -36,6 +36,8 @@ to the plugin's authors or to any other service. The plugin sends:
   (`LOOM_SESSION_MEMORY=off` stops it);
 - a run record (the first prompt as its goal, the last reply), a working-memory note
   (goal, git status, files edited, last reply), a session brief and token usage;
+- after each edit in an indexed checkout, that file's uncommitted diff against `HEAD` (up to
+  200,000 characters), to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
 - at Stop in an indexed checkout, the uncommitted diff of the files the session changed
   (up to 200,000 characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
 - with no credential, at the first session, your OS user name and host name, to request a
@@ -45,14 +47,14 @@ to the plugin's authors or to any other service. The plugin sends:
 [What the hooks do](#what-the-hooks-do) lists the hooks behind these requests. A
 client-side redaction removes common credential shapes from the prompts, tool calls, turns,
 run records, notes and briefs the hooks send. It is best effort, not a guarantee. MCP tool
-arguments, a brief the `loom-session` skill saves and the test gate's diff are sent without
-it.
+arguments, a brief the `loom-session` skill saves and the blast-radius and test-gate diffs are
+sent without it.
 
 The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
 provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
 Deleting data is covered in [retention and erasure](../memory/retention-and-erasure.md).
-The `loom-status` skill can install Node.js from a Node.js package repository, and runs
-that installer only after you agree.
+The `loom-status` skill can install Node.js from NodeSource or the system package manager
+(apk, Homebrew), and runs that installer only after you agree.
 
 ## Requirements
 
@@ -159,7 +161,7 @@ The wiring is `hooks/hooks.json`; `hooks/HOOKS.md` has per-hook notes.
 | Event                                             | Script                      | Effect                                                                                                                                                                                                                                               | Off switch                                                                     |
 | ------------------------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | SessionStart                                      | `loom-session-start.mjs`    | one budgeted `context.pack` primer (working-memory note, pins, profile, memories, decisions, procedures, recent runs), the code map for an indexed checkout, a line naming the project's saved session briefs, and a task-inbox line (`task.counts`) | `LOOM_INJECT_CONTEXT=false`, `LOOM_CODE_MAP=false`, `LOOM_TASK_INBOX_LINE=off` |
-| UserPromptSubmit                                  | `loom-prompt-pack.mjs`      | up to three `code.search` pointers for the prompt, only when the index does not abstain                                                                                                                                                              | opt-in: `LOOM_PROMPT_PACK=on`                                                  |
+| UserPromptSubmit                                  | `loom-prompt-pack.mjs`      | up to three `code.search` pointers for the prompt, only when the index does not abstain                                                                                                                                                              | `LOOM_PROMPT_PACK=off`                                                         |
 | UserPromptSubmit                                  | `loom-prompt-recall.mjs`    | one bounded `context.pack` recall for the prompt (memories, decisions, procedures), injected only when memory does not abstain                                                                                                                       | `LOOM_PROMPT_RECALL=first` (default) / `on` / `off`                            |
 | UserPromptSubmit                                  | `loom-run.mjs`              | opens the session's run (`run.begin`, `run_id = cc-<session_id>`, goal = the first prompt)                                                                                                                                                           | `LOOM_RUN_LEDGER=off`                                                          |
 | PreToolUse (Read, Grep, Bash)                     | `loom-code-shunt.mjs`       | the code shunt and the tracker shunt ([next section](#the-code-shunt))                                                                                                                                                                               | `LOOM_CODE_SHUNT=off`, `LOOM_TRACKER_SHUNT=off`                                |
