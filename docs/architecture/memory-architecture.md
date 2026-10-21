@@ -892,9 +892,10 @@ replayed by `projection_repair`; it never reaches the caller.
 Until a queued request is done, `memory.search` and `memory.ask` report
 `pending_extraction` for the scope. `memory.extraction_status` reads the namespace's
 rows, and `memory.extraction_status_mine` the caller's own by `queue_id`: the rows whose
-payload names its principal as the enqueuer, inside its read scope. The canonical-hash
-dedup makes a double claim harmless. With `extraction_queue` off, deferred saves stay
-`pending`.
+payload names its principal as the enqueuer, inside its read scope.
+`memory.extraction_retry_mine` puts the caller's own `failed` rows back to `pending` with
+one attempt left. The canonical-hash dedup makes a double claim harmless. With
+`extraction_queue` off, deferred saves stay `pending`.
 
 ## `memory.search`
 

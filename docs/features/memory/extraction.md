@@ -214,9 +214,12 @@ user sees only that user's batches. It is an HTTP and SDK view, hidden from MCP.
 deferred calls returned, at most 20 a call, and an agent reaches it over MCP through
 `loom_op`. It answers only a batch the calling principal queued in that namespace,
 inside the token's read scope; every other id comes back in `unknown`, so an agent
-cannot learn whether another principal's batch exists. Until a batch runs,
-`memory.search` and `memory.ask` report `pending_extraction`. With the worker off,
-deferred saves stay `pending`.
+cannot learn whether another principal's batch exists. Once the cause of a failure is
+fixed, `memory.extraction_retry_mine` replays the caller's own `failed` batches once
+more, under the same ids and bounds: each goes back to `pending` with one attempt left,
+so a replay that fails again ends `failed` again, and a batch still waiting or done is
+left alone. Until a batch runs, `memory.search` and `memory.ask` report
+`pending_extraction`. With the worker off, deferred saves stay `pending`.
 
 ## Operator extraction policy
 
@@ -318,6 +321,7 @@ the one model-written part, and they follow the policy). Pair it with the
 | `memory.set_from_messages`      | writer    | Extract facts (or one typed record) from `messages` and write them.              |
 | `memory.extraction_status`      | viewer    | State of the namespace's deferred batches. HTTP and SDK only.                    |
 | `memory.extraction_status_mine` | viewer    | State of the caller's own deferred batches, by `queue_id`. Over MCP as well.     |
+| `memory.extraction_retry_mine`  | writer    | Replay the caller's own failed batches once more, by `queue_id`.                 |
 | `memory.recall`                 | viewer    | Search the raw turns behind the namespace's memories by text, time and role.     |
 | `memory.evidence`               | viewer    | The source turns one memory was extracted from, with the supporting span.        |
 | `observe.record`                | writer    | Record one tool observation into the episodic plane; no model call.              |

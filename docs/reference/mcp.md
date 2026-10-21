@@ -186,7 +186,8 @@ to the caller stays on MCP: `namespace.list` is hidden and `namespace.list_mine`
 listed; `memory.extraction_status` (every batch queued in the namespace) is hidden
 and `memory.extraction_status_mine` (the batches the caller queued, by `queue_id`,
 at most 20 a call) is callable by name or through `loom_op` on every toolset,
-`readonly` included.
+`readonly` included. Its write twin, `memory.extraction_retry_mine`, replays the
+caller's failed batches once more; `loom_op` routes it on every toolset but `readonly`.
 
 ### Toolsets
 
