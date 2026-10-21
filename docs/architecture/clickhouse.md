@@ -389,65 +389,71 @@ reads candidates with no `FINAL` or `JOIN`, then looks them up by primary key un
 
 ### Why there is no vector index
 
-A `vector_similarity` index is one HNSW graph per part. Measured on ClickHouse 26.9 with
-synthetic 1536-dimension vectors in tables shaped like `memory_embeddings` (its sort key,
-`ReplacingMergeTree`, `index_granularity = 256`, one merged part), it does not fit Loom's
-reads, for four reasons.
+A `vector_similarity` index is one HNSW graph per part. It does not fit Loom's reads, for
+four reasons. The figures come from ClickHouse 26.9 with 1M synthetic 1536-dimension
+vectors in tables shaped like `memory_embeddings` (its sort key, `ReplacingMergeTree`,
+`index_granularity = 256`, one merged part), 30 queries per row; the command is in
+`bench/vector_index_vs_exact.py`.
 
 **A tenant read never uses it.** ClickHouse searches the graph only when the primary-key
 condition keeps every granule of the part. Every Loom vector read filters on
 `(org, namespace)`, the prefix of every vector table's sort key, so it reads the
 tenant's granules and sorts them exactly: no index search runs
 (`ProfileEvents['USearchSearchCount'] = 0`) and the read costs what the plain table costs.
-At 1M rows, per query:
+MiB read and p50 per query:
 
-| Tenant share | Rows | Exact scan        | With the index    | Codes-first     |
-| ------------ | ---- | ----------------- | ----------------- | --------------- |
-| 50%          | 500k | 1,478 MiB, 178 ms | 1,476 MiB, 205 ms | 121 MiB, 143 ms |
-| 10%          | 100k | 295 MiB, 499 ms   | 294 MiB, 494 ms   | 35 MiB, 78 ms   |
-| 1%           | 10k  | 30 MiB, 58 ms     | 30 MiB, 59 ms     | 13 MiB, 18 ms   |
-| 0.1%         | 1k   | 3.2 MiB, 19 ms    | 3.2 MiB, 13 ms    | 3.4 MiB, 10 ms  |
+| Tenant share | Rows | Exact scan        | With the index    | Codes-first, LIMIT 60 |
+| ------------ | ---- | ----------------- | ----------------- | --------------------- |
+| 50%          | 500k | 1,478 MiB, 141 ms | 1,476 MiB, 134 ms | 134 MiB, 55 ms        |
+| 10%          | 100k | 295 MiB, 491 ms   | 294 MiB, 476 ms   | 49 MiB, 44 ms         |
+| 1%           | 10k  | 30 MiB, 57 ms     | 30 MiB, 57 ms     | 21 MiB, 18 ms         |
+| 0.1%         | 1k   | 3.2 MiB, 12 ms    | 3.2 MiB, 13 ms    | 3.4 MiB, 9 ms         |
 
-The bytes read are the stable figure; the latencies come from a shared host. The
-`vector_search_filter_strategy`, `vector_search_index_fetch_multiplier` and
+The `vector_search_filter_strategy`, `vector_search_index_fetch_multiplier` and
 `hnsw_candidate_list_size_for_search` settings change nothing here: the index is never
-opened.
+opened. The codes-first column is the fact leg's shape (60 rows, codes multiplier 1); the
+exact top 10 was among those 60 rows for 0.95-1.00 of the cases.
 
 **Where it does run, a selective filter loses recall.** With a predicate outside the sort
 key the graph runs first and the predicate drops its candidates afterwards. recall@10
-against the exact answer, 1M rows:
+against the exact answer, by `vector_search_index_fetch_multiplier`:
 
 | Rows the filter admits | x1    | x10   | x100  |
 | ---------------------- | ----- | ----- | ----- |
-| all                    | 0.845 | 0.845 | 0.845 |
-| 10%                    | 0.170 | 0.830 | 0.935 |
-| 1%                     | 0.095 | 0.195 | 0.820 |
+| all                    | 0.783 | 0.783 | 0.783 |
+| 10%                    | 0.200 | 0.820 | 0.933 |
+| 1%                     | 0.080 | 0.163 | 0.723 |
 
-(x = `vector_search_index_fetch_multiplier`; the unfiltered row is the graph's own recall
-on this data at `hnsw_candidate_list_size_for_search = 256`, 0.940 at 1024.) A partition
-per tenant makes the index run for tenant reads, but a 1% tenant then gets 0.705, and a
-partition per namespace is not a layout a table with thousands of namespaces can hold.
+The unfiltered row is the graph's own recall on this data at
+`hnsw_candidate_list_size_for_search = 256` (0.847 at 1024). A partition per tenant
+makes the index run for tenant reads: the 50% tenant's read under `FINAL` then takes
+76 ms instead of 141 ms, at recall@10 0.757, and the 10% and 1% tenants get 0.747 and
+0.843. That layout also
+needs one partition per namespace, which a table with thousands of namespaces cannot
+hold.
 
 **Under `FINAL` it serves superseded versions.** The graph returns rows of every version
 before `FINAL` collapses them, so a key's newest version or tombstone loses to an older
 row. `bench/ann_final_staleness.py` (30k keys, 3 versions each, 18 parts) on 26.9:
-recall@10 0.38 with 6.2 of 10 rows stale, against 1.00 and none for the exact read. A
-deleted or superseded memory would be served.
+recall@10 0.38 with 6.2 of 10 rows stale, against 1.00 and none for the exact read. Its
+`reread` arm, which takes candidate keys from the graph and reads them again under
+`FINAL` with skip indexes off, removes the stale rows (recall 0.90-0.98) and takes twice
+as long as the exact read (37-39 ms against 20 ms). It does not change the decision: a tenant read never reaches the graph in the
+first place.
 
-**It doubles storage and slows writes.** At 1M rows the graph took 2.27 GiB beside a
-2.25 GiB column, and inserting the rows took 166 s against 51 s for the coded table
-without it. `memory_embeddings` keeps the index name in
-`exclude_materialize_skip_indexes_on_merge`, so a merged part would carry no graph at all;
-without that setting every merge rebuilds it (6-14 s against 1 s to merge 100k rows into one part). Each
-graph must also stay in `vector_similarity_index_cache_size`
-(5 GiB by default): once two 1M-row graphs competed for it, every indexed read missed the
-cache, reloaded the graph and took 4.8 s, unfiltered reads included.
+**It doubles storage and slows writes.** The graph took 2.27 GiB beside 2.25 GiB of table
+data, and inserting the 1M rows took 135-166 s against 17-51 s for the coded table over
+two runs. With `exclude_materialize_skip_indexes_on_merge` naming the index, a merged
+part carries no graph at all; without it every merge rebuilds the graph. A graph also
+has to stay resident in `vector_similarity_index_cache_size` (5 GiB by default). After
+the partitioned table's graphs were loaded, every read of the single-part graph missed
+the cache (`VectorSimilarityIndexCacheMisses` 30 of 30), reloaded it and took 4.8 s
+instead of 9 ms.
 
 The codes-first read is what cuts a large namespace's scan instead: at 100k rows and
-more it reads 8-12x fewer bytes than the exact scan, and it works inside the tenant's
-granules and under `FINAL`. An index becomes worth revisiting when ClickHouse searches
-it within the primary-key ranges a read selects and resolves versions under `FINAL`.
-`bench/vector_index_vs_exact.py` reproduces the tables above.
+more it reads 6-11x fewer bytes than the exact scan, inside the tenant's granules and
+under `FINAL`. An index becomes worth revisiting when ClickHouse searches it within the
+primary-key ranges a read selects and resolves versions under `FINAL`.
 
 ## Text indexes and lexical search
 

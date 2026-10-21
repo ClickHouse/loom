@@ -26,7 +26,7 @@ test runner.
 | Safety and privacy       | Does erasure reach every tier; can a prompt-only attacker extract or poison memory?            | `erasure_compliance.py`, `memory_extraction_redteam.py`, `memory_poison.py`, `sensitivity_leakage.py`                            |
 | Code index               | Does the code index find definitions, callers and conceptual answers, and abstain on the rest? | `code_intel_qa.py`, `code_plane_ablation.py`, `code_shunt_tokens.py`, `code_ask_cache_threshold/`                                |
 | Tracker                  | Does `tracker.similar` find the older duplicate an issue was closed against?                   | `tracker_similar_bench.py`                                                                                                       |
-| Latency and index health | Where does search time go; would a vector index return what brute force does?                 | `search_latency.py`, `vector_tenant_recall.py`, `ann_final_staleness.py`, `vector_index_vs_exact.py`, `scripts/ops/benchmark.py` |
+| Latency and index health | Where does search time go; would a vector index return what brute force does?                  | `search_latency.py`, `vector_tenant_recall.py`, `ann_final_staleness.py`, `vector_index_vs_exact.py`, `scripts/ops/benchmark.py` |
 | Consumer acceptance      | Does one kind of deployment get precise answers at an acceptable cost?                         | `acceptance/{code_agent,memory_app,plugin,harness}.py`                                                                           |
 
 [`bench/memoryarena/`](../../bench/memoryarena/README.md) (an agent gym that scores later
