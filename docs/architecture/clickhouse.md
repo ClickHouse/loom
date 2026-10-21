@@ -166,7 +166,7 @@ holds its connection for the window and then the flush and part write, which que
 and grow under load. One process taking 200 writes a second, two batched inserts each
 (`bench/write_rate.py --target client`), refused 3,367 of 12,000 writes with 503
 `OVERLOADED` at `ch_pool_maxsize = 20`, the formula's bound, and none at 40 or 64. Size the ClickHouse connection pool
-(`ch_pool_maxsize`) well above the bound on top of the other statements. A process at
+(`ch_pool_maxsize`) at three times the bound or more, on top of the other statements: raise it when three times the bound passes the current value. A process at
 that rate either raises `ch_pool_maxsize` or sets `ch_batched_inserts = false`; lowering
 `ch_batched_insert_wait_max_ms` also frees connections
 ([troubleshooting](../operations/troubleshooting.md)).

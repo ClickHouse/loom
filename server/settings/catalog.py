@@ -559,9 +559,11 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch the audit, transcript, event-ledger, webhook and evidence inserts so
+    # Batch the audit, transcript, agent_events, outbox, webhook and evidence inserts so
     # concurrent ones share a part (docs/architecture/clickhouse.md#batched-inserts);
-    # false commits them. The ledger flushes stay waited async inserts either way.
+    # false commits them. The auth-attempt, carry-ack, write-mark, usage-event,
+    # policy-witness, projection-failure and graph Undo inserts stay waited async
+    # inserts either way.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
