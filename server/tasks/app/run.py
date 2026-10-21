@@ -463,9 +463,9 @@ async def _open_run(
         f"run_id={run_id}. Pass it as run_id on memory.set and observe.record so "
         "the run's writes and observations join this ledger. A body run_id on "
         "memory.search or memory.ask filters to the run's own rows; over HTTP, label "
-        "reads with the X-Loom-Run-Id header instead (over MCP they carry the "
-        "session's run). When done, call run.complete with the memory_keys you "
-        "actually relied on in memories_used."
+        "reads with the X-Loom-Run-Id header instead. Over MCP, reads are labelled "
+        "with the session's own run, not this one. When done, call run.complete "
+        "with the memory_keys you actually relied on in memories_used."
     )
     if dropped_usd:
         next_step += (
