@@ -20,6 +20,7 @@ from typing import Any
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
+from server.core.naming import named
 from server.memory.api.models_evidence_transfer import (
     EvidenceChunk,
     EvidenceDigest,
@@ -136,7 +137,7 @@ async def handle_memory_export_evidence(
     ch = get_client()
     params: dict[str, Any] = {"org": input.org, "ns": input.namespace, "lim": int(input.limit) + 1}
     where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
-    if input.session_id:
+    if named(input.session_id):
         where.append("session_id = {sid:String}")
         params["sid"] = input.session_id
 

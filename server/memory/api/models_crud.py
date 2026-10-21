@@ -1049,9 +1049,11 @@ class MemoryUpdateInput(BaseModel):
     memory_key: str
     # None = keep the current value (a tags/concepts-only rewrite).
     value: dict[str, Any] | list[Any] | str | int | float | bool | None = None
-    # Optional identity narrowing; "" = any row under the namespace.
+    # Narrows the key to rows written by this agent; "", "-" or "*" = any agent.
     agent: str = ""
+    # Narrows the key to this user's rows; "" or "-" = any user.
     user_id: str = ""
+    # Narrows the key to this session's rows; "" or "-" = any session.
     session_id: str = ""
     # The run this revision is made under: stamped on the new
     # version's row so the run ledger and the `acted` fold see that this run

@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import plane_namespace_for, plane_org_for
 from server.core.errors import IdentityIncompleteError, RateLimitedError
+from server.core.naming import named
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -73,8 +74,7 @@ _FAIL_OPEN_LAST_LOG: dict[str, float] = {}
 def present(value: Any) -> str | None:
     """A request's identity field as the gates read it: None when absent,
     empty or the "-" sentinel."""
-    text = str(value or "").strip()
-    return None if text in ("", "-") else text
+    return named(str(value or "").strip())
 
 
 def _token_org(auth: AuthInfo | None) -> str | None:
