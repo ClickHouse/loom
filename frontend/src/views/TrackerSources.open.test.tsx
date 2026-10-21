@@ -134,4 +134,28 @@ describe("opening a tracker source", () => {
     expect(vi.mocked(setSavedNamespace).mock.calls.map(([saved]) => saved)).toEqual(["tracker-clickhouse"]);
     expect(forgetSavedNamespace).toHaveBeenCalledTimes(1);
   });
+
+  it("a link's namespace stays unsaved through a second round to the board and back", async () => {
+    const backFromBoard = async () => {
+      const first = renderHook(() => useRecordActions("dev", async () => {}));
+      act(() => first.result.current.open(ns));
+      first.unmount();
+      await act(async () => {
+        history.back();
+        await new Promise((r) => window.addEventListener("popstate", r, { once: true }));
+      });
+      renderHook(() => useRecordActions("dev", async () => {}));
+    };
+    useStore.setState({ linkOpened: "code-loom" });
+    await backFromBoard();
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: "code-loom" }, linkOpened: "code-loom" });
+    // The second round starts on the entry Back reached.
+    await backFromBoard();
+    expect(useStore.getState().linkOpened).toBe("code-loom");
+    expect(vi.mocked(setSavedNamespace).mock.calls.map(([saved]) => saved)).toEqual([
+      "tracker-clickhouse",
+      "tracker-clickhouse",
+    ]);
+    expect(forgetSavedNamespace).toHaveBeenCalledTimes(2);
+  });
 });

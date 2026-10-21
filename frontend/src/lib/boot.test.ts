@@ -157,6 +157,12 @@ describe("login link token", () => {
     expect(takeLinkToken()?.atRoot).toBe(false);
   });
 
+  it("keeps the entry's state as the token leaves the address", () => {
+    history.replaceState({ loomPlace: { scrollTop: 40 } }, "", "/memories#token=abc");
+    takeLinkToken();
+    expect(history.state).toEqual({ loomPlace: { scrollTop: 40 } });
+  });
+
   it("scrubs a fragment that does not decode, and takes no token from it", () => {
     history.replaceState(null, "", "/#token=%E0%A4%A");
     expect(takeLinkToken()).toEqual({ token: null, atRoot: true });

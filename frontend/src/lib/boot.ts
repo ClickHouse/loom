@@ -63,7 +63,7 @@ export function takeLinkToken(): { token: string | null; atRoot: boolean } | nul
   if (!fromHash && !query.has("token")) return null;
   query.delete("token");
   const qs = query.toString();
-  history.replaceState(null, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
+  history.replaceState(history.state, "", pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
   let token: string | null = null;
   try {
     token = fromHash ? decodeURIComponent(hash.slice("#token=".length)) || null : null;

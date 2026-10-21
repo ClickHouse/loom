@@ -1,3 +1,4 @@
+import { createRef, type RefObject } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,6 +6,7 @@ import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { invalidateShared } from "../lib/sharedReads";
 import { NamespacePicker } from "./NamespacePicker";
+import { NamespacePickerList } from "./NamespacePickerList";
 
 // The picker lists memory namespaces by role, then code indexes and tracker records in
 // their own folded groups. A row is a code index only when the server says kind=code —
@@ -287,6 +289,66 @@ describe("NamespacePicker groups", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "agent-1");
     expect(group(dialog, /^agent-…/)).toHaveTextContent("2 of 3");
     expect(grouped.calls).toBe(before);
+  });
+
+  it("opens the current namespace's group once the panel's own read places it, when boot's rows did not", async () => {
+    seed("agent-1-b", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
+    // Boot's rows predate the namespace: only the panel's own read lists it.
+    useStore.setState({ myNamespaces: [row("team", { role: "admin" })] });
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await waitFor(() => expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true"));
+  });
+
+  it("opens the group the panel's own read puts the current namespace in, over boot's", async () => {
+    const before = [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")];
+    seed("agent-1-b", [...before, row("agent-1-c")]);
+    // Boot's rows predate agent-1-c, so they fold the current namespace under agent-.
+    useStore.setState({ myNamespaces: before });
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await waitFor(() => expect(group(dialog, /^agent-1-…/)).toHaveAttribute("aria-expanded", "true"));
+  });
+
+  it("takes the focus as it loads only from where the open left it", async () => {
+    seed("team");
+    function Harness(props: {
+      list: boolean;
+      trigger: RefObject<HTMLButtonElement>;
+      input: RefObject<HTMLInputElement>;
+    }) {
+      return (
+        <>
+          <button type="button">elsewhere</button>
+          <button type="button" ref={props.trigger}>
+            trigger
+          </button>
+          {props.list && (
+            <NamespacePickerList
+              inputRef={props.input}
+              triggerRef={props.trigger}
+              onPick={() => {}}
+              onClose={() => {}}
+              onCreate={() => {}}
+            />
+          )}
+        </>
+      );
+    }
+    for (const [from, takes] of [
+      ["elsewhere", false],
+      ["trigger", true],
+    ] as const) {
+      const trigger = createRef<HTMLButtonElement>();
+      const input = createRef<HTMLInputElement>();
+      const { rerender, unmount } = render(<Harness list={false} trigger={trigger} input={input} />);
+      screen.getByRole("button", { name: from }).focus();
+      rerender(<Harness list trigger={trigger} input={input} />);
+      const search = await screen.findByRole("textbox", { name: "Search namespaces" });
+      if (takes) expect(search).toHaveFocus();
+      else expect(screen.getByRole("button", { name: from })).toHaveFocus();
+      unmount();
+    }
   });
 
   it("folds a group a search opened when its button is pressed, and opens it again", async () => {

@@ -34,12 +34,15 @@ import { Loading, Tip } from "./ui";
  */
 export function NamespacePickerList({
   inputRef,
+  triggerRef,
   onPick,
   onClose,
   onCreate,
 }: {
   /** The search field, which the popover focuses as it opens. */
   inputRef: RefObject<HTMLInputElement>;
+  /** The picker's trigger, which holds the focus while this panel loads. */
+  triggerRef: RefObject<HTMLButtonElement>;
   onPick: (namespace: string) => void;
   /** Close the popover (before a jump to Spaces). */
   onClose: () => void;
@@ -82,9 +85,11 @@ export function NamespacePickerList({
   const known = rows ?? stored;
 
   // The search field takes the focus: the popover finds none to focus while this panel
-  // still loads.
+  // still loads. Only from where the open left it (the trigger, or nothing): someone who
+  // moved on meanwhile keeps their place.
   useEffect(() => {
-    inputRef.current?.focus();
+    const focused = document.activeElement;
+    if (!focused || focused === document.body || focused === triggerRef.current) inputRef.current?.focus();
   }, []);
 
   // `*` is an access wildcard, never a namespace to switch into.
@@ -137,9 +142,13 @@ export function NamespacePickerList({
     kindGroup(r) ?? (r && families.get(r.namespace)) ?? null;
   const currentGroup = groupOf(listed.find((r) => r.namespace === current));
   // Each open starts folded, except the group the current namespace is in as it opens; a
-  // group someone folds or opens keeps that (`openGroups`).
-  const openAtFirst = useRef<string | null>();
-  if (openAtFirst.current === undefined) openAtFirst.current = currentGroup;
+  // group someone folds or opens keeps that (`openGroups`). Boot's rows decide that group at
+  // once when they put the current namespace in one, and this panel's own read decides it
+  // for good as it answers: boot's rows may be stale, or missing.
+  const openAtFirst = useRef<{ group: string | null; settled: boolean }>({ group: null, settled: false });
+  if (!openAtFirst.current.settled && (currentGroup !== null || rows !== null)) {
+    openAtFirst.current = { group: currentGroup, settled: rows !== null };
+  }
   // One pass: the memory namespaces outside every group (by role, below), and each group's.
   const memory: MyNamespaceEntry[] = [];
   const byGroup = new Map<string, MyNamespaceEntry[]>();
@@ -184,7 +193,7 @@ export function NamespacePickerList({
     .map((g) => {
       const all = byGroup.get(g) ?? [];
       const rows = sortByName(all);
-      const expanded = q ? (searchOpen[g] ?? rows.length > 0) : (openGroups[g] ?? g === openAtFirst.current);
+      const expanded = q ? (searchOpen[g] ?? rows.length > 0) : (openGroups[g] ?? g === openAtFirst.current.group);
       const shown = expanded ? (showAll[g] ? rows : rows.slice(0, GROUP_CAP)) : [];
       return { g, all, rows, expanded, shown, more: expanded && rows.length > shown.length };
     })

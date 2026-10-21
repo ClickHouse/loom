@@ -85,6 +85,11 @@ shows the same namespace.
   first, then its oldest admin grant), else its first claimed memory namespace. A token
   that reaches only code indexes and tracker records opens the first of those on the
   pages that need no memory namespace; a memory page then opens on none and says so.
+- **When the membership read fails**, a link to the saved pick still opens, since the server
+  answers its reads, and any other link opens a page that says its access could not be
+  checked, with Retry and a way to continue in the default namespace. A URL without
+  `?namespace=` then opens the saved pick only when the token claims it, else its first
+  claimed namespace.
 - **Back and Forward** never switch namespace: an entry made in another namespace opens
   nothing it names, and the address names the page's namespace. The one exception is Back
   from a tracker's Patterns board, which returns to the namespace its Open left.

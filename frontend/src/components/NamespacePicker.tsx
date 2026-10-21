@@ -128,6 +128,7 @@ function NamespacePickerMenu() {
         <Suspense fallback={<Loading label="Loading namespaces" />}>
           <NamespacePickerList
             inputRef={inputRef}
+            triggerRef={triggerRef}
             onPick={onPick}
             onClose={() => setOpen(false)}
             onCreate={() => {

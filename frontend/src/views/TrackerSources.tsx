@@ -150,7 +150,12 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
     if (!now || now.namespace === left) return;
     setIdentity({ ...now, namespace: left });
     if (typeof state?.loomSavedLeft === "string") setSavedNamespace(state.loomSavedLeft);
-    else forgetSavedNamespace();
+    else {
+      // A link opened the namespace Back returns to: it is the link's again, so the next
+      // round from here saves it no more than this one did.
+      forgetSavedNamespace();
+      useStore.getState().setLinkOpened(left);
+    }
     toast(`Switched back to ${left}`, "info");
   }, []);
   const target = (ns: TrackerSourceNamespace): JoinTarget => ({

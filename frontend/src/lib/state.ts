@@ -300,8 +300,10 @@ interface AppState {
   deniedNamespace: string | null;
   /** The namespace a link opened for this tab: never saved as the pick, so what saves a
    *  namespace on the way back from elsewhere (a tracker's Patterns board) skips it. A
-   *  switch ends it. */
+   *  switch ends it, except a return to it (`setLinkOpened`). */
   linkOpened: string | null;
+  /** The namespace a switch back returns to is the link's again (the tracker's Back). */
+  setLinkOpened: (namespace: string | null) => void;
   view: View;
   /** Counts user navigations (setView and the open-X helpers), never the boot's
    *  application of the URL's view nor Back/Forward; the shell's scroll reset and its
@@ -398,6 +400,7 @@ export const useStore = create<AppState>((set, get) => ({
   myNamespaces: null,
   deniedNamespace: null,
   linkOpened: null,
+  setLinkOpened: (linkOpened) => set({ linkOpened }),
   view: "memories",
   navSeq: 0,
   navNote: null,
