@@ -16,6 +16,8 @@ const browse: BrowseEntry[] = [
   {
     namespace: "alpha",
     description: "Support team runbooks",
+    guide_revision: 2,
+    guide_summary: "One runbook per service, keyed runbook/<service>",
     kind: "memory",
     owner_email: "",
     member_count: 1,
@@ -99,7 +101,7 @@ describe("Spaces: the rows", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
-  it("a space you manage: mono name, visibility, description; Invite inline; Settings, Copy name and Leave in its menu", async () => {
+  it("a space you manage: mono name, visibility, description; Invite inline; Settings, Guide, Copy name and Leave in its menu", async () => {
     const user = userEvent.setup();
     render(<Browse />);
     const managed = (await screen.findByRole("heading", { name: /Namespaces you manage/ })).closest(
@@ -119,7 +121,7 @@ describe("Spaces: the rows", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["Settings", "Copy name", "Leave"]);
+    ).toEqual(["Settings", "Guide", "Copy name", "Leave"]);
     await user.click(within(menu).getByRole("menuitem", { name: "Settings" }));
     expect(screen.getByRole("dialog", { name: "Settings for team" })).toBeInTheDocument();
   });
@@ -132,6 +134,8 @@ describe("Spaces: the rows", () => {
     expect(within(alpha).getByText("Public")).toBeInTheDocument();
     expect(within(alpha).getByText("1 member")).toBeInTheDocument();
     expect(within(alpha).getByText("Support team runbooks")).toBeInTheDocument();
+    // The guide's summary is the directory's view of it, for members or not.
+    expect(within(alpha).getByText("Guide: One runbook per service, keyed runbook/<service>")).toBeInTheDocument();
     expect(within(alpha).getByRole("button", { name: "Join" })).toBeInTheDocument();
     await user.click(within(alpha).getByRole("button", { name: "Actions for alpha" }));
     let menu = await screen.findByRole("menu", { name: "Actions for alpha" });
@@ -147,8 +151,33 @@ describe("Spaces: the rows", () => {
     expect(within(beta).getByRole("button", { name: "Request upgrade" })).toBeInTheDocument();
     await user.click(within(beta).getByRole("button", { name: "Actions for beta" }));
     menu = await screen.findByRole("menu", { name: "Actions for beta" });
+    // A member opens the guide; a non-member (alpha) is not offered one it could not read.
+    expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
     await user.click(within(menu).getByRole("menuitem", { name: "Leave" }));
     await waitFor(() => expect(leaveNamespace).toHaveBeenCalledWith("acme", "beta"));
+  });
+
+  it("your personal namespace offers its guide like any namespace you manage", async () => {
+    mine.push({
+      namespace: "personal-alice",
+      role: "admin",
+      status: "active",
+      visibility: "private",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "memory",
+    });
+    try {
+      const user = userEvent.setup();
+      render(<Browse />);
+      await screen.findAllByText("alpha");
+      await user.click(within(row("personal-alice")).getByRole("button", { name: "Actions for personal-alice" }));
+      const menu = await screen.findByRole("menu", { name: "Actions for personal-alice" });
+      expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
+    } finally {
+      mine.pop();
+    }
   });
 
   it("the rows are one tab stop; the arrows move between them, across both sections", async () => {

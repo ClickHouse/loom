@@ -65,7 +65,7 @@ class ContextPackInput(_Identity):
         default_factory=dict, json_schema_extra=MCP_HIDDEN
     )
     # Optional caller-specified block ordering. Values are section names:
-    # working_memory, profile, namespace_health, mentor, memory_stack,
+    # working_memory, profile, namespace_health, namespace_guide, mentor, memory_stack,
     # memories, procedures, decisions, knowledge, conversations, runs.
     # Empty keeps Loom's default ordering.
     block_order: list[str] = Field(
@@ -90,9 +90,10 @@ class ContextPackInput(_Identity):
             "conversations",
             "runs",
             "namespace_health",
+            "namespace_guide",
             "mentor",
         ]
-    ] = Field(default_factory=list, max_length=11)
+    ] = Field(default_factory=list, max_length=12)
     # Decision-typed hits leave the memories block and render as their own
     # tagged <decisions> section carrying the structured record (scenario,
     # outcome, realized outcome). Same search, one more plane on the wire.

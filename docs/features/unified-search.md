@@ -158,9 +158,10 @@ plugins' session primer and per-prompt recall call it.
 | `only_sections`                                                                | all         | Restrict the pack, e.g. `memories`, `decisions`, `procedures` for a per-prompt call.                                                                                                                                                      |
 | `read_scope`                                                                   | `namespace` | `own_user` or `own_session`, capped by the token's claim.                                                                                                                                                                                 |
 
-Section order: `working_memory`, `profile`, `namespace_health`, `mentor`, `memory_stack`, `memories`, `procedures`,
-`decisions`, `knowledge`, `conversations`, `runs`. The query-independent sections lead, so the start of `rendered` is
-the same bytes for every question until working memory, profile or pins change.
+Section order: `working_memory`, `profile`, `namespace_health`, `namespace_guide`, `mentor`, `memory_stack`,
+`memories`, `procedures`, `decisions`, `knowledge`, `conversations`, `runs`. The query-independent sections lead, so
+the start of `rendered` is the same bytes for every question until working memory, profile, pins or the namespace's
+guide change.
 
 - `stable_sections`, `stable_prefix_chars` and `stable_hash` describe that prefix. Put a prompt-cache breakpoint at
   `stable_prefix_chars`; compare the hash to see whether the prefix moved. The Python SDK splits it as
@@ -172,7 +173,9 @@ the same bytes for every question until working memory, profile or pins change.
 - `tokens_estimate` and `fill_ratio` report budget pressure.
 - A section that fails is empty; the pack still answers.
 - `mentor` and `namespace_health` render only when they have something to say
-  (`LOOM_MENTOR_TTL_SECONDS=0` / `LOOM_NAMESPACE_HEALTH_TTL_SECONDS=0` turn them off).
+  (`LOOM_MENTOR_TTL_SECONDS=0` / `LOOM_NAMESPACE_HEALTH_TTL_SECONDS=0` turn them off), and
+  `namespace_guide` only when the namespace has a
+  [guide](./namespaces-and-sharing.md#a-namespaces-guide).
 
 Section contents and limits: [working memory and profiles](./memory/working-memory-and-profiles.md),
 [procedures and learnings](./memory/procedures-and-learnings.md).
