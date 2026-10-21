@@ -53,8 +53,8 @@ _EXPECTED_MUTATIONS = Counter(
         # Conditional Keeper key recovery, only after a kernel death proof and
         # a server-side quiescence check; not a MergeTree data mutation.
         ("server/insights/store/provider_lock.py", "_migration_lock", "DELETE"): 1,
-        # memory.redact scrubs the named historical version, then the profile
-        # versions built from it, in one statement per table, on loom.memory and
+        # memory.redact scrubs the named historical version and the profile
+        # versions built from it in one statement per table, on loom.memory and
         # on the append-only mirror (ALTER UPDATE does not flow through
         # memory_versions_mv).
         ("server/memory/store/redaction.py", "memory", "UPDATE"): 1,

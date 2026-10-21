@@ -160,7 +160,7 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   `profile.fold:structured_profile:<memory ids>`, the memories it was built from. Only a
   row the worker wrote (its `actor`) is served: a row a caller writes to the key reads as
   no profile (`pending`), whatever its tags, and the worker rebuilds over it unless it is
-  pinned or locked.
+  pinned, locked or labelled `high`.
 - **Sources.** The user's current `semantic`, `preference` and `decision` facts, under the
   same filter as the free-text fold: never a `high` row, a duplicate (its canonical row
   counts), a fact about someone else (`about:other`), a protected attribute or a stored

@@ -1,5 +1,6 @@
-"""The in-place redaction of one historical memory version, and every derived
-copy of its text.
+"""The in-place redaction of a historical memory version, of every profile
+version built from that memory (live heads included), and of every derived copy
+of their text.
 
 A redaction replaces content bytes and keeps rows, so audit, history and
 lineage still see that a version existed, who wrote it and when. What holds

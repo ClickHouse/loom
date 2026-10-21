@@ -16,7 +16,11 @@ gets an all-null profile without a model call.
 A pass reaches namespaces in (org, namespace) order from where the last one
 stopped (the pass cursor), and each gets an equal share of the pass's budget.
 A namespace with nothing to build spends none of it, so the pass reads on
-until its budget is spent or it has reached every namespace. Past half of
+until its budget is spent or it has reached every namespace. The cursor moves
+past a namespace before its work, so one that keeps failing is tried again when
+the rotation comes back to it, never on every pass. The worker reads idle only
+after a pass that came round the rotation and took no user: a user taken but
+not written may leave others behind in the scan list. Past half of
 `structured_profile_max_pass_seconds` it takes no more users, which leaves the
 build in flight the second half to finish. A user whose build failed is
 skipped for a while, longer after each failure, and so is a namespace whose
@@ -432,9 +436,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         # The pass takes no user in the second half of its deadline, which leaves the
         # last build that half to finish in.
         stop_at = time.monotonic() + settings.structured_profile_max_pass_seconds / 2
-        # Namespaces reached this pass. Pages are read from the last one reached until
-        # the budget is spent or the rotation comes back round: a namespace with
-        # nothing to build spends no budget, so the namespaces after it still get their turn.
+        # A namespace with nothing to build spends no budget, so read on to the next page.
         reached: set[tuple[str, str]] = set()
         # Namespaces that used their whole share: the budget others left goes to them,
         # from the users their scan already found.
@@ -442,10 +444,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         after = _cursor()
         wrapped = False
         while budget > 0 and not wrapped and not _out_of_time(stop_at):
-            # Every namespace reached can build at least once, so a page holds at most
-            # `budget`. A namespace backing off (its scan or its schema failed) waits
-            # like a user does, left out in SQL so the limit counts only namespaces
-            # this pass can run.
+            # Backing-off namespaces are left out in SQL so the limit counts only runnable ones.
             rows = await profile_schemas.list_active(
                 exclude_orgs=off,
                 after=after,
@@ -468,9 +467,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
                 pass_context.check_stop()
                 result.namespaces_reached += 1
                 pass_context.set_namespace(schema.namespace)
-                # The cursor moves on before the namespace's work, so one that keeps
-                # failing is tried again when the rotation comes back to it, never on
-                # every pass.
+                # Move the cursor first so a namespace that keeps failing waits for the rotation.
                 pass_context.set_cursor(json.dumps([schema.org, schema.namespace]))
                 limit = min(share, budget)
                 users = await _scan(schema, result, limit)
@@ -487,9 +484,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             users = _take(schema, budget) or []
             budget -= len(users)
             await _build_users(schema, users, result, stop_at)
-        # Idle only when the rotation came round and the pass took no user: a user
-        # taken but not written (current, sources moved, refused) may leave others
-        # behind in the scan list. A pass that took none reached every namespace it read.
+        # Idle only after a full rotation that took no user.
         took_none = budget == max_users
         if wrapped and took_none and not result.errors and not _out_of_time(stop_at):
             pass_context.mark_idle()

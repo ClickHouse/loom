@@ -178,15 +178,18 @@ class ProfileStructuredOutput(BaseModel):
     # Every property of the schema, null where the memories do not settle it ({} under
     # `no_schema`).
     profile: dict[str, Any] = {}
-    # When the profile was built; None while pending.
+    # When the profile was built; None when no row holds it (pending, or ready for a user
+    # with no facts).
     built_at: datetime | None = None
-    # The memory row that holds the profile, whose history is the profile's history.
+    # The memory row that holds the profile, whose history is the profile's history; empty
+    # when no row holds it (pending, or ready for a user with no facts).
     memory_id: str = ""
-    # The row's version, higher for each rebuild; 0 while pending.
+    # The row's version, higher for each rebuild; 0 when no row holds it (pending, or ready
+    # for a user with no facts).
     version: int = 0
     # The same version as a decimal string, exact for a JavaScript caller (the number is
     # above 2^53, which JSON.parse rounds): send this one to memory.delete_version. Empty
-    # while pending.
+    # when no row holds it (pending, or ready for a user with no facts).
     version_text: str = ""
     # The hash of the schema the namespace has now.
     schema_sha256: str = ""
