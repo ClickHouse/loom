@@ -7,6 +7,7 @@ Skips without LOOM_BASE_URL."""
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -253,6 +254,7 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     nonce = _nonce()
     turn = {"conversation_id": "c9", "message_id": "m9"}
     content = f"The renewal note {nonce}."
+    before = datetime.now(UTC) - timedelta(minutes=5)
     saved = _chat_ok(
         gw,
         "alice",
@@ -266,6 +268,8 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
         ("c9", "m9", "assistant")
     ], rows
     assert nonce in rows[0]["content_excerpt"], rows
+    saved_at = datetime.fromisoformat(rows[0]["ts"].replace("Z", "+00:00"))
+    assert (saved_at.tzinfo and saved_at or saved_at.replace(tzinfo=UTC)) >= before, rows
     status = {**mine, "message_ids": ["m9", "m8"]}
     assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]
     search = {"user_id": "alice", "query": nonce}
