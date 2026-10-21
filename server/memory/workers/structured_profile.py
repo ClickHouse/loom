@@ -72,15 +72,36 @@ WORKER_ACTOR = "process:structured-profile-worker"
 # comes first.
 SCAN_FACTOR = 10  # not a setting: the scan's shape, sized with the scan-cost measurement
 
+
+@dataclass(frozen=True)
+class _Wait:
+    """A failed build or scan waiting to be retried."""
+
+    # Monotonic time it may be retried.
+    until: float
+    # Its last wait, doubled by the next failure.
+    wait: float
+    # The schema hash that failed; a namespace's wait ends with a new hash.
+    schema_sha256: str = ""
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    """What a refused build saw, held until it lapses."""
+
+    digest: str
+    profile_version: int
+    # Monotonic time it lapses.
+    lapses: float
+
+
 # Kept in this process only, so each starts over when the worker lease moves.
-# (org, namespace, user_id) -> (monotonic time it may be retried, its last wait).
-_backoff: dict[tuple[str, str, str], tuple[float, float]] = {}
-# (org, namespace) -> (monotonic time it may be retried, its last wait, the schema
-# hash that failed): a namespace whose scan or schema failed. A new hash ends it.
-_namespace_backoff: dict[tuple[str, str], tuple[float, float, str]] = {}
-# (org, namespace, user_id) -> (digest, profile row version, monotonic time it lapses):
-# what a refused build saw.
-_refused: dict[tuple[str, str, str], tuple[str, int, float]] = {}
+# (org, namespace, user_id) -> the user's wait after a failed build.
+_backoff: dict[tuple[str, str, str], _Wait] = {}
+# (org, namespace) -> the wait of a namespace whose scan or schema failed.
+_namespace_backoff: dict[tuple[str, str], _Wait] = {}
+# (org, namespace, user_id) -> what the user's refused build saw.
+_refused: dict[tuple[str, str, str], _Refusal] = {}
 
 
 @dataclass
@@ -208,22 +229,23 @@ def _next_wait(wait: float) -> float:
 
 
 def _note_failure(key: tuple[str, str, str]) -> None:
-    _, wait = _backoff.get(key, (0.0, 0.0))
-    wait = _next_wait(wait)
-    _backoff[key] = (time.monotonic() + wait, wait)
+    last = _backoff.get(key)
+    wait = _next_wait(last.wait if last else 0.0)
+    _backoff[key] = _Wait(time.monotonic() + wait, wait)
 
 
 def _note_namespace_failure(org: str, namespace: str, schema_sha256: str) -> None:
-    _, wait, sha = _namespace_backoff.get((org, namespace), (0.0, 0.0, ""))
-    wait = _next_wait(wait if sha == schema_sha256 else 0.0)
-    _namespace_backoff[(org, namespace)] = (time.monotonic() + wait, wait, schema_sha256)
+    last = _namespace_backoff.get((org, namespace))
+    same_schema = last is not None and last.schema_sha256 == schema_sha256
+    wait = _next_wait(last.wait if same_schema else 0.0)
+    _namespace_backoff[(org, namespace)] = _Wait(time.monotonic() + wait, wait, schema_sha256)
 
 
 def namespaces_waiting() -> list[tuple[str, str, str]]:
     """(org, namespace, schema hash) of each namespace still backing off."""
     now = time.monotonic()
     return sorted(
-        (o, n, sha) for (o, n), (until, _, sha) in _namespace_backoff.items() if until > now
+        (o, n, w.schema_sha256) for (o, n), w in _namespace_backoff.items() if w.until > now
     )
 
 
@@ -232,14 +254,14 @@ def _prune() -> None:
     old to use), so the maps hold only what a pass may still read."""
     now = time.monotonic()
     cap = settings.structured_profile_backoff_cap_seconds
-    for key, (until, _) in list(_backoff.items()):
-        if until + cap < now:
+    for key, w in list(_backoff.items()):
+        if w.until + cap < now:
             del _backoff[key]
-    for space, (until, _, _) in list(_namespace_backoff.items()):
-        if until + cap < now:
+    for space, w in list(_namespace_backoff.items()):
+        if w.until + cap < now:
             del _namespace_backoff[space]
-    for key, (_, _, lapses) in list(_refused.items()):
-        if lapses <= now:
+    for key, refusal in list(_refused.items()):
+        if refusal.lapses <= now:
             del _refused[key]
     for space, scanned in list(_scans.items()):
         if now - scanned.scanned_at > settings.structured_profile_scan_max_age_seconds:
@@ -250,9 +272,7 @@ def backing_off(org: str, namespace: str) -> tuple[str, ...]:
     """Users of the namespace whose last build failed and who are still waiting."""
     now = time.monotonic()
     waiting = [
-        u
-        for (o, n, u), (until, _) in _backoff.items()
-        if (o, n) == (org, namespace) and until > now
+        u for (o, n, u), w in _backoff.items() if (o, n) == (org, namespace) and w.until > now
     ]
     return tuple(sorted(waiting))
 
@@ -261,9 +281,9 @@ def refused_at(org: str, namespace: str) -> dict[str, tuple[str, int]]:
     """User -> the (digest, profile version) their refused build saw, while it holds."""
     now = time.monotonic()
     return {
-        u: (digest, version)
-        for (o, n, u), (digest, version, lapses) in _refused.items()
-        if (o, n) == (org, namespace) and lapses > now
+        u: (refusal.digest, refusal.profile_version)
+        for (o, n, u), refusal in _refused.items()
+        if (o, n) == (org, namespace) and refusal.lapses > now
     }
 
 
@@ -304,7 +324,7 @@ async def _build_users(
             result.refused += 1
             log.info("structured profile refused for %s/%s: %s", schema.namespace, user_id, e)
             lapses = time.monotonic() + settings.structured_profile_refusal_retry_seconds
-            _refused[key] = (e.digest, e.profile_version, lapses)
+            _refused[key] = _Refusal(e.digest, e.profile_version, lapses)
             continue
         except Exception as e:  # one user's build must not stop the pass
             result.errors += 1

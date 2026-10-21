@@ -158,7 +158,7 @@ The user's structured profile and whether it is current.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | `ready` (current), `stale` (memories or the schema changed since the build), `pending` (not built yet, or the user has no facts to build from) or `no_schema` (the namespace has none, or its stored one no longer parses). |
+| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | `ready` (current; every property null for a user whose facts are all gone), `stale` (memories or the schema changed since the build), `pending` (not built yet) or `no_schema` (the namespace has none, or its stored one no longer parses). |
 | `profile` | `dict[str, Any]` | Every property of the schema, null where the memories do not settle it ({} under `no_schema`). |
 | `built_at` | `datetime \| None` | When the profile was built; None while pending. |
 | `memory_id` | `str` | The memory row that holds the profile, whose history is the profile's history. |

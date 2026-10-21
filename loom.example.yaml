@@ -2654,9 +2654,8 @@ settings:
 
   # --- structured profiles ---
 
-  # Keep each user's structured profile (memory_type='profile') current in the shape
-  # `profile_schema.set` gives the namespace. LLM calls, only for a namespace with a
-  # schema: setting one is the opt-in. [restart]
+  # Run the worker that builds each user's structured profile in the namespace's schema
+  # (LLM calls, only where `profile_schema.set` set one). [restart]
   # structured_profile_enabled: true
 
   # Seconds between structured profile passes. Above 0. [restart]
@@ -2678,9 +2677,8 @@ settings:
   # share it equally, and the pass reads on while budget is left. At least 1. [live]
   # structured_profile_max_users_per_pass: 20
 
-  # Seconds a structured profile pass may run before the supervisor abandons it. The
-  # pass takes no user in the second half, so the build in flight has that half to
-  # finish, and the users not reached wait for the next pass. Above 0. [restart]
+  # Seconds a structured profile pass may run before the supervisor abandons it; it
+  # takes no user in the second half. Above 0. [restart]
   # structured_profile_max_pass_seconds: 600.0
 
   # Memories read into one structured profile build, highest confidence then newest
@@ -2691,25 +2689,20 @@ settings:
   # change or a deleted source skips this wait. 0 rebuilds on the next pass. [live]
   # structured_profile_cooldown_seconds: 600
 
-  # Seconds a user whose structured profile build failed waits before the first retry;
-  # each further failure doubles the wait. The retry comes at the first namespace scan
-  # after the wait ends: at most the wait plus `structured_profile_scan_max_age_seconds`
-  # after the failure. Also the first wait of a namespace whose scan or stored schema
-  # failed. Above 0. [live]
+  # Seconds a user or namespace whose structured profile build failed waits before the
+  # first retry; each further failure doubles it. Above 0. [live]
   # structured_profile_backoff_base_seconds: 300
 
   # Longest wait, in seconds, of a user or namespace whose structured profile build
   # keeps failing. Above 0. [live]
   # structured_profile_backoff_cap_seconds: 21600
 
-  # Seconds after which a user whose profile row refused the structured profile write (a
-  # lock, a pin, a 4xx) is tried again even when nothing changed, so a lock that ran out
-  # without a write does not hold the profile back. Above 0. [live]
+  # Seconds before a structured profile build its profile row refused (a lock, a pin, a
+  # 4xx) is tried again with nothing changed. Above 0. [live]
   # structured_profile_refusal_retry_seconds: 21600
 
-  # Seconds a namespace's list of users behind serves the structured profile passes
-  # before the namespace is scanned again; a complete list that drained waits this long
-  # before the next scan. Above 0. [live]
+  # Seconds a namespace's scan for users behind their structured profile serves later
+  # passes before it is run again. Above 0. [live]
   # structured_profile_scan_max_age_seconds: 600
 
   # `memory_key` of the structured profile row. [restart]

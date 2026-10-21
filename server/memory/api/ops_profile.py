@@ -100,7 +100,7 @@ profile_schema_set = Operation(
     input_model=ProfileSchemaSetInput,
     output_model=ProfileSchemaOutput,
     handler=handle_profile_schema_set,
-    idempotent=True,  # the same schema again changes nothing a reader sees
+    idempotent=True,  # the same schema again keeps its hash, so no profile goes stale
     required_role=Role.ADMIN,
     audit=True,
 )

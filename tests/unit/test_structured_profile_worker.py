@@ -3,6 +3,7 @@ which orgs and users it passes over, and what it never writes."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from collections.abc import Callable, Iterator
@@ -253,15 +254,15 @@ async def test_a_failed_build_is_counted_and_backs_off_until_it_succeeds(
     assert key not in world["built"] and result.errors == 0
 
     # Each failure doubles the wait, up to the cap.
-    first = w._backoff[key][1]
+    first = w._backoff[key].wait
     w._note_failure(key)
-    assert w._backoff[key][1] == 2 * first
+    assert w._backoff[key].wait == 2 * first
     for _ in range(20):
         w._note_failure(key)
-    assert w._backoff[key][1] == settings.structured_profile_backoff_cap_seconds
+    assert w._backoff[key].wait == settings.structured_profile_backoff_cap_seconds
 
     # Once the wait is over the user is built again, and the success clears it.
-    w._backoff[key] = (0.0, w._backoff[key][1])
+    w._backoff[key] = dataclasses.replace(w._backoff[key], until=0.0)
     world["fail"] = set()
     world["built"].clear()
     w._scans.clear()  # and the last scan is old enough to run again
@@ -287,8 +288,7 @@ async def test_a_refused_build_waits_then_is_tried_again_when_the_refusal_lapses
     world["built"].clear()
     await w.run_pass(_cfg(("o2", "a")))
     assert key not in world["built"]
-    digest, version, _ = w._refused[key]
-    w._refused[key] = (digest, version, 0.0)
+    w._refused[key] = dataclasses.replace(w._refused[key], lapses=0.0)
     w._scans.clear()  # and the last scan is old enough to run again
     await w.run_pass(_cfg(("o2", "a")))
     assert key in world["built"] and key not in w._refused
@@ -298,10 +298,10 @@ def test_waits_that_are_over_are_pruned() -> None:
     w._backoff.clear()
     w._refused.clear()
     cap = settings.structured_profile_backoff_cap_seconds
-    w._backoff[("o", "n", "old")] = (-2 * cap, cap)
-    w._backoff[("o", "n", "new")] = (1e18, 300.0)
-    w._refused[("o", "n", "lapsed")] = ("d", 1, 0.0)
-    w._refused[("o", "n", "held")] = ("d", 1, 1e18)
+    w._backoff[("o", "n", "old")] = w._Wait(until=-2 * cap, wait=cap)
+    w._backoff[("o", "n", "new")] = w._Wait(until=1e18, wait=300.0)
+    w._refused[("o", "n", "lapsed")] = w._Refusal(digest="d", profile_version=1, lapses=0.0)
+    w._refused[("o", "n", "held")] = w._Refusal(digest="d", profile_version=1, lapses=1e18)
     w._prune()
     assert list(w._backoff) == [("o", "n", "new")] and list(w._refused) == [("o", "n", "held")]
     w._backoff.clear()
@@ -622,8 +622,8 @@ async def test_a_failing_namespace_backs_off_without_keeping_the_pass_busy(
     result = await w.run_pass(cfg)
     assert world["scans"] == 1 and result.errors == 0 and ctx.idle
     # Once its wait is over it is scanned again.
-    _, wait, sha = w._namespace_backoff[("o2", "a")]
-    w._namespace_backoff[("o2", "a")] = (0.0, wait, sha)
+    space = ("o2", "a")
+    w._namespace_backoff[space] = dataclasses.replace(w._namespace_backoff[space], until=0.0)
     await w.run_pass(cfg)
     assert world["scans"] == 2
 

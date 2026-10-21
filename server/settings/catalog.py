@@ -2212,9 +2212,8 @@ class MemorySettings(BaseModel):
     profile_consolidation_label: str = "consolidated_profile"
 
     # ---- structured profiles ----
-    # Keep each user's structured profile (memory_type='profile') current in the
-    # shape `profile_schema.set` gives the namespace. LLM calls, only for a
-    # namespace with a schema: setting one is the opt-in.
+    # Run the worker that builds each user's structured profile in the namespace's
+    # schema (LLM calls, only where `profile_schema.set` set one).
     structured_profile_enabled: bool = True
     # Seconds between structured profile passes. Above 0.
     structured_profile_interval_seconds: int = Field(default=120, gt=0)
@@ -2232,9 +2231,8 @@ class MemorySettings(BaseModel):
     # Structured profiles one pass builds; the namespaces in each page the pass reads
     # share it equally, and the pass reads on while budget is left. At least 1.
     structured_profile_max_users_per_pass: Annotated[int, LIVE] = Field(default=20, ge=1)
-    # Seconds a structured profile pass may run before the supervisor abandons it. The
-    # pass takes no user in the second half, so the build in flight has that half to
-    # finish, and the users not reached wait for the next pass. Above 0.
+    # Seconds a structured profile pass may run before the supervisor abandons it;
+    # it takes no user in the second half. Above 0.
     structured_profile_max_pass_seconds: float = Field(default=600.0, gt=0)
     # Memories read into one structured profile build, highest confidence then newest
     # first. At least 1.
@@ -2242,22 +2240,17 @@ class MemorySettings(BaseModel):
     # Seconds after a structured profile is built before new memories rebuild it; a
     # schema change or a deleted source skips this wait. 0 rebuilds on the next pass.
     structured_profile_cooldown_seconds: Annotated[int, LIVE] = Field(default=600, ge=0)
-    # Seconds a user whose structured profile build failed waits before the first
-    # retry; each further failure doubles the wait. The retry comes at the first
-    # namespace scan after the wait ends: at most the wait plus
-    # `structured_profile_scan_max_age_seconds` after the failure. Also the first wait
-    # of a namespace whose scan or stored schema failed. Above 0.
+    # Seconds a user or namespace whose structured profile build failed waits before
+    # the first retry; each further failure doubles it. Above 0.
     structured_profile_backoff_base_seconds: Annotated[int, LIVE] = Field(default=300, gt=0)
     # Longest wait, in seconds, of a user or namespace whose structured profile build
     # keeps failing. Above 0.
     structured_profile_backoff_cap_seconds: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
-    # Seconds after which a user whose profile row refused the structured profile
-    # write (a lock, a pin, a 4xx) is tried again even when nothing changed, so a lock
-    # that ran out without a write does not hold the profile back. Above 0.
+    # Seconds before a structured profile build its profile row refused (a lock, a
+    # pin, a 4xx) is tried again with nothing changed. Above 0.
     structured_profile_refusal_retry_seconds: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
-    # Seconds a namespace's list of users behind serves the structured profile passes
-    # before the namespace is scanned again; a complete list that drained waits this
-    # long before the next scan. Above 0.
+    # Seconds a namespace's scan for users behind their structured profile serves
+    # later passes before it is run again. Above 0.
     structured_profile_scan_max_age_seconds: Annotated[int, LIVE] = Field(default=600, gt=0)
     # `memory_key` of the structured profile row.
     structured_profile_label: str = "structured_profile"
