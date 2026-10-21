@@ -4,8 +4,9 @@ here against the same ClickHouse, narrowed to the test's namespace) POSTing
 signed events to a receiver on 127.0.0.1.
 
 The server must accept http to 127.0.0.1 (LOOM_MEMORY_WEBHOOK_ALLOW_HTTP=true,
-LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS=127.0.0.1, as CI's integration job sets); a
-server that refuses the receiver's URL skips the delivery tests."""
+LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS=127.0.0.1, as CI's integration job sets for the
+server and the tests). A server that refuses the receiver's URL skips the delivery
+tests, unless the tests run with that allowlist too: then the refusal fails them."""
 
 from __future__ import annotations
 
@@ -104,9 +105,12 @@ class Ops:
             json={"org": ORG, "namespace": self.ns, "url": url, "secret_ref": REF, **body},
             headers={"authorization": f"Bearer {self.token}"},
         )
-        if r.status_code == 422 and "url refused" in r.text:
+        # A run configured as CI is (the allowlist in this process's environment, shared
+        # with the server) fails on a refusal: it can only be a regression.
+        configured = settings.memory_webhook_allow_http and settings.memory_webhook_private_hosts
+        if r.status_code == 422 and "url refused" in r.text and not configured:
             pytest.skip(
-                "the server refuses http to 127.0.0.1: start it with "
+                "the server refuses http to 127.0.0.1: start it and the tests with "
                 "LOOM_MEMORY_WEBHOOK_ALLOW_HTTP=true LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS=127.0.0.1"
             )
         assert r.status_code == 200, r.text

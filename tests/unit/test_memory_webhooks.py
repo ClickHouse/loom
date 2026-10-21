@@ -392,7 +392,7 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
 
     live = _memory_row("k", tags=["tea"]) if existing else None
     row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
-    row |= {"confidence": 0.8, "valid_at": None}
+    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None}
     w = SimpleNamespace(had_existing_row=existing, restated=restated, memory_row=row, existing=live)
     await _announce_set(w)  # type: ignore[arg-type]
     assert announced == ([[(event, row)]] if event else [])
@@ -406,6 +406,7 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
         {"expires_at": datetime.now(UTC) + timedelta(seconds=60)},
         {"confidence": 0.5},
         {"valid_at": NOW},
+        {"memory_type": "semantic"},
     ],
 )
 async def test_memory_set_of_the_same_value_with_new_fields_is_revised(
@@ -414,11 +415,26 @@ async def test_memory_set_of_the_same_value_with_new_fields_is_revised(
     from server.memory.app.set_commit import _announce_set
 
     row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
-    row |= {"confidence": 0.8, "valid_at": None, **change}
+    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None, **change}
     live = _memory_row("k", tags=["tea"])
     w = SimpleNamespace(had_existing_row=True, restated=True, memory_row=row, existing=live)
     await _announce_set(w)  # type: ignore[arg-type]
     assert announced == [[("memory.revised", row)]]
+
+
+@pytest.mark.asyncio
+async def test_memory_set_restatement_compares_at_the_stored_precision(
+    announced: list[Any],
+) -> None:
+    from server.memory.app.set_commit import _announce_set
+
+    # The live row as ClickHouse reads it back: Float32 confidence, whole-second DateTime.
+    live = _memory_row("k", tags=["tea"], confidence=0.800000011920929, valid_at=NOW)
+    row = {"memory_key": "k", "version": 42, "memory_type": "episodic", "tags": ["tea"]}
+    row |= {"expires_at": None, "confidence": 0.8, "valid_at": NOW.replace(microsecond=250000)}
+    w = SimpleNamespace(had_existing_row=True, restated=True, memory_row=row, existing=live)
+    await _announce_set(w)  # type: ignore[arg-type]
+    assert announced == []
 
 
 @pytest.mark.asyncio

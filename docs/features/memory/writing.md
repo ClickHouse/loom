@@ -269,16 +269,18 @@ the table.
 | Event               | Sent after                                                                                                                                                                                                                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row, or a proposal is accepted                                                                                                                                                                                            |
-| `memory.revised`    | a new value, tags, expiry, confidence or `valid_at` of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes                                   |
+| `memory.revised`    | a new value, type, tags, expiry, confidence or `valid_at` of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes                             |
 | `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` for the side it tombstones, `blacklist.add` for each live row its sweep tombstones, `namespace.rollback` back to a tombstone or removing a key born later, an expiry that tombstones |
 | `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                                                                                            |
 | `memory.redacted`   | `memory.redact` scrubs a historical version                                                                                                                                                                                                                                                |
 | `memory.erased`     | an `erasure.request` saga completes                                                                                                                                                                                                                                                        |
 
 Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
-events. The same value said again with the same tags, expiry, confidence and `valid_at`
-(a restatement, which only reinforces the row) sends none, on `memory.set` and
-`memory.bulk_set` alike; the same value with any of those changed is `memory.revised`. In one `memory.bulk_set`, a key that an
+events. A `memory.set` of the same value with the same type, tags, expiry, confidence
+and `valid_at` (a restatement, which only reinforces the row) sends none; the same value
+with any of those changed is `memory.revised`. `memory.bulk_set` skips any entry whose
+value equals the live row's: it writes no version and sends no event, even when the
+entry's tags, expiry or confidence differ. In one `memory.bulk_set`, a key that an
 earlier entry of the batch wrote is `memory.revised`; if the batch's lookup of live keys
 fails, its revisions are announced as `memory.written`. A merge (`merged_into_key`) writes
 no version at your key and sends no event; neither does a dry run or a refused write.

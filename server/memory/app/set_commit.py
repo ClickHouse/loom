@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -248,26 +249,35 @@ async def _lift_after_insert(
     return w.version
 
 
+def _whole_seconds(dt: datetime | None) -> datetime | None:
+    """`dt` as the DateTime column stores it: naive UTC, whole seconds."""
+    dt = to_naive_utc(dt)
+    return dt.replace(microsecond=0) if dt else None
+
+
 def _only_reinforces(w: _SetWrite) -> bool:
-    """The same value said again with the same tags, expiry, confidence and valid_at:
-    the new version only reinforces the live row."""
+    """The same value said again with the same type, tags, expiry, confidence and
+    valid_at: the new version only reinforces the live row. The live row reads back at its
+    columns' precision (Float32 confidence, whole-second DateTime), so each field is
+    compared at that precision."""
     if not w.restated:
         return False
     row, existing = w.memory_row, w.existing
     return (
-        sorted(row.get("tags") or []) == sorted(existing.tags or [])
-        and to_naive_utc(row.get("expires_at")) == to_naive_utc(existing.expires_at)
-        and row.get("confidence") == existing.confidence
-        and to_naive_utc(row.get("valid_at")) == to_naive_utc(existing.valid_at)
+        row.get("memory_type") == existing.memory_type
+        and sorted(row.get("tags") or []) == sorted(existing.tags or [])
+        and _whole_seconds(row.get("expires_at")) == _whole_seconds(existing.expires_at)
+        and math.isclose(float(row.get("confidence") or 0.0), existing.confidence, rel_tol=1e-6)
+        and _whole_seconds(row.get("valid_at")) == _whole_seconds(existing.valid_at)
     )
 
 
 async def _announce_set(w: _SetWrite) -> None:
     """The row just inserted, to the namespace's webhooks: a new key is written, a new
-    value, tags, expiry, confidence or valid_at of one is revised, and the same row said
-    again (a reinforcement) is no change to announce. A proposal is not served, so it is
-    announced when `memory.proposal_decide` accepts it. Called once the row is in, even
-    when the rest of the write fails, so the event is not lost: a retry of the same
+    value, type, tags, expiry, confidence or valid_at of one is revised, and the same row
+    said again (a reinforcement) is no change to announce. A proposal is not served, so
+    it is announced when `memory.proposal_decide` accepts it. Called once the row is in,
+    even when the rest of the write fails, so the event is not lost: a retry of the same
     write is a reinforcement and announces nothing."""
     if _only_reinforces(w) or w.memory_row.get("status") == "proposed":
         return
