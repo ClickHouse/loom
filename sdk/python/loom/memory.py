@@ -1726,6 +1726,10 @@ class MemoryClient:
             payload["confidence"] = confidence
         if reason:
             payload["reason"] = reason
+        # Inside a run_scope the revision belongs to the run, as every other write does.
+        run_id = current_run_id()
+        if run_id:
+            payload["run_id"] = run_id
         return await self._agent.transport.post("/v1/memory.update", payload)
 
     async def share(

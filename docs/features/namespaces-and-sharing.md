@@ -125,7 +125,7 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 
 [`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns how to use Loom, written for a model: the
 `loom` skill in `skills/loom/`, as `part` `skill` (the loop and the rules), `reference` (every plane with its ops) or
-`all`. It is the same for every caller, so any token may read it, including one narrowed to a user and an end user's.
+`all`. It is the same for every caller, so any viewer token may read it, including one narrowed to a user, and an end user's over HTTP.
 
 ## Throwaway namespaces
 

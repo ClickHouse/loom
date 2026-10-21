@@ -60,12 +60,13 @@ change between releases, and ops MCP does not serve with ‡.
    `context.pack`, and keep it off `memory.search`‡ and `memory.ask`, where
    a `run_id` filters to the run's own rows (over HTTP, the `X-Loom-Run-Id`
    header labels a read without filtering it). In Python,
-   the typed helpers inside `agent.run_scope(...)` carry the run for you,
-   except `agent.memory.update`, which sends none: revise through
-   `agent.call("memory.update", {"agent": "*", ...})`. A raw `agent.call`
-   in the scope gets the run only on writes (working memory: `set` and
-   `append`), so pass `run_id` yourself on its other working-memory calls
-   and on `context.pack`; in TypeScript,
+   the typed helpers inside `agent.run_scope(...)` carry the run for you.
+   A raw `agent.call` in the scope gets it only on `memory.set`, `pin`,
+   `update`, `set_from_messages`, `bulk_set`, `link`, `observe.record` and
+   `working_memory.set` and `append`, so pass `run_id` yourself on any
+   other call that takes one (`context.pack`, working-memory reads,
+   `decision.record`†, `context.offload`†, `session.brief_save`†); in
+   TypeScript,
    pass `runId` in the scope argument of writes, working-memory calls and
    `contextPack`, never of `recall` or `ask`; over MCP, the connection's own
    run labels reads.
@@ -154,6 +155,8 @@ cover the loop:
   memory stack, and `mentor.brief` your own usage, so an `agent: "*"`
   there finds none of yours (`mentor.brief` then reports the namespace's
   most active writer instead).
+  `memory.list` also compares `user_id` and `session_id` exactly (`-` when
+  omitted): send `"*"` for those too to list every row.
 - **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
   read narrows it to those rows. `search.query`† has none of them; to read
   one user's rows, use `memory.ask` with `user_id`.
