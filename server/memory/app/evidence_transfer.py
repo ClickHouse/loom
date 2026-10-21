@@ -227,11 +227,10 @@ async def handle_memory_export_evidence(
 async def _without_held_evidence(
     input: MemoryExportEvidenceInput, items: list[Any], stored_held: list[bool] | None = None
 ) -> list[Any]:
-    """`items` without the ones not exported: those `okf_evidence.evidence_is_high` keeps
-    back, given which of the keys they are linked to were ever 'high', and those that
-    `stored_held` marks (a chunk stored without a vector). With `include_high` every item
-    is exported, and each one that would have been kept back is audited as a key read of a
-    'high' row is."""
+    """The `items` that are exported: all but those `okf_evidence.evidence_is_high` keeps
+    back, given which of their linked keys were ever 'high', and those `stored_held` marks
+    (a chunk stored without a vector). With `include_high` every item is exported, and each
+    one that would have been kept back is audited as a key read of a 'high' row is."""
     if not items:
         return items
     import server.memory.store as memory_repo
