@@ -227,24 +227,53 @@ def test_no_request_field_reaches_another_users_personal_collection_or_widens_a_
     assert r.status_code == 403
 
 
+def test_a_long_document_is_chunked_whole_and_its_tail_is_found(gw: Gateway) -> None:
+    tail = _nonce()
+    body = ("The renewal clause covers notice periods and pricing. " * 380) + f"Final note {tail}."
+    assert len(body) > 20_000
+    gw.ok(
+        "alice",
+        "knowledge.upsert",
+        {"namespace": "@me", "source_uri": "doc/long", "content": body},
+    )
+    rows = gw.ok("alice", "knowledge.list", {"namespace": "@me", "uri_prefix": ["doc/long"]})[
+        "rows"
+    ]
+    assert rows and rows[0]["chunk_count"] > 10
+    for mode in ("lexical", "hybrid"):
+        hits = gw.ok(
+            "alice",
+            "knowledge.search",
+            {"namespace": "@me", "query": tail, "search_mode": mode, "namespace_scope": "this"},
+        )["results"]
+        assert hits and hits[0]["source_uri"] == "doc/long" and tail in hits[0]["content"], mode
+
+
 def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gateway) -> None:
     nonce = _nonce()
     turn = {"conversation_id": "c9", "message_id": "m9"}
+    content = f"The renewal note {nonce}."
     saved = _chat_ok(
         gw,
         "alice",
         "conversation.save_message",
-        {**turn, "role": "assistant", "content": f"The renewal note {nonce}.", "user_id": "alice"},
+        {**turn, "role": "assistant", "content": content, "user_id": "alice"},
     )
     assert saved["indexed"] is True, saved
     mine = {"user_id": "alice", "conversation_id": "c9"}
     rows = _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"]
-    assert [r["message_id"] for r in rows] == ["m9"], rows
+    assert [(r["conversation_id"], r["message_id"], r["role"]) for r in rows] == [
+        ("c9", "m9", "assistant")
+    ], rows
+    assert nonce in rows[0]["content_excerpt"], rows
     status = {**mine, "message_ids": ["m9", "m8"]}
     assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]
     search = {"user_id": "alice", "query": nonce}
     hits = _chat_ok(gw, "alice", "conversation.search_saved_messages", search)["hits"]
     assert [h["message_id"] for h in hits] == ["m9"], hits
+    # The transcript ops refuse an end-user token: `@me` holds saved messages only.
+    append = {"thread_id": "c9", "role": "user", "content": "hi", "user_id": "alice"}
+    assert _chat(gw, "alice", "conversation.append", append).status_code == 403
     # Bob's `@me` is his own; naming Alice's collection or Alice is refused.
     bobs = {"user_id": "bob", "query": nonce}
     assert _chat_ok(gw, "bob", "conversation.search_saved_messages", bobs)["hits"] == []
@@ -257,6 +286,10 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
         agent="chat",
     )
     assert r.status_code == 403 and nonce not in r.text, r.text
+    # A personal collection records no transcript, so unsaving removes the turn.
+    unsaved = _chat_ok(gw, "alice", "conversation.unsave_message", {**turn, "user_id": "alice"})
+    assert unsaved["removed"] is True, unsaved
+    assert _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"] == []
 
 
 def _chat(gw: Gateway, user: str, op: str, payload: dict[str, Any]) -> httpx.Response:

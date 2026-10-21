@@ -54,31 +54,28 @@ flowchart LR
 
 ## Saved messages
 
-A chat's saved message is a turn of its conversation flagged for its user:
+A chat's saved message is a conversation turn flagged for its user:
 `conversation.save_message` saves one, `conversation.unsave_message` withdraws it,
 `conversation.list_saved_messages`, `conversation.saved_status` and
 `conversation.search_saved_messages` read them
 ([Saving single messages](../features/conversations-and-sessions.md#saving-single-messages)).
-The flag lives on the conversation rows, in the namespace that holds the conversation. A
-chat that keeps each end user's conversations in their personal collection calls these
-ops with `namespace: "@me"`; one that keeps them in its own namespace calls them with a
-token pinned to the user (`read_scope = own_user`). An end-user token is pinned the same
-way, so either way a save, a listing or a search acts as the token's user alone.
+The same five ops serve both ways a chat runs in front of Loom:
 
-A personal collection's documents are for what the user brings (an upload, an
-attachment), not for a copy of a chat turn. A saved message stays tied to its turn:
+- **A chat that records its conversations** in its own namespace calls them with a token
+  pinned to the user (`read_user_id`). Saving a turn the transcript holds flags it in
+  place, so the message is stored and embedded once; the transcript row decides its
+  owner, so two users never both save one turn, and compaction keeps a saved turn.
+- **A chat that signs end-user tokens** calls them with `namespace: "@me"`. The other
+  conversation ops refuse an end-user token (it is pinned to one user, and a thread has
+  no user axis to bound), so no transcript lives in a personal collection: a save there
+  stores the text the request sends as a saved-only row, and unsaving it removes the row.
 
-- **One copy of the text.** Saving a turn the transcript holds flags it in place, so the
-  message is stored and embedded once, and a client draws every turn's saved state from
-  one `conversation.saved_status` call.
-- **The turn's own rules.** The transcript row decides the owner, so two users never both
-  save one turn; a tombstoned turn, a system or tool turn and one whose text reads as a
-  credential are refused (`reason`), and compaction keeps a saved turn. A document is
-  chunked and embedded whatever its text holds.
-- **Without transcripts.** A save is stored when the namespace's transcript logging is
-  off, and unsaving a turn that exists only because of the save removes it.
-- **Erasure.** A user erasure takes the user's conversation rows, saved ones included,
-  with the rest of what they wrote.
+In both, a save is refused for a tombstoned turn, a system or tool turn and text that
+reads as a credential (`reason`); a body naming another user is refused (403); a client
+draws a conversation's saved state with one `conversation.saved_status` call; and a user
+erasure takes the user's conversation rows, saved ones included. The personal
+collection's documents are for what the user brings (an upload, a chat's attachment),
+which is chunked and embedded whatever its text holds.
 
 ## Identity
 
@@ -256,11 +253,11 @@ visible row's place on the page.
   one feature by building a second document store: chunking, lexical statistics,
   embedding retries and erasure twice, and documents that can never join a collection.
 - **Saved messages as documents in the personal collection** (`chat/<conversation>/<message>`
-  through `knowledge.upsert`). It needs no op of its own, but it copies each saved turn
-  into a second store with no link back to it: the turn's owner, tombstone, role and
-  credential checks do not apply, a client finds a conversation's saved state by listing
-  a URI prefix, and it serves only a chat that signs end-user tokens. Saved messages are
-  a flag on the conversation rows instead.
+  through `knowledge.upsert`). It needs no op of its own, but it serves only a chat that
+  signs end-user tokens, so a chat that records its conversations would need the
+  conversation ops anyway: two ways to save one message. A document gets no role or
+  credential check, and a client finds a conversation's saved state by listing a URI
+  prefix. Saved messages are conversation rows in both cases instead.
 - **One namespace per tenant with row-level ACLs.** Every read filters rows one by one and
   prunes nothing, and a move or a revoke rewrites every affected chunk row.
 - **An ACL key in the sort order.** A request's readable set is a union over its
