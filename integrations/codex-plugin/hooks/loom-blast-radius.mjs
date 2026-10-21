@@ -24,7 +24,7 @@ import {
   postBounded,
   readStdinJson,
   DIFF_ARGS,
-  redactDiff,
+  diffHeaders,
   resolveServerUrl,
   resolveToken,
   scheduleExit,
@@ -100,7 +100,7 @@ async function main() {
     {
       org: repo.org,
       namespace: repo.namespace,
-      diff: redactDiff(diff, 200_000, token),
+      diff: diffHeaders(diff, 200_000),
       depth: DEPTH,
       per_hop_limit: PER_HOP,
       consumer: "claude-code-blast",

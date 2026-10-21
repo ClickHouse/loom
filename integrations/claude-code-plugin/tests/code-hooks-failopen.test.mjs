@@ -356,7 +356,7 @@ test("shunt: a tracker search reaches tracker.duplicate_check redacted", async (
   assert.equal(check.body.title, "login fails password=[redacted]");
 });
 
-test("blast radius and test gate: the diff reaches the server redacted", async () => {
+test("blast radius and test gate: only the diff's paths and hunk headers reach the server", async () => {
   const { dir, tmp, transcript } = dirtySession();
   fs.appendFileSync(path.join(dir, "src/a.cpp"), 'const char* api_key = "s3cr3t-value";\n');
   // A user's diff settings (colour, an external tool, a textconv filter, other
@@ -389,8 +389,7 @@ test("blast radius and test gate: the diff reaches the server redacted", async (
     assert.ok(sent, `${op} not called: ${JSON.stringify(bodies.map((b) => b.url))}`);
     assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
     assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
-    assert.match(sent.body.diff, /api_key = "\[redacted\]"/, op);
-    assert.match(sent.body.diff, /int g\(\) \{ return 1; \}/, `${op} keeps the rest of the diff`);
+    assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
     assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
     assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
   }

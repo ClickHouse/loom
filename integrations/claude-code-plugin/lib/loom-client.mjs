@@ -702,19 +702,8 @@ const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----E
 const TOKEN_SHAPES_RE =
   /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
-// `:=` assigns; `::` is a scope operator (`PrivateKey::verify`), not an assignment.
-// A quoted value with no closing quote (cut off, as git cuts a hunk header's
-// context) goes to the end of its line.
-const SECRET_NAME = String.raw`\b[\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?`;
-const SECRET_VALUE = String.raw`("[^"]*"|'[^']*'|"[^"\n]*|'[^'\n]*|[^\s"'\\,;}]+)`;
-const SECRET_ASSIGNMENT_RE = new RegExp(String.raw`(${SECRET_NAME}\s*(?::=|=|:(?![:=]))\s*)${SECRET_VALUE}`, "gi");
-// A typed assignment (`api_key: str = "…"`): the pass above takes the type for
-// the value, so the value after the `=` that follows it goes too. `==` compares.
-// A literal value is matched; a call or a container (`= load("…")`) is not.
-const TYPED_SECRET_RE = new RegExp(
-  String.raw`(${SECRET_NAME}\s*:\s*\[redacted\][^=\n]{0,64}?[ \t]=(?!=)[ \t]*)${SECRET_VALUE}`,
-  "gi",
-);
+const SECRET_ASSIGNMENT_RE =
+  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
 const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
@@ -737,7 +726,6 @@ export function redactSecrets(text, token = resolveToken()) {
     .replace(PRIVATE_KEY_RE, "[redacted private key]")
     .replace(TOKEN_SHAPES_RE, "[redacted]")
     .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"))
-    .replace(TYPED_SECRET_RE, (_, name, value) => name + quoted(value, "[redacted]"))
     .replace(JWT_RE, "[redacted]")
     .replace(BEARER_RE, "$1 [redacted]")
     .replace(BASIC_AUTH_RE, "$1 [redacted]")
@@ -772,45 +760,40 @@ export const DIFF_ARGS = ["--no-ext-diff", "--no-color", "--no-textconv", "--src
 
 // A hunk header: its ranges, then the function context git appends to it.
 const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/s;
+// What may stand before a function's `(` in that context: a return type, a
+// scope-qualified name, template arguments. No quote, `=` or other punctuation,
+// so no assignment or literal can pass.
+const FUNCTION_HEAD_RE = /^[\w\s:<>,~&*.[\]]*$/;
 
-/** `redactSecrets` over a unified diff, cut to `max` chars. The file header
- *  lines (`diff --git` up to the first hunk) and each hunk header's ranges are
- *  kept as they are: they hold the paths and ranges the server parses, and a
- *  pattern that runs past a line end (a value after `KEY=`, an unterminated
- *  private key) would otherwise swallow them. The function context after a
- *  hunk header's ranges, and each hunk body on its own, are redacted, so a
- *  match never reaches past its hunk. Text before the first `diff --git` is
- *  redacted as a body. Redaction stops once `max` chars plus the redaction
- *  margin are built. */
-export function redactDiff(diff, max, token = resolveToken()) {
+/** The part of a unified diff that code.impact and code.test_gate read, cut to
+ *  `max` chars: each file's header lines (`diff --git` up to its first hunk) and
+ *  each hunk header's ranges. A hunk header keeps its function context up to the
+ *  first `(`, where the server finds the function's name, only when what stands
+ *  before it reads as a function head. The changed lines are left out, so nothing
+ *  in them is sent: a key, a password, or a value whose name is on an unchanged
+ *  line. */
+export function diffHeaders(diff, max) {
   const out = [];
   let built = 0;
-  let body = [];
-  let bodyChars = 0;
-  let inBody = true;
-  const emit = (text) => {
-    out.push(text);
-    built += text.length + 1;
-  };
-  const flush = () => {
-    if (body.length) emit(redactHead(body.join("\n"), max, token));
-    body = [];
-    bodyChars = 0;
-  };
+  let inFileHeader = false;
   for (const line of String(diff ?? "").split("\n")) {
-    if (built + bodyChars >= max + REDACT_MARGIN) break;
-    if (line.startsWith("diff --git ")) inBody = false;
+    if (built >= max) break;
+    let kept = null;
+    if (line.startsWith("diff --git ")) inFileHeader = true;
     const hunk = HUNK_HEADER_RE.exec(line);
-    if (hunk || !inBody) {
-      flush();
-      emit(hunk ? hunk[1] + redactSecrets(hunk[2], token) : line);
-      if (hunk) inBody = true;
-    } else {
-      body.push(line);
-      bodyChars += line.length + 1;
+    if (hunk) {
+      inFileHeader = false;
+      const open = hunk[2].indexOf("(");
+      const head = open < 0 ? null : hunk[2].slice(0, open);
+      kept = hunk[1] + (head !== null && FUNCTION_HEAD_RE.test(head) ? `${head}(` : "");
+    } else if (inFileHeader) {
+      kept = line;
+    }
+    if (kept !== null) {
+      out.push(kept);
+      built += kept.length + 1;
     }
   }
-  flush();
   return out.join("\n").slice(0, max);
 }
 
