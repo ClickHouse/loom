@@ -37,7 +37,9 @@ Every row carries five identity columns:
 Many operations also take `run_id` (default `-`) to scope a write or read to one task
 execution. The token fixes the org and the namespaces a caller may reach; the rest of the
 tuple travels in each request body. The SDKs bind `(org, namespace, agent)` when the
-client is constructed and pass `user_id`, `session_id` and `run_id` per call.
+client is constructed and pass `user_id`, `session_id` and `run_id` per call. In
+`memory.search`, `memory.ask` and `context.pack`, `-` in `user_id`, `session_id` or
+`run_id` means no filter: a search that names no run reads every run's rows.
 
 **Reads span every author.** A read defaults to `agent="*"`: every row of the namespace,
 whoever wrote it. Passing an `agent` only narrows. `user_id` and `session_id` on a read
