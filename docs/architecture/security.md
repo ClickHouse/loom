@@ -847,13 +847,14 @@ A worker pass is bounded:
   reads that agent again. A pass that labelled nothing leaves its cursor past that agent
   when its candidates, all in that agent, failed to apply, or when it found none and its
   last page had a key with no current row in that agent, the case of older versions
-  waiting for a merge. Such a key in an earlier agent on that page sorts before the
-  cursor, so it does not move the cursor past the agent it stopped in. So a row that fails every time, or a run of such versions, is read again when the
-  sweep comes back round to it. A pass whose last page was an ordinary one, even one that
-  crossed into the next agent, leaves its cursor at the agent it stopped in, and failures
-  in an earlier agent leave the cursor where the pass stopped. A cursor that names an agent
-  too long for its 512 characters, at or past it, is past its namespace (or org) instead, so
-  that agent's remaining rows wait until the sweep comes back round. The cursor, in
+  waiting for a merge. So a row that fails every time, or a run of such versions, is read
+  again when the sweep comes back round to it. Such a key in an earlier agent on that page
+  sorts before the cursor, so it does not move the cursor past the agent it stopped in. A
+  pass whose last page was an ordinary one, even one that crossed into the next agent,
+  leaves its cursor at the agent it stopped in, and failures in an earlier agent leave the
+  cursor where the pass stopped. A cursor that names an agent too long for its 512
+  characters, at or past it, is past its namespace (or org) instead, so that agent's
+  remaining rows wait until the sweep comes back round. The cursor, in
   `loom.worker_status`, holds the org, namespace and agent only, so it names no user or
   memory key that would outlive an erasure.
 - Its ClickHouse filter selects only the shapes in `LOOM_SENSITIVITY_SWEEP_SHAPES`
