@@ -17,7 +17,8 @@ compete with the single-part graph for the index cache; the last row reads the
 single-part graph again once they have.
 
 Needs no provider and no Loom server, only a ClickHouse you started for this. It writes
-the `vb_*` tables into `--database` and drops them at the end unless `--keep`. The run in
+the `vb_*` tables into `--database` (created if missing, left in place) and drops the
+tables at the end, failed runs included, unless `--keep`. The run in
 docs/architecture/clickhouse.md#why-there-is-no-vector-index (about 40 minutes and
 12 GiB of disk):
 
@@ -36,6 +37,7 @@ import uuid
 import clickhouse_connect
 
 TENANTS = [("big", 0.50), ("mid", 0.10), ("small", 0.01), ("tiny", 0.001)]
+TENANT_NAMES = [ns for ns, _ in TENANTS]
 # Predicates outside the sort key, by the per-mille of rows they admit.
 HASH_FILTERS = {"10pct": 100, "1pct": 10}
 KINDS = ("plain", "codes", "hnsw", "hnsw_part")
@@ -52,7 +54,7 @@ def ddl(name: str, dim: int, kind: str) -> str:
     partition = "toYYYYMM(created_at)"
     if kind == "hnsw_part":
         # One partition per named tenant, so a tenant filter selects whole parts.
-        named = ", ".join(f"'{ns}'" for ns, _ in TENANTS)
+        named = ", ".join(f"'{ns}'" for ns in TENANT_NAMES)
         partition = f"if(namespace IN ({named}), toString(namespace), 'rest')"
         kind = "hnsw"
     codec = f" CODEC(Quantized('rabitq', {dim}, 0))" if kind == "codes" else ""
@@ -231,11 +233,20 @@ def main() -> None:
             parameters={"t": f"vb_{kind}"},
         ).result_rows[0]
         print(f"vb_{kind}: parts={r[0]} rows={r[1]} table data={r[2]} index={r[3]}")
+    try:
+        measure(ch, args)
+    finally:
+        # Also on a failed or interrupted run: the 1M-row tables take about 12 GiB.
+        if not args.keep:
+            for kind in KINDS:
+                ch.command(f"DROP TABLE IF EXISTS vb_{kind} SYNC")
 
+
+def measure(ch, args: argparse.Namespace) -> None:
     # Tags carry a run id: system.query_log keeps every earlier run's rows.
     run = uuid.uuid4().hex[:8]
     rnd = random.Random(7)
-    filters = ["all"] + [ns for ns, _ in TENANTS] + list(HASH_FILTERS)
+    filters = ["all"] + TENANT_NAMES + list(HASH_FILTERS)
     queries: dict[str, list[list[float]]] = {}
     truth: dict[str, list[set[str]]] = {}
     admitted: dict[str, int] = {}
@@ -261,8 +272,7 @@ def main() -> None:
         " | p50 ms | p95 ms | rows read | MiB read |"
     )
     print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
-    passes = [(VARIANTS, filters), (PARTITIONED, ["all"] + [ns for ns, _ in TENANTS])]
-    passes.append((CACHE_CHECK, ["all"]))
+    passes = [(VARIANTS, filters), (PARTITIONED, ["all"] + TENANT_NAMES), (CACHE_CHECK, ["all"])]
     for variants, names in passes:
         for name in names:
             for label, table, final, limit, st in variants:
@@ -293,9 +303,6 @@ def main() -> None:
                     f" | {read_mib:.1f} |",
                     flush=True,
                 )
-    if not args.keep:
-        for kind in KINDS:
-            ch.command(f"DROP TABLE IF EXISTS vb_{kind} SYNC")
 
 
 if __name__ == "__main__":

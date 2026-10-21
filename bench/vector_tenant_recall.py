@@ -1,12 +1,13 @@
-"""Does the production read return the same top-k as brute force for SMALL tenants?
+"""Do skip indexes change a SMALL tenant's nearest neighbours?
 
 loom.memory_embeddings is one table holding many org/namespace tenants, and the
-identity tuple is a PREWHERE filter. The bench compares a read with skip indexes on
-against the same read with `use_skip_indexes = 0`. With no vector index on the table
-they agree by construction; if a `vector_similarity` index is ever added, a small
-tenant could get the table's neighbours instead of its own
-(docs/architecture/clickhouse.md#why-there-is-no-vector-index). This bench keeps that a
-standing assertion against a live deployment.
+identity tuple is a PREWHERE filter. The bench compares a tenant-filtered nearest-
+neighbour read (no FINAL) with skip indexes on against the same read with
+`use_skip_indexes = 0`. A disagreement means some skip index changed which rows a
+tenant read returns. With no vector index on the table they agree by construction, and
+docs/architecture/clickhouse.md#why-there-is-no-vector-index measures why a
+`vector_similarity` index would not even be searched by such a read. This bench keeps
+the agreement a standing assertion against a live deployment.
 
     python bench/vector_tenant_recall.py --tenants 3 --probes 6 --min-agreement 0.95
 

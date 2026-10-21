@@ -14,9 +14,10 @@ Run against any ClickHouse (default: a local one on :8125):
 
     python bench/ann_final_staleness.py --url http://localhost:8125 --user loom
 
-Measured on CH 26.5.1, 30k keys x 3 versions, D=128, 3 parts:
-    final     recall@10 2-4/10, 6-8 stale rows, ~8 ms
-    reread x6 recall@10 10/10,  0 stale rows,  ~32 ms
+Measured on CH 26.9 with the defaults (30k keys x 3 versions, D=128, 18 parts):
+    final      recall@10 0.38, 6.2 stale rows, ~9 ms
+    prefilter  recall@10 1.00, 0 stale rows,  ~20 ms
+    reread x6  recall@10 0.98, 0 stale rows,  ~39 ms
 """
 
 from __future__ import annotations
