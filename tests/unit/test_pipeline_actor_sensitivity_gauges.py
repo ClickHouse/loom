@@ -446,7 +446,7 @@ async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch)
     every_page = await sweep.scan(since_days=2, limit=2, page_size=2, pages=10, ch=ch)  # type: ignore[arg-type]
     assert [c.memory_key for c in every_page.candidates] == ["vault_door"]
     assert every_page.candidates[0].level == "high" and every_page.scanned == 6
-    for pages, expected, cursor in ((10, ["vault_door"], []), (1, [], ["o", "n", "a\x01"])):
+    for pages, expected, cursor in ((10, ["vault_door"], []), (1, [], {"past": ["o", "n", "a"]})):
         ctx = pass_context.begin("sensitivity_sweep", resume_cursor="")
         try:
             applied, _out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=pages)
@@ -577,7 +577,7 @@ async def test_each_pass_starts_where_the_last_one_stopped(monkeypatch) -> None:
         cursor = ctx.cursor
         cursors.append(json.loads(cursor))
     assert labelled == [[], ["vault_door"], []]
-    assert cursors == [["o", "n", "a\x01"], [], ["o", "n", "a\x01"]]
+    assert cursors == [{"past": ["o", "n", "a"]}, [], {"past": ["o", "n", "a"]}]
 
 
 async def _passes(
@@ -633,7 +633,7 @@ async def test_a_pass_that_labels_rows_reads_its_agent_again_and_one_that_fails_
     rows = [_Row("o", "n", "-", _uuid(i), f"pin_{i}", pin, 600 - i) for i in range(6)]
     labelled, cursors = await _passes(monkeypatch, rows, count=4, pages=3, failing=(1,))
     assert labelled == [["pin_0", "pin_1"], [], ["pin_2", "pin_3"], ["pin_4", "pin_5"]]
-    a, past_a = ["o", "n", "a"], ["o", "n", "a\x01"]
+    a, past_a = ["o", "n", "a"], {"past": ["o", "n", "a"]}
     assert cursors == [a, past_a, a, a]
 
 
@@ -712,7 +712,7 @@ async def test_a_pass_spent_on_versions_waiting_for_a_merge_moves_past_their_age
     rows = [*unlabelled, *labelled_since, pin_row]
     labelled, cursors = await _passes(monkeypatch, rows, count=2, pages=2)
     assert labelled == [[], ["vault_door"]]
-    assert cursors[0] == ["o", "n", "a\x01"]
+    assert cursors[0] == {"past": ["o", "n", "a"]}
 
 
 @pytest.mark.asyncio
@@ -770,7 +770,7 @@ async def test_rows_that_fail_in_apply_on_every_pass_never_hold_the_sweep_in_the
     rows.append(_Row("o", "n", "-", _uuid(99), "vault_door", pin, 60, agent="b"))
     labelled, cursors = await _passes(monkeypatch, rows, count=3, failing=(0, 1, 2))
     assert labelled == [[], [], []]
-    assert cursors == [["o", "n", "a\x01"], [], ["o", "n", "a\x01"]]
+    assert cursors == [{"past": ["o", "n", "a"]}, [], {"past": ["o", "n", "a"]}]
 
 
 @pytest.mark.asyncio
@@ -789,7 +789,7 @@ async def test_an_agent_name_longer_than_the_cursor_holds_never_stalls_the_sweep
     pin_row = _Row("o", "p", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60, agent="b")
     labelled, cursors = await _passes(monkeypatch, [*spins, pin_row], count=3)
     assert labelled == [[], ["vault_door"], []]
-    assert cursors == [["o", "n\x01", ""], [], ["o", "n\x01", ""]]
+    assert cursors == [{"past": ["o", "n"]}, [], {"past": ["o", "n"]}]
 
 
 @pytest.mark.asyncio
@@ -828,6 +828,7 @@ async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> N
 
 
 def test_the_cursor_keeps_the_agent_or_names_the_place_past_it() -> None:
+    from server.memory.store.sensitivity_sweep_sql import past_key
     from server.memory.workers.sensitivity_sweep import cursor_key, cursor_text
     from server.workers.pass_context import MAX_CURSOR
 
@@ -835,18 +836,49 @@ def test_the_cursor_keeps_the_agent_or_names_the_place_past_it() -> None:
     start = {"org": "o", "namespace": "n", "agent": "a", "user_id": "", "session_id": ""}
     assert cursor_text(key | {"memory_key": "k"}) == '["o", "n", "a"]'
     assert cursor_key(cursor_text(key | {"memory_key": "k"})) == start | {"memory_key": ""}
-    # past the agent, or past the namespace when the agent does not fit
-    assert cursor_text(key, past=True) == '["o", "n", "a\\u0001"]'
+    # past the agent, asked for or as the scan's `past_key` place
+    past_agent = {"org": "o", "namespace": "n", "agent": "a"}
+    assert cursor_text(key | {"memory_key": "k"}, past=True) == '{"past": ["o", "n", "a"]}'
+    assert cursor_text(past_key(key | {"memory_key": "k"}, "agent")) == cursor_text(
+        key | {"memory_key": "k"}, past=True
+    )
+    assert cursor_key('{"past": ["o", "n", "a"]}') == past_agent
+    # past the namespace when the agent does not fit
     long_agent = key | {"agent": "a" * MAX_CURSOR, "memory_key": "k"}
-    past_namespace = start | {"namespace": "n\x01", "agent": "", "memory_key": ""}
-    assert cursor_text(long_agent) == '["o", "n\\u0001", ""]'
-    assert cursor_key(cursor_text(long_agent, past=True)) == past_namespace
+    assert cursor_text(long_agent) == '{"past": ["o", "n"]}'
+    assert cursor_key(cursor_text(long_agent, past=True)) == {"org": "o", "namespace": "n"}
     # a non-ASCII agent name is measured in the characters the store keeps
     cjk_agent = key | {"agent": "代" * 200, "memory_key": "k"}
     assert cursor_key(cursor_text(cjk_agent)) == start | {"agent": "代" * 200, "memory_key": ""}
     assert cursor_text(None) == "[]" and cursor_key("[]") is None and cursor_key("") is None
-    # a cursor that is not this worker's three-column form reads as none
+    # a cursor that is not one of this worker's forms reads as none
     assert cursor_key(json.dumps(["o", "n", "a", "u", "s", "k"])) is None
+    assert cursor_key(json.dumps({"past": ["o", "n", "a", "u"]})) is None
+    assert cursor_key(json.dumps({"past": []})) is None
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_read_past_an_agent_reaches_an_agent_named_after_it_with_any_byte() -> None:
+    # An identity column takes any string, so `a\x00b` sorts after `a` and before every
+    # other name that starts with `a`. A page past agent `a` bounds on the org, namespace
+    # and agent alone, so it still reads that agent.
+    from server.memory.store.sensitivity_sweep_sql import keys_sql, past_key
+
+    insert = (
+        "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_id, "
+        "memory_key, value, created_at) VALUES "
+        "('o', 'n', 'a', '-', '-', generateUUIDv4(), 'k_a', '\"badge PIN is 4471\"', now()), "
+        "('o', 'n', concat('a', char(0), 'b'), '-', '-', generateUUIDv4(), 'k_ab', "
+        "'\"badge PIN is 4471\"', now())"
+    )
+    last_in_a = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-"}
+    last_in_a |= {"session_id": "-", "memory_key": "k_a"}
+    past_a = past_key(last_in_a, "agent")
+    params = {"shape": sweep.coarse_shape_re(set()), "lim": 10}
+    params |= {f"after_{col}": value for col, value in past_a.items()}
+    sql = keys_sql(org=None, namespace=None, since_days=None, after=tuple(past_a))
+    keys = run([ddl("memory"), insert], sql, params)
+    assert [(k["agent"], k["memory_key"]) for k in keys] == [("a\x00b", "k_ab")]
 
 
 @pytest.mark.asyncio

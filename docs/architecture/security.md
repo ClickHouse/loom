@@ -725,9 +725,10 @@ A caller-supplied level wins for the stored label. Detection is
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT`.
 
 The readers that send a value to a model still check the value itself
-(`value_reads_high`): consolidation, the profile fold, the existing memories an extraction
-prompt shows, `observe_extract` and the entity extractor leave out a value that reads as
-`high` even when its writer labelled it `low` or left it unset. This fails closed by design.
+(`value_reads_high`): consolidation, the profile fold, the structured profile, the existing
+memories an extraction prompt shows, `observe_extract` and the entity extractor leave out a
+value that reads as `high` even when its writer labelled it `low` or left it unset. This
+fails closed by design.
 
 A `high` row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so
 no search leg returns it. The other reads that could serve its value follow three rules:

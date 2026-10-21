@@ -21,7 +21,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core.repo_base import _CHClient
-from server.memory.store.sensitivity_sweep_sql import SORT_KEY, past_key
+from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
@@ -87,6 +87,8 @@ def _resume_past_agent(report: SweepReport, result: ApplyResult) -> bool:
     docs/architecture/security.md, "Sensitivity")."""
     if result.relabelled or not report.resume_after:
         return False
+    if len(report.resume_after) < len(SORT_KEY):
+        return False  # the scan already stopped past an agent, a namespace or an org
     if not report.candidates:
         return report.last_page_had_stale_key
     if not result.failed:
@@ -99,31 +101,40 @@ def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
     """The agent of `key` as the pass's cursor: a JSON list of its org, namespace and agent,
     `[]` for the first key (never empty, which would keep the previous cursor).
 
-    With `past`, or when the agent does not fit the cursor store, the cursor names the
-    place just past the agent instead, or past the namespace or the org when the longer
-    cursor does not fit, or the first key when none does. A cursor before an agent too
-    long to name would have the next pass read the same pages again."""
+    With `past`, or when `key` holds the first columns of the sort key only (`past_key`),
+    or when the agent does not fit the cursor store, the cursor names the place just past
+    the agent instead, `{"past": [org, namespace, agent]}`, or past the namespace or the
+    org when the longer cursor does not fit, or the first key when none does. A cursor
+    before an agent too long to name would have the next pass read the same pages again."""
     if not key:
         return "[]"
-    text = json.dumps([str(key[col]) for col in CURSOR_KEY], ensure_ascii=False)
-    if not past and len(text) <= pass_context.MAX_CURSOR:
-        return text
-    for column in reversed(CURSOR_KEY):
-        skipped = past_key(key, column)
-        text = json.dumps([str(skipped[col]) for col in CURSOR_KEY], ensure_ascii=False)
+    if not past and len(key) == len(SORT_KEY):
+        text = json.dumps([str(key[col]) for col in CURSOR_KEY], ensure_ascii=False)
         if len(text) <= pass_context.MAX_CURSOR:
             return text
+    columns = [col for col in CURSOR_KEY if col in key]
+    while columns:
+        text = json.dumps({"past": [str(key[col]) for col in columns]}, ensure_ascii=False)
+        if len(text) <= pass_context.MAX_CURSOR:
+            return text
+        columns.pop()
     return "[]"
 
 
 def cursor_key(text: str) -> dict[str, Any] | None:
     """The sort key a pass starts after: the agent `cursor_text` wrote, with the user,
     session and memory key empty, which sorts before every key in that agent that has a
-    memory key. None for `[]`, no cursor or one it did not write."""
+    memory key; for a `past` cursor, its columns alone (`past_key`). None for `[]`, no
+    cursor or one it did not write."""
     try:
         parts = json.loads(text)
     except ValueError:
         return None
+    if isinstance(parts, dict) and list(parts) == ["past"]:
+        past = parts["past"]
+        if not isinstance(past, list) or not 1 <= len(past) <= len(CURSOR_KEY):
+            return None
+        return dict(zip(CURSOR_KEY, map(str, past), strict=False))
     if not isinstance(parts, list) or len(parts) != len(CURSOR_KEY):
         return None
     key = dict.fromkeys(SORT_KEY, "")

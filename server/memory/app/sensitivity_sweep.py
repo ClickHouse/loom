@@ -168,8 +168,9 @@ class SweepReport:
     # `seconds` ran out), or the candidates were cut to `limit`.
     truncated: bool = False
     # The sort key the next pass starts after: the last key read, or the last candidate's
-    # when the candidates were cut to the limit. None when the scan read from the first key
-    # to the last, so the next pass starts again at the first.
+    # when the candidates were cut to the limit, or its first columns alone (`past_key`)
+    # when the scan moved past that agent. None when the scan read from the first key to
+    # the last, so the next pass starts again at the first.
     resume_after: dict[str, Any] | None = None
     # Whether the read that set `resume_after` stopped on a page with a stale key: one the
     # FINAL read gave no current row for, because its only match is an older version. Such
@@ -232,7 +233,8 @@ async def scan(
     Reads pages of `page_size` keys in the table's sort key order, then the current version
     of each, until `limit` candidates are found, the rows run out, `pages` pages are read
     (`None`: no page cap) or `seconds` have passed (`None`: no time cap), starting after the
-    sort key `start_after` (the first key when None). `skip_noisy_agents` is the scheduled
+    sort key `start_after`, or past its columns when it holds the first ones only
+    (`past_key`), or at the first key when None. `skip_noisy_agents` is the scheduled
     pass's paging; its rules are in docs/architecture/security.md, "Sensitivity"."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
@@ -316,7 +318,7 @@ class _Range:
     """How one `_read_range` ended."""
 
     reached_end: bool  # the range's last key was read
-    last: dict[str, Any]  # the key the next page would start after
+    last: dict[str, Any]  # the key (or `past_key` place) the next page would start after
     # The range stopped before its end on a page with a stale key in its last key's agent:
     # one the FINAL read gave no current row for, because its only match is an older version.
     last_page_had_stale_key: bool = False
@@ -373,19 +375,18 @@ async def _read_page(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """One page: its sort keys after `after` (from the first key when empty) and up to
     `stop`, then the current version of each."""
-    page_params = dict(params)
-    if after:
-        page_params |= {f"after_{col}": after[col] for col in SORT_KEY}
-    if stop:
-        page_params |= {f"stop_{col}": stop[col] for col in SORT_KEY}
-    sql = keys_sql(**scope, after=bool(after), stop=bool(stop))
+    # `after` and `stop` hold the sort key, or the first columns of it when they name the
+    # place past (or up to the end of) an agent, a namespace or an org.
+    page_params = dict(params) | {f"after_{col}": value for col, value in after.items()}
+    page_params |= {f"stop_{col}": value for col, value in (stop or {}).items()}
+    sql = keys_sql(**scope, after=tuple(after), stop=tuple(stop or ()))
     keys = await ch.query_all(sql, params=page_params)
     if not keys:
         return [], []
     # The FINAL read takes the page's key range as a subquery, not its keys as a list: a
     # list of thousands of keys is a parameter too long for the request URL.
     page_params |= {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
-    rows = await ch.query_all(scan_sql(**scope, after=bool(after)), params=page_params)
+    rows = await ch.query_all(scan_sql(**scope, after=tuple(after)), params=page_params)
     return keys, rows
 
 

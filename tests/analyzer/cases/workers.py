@@ -28,6 +28,8 @@ async def _pure_builders(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.observability import grep_replay_probe as gp
 
     scoped = c["scoped"]
+    # a bound on no column, on one key, and past (or up to the end of) one agent
+    bounds = ((), sweep_sql.SORT_KEY, sweep_sql.SORT_KEY[:3])
     for sql in (
         read_sql(),
         _read_schema_sql(),
@@ -48,17 +50,18 @@ async def _pure_builders(ch: RecordingCH, c: dict[str, Any]) -> None:
                 after=after,
             )
             for build in (sweep_sql.keys_sql, sweep_sql.scan_sql)
-            for after in (False, True)
+            for after in bounds
         ),
-        *(  # a pass that went back to the first key
+        *(  # a pass that went back to the first key, or rereads an agent it moved past
             sweep_sql.keys_sql(
                 org=ORG if scoped else None,
                 namespace=NS if scoped else None,
                 since_days=7 if scoped else None,
                 after=after,
-                stop=True,
+                stop=stop,
             )
-            for after in (False, True)
+            for after in bounds
+            for stop in bounds[1:]
         ),
         sw.HIGH_WITH_EMBEDDING_SQL,
         reinforcement_lookup_sql(),
