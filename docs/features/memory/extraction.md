@@ -115,12 +115,14 @@ request's `(org, namespace, agent)`:
   every user, a user bounded to their own rows included: `context.pack` with
   `include_knowledge`, `memory.stack`, `loom_search` and `memory.ask` (its knowledge
   passages and its whole-document route). Another agent in the
-  namespace is not served it. A namespace-wide read (agent `*`, the `memory.ask`
-  default) spans every agent and is served every bot's rules; a read under no agent
-  (`-`, the `loom_search` default) is served no rule promoted for a named bot, so a
-  bot names its agent there. A rule filed for every agent (`-`) carries no agent tag
-  and is served to every read. `knowledge.search` is not filtered by agent; a bot
-  finds its own rules with `knowledge.search(tags=["agent:<agent>"])`.
+  namespace is not served it. Over HTTP, a namespace-wide read (agent `*`, the
+  `memory.ask` default) spans every agent and is served every bot's rules; a read under
+  no agent (`-`, the `loom_search` default) is served no rule promoted for a named bot,
+  so a bot names its agent there. Over MCP an unnamed `agent` is the client's
+  (`claude-code`, ...), so those reads serve that agent's rules. A rule filed for every
+  agent (`-`) carries no agent tag and is served to every read. `knowledge.search` is
+  not filtered by agent; a bot finds its own rules with
+  `knowledge.search(tags=["agent:<agent>"])`.
   `destination="memory"` writes the agent's memory row instead (`user_id` `-`,
   `source_trace` `learning:<candidate_id>`), which namespace-wide reads find and a read
   bounded to one user does not.

@@ -205,9 +205,11 @@ sessions, and the `rationale` the earliest remaining supporter's quotes. Support
 promotes it; promoting it publishes the rule to the namespace's knowledge, tagged
 `agent:<agent>`. `context.pack` with `include_knowledge`, `memory.stack`, `loom_search`
 and `memory.ask` serve it to that agent's reads for every user and leave it out of other
-agents' reads. A namespace-wide read (agent `*`, the `memory.ask` default) is served
-every bot's rules, and a read under no agent (`-`) is served no rule promoted for a
-named bot; a rule for every agent is still served. A token pinned to one end user
+agents' reads. Over HTTP, a namespace-wide read (agent `*`, the `memory.ask` default)
+is served every bot's rules, and a read under no agent (`-`, the `loom_search`
+default) is served no rule promoted for a named bot. Over MCP an unnamed `agent` is the
+client's (`claude-code`, ...), so those reads serve that agent's rules. A rule for
+every agent is served to every read. A token pinned to one end user
 (`read_user_id`) acts as the agent it names, never the body's `agent`; any other token,
 an `own_user` token without a pin included, acts as the body's `agent`. A token Loom mints with a
 `read_user_id` pin names no agent, so it files no bot's rule and is served no rule
