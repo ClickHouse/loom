@@ -157,6 +157,7 @@ async def test_backstop_anchors_unanchored_qualifier_fact(
         [{"role": "user", "content": "We repainted the kitchen last weekend."}],
         observation_date=_OBS,
         judge=False,
+        operator_policy="",
     )
 
     by_key = {f.memory_key: f for f in result.facts}
@@ -179,6 +180,7 @@ async def test_backstop_noop_without_observation_date(
     result = await extract_from_messages(
         [{"role": "user", "content": "Bought a helmet yesterday."}],
         judge=False,
+        operator_policy="",
     )
 
     assert result.facts[0].temporal_anchor is None

@@ -490,7 +490,7 @@ async def _write_canonical(
     except Exception as e:  # noqa: BLE001 — lineage is additive
         log.warning("consolidate: derived_from links failed (non-fatal): %s", e)
     if canonical_row["sensitivity"] == "high":
-        # The merged text holds a credential: no vector, and the key is fenced.
+        # The merged text holds a high shape: no vector, and the key is fenced.
         from server.memory.app.high_fence import fence_high
 
         await fence_high([(memory_repo.embedding_key(canonical_row), version)], ch=ch)
@@ -635,8 +635,8 @@ async def handle_memory_consolidate(
             "model": embedder.model_name,
         },
     )
-    # An unlabelled row (copy_to, an import, before the sweep) holding a credential never
-    # goes into the merge prompt, which is sent to the LLM.
+    # A row whose value reads as high, whatever its label (unset after copy_to or an import,
+    # or `low` from its writer), never goes into the merge prompt, which is sent to the LLM.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
 
     out = MemoryConsolidateOutput(examined=len(rows))

@@ -988,6 +988,43 @@ class ErasureOps:
         )
 
 
+class ExtractionPolicyOps:
+    """The `extraction_policy.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def clear(
+        self, body: _ops.ExtractionPolicyClearBody | None = None, /, **options: Any
+    ) -> _ops.ExtractionPolicyOutput:
+        """`extraction_policy.clear`."""
+        return cast(
+            "_ops.ExtractionPolicyOutput",
+            await self._agent.call("extraction_policy.clear", body, **options),
+        )
+
+    async def get(
+        self, body: _ops.ExtractionPolicyGetBody | None = None, /, **options: Any
+    ) -> _ops.ExtractionPolicyOutput:
+        """`extraction_policy.get`."""
+        return cast(
+            "_ops.ExtractionPolicyOutput",
+            await self._agent.call("extraction_policy.get", body, **options),
+        )
+
+    async def set(
+        self, body: _ops.ExtractionPolicySetBody | None = None, /, **options: Any
+    ) -> _ops.ExtractionPolicyOutput:
+        """`extraction_policy.set`."""
+        return cast(
+            "_ops.ExtractionPolicyOutput",
+            await self._agent.call("extraction_policy.set", body, **options),
+        )
+
+
 class FactsOps:
     """The `facts.*` operations."""
 
@@ -3048,6 +3085,7 @@ class OpsClient:
         self.cost = CostOps(agent)
         self.decision = DecisionOps(agent)
         self.erasure = ErasureOps(agent)
+        self.extraction_policy = ExtractionPolicyOps(agent)
         self.facts = FactsOps(agent)
         self.grants = GrantsOps(agent)
         self.inbox = InboxOps(agent)

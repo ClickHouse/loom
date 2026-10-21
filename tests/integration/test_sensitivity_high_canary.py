@@ -9,6 +9,7 @@ Runs against a real Control Plane + ClickHouse (LOOM_BASE_URL, LOOM_CH_*).
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from collections.abc import Callable
@@ -196,6 +197,107 @@ def test_a_read_by_id_that_omits_a_high_value_serves_none_and_audits_none(
     assert _CANARY_SECRET in r.text
     _wait(lambda: _reads_of_row() >= 1)
     assert _reads_of_row() == 1, "the read that omitted the value is not audited"
+
+
+@pytest.mark.parametrize(
+    ("value", "level", "other_tags"),
+    [
+        ("My employee badge PIN is 4471", "high", []),
+        ("the company card is 4111 1111 1111 1111", "high", []),
+        ("her SSN is 123-45-6789", "high", []),
+        ("salary goes to GB82 WEST 1234 5698 7654 32", "medium", ["attribute:income"]),
+        ({"badge": "front door", "badge_pin": "4471"}, "high", []),
+    ],
+    ids=["pin", "card", "ssn", "iban", "keyed-pin"],
+)
+def test_payment_and_identity_numbers_are_labelled_on_write(
+    control_plane_url: str, ch_client, token: str, value: object, level: str, other_tags: list
+) -> None:
+    key = f"pii_{uuid.uuid4().hex[:6]}"
+    ident = {"org": ORG, "namespace": NAMESPACE, "agent": "canary"}
+    r = _post(control_plane_url, token, "memory.set", {**ident, "memory_key": key, "value": value})
+    assert r.status_code == 200, r.text
+    # a plain row written after it: once it is embedded, the labelled row's embedding has
+    # had its turn
+    fence = f"{key}_fence"
+    plain = f"the {key} rota changes on mondays"
+    r = _post(
+        control_plane_url, token, "memory.set", {**ident, "memory_key": fence, "value": plain}
+    )
+    assert r.status_code == 200, r.text
+    r = _post(control_plane_url, token, "memory.get", {**ident, "memory_key": key})
+    assert r.status_code == 200 and r.json().get("found") is True, r.text
+    got = r.json()
+    # every field but the values the server assigns; the retention window a label can stamp
+    # is off by default (`memory_sensitive_retention_days` 0)
+    assigned = (
+        "memory_id",
+        "created_at",
+        "updated_at",
+        "version",
+        "version_text",
+        "content_sha256",
+    )
+    assert all(got.get(f) for f in assigned), r.text[:500]
+    assert got["version_text"] == str(got["version"])
+    got["tags"] = sorted(got.get("tags", []))
+    assert {f: v for f, v in got.items() if f not in assigned} == {
+        "found": True,
+        "unchanged": False,
+        "value": value,
+        "memory_type": "semantic",
+        "confidence": 1.0,
+        "expires_at": None,
+        "on_expire": "",
+        "expire_reason": "",
+        "valid_at": None,
+        "valid_to": None,
+        "temporal_anchor": None,
+        "temporal_confidence": 0.0,
+        "pinned": False,
+        "actor": "process:canary",
+        "source_class": "asserted",
+        "agent": "canary",
+        "status": "active",
+        "code": [],
+        "superseded_by": "",
+        "duplicate_of": "",
+        "conflict_verdict": "clear",
+        "tags": sorted([*other_tags, f"sensitivity:{level}"]),
+        "entities": [],
+        "char_limit": None,
+        "recall_count": 0,
+        "last_recalled_at": None,
+        "verified_by": "",
+        "verified_at": None,
+        "verification": "none",
+        "lock_mode": "",
+        "lock_reason": "",
+        "lock_until": None,
+        "locked_by": "",
+        "recall_by_agent": [],
+        "sensitivity": level,
+    }, r.text[:500]
+    stored = ch_client.query(
+        "SELECT memory_id, org, namespace, agent, user_id, session_id, sensitivity "
+        "FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} "
+        "AND memory_key = {k:String} AND tombstoned_at IS NULL",
+        parameters={"o": ORG, "n": NAMESPACE, "k": key},
+    ).result_rows
+    assert [tuple(map(str, row)) for row in stored] == [
+        (got["memory_id"], ORG, NAMESPACE, "canary", "-", "-", level)
+    ]
+    _wait(lambda: _live_vectors(ch_client, fence) == 1)
+    if level == "high":
+        assert _live_vectors(ch_client, key) == 0
+        query = value if isinstance(value, str) else json.dumps(value)
+        r = _post(
+            control_plane_url, token, "memory.search", {**ident, "query": query, "fresh": True}
+        )
+        assert r.status_code == 200, r.text
+        assert key not in [h.get("memory_key") for h in r.json().get("results", [])]
+    else:
+        _wait(lambda: _live_vectors(ch_client, key) == 1)
 
 
 @pytest.mark.parametrize("op", ["memory.set", "memory.bulk_set"])

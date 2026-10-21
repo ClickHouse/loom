@@ -437,6 +437,8 @@ jobs:
       LOOM_JWT_SECRET: ci-only-jwt-secret
       # Overrides reach every web process within one refresh; the tests wait it out.
       LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS: "1"
+      # Extraction policies and the model-call switch likewise; the tests wait it out.
+      LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS: "2"
       LOOM_BASE_URL: http://localhost:7777
       LOOM_EMBEDDING_MODEL: fake-ngram-1024
       LOOM_LLM_PROVIDER: fake

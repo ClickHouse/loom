@@ -632,7 +632,9 @@ async def test_the_sweep_labels_a_token_on_its_own_line() -> None:
         f"'active', '', 1), ('o', 'n', 'a', '-', 's', '{_B}', 'note', 'semantic', "
         f"{as_string!r}, '{{}}', 'active', '', 1)",
     )
-    report = await sensitivity_sweep.scan(org="o", namespace="n", ch=ch)
+    report = await sensitivity_sweep.scan(
+        org="o", namespace="n", limit=100, page_size=100, pages=1, ch=ch
+    )
     found = sorted((c.memory_key, c.level) for c in report.candidates)
     assert found == [("note", "high"), ("obs/1", "high")]
 

@@ -83,6 +83,7 @@ async def test_the_default_extraction_prompt_is_pinned(
         coverage_sweep=False,
         llm_cache=False,
         compact_prompt=compact,
+        operator_policy="",
     )
     system, user = defaults.calls[0]
     assert (_sha(system), _sha(user)) == (system_sha, user_sha)

@@ -341,6 +341,8 @@ _NEVER_ZERO = [
     "memory_profile_cas_max_retries",
     "memory_profile_search_embed_cap",
     "memory_proposals_scan_cap",
+    "sensitivity_sweep_max_rows_per_pass",
+    "sensitivity_sweep_pages_per_pass",
     "memory_entity_extract_parse_fail_max",
     "memory_observe_extract_session_context_limit",
     "memory_usage_fold_acted_max_rows_per_pass",
@@ -384,6 +386,13 @@ def test_the_replica_bound_retry_count_has_a_ceiling() -> None:
     assert coerce(Settings, "ch_replica_bound_retries", 5) == 5
     with pytest.raises(ValidationError):
         coerce(Settings, "ch_replica_bound_retries", 6)
+
+
+def test_the_sensitivity_sweep_pages_per_pass_have_a_ceiling() -> None:
+    """The reference promises 1 to 1000 pages per pass."""
+    assert coerce(Settings, "sensitivity_sweep_pages_per_pass", 1000) == 1000
+    with pytest.raises(ValidationError):
+        coerce(Settings, "sensitivity_sweep_pages_per_pass", 1001)
 
 
 def test_zero_retries_of_an_empty_block_read_still_means_none() -> None:

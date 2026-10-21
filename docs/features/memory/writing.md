@@ -66,9 +66,9 @@ is chunked on its headings and searched with its section. Store the document in
 **Memory types.** `memory_type` (default `semantic`) decides whether a row is embedded and
 searched. `episodic` and `profile` rows are not embedded and never appear in
 `memory.search`. A `procedural` write that is not a procedure body is stored as
-`semantic` (`retyped_from`). A `sensitivity="high"` row, or one detected as a credential,
-is never embedded and is readable by key only. The full table is in
-[memory concepts](../../concepts/memory.md).
+`semantic` (`retyped_from`). A `sensitivity="high"` row, or one detected as high (a
+credential, card number, SSN or stated PIN), is never embedded and is readable by key
+only. The full table is in [memory concepts](../../concepts/memory.md).
 
 ## What a write returns
 
@@ -255,11 +255,11 @@ They answer predicate questions without parsing text.
 
 ## Settings
 
-| Setting                              | Default | Effect                                                            |
-| ------------------------------------ | ------- | ----------------------------------------------------------------- |
-| `LOOM_MEMORY_VALUE_ADVISORY_CHARS`   | 30000   | Size past which a value earns the oversized advisory. 0 disables. |
-| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | true    | Detect credential and contact shapes when `sensitivity` is unset. |
-| `LOOM_MAX_REQUEST_BYTES`             | 32 MiB  | Request-body cap.                                                 |
+| Setting                              | Default | Effect                                                                                                                        |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_MEMORY_VALUE_ADVISORY_CHARS`   | 30000   | Size past which a value earns the oversized advisory. 0 disables.                                                             |
+| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | true    | Detect credential, card, SSN and PIN shapes (`high`) and email, phone and IBAN shapes (`medium`) when `sensitivity` is unset. |
+| `LOOM_MAX_REQUEST_BYTES`             | 32 MiB  | Request-body cap.                                                                                                             |
 
 Conflict and duplicate settings are in
 [conflicts and refusal](./conflicts-and-refusal.md#settings). Per namespace,

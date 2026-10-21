@@ -113,13 +113,14 @@ def test_the_journal_files() -> None:
         "059_conversation_saved_messages.sql",
         "060_conversation_saved_at.sql",
         "061_profile_schemas.sql",
-        "062_entity_triple_rows.sql",
-        "063_projection_failure_abandoned.sql",
-        "064_entity_triple_seen_at.sql",
-        "065_graph_restore_id.sql",
-        "066_entity_edge_rows.sql",
-        "067_entity_edge_close_id.sql",
-        "068_projection_failure_ttl.sql",
+        "062_extraction_policies.sql",
+        "063_entity_triple_rows.sql",
+        "064_projection_failure_abandoned.sql",
+        "065_entity_triple_seen_at.sql",
+        "066_graph_restore_id.sql",
+        "067_entity_edge_rows.sql",
+        "068_entity_edge_close_id.sql",
+        "069_projection_failure_ttl.sql",
     ]
 
 

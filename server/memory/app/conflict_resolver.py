@@ -681,7 +681,7 @@ async def _still_unprotected(
 ) -> tuple[Any, list[dict[str, Any]]]:
     """The row and its peers re-read right before the prompt is built: a row relabelled
     'high' since it was read (same bytes, same hash) is never sent, nor one whose value
-    or key holds a credential shape the sweep has not labelled yet. (None, []) when the
+    or key holds a high shape the sweep has not labelled yet. (None, []) when the
     judged row is no longer eligible or holds one (it is stamped judged, with no model
     call); such a peer is dropped."""
     fresh = await _head(org, str(row.memory_id))
@@ -698,7 +698,7 @@ async def _still_unprotected(
 
 
 def _reads_high(value: Any, memory_key: Any) -> bool:
-    """A credential shape in the value or the key: the prompt shows both."""
+    """A high shape in the value or the key: the prompt shows both."""
     return value_reads_high(value) or reads_high(str(memory_key))
 
 

@@ -26,35 +26,127 @@ Read-only by construction until `apply`; `scan` is what `--dry-run` prints.
 
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from time import monotonic
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.app.high_fence import fence_high, tombstone_chunks_of
 from server.memory.domain.sensitivity import (
+    ASSIGNMENT_WORDS,
     HIGH,
+    KEYED_SECRET_WORDS,
     MEDIUM,
+    PIN_CODE_LABEL,
+    PIN_LABEL,
+    POSTCODE_LIKE_PIN_LABEL,
+    SSN_KEYS,
     detect_sensitivity,
     detector_text,
+    pin_grammar,
     sensitivity_tags,
+)
+from server.memory.store.sensitivity_sweep_sql import (
+    AGENT_KEY,
+    SORT_KEY,
+    keys_sql,
+    past_agent,
+    scan_sql,
+)
+
+# The scan matches JSON text: the `json.dumps` text in `value`, and `toString(value_json)`
+# for an object value. So an escape (`\n`, `\u000B`, `\/`) or `_` may start a PIN
+# or IBAN label, and a control escape counts as whitespace, as the detector reads it
+# decoded; `\v` is listed because RE2's `\s` lacks it.
+_JSON_BOUNDARY = r"(?:\b|_|\\[bfnrt]|\\u[0-9a-fA-F]{4})"
+_JSON_SPACE = r"(?:[\s\v]|\\[fnrt]|\\u000[bB])"
+_PIN_FOR, _PIN_VALUE_AFTER = pin_grammar(_JSON_SPACE)
+# `pin` and `pin code` take a 3-5 digit value, as the detector reads them, so a postal code
+# (`PIN: 560001`, `PIN code 560001`) is not selected; every other label takes 3-8.
+_POSTCODE_LIKE_PIN_VALUE = r"[0-9]{3,5}(?:[^0-9]|$)"
+_COARSE_PIN = (
+    rf"(?i:{_JSON_BOUNDARY}{PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}{PIN_LABEL}{_JSON_SPACE}+[0-9]{{3}}"
+    rf"|{_JSON_BOUNDARY}{POSTCODE_LIKE_PIN_LABEL}{_PIN_FOR}{_PIN_VALUE_AFTER}"
+    rf"{_POSTCODE_LIKE_PIN_VALUE}"
+    rf"|{_JSON_BOUNDARY}{PIN_CODE_LABEL}{_JSON_SPACE}+{_POSTCODE_LIKE_PIN_VALUE})"
+)
+
+# What separates a key's words, in JSON text: non-alphanumerics and escapes, up to the
+# key's closing quote.
+_KEY_SEP = r'(?:[^A-Za-z0-9"\\]|\\(?:["bfnrt/\\]|u[0-9a-fA-F]{4}))*'
+_KEY_VALUE = rf'{_KEY_SEP}"{_JSON_SPACE}*:{_JSON_SPACE}*"?{_JSON_SPACE}*'
+
+
+def _key_words(keys: Iterable[tuple[str, ...]]) -> str:
+    """Key words as RE2, with a separator run between them, as the detector splits a key."""
+    return "|".join(_KEY_SEP.join(words) for words in keys)
+
+
+_PIN_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label == "pin")
+_OTHER_KEYS = _key_words(w for w, label in KEYED_SECRET_WORDS.items() if label != "pin")
+# A key that ends in a label, then its value (3-5 digits under a `pin` key, so a postal
+# code is not selected): a superset of the detector's key rule, as security.md describes.
+_COARSE_KEYED = (
+    rf"(?i:(?:{_PIN_KEYS}){_KEY_VALUE}[0-9]{{3,5}}(?:[^0-9]|$)"
+    rf"|(?:{_OTHER_KEYS}|{_key_words(SSN_KEYS)}){_KEY_VALUE}[0-9]{{3}})"
+)
+
+# The whitespace the detector's Unicode `\s` reads (`str.isspace`; U+3000 is the last), as
+# literal characters, since RE2's `\s` is ASCII and lacks `\v`; or a JSON escape.
+_UNICODE_SPACES = "".join(c for c in map(chr, range(0x3001)) if c.isspace())
+_ASSIGN_SPACE = rf"(?:[{_UNICODE_SPACES}]|\\[bfnrt]|\\u[0-9a-fA-F]{{4}})"
+# A `password=…` assignment, as the detector reads one: the word, `:` or `=`, then 8
+# characters of the value, which may start with a quote (`\"` in JSON text). So prose that
+# only names the word ("I forgot my password") is not selected.
+_COARSE_ASSIGNMENT = (
+    rf"(?i:{_JSON_BOUNDARY}(?:{ASSIGNMENT_WORDS})\b{_ASSIGN_SPACE}*[:=]{_ASSIGN_SPACE}*"
+    r"""(?:\\?"|')?[^\s"',;]{8})"""
 )
 
 # RE2, for ClickHouse `match()`: a superset of the shapes in
-# `memory/domain/sensitivity.py`'s high and medium patterns. Anything this misses
-# the detector would miss too; anything it over-selects the detector drops.
-COARSE_SHAPE_RE = (
-    r"sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|PRIVATE KEY|eyJ|AIza"
-    r"|(?i:password|passwd|pwd|api[_-]?key|secret|access[_-]?token|auth[_-]?token"
-    r"|bearer|client[_-]?secret|private[_-]?key)"
-    r"|@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
-    r"|[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}"
-)
+# `memory/domain/sensitivity.py`'s high and medium patterns, by the shape `_shapes` gives
+# the row. Anything this misses the detector would miss too; anything it over-selects the
+# detector drops.
+_COARSE_BY_SHAPE = {
+    "credential": (
+        # the detector reads these prefixes at a word boundary, so `task-` and `disk-` are not
+        rf"{_JSON_BOUNDARY}(?:sk-|pk-lf-|AKIA|gh[opusr]_|github_pat_|xox[abprs]-|eyJ|AIza)"
+        r"|PRIVATE KEY"
+        rf"|{_COARSE_ASSIGNMENT}"
+        # A card number, as `_has_card` reads one: a lone 15- or 16-digit group, or a
+        # printed grouping that starts with a 4-digit group, each with a network's leading
+        # digit. So epoch milliseconds and 19-digit ids are not selected.
+        # The left edge may be a `\uXXXX` escape, whose last hex digit can be a digit.
+        r"|(?:^|[^0-9]|\\u[0-9a-fA-F]{4})[2-6][0-9]{14,15}(?:[^0-9]|$)"
+        r"|(?:^|[^0-9]|\\u[0-9a-fA-F]{4})[2-6][0-9]{3}[ -][0-9]{4,6}[ -][0-9]{4}"
+        r"|[0-9]{3}-[0-9]{2}-[0-9]{4}"  # SSN
+        rf"|{_COARSE_PIN}"
+        rf"|{_COARSE_KEYED}"
+    ),
+    "email": r"@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+    # the detector allows one Unicode space between groups, which JSON text may escape
+    "phone": (
+        rf"[0-9]{{3}}(?:[\s.()-]|{_ASSIGN_SPACE})*"
+        rf"[0-9]{{3}}(?:[\s.-]|{_ASSIGN_SPACE})*[0-9]{{4}}"
+    ),
+    "other": rf"{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}",  # IBAN
+}
+
+
+def coarse_shape_re(shapes: set[str]) -> str:
+    """The coarse filter for rows of the named shapes (every shape when none is named), so
+    a pass that keeps only some shapes never selects a row it would drop: a phone-shaped
+    row the scheduled pass leaves unlabelled would be selected again on every pass."""
+    return "|".join(rx for shape, rx in _COARSE_BY_SHAPE.items() if not shapes or shape in shapes)
+
 
 # A probe shape reported beside the detector's levels, so a dry run says how many
-# e-mail-shaped rows it found (every high row is a credential).
+# e-mail-shaped rows it found.
 _PROBE_EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 
 
@@ -69,13 +161,28 @@ class SweepCandidate:
     memory_key: str
     level: str  # 'high' | 'medium'
     shapes: tuple[str, ...]  # 'credential' | 'email' | 'phone' | 'other'
+    # The scanned row's sort key as stored: the fields above write an empty agent, user or
+    # session as '-', which sorts after ''.
+    sort_key: dict[str, Any]
 
 
 @dataclass
 class SweepReport:
     scanned: int = 0  # candidate rows the coarse filter returned
     candidates: list[SweepCandidate] = field(default_factory=list)
+    # Whether the scan stopped before reading every key it meant to (pages, `limit` or
+    # `seconds` ran out), or the candidates were cut to `limit`.
     truncated: bool = False
+    # The sort key the next pass starts after: the last key read, or the last candidate's
+    # when the candidates were cut to the limit, or its first columns alone (`past_agent`)
+    # when the scan moved past that agent. None when the next pass should start at the
+    # first key: the scan read from the first key to the last, or it reached the last key
+    # with no page left to read the keys before its start.
+    resume_after: dict[str, Any] | None = None
+    # Whether the read that set `resume_after` stopped on a page with a stale key: one the
+    # FINAL read gave no current row for, because its only match is an older version. Such
+    # a page never moves the scan past its agent.
+    last_page_had_stale_key: bool = False
 
     @property
     def by_level(self) -> Counter[str]:
@@ -96,8 +203,9 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     import re
 
     shapes: list[str] = []
-    # Every row the detector reads as high is a credential, whatever its shape: the scheduled
-    # pass applies `credential` and `email` rows by default.
+    # Every row the detector reads as high is a credential, whatever its shape (a key, a card
+    # number, an SSN, a stated PIN): the scheduled pass applies `credential` and `email` rows
+    # by default. An IBAN-only row is `other`, applied by the operator's run.
     if level == HIGH:
         shapes.append("credential")
     if re.search(_PROBE_EMAIL, text):
@@ -109,58 +217,217 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     return tuple(shapes) or ("other",)
 
 
-def scan_sql(*, org: str | None, namespace: str | None, since_days: int | None) -> str:
-    scope = ""
-    if org:
-        scope += " AND org = {org:String}"
-    if namespace:
-        scope += " AND namespace = {ns:String}"
-    if since_days:
-        scope += " AND created_at > now() - INTERVAL {days:UInt32} DAY"
-    return f"""
-        SELECT memory_id, org, namespace, agent, user_id, session_id, memory_key,
-               if(length(toString(value_json)) > 2, toString(value_json), value) AS value
-        FROM loom.memory FINAL
-        WHERE tombstoned_at IS NULL AND sensitivity = ''
-          AND (expires_at IS NULL OR expires_at > now())
-          AND match(value, {{shape:String}})
-          {scope}
-        ORDER BY created_at, memory_key
-        LIMIT {{lim:UInt32}}
-    """
-
-
 async def scan(
     *,
     org: str | None = None,
     namespace: str | None = None,
     since_days: int | None = None,
-    limit: int = 20000,
+    limit: int,
+    page_size: int,
+    pages: int | None,
     only_shapes: Iterable[str] | None = None,
+    start_after: dict[str, Any] | None = None,
+    skip_noisy_agents: bool = False,
+    seconds: float | None = None,
     ch: _CHClient | None = None,
 ) -> SweepReport:
-    """Live unlabelled rows the detector would label, exactly as the write
-    path would have. Read-only. `only_shapes` keeps candidates carrying at
-    least one of the named probe shapes (`credential`, `email`, `phone`,
-    `other`) — the phone shape is a ten-digit run and the noisiest, so an
-    operator can apply the others first."""
+    """Live unlabelled rows the detector labels, read from `value` and an object's
+    `value_json`. Read-only. `only_shapes` narrows the ClickHouse filter to those probe
+    shapes' alternatives (`credential`, `email`, `phone`, `other`) and keeps only candidates
+    that carry one of them.
+
+    Reads pages of `page_size` keys in the table's sort key order, then the current version
+    of each, until `limit` candidates are found, the rows run out, `pages` pages are read
+    (`None`: no page cap) or `seconds` have passed (`None`: no time cap), starting after the
+    sort key `start_after`, or past its columns when it holds the first ones only
+    (`past_agent`), or at the first key when None. `skip_noisy_agents` is the scheduled
+    pass's paging; its rules are in docs/architecture/security.md, "Sensitivity"."""
     ch = ch or _default_client()
-    params: dict[str, Any] = {"shape": COARSE_SHAPE_RE, "lim": int(limit)}
+    keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
+    report = SweepReport()
+    shape_re = coarse_shape_re(keep)
+    if not shape_re:  # no shape the detector gives
+        return report
+    params: dict[str, Any] = {"shape": shape_re, "lim": page_size}
     if org:
         params["org"] = org
     if namespace:
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
-    rows = await ch.query_all(
-        scan_sql(org=org, namespace=namespace, since_days=since_days), params=params
+    run = _Run(
+        ch=ch,
+        params=params,
+        scope={"org": org, "namespace": namespace, "since_days": since_days},
+        keep=keep,
+        limit=limit,
+        pages=pages,
+        report=report,
+        stop_at=None if seconds is None else monotonic() + seconds,
     )
-    report = SweepReport(scanned=len(rows), truncated=len(rows) >= int(limit))
-    keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
+    start = dict(start_after or {})
+    first = await _read_range(run, after=start, skip=skip_noisy_agents)
+    ranges = [first]
+    report.resume_after = first.last
+    report.last_page_had_stale_key = first.last_page_had_stale_key
+    if first.reached_end:
+        # The scan reached the last key, so the next pass starts at the first. With
+        # `start_after`, read the keys before it too, or they wait for a later pass and can
+        # leave the window; once they are all read, the next pass starts where this one did.
+        report.resume_after = None
+        if start_after:
+            wrap = await _read_range(run, after={}, stop=start, skip=skip_noisy_agents)
+            ranges.append(wrap)
+            report.resume_after = start if wrap.reached_end else wrap.last or None
+            report.last_page_had_stale_key = wrap.last_page_had_stale_key
+    # The rest of each agent the scan moved past, with the pages left. Every pass starts
+    # these reads after the same page, since the cursor names no key inside an agent: a
+    # row behind more than a pass's pages of such keys in its agent waits until they leave
+    # the window, or for the operator's run. The cursor stays where the reads above left it.
+    for key in run.skipped:
+        ranges.append(await _read_range(run, after=key, stop=past_agent(key), skip=False))
+    report.truncated = not all(r.reached_end for r in ranges)
+    if len(report.candidates) > limit:
+        report.candidates = report.candidates[:limit]
+        report.truncated = True
+        report.resume_after = report.candidates[-1].sort_key
+        report.last_page_had_stale_key = False
+    return report
+
+
+@dataclass
+class _Run:
+    """One scan's reads, its caps, and the agents it moved past."""
+
+    ch: _CHClient
+    params: dict[str, Any]
+    scope: dict[str, Any]
+    keep: set[str]
+    limit: int
+    pages: int | None
+    report: SweepReport
+    # The `monotonic()` time the scan reads no more pages after; None for no time cap.
+    stop_at: float | None = None
+    pages_read: int = 0
+    # The last key read in each agent the scan moved past, kept for this scan only: the
+    # stored cursor names no user or memory key.
+    skipped: list[dict[str, Any]] = field(default_factory=list)
+
+    def more_wanted(self) -> bool:
+        """Pages and time are left and fewer than `limit` candidates were found."""
+        pages_left = self.pages is None or self.pages_read < self.pages
+        time_left = self.stop_at is None or monotonic() < self.stop_at
+        return pages_left and time_left and len(self.report.candidates) < self.limit
+
+
+@dataclass
+class _Range:
+    """How one `_read_range` ended."""
+
+    reached_end: bool  # the range's last key was read
+    last: dict[str, Any]  # the key (or `past_agent` place) the next page would start after
+    # The range stopped before its end on a page with a stale key in its last key's agent:
+    # one the FINAL read gave no current row for, because its only match is an older version.
+    last_page_had_stale_key: bool = False
+
+
+async def _read_range(
+    run: _Run,
+    *,
+    after: dict[str, Any],
+    stop: dict[str, Any] | None = None,
+    skip: bool,
+) -> _Range:
+    """Pages after `after` (from the first key when empty) and up to `stop`, while the scan
+    wants more."""
+    report = run.report
+    last = dict(after)
+    stale = False
+    while run.more_wanted():
+        run.pages_read += 1
+        keys, rows = await _read_page(run.ch, run.params, run.scope, after=last, stop=stop)
+        report.scanned += len(rows)
+        found = len(report.candidates)
+        _add_candidates(report, rows, run.keep)
+        if len(keys) < run.params["lim"]:
+            return _Range(reached_end=True, last=last)
+        # A page moves the scan past its agent only when the FINAL read gave back a current
+        # unlabelled row for each of its keys. A key whose only match is an older version
+        # (a row `apply` labelled, or one deleted, before the parts merge) gives none, and
+        # skipping on a page of those would leave the agent's later rows unread. The FINAL
+        # read may also return keys written between the two reads, so compare keys, not
+        # counts. Only the last key's agent counts: a stale key in an earlier agent sorts
+        # before the cursor and does not hold the next agent back.
+        last = keys[-1]
+        current = _sort_keys(rows)
+        stale = any(
+            k not in current for k in _sort_keys(keys) if k[: len(AGENT_KEY)] == _agent(last)
+        )
+        if (
+            skip
+            and not stale
+            and len(report.candidates) == found
+            and _agent(keys[0]) == _agent(last)
+        ):
+            run.skipped.append(last)
+            last = past_agent(last)
+    return _Range(reached_end=False, last=last, last_page_had_stale_key=stale)
+
+
+async def _read_page(
+    ch: _CHClient,
+    params: dict[str, Any],
+    scope: dict[str, Any],
+    *,
+    after: dict[str, Any],
+    stop: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """One page: its sort keys after `after` (from the first key when empty) and up to
+    `stop`, then the current version of each."""
+    # `after` and `stop` hold the sort key, or the first columns of it when they name the
+    # place past (or up to the end of) an agent, a namespace or an org.
+    page_params = dict(params) | {f"after_{col}": value for col, value in after.items()}
+    page_params |= {f"stop_{col}": value for col, value in (stop or {}).items()}
+    sql = keys_sql(**scope, after=tuple(after), stop=tuple(stop or ()))
+    keys = await ch.query_all(sql, params=page_params)
+    if not keys:
+        return [], []
+    # The FINAL read takes the page's key range as a subquery, not its keys as a list: a
+    # list of thousands of keys is a parameter too long for the request URL.
+    page_params |= {f"upto_{col}": keys[-1][col] for col in SORT_KEY}
+    rows = await ch.query_all(scan_sql(**scope, after=tuple(after)), params=page_params)
+    return keys, rows
+
+
+def _agent(key: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(key[col] for col in AGENT_KEY)
+
+
+def _sort_keys(rows: list[dict[str, Any]]) -> set[tuple[str, ...]]:
+    return {tuple(r[col] for col in SORT_KEY) for r in rows}
+
+
+def scan_text(row: dict[str, Any]) -> str:
+    """The text the detector reads for a scanned row: `value`, and `object_text` (value_json)
+    when it holds an object, each decoded as the write path reads it (in the stored JSON a
+    token after a newline follows `\\n`, and the detector's word boundary never matches
+    there)."""
+    texts = [row.get("value") or ""]
+    if (row.get("object_text") or "{}") != "{}":
+        texts.append(row["object_text"])
+    return detector_text([_decoded(t) for t in texts])
+
+
+def _decoded(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except (ValueError, RecursionError):  # raw text, or nested too deep to parse
+        return text
+
+
+def _add_candidates(report: SweepReport, rows: list[dict[str, Any]], keep: set[str]) -> None:
     for r in rows:
-        # Decoded, as the write path reads it: in the stored JSON a token after a newline
-        # follows `\\n`, and the detector's word boundary never matches there.
-        text = detector_text(r.get("value") or "")
+        text = scan_text(r)
         level = detect_sensitivity(text)
         if level not in (HIGH, MEDIUM):
             continue
@@ -178,9 +445,9 @@ async def scan(
                 memory_key=str(r["memory_key"]),
                 level=level,
                 shapes=shapes,
+                sort_key={col: r[col] for col in SORT_KEY},
             )
         )
-    return report
 
 
 @dataclass
@@ -190,7 +457,11 @@ class ApplyResult:
     medium: int = 0
     embeddings_tombstoned: int = 0  # high rows' embedding rows
     embeddings_tagged: int = 0  # medium rows' embedding rows re-emitted with the tag
-    errors: list[str] = field(default_factory=list)
+    failed: list[tuple[SweepCandidate, str]] = field(default_factory=list)  # with the error
+
+    @property
+    def errors(self) -> list[str]:
+        return [error for _, error in self.failed]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -314,7 +585,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
-            result.errors.append(f"{c.namespace}/{c.memory_key}: {e}")
+            result.failed.append((c, f"{c.namespace}/{c.memory_key}: {e}"))
     return result
 
 
@@ -342,13 +613,12 @@ async def high_with_embedding_count(
 
 
 __all__ = [
-    "COARSE_SHAPE_RE",
     "HIGH_WITH_EMBEDDING_SQL",
     "ApplyResult",
     "SweepCandidate",
     "SweepReport",
     "apply",
+    "coarse_shape_re",
     "high_with_embedding_count",
     "scan",
-    "scan_sql",
 ]

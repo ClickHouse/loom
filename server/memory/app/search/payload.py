@@ -444,7 +444,7 @@ async def _expand_source_bodies(
             """,
             params,
         )
-        # A passage has no sensitivity of its own; one that reads as a credential is not served.
+        # A passage has no sensitivity of its own; one that reads as `high` is not served.
         passages = {
             str(r["eid"]): str(r["body"] or "")
             for r in rows

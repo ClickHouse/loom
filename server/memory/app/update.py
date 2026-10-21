@@ -647,7 +647,7 @@ async def _write_revision(
     # earlier versions are never their own peer. Skipped for non-searchable types (no
     # embedding to compare) and when the flag is off.
     # The new value is labelled as memory.set labels one, never below the row's own
-    # label: a value that now holds a credential is 'high' and is not embedded.
+    # label: a value that now holds a high shape is 'high' and is not embedded.
     sensitivity, new_tags = _update_sensitivity(existing, serialized_value, new_tags)
     searchable = is_embedded(existing.memory_type, sensitivity)
     embedder = get_embedder() if searchable else None

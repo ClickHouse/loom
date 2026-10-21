@@ -116,6 +116,7 @@ async def test_extract_from_messages_runs_the_backfill_after_the_first_pass(monk
     res = await extract_from_messages(
         [{"role": "user", "content": "The chief executive officer of Apple Inc. is Tim Cook."}],
         judge=False,
+        operator_policy="",
     )
     assert len(client.calls) == 2 and "typed triples" in client.calls[1]["system"]
     assert res.relations_backfilled == 1

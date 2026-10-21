@@ -139,6 +139,9 @@ OpName = Literal[
     "erasure.list",
     "erasure.request",
     "erasure.status",
+    "extraction_policy.clear",
+    "extraction_policy.get",
+    "extraction_policy.set",
     "facts.expire_by_adapter",
     "facts.list",
     "facts.path",
@@ -465,6 +468,9 @@ OP_NAMES: tuple[str, ...] = (
     "erasure.list",
     "erasure.request",
     "erasure.status",
+    "extraction_policy.clear",
+    "extraction_policy.get",
+    "extraction_policy.set",
     "facts.expire_by_adapter",
     "facts.list",
     "facts.path",
@@ -1890,6 +1896,42 @@ OPS: dict[str, OpSpec] = {
         25,
         False,
         True,
+    ),
+    "extraction_policy.clear": OpSpec(
+        "extraction_policy.clear",
+        "ExtractionPolicyClearInput",
+        "ExtractionPolicyClearBody",
+        "ExtractionPolicyOutput",
+        True,
+        "org_admin",
+        "experimental",
+        100,
+        True,
+        False,
+    ),
+    "extraction_policy.get": OpSpec(
+        "extraction_policy.get",
+        "ExtractionPolicyGetInput",
+        "ExtractionPolicyGetBody",
+        "ExtractionPolicyOutput",
+        True,
+        "org_admin",
+        "experimental",
+        50,
+        False,
+        False,
+    ),
+    "extraction_policy.set": OpSpec(
+        "extraction_policy.set",
+        "ExtractionPolicySetInput",
+        "ExtractionPolicySetBody",
+        "ExtractionPolicyOutput",
+        True,
+        "org_admin",
+        "experimental",
+        150,
+        True,
+        False,
     ),
     "facts.expire_by_adapter": OpSpec(
         "facts.expire_by_adapter",
@@ -8776,6 +8818,61 @@ class ErasureStatusOutput(TypedDict, total=False):
     verified_at: NotRequired[Optional[str]]
 
 
+class ExtractionPolicyClearInput(TypedDict, total=False):
+    org: Required[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+
+
+class ExtractionPolicyClearBody(TypedDict, total=False):
+    org: NotRequired[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+
+
+class ExtractionPolicyOutput(TypedDict, total=False):
+    org: Required[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+    policy: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+    effective: NotRequired[str]
+    namespace_policies: NotRequired[list["NamespacePolicy"]]
+
+
+class NamespacePolicy(TypedDict, total=False):
+    namespace: Required[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+
+
+class ExtractionPolicyGetInput(TypedDict, total=False):
+    org: Required[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+
+
+class ExtractionPolicyGetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+
+
+class ExtractionPolicySetInput(TypedDict, total=False):
+    org: Required[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+    policy: Required[str]
+
+
+class ExtractionPolicySetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    scope: Required[Literal["org", "namespace"]]
+    namespace: NotRequired[str]
+    policy: Required[str]
+
+
 class FactsExpireByAdapterInput(TypedDict, total=False):
     "Tombstone graph-level triples emitted by a specific extractor"
 
@@ -13441,6 +13538,7 @@ class MemorySetFromMessagesOutput(TypedDict, total=False):
     deferred_by: NotRequired[str]
     stage_ms: NotRequired[dict[str, float]]
     observation_date_source: NotRequired[str]
+    under_operator_policy: NotRequired[bool]
     extract_prompt_keys: NotRequired[list[str]]
     llm_cache_hits: NotRequired[int]
     llm_cache_misses: NotRequired[int]

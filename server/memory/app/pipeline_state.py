@@ -31,6 +31,9 @@ class WorkflowState:
     last_messages: list[dict[str, Any]] = field(default_factory=list)
     observation_date: str | None = None
     extraction_instructions: str = ""
+    # The operator's extraction policy for (org, namespace), read by the handler
+    # (`extraction_policy.effective`), never from the request; "" when none is set.
+    operator_policy: str = ""
     max_tokens: int = 4096
     extra_tags: list[str] = field(default_factory=list)
     # Per-call fallback for bi-temporal `valid_at`. Applied to every

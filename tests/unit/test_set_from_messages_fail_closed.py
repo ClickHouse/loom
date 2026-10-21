@@ -128,7 +128,9 @@ async def test_schema_mode_surfaces_stubbed_fields(
     async def _fake_inline(*args, **kwargs):
         return projected
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(record={"category": None, "amount": 4.5}, stubbed_fields=["category"]),
             LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
@@ -208,7 +210,9 @@ async def test_schema_mode_reports_the_fallbacks_noted_during_the_call(
     async def _fake_inline(*args, **kwargs):
         return False
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(record={"amount": 4.5}),
             LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
@@ -255,7 +259,9 @@ async def test_a_scope_skipped_record_projection_leaves_provider_health_alone(
     async def _fake_inline(*args, **kwargs):
         return False
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(record={"amount": 4.5}),
             LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
@@ -310,7 +316,9 @@ async def test_a_record_the_write_kept_out_projects_no_typed_record(
         projected.append(args)
         return True
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(record={"note": "blocked-marker"}),
             LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),
@@ -364,7 +372,9 @@ async def test_a_refused_record_gets_no_evidence_and_no_count(
         linked.append(list(keys))
         return 0
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(record={"note": "x"}),
             LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),

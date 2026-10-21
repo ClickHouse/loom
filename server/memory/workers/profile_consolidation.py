@@ -155,8 +155,8 @@ async def _consolidate_identity(
         scope=WHOLE_NAMESPACE,
         ch=ch,
     )
-    # An unlabelled row (copy_to, an import, before the sweep) holding a credential is never
-    # sent to the fold model, whose output becomes a plain profile section.
+    # A row whose value reads as high, whatever its label, is never sent to the fold model,
+    # whose output becomes a plain profile section.
     rows = [r for r in rows if not value_reads_high(r.get("value"))]
     facts = render_fold_input(rows)
     if not facts:

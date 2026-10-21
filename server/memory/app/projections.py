@@ -1113,7 +1113,7 @@ _STILL_OPEN_EDGES_WHERE = """org = {org:String} AND namespace = {ns:String}
 
 # The migration that started linking rows to edges: a value first written before it
 # was applied has no edge links of its own.
-EDGE_ROW_LINKS_MIGRATION = "066_entity_edge_rows.sql"
+EDGE_ROW_LINKS_MIGRATION = "067_entity_edge_rows.sql"
 
 
 # The pairs of {pairs} a live row still names: its current value has a link to the

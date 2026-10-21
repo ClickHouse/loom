@@ -159,7 +159,7 @@ async def _fetch_relevant_existing_memories(
     out: list[dict[str, str]] = []
     for h in hits:
         r = by_key.get(h.memory_key)
-        # An unlabelled row (copy_to, an import, before the sweep) may still hold a credential.
+        # A row whose value reads as high, whatever its label, is not shown to the model.
         if r is None or value_reads_high(r.value):
             continue
         # sha over canonical JSON so the caller can hash-dedup extractions.
