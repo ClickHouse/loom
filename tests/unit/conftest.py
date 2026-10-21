@@ -447,6 +447,19 @@ def _nobody_deactivated_over_scim() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _no_memory_webhooks() -> Iterator[None]:
+    """A memory write reads the webhook registry once per refresh interval, and
+    the unit fakes have no such table: every test starts with an empty copy that
+    is never read again. test_memory_webhooks.py sets the copy itself. No
+    `monkeypatch`: requesting it would set it up ahead of the settings guard."""
+    from server.memory.app import webhooks
+
+    webhooks._registry._reset_for_tests({}, read_age_s=0.0, due_in_s=float("inf"))
+    yield
+    webhooks._registry._reset_for_tests({}, read_age_s=None, due_in_s=0.0)
+
+
+@pytest.fixture(autouse=True)
 def _not_draining() -> Iterator[None]:
     """A test that ran an app's lifespan leaves the process marked draining,
     which the workers lease reads: every test starts serving."""

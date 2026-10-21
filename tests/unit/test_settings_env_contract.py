@@ -85,6 +85,8 @@ def _other(name: str, f: FieldInfo) -> Any:
     """A valid value for `f` that differs from its default, or None."""
     if name in _CROSS_CHECKED:
         return None
+    if name == "memory_webhook_backoff_steps_seconds":
+        return "7,21,90"
     ann, default = f.annotation, _default(f)
     origin, args = typing.get_origin(ann), typing.get_args(ann)
     if origin is typing.Literal:

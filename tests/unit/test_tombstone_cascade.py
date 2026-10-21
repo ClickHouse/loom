@@ -90,10 +90,12 @@ async def test_cascade_writes_tombstoned_version_and_mirrors_embeddings(
     cascade_spy: dict[str, Any],
 ) -> None:
     when = datetime(2026, 9, 12, 8, 0, 0)
-    n = await memory_repo.tombstone_cascade_by_ids(
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
         "o", ["m1", "m2", "m1", "missing"], when=when, ch=object()
     )
-    assert n == 2
+    assert [t["memory_id"] for t in tombstoned] == ["m1", "m2"]
+    # Each returned change carries the version its tombstone was written at.
+    assert [t["version"] for t in tombstoned] == [ov["version"] for ov in cascade_spy["overrides"]]
     assert cascade_spy["versions"] == ["m1", "m2"]
     for ov in cascade_spy["overrides"]:
         assert ov["status"] == "tombstoned"
@@ -138,10 +140,11 @@ async def test_mirror_failure_is_logged_not_raised(
     monkeypatch.setattr(
         lifecycle, "mirror_status_to_embeddings", memory_repo.mirror_status_to_embeddings
     )
-    n = await memory_repo.tombstone_cascade_by_ids(
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
         "o", ["m1"], when=datetime(2026, 9, 12), ch=_Down()
     )
-    assert n == 1  # the memory tombstone is durable; the reconcile worker heals the mirror
+    # The memory tombstone is durable; the reconcile worker heals the mirror.
+    assert len(tombstoned) == 1
 
 
 @pytest.mark.asyncio

@@ -223,6 +223,7 @@ writer-set expiry (`ttl_seconds`, applied by `memory_expiry_sweep` per the row's
 | Window     | Tables                                                                                                                                     |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | 60 minutes | `code_search_memo`                                                                                                                         |
+| 3 days     | `memory_webhook_outbox`, `memory_webhook_attempts`                                                                                         |
 | 7 days     | `llm_response_cache`, `code_scip_parts`                                                                                                    |
 | 30 days    | `events`, `embedding_cache`, `memory_drops`, `memory_extraction_queue`, `memory_ask_precedents`, `worker_status`, `code_scip_batches`      |
 | 90 days    | `erasure_requests`, `oauth_state`, `policy_decisions`                                                                                      |
