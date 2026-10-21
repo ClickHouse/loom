@@ -66,6 +66,16 @@ vi.mock("../api", async (importOriginal) => {
     browseNamespaces: vi.fn(async () => browse),
     leaveNamespace: (...a: unknown[]) => leaveNamespace(...(a as [])),
     joinNamespace: (...a: unknown[]) => joinNamespace(...(a as [])),
+    // A namespace with no guide yet, whichever one the dialog reads.
+    getNamespaceGuide: vi.fn(async () => ({
+      found: false,
+      revision: 0,
+      content: "",
+      summary: "",
+      note: "",
+      updated_by: "",
+      updated_at: null,
+    })),
   };
 });
 vi.mock("../lib/sharedReads", () => ({ sharedMine: () => Promise.resolve(mine) }));
@@ -189,6 +199,31 @@ describe("Spaces: the rows", () => {
       await user.click(within(row("personal-alice")).getByRole("button", { name: "Actions for personal-alice" }));
       const menu = await screen.findByRole("menu", { name: "Actions for personal-alice" });
       expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
+    } finally {
+      mine.pop();
+    }
+  });
+
+  it("an end user's personal collection offers its guide to read, never to write", async () => {
+    mine.push({
+      namespace: "col-me-alice",
+      role: "admin",
+      status: "active",
+      visibility: "private",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "memory",
+    });
+    try {
+      const user = userEvent.setup();
+      render(<Browse />);
+      await screen.findAllByText("alpha");
+      await user.click(within(row("col-me-alice")).getByRole("button", { name: "Actions for col-me-alice" }));
+      const menu = await screen.findByRole("menu", { name: "Actions for col-me-alice" });
+      await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
+      expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
     } finally {
       mine.pop();
     }
