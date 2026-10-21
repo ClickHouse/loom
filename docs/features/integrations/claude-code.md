@@ -17,18 +17,18 @@ Codex build runs the same scripts; see [codex.md](codex.md).
 ## Data handling
 
 This section covers the Claude Code plugin and the Codex plugin, which run the same
-scripts. The hooks and the plugin's scripts send data only to the Loom server the plugin
+scripts; Codex wires all but the token-usage hook. The hooks and the plugin's scripts send data only to the Loom server the plugin
 is configured with; the two skills named at the end of this section are the exceptions.
 The plugin sends:
 
 - whatever the agent passes to a Loom MCP tool: memories it saves, search and code
   queries;
 - the repository's identity. The owner and name of each git remote go to `code.repos`
-  to find its code index. The remote that identifies the repository goes with every
-  observation, run record and session brief, and so do the branch and `HEAD` commit with
-  each brief and the absolute working directory with the run record. The checkout's
-  directory name, the working subdirectory and a hash of the repository tag observations
-  and session memory;
+  to find its code index. The owner and name of the matched remote go with every
+  observation, run record and session brief; the branch and `HEAD` commit go with each
+  brief, and the absolute working directory with the run record. Observations and session
+  memory are tagged with the checkout's directory name and a hash of the repository, and
+  observations also carry the working subdirectory;
 - prompts, to fetch recalled memories and code pointers for them;
 - each tool call's input, output or error (`observe.record`), and the paths of files read
   or edited, for the code shunt, file rules and blast radius; a symbol name taken from a
@@ -40,13 +40,19 @@ The plugin sends:
   source evidence for the facts it extracts whatever the logging setting is, with up to
   80,000 characters of the session's Loom tool arguments and results
   (`LOOM_SESSION_MEMORY=off` stops it);
-- a run record (the first prompt as its goal, the last reply), a working-memory note
-  (goal, git status, files edited, last reply), a session brief (asks, replies, commands,
-  errors, files read, todo lists, pull request and commit identifiers) and token usage;
+- a run record (the first prompt as its goal, the last reply) and a working-memory note
+  (goal, git status, files edited, last reply);
+- a session brief at each compaction and at session end: the client's compaction summary
+  of the whole context window (up to 15,000 characters) and a log of the session's events,
+  with each ask and reply, command, file read or edited, search pattern, web address or
+  query, subagent prompt, error, todo list, other tool's name, and pull request and commit
+  identifier (`LOOM_SESSION_BRIEF=off` stops it);
+- token usage and the model name (Claude Code only);
 - after each edit in an indexed checkout, that file's uncommitted diff against `HEAD` (up to
   200,000 characters), to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
-- at Stop in an indexed checkout, the uncommitted diff of the files the session changed
-  (up to 200,000 characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
+- at Stop in an indexed checkout, the uncommitted diff of the files the session changed,
+  or of the whole uncommitted tree when the client gives no transcript (up to 200,000
+  characters), to `code.test_gate` (`LOOM_TEST_GATE=off` stops it);
 - with no credential, at the first session, your OS user name and host name, to request a
   self-signup token (refused unless the server allows self-signup; `LOOM_AUTO_SIGNUP=off`
   stops it);

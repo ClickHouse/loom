@@ -181,7 +181,7 @@ Agents and people find Loom through these listings. Each reads files in this rep
 
 The `mcp-registry` job runs in the `mcp-registry` environment. Give it the same protection rules as `pypi` and `npm` before the first dispatch: GitHub creates a missing environment with none. Its login needs no secret.
 
-Run `claude plugin validate integrations/claude-code-plugin` before changing the Claude manifest or the marketplace entry: it runs the directory's structural checks.
+After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin`: it runs the directory's structural checks.
 
 ## After the release
 
