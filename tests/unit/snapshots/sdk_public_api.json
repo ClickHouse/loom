@@ -2158,6 +2158,9 @@
             "bots_list": [
               "body"
             ],
+            "bots_provision_agent": [
+              "body"
+            ],
             "budget_set": [
               "body"
             ],

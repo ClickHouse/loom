@@ -238,6 +238,16 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   namespace for good (that agent is refused after). An agent the control
   plane retires keeps its namespace and data until you release or erase it.
 
+  An agent's namespace exists from its first exchange. To grant the agent
+  something before then, such as a namespace a control plane attaches as it
+  creates the agent, a platform admin makes it ahead:
+  `loom call /v1/admin/bots.provision_agent --data '{"name":"fleet","agent":"a"}'`
+  makes `fleet-a` as that exchange would (the trust's mark, the agent as its
+  one owner, counted against `--max-agents`) and answers its org, namespace
+  and subject (`sa:fleet:a`). It audits `auth.agent_provisioned` with the
+  admin as actor, makes no namespace the trust would refuse, and a repeat
+  changes nothing; the agent's first exchange takes the namespace as its own.
+
   Every trust bounds what it takes: a workload token living longer than
   `--max-token-age` seconds (exp less iat, default 3600) is refused, an agent
   trust makes at most `--max-agents` agents (default 1000), and a trust needs

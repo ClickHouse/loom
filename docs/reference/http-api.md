@@ -100,6 +100,7 @@ the same routes), and the curated `agent.deployment` methods over them.
 | `POST /v1/admin/bots.create` | `platform_admin` | Register a bot. |
 | `POST /v1/admin/bots.disable` | `platform_admin` | Disable a bot: its proofs are refused and the tokens it holds revoked. |
 | `POST /v1/admin/bots.list` | `platform_admin` | Every registered bot: its namespaces and roles, key or issuer, and limits. |
+| `POST /v1/admin/bots.provision_agent` | `platform_admin` | Make the namespace of a trust's agent before its first exchange, as that exchange would, so grants can name the agent first. |
 | `POST /v1/admin/budget.set` | `platform_admin` | Install or clear a per-operation latency-budget override. |
 | `POST /v1/admin/budget.violations` | `platform_admin` | Aggregate recent `budget.violated` events (loom.events) for ops alerting. |
 | `POST /v1/admin/claim_release` | `org_admin` | Release a self-signup claim: revoke its grants, clear the owner, deactivate it; the name stays reserved. |

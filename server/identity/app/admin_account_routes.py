@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from server.auth import machines, oauth, revocation, subject_revocation
+from server.auth import agents, machines, oauth, revocation, subject_revocation
 from server.auth.grant_claims import NotClaimed
 from server.auth.jwt import AuthInfo
 from server.core.errors import GrantBusyError
@@ -206,6 +206,27 @@ class NameInput(_Input):
 async def bots_disable(input: NameInput, info: Admin) -> dict[str, Any]:
     """Disable a bot: its proofs are refused and the tokens it holds revoked."""
     return {"disabled": await account_admin.disable_bot(input.name, by=_by(info))}
+
+
+class ProvisionAgentInput(_Input):
+    name: str
+    agent: str
+
+
+@router.post("/v1/admin/bots.provision_agent")
+async def bots_provision_agent(input: ProvisionAgentInput, info: Admin) -> dict[str, Any]:
+    """Make the namespace of a trust's agent before its first exchange, as that
+    exchange would, so grants can name the agent first.
+
+    `name` is a bot registered with an agent claim, `agent` the value its
+    workloads' claim will carry. The namespace counts against the trust's
+    `max_agents`; a repeat changes nothing.
+    """
+    try:
+        org, namespace = await account_admin.provision_agent(input.name, input.agent, by=_by(info))
+    except ValueError as e:
+        raise _invalid(e) from None
+    return {"org": org, "namespace": namespace, "subject": agents.subject(input.name, input.agent)}
 
 
 class RevokeSubjectInput(_Input):

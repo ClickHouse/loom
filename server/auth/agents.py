@@ -142,13 +142,14 @@ def agent_of(m: machines.Machine, claims: dict[str, Any]) -> str:
     return agent
 
 
-async def ensure_namespace(m: machines.Machine, agent: str) -> str:
+async def ensure_namespace(m: machines.Machine, agent: str, *, by: str = "") -> str:
     """The agent's namespace, made on its first exchange, as an account is:
     the row names its one owner, the agent, and then its owner grant follows.
     A later exchange writes that grant only if it was never written (the first
     one cut off after the row); one revoked since leaves a row, so it stays
     revoked. Held as a release holds it (its reads are sequential under the
-    claim), so two first exchanges make one, and one released is not made again."""
+    claim), so two first exchanges make one, and one released is not made again.
+    `by` is who made it when not the trust's exchange (an admin's, ahead of it)."""
     from server.auth.grant_claims import bot_change
     from server.auth.self_signup import provision_account
 
@@ -200,7 +201,7 @@ async def ensure_namespace(m: machines.Machine, agent: str) -> str:
             "auth.agent_provisioned",
             org=org,
             namespace=ns,
-            actor=machines.subject(m["name"]),
+            actor=by or machines.subject(m["name"]),
             subject={"agent": agent},
         )
     return ns

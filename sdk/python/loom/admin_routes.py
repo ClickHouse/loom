@@ -49,6 +49,12 @@ class AdminRoutes:
             "POST", "/v1/admin/bots.list", json=body or {}
         )
 
+    async def bots_provision_agent(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/bots.provision_agent` (platform_admin). Make the namespace of a trust's agent before its first exchange, as that exchange would, so grants can name the agent first."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/bots.provision_agent", json=body or {}
+        )
+
     async def budget_set(self, body: dict[str, Any] | None = None) -> Any:
         """`POST /v1/admin/budget.set` (platform_admin). Install or clear a per-operation latency-budget override."""
         return await self._agent.transport.request_json(
