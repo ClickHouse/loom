@@ -34,7 +34,6 @@ class FakeTransport:
         self.closed = False
         self.consumer = consumer
         self.attempts = 1
-        self.before_post: Any = None
         self.headers: list[dict[str, str]] = []
 
     async def post_with_meta(
@@ -44,10 +43,11 @@ class FakeTransport:
         idempotency_key: str | None = None,
         *,
         timeout_s: float | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> WireResult:
         if self.consumer and "consumer" not in payload:
             payload = {**payload, "consumer": self.consumer}
-        self.headers.append(await self.before_post(op_path, payload) if self.before_post else {})
+        self.headers.append(dict(extra_headers or {}))
         self.calls.append((op_path, dict(payload), idempotency_key, timeout_s))
         op = op_path.removeprefix("/v1/")
         scripted = self.responses.get(op)

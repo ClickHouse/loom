@@ -42,6 +42,7 @@ from server.memory.domain.context_layout import (
     one_item,
 )
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
+from server.memory.domain.memory_types import excluded_from_unfiltered_search
 
 log = logging.getLogger(__name__)
 
@@ -357,8 +358,6 @@ async def _pack_startup_recall(st: _PackState) -> None:
     # Transcripts leave in the statement, before the limit: every session's tool calls
     # would otherwise fill the window. Across sessions the recall also leaves out what an
     # unfiltered memory.search does (session replays, profiles, reflections).
-    from server.memory.domain.memory_types import excluded_from_unfiltered_search
-
     shape: dict[str, Any] = {
         "exclude_high_sensitivity": True,
         "exclude_transcripts": True,

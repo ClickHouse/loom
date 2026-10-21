@@ -236,10 +236,6 @@ class ReferenceClient:
             ratelimit_max_wait_s=self.max_retry_wait_s,
             consumer=self.consumer,
         )
-        # Reads under an open run are labelled with it (a header the ledger reads), not
-        # filtered by it; a transport that already has a hook keeps its own.
-        if getattr(self._transport, "before_post", ...) is None:
-            self._transport.before_post = self._label_read
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -257,12 +253,14 @@ class ReferenceClient:
     def transport(self) -> Any:
         return self._transport
 
-    async def _label_read(self, op_path: str, payload: dict[str, Any]) -> dict[str, str]:
-        if self.run_id and op_path in RECALL_READ_PATHS:
+    # -- the one call path ---------------------------------------------------
+
+    def _run_label(self, op: str) -> dict[str, str]:
+        """The open run as the label header on a recall read, where a body run_id
+        would filter; nothing on any other call."""
+        if self.run_id and f"/v1/{op}" in RECALL_READ_PATHS:
             return {AMBIENT_RUN_HEADER: self.run_id}
         return {}
-
-    # -- the one call path ---------------------------------------------------
 
     def identity(self, op: str) -> dict[str, Any]:
         """The identity fields every request carries for this op."""
@@ -275,7 +273,8 @@ class ReferenceClient:
                 ident["user_id"] = self.user_id
             if self.session_id is not None:
                 ident["session_id"] = self.session_id
-            # A body run_id on a read filters it to the run's own rows: writes only.
+            # On a recall read (RECALL_READ_PATHS) a body run_id filters to the run's own
+            # rows; `call` labels those reads with the run's header instead.
             if self.run_id and op.startswith("memory.") and f"/v1/{op}" not in RECALL_READ_PATHS:
                 ident["run_id"] = self.run_id
         return ident
@@ -321,6 +320,7 @@ class ReferenceClient:
                 f"/v1/{op}",
                 body,
                 timeout_s=timeout_s if timeout_s is not None else self.timeout_s,
+                extra_headers=self._run_label(op),
             )
         except Exception as e:  # noqa: BLE001 — fail-soft: never crash the host session
             # A failed call reports no attempt count; it is counted once.
@@ -581,10 +581,10 @@ class ReferenceClient:
         return await self.call("code.outcome", body, required=("recorded",))
 
     async def run_begin(self, goal: str, **fields: Any) -> CallResult:
-        """Open a run: every memory write until `run_complete` carries its
-        `run_id`, and every read is labelled with it (`X-Loom-Run-Id`), so the
-        ledger joins what the run read and wrote to what it did. A read carries
-        no body run_id: there it filters to the run's own rows."""
+        """Open a run: until `run_complete`, memory calls carry its `run_id`,
+        except recall reads (`RECALL_READ_PATHS`), where a body run_id filters
+        to the run's own rows; those are labelled with it (`X-Loom-Run-Id`)
+        instead, so the ledger still joins what the run read to what it did."""
         r = await self.call("run.begin", {"goal": goal, **fields}, required=("run_id",))
         if r.ok:
             self.run_id = str(r.data["run_id"])

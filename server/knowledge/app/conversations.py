@@ -629,7 +629,8 @@ async def handle_conversation_update(
             detail={
                 "code": "NO_FIELDS_PROVIDED",
                 "message": (
-                    "conversation.update requires at least one of `title`, `metadata`, or `run_id`."
+                    "conversation.update requires at least one of `title`, `metadata`, or "
+                    '`run_id` (`run_id` "-" keeps the thread\'s run; "" detaches it).'
                 ),
             },
         )
