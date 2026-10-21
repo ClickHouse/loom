@@ -5245,6 +5245,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # sort key, a handful of FINAL-scoped counts over the namespace, three of
     # the audit's shape checks, and two adoption reads — cached an hour.
     "mentor.brief": 3000,
+    "mentor.guide": 20,
     # Three summary reads, ten FINAL-scoped aggregates over
     # the namespace and one Python scan of up to 20k (key, clipped value)
     # rows for the hand-rolled index check. Namespace-sized; the ledger

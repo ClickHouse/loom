@@ -6290,6 +6290,17 @@ export interface MentorBriefOutput {
   healthy?: boolean;
 }
 
+export interface MentorGuideInput {
+  org?: string;
+  part?: "skill" | "reference" | "all";
+}
+
+export interface MentorGuideOutput {
+  version: string;
+  part: "skill" | "reference" | "all";
+  text: string;
+}
+
 export interface NamespaceAuditInput {
   org: string;
   namespace: string;
@@ -9094,6 +9105,7 @@ export type OpName =
   | "memory_schema.propose"
   | "memory_schema.register"
   | "mentor.brief"
+  | "mentor.guide"
   | "namespace.audit"
   | "namespace.browse"
   | "namespace.cancel_request"
@@ -9430,6 +9442,7 @@ export interface OpMap {
   "memory_schema.propose": { input: MemorySchemaRegisterInput; output: MemorySchemaRegisterOutput };
   "memory_schema.register": { input: MemorySchemaRegisterInput; output: MemorySchemaRegisterOutput };
   "mentor.brief": { input: MentorBriefInput; output: MentorBriefOutput };
+  "mentor.guide": { input: MentorGuideInput; output: MentorGuideOutput };
   "namespace.audit": { input: NamespaceAuditInput; output: NamespaceAuditOutput };
   "namespace.browse": { input: NamespaceBrowseInput; output: NamespaceBrowseOutput };
   "namespace.cancel_request": { input: NamespaceCancelRequestInput; output: NamespaceCancelRequestOutput };
@@ -9766,6 +9779,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory_schema.propose", group: "memory_schema", method: "propose", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 120, audit: true, readOnly: false },
   { name: "memory_schema.register", group: "memory_schema", method: "register", idempotent: false, role: "admin", maturity: "stable", budgetP99Ms: 120, audit: true, readOnly: false },
   { name: "mentor.brief", group: "mentor", method: "brief", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 3000, audit: false, readOnly: true },
+  { name: "mentor.guide", group: "mentor", method: "guide", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 20, audit: false, readOnly: true },
   { name: "namespace.audit", group: "namespace", method: "audit", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 3000, audit: false, readOnly: true },
   { name: "namespace.browse", group: "namespace", method: "browse", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "namespace.cancel_request", group: "namespace", method: "cancelRequest", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
@@ -9889,4 +9903,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 333;
+export const GENERATED_OP_COUNT = 334;
