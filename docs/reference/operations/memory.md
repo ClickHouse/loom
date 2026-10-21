@@ -963,8 +963,8 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
-| `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped, one that reads as a credential is inserted without a vector, and a key cut between two calls' chunks is not found. |
-| `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); empty summaries are skipped, and one whose text reads as a credential is inserted without a vector. |
+| `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped, one that reads as high is inserted without a vector, and a key cut between two calls' chunks is not found. |
+| `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); empty summaries are skipped, and one whose text reads as high is inserted without a vector. |
 | `source_trace` | `str` | `'okf-import'` | Stamped into memory_chunks.source_url when the chunk carries none. |
 
 | Output field | Type | Meaning |
@@ -973,7 +973,7 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `links_written` | `int` | Chunk-to-memory-key provenance links inserted from the chunks' `memory_keys`. |
 | `digests_written` | `int` | Rows inserted into `loom.session_summaries`. |
 | `embedding_model` | `str` | The server embedder the imported rows were re-embedded with. |
-| `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded (every item read as a credential, or none was written). |
+| `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded (every item read as high, or none was written). |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
 | `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
 

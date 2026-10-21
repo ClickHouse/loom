@@ -523,7 +523,7 @@ def reads_high(text: str) -> bool:
     )
 
 
-def _high_spans(text: str) -> list[tuple[int, int]]:
+def _spans_as_written(text: str) -> list[tuple[int, int]]:
     """The [start, end) ranges of `text` that `_reads_high_text` reads as high, with each
     `"key": value` pair that states a secret (`{"badge_pin": "4471"}`)."""
     spans = [m.span() for pat in _HIGH_SHAPES for m in pat.finditer(text)]
@@ -536,10 +536,10 @@ def _high_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def credential_spans(text: str) -> list[tuple[int, int]]:
+def high_spans(text: str) -> list[tuple[int, int]]:
     """The [start, end) character ranges of `text` that read as high, by the rule
     `reads_high` applies: as written, and with JSON string escapes undone."""
-    spans = _high_spans(text)
+    spans = _spans_as_written(text)
     escapes = list(_JSON_ESCAPE.finditer(text))
     if not escapes:
         return spans
@@ -558,16 +558,16 @@ def credential_spans(text: str) -> list[tuple[int, int]]:
         before = bisect.bisect_left(decoded_at, pos)
         return pos + (shortened[before - 1] if before else 0)
 
-    spans += [(in_text(start), in_text(end)) for start, end in _high_spans(unescaped)]
+    spans += [(in_text(start), in_text(end)) for start, end in _spans_as_written(unescaped)]
     return spans
 
 
-def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
+def overlaps_high(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
     """For each [start, end) range of `source` (a chunk's place in the text it was cut from),
-    whether it overlaps a credential in `source` or its own text reads as one. A chunk cut
-    through a key holds only its head or its tail, which does not read as a credential on its
+    whether it overlaps a high shape in `source` or its own text reads as one. A chunk cut
+    through a key holds only its head or its tail, which does not read as high on its
     own; a chunk that starts inside a word can read as one where `source` does not."""
-    spans = credential_spans(source)
+    spans = high_spans(source)
     return [
         reads_high(source[start:end])
         or any(start < s_end and s_start < end for s_start, s_end in spans)
@@ -607,11 +607,11 @@ def _joined_runs(texts: dict[int, str]) -> Iterator[tuple[str, list[int], list[t
         yield joined, indexes, ranges
 
 
-def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
-    """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
+def joined_overlaps_high(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
+    """For each `(session, chunk_index, content)` chunk, whether it overlaps a high shape in
     the text its session's chunks make joined in `chunk_index` order, each chunk's overlap with
     the one before dropped, or its own text reads as one: the rule the other chunk writers
-    apply to the text they cut (`overlaps_credential`). Chunks with a gap in `chunk_index`
+    apply to the text they cut (`overlaps_high`). Chunks with a gap in `chunk_index`
     are not joined. A session that holds two texts at one index (written by two calls) has
     no single text to rebuild, so its chunks are read in pairs instead
     (`_held_in_pairs`)."""
@@ -629,7 +629,7 @@ def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]
             continue
         single = {index: next(iter(versions)) for index, versions in texts.items()}
         for joined, indexes, ranges in _joined_runs(single):
-            for index, hit in zip(indexes, overlaps_credential(joined, ranges), strict=True):
+            for index, hit in zip(indexes, overlaps_high(joined, ranges), strict=True):
                 for i in positions[index]:
                     held[i] = hit
     return held
@@ -637,7 +637,7 @@ def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]
 
 def _held_in_pairs(texts: dict[int, set[str]]) -> set[tuple[int, str]]:
     """The `(chunk_index, text)` chunks of a session with several texts at one index that
-    read as a credential on their own, or that overlap one in the text a chunk and a chunk
+    read as high on their own, or that overlap one in the text a chunk and a chunk
     at the next index make joined. Only a pair whose texts overlap (`_overlap`) was cut
     from one text, so only such a pair is joined."""
     held = {
@@ -651,7 +651,7 @@ def _held_in_pairs(texts: dict[int, set[str]]) -> set[tuple[int, str]]:
                     continue
                 joined = first + second[repeat:]
                 ranges = [(0, len(first)), (len(first) - repeat, len(joined))]
-                first_hit, second_hit = overlaps_credential(joined, ranges)
+                first_hit, second_hit = overlaps_high(joined, ranges)
                 if first_hit:
                     held.add((index, first))
                 if second_hit:
@@ -659,15 +659,15 @@ def _held_in_pairs(texts: dict[int, set[str]]) -> set[tuple[int, str]]:
     return held
 
 
-# Spare rows a read asks for, so a passage it holds back for reading as a credential does
+# Spare rows a read asks for, so a passage it holds back for reading as high does
 # not leave the page short.
 HELD_MARGIN = 2  # not a setting: algorithm shape, sized to how rarely a row is held
 
 
-def without_credentials[T](
+def without_high[T](
     items: Iterable[T], text: Callable[[T], str], limit: int | None = None
 ) -> list[T]:
-    """`items`, in order, whose text does not read as a credential, the first `limit` of
+    """`items`, in order, whose text does not read as high, the first `limit` of
     them. The text is checked only as far as `limit` reaches."""
     kept: list[T] = []
     for item in items:
@@ -680,7 +680,7 @@ def without_credentials[T](
 
 def listed_text(text: Any) -> str:
     """`text` as a namespace-wide listing shows it: every reader of the namespace sees a
-    listing, so text that reads as a credential is shown empty."""
+    listing, so text that reads as high is shown empty."""
     t = str(text or "")
     return "" if reads_high(t) else t
 

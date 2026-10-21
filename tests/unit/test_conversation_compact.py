@@ -749,12 +749,12 @@ def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> N
             )
         )
     )
-    assert (out.compacted, out.reason) == (False, "summary-reads-as-credential")
+    assert (out.compacted, out.reason) == (False, "summary-high-sensitivity")
     assert fake.inserted == [] and fake.embedded == [] and fake.executed == []
 
 
 def test_a_credential_turn_is_left_out_of_the_window_and_stays_live(monkeypatch) -> None:
-    """The summarizer never sees a turn that reads as a credential, even one that echoes
+    """The summarizer never sees a turn that reads as high, even one that echoes
     its input; the turn stays live, and the rest of the window compacts."""
     import server.core.ch
     import server.llm.client
@@ -856,7 +856,7 @@ def test_a_saved_and_a_credential_turn_both_stay_live(monkeypatch) -> None:
 
 @pytest.mark.parametrize("held", ["saved", "credential"])
 def test_a_window_of_only_held_turns_has_nothing_to_compact(monkeypatch, held) -> None:
-    """Every turn before the recent ones is saved, or reads as a credential: none can be
+    """Every turn before the recent ones is saved, or reads as high: none can be
     summarised, so nothing is (not `already-compacted`: there is no summary)."""
     import server.core.ch
     import server.llm.client

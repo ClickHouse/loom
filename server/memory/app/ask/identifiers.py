@@ -16,7 +16,7 @@ from server.memory.app.ask.question_shapes import (
     is_mention_time_question,
 )
 from server.memory.app.ask.result import _is_chunk_hit
-from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
+from server.memory.domain.sensitivity import HELD_MARGIN, without_high
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +81,11 @@ _INJECT_WORD_ORDINAL_RE = re.compile(
 async def _plain_chunks(
     find: Callable[..., Awaitable[list[dict[str, Any]]]], *, limit: int, **kwargs: Any
 ) -> list[dict[str, Any]]:
-    """`find` (a chunk lookup), without the chunks whose text reads as a credential. A chunk
+    """`find` (a chunk lookup), without the chunks whose text reads as high. A chunk
     written as one has no vector and the lookup's `embedding_dim > 0` filter leaves it out;
     this holds back one an earlier build embedded."""
     rows = await find(limit=limit + HELD_MARGIN, **kwargs)
-    return without_credentials(rows, lambda r: str(r.get("content_excerpt") or ""), limit)
+    return without_high(rows, lambda r: str(r.get("content_excerpt") or ""), limit)
 
 
 def ordinal_line_markers(query_text: str) -> list[str]:

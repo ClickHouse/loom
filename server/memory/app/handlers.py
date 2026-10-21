@@ -255,7 +255,7 @@ async def _get_chunk_with_neighbors(input: MemoryGetInput) -> MemoryGetOutput:
     if target is None:
         return MemoryGetOutput(found=False)
 
-    # A chunk that reads as a credential, or that was written without a vector for holding
+    # A chunk that reads as high, or that was written without a vector for holding
     # part of one, is served only when its own key is read, and that read is audited as a
     # key read of a 'high' row is. A neighbour is context the caller did not name: a held
     # one is left out of the passage.

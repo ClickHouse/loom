@@ -2316,7 +2316,7 @@ settings:
   # changes no stored row. At most 2048, the most an embedding row stores
   # (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message
   # listing reads this many characters and a fixed margin past them, and checks them all
-  # for a credential before it cuts the excerpt. [live]
+  # for a high shape before it cuts the excerpt. [live]
   # conversation_search_excerpt_chars: 240
 
   # LLM-title untitled threads in namespaces with conversation_logging_enabled (the

@@ -71,7 +71,7 @@ from server.memory.domain.sensitivity import (
     HELD_MARGIN,
     listed_text,
     reads_high,
-    without_credentials,
+    without_high,
 )
 from server.observability.genai import staged
 from server.observability.otel import traced
@@ -89,7 +89,7 @@ log = logging.getLogger(__name__)
 
 # Why conversation.save_message did not index a turn (`indexed=False`).
 SaveRefusal = Literal[
-    "owner_mismatch", "deleted", "unsupported_role", "embed_failed", "reads_as_credential"
+    "owner_mismatch", "deleted", "unsupported_role", "embed_failed", "high_sensitivity"
 ]
 
 
@@ -133,7 +133,7 @@ async def handle_conversation_append(
     """Insert one message row, then its embedding row once the message landed.
 
     A failed embed still stores the turn; its embedding row records the error. A turn
-    that reads as a credential is stored with no embedding row, so its text never
+    that reads as high is stored with no embedding row, so its text never
     reaches the embedder and conversation.search never ranks it.
     """
     from server.knowledge.store import conversations as conversation_repo
@@ -189,8 +189,8 @@ async def handle_conversation_append(
     # Only user/assistant turns are embedded for recall. System/tool messages
     # stay in the transcript (loom.conversations) but are NOT indexed — they're
     # scaffolding (tool output, system reminders) that pollutes
-    # conversation.search ranking and wastes embed spend. A turn that reads as a
-    # credential is stored but never embedded, so conversation.search never ranks it.
+    # conversation.search ranking and wastes embed spend. A turn that reads as
+    # high is stored but never embedded, so conversation.search never ranks it.
     # A turn can be megabytes long, so the check runs off the event loop.
     if input.role not in ("user", "assistant") or await asyncio.to_thread(
         reads_high, input.content
@@ -262,7 +262,7 @@ async def _embed_turn(
 ) -> EmbeddedTurn:
     """Embed a turn's first `EMBEDDED_EXCERPT_CHARS` characters. Fail-open: a failed
     embed returns no vector and the error. The caller checks `reads_high` first: a
-    turn that reads as a credential is never embedded."""
+    turn that reads as high is never embedded."""
     embedder = get_embedder()
     excerpt = content[:EMBEDDED_EXCERPT_CHARS]
     try:
@@ -367,7 +367,7 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
     stored = await _stored_turn(key, user_id)
     if stored is None:
         if await asyncio.to_thread(reads_high, input.content):
-            return _save_refused(input, "reads_as_credential")  # nothing written
+            return _save_refused(input, "high_sensitivity")  # nothing written
         # The vector is needed either way, so embed while the row is written.
         _, embedded = await asyncio.gather(
             _write_saved_turn(input, once_per_identity=True),
@@ -505,10 +505,10 @@ def _save_refusal(stored: StoredMessage, user_id: str) -> SaveRefusal | None:
         return "unsupported_role"
     if any(owner not in ("-", "", user_id) for owner in stored.owners):
         return "owner_mismatch"
-    # A turn that reads as a credential is never embedded, so the saved search could
+    # A turn that reads as high is never embedded, so the saved search could
     # never find it.
     if reads_high(stored.content):
-        return "reads_as_credential"
+        return "high_sensitivity"
     return None
 
 
@@ -985,9 +985,9 @@ async def _search_substring_fallback(
         # Spare rows, so the turns held back below do not leave the page short.
         limit=input.top_k + HELD_MARGIN,
     )
-    # The fallback checks each matched turn's whole text and drops one that reads as a
-    # credential. A matched turn can be megabytes long, so the check runs off the event loop.
-    rows = await asyncio.to_thread(without_credentials, rows, lambda r: r.content, input.top_k)
+    # The fallback checks each matched turn's whole text and drops one that reads as
+    # high. A matched turn can be megabytes long, so the check runs off the event loop.
+    rows = await asyncio.to_thread(without_high, rows, lambda r: r.content, input.top_k)
     hits = [
         _ConversationHit(
             thread_id=r.thread_id,
@@ -1059,11 +1059,11 @@ async def handle_conversation_search_saved_messages(
                 # Spare rows, for the messages held back below.
                 limit=candidate_limit + HELD_MARGIN,
             )
-        # A message that reads as a credential is never a keyword hit either: one saved
+        # A message that reads as high is never a keyword hit either: one saved
         # by an earlier build is held back here, as the vector leg holds it back.
         # The check reads each message whole, so it runs in a thread, off the event loop.
         plain = await asyncio.to_thread(
-            without_credentials,
+            without_high,
             [r for r in rows if r["role"] in ("user", "assistant")],
             lambda r: str(r["content"]),
             candidate_limit,
@@ -1155,14 +1155,14 @@ async def handle_conversation_list_saved_messages(
             scope=scope,
             user_id=input.user_id,
             # The excerpt the listing shows and a margin past it: a key crossing the
-            # cut reads as a credential in what is checked.
+            # cut reads as high in what is checked.
             listed=size + LISTED_MARGIN_CHARS,
             conversation_id=input.conversation_id,
             before=before,
             limit=input.limit + 1,  # +1 to detect "more"
         )
     page = rows[: input.limit]
-    # Listed without the text when it reads as a credential, as memory.list lists a
+    # Listed without the text when it reads as high, as memory.list lists a
     # 'high' row. Checking every text is CPU work; it runs off the event loop.
     listed = await asyncio.to_thread(lambda: [listed_text(r["content"]) for r in page])
     hits = [
@@ -1237,7 +1237,7 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
     titles = await conversation_repo.thread_titles(
         input.org, input.namespace, [str(r["thread_id"]) for r in rows]
     )
-    # Listed across the namespace: a last turn or a title that reads as a credential is
+    # Listed across the namespace: a last turn or a title that reads as high is
     # listed without its text, as memory.list lists a 'high' row. The excerpt and
     # LISTED_MARGIN_CHARS characters past it are checked, so a key that crosses the
     # excerpt's cut is caught too. Checking every text is CPU work; it runs off the
@@ -1347,9 +1347,9 @@ def _compaction_candidates(
     for each whether it is an earlier summary.
 
     A saved turn is the user's explicit choice to keep that message findable: it stays
-    verbatim, never folded into a summary and tombstoned. A turn that reads as a
-    credential is never sent to the summarizer: it stays live, out of the window, and out
-    of search (it has no embedding row). The credential check stops once the window is
+    verbatim, never folded into a summary and tombstoned. A turn that reads as high
+    is never sent to the summarizer: it stays live, out of the window, and out of search
+    (it has no embedding row). The sensitivity check stops once the window is
     full and `min_to_compact` new turns are kept: later turns never reach the
     summarizer. Summaries before the first new turn are not counted toward the window;
     every turn from the first new one on is."""
@@ -1384,9 +1384,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     The summary row's metadata.compacted_from = [msg_ids] marks it as a summary: a
     later run folds it into its window, and a window of nothing but summaries is
     already compacted. A summary that cannot be embedded compacts nothing
-    (`reason="embed-failed"`). A turn that reads as a credential is left out of the
+    (`reason="embed-failed"`). A turn that reads as high is left out of the
     window and stays live; a summary that reads as one anyway compacts nothing
-    (`reason="summary-reads-as-credential"`).
+    (`reason="summary-high-sensitivity"`).
     """
     import uuid as _uuid
 
@@ -1425,7 +1425,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="nothing-to-compact",
         )
 
-    # The credential check reads each candidate turn whole, so it runs off the event loop.
+    # The sensitivity check reads each candidate turn whole, so it runs off the event loop.
     candidates, is_summary = await asyncio.to_thread(
         _compaction_candidates, rows[: -input.keep_recent], input.min_to_compact
     )
@@ -1483,14 +1483,14 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             tokens_out=result.tokens_out,
         )
 
-    # A summary that reads as a credential is never embedded, so it is refused before
+    # A summary that reads as high is never embedded, so it is refused before
     # anything is written. The window does not change while its turns stay live, so a
     # retry resends the same transcript and most likely gets the same refusal.
     if reads_high(summary_text):
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
-            reason="summary-reads-as-credential",
+            reason="summary-high-sensitivity",
             tokens_in=result.tokens_in,
             tokens_out=result.tokens_out,
         )

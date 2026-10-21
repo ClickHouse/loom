@@ -2024,7 +2024,7 @@
           "maximum": 2048,
           "minimum": 1,
           "type": "integer",
-          "description": "Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a credential before it cuts the excerpt."
+          "description": "Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a high shape before it cuts the excerpt."
         },
         "conversation_search_min_similarity": {
           "default": 0.3,

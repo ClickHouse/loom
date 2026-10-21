@@ -206,9 +206,9 @@ def _shapes(text: str, level: str) -> tuple[str, ...]:
     import re
 
     shapes: list[str] = []
-    # Every row the detector reads as high is a credential, whatever its shape (a key, a card
-    # number, an SSN, a stated PIN): the scheduled pass applies `credential` and `email` rows
-    # by default. An IBAN-only row is `other`, applied by the operator's run.
+    # The `credential` shape names every row the detector reads as high, whatever its shape
+    # (a key, a card number, an SSN, a stated PIN): the scheduled pass applies `credential`
+    # and `email` rows by default. An IBAN-only row is `other`, applied by the operator's run.
     if level == HIGH:
         shapes.append("credential")
     if re.search(_PROBE_EMAIL, text):

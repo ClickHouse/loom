@@ -68,7 +68,7 @@ class ConversationTitlerConfig:
 class ConversationTitlerResult:
     titled: int = 0
     # Threads marked so they are never titled: the model's title, or every opening
-    # turn, read as a credential.
+    # turn, read as high.
     refused: int = 0
     skipped_titled: int = 0
     skipped_deleted: int = 0
@@ -97,7 +97,7 @@ async def _make_title(
     turns = await conversation_repo.opening_turns(
         str(row["org"]), str(row["namespace"]), str(row["thread_id"]), limit=_OPENING_TURNS
     )
-    # A turn that reads as a credential never reaches the model: the title is listed to
+    # A turn that reads as high never reaches the model: the title is listed to
     # every reader of the namespace. A turn can be as long as the request cap allows, so
     # the check runs in a worker thread.
     spoken = [r for r in turns if str(r.get("content") or "").strip()]
@@ -107,7 +107,7 @@ async def _make_title(
     snippet = "\n".join(f"{r['role']}: {str(r['content'])[:500]}" for r in plain)
     if not snippet:
         if spoken and len(turns) >= _OPENING_TURNS:
-            # Every opening turn reads as a credential and no later turn can join them.
+            # Every opening turn reads as high and no later turn can join them.
             # The thread is marked, so it stops taking one of the scan's slots on every
             # pass. With fewer turns it stays unmarked: a plain turn may still arrive.
             await _store_title(row, existing, "", refused=True)
@@ -140,7 +140,7 @@ async def _make_title(
     title = (getattr(out, "text", "") or "").strip().strip('"').strip()[:80]
     if not title:
         return None
-    # A title that reads as a credential is never stored. The thread is marked instead,
+    # A title that reads as high is never stored. The thread is marked instead,
     # so later passes do not pay for the same title again.
     refused = reads_high(title)
     await _store_title(row, existing, "" if refused else title, refused=refused)

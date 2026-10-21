@@ -588,7 +588,7 @@ async def test_a_new_turn_that_reads_as_a_credential_is_refused_and_not_written(
     out = await conversations.handle_conversation_save_message(
         _save_input().model_copy(update={"content": f"my key is {OPENAI_KEY}"})
     )
-    assert (out.indexed, out.reason) == (False, "reads_as_credential")
+    assert (out.indexed, out.reason) == (False, "high_sensitivity")
     assert store.appends == [] and store.embeddings == [] and store.marked == []
 
 
@@ -611,7 +611,7 @@ async def test_a_stored_turn_that_reads_as_a_credential_is_refused(
     )
     store = _Store(monkeypatch, [stored], _embedding(current=0))
     out = await conversations.handle_conversation_save_message(_save_input())
-    assert (out.indexed, out.reason) == (False, "reads_as_credential")
+    assert (out.indexed, out.reason) == (False, "high_sensitivity")
     assert store.marked == [] and store.embeddings == []
 
 
