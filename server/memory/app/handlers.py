@@ -605,8 +605,15 @@ async def handle_memory_delete(input: MemoryDeleteInput) -> MemoryDeleteOutput:
     # The version is drawn here, right before the insert: the vector retire skips rows at
     # or above it, so the later it is drawn the fewer late vector writes it leaves live.
     version = next_version()
-    tombstoned, downgraded = await _tombstone(existing, version=version, op="memory.delete")
-    await webhooks.announce([("memory.tombstoned", webhooks.memory_change(existing, version))])
+    await _write_tombstone_row(existing, version=version)
+    try:
+        tombstoned, downgraded = await _retire_derived(
+            existing, version=version, op="memory.delete"
+        )
+    finally:
+        # The tombstone is in: a retry finds no live row and returns found=False, so the
+        # event is recorded whatever fails while retiring what was derived from it.
+        await webhooks.announce([("memory.tombstoned", webhooks.memory_change(existing, version))])
     return MemoryDeleteOutput(
         tombstoned=True,
         version=version,
@@ -1008,13 +1015,6 @@ async def _write_above(row: Any, *, tombstone: int, source_trace: str | None = N
         **changes,
     )
     await insert_memory_versions([back], ch=get_client())
-
-
-async def _tombstone(existing: Any, *, version: int, op: str) -> tuple[int, int]:
-    """Write the tombstone of `existing` at `version` and retire what was derived from it.
-    Returns how many consolidated summaries it tombstoned and downgraded."""
-    await _write_tombstone_row(existing, version=version)
-    return await _retire_derived(existing, version=version, op=op)
 
 
 async def _write_tombstone_row(existing: Any, *, version: int, trace: str = "") -> None:

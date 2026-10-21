@@ -372,11 +372,13 @@ sweep, the `delete_version` check).
   (`LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS`) and doubles up to an hour
   (`LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS`), checked before each POST; a 2xx ends it.
   The cooldown is kept per server process, so a restart or a new worker leader starts it
-  afresh. A pass stops starting POSTs once every POST could have waited its whole ack
-  deadline (40 / 4 × 10 s = 100 s after the pass starts), and at the latest
+  afresh. A pass POSTs until every POST could have waited its whole ack deadline
+  (40 / 4 × 10 s = 100 s after the pass starts), and at the latest until
   `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` (20 s) before its deadline
   (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); the reserve covers the one
-  insert after the POSTs. The reads before the POSTs come out of the POST budget, which
+  insert after the POSTs. At that point the pass cancels its POSTs still in flight: a
+  receiver may already have handled one, but no outcome is recorded, so its event keeps
+  the lease and is sent again under the same `webhook-id` once the lease ends. The reads before the POSTs come out of the POST budget, which
   counts from the start of the pass, so when the due-event read grows with the outbox
   backlog, raise `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`. What a pass did not send
   goes next pass. With fast receivers the ceiling is about 40 events per pass, a pass

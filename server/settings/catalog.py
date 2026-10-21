@@ -3112,11 +3112,14 @@ class MemoryWebhookSettings(BaseModel):
     memory_webhook_deliver_interval_seconds: int = Field(default=5, ge=1)
     # Seconds between memory webhook delivery passes that found nothing due.
     memory_webhook_deliver_idle_interval_seconds: int = Field(default=30, ge=1)
-    # Seconds a memory webhook delivery pass may run before the supervisor abandons it; it
-    # stops starting POSTs memory_webhook_deliver_reserve_seconds before. At least 30.
+    # Seconds a memory webhook delivery pass may run before the supervisor abandons it;
+    # memory_webhook_deliver_reserve_seconds before it, the pass cancels its POSTs still in
+    # flight. At least 30.
     memory_webhook_deliver_max_pass_seconds: float = Field(default=120.0, ge=30)
-    # Seconds before the pass deadline a memory webhook delivery pass stops starting POSTs,
-    # kept for the one insert after them; less than memory_webhook_deliver_max_pass_seconds.
+    # Seconds before the pass deadline a memory webhook delivery pass cancels its POSTs
+    # still in flight, kept for the one insert after them; their events keep the lease and
+    # are sent again under the same webhook-id once it ends. Less than
+    # memory_webhook_deliver_max_pass_seconds.
     memory_webhook_deliver_reserve_seconds: float = Field(default=20.0, gt=0)
     # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
     # leased stays passed over by other passes, so a crashed pass's events come back after it.

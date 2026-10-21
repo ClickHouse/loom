@@ -226,8 +226,10 @@ async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
             "version": 7,
         }
 
-    monkeypatch.setattr(
-        webhooks, "_hooks", {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)}
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read=True,
+        refresh_s=float("inf"),
     )
     monkeypatch.setattr(lifecycle, "CLEAR_PAGE_ROWS", 2)
     ch = _clear_ch(monkeypatch, [[row("a"), row("b")], [row("c")]])

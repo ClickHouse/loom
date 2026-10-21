@@ -594,6 +594,53 @@ async def test_memory_set_announces_its_row_when_supersession_fails(
 
 
 @pytest.mark.asyncio
+async def test_memory_delete_announces_its_tombstone_when_retiring_derived_rows_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tombstone is in before the derived rows are retired: a failure there answers
+    an error, and the event is already in the outbox (a retry finds no live row)."""
+    ch = _CH()
+    monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
+    existing = MemoryRow(
+        memory_id="mid-1",
+        org="test",
+        namespace="ops-alerts",
+        agent="sre",
+        user_id="-",
+        session_id="-",
+        memory_key=_KEY,
+        memory_type="semantic",
+        value="Deploys happen on Thursday",
+        confidence=0.8,
+        version=100,
+        pinned=False,
+        created_at=datetime(2026, 9, 17, 12, 0, 0),
+        expires_at=None,
+    )
+    announced: list[Any] = []
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return existing
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    async def _retire(*_: Any, **__: Any) -> tuple[int, int]:
+        raise RuntimeError("summary downgrade failed")
+
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    monkeypatch.setattr(mem_handlers, "_retire_derived", _retire)
+    with pytest.raises(RuntimeError, match="summary downgrade"):
+        await mem_handlers.handle_memory_delete(
+            MemoryDeleteInput(org="test", namespace="ops-alerts", agent="sre", memory_key=_KEY)
+        )
+    assert [r["tombstoned_at"] is not None for r in ch.rows_for("loom.memory")] == [True]
+    [(event, row)] = announced
+    assert event == "memory.tombstoned" and row["memory_key"] == _KEY
+
+
+@pytest.mark.asyncio
 async def test_memory_set_announces_its_row_when_the_embedding_insert_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
