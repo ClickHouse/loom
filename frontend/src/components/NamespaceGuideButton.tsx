@@ -10,9 +10,8 @@ import { Tip } from "./ui";
 
 /**
  * The namespace's guide, one button in the page header beside the page's primary action.
- * The button is there whatever the read answers (on any namespace but a personal
- * collection, which takes no guide), so nothing on the page moves when
- * it lands and focus has a place to come back to. Its description says what the guide is
+ * The button is there whatever the read answers, so nothing on the page moves when it
+ * lands and focus has a place to come back to. Its description says what the guide is
  * (its summary, or that there is none); a writer of a namespace without one lands straight
  * in the editor.
  */

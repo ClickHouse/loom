@@ -256,7 +256,7 @@ describe("Spaces: the rows", () => {
     }
   });
 
-  it("an end user's personal collection says it takes no guide, and offers no editor", async () => {
+  it("an end user's personal collection offers no guide in its menu", async () => {
     mine.push({
       namespace: "col-me-alice",
       role: "admin",
@@ -273,9 +273,8 @@ describe("Spaces: the rows", () => {
       await screen.findAllByText("alpha");
       await user.click(within(row("col-me-alice")).getByRole("button", { name: "Actions for col-me-alice" }));
       const menu = await screen.findByRole("menu", { name: "Actions for col-me-alice" });
-      await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
-      expect(await screen.findByText(/A personal collection takes no guide/)).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+      // It takes no guide, so its menu offers none.
+      expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
     } finally {
       mine.pop();
     }

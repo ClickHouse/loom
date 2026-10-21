@@ -18,6 +18,7 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
+import { isPersonalCollection } from "../lib/namespace";
 import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
@@ -547,8 +548,9 @@ const SpaceRow = memo(function SpaceRow({
    *  Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
-    // A row whose summary is shown opens the guide from it: one way in, not two.
-    ...(canReadGuide && !guideSummary
+    // A row whose summary is shown opens the guide from it: one way in, not two. A personal
+    // collection takes no guide, so it offers none.
+    ...(canReadGuide && !guideSummary && !isPersonalCollection(namespace)
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
       : []),
     {
