@@ -689,7 +689,7 @@ function LearningsPanel({
               ) : (
                 <div className="text-sm text-text mb-2">{truncate(formatValue(r.proposed_value), 240)}</div>
               )}
-              {/* A bot rule's rationale quotes the user turn, then the rule, one per line. */}
+              {/* A bot rule's rationale quotes the user turn, then what the assistant said, one per line. */}
               {r.rationale && (
                 <div className="text-sm text-text-muted mb-2 italic whitespace-pre-line">{r.rationale}</div>
               )}

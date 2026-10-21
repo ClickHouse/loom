@@ -106,7 +106,7 @@ _ASKS = {"always", "never", "don't", "dont"}  # not a setting: a word list
 # Words that open a question asking for a behaviour ("could you always ...?").
 _POLITE = {"can", "could", "would", "will"}  # not a setting: a word list
 # Words that name the user as the one a question asks something done to.
-_ME = {"me", "my", "us", "our"}  # not a setting: a word list
+_ME = {"me", "us"}  # not a setting: a word list
 # Words that ask for a behaviour before "you to" ("I want you to always ...").
 _WANTS = {"want", "need"}  # not a setting: a word list
 # Words a rule and a request share without naming the same behaviour.

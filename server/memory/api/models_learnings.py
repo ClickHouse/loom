@@ -26,7 +26,7 @@ class _LearningEntry(BaseModel):
     memory_key: str
     memory_type: str
     proposed_value: Any
-    # How many back it; for `assistant_turn`, the distinct end users.
+    # Supporters behind the candidate; for `assistant_turn`, the distinct end users.
     supporter_count: int
     # `assistant_turn` only (0 otherwise): distinct (user, session) pairs that
     # stated the rule.

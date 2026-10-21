@@ -161,7 +161,7 @@ export interface LearningEntry {
   memory_key: string;
   memory_type: string;
   proposed_value: unknown;
-  // How many back it; for an `assistant_turn` row, the distinct end users.
+  // Supporters behind the candidate; for `assistant_turn`, the distinct end users.
   supporter_count: number;
   // `assistant_turn` rows: distinct sessions that stated the rule. Absent from a
   // server a release behind.

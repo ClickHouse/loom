@@ -637,6 +637,8 @@ async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_f
         # A question about the policy the bot states.
         "Do you always escalate refunds over $500?",
         "Will you always escalate refunds over $500?",
+        # A possessive names the user's thing, not the user as the one asked.
+        "Will you always escalate my refund over $500?",
         # A complaint: "never" and "don't" in a statement ask for nothing.
         "I never received my refund over $500.",
         "You never told me you escalate refunds over $500.",

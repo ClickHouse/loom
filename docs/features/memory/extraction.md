@@ -88,12 +88,12 @@ before its first cited assistant turn opens an imperative with "always", "never"
 comma or semicolon with "always" ("From now on, always ..."), and the words after it
 share at least two of the rule's content words and at least half of them. A question
 asks for a behaviour only when it opens with "can", "could", "would" or "will" you
-and its requested words name the user ("me", "my", "us" or "our"): "Could you always
-answer me in French?". The drop is counted in `loom.memory_drops` (stage
+and its requested words name the user as the one it is done to ("me" or "us"):
+"Could you always answer me in French?". The drop is counted in `loom.memory_drops` (stage
 `learnings.file`, reason `user_requested`). A statement ("I never received my refund
 over $500", "You never told me you escalate refunds over $500", "I called twice, never
 got my refund over $500"), a question about the policy ("Do you always escalate refunds
-over $500?", "Will you always escalate refunds over $500?") or a request on its topic
+over $500?", "Will you always escalate my refund over $500?") or a request on its topic
 ("Please refund my order") asks for no behaviour, so the rule is filed.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
