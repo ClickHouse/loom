@@ -1,6 +1,7 @@
 """The deduplication settings `CHClient.insert` adds to every write
 (`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
-for a batched insert (`batched_insert_settings`).
+for a batched insert (`batched_insert_settings`) or a committed one
+(`COMMITTED_INSERT_SETTINGS`).
 """
 
 from __future__ import annotations
@@ -10,12 +11,22 @@ from typing import Any
 
 from server.settings import settings
 
+# Insert settings that commit the rows before the insert returns.
+COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
-def batched_insert_settings() -> dict[str, Any]:
+
+def batched_insert_settings(*, background: bool = False) -> dict[str, Any]:
     """Settings of a batched insert: an async insert answered once its shared part
-    is written, waiting between the two live bounds for others to join it. Why it
-    is safe: docs/architecture/clickhouse.md#batched-inserts."""
-    wait_max = int(settings.ch_batched_insert_wait_max_ms)
+    is written, waiting between the live bounds for others to join it. `background`
+    is for an insert no request waits on, which takes the longer
+    `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, the
+    committed settings. Why it is safe: docs/architecture/clickhouse.md#batched-inserts."""
+    if not settings.ch_batched_inserts:
+        return COMMITTED_INSERT_SETTINGS
+    if background:
+        wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
+    else:
+        wait_max = int(settings.ch_batched_insert_wait_max_ms)
     return {
         "async_insert": 1,
         "wait_for_async_insert": 1,

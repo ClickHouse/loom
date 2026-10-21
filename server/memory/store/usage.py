@@ -44,8 +44,9 @@ _USAGE_FLUSH_INTERVAL_S = 0.5
 _USAGE_FLUSH_TASK: asyncio.Task[None] | None = None
 
 
-async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
-    """Drain the usage-event buffer in one CH insert. No-op when empty."""
+async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bool = True) -> None:
+    """Drain the usage-event buffer in one CH insert. No-op when empty.
+    `background=False` for the flush a request waits on (the buffer is full)."""
     global _USAGE_BUFFER
     if _USAGE_BUFFER_LOCK is None:
         return
@@ -60,7 +61,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
             "loom.memory_usage_events",
             batch,
             # wait=1: a rejected insert raises here and is re-queued, not lost unseen.
-            settings=batched_insert_settings(),
+            settings=batched_insert_settings(background=background),
         )
     except Exception as e:  # noqa: BLE001 — requeue on any flush failure
         # Re-queue on failure, but bounded: drop rather than OOM if CH stays down.
@@ -202,7 +203,7 @@ async def record_usage_event(
             should_flush = True
     if should_flush:
         # Back-pressure: caller waits for the drain so the buffer can't grow unbounded.
-        await _flush_usage_buffer_now(ch=ch)
+        await _flush_usage_buffer_now(ch=ch, background=False)
 
 
 async def record_usage_for_keys(

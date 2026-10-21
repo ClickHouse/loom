@@ -100,13 +100,22 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Longest wait, ms, of a batched insert (audit rows, transcript turns, request
-  # ledgers) for concurrent inserts to share its part; the pooled connection is held
-  # meanwhile. [live]
+  # Batched inserts: concurrent inserts into one table share a part and each still
+  # returns once written. False sends every insert committed, one part each, as before.
+  # [live]
+  # ch_batched_inserts: true
+
+  # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript
+  # turns, request ledgers) for concurrent inserts to share its part; the pooled
+  # connection is held meanwhile. [live]
   # ch_batched_insert_wait_max_ms: 50
 
+  # Longest wait, ms, of a batched insert no request waits on (the usage-event and
+  # write-mark flushes, webhook delivery attempts); ClickHouse's own default. [live]
+  # ch_batched_insert_background_wait_max_ms: 200
+
   # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
-  # sparse; capped at ch_batched_insert_wait_max_ms. [live]
+  # sparse; capped at the insert's longest wait. [live]
   # ch_batched_insert_wait_min_ms: 10
 
   # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot

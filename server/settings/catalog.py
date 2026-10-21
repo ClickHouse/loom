@@ -561,11 +561,18 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Longest wait, ms, of a batched insert (audit rows, transcript turns, request ledgers)
-    # for concurrent inserts to share its part; the pooled connection is held meanwhile.
+    # Batched inserts: concurrent inserts into one table share a part and each still
+    # returns once written. False sends every insert committed, one part each, as before.
+    ch_batched_inserts: Annotated[bool, LIVE] = True
+    # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript
+    # turns, request ledgers) for concurrent inserts to share its part; the pooled
+    # connection is held meanwhile.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
+    # Longest wait, ms, of a batched insert no request waits on (the usage-event and
+    # write-mark flushes, webhook delivery attempts); ClickHouse's own default.
+    ch_batched_insert_background_wait_max_ms: Annotated[int, LIVE] = Field(default=200, gt=0)
     # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
-    # sparse; capped at ch_batched_insert_wait_max_ms.
+    # sparse; capped at the insert's longest wait.
     ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0)
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
@@ -5141,7 +5148,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.auto_retirements": 200,
     "memory.backlinks": 200,
     "memory.brief": 4000,
-    "memory.bulk_get": 80,
+    # Its audit row (high-sensitivity rows) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.bulk_get": 130,
     # One CH insert + N embeds.
     "memory.bulk_set": 300,
     # 6 ALTER UPDATEs against bounded scopes.
@@ -5180,7 +5189,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # ch_batched_insert_wait_max_ms (50).
     "memory.get_by_id": 100,
     "memory.health": 400,
-    "memory.history": 80,
+    # Its audit row (high-sensitivity rows) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.history": 130,
     # ~50 sections × per-section memory.set; embed-on-write dominates.
     "memory.import_curated": 30000,
     # one embed_many over ≤256 chunks + two synchronous inserts
@@ -5232,7 +5243,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search_trace_log": 200,
     # A set's version inserts plus the conflict and dedup reads: p50 1,062 ms and
     # p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier = 4 s sits at that
-    # p99, so a violation is a signal.
+    # p99, so a violation is a signal. Its outbox row (namespaces with a webhook) is a
+    # batched insert that waits up to ch_batched_insert_wait_max_ms (50), which fits
+    # the 300 ms between that p99 and the 4 s ceiling.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms,
     # and about four batched inserts in sequence each wait up to

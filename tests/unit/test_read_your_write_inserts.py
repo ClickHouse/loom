@@ -37,8 +37,9 @@ from server.core.ch_writes import batched_insert_settings  # noqa: E402
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
     """Every `settings=` passed to a `ch.insert` for `table`, in one module or in
     every module of a package directory: a dict literal, `batched_insert_settings()`
-    resolved to its value, the session defaults for an insert that passes none, and
-    `{"unresolved": 1}` for any other value."""
+    resolved to its value (a `background=` that is not a constant reads as False:
+    either value is a batched insert), the session defaults for an insert that passes
+    none, and `{"unresolved": 1}` for any other value."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
     trees = [ast.parse(f.read_text()) for f in files]
     # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`.
@@ -79,7 +80,11 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
                 isinstance(value, ast.Call)
                 and getattr(value.func, "id", "") == "batched_insert_settings"
             ):
-                found.append(batched_insert_settings())
+                background = any(
+                    k.arg == "background" and isinstance(k.value, ast.Constant) and k.value.value
+                    for k in value.keywords
+                )
+                found.append(batched_insert_settings(background=bool(background)))
                 continue
             if not isinstance(value, ast.Dict):
                 # A name or another call: unknown here, so it fails every check.
@@ -135,8 +140,9 @@ def test_tables_written_on_every_request_are_batched(rel_path: str, table: str) 
     batched, concurrent writers share parts and each still waits for its row."""
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
+    batched = (batched_insert_settings(), batched_insert_settings(background=True))
     for s in settings_seen:
-        assert s == batched_insert_settings(), (
+        assert s in batched, (
             f"{table} in {rel_path} is written with {s}; pass "
             "`settings=batched_insert_settings()` so its inserts share parts."
         )

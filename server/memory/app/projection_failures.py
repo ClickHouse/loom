@@ -81,9 +81,9 @@ FOLLOW_ROWS = "triples_follow_rows"
 # FOLLOW_ROWS. Its own name, since an older build replays FOLLOW_ROWS without checking
 # that the loser is still retired, and leaves a name it does not know active.
 FOLLOW_OWED = "triples_follow_owed"
-# A FOLLOW_OWED intent is committed right before its supersede, and its writer records
-# and follows the retirement itself: the repair leaves it this long, so the two never
-# write the record side by side.
+# A FOLLOW_OWED intent is written (a waited batched insert) right before its supersede,
+# and its writer records and follows the retirement itself: the repair leaves it this
+# long, so the two never write the record side by side.
 FOLLOW_OWED_GRACE_S = 600  # not a setting: protocol timing between writer and repair
 # Triples a follow closed but could not re-check for a live row holding them.
 TRIPLES_REOPEN = "triples_reopen"

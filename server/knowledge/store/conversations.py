@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict
 from server.core import bm25
 from server.core.ch import caller_shaped, own_write_reads, sequential_reads
 from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import COMMITTED_INSERT_SETTINGS, batched_insert_settings
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.core.vectors import codes_state
@@ -32,9 +32,6 @@ from server.knowledge.domain.conversations import (
     ConversationRole,
 )
 from server.settings import settings
-
-# Insert settings that commit the rows before the insert returns.
-COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
 
 @asynccontextmanager
@@ -778,7 +775,7 @@ async def insert_thread(
     await ch.insert(
         "loom.conversation_threads",
         [cast(dict[str, Any], row)],
-        settings=dict(COMMITTED_INSERT_SETTINGS),
+        settings=COMMITTED_INSERT_SETTINGS,
     )
 
 
@@ -829,12 +826,13 @@ async def insert_embedding(
     embeds, or the summary conversation.compact writes."""
     ch = ch or _default_client()
     insert_settings = embedding_insert_settings(row["embedding"])
+    batched = insert_settings is not COMMITTED_INSERT_SETTINGS
     try:
         await ch.insert(
             "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=insert_settings
         )
     except Exception as e:
-        if insert_settings == COMMITTED_INSERT_SETTINGS or error_code(e) != WIDTH_MISMATCH_CODE:
+        if not (batched and error_code(e) == WIDTH_MISMATCH_CODE):
             raise
         # Another insert's vector failed the shared flush; this row is sent alone.
         await ch.insert(
@@ -855,7 +853,7 @@ def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
     width = codes_state.stored_width(table, "embedding")
     if width == int(settings.embedding_dim) and len(vector) in (0, width):
         return batched_insert_settings()
-    return dict(COMMITTED_INSERT_SETTINGS)
+    return COMMITTED_INSERT_SETTINGS
 
 
 async def tombstone_thread(

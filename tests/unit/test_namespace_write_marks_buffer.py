@@ -266,7 +266,7 @@ def test_a_process_start_moves_the_all_orgs_mark_waited_for() -> None:
     ch = _CH()
     asyncio.run(m.mark_process_start(ch=ch))
     ((table, rows, settings),) = ch.inserts
-    assert table == m.TABLE and settings == batched_insert_settings()
+    assert table == m.TABLE and settings == batched_insert_settings(background=True)
     assert [(r["org"], r["namespace"], r["plane"]) for r in rows] == [("*", "*", "restart")]
 
 

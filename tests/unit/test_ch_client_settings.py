@@ -115,3 +115,19 @@ def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
     # A retried batch still lands once: the token goes through the async switch.
     token = ch_writes.dedup_settings("t", s)
     assert token["async_insert_deduplicate"] == 1 and token["insert_deduplication_token"] == "t"
+
+
+def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An insert no request waits on waits up to the background bound; with
+    `ch_batched_inserts` off every batched insert is sent committed, read per call."""
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
+    monkeypatch.setattr(settings, "ch_batched_insert_background_wait_max_ms", 200)
+    s = ch_writes.batched_insert_settings(background=True)
+    assert s["async_insert"] == 1 and s["async_insert_busy_timeout_max_ms"] == 200
+    assert s["async_insert_busy_timeout_min_ms"] == 10
+    monkeypatch.setattr(settings, "ch_batched_inserts", False)
+    committed = {"async_insert": 0, "wait_for_async_insert": 1}
+    assert ch_writes.batched_insert_settings() == committed
+    assert ch_writes.batched_insert_settings(background=True) == committed

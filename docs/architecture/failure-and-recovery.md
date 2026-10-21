@@ -249,15 +249,17 @@ inserts, committed or batched, sequential re-reads), not process affinity.
 
 `server/core/ch.py` gives each process one pool and one admission semaphore of the same size.
 
-| Setting                              | Default | Effect                                                                                              |
-| ------------------------------------ | ------- | --------------------------------------------------------------------------------------------------- |
-| `LOOM_CH_POOL_MAXSIZE`               | 64      | Connections and concurrent statements per process.                                                  |
-| `LOOM_CH_POOL_WAIT_MS`               | 500     | Wait for a slot; past it 503 `OVERLOADED` with `Retry-After: 1`. 0 disables the gate.               |
-| `LOOM_CH_TIMEOUT_READ_S`             | 30      | Read deadline.                                                                                      |
-| `LOOM_CH_TIMEOUT_WRITE_S`            | 60      | `INSERT` / `UPDATE` deadline.                                                                       |
-| `LOOM_CH_TIMEOUT_DDL_S`              | 300     | DDL, `OPTIMIZE`, `SYSTEM` deadline.                                                                 |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | 50      | Longest wait of a batched insert for others to share its part; the connection is held for the wait. |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | 10      | Shortest wait of a batched insert, what a lone insert waits; the connection is held for the wait.   |
+| Setting                                         | Default | Effect                                                                                              |
+| ----------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------- |
+| `LOOM_CH_POOL_MAXSIZE`                          | 64      | Connections and concurrent statements per process.                                                  |
+| `LOOM_CH_POOL_WAIT_MS`                          | 500     | Wait for a slot; past it 503 `OVERLOADED` with `Retry-After: 1`. 0 disables the gate.               |
+| `LOOM_CH_TIMEOUT_READ_S`                        | 30      | Read deadline.                                                                                      |
+| `LOOM_CH_TIMEOUT_WRITE_S`                       | 60      | `INSERT` / `UPDATE` deadline.                                                                       |
+| `LOOM_CH_TIMEOUT_DDL_S`                         | 300     | DDL, `OPTIMIZE`, `SYSTEM` deadline.                                                                 |
+| `LOOM_CH_BATCHED_INSERTS`                       | true    | Batch the inserts written on every request; false sends each committed.                             |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS`            | 50      | Longest wait of a batched insert for others to share its part; the connection is held for the wait. |
+| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | 200     | The same, for a batched insert no request waits on.                                                 |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS`            | 10      | Shortest wait of a batched insert, what a lone insert waits; the connection is held for the wait.   |
 
 **Why a bounded wait:** when ClickHouse slows, an unbounded queue turns every request into
 a client timeout after the work was queued anyway. A short wait fails fast with a retryable 503. The gauges `loom.ch.pool.in_use`, `waiters`, `overloaded_total` and `timeouts_total`

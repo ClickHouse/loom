@@ -135,8 +135,8 @@ async def flush_now(*, ch: _CHClient | None = None) -> int:
     try:
         ch = ch or _default_client()
         # Batched server-side with every other process's marks: one part per
-        # busy interval, not one per flush.
-        await ch.insert(TABLE, rows, settings=batched_insert_settings())
+        # busy interval, not one per flush. No request waits on the timer's flush.
+        await ch.insert(TABLE, rows, settings=batched_insert_settings(background=True))
     except Exception as e:  # noqa: BLE001 — telemetry-grade write; the marks stay buffered
         log.warning("namespace_write_marks flush failed (non-fatal, %d rows): %s", len(rows), e)
         _arm()
@@ -164,7 +164,7 @@ async def mark_process_start(*, ch: _CHClient | None = None) -> None:
     }
     tag = query_tag_var.set("namespace_write_marks.process_start")
     try:
-        await ch.insert(TABLE, [row], settings=batched_insert_settings())
+        await ch.insert(TABLE, [row], settings=batched_insert_settings(background=True))
     except Exception as e:  # noqa: BLE001 — a missed start mark never blocks boot
         log.warning("namespace_write_marks: process-start mark failed (non-fatal): %s", e)
     finally:
