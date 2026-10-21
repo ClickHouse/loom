@@ -8810,6 +8810,13 @@ class ExtractionPolicyOutput(TypedDict, total=False):
     updated_by: NotRequired[str]
     updated_at: NotRequired[Optional[str]]
     effective: NotRequired[str]
+    namespace_policies: NotRequired[list["NamespacePolicy"]]
+
+
+class NamespacePolicy(TypedDict, total=False):
+    namespace: Required[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
 
 
 class ExtractionPolicyGetInput(TypedDict, total=False):

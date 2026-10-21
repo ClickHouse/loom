@@ -51,6 +51,15 @@ class ExtractionPolicyClearInput(BaseModel):
     namespace: str = ""
 
 
+class NamespacePolicy(BaseModel):
+    # A namespace that holds a policy of its own.
+    namespace: str
+    # Who set it.
+    updated_by: str = ""
+    # When it was set (UTC).
+    updated_at: datetime | None = None
+
+
 class ExtractionPolicyOutput(BaseModel):
     org: str
     # `org` or `namespace`, as asked.
@@ -66,3 +75,8 @@ class ExtractionPolicyOutput(BaseModel):
     # What extractions in this scope run under: the org's policy, then the
     # namespace's; "" when neither is set.
     effective: str = ""
+    # For scope `org`: every namespace of the org that holds a policy of its own,
+    # by name, including a deleted namespace's, which still counts toward
+    # LOOM_EXTRACTION_POLICY_MAX_NAMESPACES until it is cleared. Empty for scope
+    # `namespace`.
+    namespace_policies: list[NamespacePolicy] = Field(default_factory=list)

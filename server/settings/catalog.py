@@ -4894,11 +4894,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Multiple ALTER UPDATEs are slow; tolerated for compliance.
     "erasure.request": 2000,
     "erasure.status": 25,
-    # One sync insert and its audit row, then two point reads.
+    # One sync insert and its audit row, then two point reads, or for scope org one
+    # point read and the org's namespace policies (at most the cap's rows).
     "extraction_policy.clear": 100,
-    # Two point reads.
+    # Two point reads, or for scope org one point read and the org's namespace policies.
     "extraction_policy.get": 50,
-    # Cap check (a point read and a FINAL count), a sync insert and its audit row, two point reads.
+    # Cap check (a point read and a FINAL count), a sync insert and its audit row, then
+    # the reads extraction_policy.get makes.
     "extraction_policy.set": 150,
     "facts.expire_by_adapter": 500,
     "facts.list": 80,

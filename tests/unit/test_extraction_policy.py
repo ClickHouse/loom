@@ -373,10 +373,44 @@ def stored(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         scopes = {r["namespace"] for r in rows if r["org"] == org and r["namespace"]}
         return len([ns for ns in scopes if await get(org, ns)])
 
+    async def namespace_rows(org: str, **_: Any) -> list[dict[str, Any]]:
+        scopes = sorted({r["namespace"] for r in rows if r["org"] == org and r["namespace"]})
+        live = [await get(org, ns) for ns in scopes]
+        return [row for row in live if row]
+
     monkeypatch.setattr(extraction_policy.repo, "insert_row", insert_row)
     monkeypatch.setattr(extraction_policy.repo, "get", get)
     monkeypatch.setattr(extraction_policy.repo, "namespace_count", namespace_count)
+    monkeypatch.setattr(extraction_policy.repo, "namespace_rows", namespace_rows)
     return rows
+
+
+async def test_the_org_scope_lists_every_namespace_policy(stored) -> None:
+    from server.memory.api.models_extraction_policy import (
+        ExtractionPolicyClearInput,
+        ExtractionPolicyGetInput,
+        ExtractionPolicySetInput,
+    )
+
+    for namespace in ("chat", "support", "drafts"):
+        await extraction_policy.handle_extraction_policy_set(
+            ExtractionPolicySetInput(
+                org="acme", scope="namespace", namespace=namespace, policy="No addresses."
+            )
+        )
+    await extraction_policy.handle_extraction_policy_clear(
+        ExtractionPolicyClearInput(org="acme", scope="namespace", namespace="drafts")
+    )
+
+    out = await extraction_policy.handle_extraction_policy_get(
+        ExtractionPolicyGetInput(org="acme", scope="org")
+    )
+    assert [p.namespace for p in out.namespace_policies] == ["chat", "support"]
+    assert all(p.updated_at is not None for p in out.namespace_policies)
+    one = await extraction_policy.handle_extraction_policy_get(
+        ExtractionPolicyGetInput(org="acme", scope="namespace", namespace="chat")
+    )
+    assert one.namespace_policies == []
 
 
 async def test_namespace_policies_stop_at_the_per_org_cap(
@@ -396,7 +430,7 @@ async def test_namespace_policies_stop_at_the_per_org_cap(
 
     await extraction_policy.handle_extraction_policy_set(set_for("a"))
     await extraction_policy.handle_extraction_policy_set(set_for("b"))
-    with pytest.raises(ValidationError, match="LOOM_EXTRACTION_POLICY_MAX_NAMESPACES"):
+    with pytest.raises(ValidationError, match="extraction_policy.get with scope 'org' lists"):
         await extraction_policy.handle_extraction_policy_set(set_for("c"))
     # Replacing one, or the org's own policy, is not one more namespace.
     await extraction_policy.handle_extraction_policy_set(set_for("a"))

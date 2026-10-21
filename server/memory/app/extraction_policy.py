@@ -28,6 +28,7 @@ from server.memory.api.models_extraction_policy import (
     ExtractionPolicyGetInput,
     ExtractionPolicyOutput,
     ExtractionPolicySetInput,
+    NamespacePolicy,
 )
 from server.memory.domain.extraction_policy import combine
 from server.memory.store import extraction_policy as repo
@@ -125,7 +126,8 @@ async def _check_namespace_cap(org: str, namespace: str) -> None:
     if count >= cap:
         raise ValidationError(
             f"org {org!r} already has {count} namespace extraction policies, the most "
-            f"LOOM_EXTRACTION_POLICY_MAX_NAMESPACES allows ({cap}); clear one, or set "
+            f"LOOM_EXTRACTION_POLICY_MAX_NAMESPACES allows ({cap}); "
+            "extraction_policy.get with scope 'org' lists them; clear one, or set "
             "the rule in the org's policy"
         )
 
@@ -140,7 +142,8 @@ async def handle_extraction_policy_clear(
 
 
 async def handle_extraction_policy_get(input: ExtractionPolicyGetInput) -> ExtractionPolicyOutput:
-    """The scope's policy and the one its extractions run under."""
+    """The scope's policy and the one its extractions run under. For scope
+    `org`, also every namespace that holds a policy of its own."""
     org, namespace = _scope(input)
     return await _output(org, namespace)
 
@@ -149,6 +152,7 @@ async def _output(org: str, namespace: str) -> ExtractionPolicyOutput:
     with own_write_reads():  # an admin reads right after setting it, on any replica
         row = await repo.get(org, namespace)
         org_row = await repo.get(org, "") if namespace else row
+        namespace_rows = [] if namespace else await repo.namespace_rows(org)
     policy = str((row or {}).get("policy") or "")
     org_policy = str((org_row or {}).get("policy") or "")
     ns_policy = policy if namespace else ""
@@ -160,4 +164,12 @@ async def _output(org: str, namespace: str) -> ExtractionPolicyOutput:
         updated_by=str((row or {}).get("updated_by") or ""),
         updated_at=(row or {}).get("updated_at"),
         effective=combine(org_policy, ns_policy),
+        namespace_policies=[
+            NamespacePolicy(
+                namespace=str(r["namespace"]),
+                updated_by=str(r.get("updated_by") or ""),
+                updated_at=r.get("updated_at"),
+            )
+            for r in namespace_rows
+        ],
     )

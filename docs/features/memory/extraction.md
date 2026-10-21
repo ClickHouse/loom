@@ -122,11 +122,15 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   A namespace policy covers that namespace only: a child collection does not inherit its
   parent's, so a rule for a whole subtree belongs in the org's policy.
   `extraction_policy.get` returns a scope's policy and the `effective` text its
-  extractions run under; `extraction_policy.clear` removes one scope's policy (clearing a
+  extractions run under; for scope `org` it also lists in `namespace_policies` every
+  namespace that holds a policy of its own. `extraction_policy.clear` removes one scope's policy (clearing a
   namespace's leaves the org's in force). A policy is at most 4,096 characters.
 - **Bound.** An org holds its own policy and at most
   [`LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`](../../reference/configuration.md#extraction)
-  namespace policies (1,000 by default; one more is refused). Every server holds every
+  namespace policies (1,000 by default; one more is refused). Deleting a namespace leaves
+  its policy in place: it still counts toward the cap, and applies again if the name is
+  registered later, until `extraction_policy.clear` removes it; the org-scope
+  `extraction_policy.get` lists them. Every server holds every
   org's policies and reads them all at each refresh, so the cap bounds each org's share
   of that read (about 4 MiB at the default); the read grows with the number of orgs that
   hold a policy. A rule for every end user belongs in the org's policy, not in a policy

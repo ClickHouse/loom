@@ -29,6 +29,7 @@ Remove the scope's policy.
 | `updated_by` | `str` | Who set it; "" when none is set. |
 | `updated_at` | `datetime \| None` | When it was set (UTC); None when none is set. |
 | `effective` | `str` | What extractions in this scope run under: the org's policy, then the namespace's; "" when neither is set. |
+| `namespace_policies` | `list[NamespacePolicy]` | For scope `org`: every namespace of the org that holds a policy of its own, by name, including a deleted namespace's, which still counts toward LOOM_EXTRACTION_POLICY_MAX_NAMESPACES until it is cleared. |
 
 ## `extraction_policy.get`
 
@@ -51,6 +52,7 @@ The scope's policy and the one its extractions run under.
 | `updated_by` | `str` | Who set it; "" when none is set. |
 | `updated_at` | `datetime \| None` | When it was set (UTC); None when none is set. |
 | `effective` | `str` | What extractions in this scope run under: the org's policy, then the namespace's; "" when neither is set. |
+| `namespace_policies` | `list[NamespacePolicy]` | For scope `org`: every namespace of the org that holds a policy of its own, by name, including a deleted namespace's, which still counts toward LOOM_EXTRACTION_POLICY_MAX_NAMESPACES until it is cleared. |
 
 ## `extraction_policy.set`
 
@@ -74,5 +76,6 @@ Set the scope's policy, replacing the one it held.
 | `updated_by` | `str` | Who set it; "" when none is set. |
 | `updated_at` | `datetime \| None` | When it was set (UTC); None when none is set. |
 | `effective` | `str` | What extractions in this scope run under: the org's policy, then the namespace's; "" when neither is set. |
+| `namespace_policies` | `list[NamespacePolicy]` | For scope `org`: every namespace of the org that holds a policy of its own, by name, including a deleted namespace's, which still counts toward LOOM_EXTRACTION_POLICY_MAX_NAMESPACES until it is cleared. |
 
 <!-- prettier-ignore-end -->

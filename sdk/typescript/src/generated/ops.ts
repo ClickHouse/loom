@@ -2761,6 +2761,12 @@ export interface ExtractionPolicyClearInput {
   namespace?: string;
 }
 
+export interface NamespacePolicy {
+  namespace: string;
+  updated_by?: string;
+  updated_at?: string | null;
+}
+
 export interface ExtractionPolicyOutput {
   org: string;
   scope: "org" | "namespace";
@@ -2769,6 +2775,7 @@ export interface ExtractionPolicyOutput {
   updated_by?: string;
   updated_at?: string | null;
   effective?: string;
+  namespace_policies?: NamespacePolicy[];
 }
 
 export interface ExtractionPolicyGetInput {
