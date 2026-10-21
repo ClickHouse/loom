@@ -451,7 +451,9 @@ class RunScope:
     async def note(self, content: str, *, block_key: str = "scratchpad") -> dict[str, Any]:
         """Write the run's scratchpad block: the task's current
         state as the agent sees it. context.pack and memory.ask calls that
-        carry this run_id read it back before the memories."""
+        carry this run_id in the body read it back before the memories; on
+        memory.ask that body run_id also filters the read to the run's rows,
+        and a read inside this scope sends the run as a header instead."""
         return await self._client._agent.working_memory.set(
             content, block_key=block_key, run_id=self.run_id
         )
