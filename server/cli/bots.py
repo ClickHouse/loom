@@ -1,6 +1,7 @@
-"""`loom bot create | list | disable`: bots and CI jobs that get hour-long
-tokens by proving a key or their CI platform's identity, never a long-lived
-secret (server/auth/machines.py, server/identity/app/account_admin.py)."""
+"""`loom bot create | list | disable`: bots and CI jobs that get tokens (an
+hour, or what the request asks up to the bot's maximum) by proving a key or
+their CI platform's identity, never a long-lived secret
+(server/auth/machines.py, server/identity/app/account_admin.py)."""
 
 from __future__ import annotations
 
@@ -75,6 +76,14 @@ def register_bot_cli(sub: Any) -> None:
         help="CI trust: the longest a workload token may live (exp less iat) to be taken",
     )
     p_create.add_argument(
+        "--max-access-token-ttl",
+        type=int,
+        default=3600,
+        metavar="SECONDS",
+        help="The longest token an exchange may ask for (expires_in, 60 to 86400); without "
+        "expires_in a token lives an hour, or this when it is shorter",
+    )
+    p_create.add_argument(
         "--max-agents",
         type=int,
         default=1000,
@@ -123,6 +132,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             jwks_uri=args.jwks_uri,
             max_token_s=args.max_token_age,
             max_agents=args.max_agents,
+            max_access_token_s=args.max_access_token_ttl,
         )
     except (OSError, ValueError) as e:
         return _fail(str(e))
@@ -160,6 +170,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
         for r in await machines.listed():
             proofs = ["key"] * bool(r["has_key"]) + [f"CI {r['issuer']}"] * bool(r["issuer"])
             proofs += [f"agents by {r['agent_claim']}"] * bool(r["agent_claim"])
+            ttl = int(r["max_access_token_s"])
+            proofs += [f"tokens up to {ttl} s"] * (ttl != machines.TOKEN_TTL)
             state = "active" if r["active"] else "disabled"
             roles = ", ".join(f"{ns}={role}" for ns, role in r["ns_roles"])
             print(f"  {r['name']:<24} {state:<8} {r['org']:<16} {roles:<40} {' + '.join(proofs)}")

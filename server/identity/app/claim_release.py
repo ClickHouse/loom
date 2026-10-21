@@ -100,8 +100,8 @@ async def release_claim(
     server's client.
 
     A release that fails must be retried: one cut off after its row was
-    rewritten has not ended its bots' tokens, which keep the namespace for up
-    to an hour.
+    rewritten has not ended its bots' tokens, which keep the namespace until
+    they expire (an hour, or up to a day for a bot that allows longer).
     """
     if ch is None:
         ch = get_client()
@@ -123,7 +123,7 @@ async def release_claim(
         if isinstance(e, BackendUnavailableError):
             raise BackendUnavailableError(
                 f"the release of {org}/{namespace} did not finish ({e.message}); retry it, "
-                "or its bots' tokens keep the namespace for up to an hour",
+                "or its bots' tokens keep the namespace until they expire",
                 operation=e.extra.get("operation", ""),
             ) from e
         raise
