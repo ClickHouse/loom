@@ -656,19 +656,122 @@ Loom does not classify stored text as instruction-like and refuses nothing on th
 basis. The read-side bounds (`read_scope`, `top_k`, the exposure ledger, breadth budgets)
 are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
+### Extraction policy
+
+An org admin sets rules for what extraction never stores, once for the org and
+optionally added to for a namespace (`extraction_policy.set`, audited, `org_admin` of
+that org only; an end-user token holds `viewer` and cannot set, clear or read one). The
+rows live in `loom.extraction_policies`; every server keeps a copy, read at most every
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted for no longer than
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`. Past that it fails closed: inline
+extraction answers 503, and queued requests and worker passes wait. A replica of a build
+that predates the policy table extracts without it; set a policy once every replica runs
+a build that reads it ([rolling upgrades](rolling-upgrades.md)).
+
+The handler reads the policy for the request's `(org, namespace)` itself; no request
+field carries it. Each model call of the memory, knowledge and observe planes that
+writes stored text from raw text (fact extraction with its retries and coverage sweep,
+the typed-record value stage, the session digest, observation distillation,
+conversation summaries and titles, session briefs and `bulk_set` context lines) ends
+its system prompt with it, after the request's `extraction_instructions` and any retry
+addendum, in a delimited block that states it outranks them and the messages. The
+deterministic passes that would add rows the model left out, or copy from the raw turns
+what the model did not write, do not run under a policy, and the response says so
+(`under_operator_policy`). The rule is given to the model, not checked against what it
+returns; verbatim evidence, chunks and observations are stored as sent. Model passes
+over rows already stored rather than over raw text do not add it, such as period
+digests, profile consolidation, contrast reflections, `memory.consolidate` merges, the
+structured profile worker (`server/memory/workers/structured_profile.py`) and the
+entity extractor (`server/memory/workers/entity_extractor.py`); those rows include
+`memory.set` values, which no policy filtered. A namespace policy covers that namespace
+only, not its child collections. The
+[extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists
+the paths.
+
 ## Sensitivity
 
-`server/memory/domain/sensitivity.py` classifies a value with deterministic regexes:
+`server/memory/domain/sensitivity.py` classifies a value with deterministic regexes. It is
+a lower bound: it recognises the label forms and shapes listed here, not every way a person
+can phrase a secret. The catch-all for extraction is an operator's extraction policy.
 
-| Level    | Matches                                                                                                                                        |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `high`   | A credential shape: prefixed API key, access key id, private-key block, JWT, or a `password=` / `api_key:` assignment of an 8+ character token |
-| `medium` | An email or phone number                                                                                                                       |
-| `low`    | Set only by a caller                                                                                                                           |
+| Level    | Matches                                                                    |
+| -------- | -------------------------------------------------------------------------- |
+| `high`   | A credential, payment card number, US Social Security number or stated PIN |
+| `medium` | An email address, a phone number or an IBAN                                |
+| `low`    | Set only by a caller                                                       |
 
-A caller-supplied level wins. Detection is `LOOM_MEMORY_SENSITIVITY_AUTODETECT`. A `high`
-row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so no search
-leg returns it. The other reads that could serve its value follow three rules:
+The `high` shapes:
+
+- Credential: a prefixed API key, an access key id, a private-key block, a JWT, or a
+  `password=` / `api_key:` assignment of an 8+ character token.
+- Card number: one ungrouped group of 15 (Amex) or 16 digits, or, in a run of digit
+  groups joined by single spaces or dashes, consecutive groups in a printed card grouping
+  (4-4-4-4, 4-4-4-4-3, 4-6-5, 4-6-4) with at most three short groups around it, at most
+  two of them after it. A card pasted with its expiry and CVV or after a date still counts;
+  two phone numbers side by side, a table of eight or more numbers, a 19-digit hash and a
+  13-digit phone number without its `+` do not. It has a card network's leading digits and
+  length (Visa 4 at 16 or 19; Mastercard 51-55 and 2221-2720 at 16; Amex 34 and 37 at 15;
+  Diners 300-305, 3095, 36, 38 and 39 at 14; JCB 3528-3589 and Discover/UnionPay 6011, 62,
+  644-649 and 65 at 16 or 19) and passes the Luhn check. A 15-digit IMEI passes Luhn by
+  design; the only 15-digit network is Amex (34, 37), so an IMEI with any other leading
+  digits is not a card. Groups joined by two spaces or by dots
+  (`4111  1111  1111  1111`, `4111.1111.1111.1111`) are not read.
+- Social Security number: `ddd-dd-dddd` outside the never-issued ranges (area 000, 666,
+  9xx; group 00; serial 0000).
+- Stated PIN: one of the labels `pin`, `pin code`, `pin number`, `passcode` /
+  `pass code`, `cvv`, `cvc`, `cvv2`, `cvc2`, `cvv code`, `cvv number`, `cvc code`,
+  `cvc number` and `security code` (`_` or a space inside a two-word label, after any
+  prefix that ends in something other than a letter or digit: `BADGE_PIN`, `CARD_CVV`),
+  followed by its value after `is`, `was`, `:` or `=` (`PIN is 4471`, `cvv: 123`), with an
+  optional `for` and up to three words before it (`PIN for the front door is 4471`). Every
+  label but a bare `pin`, which is also a verb and a connector pin (`pin 115`, `pin #115`),
+  also takes the value directly (`CVV 123`), unless `of` follows it
+  (`passcode 100 of the batch`). `PIN number`, passcode, CVV/CVC and security code take
+  3-8 digits; `PIN` and `PIN code` take 3-5, since `PIN: 560001` and `PIN code 560001` are
+  Indian postal codes, so a 6-digit PIN counts when stated as a `PIN number`. A connector
+  pin written as an assignment or with `number` (`GPIO pin: 115`, `GPIO pin number 115`)
+  reads as a PIN, the price of reading `PIN: 4471` and `PIN number 4471` as one. The value
+  must end at its number: a version, a date or a run-on word (`pin is 2024.1`,
+  `pin is 2024/01/15`, `pin is 1234abc`) is not a PIN.
+
+An IBAN counts when its country code is in the ISO 13616 registry, its length is that
+country's and it passes the mod-97 check. The card check skips an IBAN's digits, whose
+printed groups can read as a card number that passes Luhn (`DE24 4005 0150 0000 0005 00`),
+so an IBAN is `medium`. A question naming an IBAN or a bank account (number) counts as
+contact intent, so ranking does not demote the row that answers it.
+
+A JSON value is read scalar by scalar (`detector_text`). A key whose last one or two words
+name a PIN-like secret (three for `social_security_number`) states its digits under that
+label, so the free-text rules above decide the length. A label's words may also be written
+as one word (`pincode`, `cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as
+`pin is <value>` (3-5 digits), `pin_number` as `pin number is <value>`, and `passcode`,
+`cvv`, `cvc` and `security_code` (with, for example, `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and
+`cvc_number`) as `<label> is <value>` (3-8 digits). An `ssn`, `ssn_number`, `ssn_no` or
+`social_security_number` key states an SSN with its dashes optional. A card number is found
+under any key. So `{"pin": "4471"}`, `{"pin_code": "4471"}`, `{"badge_pin": "4471"}` and
+`{"ssn": "123456789"}` are `high`, and `{"pin": "560001"}`, `{"pincode": "560001"}` (a
+postal code), `{"pin_count": 4}` and `{"pin": "A1"}` are not. A connector pin in a config
+(`{"pin": 115}`) reads as a PIN, as `GPIO pin: 115` does. Any other key labels nothing: a
+`{"password": ...}` key does not label its value. `reads_high` reads the same pairs in raw
+JSON text, such as a chunk of an object value, when the value is digits and dashes. The
+sweep's prefilter is a superset of this key rule, not a copy: it selects a key that ends in
+a label, so it may select a few non-secret rows (`spin`, `unpin`, `ATMPIN`), which the
+detector, comparing whole key words, leaves unlabelled; each costs a re-check on the sweep's
+passes within its window. The sweep reads the bytes its writer stored in `value`, where a
+dotted key such as `{"security.code": "5512"}` keeps its words, and also the object in
+`value_json`, which an import may fill with more than `value` holds.
+
+A caller-supplied level wins for the stored label. Detection is
+`LOOM_MEMORY_SENSITIVITY_AUTODETECT`.
+
+The readers that send a value to a model still check the value itself
+(`value_reads_high`): consolidation, the profile fold, the structured profile, the existing
+memories an extraction prompt shows, `observe_extract` and the entity extractor leave out a
+value that reads as `high` even when its writer labelled it `low` or left it unset. This
+fails closed by design.
+
+A `high` row is never embedded (`is_embedded` in `server/memory/domain/memory_types.py`), so
+no search leg returns it. The other reads that could serve its value follow three rules:
 
 - Left out: the `anchor_first` and `recent_first` tiers, `memory.related`'s excerpts,
   `memory.aggregate` (no group key or filter match on a `high` value), `profile.render` and
@@ -677,17 +780,17 @@ leg returns it. The other reads that could serve its value follow three rules:
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
   duplicate's place), the profile fold and the structured profile, the entity graph (a row
   written as `high` projects only the entities its writer declared, and the entity
-  extractor never sends it to its model, nor an unlabelled value that reads as a credential; for a fact
+  extractor never sends it to its model, nor an unlabelled value that reads as `high`; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, the candidates `procedure.match` reads, the bodies
   `procedure.list` summarises and the bodies `bodies: "unit"` reads (each read leaves `high`
   rows out before it picks a row, so another identity's `high` row of a key never hides the
   plain one), the existing memories an extraction prompt shows the LLM (labelled `high` or
-  reading as a credential), the observations `observe_extract` sends its model (labelled
-  `high` or reading as a credential: capture writes them unlabelled), the entities a period
+  reading as `high`), the observations `observe_extract` sends its model (labelled
+  `high` or reading as `high`: capture writes them unlabelled), the entities a period
   digest copies from its sources and `namespace.taxonomy` counts, and a session digest's key
-  facts that read as a credential (left out when the digest is written, listed by
+  facts that read as `high` (left out when the digest is written, listed by
   `memory.digests` and sent to the outcome judge, so a digest an earlier build wrote is
   covered too). A period row an earlier build wrote keeps its `high` sources' entities until
   it is written again: `loom period-digest --org <org> --namespace <ns> --rewrite --apply`
@@ -719,18 +822,20 @@ leg returns it. The other reads that could serve its value follow three rules:
 
 Raw evidence (conversation chunks, session digests, the passages `bodies: "source"` serves)
 has no sensitivity column. `memory.export_evidence` leaves out the chunks and digests linked
-to a key with any `high` version, and those whose text the detector reads as a credential,
+to a key with any `high` version, and those whose text the detector reads as `high`,
 unless asked with `include_high` (each one it then releases is audited). `bodies: "source"`
-leaves out a passage whose text reads as a credential. Other raw text is served to readers
+leaves out a passage whose text reads as `high`. Other raw text is served to readers
 of the namespace as it is: a caller-labelled `high` value that shares a passage with a plain
 row, `memory.search`'s `chunk` and `summary` hits (which `memory.ask` also hands its model),
 `memory.get` on a `chunk:` key, the session digests `memory.digests` lists (their summary
-text; key facts that read as a credential are left out), what the session-summary draft (the
+text; key facts that read as `high` are left out), what the session-summary draft (the
 conversation turns), the period-digest draft and the outcome judge (session digest text)
-send their model, and `memory.recall`'s raw turns.
+send their model, `memory.recall`'s raw turns, and the turns `conversation.search` and
+`conversation.search_saved_messages` rank, which are embedded whatever card number, SSN or
+stated PIN they hold.
 
-Search demotes labelled rows on questions that did not ask for a contact detail
-(`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
+Search demotes labelled rows on questions that did not ask for a contact detail or a bank
+account (`LOOM_MEMORY_SEARCH_SENSITIVITY_DEMOTE`).
 
 The detector runs on `memory.set`, `memory.bulk_set`, `memory.update` and extraction when
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT` is on, and reads the decoded value (`detector_text`): each
@@ -746,11 +851,64 @@ undone): `memory.export_evidence` (chunks, and digests with their key facts deco
 extractor's input, the existing memories an extraction prompt shows, the rows
 `memory.consolidate`, the profile fold and the structured profile send their models, and a
 session digest's key facts when written, listed by `memory.digests` or read by the outcome judge. The
-`sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
-counting as `credential` for its default shape filter: a new version per row and, for
-`high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
-unlabelled row that holds a credential is embedded like any other, so search serves it, and
+`sensitivity_sweep` worker (on, daily) labels the rows from paths that skip the detector:
+a new version per row and, for `high`, tombstoned embedding rows and entity vectors. Until
+the sweep labels it, an unlabelled row that holds a high shape (a credential, card
+number, SSN or stated PIN) is embedded like any other, so search serves it, and
 `memory.ask` and the conflict judge can send it to their models.
+The worker reads only the trailing window and the shapes in
+`LOOM_SENSITIVITY_SWEEP_SHAPES` (`credential` and `email` by default); the historical
+backlog and the shapes the worker leaves out (by default IBAN-only rows, shape `other`,
+and phone-shaped rows) are cleared by the operator's `loom sensitivity-sweep --apply`,
+which pages through its whole scope until `--limit` candidates are found, in pages of at
+least `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys. The sweep reads unlabelled rows
+only: a row already labelled `medium` that also holds a `high` shape stays `medium` until
+it is set again with `sensitivity: "high"`.
+
+A worker pass is bounded:
+
+- It reads its window in the table's sort key order, in pages of
+  `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys, until that many candidates are found,
+  `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read, or half the pass deadline (450 s
+  at the default daily interval) has passed. A pass cut by that time applies what it found,
+  stores its cursor and reports `truncated`, so the next pass starts where it stopped even
+  when the pages cost more than the deadline allows.
+- It starts at the agent the pass before stopped in. When it reaches the window's last row
+  with pages left, it goes on from the first key up to where it started, so the rows that
+  sort before its cursor are read in the same pass rather than left to age out of the
+  window. A full page of current unlabelled rows inside one agent that gives nothing to
+  label moves the pass past that agent, so one pass crosses up to its page cap of agents
+  whose selected rows the detector leaves unlabelled. A page with a key whose only
+  matching version is an older one (a row the sweep labelled, or deleted, before the parts
+  merge) gets no current row for that key and does not count. Once the pass has read
+  every other key with pages left, it reads the rest of each agent it moved past. The
+  cursor names no key inside an agent, so each pass reads the same pages of that agent:
+  a row behind more than `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` x
+  `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` selected-but-unlabelled keys of its own agent
+  is not reached by the worker until those keys leave the window. `loom sensitivity-sweep
+--apply` reaches it.
+- A pass that labelled rows leaves its cursor at the agent it stopped in, so the next pass
+  reads that agent again. A pass that labelled nothing leaves its cursor past that agent
+  when its candidates, all in that agent, failed to apply, or when it found none and its
+  last page had a key with no current row in that agent, the case of older versions
+  waiting for a merge. So a row that fails every time, or a run of such versions, is read
+  again when the sweep comes back round to it. Such a key in an earlier agent on that page
+  sorts before the cursor, so it does not move the cursor past the agent it stopped in. A
+  pass whose last page was an ordinary one, even one that crossed into the next agent,
+  leaves its cursor at the agent it stopped in, and failures in an earlier agent leave the
+  cursor where the pass stopped. A cursor that names an agent too long for its 512
+  characters, at or past it, is past its namespace (or org) instead, so that agent's
+  remaining rows wait until the sweep comes back round. The cursor, in
+  `loom.worker_status`, holds the org, namespace and agent only, so it names no user or
+  memory key that would outlive an erasure.
+- Its ClickHouse filter selects only the shapes in `LOOM_SENSITIVITY_SWEEP_SHAPES`
+  (`credential` and `email` by default; every high shape, a card number, SSN or stated PIN
+  included, counts as `credential`), and within them only what the detector can label: a
+  card is a lone 15- or 16-digit group or a printed grouping with a network's leading
+  digit, a credential word is an assignment (`password=` and eight characters of a value),
+  and `PIN` or `PIN code` takes a 3-5 digit value. So epoch timestamps, 19-digit ids,
+  prose that names a credential word (`I forgot my password`) and postal codes
+  (`PIN: 560001`) are not selected.
 
 A redaction (`memory.redact`) scrubs the version it names, that key's derived rows, and
 every version of the user's profiles whose trace names the memory: the structured profile
@@ -862,6 +1020,7 @@ pods, and the upload never replaces an object.
 | Rate limiter                | `server/core/ratelimit.py` (`Limiter.check`, `op_class_for`), `server/core/ratelimit_shared.py`                             |
 | Blacklist                   | `server/memory/app/blacklist_guard.py` (`enforce_on_insert`), `server/memory/app/blacklist_sweep.py`                        |
 | Prompt fence                | `server/memory/domain/prompt_fence.py`                                                                                      |
+| Extraction policy           | `server/memory/app/extraction_policy.py` (`effective`), `server/memory/domain/extraction_policy.py`                         |
 | Sensitivity                 | `server/memory/domain/sensitivity.py`, `server/memory/app/sensitivity_sweep.py`                                             |
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |

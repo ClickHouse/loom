@@ -481,9 +481,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     ),
     "loom.worker_status": (
         "worker health per pass: worker name, launcher label, status, "
-        "counters and a bounded error text; `namespace` is the label of the namespace "
-        "a pass reached, not a tenant axis over memory rows; no "
-        "org/user axis, no memory row; 30-day TTL."
+        "counters, a bounded error text and a resume cursor; `namespace` is the label of "
+        "the namespace a pass reached, not a tenant axis over memory rows; the sensitivity "
+        "sweep's cursor names an org, a namespace and an agent, never a user or a memory "
+        "key; no user axis, no memory row; 30-day TTL."
     ),
     "loom.qa_link_candidates": (
         "issue and PR numbers of the public tracker record with scores and titles, keyed by "
@@ -501,6 +502,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.revoked_tokens": "auth plane: revoked JWT ids.",
     "loom.machine_identities": "auth plane: registered bots and their public keys; no memory.",
     "loom.org_model_calls": "whether an org's data may go to a model, and who said so; no memory.",
+    "loom.extraction_policies": "the operator's rules for what extraction stores; no memory.",
     "loom.sso_links": "auth plane: which password accounts SSO sign-ins reach; no memory.",
     "loom.scim_users": (
         "auth plane: the people the identity provider provisions (email, the emails "

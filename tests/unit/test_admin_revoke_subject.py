@@ -740,7 +740,10 @@ def test_retaining_a_revocation_updates_the_local_snapshot(store, monkeypatch, c
 
 @pytest.mark.parametrize("claim_flag", ["--subject", "--jti"])
 @pytest.mark.parametrize("narrowing", ["cutoff", "expiry"])
-def test_the_cli_cannot_restore_tokens_whose_names_were_freed(store, capsys, claim_flag, narrowing):
+@pytest.mark.parametrize("subject", ["lee", " lee "])
+def test_the_cli_cannot_restore_tokens_whose_names_were_freed(
+    store, capsys, claim_flag, narrowing, subject
+):
     from server.auth.jwt import _check_not_revoked
 
     now = datetime.now(UTC).replace(microsecond=0)
@@ -755,7 +758,7 @@ def test_the_cli_cannot_restore_tokens_whose_names_were_freed(store, capsys, cla
         if narrowing == "cutoff"
         else ["--expires-at", (now + timedelta(days=1)).isoformat()]
     )
-    rc = cli.main(["revoke-token", claim_flag, "lee", *option])
+    rc = cli.main(["revoke-token", claim_flag, subject, *option])
     assert store.heads()["laptop"]["revoked_at"] is not None
     with pytest.raises(TokenError, match="revoked"):
         _check_not_revoked(

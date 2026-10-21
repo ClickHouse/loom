@@ -20,6 +20,7 @@ import asyncio
 import logging
 from typing import Any
 
+from server.memory.domain.extraction_policy import with_policy
 from server.observability.genai import llm_stage
 
 log = logging.getLogger(__name__)
@@ -74,15 +75,19 @@ async def contextualize_chunks(
     concurrency: int = 8,
     max_context_chars: int = 400,
     max_tokens: int = 160,
+    operator_policy: str,
 ) -> list[str]:
     """One context per chunk, in order; "" where the model failed (fail-open:
-    that chunk is embedded as it is). One `llm_stage` for the whole batch."""
+    that chunk is embedded as it is). One `llm_stage` for the whole batch. The
+    context is written from the caller's text and stored with it, so each call
+    ends with the operator's extraction policy."""
     if not chunks:
         return []
     sem = asyncio.Semaphore(max(1, concurrency))
 
     async def one(chunk: str) -> str:
         system, user = build_prompt(document, chunk)
+        system = with_policy(system, operator_policy)
         async with sem:
             try:
                 res = await llm.complete(system=system, user=user, max_tokens=max_tokens)

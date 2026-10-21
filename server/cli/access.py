@@ -391,7 +391,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     if issued_before is not None and not args.subject:
         print("  ✗ --issued-before narrows a --subject revocation; pass --subject", file=sys.stderr)
         return 2
-    subject = args.subject or ""
+    subject = (args.subject or "").strip()
     end_user_org = org_of_end_user_revocation(subject)
     problem = subject_revocation.refusal(subject) if args.subject is not None else None
     if problem:
@@ -409,7 +409,7 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     async def _run(ch: Any) -> int:
         if args.list:
             return _print_revocations(await revocation.list_active(), as_json=args.json)
-        token_id = args.jti or args.subject
+        token_id = (args.jti or subject).strip()
         by = f"cli:{getpass.getuser()}"
         kind = "jti" if args.jti else "subject"
         # A CLI revoke has no request ledger row; its audit row is its only

@@ -531,12 +531,20 @@ async def _site_orphan_reconcile(ch, mp):
 
 async def _site_sensitivity_high(ch, mp):
     from server.memory.app import sensitivity_sweep as sweep
+    from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 
     async def relabelled(*_a, **_k):
         return 1
 
     mp.setattr("server.memory.store.write_versions_by_ids", relabelled)
-    await sweep.apply([sweep.SweepCandidate("mid", *_KEY[:5], "k", "high", ("credential",))], ch=ch)
+    await sweep.apply(
+        [
+            sweep.SweepCandidate(
+                "mid", *_KEY, "high", ("credential",), dict(zip(SORT_KEY, _KEY, strict=True))
+            )
+        ],
+        ch=ch,
+    )
 
 
 async def _site_cascade(ch, mp):

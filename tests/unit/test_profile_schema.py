@@ -733,12 +733,15 @@ async def test_every_digest_is_16_hex_characters() -> None:
     assert any(d.startswith("0") for d in digests)
 
 
-def _dated(mid: str, value: str, created: str, updated: str, version: int = 1) -> str:
+def _dated(
+    mid: str, value: str, created: str, updated: str, version: int = 1, sensitivity: str = ""
+) -> str:
     return (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
-        "memory_type, value, memory_id, content_sha256, version, created_at, updated_at) "
-        f"VALUES ('o', 'n', 'a', 'u1', '-', 'k{mid[-1]}', 'semantic', '\"{value}\"', '{mid}', "
-        f"'{value[0] * 64}', {version}, {created}, {updated})"
+        "memory_type, value, memory_id, content_sha256, version, created_at, updated_at, "
+        f"sensitivity) VALUES ('o', 'n', 'a', 'u1', '-', 'k{mid[-1]}', 'semantic', "
+        f"'\"{value}\"', '{mid}', '{value[0] * 64}', {version}, {created}, {updated}, "
+        f"'{sensitivity}')"
     )
 
 
@@ -848,6 +851,42 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
     schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
     assert await w.build_profile(schema, "u1") == 0
     assert read == ["- [2026-01-03] My timezone is Tokyo."]  # _JAN3
+
+
+@_needs_ch
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "label",
+    # an import leaves a row unlabelled until the sweep; a writer's explicit `low` sets the
+    # stored label, but the build still checks the value
+    ["", "low"],
+    ids=["unlabelled-pin", "low-labelled-pin"],
+)
+async def test_a_fact_reading_as_high_never_reaches_the_profile_model(
+    local_store: Any, monkeypatch: pytest.MonkeyPatch, label: str
+) -> None:
+    from server.memory.app import profile_schema as schema_app
+    from server.memory.workers import structured_profile as w
+
+    local_store(
+        ddl("memory"),
+        _dated(_A, "My timezone is Berlin.", _JAN2, _JAN2),
+        _dated(_B, "badge PIN is 4471", _JAN3, _JAN3, sensitivity=label),
+    )
+    read: list[str] = []
+
+    async def ask(org: str, ns: str, props: Any, facts: str) -> dict[str, Any]:
+        read.append(facts)
+        return {}
+
+    async def write(**kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr(w, "_ask", ask)
+    monkeypatch.setattr(schema_app, "write_structured_profile", write)
+    schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
+    assert await w.build_profile(schema, "u1") == 0
+    assert read == ["- [2026-01-02] My timezone is Berlin."]
 
 
 @_needs_ch

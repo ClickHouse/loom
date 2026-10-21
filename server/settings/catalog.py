@@ -1678,9 +1678,10 @@ class ContextSettings(BaseModel):
     context_offload_max_bytes: Annotated[int, LIVE] = 8_000_000
     # session.brief_save. `session_brief_llm` off = every brief comes from the
     # deterministic builder (goal, status, files, errors, rules, pointers; no
-    # decisions or dead ends). The model is the
-    # deployment's LLM when `session_brief_llm_model` has no key. A save
-    # condenses its events into windows of `session_brief_window_chars`
+    # decisions or dead ends), except under an operator's extraction policy,
+    # where a save of events alone with no model to call writes nothing. The
+    # model is the deployment's LLM when `session_brief_llm_model` has no key.
+    # A save condenses its events into windows of `session_brief_window_chars`
     # (≈6k tokens each) and revises the brief once per window, at most
     # `session_brief_max_windows` calls per save (the last window takes the
     # remainder, condensed harder).
@@ -1891,6 +1892,10 @@ class ExtractionSettings(BaseModel):
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
     extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
+    # --- operator extraction policy ---
+    # Most namespaces of one org that may hold their own extraction policy;
+    # `extraction_policy.set` with scope `namespace` refuses one more.
+    extraction_policy_max_namespaces: Annotated[int, LIVE] = Field(default=1000, ge=1)
 
 
 # ===== Knowledge ==============================================================
@@ -2394,8 +2399,9 @@ class MemorySettings(BaseModel):
 
     # ---- sensitivity and provenance ----
     # With no explicit `sensitivity`, detect it from the value with regexes:
-    # credential shapes -> 'high' (never embedded, key-only reads, audited);
-    # email/phone -> 'medium' (embedded, labelled). Off = every row stays ''.
+    # credential shapes, card numbers, SSNs and stated PINs -> 'high' (never
+    # embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded,
+    # labelled). Off = every row stays ''.
     memory_sensitivity_autodetect: bool = True
     # `medium`/`high` rows get expires_at = now + N days on the set and bulk
     # paths (a shorter caller expiry wins) and, if the caller set none, this
@@ -2412,12 +2418,15 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_interval_seconds: int = 86400
     # Days back the sensitivity sweep re-labels rows created in.
     sensitivity_sweep_window_days: int = 2
-    # Rows one sweep pass re-labels (at least 1).
+    # Rows one sensitivity sweep pass re-labels, and the keys per page it reads
+    # (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
+    # Pages one sensitivity sweep pass reads at most, each of
+    # `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000).
+    sensitivity_sweep_pages_per_pass: Annotated[int, LIVE] = Field(default=10, ge=1, le=1000)
     # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
-    # other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label
-    # demotes the row in ranking, so it is left to the operator's
-    # `--only-shape phone`.
+    # other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are
+    # left to the operator's `loom sensitivity-sweep --apply`.
     sensitivity_sweep_shapes: str = "credential,email"
     # Tag rows mentioning a protected attribute or common proxy with
     # `attribute:<class>` at write time (gender, religion, health, age, family,
@@ -3696,11 +3705,12 @@ class ProviderSettings(ModelSettings):
     # to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's.
     inference_feature_map_json: Annotated[str, JsonObject] = ""
     # Seconds between each process's reads of the orgs whose model calls are
-    # switched off (loom.org_model_calls); a change reaches every process within it.
+    # switched off (loom.org_model_calls) and of the operators' extraction
+    # policies (loom.extraction_policies); a change reaches every process within it.
     model_calls_policy_refresh_seconds: float = Field(10.0, gt=0)
-    # Seconds a process trusts its copy of the org model-call switch when it cannot
-    # read it again; past it, every model call for an org is refused (fail closed).
-    # 15 to 300.
+    # Seconds a process trusts its copy of the org model-call switch, and of the
+    # extraction policies, when it cannot read it again; past it, every model call
+    # for an org is refused and no extraction runs (fail closed). 15 to 300.
     model_calls_policy_max_stale_seconds: float = Field(60.0, ge=15, le=300)
     # Days a switched-off org's queued requests (the extraction queue) wait, from
     # when the org was switched off, before they are dropped, each with a
@@ -4884,6 +4894,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Multiple ALTER UPDATEs are slow; tolerated for compliance.
     "erasure.request": 2000,
     "erasure.status": 25,
+    # A point read, a sync insert when the scope holds a policy, the audit row, then two
+    # point reads, or for scope org one point read and the org's namespace policies.
+    "extraction_policy.clear": 100,
+    # Two point reads, or for scope org one point read and the org's namespace policies.
+    "extraction_policy.get": 50,
+    # Cap check (a point read and a FINAL count), a sync insert and its audit row, then
+    # the reads extraction_policy.get makes.
+    "extraction_policy.set": 150,
     "facts.expire_by_adapter": 500,
     "facts.list": 80,
     # One frontier query per hop, at most max_hops of them.
