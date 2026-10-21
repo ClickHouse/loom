@@ -3585,6 +3585,16 @@ IDENTITY_REFUSAL_FIELDS = ("code", "type", "message")
 
 
 @functools.lru_cache(maxsize=4)
+def _identity_headers(raw: str) -> tuple[tuple[str, str], ...]:
+    """LOOM_INFERENCE_IDENTITY_HEADERS_JSON decoded once per value: every model call
+    reads it, several times."""
+    if not raw:
+        return ()
+    pairs = json_map_items(raw, "LOOM_INFERENCE_IDENTITY_HEADERS_JSON", strings_only=True)
+    return tuple((name, template.strip()) for name, template in pairs)
+
+
+@functools.lru_cache(maxsize=4)
 def _identity_refusals(raw: str) -> dict[str, tuple[dict[str, Any], ...]]:
     """LOOM_INFERENCE_IDENTITY_REFUSALS_JSON decoded and checked, once per value: every
     gateway answer to a model call is matched against it."""
@@ -3861,11 +3871,7 @@ class ProviderSettings(ModelSettings):
     def identity_headers(self) -> tuple[tuple[str, str], ...]:
         """`inference_identity_headers_json` parsed: (header, template) pairs, each
         template without its surrounding whitespace."""
-        raw = self.inference_identity_headers_json.strip()
-        if not raw:
-            return ()
-        pairs = json_map_items(raw, "LOOM_INFERENCE_IDENTITY_HEADERS_JSON", strings_only=True)
-        return tuple((name, template.strip()) for name, template in pairs)
+        return _identity_headers(self.inference_identity_headers_json.strip())
 
     @model_validator(mode="after")
     def _check_model_calls_refresh(self) -> ProviderSettings:
