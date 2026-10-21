@@ -37,6 +37,8 @@ _READ = {
     "memory.recall",
     "memory.export_evidence",
     "memory.get_by_id",
+    "memory.statuses",
+    "memory.auto_retirements",
     "memory.bulk_get",
     "memory.search",
     "memory.ask",

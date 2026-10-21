@@ -86,21 +86,46 @@ async def emit(
     request produces carries it without per-call plumbing. Outside the hash
     payload, like the build/instance stamps."""
     try:
-        row = _audit_row(
+        return await emit_strict(
             event_type,
-            org,
-            namespace,
-            actor,
-            subject,
+            org=org,
+            namespace=namespace,
+            actor=actor,
+            subject=subject,
             request_id=request_id,
             ts=ts,
             consumer=consumer,
         )
-        await get_client().insert("loom.audit_log", [row])
-        return str(row["row_hash"])
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit failed for event_type=%s: %s", event_type, e)
         return ""
+
+
+async def emit_strict(
+    event_type: str,
+    *,
+    org: str,
+    namespace: str,
+    actor: str,
+    subject: dict[str, Any] | list[Any] | str | None = None,
+    request_id: str = "",
+    ts: datetime | None = None,
+    consumer: str | None = None,
+) -> str:
+    """`emit` that raises when the row is not written: for a record an op depends on
+    (an Undo's, which the conflict resolver reads), written before the op's change."""
+    row = _audit_row(
+        event_type,
+        org,
+        namespace,
+        actor,
+        subject,
+        request_id=request_id,
+        ts=ts,
+        consumer=consumer,
+    )
+    await get_client().insert("loom.audit_log", [row])
+    return str(row["row_hash"])
 
 
 async def emit_many(

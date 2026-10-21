@@ -144,6 +144,17 @@ async def test_exact_get_obeys_the_tokens_pinned_user(env) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_get_names_the_rows_user_and_session(env) -> None:
+    """A write back to the row (the dashboard's restore and verify) names its identity:
+    a key repeats across users and sessions."""
+    env.row = env.row.model_copy(update={"agent": "bot", "user_id": "u1", "session_id": "s2"})
+    out = await mem.handle_memory_get(_input())
+    assert (out.agent, out.user_id, out.session_id) == ("bot", "u1", "s2")
+    dumped = out.model_dump()
+    assert dumped["user_id"] == "u1" and dumped["session_id"] == "s2"
+
+
+@pytest.mark.asyncio
 async def test_a_high_read_is_audited_as_the_tokens_principal(env) -> None:
     from server.auth.context import set_current_auth
     from server.auth.jwt import AuthInfo

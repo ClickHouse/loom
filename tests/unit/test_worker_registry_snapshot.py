@@ -6,10 +6,12 @@ sleep and first-pass hook. A refactor of how it is written must not move
 any of that, so this test builds the list under three settings profiles and
 compares every `WorkerSpec` field against `snapshots/worker_registry.json`:
 
-  - ``defaults``: every worker switch and cadence at its declared default;
+  - ``defaults``: every worker switch and cadence at its declared default (the
+    conflict resolver's is what the fake LLM provider resolves: off);
   - ``all_on``: every ``*_enabled`` flag on;
   - ``production``: the worker switches a production `.env` sets (booleans only,
-    copied into `_PRODUCTION_FLAGS`), everything else at its default.
+    copied into `_PRODUCTION_FLAGS`) on a real LLM provider, everything else at its
+    default.
 
 Callables are named by ``__module__:__qualname__``. A closure's qualname
 carries the function it is defined in (``<fn>.<locals>.``), which is where
@@ -50,6 +52,8 @@ _PRODUCTION_FLAGS: dict[str, bool] = {
     "reflection_distill_enabled": True,
     "observe_extract_enabled": True,
     "entity_communities_enabled": True,
+    # A real LLM provider resolves the conflict resolver on.
+    "memory_conflict_resolver_enabled": True,
 }
 
 

@@ -4,12 +4,20 @@ memory.unsupersede."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
 from server.memory.store import MemoryRow
+from tests.unit.claims_fake import fake_key_locks
+
+
+@pytest.fixture(autouse=True)
+def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The Undo holds the key's write lock, a Keeper lease: here over a fake lease table.
+    fake_key_locks(monkeypatch)
+
 
 # --- memory.restore on a superseded row -------------------------------------
 
@@ -103,10 +111,21 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
     monkeypatch.setattr("server.memory.store.unsupersede_embeddings", _unsupersede)
     monkeypatch.setattr("server.observability.audit.emit", _emit)
-    out = await restore_mod.handle_memory_restore(
-        MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
-    )
+    monkeypatch.setattr("server.observability.audit.emit_strict", _emit)
+    from types import SimpleNamespace
+
+    from server.auth.context import set_current_auth
+
+    set_current_auth(SimpleNamespace(org="o", subject="alice", is_service_account=False))
+    try:
+        out = await restore_mod.handle_memory_restore(
+            MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
+        )
+    finally:
+        set_current_auth(None)
     assert out.restored is True and out.from_status == "superseded"
+    # The ledger row names who undid the retirement, from the token.
+    assert emitted[0][1]["actor"] == "human:alice"
     table, rows = ch.inserts[0]
     assert table == "loom.memory"
     assert (
@@ -118,4 +137,179 @@ async def test_restore_reverses_an_automatic_supersession_and_writes_the_ledger_
     assert unsup == ["k"], "embeddings re-emitted active"
     assert emitted and emitted[0][0] == "memory.unsupersede"
     subj = emitted[0][1]["subject"]
-    assert subj["superseded_by"] == "keeper-id" and subj["retired_by"] == "dedup_sweep"
+    assert subj["superseded_by"] == "keeper-id" and "retired_by" not in subj
+    assert subj["version"] == out.version, "the resolver reads the restore's version"
+
+
+@pytest.mark.asyncio
+async def test_an_undo_whose_record_fails_restores_nothing(monkeypatch):
+    # The resolver honours an Undo only by its record: an Undo it could not see would
+    # be judged again, so a failed record fails the Undo before the restore is written.
+    from server.core.errors import BackendUnavailableError
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    ch = _CH({"status": "superseded", "superseded_by": "keeper-id", "tombstoned_at": None})
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return _superseded_row()
+
+    async def _boom(*_: Any, **__: Any) -> str:
+        raise RuntimeError("audit insert failed")
+
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _boom)
+    with pytest.raises(BackendUnavailableError) as raised:
+        await restore_mod.handle_memory_restore(
+            MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
+        )
+    assert raised.value.status_code == 503 and "nothing was restored" in str(raised.value)
+    assert ch.inserts == [], "nothing restored"
+
+
+@pytest.mark.parametrize("deleted_since", [True, False])
+async def test_an_undo_after_a_later_delete_leaves_the_delete(monkeypatch, deleted_since):
+    # The first read still shows the retirement; the read-your-writes head shows the
+    # delete that landed since, or no row at all. The delete stands, and the answer
+    # comes from that head.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    ch = _CH({"memory_id": "stale", "version": 100, "status": "superseded", "tombstoned_at": None})
+    deleted = _superseded_row().model_copy(
+        update={"version": 101, "tombstoned_at": datetime(2026, 9, 11)}
+    )
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow | None:
+        return deleted if deleted_since else None
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    out = await restore_mod.handle_memory_restore(
+        MemoryRestoreInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            session_id="s1",
+            memory_key="k",
+            if_superseded_by="keeper-id",
+        )
+    )
+    assert out.restored is False and ch.inserts == []
+    if deleted_since:
+        assert (out.memory_id, out.version) == ("mid", 101)
+    else:
+        assert out.memory_id is None
+
+
+async def test_a_guarded_restore_never_undoes_a_delete(monkeypatch):
+    # The inspector showed the row retired; another client deleted it since.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    yesterday = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
+    deleted = _superseded_row().model_copy(update={"version": 101, "tombstoned_at": yesterday})
+    ch = _CH(
+        {
+            "memory_id": "mid",
+            "version": 101,
+            "status": "superseded",
+            "tombstoned_at": deleted.tombstoned_at,
+        }
+    )
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return deleted
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    out = await restore_mod.handle_memory_restore(
+        MemoryRestoreInput(
+            org="o",
+            namespace="n",
+            agent="a",
+            session_id="s1",
+            memory_key="k",
+            only_if_superseded=True,
+        )
+    )
+    assert out.restored is False and out.from_status == "" and ch.inserts == []
+
+
+_PAST = datetime(2026, 1, 1)
+_FUTURE = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30)
+
+
+@pytest.mark.parametrize(
+    ("keeper", "status"),
+    [
+        ({"status": "active"}, "duplicate"),
+        ({"status": "conflicted"}, "duplicate"),
+        # Marked high since: still served to those who may read it, so the copy stays hidden.
+        ({"status": "active", "sensitivity": "high"}, "duplicate"),
+        ({"status": "active", "expires_at": _FUTURE}, "duplicate"),
+        ({"status": "active", "valid_to": _FUTURE}, "duplicate"),
+        (None, "active"),
+        # Reads serve none of these, so the restored row must not hide behind them.
+        ({"status": "proposed"}, "active"),
+        ({"status": "duplicate"}, "active"),
+        ({"status": "active", "expires_at": _PAST}, "active"),
+        ({"status": "active", "valid_to": _PAST}, "active"),
+    ],
+)
+async def test_undoing_a_retired_duplicate_keeps_it_a_duplicate(monkeypatch, keeper, status):
+    # The same-key judge can retire a duplicate row. Undone while the row it
+    # duplicates is still served, it stays hidden behind that row, on both tables.
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore as restore_mod
+
+    class _WasDuplicate(_CH):
+        async def query_all(self, sql: str, *_: Any, **__: Any) -> list[dict[str, Any]]:
+            return [{"was": "duplicate"}] if "AS was" in sql else []
+
+    ch = _WasDuplicate({"memory_id": "mid", "status": "superseded", "tombstoned_at": None})
+    existing = _superseded_row().model_copy(update={"duplicate_of": "keeper-of-the-fact"})
+    original = None
+    if keeper is not None:
+        original = _superseded_row().model_copy(
+            update={"memory_id": "keeper-of-the-fact", "superseded_by": "", **keeper}
+        )
+
+    async def _get_by_key(*_: Any, **__: Any) -> MemoryRow:
+        return existing
+
+    async def _get_by_id(memory_id: str, **_: Any) -> MemoryRow | None:
+        return original if memory_id == "keeper-of-the-fact" else None
+
+    unsup: list[str] = []
+
+    async def _unsupersede(*a: Any, status: str, **k: Any) -> int:
+        unsup.append(status)
+        return 1
+
+    async def _emit(*_: Any, **__: Any) -> str:
+        return "hash"
+
+    monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
+    monkeypatch.setattr("server.memory.store.get_by_key", _get_by_key)
+    monkeypatch.setattr("server.memory.store.get_by_id", _get_by_id)
+    monkeypatch.setattr("server.memory.store.unsupersede_embeddings", _unsupersede)
+    monkeypatch.setattr("server.observability.audit.emit", _emit)
+    monkeypatch.setattr("server.observability.audit.emit_strict", _emit)
+    out = await restore_mod.handle_memory_restore(
+        MemoryRestoreInput(org="o", namespace="n", agent="a", session_id="s1", memory_key="k")
+    )
+    assert out.restored is True
+    table, rows = ch.inserts[0]
+    assert table == "loom.memory" and rows[0]["status"] == status
+    assert unsup == [status]
+
+
+def test_a_version_becomes_its_time_to_the_microsecond() -> None:
+    from datetime import datetime
+
+    from server.memory.store.rows import version_time
+
+    # A float of these ns rounds the microsecond up; integer arithmetic does not.
+    assert version_time(1_792_383_601_496_448_999) == datetime(2026, 10, 19, 4, 20, 1, 496448)

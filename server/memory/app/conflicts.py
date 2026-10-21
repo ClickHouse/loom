@@ -13,10 +13,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
 from server.core.errors import AuthInsufficientError, IdentityIncompleteError
@@ -31,16 +32,16 @@ from server.memory.domain.conflicts import (
     APPEND_ONLY_POLICY,
     ConflictPeer,
     ConflictResult,
-    PendingJudge,
     WriteConfig,
     _as_datetime,
-    _fold_judged,
     canonical,
     merge_or_run_duplicate,
     query_max_distance,
     same_content_words,
+    substitution_result,
     templated_substitution,
 )
+from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.store import conflicts as _conflicts_repo
 from server.memory.store.conflict_candidates import (
     _PEER_ROWS_SQL,
@@ -49,8 +50,12 @@ from server.memory.store.conflict_candidates import (
     _peer_candidates_sql,
     candidate_sql_many,
     pinned_sql_many,
+    vector_params,
 )
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.memory.app.auto_resolution import Follow
 
 log = logging.getLogger(__name__)
 
@@ -118,12 +123,59 @@ async def _allowlisted_keys(org: str, namespace: str, my_key: str) -> set[str]:
     return await _conflicts_repo.allowlisted_peers(org, namespace, my_key, ch=get_client())
 
 
+def _peer_query_distance(threshold: float) -> float:
+    """The distance the peer statement reaches: the conflict threshold, or with the
+    conflict resolver on its lower floor, so a write with a peer in between is
+    marked for the resolver (those peers never flag on cosine alone)."""
+    if settings.memory_conflict_resolver_enabled:
+        threshold = min(threshold, float(settings.memory_conflict_resolver_min_similarity))
+    return query_max_distance(threshold)
+
+
+def resolver_mark(result: Any) -> datetime | None:
+    """The `conflict_checked_at` a write's vector row carries: the conflict resolver's
+    owed mark when the check asked for a judgement, else NULL."""
+    from server.memory.store.conflict_resolver import OWED_MARK
+
+    if settings.memory_conflict_resolver_enabled and bool(getattr(result, "review", False)):
+        return OWED_MARK
+    return None
+
+
+async def same_key_mark(
+    result: Any, *, org: str, namespace: str, memory_row: dict[str, Any], policy: str | None
+) -> datetime | None:
+    """`resolver_mark` for a point write, or the owed mark when another session of the
+    same subject holds the row's key live: a shared key is not proof of one attribute,
+    so the resolver judges the pair (as bulk writes do). Not under `newest_wins`, which
+    retires the older row itself, nor `append_only`, nor for the anonymous user
+    (`keys_held_elsewhere`). One query; fail-open."""
+    from server.memory.app.key_supersession import keys_held_elsewhere
+    from server.memory.store.conflict_resolver import OWED_MARK
+
+    mark = resolver_mark(result)
+    if mark is not None or not settings.memory_conflict_resolver_enabled:
+        return mark
+    try:
+        ch = get_client()
+        policy = policy or await namespace_conflict_policy(org, namespace, ch=ch)
+        if policy in ("newest_wins", "append_only"):
+            return None
+        held = await keys_held_elsewhere(
+            org=org, namespace=namespace, memory_rows=[memory_row], ch=ch
+        )
+    except Exception as e:  # noqa: BLE001 — the row lands unmarked; the write stands
+        log.warning("same-key mark skipped (non-fatal): %s", e)
+        return None
+    return OWED_MARK if str(memory_row.get("memory_key") or "") in held else None
+
+
 async def resolve_conflict_floor(org: str, namespace: str, memory_type: str) -> tuple[float, float]:
     """(threshold, max_distance) for one namespace + memory_type — the two
     numbers `check_on_commit` resolves before its statement, exposed so a bulk
     writer resolves them once per type instead of once per fact."""
     threshold = await _resolve_threshold(org, namespace, memory_type=memory_type)
-    return threshold, query_max_distance(threshold)
+    return threshold, _peer_query_distance(threshold)
 
 
 async def candidate_rows_many(
@@ -162,7 +214,7 @@ async def candidate_rows_many(
             "org": org,
             "ns": namespace,
             "dim": dim,
-            "embs": [items[i][2] for i in idxs],
+            **vector_params([items[i][2] for i in idxs]),
             "types": [items[i][0] for i in idxs],
             "keys": [items[i][1] for i in idxs],
             "max_dists": [float(items[i][3]) for i in idxs],
@@ -415,22 +467,7 @@ async def _substitution_verdict(
         policy = ""
     if policy != "newest_wins":
         return None
-    from server.memory.app.conflict_judge import Judgement
-
-    judged = Judgement(
-        verdict="conflict",
-        ran=True,
-        keep=[p.memory_id for p in subst],
-        labels={p.memory_id: "contradiction" for p in subst},
-    )
-    return _fold_judged(
-        judged,
-        peers,
-        cosine_peers=peers,
-        policy=policy,
-        new_valid_at=new_valid_at,
-        new_value=new_value,
-    )
+    return substitution_result(subst, peers, new_valid_at=new_valid_at)
 
 
 async def check_on_commit(
@@ -449,7 +486,6 @@ async def check_on_commit(
     resolved_duplicate_threshold: float | None = None,
     resolved_policy: str | None = None,
     allowlisted_keys: set[str] | None = None,
-    defer_judge: bool = False,
 ) -> ConflictResult:
     """Run the 4-step algorithm. Caller raises 409 on verdict=='rejected'
         and applies merge/conflict flags on insert.
@@ -457,9 +493,6 @@ async def check_on_commit(
         `resolved_duplicate_threshold` / `resolved_policy` / `allowlisted_keys`
     : the namespace reads a point write prefetched in one round
         trip (`prefetch_write_config`); None reads them here.
-        `defer_judge=True` returns `pending` with a `PendingJudge` where the
-        inline path would have called the LLM; every deterministic tier (merge,
-        rejected, templated substitution, duplicate) still answers inline.
 
         `new_run_id`: a write made under a run keeps its own row.
         A canonical-form match with a peer from another run, or from no run,
@@ -468,7 +501,7 @@ async def check_on_commit(
         reads find what the run wrote. Same-run restatements still merge.
 
         `new_valid_at`: the new row's validity date when the writer supplied one; it decides
-        which side of a judged contradiction `newest_wins` retires.
+        which side of a templated substitution `newest_wins` retires.
 
         `candidate_rows` / `resolved_threshold`: a bulk writer that already fetched this
         fact's peers with `candidate_rows_many` and resolved the namespace threshold passes
@@ -487,12 +520,7 @@ async def check_on_commit(
         if resolved_threshold is not None
         else await _resolve_threshold(org, namespace, memory_type=memory_type)
     )
-    # With the judge on, the peer query reaches down to a lower floor. Peers in the band
-    # below `threshold` are candidates for the judge only — they never produce a cosine
-    # verdict on their own — so recall widens exactly where the judge's precision pays
-    # for it (updates that share only ~20% of their words and sit under different keys
-    # are never seen by the 0.85 flag).
-    max_distance = query_max_distance(threshold)
+    max_distance = _peer_query_distance(threshold)
 
     # Excludes our own memory_key (re-write is LWW by version, not a conflict)
     # and filters peers by embedding_dim so cosineDistance gets equal-length
@@ -533,24 +561,12 @@ async def check_on_commit(
 
     new_canonical = canonical(new_value)
     all_peers, foreign = _split_by_read_scope([_peer_of(r) for r in rows])
-    # Flagged peers reach the cosine verdicts below; band peers only the judge.
     peers = [p for p in all_peers if p.similarity >= threshold]
-    band_peers = [p for p in all_peers if p.similarity < threshold]
     # A pinned row outside the writer's read scope still blocks it.
     foreign_blocker = next((p for p in foreign if p.pinned and p.similarity >= threshold), None)
     if not peers and foreign_blocker is None:
-        pj = PendingJudge(
-            org,
-            namespace,
-            new_value,
-            band_peers,
-            [],
-            "clear",
-            new_valid_at,
-            new_run_id,
-            resolved_policy,
-        )
-        return await _judge_or_defer(pj, defer_judge)
+        # Peers below the threshold only ask the conflict resolver to look.
+        return ConflictResult(verdict="clear", peers=[], review=bool(all_peers))
 
     # Step 2 — canonical-form match → merge (return existing id, skip insert), unless
     # the write is run-scoped and the peer is not this run's: then the row is inserted
@@ -571,8 +587,7 @@ async def check_on_commit(
     # Step 3 (before 3a) — a templated substitution under `newest_wins`: the
     # same statement shape with a different fill is an update to a
     # single-valued attribute, and the policy says the newer statement wins.
-    # Deterministic; the judge is not asked (it called "created in the country
-    # of Soviet Union" a restatement of "… United States of America").
+    # Deterministic.
     substituted = await _substitution_verdict(
         peers,
         new_value=new_value,
@@ -590,8 +605,7 @@ async def check_on_commit(
     # politician" and "works in the field of soldier" sit above the duplicate
     # gate (one token apart in a templated sentence); filing the second as a
     # duplicate of the first would lose the update. A pair whose content words differ
-    # falls through to the judge, whose contradiction verdict `newest_wins`
-    # can act on.
+    # falls through to the conflict flag.
     dup_threshold = (
         float(resolved_duplicate_threshold)
         if resolved_duplicate_threshold is not None
@@ -613,95 +627,13 @@ async def check_on_commit(
         )
 
     # Step 3b — close-but-different (below duplicate_threshold but
-    # above conflict threshold) → conflict, unless the judge
-    # says the pair is an elaboration, a restatement or unrelated (most cosine
-    # "conflicts" are not).
-    pj = PendingJudge(
-        org,
-        namespace,
-        new_value,
-        peers + band_peers,
-        peers,
-        "conflict",
-        new_valid_at,
-        new_run_id,
-        resolved_policy,
-    )
-    return await _judge_or_defer(pj, defer_judge)
+    # above conflict threshold) → conflict, for the conflict resolver to judge.
+    return ConflictResult(verdict="conflict", peers=peers, review=True)
 
 
 async def namespace_conflict_policy(org: str, namespace: str, *, ch: Any) -> str:
     """The namespace's `default_conflict_policy`, or the default when unset."""
     return _policy_from(await _conflicts_repo.namespace_write_row(org, namespace, ch=ch))
-
-
-async def _policy_for(org: str, namespace: str, judged: Any) -> str:
-    """The namespace conflict policy, read only when a judged contradiction
-    could fold to supersession under it. '' on any error."""
-    if getattr(judged, "verdict", "") != "conflict":
-        return ""
-    try:
-        return await namespace_conflict_policy(org, namespace, ch=get_client())
-    except Exception as e:  # noqa: BLE001 — unknown policy keeps the flag
-        logging.getLogger(__name__).warning("conflict judge: policy read failed (%s)", e)
-        return ""
-
-
-async def _judge_conflict(new_value: str, peers: list[ConflictPeer]) -> Any:
-    """One cheap call labels the closest peers. None when off."""
-    if not bool(settings.memory_conflict_judge):
-        return None
-    from server.memory.app import conflict_judge
-
-    cap = max(int(settings.memory_conflict_judge_max_peers), 1)
-    try:
-        from server.llm.client import get_llm_client, get_llm_client_for_model
-
-        cheap = settings.memory_ask_synth_model_cheap.strip()
-        llm = get_llm_client_for_model(cheap) if cheap else get_llm_client()
-    except Exception as e:  # noqa: BLE001 — no client, cosine verdict stands
-        logging.getLogger(__name__).warning("conflict judge: no LLM client (%s)", e)
-        return None
-    # peers arrive ordered by distance ascending; judge the closest few.
-    return await conflict_judge.judge(llm, new_value, peers[:cap])
-
-
-def judge_enabled() -> bool:
-    return bool(settings.memory_conflict_judge)
-
-
-async def _judge_or_defer(pj: PendingJudge, defer: bool) -> ConflictResult:
-    """With `defer` the write gets `pending` and the judge's
-    input; otherwise the judge runs now. The judge switched off never
-    defers — there is nothing to wait for and the cosine verdict is final."""
-    if defer and judge_enabled() and pj.candidates:
-        return ConflictResult(verdict="pending", peers=list(pj.candidates), pending_judge=pj)
-    return await settle_deferred_judgement(pj)
-
-
-async def settle_deferred_judgement(pj: PendingJudge) -> ConflictResult:
-    """Run the judge over a `PendingJudge` and fold its labels exactly as the
-    inline path does: no judge or an unparsable answer → the cosine fallback
-    verdict over the cosine peers; else `_fold_judged` over the candidates
-    with the flagged peers as the conflict fallback and the namespace policy
-    (prefetched or read now). The inline path calls this too, so the two
-    cannot drift."""
-    judged = await _judge_conflict(pj.new_value, pj.candidates)
-    if judged is None or not judged.ran:
-        return ConflictResult(verdict=pj.fallback_verdict, peers=list(pj.cosine_peers))
-    if pj.policy is None:
-        policy = await _policy_for(pj.org, pj.namespace, judged)
-    else:  # prefetched; read only for a judged contradiction
-        policy = pj.policy if judged.verdict == "conflict" else ""
-    return _fold_judged(
-        judged,
-        pj.candidates,
-        cosine_peers=pj.cosine_peers or None,
-        policy=policy,
-        new_valid_at=pj.new_valid_at,
-        new_run_id=pj.new_run_id,
-        new_value=pj.new_value,
-    )
 
 
 async def prefetch_write_config(
@@ -779,44 +711,6 @@ async def auto_reinforce_peer(ident: Any, peer_id: str, *, ch: Any, cfg: Any = N
         logging.getLogger(__name__).warning("auto_reinforce bump failed (non-fatal): %s", e)
 
 
-def truncating_refinement(new_value: str, peer_value: str) -> bool:
-    """Whether `new_value` drops a measured token `peer_value` carries. Pure."""
-    from server.memory.app.value_updates import measured_tokens
-
-    if not peer_value:
-        return False
-    return bool(measured_tokens(peer_value) - measured_tokens(new_value or ""))
-
-
-async def _truncating_refines(
-    org: str,
-    namespace: str,
-    new_memory_id: str,
-    new_value: str,
-    refined_peers: list[ConflictPeer],
-    *,
-    ch: Any = None,
-) -> set[str]:
-    """The peers a refines verdict must NOT retire (see `apply_refines`).
-    Reads the new row's text when the caller had none; fail-open to none."""
-    if not refined_peers:
-        return set()
-    text = new_value or ""
-    if not text:
-        try:
-            rows = await (ch or get_client()).query_all(
-                "SELECT toString(value) AS v FROM loom.memory FINAL WHERE org = {org:String} "
-                "AND namespace = {ns:String} AND toString(memory_id) = {mid:String} LIMIT 1",
-                params={"org": org, "ns": namespace, "mid": str(new_memory_id)},
-            )
-            text = str(rows[0]["v"]) if rows else ""
-        except Exception:  # noqa: BLE001 — no text, no guard
-            return set()
-    if not text:
-        return set()
-    return {p.memory_id for p in refined_peers if truncating_refinement(text, p.value or "")}
-
-
 async def apply_refines(
     *,
     org: str,
@@ -825,36 +719,36 @@ async def apply_refines(
     new_memory_key: str,
     refined_peers: list[ConflictPeer],
     ch: Any = None,
-    run_id: str = "-",
-    relation: str = "refines",
-    new_value: str = "",
+    record_into: dict[str, list[dict[str, Any]]] | None = None,
     expected_sha256: str = "",
+    skip_peer: Callable[[Any], bool] | None = None,
+    reason: str = "",
+    follows: list[Follow] | None = None,
 ) -> int:
-    """The `refines` verdict, after the new row is in: every
-    non-pinned refined peer is superseded (status, superseded_by = the new
-    row, invalid_at now — never deleted; recall drops it, the audit trail and
-    `as_of` keep it) and a `refines` edge from the new key to the old records
-    why. Best effort; returns the number of peers superseded.
+    """The `refines` verdict, after the new row is in: every non-pinned peer
+    the new row replaces is superseded (status, superseded_by = the new row,
+    invalid_at now — never deleted; recall drops it, the audit trail and `as_of`
+    keep it). Best effort; returns the number of peers superseded. With `expected_sha256`
+    (a verdict reached after the write) nothing is retired once the
+    new row is another revision's, read sequentially right before the supersede;
+    `skip_peer` leaves a peer whose head row it answers True for (the resolver's:
+    revised since it was judged).
 
-    A peer whose text carries a measured token the new row lacks (a duration, a count, a
-    price, a date, a month) keeps its row — the new statement elaborates a facet but
-    truncates the record, and the question that needs the measure ("how long did it
-    take") would read "not recorded". The edge is still written. `new_value` is the new
-    row's text; when the caller has none it is read from the store. With
-    `expected_sha256` (a deferred verdict) nothing is retired or linked once the
-    new row is another revision's, read sequentially right before the supersede."""
+    The peers that did retire are recorded as `memory.auto_supersede`
+    (`auto_resolution`): into `record_into` (reason -> entries) when the caller
+    writes one record for many verdicts (a bulk write), else beside the response,
+    under `reason` (default `newest_wins_contradiction`), the retired pairs added to
+    `follows` for the caller to follow once its relations are in."""
     from server.core.ch import sequential_reads
     from server.memory.store import get_by_id, supersede_duplicates
 
-    # A proposal (a fact on trial) retires nothing — whichever
-    # path reached this verdict (inline, deferred settle, the sweep, bulk).
+    # A proposal (a fact on trial) retires nothing, whichever path reached this verdict.
     try:
         new_row = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
     except Exception:  # noqa: BLE001 — unreadable: the verdict applies
         new_row = None
     if new_row is not None and str(getattr(new_row, "status", "") or "") == "proposed":
         return 0
-    keep = await _truncating_refines(org, namespace, new_memory_id, new_value, refined_peers, ch=ch)
     victims = [
         {
             "memory_id": p.memory_id,
@@ -866,13 +760,13 @@ async def apply_refines(
             "superseded_by": new_memory_id,
         }
         for p in refined_peers
-        if not p.pinned and p.memory_id and p.memory_id != new_memory_id and p.memory_id not in keep
+        if not p.pinned and p.memory_id and p.memory_id != new_memory_id
     ]
     if expected_sha256:
         # The verdict takes effect at this read: a revision committed after it is
         # the serial order "A refined its peers, then B replaced A", which leaves
         # the same rows. Fencing B itself would put a lock on every memory.set.
-        # One difference: B's own inline judge saw a peer active that this then
+        # One difference: B's own inline check saw a peer active that this then
         # retires, so B's conflict_with can name a superseded row (review queue only).
         with sequential_reads():
             current = await get_by_id(new_memory_id, org=org, ch=ch, scope=WHOLE_NAMESPACE)
@@ -880,42 +774,54 @@ async def apply_refines(
             return 0
     n = 0
     if victims:
-        try:
-            from server.memory.domain.lock import refuses_retirement
+        from server.memory.app.auto_resolution import (
+            NEWEST_WINS_CONTRADICTION,
+            RetirementTracker,
+            owe_retirements,
+            settle_retirements,
+        )
+        from server.memory.domain.lock import refuses_retirement
 
+        tracker = RetirementTracker(
+            lambda row: refuses_retirement(row) or (skip_peer is not None and skip_peer(row))
+        )
+        reason = reason or NEWEST_WINS_CONTRADICTION
+        agent = str(getattr(new_row, "agent", "") or "")
+        intent = ""
+        if record_into is None:  # a caller recording into its own list owes its own intent
+            planned = [{**v, "superseded_by_key": new_memory_key} for v in victims]
+            intent = await owe_retirements(
+                org=org, namespace=namespace, victims=planned, reason=reason, agent=agent
+            )
+        try:
+            # Read-your-writes: a lagging replica's row would be rebuilt over a revision.
             n = await supersede_duplicates(
-                org, victims, ch=ch or get_client(), skip=refuses_retirement
+                org,
+                victims,
+                ch=ch or get_client(),
+                skip=tracker.skip,
+                strong=True,
+                on_written=tracker.written,
+                on_unconfirmed=tracker.unconfirmed,
+                # A later verdict lands at the read + 1, below a write that started meanwhile.
+                judged=bool(expected_sha256),
             )
         except Exception as e:  # noqa: BLE001 — the row is in; retirement is best effort
             logging.getLogger(__name__).warning("refines: supersede failed (non-fatal): %s", e)
-    for p in refined_peers:
-        if p.memory_key == new_memory_key:
-            continue
-        try:
-            from server.memory.api.models_graph import MemoryLinkInput
-            from server.memory.app.ops import handle_memory_link
-
-            await handle_memory_link(
-                MemoryLinkInput(
-                    org=org,
-                    namespace=namespace,
-                    from_key=new_memory_key,
-                    to_key=p.memory_key,
-                    relation=relation,
-                    explanation=(
-                        "Judged on write: the newer memory restates this "
-                        "one with more detail; the older row is superseded, not deleted."
-                        if relation == "refines"
-                        else "Judged on write: the newer memory contradicts "
-                        "this one and the namespace is newest_wins; the older row is "
-                        "superseded, not deleted."
-                    ),
-                    confidence=0.9,
-                    run_id=run_id or "-",
-                )
+        # What reached loom.memory, even when the embeddings mirror then failed.
+        retired = [{**v, "superseded_by_key": new_memory_key} for v in tracker.retired(victims)]
+        if record_into is not None:
+            record_into.setdefault(reason, []).extend(retired)
+        else:
+            await settle_retirements(
+                org=org,
+                namespace=namespace,
+                retired=retired,
+                reason=reason,
+                follows=[] if follows is None else follows,
+                agent=agent,
+                intent=intent,
             )
-        except Exception as e:  # noqa: BLE001 — the refines edge is best effort; the row is in
-            logging.getLogger(__name__).warning("refines: edge write failed (non-fatal): %s", e)
     return n
 
 
@@ -986,20 +892,25 @@ async def check_against_shared(
     return rows
 
 
+# The rows a conflict mark may touch: the live ones, and a proposal on trial.
+_MARKABLE = (*LIVE_STATUSES, "proposed")
+
+
 async def mark_peers_conflicted(
     *,
     org: str,
     new_memory_id: str,
     peer_ids: list[str],
     expected_sha256: str = "",
-) -> bool:
-    """After a conflicting insert, populate conflict_with on the new
-    row AND on each existing peer, and flip all of them to
-    status='conflicted'. Writes new RMT version rows so every persisted
-    column is preserved by memory_repo's mirror helper. With
-    `expected_sha256` (a deferred verdict), only the judged write is flagged
-    (`judged_write`); False, and no peer touched, when a newer one replaced it.
-    """
+    peer_sha256: dict[str, str] | None = None,
+) -> str:
+    """Cross-link the new row with its live peers and flag both `conflicted` (a
+    proposal keeps its status). With `expected_sha256` (the resolver's later verdict)
+    the new row, and with `peer_sha256` ({peer id: hash judged}) each unpinned peer,
+    is flagged only while it holds that hash, at its read version + 1. Returns
+    `conflict` when flagged; `moved` when the new row was not (replaced, retired, or
+    under `expected_sha256` no longer the judged write), and no peer is touched;
+    `clear` when no peer was live."""
     import server.memory.store as memory_repo
 
     def _merged(existing: list[str], additions: list[str]) -> list[str]:
@@ -1012,6 +923,52 @@ async def mark_peers_conflicted(
                 out.append(val)
         return out
 
+    # A strong read, so a retirement this write just made is seen: a peer retired
+    # since the verdict stays retired. One retiring between this read and the new
+    # row's write is still listed in the new row's `conflict_with` (the peer write
+    # below skips it); closing that would need the new row's write confirmed, and
+    # a mark is best effort.
+    peers = await asyncio.gather(
+        *(
+            memory_repo.get_by_id(p, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True)
+            for p in peer_ids
+        )
+    )
+
+    def _peer_moved(row: Any) -> bool:
+        """A peer the judgement no longer covers: retired, or revised or pinned since."""
+        if row.status not in _MARKABLE:
+            return True
+        if peer_sha256 is None:
+            return False
+        judged = peer_sha256.get(str(row.memory_id), "")
+        return bool(row.pinned) or str(row.content_sha256 or "") != judged
+
+    live = [
+        p
+        for p, row in zip(peer_ids, peers, strict=True)
+        if row is not None and not _peer_moved(row)
+    ]
+    # Strong: the row was just written (or revised under its own id), and a stale
+    # read would rebuild the version before it at a higher one. A row retired since
+    # (by a verdict reached since, or the resolver's) is left retired, and so are its
+    # peers.
+    judged_skip, version = judged_write(expected_sha256)
+
+    def _skip_new(row: Any) -> bool:
+        return row.status not in _MARKABLE or (judged_skip is not None and judged_skip(row))
+
+    if not live:
+        if judged_skip is None:
+            return "clear"  # an inline verdict: nothing left to flag
+        # A verdict reached after the write says whether it would have flagged the row,
+        # by the write's own rule: a revision since owes its own judgement, so this one
+        # is moved.
+        row = await memory_repo.get_by_id(
+            new_memory_id, org=org, scope=WHOLE_NAMESPACE, fresh=True, strong=True
+        )
+        return "clear" if row is not None and not _skip_new(row) else "moved"
+
     # A proposal (a fact on trial) keeps its status and only
     # records the contradiction; it is surfaced when the proposal is accepted
     # (memory.proposal_decide re-runs this for it). Until then an established
@@ -1020,39 +977,50 @@ async def mark_peers_conflicted(
 
     def _new(row: Any) -> dict[str, Any]:
         nonlocal new_is_proposal
-        new_is_proposal = str(getattr(row, "status", "") or "") == "proposed"
+        new_is_proposal = row.status == "proposed"
         return {
             "status": "proposed" if new_is_proposal else "conflicted",
-            "conflict_with": _merged(row.conflict_with, peer_ids),
+            "conflict_with": _merged(row.conflict_with, live),
         }
 
-    skip, version = judged_write(expected_sha256)
-    landed = await memory_repo.write_versions_by_ids(
+    marked = await memory_repo.write_versions_by_ids(
         org,
         [new_memory_id],
         lambda row: _new(row) | version(row),
-        skip=skip,
-        judged=skip is not None,
+        skip=_skip_new,
+        strong=True,
+        judged=judged_skip is not None,
     )
-    if new_is_proposal or not landed:
-        return bool(landed)
+    if not marked:
+        return "moved"
+    if new_is_proposal:
+        return "conflict"
+    # The peers are read again here, not built from `peers` above. Those rows carry
+    # every column, but they were read before the new row was marked: a peer revised
+    # or retired in the meantime would be written back over at a higher version,
+    # undoing that change. Reading just before the write keeps that window small.
     await memory_repo.write_versions_by_ids(
         org,
-        peer_ids,
+        live,
         lambda row: {
-            "status": "proposed"
-            if str(getattr(row, "status", "") or "") == "proposed"
-            else "conflicted",
+            "status": "proposed" if row.status == "proposed" else "conflicted",
             "conflict_with": _merged(row.conflict_with, [new_memory_id]),
+            # A judged peer lands above the row read, never above a later revision.
+            **({"version": int(row.version) + 1} if peer_sha256 is not None else {}),
         },
+        # Retired (or, judged, revised or pinned) between the read above and this
+        # write: left as it is.
+        skip=_peer_moved,
+        strong=True,
+        judged=peer_sha256 is not None,
     )
-    return True
+    return "conflict"
 
 
 def judged_write(
     sha: str,
 ) -> tuple[Callable[[Any], bool] | None, Callable[[Any], dict[str, Any]]]:
-    """(skip, version) for `write_versions_by_ids` landing a deferred verdict on the
+    """(skip, version) for `write_versions_by_ids` landing a later verdict on the
     write it judged: a row of other content is left alone, and the new version is
     the read's + 1, so a revision committed after the read stays the newest row.
     No-ops without `sha` (an inline verdict, or a row stored without one)."""

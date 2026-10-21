@@ -69,9 +69,10 @@ def dedup_settings(token: str, base: dict[str, Any] | None) -> dict[str, Any]:
     synchronous path deduplicates through `insert_deduplicate`, the async
     buffer through `async_insert_deduplicate`. With a token the check is by
     token only, never by content, so the reason the async switch is otherwise
-    off (byte-identical event rows in one flush window) does not apply."""
+    off (byte-identical event rows in one flush window) does not apply. A token
+    the caller set is kept: a replay names its batch so a second attempt drops."""
     out = dict(base or {})
-    out["insert_deduplication_token"] = token
+    out.setdefault("insert_deduplication_token", token)
     if out.get("async_insert") == 1:
         out["async_insert_deduplicate"] = 1
     else:

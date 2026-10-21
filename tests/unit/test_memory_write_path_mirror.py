@@ -133,6 +133,9 @@ _EMB_TABLE_ROW = {
 async def test_restore_mirrors_every_embedding_column(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.unit.claims_fake import fake_key_locks
+
+    fake_key_locks(monkeypatch)  # an Undo takes the key's write lock
     tombstoned_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2)
     ch = _StubCH(
         query_one_result={

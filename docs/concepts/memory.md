@@ -99,11 +99,16 @@ user/preferences/editor
 - **Facets go in `tags` and `entities`,** not in the key.
 
 The storage identity is `(org, namespace, agent, user_id, session_id, memory_key)`: the
-same key written by two agents or in two sessions is two rows. Under the namespace policy
-`newest_wins`, the newest write for a key retires every older live row with that key in
-the namespace, whoever wrote it. Extraction mints keys from the subject and attribute,
-never from the value, so a later session that states the same attribute lands on the
-same key.
+same key written by two agents or in two sessions is two rows. Under the namespace
+policy `newest_wins`, the newest write for a key retires every older live row with that
+key in the namespace, whoever wrote it. Extraction mints keys from the subject and
+attribute, never from the value, so a later session that states the same attribute lands
+on the same key. Under `auto_reinforce` and `manual_review`, the conflict resolver judges
+the rows of one key that two sessions of the same user (not the anonymous user `-` or a
+user_id sent empty, whose sessions are separate tasks) wrote, from a point write or a bulk
+write, as it judges any close pair: it retires the older row of an update it is sure of
+(except under `manual_review`), flags a contradiction for review and leaves two different
+facts under a reused key live. Under `append_only` nothing is judged.
 
 ## Memory types
 
@@ -197,11 +202,13 @@ carries `conflict_verdict`, up to five `peers`, and a `next` hint.
   (`server/memory/app/embedder_calibration.py`). The scalars `LOOM_CONFLICT_THRESHOLD`
   (0.85) and `LOOM_DUPLICATE_THRESHOLD` (0.97) are the fallback. A namespace or memory
   type can pin its own; `calibration.get` reports which is in force.
-- **The judge.** Cosine says two statements are about the same thing, not whether they
-  agree. With `LOOM_MEMORY_CONFLICT_JUDGE=true`, one LLM call labels the closest peers
-  (`contradiction`, `elaboration`, `restatement`, `unrelated`), giving `conflict`,
-  `refines` (the refined peer is superseded), `merge` or `clear`. It runs after the
-  write by default (verdict `pending`) unless the caller passes `await_verdict=true`.
+- **The conflict resolver.** Cosine says two statements are about the same thing, not
+  whether they agree. A leader-only worker judges each write with a close peer after it
+  lands, one LLM call per row: it retires the older row of an update it is sure of under
+  the default `auto_reinforce` and under `newest_wins` (the old value stays readable
+  with `include_superseded` and `as_of`), flags a contradiction, and clears a false flag
+  ([conflicts](../features/memory/conflicts-and-refusal.md#the-conflict-resolver)). No
+  verdict on the write itself calls an LLM.
 - **Run scope.** A write under a `run_id` whose canonical match belongs to another run is
   stored as a `duplicate`, not merged, so a run-scoped read still finds it.
 - **Namespace policy.** `default_conflict_policy` decides what a contradiction does
@@ -237,7 +244,7 @@ stateDiagram-v2
     proposed --> active: memory.proposal_decide (accept)
     proposed --> rejected: memory.proposal_decide (reject)
     active --> rejected: memory.reject
-    active --> superseded: newer write (newest_wins, refines)
+    active --> superseded: newer write (newest_wins, refines, conflict resolver)
     superseded --> active: memory.restore
     active --> tombstoned: memory.delete, blacklist sweep, expiry
     tombstoned --> active: memory.restore (within 14 days)
@@ -360,7 +367,7 @@ true at T: rows whose best world date (`valid_at`, else `temporal_anchor`, else
 `created_at`) is at or before T. `as_of_basis="knowledge_time"` asks what Loom had
 learned by T: rows written by T and not retired, deleted or invalidated by T.
 
-Under `newest_wins`, a judged contradiction retires the peer only if the peer's
+Under `newest_wins`, a templated substitution retires the peer only if the peer's
 `valid_at` is not later than the new row's, so a backfill of old facts does not retire
 current ones. This is valid time plus a retirement stamp, not a bi-temporal model:
 supersession, not exclusion by date, decides which of two rows is current. A full
