@@ -145,7 +145,8 @@ async def handle_conversation_append(
     """Insert one message row, then its embedding row once the message landed.
 
     A failed embed still stores the turn; its embedding row records the error. A turn
-    that reads as a credential is stored with no embedding row (`_embed_turn`).
+    that reads as a credential is stored with no embedding row, so its text never
+    reaches the embedder and conversation.search never ranks it.
     """
     from server.knowledge.store import conversations as conversation_repo
 
@@ -201,7 +202,7 @@ async def handle_conversation_append(
     # stay in the transcript (loom.conversations) but are NOT indexed — they're
     # scaffolding (tool output, system reminders) that pollutes
     # conversation.search ranking and wastes embed spend.
-    if input.role not in ("user", "assistant"):
+    if input.role not in ("user", "assistant") or reads_high(input.content):
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)
         return ConversationAppendOutput(msg_id=msg_id, ts=now)
@@ -225,8 +226,6 @@ async def handle_conversation_append(
             msg_id=msg_id,
         ),
     )
-    if embedded is None:
-        return ConversationAppendOutput(msg_id=msg_id, ts=now)  # no embedding row to flag
     async with conversation_repo.saved_message_write_lock(
         input.org, input.namespace, input.thread_id
     ):
@@ -268,13 +267,10 @@ class EmbeddedTurn(NamedTuple):
 
 async def _embed_turn(
     content: str, *, org: str, namespace: str, thread_id: str, msg_id: str
-) -> EmbeddedTurn | None:
+) -> EmbeddedTurn:
     """Embed a turn's first `EMBEDDED_EXCERPT_CHARS` characters. Fail-open: a failed
-    embed returns no vector and the error. None for a turn whose text reads as a
-    credential: it is stored as written but gets no embedding row, so its text never
-    reaches the embedder and conversation.search never ranks it."""
-    if reads_high(content):
-        return None
+    embed returns no vector and the error. The caller checks `reads_high` first: a
+    turn that reads as a credential is never embedded."""
     embedder = get_embedder()
     excerpt = content[:EMBEDDED_EXCERPT_CHARS]
     try:
@@ -438,7 +434,6 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
                 thread_id=key.thread_id,
                 msg_id=key.msg_id,
             )
-        assert embedded is not None  # _save_refusal refused a credential turn
         await _store_embedding(
             conversation_repo.MessageInsert(
                 org=key.org,
@@ -1490,11 +1485,21 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             tokens_out=result.tokens_out,
         )
 
+    # A summary that reads as a credential is never embedded, so it is refused before
+    # anything is written. The window does not change while its turns stay live, so a
+    # retry resends the same transcript and most likely gets the same refusal.
+    if reads_high(summary_text):
+        return ConversationCompactOutput(
+            compacted=False,
+            messages_summarized=0,
+            reason="summary-reads-as-credential",
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+        )
     summary_msg_id = f"compact-{_uuid.uuid4().hex[:12]}"
     # The summary is what search finds once the turns it replaces are tombstoned, so
     # it is embedded before the summary or any turn's tombstone is written; without a
-    # vector there is no summary and no turn is tombstoned. A summary that reads as a
-    # credential would have none, so it is refused the same way.
+    # vector there is no summary and no turn is tombstoned.
     embedded = await _embed_turn(
         summary_text,
         org=input.org,
@@ -1502,11 +1507,11 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
         thread_id=input.thread_id,
         msg_id=summary_msg_id,
     )
-    if embedded is None or embedded.error:
+    if embedded.error:
         return ConversationCompactOutput(
             compacted=False,
             messages_summarized=0,
-            reason="summary-reads-as-credential" if embedded is None else "embed-failed",
+            reason="embed-failed",
             tokens_in=result.tokens_in,
             tokens_out=result.tokens_out,
         )

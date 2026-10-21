@@ -51,7 +51,7 @@ class ConversationAppendInput(BaseModel):
     # Who spoke: `user`, `assistant`, `system` or `tool`.
     role: ConversationRole
     # The message text, stored verbatim; a user or assistant turn is also embedded for
-    # `conversation.search`.
+    # `conversation.search`, unless its text reads as a credential.
     content: str
     # The model's reasoning for this turn, stored beside `content`; empty = none.
     reasoning: str = ""
@@ -328,9 +328,10 @@ class ConversationSearchInput(BaseModel):
     """Rank conversation messages by embedding similarity to `query`.
 
     `thread_id`, `run_id` and `role` each narrow the hits, and they combine. User and
-    assistant turns and compaction summaries are embedded; when the embedder is
-    unavailable a substring match stands in, newest first, and it also matches the
-    other system turns and tool turns."""
+    assistant turns and compaction summaries are embedded, unless their text reads as a
+    credential; when the embedder is unavailable a substring match stands in, newest
+    first, and it also matches the other system turns and tool turns. No path, the
+    substring fallback included, returns a turn whose text reads as a credential."""
 
     org: str
     namespace: str
@@ -402,7 +403,8 @@ class _SavedMessageHit(ProjectedRow):
     conversation_id: str
     message_id: str
     role: Literal["user", "assistant"]
-    # The message's opening; empty in the saved list when it reads as a credential.
+    # A window of the message: its opening, or the text around the first matched term
+    # in a keyword hit; empty in the saved list when it reads as a credential.
     content_excerpt: str
     ts: datetime
 
@@ -534,5 +536,7 @@ class ConversationCompactOutput(BaseModel):
     tokens_out: int = 0
     # Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted,
     # summarizer-empty, embed-failed (retry once the embedder answers), or
-    # summary-reads-as-credential (the summary holds a credential, so it would have no vector).
+    # summary-reads-as-credential (the summary holds a credential, so it is never embedded;
+    # a retry resends the same window and most likely gets the same summary, so do not
+    # retry).
     reason: str = ""

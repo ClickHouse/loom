@@ -724,8 +724,8 @@ search. `conversation.save_message` answers `reason: "reads_as_credential"` for 
 turn, so the saved search never holds it.
 `conversation.compact` leaves such a turn out of its window: it stays live and is never
 sent to the summarizer. A summary that reads as a credential anyway is refused (`reason:
-"summary-reads-as-credential"`) and tombstones nothing, as when the summary cannot be
-embedded. A provider rebuild stages a chunk, digest or turn embedding that reads as a
+"summary-reads-as-credential"`) and tombstones nothing; the window stays the same while
+its turns are live, so a retry most likely gets the same refusal. A provider rebuild stages a chunk, digest or turn embedding that reads as a
 credential without a vector, and its verification reads the text of every row left empty
 and accepts those that read as a credential. `loom reembed` keeps a conversation turn that
 reads as a credential on its old model, which search does not read, until `--delete-old`

@@ -187,7 +187,10 @@ agents get the conversation section of [`loom_search`](./unified-search.md).
   `conversation.save_message` is never summarised or tombstoned either; it stays verbatim
   between the summary and the recent turns. A summary that cannot be embedded compacts
   nothing (`reason: "embed-failed"`), and neither does one that reads as a credential
-  anyway (`reason: "summary-reads-as-credential"`), since it would have no vector. A
+  anyway (`reason: "summary-reads-as-credential"`), since it is never embedded. Unlike
+  `embed-failed`, that refusal is not worth a retry: the window stays the same while its
+  turns are live, so a retry pays for the same summarizer call and most likely gets the
+  same summary. A
   window that holds only such turns, saved ones or both, answers
   `reason: "nothing-to-compact"`.
 - **`conversation.delete`** (admin) tombstones one thread's turns, thread row and

@@ -22,7 +22,7 @@ Log one chat turn (role + content) to the active thread.
 | `thread_id` | `str` | required | The thread to append to; it need not have been created first. |
 | `msg_id` | `str` | `''` | optional; server derives a content hash when omitted |
 | `role` | `Literal['user', 'assistant', 'system', 'tool']` | required | Who spoke: `user`, `assistant`, `system` or `tool`. |
-| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`. |
+| `content` | `str` | required | The message text, stored verbatim; a user or assistant turn is also embedded for `conversation.search`, unless its text reads as a credential. |
 | `reasoning` | `str` | `''` | The model's reasoning for this turn, stored beside `content`; empty = none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
@@ -58,7 +58,7 @@ Summarize old turns into one embedded system turn and tombstone the originals.
 | `summary_msg_id` | `str` | Id of the synthetic `system` summary message; empty when not compacted. |
 | `tokens_in` | `int` | Prompt tokens the summarizer LLM call used; 0 when no call was made. |
 | `tokens_out` | `int` | Completion tokens of the summary; 0 when no call was made. |
-| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), or summary-reads-as-credential (the summary holds a credential, so it would have no vector). |
+| `reason` | `str` | Why compacted=False: nothing-to-compact, below-min-to-compact, already-compacted, summarizer-empty, embed-failed (retry once the embedder answers), or summary-reads-as-credential (the summary holds a credential, so it is never embedded; a… |
 
 ## `conversation.create`
 
