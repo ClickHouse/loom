@@ -77,8 +77,8 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
     setEditing(true);
   }
 
-  // The outline as given, give or take whitespace, is not a guide yet.
-  const untouched = content.trim() === STARTER.trim();
+  // The outline as given, give or take whitespace anywhere, is not a guide yet.
+  const untouched = content.replace(/\s+/g, "") === STARTER.replace(/\s+/g, "");
 
   const save = async () => {
     if (!base || untouched) return;

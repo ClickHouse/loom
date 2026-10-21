@@ -213,7 +213,11 @@ describe("Spaces: the rows", () => {
     await user.click(within(row("team")).getByRole("button", { name: "Actions for team" }));
     const menu = await screen.findByRole("menu", { name: "Actions for team" });
     await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
-    expect(await screen.findByRole("button", { name: "Write the guide" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Write the guide" }));
+    // A first guide from Spaces starts on the same outline, which does not save unchanged.
+    const editor = await screen.findByLabelText("Guide (Markdown)");
+    expect((editor as HTMLTextAreaElement).value).toContain("## What this namespace holds");
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("a namespace a viewer token names without a grant offers its guide to read only", async () => {

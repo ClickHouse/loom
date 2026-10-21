@@ -146,6 +146,10 @@ describe("NamespaceGuideButton", () => {
     const editor = await screen.findByLabelText("Guide (Markdown)");
     await userEvent.type(editor, "{Enter}{Enter}  ");
     expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
+    // A blank line inside the outline is still the outline.
+    const text = (editor as HTMLTextAreaElement).value;
+    fireEvent.change(editor, { target: { value: text.replace("## Keys", "\n\n## Keys") } });
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
     await userEvent.type(editor, "Keys: acct/{{}id}/plan");
     expect(screen.getByRole("button", { name: "Save" })).not.toHaveAttribute("aria-disabled");
   });
