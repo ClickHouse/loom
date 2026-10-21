@@ -241,15 +241,23 @@ class _Queue:
 
 @pytest.fixture(autouse=True)
 def blacklist(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """The namespace's blacklist patterns, matched as substrings; empty by default."""
-    from types import SimpleNamespace
-
+    """The namespace's substring blacklist patterns, matched by the guard's own
+    `_matches`; empty by default."""
     patterns: list[str] = []
 
     async def find_match(*, org: str, namespace: str, value: str) -> Any:
-        for p in patterns:
-            if p.lower() in value.lower():
-                return SimpleNamespace(pattern_id=p, scope="namespace", reason="")
+        for text in patterns:
+            row = blacklist_guard.BlacklistPattern(
+                pattern_id=text,
+                org=org,
+                namespace=namespace,
+                pattern=text,
+                pattern_type="substring",
+                scope="namespace",
+                reason="",
+            )
+            if blacklist_guard._matches(row, value):
+                return row
         return None
 
     async def note_hit(pattern_id: str) -> None:

@@ -207,7 +207,7 @@ each gate and the handler do.
 | response  | `Retry-After`                                 | Seconds to wait, on `429 RATE_LIMITED`, `503 OVERLOADED` and `503 AUTH_UNAVAILABLE`.                                                            |
 | response  | `X-Loom-Traffic-Class`                        | The traffic class the call ran as and where it came from, `<class>;source=<source>`.                                                            |
 | response  | `X-Idempotent-Replay: true`                   | The body is a stored replay, not a fresh execution.                                                                                             |
-| response  | `X-Loom-Ignored-Args`                         | Body keys the op does not read (see below).                                                                                                     |
+| response  | `X-Loom-Ignored-Args`                         | Body keys the op did not apply: fields the op itself declined, then keys it does not read (see below).                                          |
 | response  | `X-Loom-Hint` / `X-Loom-Hint-Code`            | Advice about how the caller uses Loom, when one applies to this call. The body is unchanged; the SDKs log it once per distinct text.            |
 | response  | `X-Trace-Id`                                  | The OpenTelemetry trace id of the call, when tracing is on.                                                                                     |
 
@@ -221,8 +221,8 @@ policy exposes when `LOOM_CORS_ORIGINS` is set: `X-Request-Id`,
 Input models ignore keys they have no field for, so Loom names them instead of
 dropping them silently (`server/transport/arg_check.py`):
 
-- A successful response carries `ignored_args` (the unread top-level keys) and,
-  when one is a near miss for a real field, `did_you_mean`
+- A successful response carries `ignored_args` (the top-level keys the op did
+  not apply) and, when one is a near miss for a real field, `did_you_mean`
   (`{"namepsace": "namespace"}`). The identity keys (`org`, `namespace`,
   `agent`, `user_id`, `session_id`, `run_id`), `consumer`, `traffic_class`,
   `explain` and the idempotency keys are never reported.
@@ -232,6 +232,10 @@ dropping them silently (`server/transport/arg_check.py`):
   write it would have made is not the one asked for.
 - A field removed from the wire is treated as unknown: served, and named in
   `ignored_args`, so an older client keeps running without the feature.
+- An op may report a field it reads but did not apply. That field is listed
+  first in `ignored_args` and in the header, before the unread keys.
+  `memory.set_from_messages` does this for `agent_learnings=true` while
+  `memory_extract_agent_learnings` is off.
 
 Operations and fields can change between releases. Nothing keeps a registry of removed
 fields: `ignored_args` is how a client finds out that the server no longer reads something it
