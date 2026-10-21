@@ -144,13 +144,13 @@ def chunks_by_chars(session_no: int, lines: list[str], size: int) -> list[Chunk]
     text = "\n".join(lines)
     old_size, old_overlap, old_cap = (
         chunk_projection._CHUNK_SIZE,
-        chunk_projection._CHUNK_OVERLAP,
+        chunk_projection.CHUNK_OVERLAP,
         chunk_projection._MAX_CHUNKS_PER_CALL,
     )
     # loom's overlap is 100 chars at 800; keep the same 1/8 ratio at other sizes
     (
         chunk_projection._CHUNK_SIZE,
-        chunk_projection._CHUNK_OVERLAP,
+        chunk_projection.CHUNK_OVERLAP,
         chunk_projection._MAX_CHUNKS_PER_CALL,
     ) = size, max(0, size // 8), 10_000
     try:
@@ -158,7 +158,7 @@ def chunks_by_chars(session_no: int, lines: list[str], size: int) -> list[Chunk]
     finally:
         (
             chunk_projection._CHUNK_SIZE,
-            chunk_projection._CHUNK_OVERLAP,
+            chunk_projection.CHUNK_OVERLAP,
             chunk_projection._MAX_CHUNKS_PER_CALL,
         ) = old_size, old_overlap, old_cap
     return [

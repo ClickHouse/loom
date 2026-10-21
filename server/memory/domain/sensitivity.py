@@ -274,6 +274,55 @@ def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool
     ]
 
 
+# The characters a memory chunk repeats from the one before it (chunk_projection cuts with it).
+CHUNK_OVERLAP = 100  # not a setting: algorithm shape, changed only with a benchmark
+
+
+def _overlap(previous: str, chunk: str) -> int:
+    """The length of the longest start of `chunk` that ends `previous`: the characters a
+    chunk repeats from the one before it (`CHUNK_OVERLAP`, less the whitespace a chunk
+    is trimmed of). The chunker repeats at most `CHUNK_OVERLAP` characters; the search
+    stops at twice that, a margin that still keeps the scan short and leaves a longer
+    repeated run as new text."""
+    for size in range(min(len(previous), len(chunk), 2 * CHUNK_OVERLAP), 0, -1):
+        if previous.endswith(chunk[:size]):
+            return size
+    return 0
+
+
+def split_credentials(chunks: list[tuple[object, int, str]]) -> list[bool]:
+    """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
+    its session's text, rebuilt by joining the session's chunks in `chunk_index` order with
+    each one's overlap with the one before it dropped: a key cut at a chunk boundary reads
+    as one only when joined. A gap in `chunk_index` starts a new text, so chunks that were
+    never neighbours are not joined."""
+    held = [False] * len(chunks)
+    sessions: dict[object, list[int]] = {}
+    for i, (session, _, _) in enumerate(chunks):
+        sessions.setdefault(session, []).append(i)
+    for positions in sessions.values():
+        positions.sort(key=lambda i: chunks[i][1])
+        runs: list[list[int]] = []
+        for i in positions:
+            if runs and chunks[i][1] == chunks[runs[-1][-1]][1] + 1:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+        for run in runs:
+            source = ""
+            ranges: list[tuple[int, int]] = []
+            previous = ""
+            for i in run:
+                content = chunks[i][2]
+                start = len(source) - _overlap(previous, content)
+                source += content[len(source) - start :]
+                ranges.append((start, len(source)))
+                previous = content
+            for i, overlaps in zip(run, overlaps_credential(source, ranges), strict=True):
+                held[i] = overlaps
+    return held
+
+
 # Spare rows a read asks for, so a passage it holds back for reading as a credential does
 # not leave the page short.
 HELD_MARGIN = 2  # not a setting: algorithm shape, sized to how rarely a row is held

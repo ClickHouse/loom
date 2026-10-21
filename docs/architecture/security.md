@@ -737,9 +737,13 @@ sent to the summarizer. A summary that reads as a credential anyway is refused (
 "summary-reads-as-credential"`) and tombstones nothing; the window stays the same while
 its turns are live, so a retry most likely gets the same refusal.
 A provider rebuild stages a chunk, digest or turn embedding that reads as a credential,
-or a chunk stored without a vector (one may hold only part of a key), without a vector; a
-digest or turn embedding stored without one (a failed embed) is embedded, and its verification reads the text of every row left empty whose source held a
-vector and accepts those that read as a credential. `loom reembed` keeps a conversation turn that reads as
+or a chunk that holds part of a key cut at its boundary with a neighbour (its session's
+chunks in the same page, joined at their overlap), without a vector; a page that holds
+only one side of the cut misses the key, and that chunk is embedded. Any other passage
+stored without one (a failed embed, or a row an earlier rebuild left empty while its org's
+model calls were off) is embedded. Verification reads the text of every row left empty
+whose source held a vector and accepts those that read as a credential, and a chunk whose
+session's chunks, joined, hold a key across its boundary. `loom reembed` keeps a conversation turn that reads as
 a credential on its old model, which search does not read, until `--delete-old` removes it
 (a memory row's vector follows its sensitivity label). `loom reembed --in-database` runs
 the embedding inside ClickHouse and cannot check the text, so it re-embeds such a turn

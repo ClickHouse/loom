@@ -16,7 +16,7 @@ from server.insights.app.provider_rebuild_batch import (
     rebuild_batch,
 )
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
-from tests.unit._fake_credentials import AWS_KEY_ID
+from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
 
 
 @pytest.fixture
@@ -52,6 +52,8 @@ def row_for(table):
         row.update(context_text="contextual source", content="raw source")
     if table == "categories":
         row.update(name="Category", description="Description")
+    if table == "memory_chunks":
+        row.update(session_id="s", chunk_index=0)
     return row
 
 
@@ -246,12 +248,30 @@ def _without_vector(table: str, text: str) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_a_memory_chunk_stored_without_a_vector_is_rebuilt_without_one(target):
-    # A chunk holding only a key's head reads as plain text; its write path left it empty.
-    row = _without_vector("memory_chunks", "token sk-proj-")
+async def test_a_plain_memory_chunk_stored_without_a_vector_is_embedded_again(target):
+    # Left empty by an earlier rebuild that ran while its org's model calls were off.
+    row = _without_vector("memory_chunks", "source text")
     result = (await rebuild_batch("memory_chunks", [row], target))[0]
-    assert (result["embedding_model"], result["embedding_dim"]) == ("target-model", 0)
-    target.embed_many.assert_not_awaited()
+    target.embed_many.assert_awaited_once_with(["source text"])
+    assert result["embedding_dim"] == 2
+
+
+@pytest.mark.asyncio
+async def test_memory_chunks_cut_through_a_key_are_rebuilt_without_a_vector(target):
+    from server.memory.app.chunk_projection import chunk_text_with_ranges
+    from server.memory.domain.sensitivity import reads_high
+
+    text = ("plain words here " * 60)[:784] + f" {OPENAI_KEY} " + "more plain words " * 60
+    chunks, _, _ = chunk_text_with_ranges(text, max_chunks=64)
+    contents = [c for c, _, _ in chunks]
+    assert not reads_high(contents[0])  # only the key's head
+    rows = [
+        {**row_for("memory_chunks"), "chunk_index": i, "content": c}
+        for i, c in reversed(list(enumerate(contents)))
+    ]
+    result = await rebuild_batch("memory_chunks", rows, target)
+    assert [r["embedding_dim"] for r in result] == [2, 0, 0]
+    target.embed_many.assert_awaited_once_with([contents[2]])
 
 
 @pytest.mark.asyncio

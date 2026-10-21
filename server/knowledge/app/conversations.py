@@ -184,7 +184,8 @@ async def handle_conversation_append(
     # Only user/assistant turns are embedded for recall. System/tool messages
     # stay in the transcript (loom.conversations) but are NOT indexed — they're
     # scaffolding (tool output, system reminders) that pollutes
-    # conversation.search ranking and wastes embed spend.
+    # conversation.search ranking and wastes embed spend. A turn that reads as a
+    # credential is stored but never embedded, so conversation.search never ranks it.
     if input.role not in ("user", "assistant") or reads_high(input.content):
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)

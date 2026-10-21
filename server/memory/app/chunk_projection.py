@@ -15,16 +15,15 @@ from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.app.credential_passages import embed_plain
 from server.memory.app.projection_errors import record_input_projection_failure
-from server.memory.domain.sensitivity import overlaps_credential
+from server.memory.domain.sensitivity import CHUNK_OVERLAP, overlaps_credential
 
 log = logging.getLogger(__name__)
 
 
 # 800 chars ≈ 200 tokens; preserves multi-sentence units a 400-char window
-# splits mid-thought. 100-char overlap so a boundary-straddling date/entity
-# appears in both neighbors.
+# splits mid-thought. A CHUNK_OVERLAP-char overlap so a boundary-straddling
+# date/entity appears in both neighbors.
 _CHUNK_SIZE = 800
-CHUNK_OVERLAP = 100
 _MIN_CHUNK_SIZE = 20  # drop chunks shorter than this (mostly noise)
 # Fallback when the setting is unreadable; the cap itself is
 # `settings.memory_chunks_max_per_call`. 64 chunks is ~50K chars, which a
