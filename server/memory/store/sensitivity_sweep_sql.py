@@ -14,9 +14,8 @@ def past_key(key: dict[str, Any], column: str) -> dict[str, Any]:
     """A sort key after every key that shares `key`'s values up to `column`, and before the
     next value of `column`: `column` ends in `\x01` and the columns after it are empty.
 
-    `\x01` sorts after every key under that value and before the next value, as no org,
-    namespace or agent name holds a control character (a NUL would not pass as a query
-    parameter)."""
+    `\x01` sorts after every key under that value; the only values between `x` and `x\x01`
+    start with `x\x00`, which a query parameter cannot carry."""
     kept = SORT_KEY.index(column)
     out = {col: key[col] for col in SORT_KEY[:kept]} | {column: key[column] + "\x01"}
     return out | dict.fromkeys(SORT_KEY[kept + 1 :], "")

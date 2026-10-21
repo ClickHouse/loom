@@ -348,7 +348,7 @@ async def _read_range(
         # skipping on a page of those would leave the agent's later rows unread. The FINAL
         # read may also return keys written between the two reads, so compare keys, not
         # counts.
-        stale = not _sort_keys(rows) >= _sort_keys(keys)
+        stale = bool(_sort_keys(keys) - _sort_keys(rows))  # a page key with no current row
         last = keys[-1]
         if (
             skip
