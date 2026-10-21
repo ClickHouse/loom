@@ -432,6 +432,7 @@ async def test_a_candidate_whose_filing_failed_is_filed_by_the_next_session(
         assert await _raw(ch, table, org, "candidate_id = {cid:UUID}", cid=cid) == [], table
 
 
+@pytest.mark.destructive
 @pytest.mark.asyncio
 async def test_erasing_the_only_supporter_of_a_rejected_rule_keeps_the_rejection(
     base_url: str, token: tuple[str, str], ch: Any

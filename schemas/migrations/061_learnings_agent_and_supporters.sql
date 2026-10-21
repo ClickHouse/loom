@@ -10,12 +10,12 @@ ALTER TABLE loom.learnings_queue
 
 -- One row per (candidate, end user, session) that stated an `assistant_turn`
 -- candidate's rule, with the agent it was said to (the candidate's `agent`, so a row
--- read on its own names its bot) and that user's own bounded quotes: `asked` (the user turn before
--- the rule) and `said` (the cited span, else the assistant turn, else the rule itself).
--- A user's words live only on that user's rows: a user erasure deletes them
--- (erasure.store.steps_ledgers), and a candidate left with no supporters is deleted,
--- or keeps only its decision.
--- learnings.list counts the rows at read time with uniqExact.
+-- read on its own names its bot) and that user's own bounded quotes: `asked` (the
+-- user turn before the rule) and `said` (the cited span, else the assistant turn,
+-- else the rule itself). A user's words live only on that user's rows: a user
+-- erasure deletes them (erasure.store.steps_ledgers), and a candidate left with no
+-- supporters is deleted, or keeps only its decision. learnings.list counts the rows
+-- at read time with uniqExact.
 CREATE TABLE IF NOT EXISTS loom.learnings_supporters
 (
     `org` LowCardinality(String),

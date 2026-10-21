@@ -26,6 +26,7 @@ from server.memory.api.models_bulk import (
     _BulkSetResult,
     _ExtractionQueueRow,
 )
+from server.memory.app.agent_rules import request_rule_agent
 from server.memory.app.bulk_set import (
     detect_updates_override,
     handle_memory_bulk_set,
@@ -495,7 +496,6 @@ async def handle_memory_set_from_messages(
     replay reads it again. `rule_agent` is the agent a filed rule is for: None
     resolves it from the request's token, a deferred replay passes the one stored
     when it was queued ('' files nothing)."""
-    from server.memory.app.agent_rules import request_rule_agent
     from server.settings import settings as _settings
 
     setting_on = _settings.memory_extract_agent_learnings
