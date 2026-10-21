@@ -25,6 +25,7 @@ from fastapi import HTTPException
 
 from server.core.errors import ModelCallDeferred, ModelCallRefused
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.llm.gateway import GatewayUnavailable
 from server.llm.identity import IdentityUnread
 from server.memory.api.models_bulk import MemorySetFromMessagesInput, _Message
 from server.memory.app import extraction_queue as q
@@ -768,6 +769,8 @@ async def test_a_failed_attempt_is_claimed_again_only_after_its_backoff() -> Non
     [
         httpx.ConnectError("no route to the gateway"),
         httpx.ReadTimeout("the gateway did not answer"),
+        httpx.RemoteProtocolError("the answer was cut off"),
+        GatewayUnavailable("the inference gateway's token could not be renewed"),
         TimeoutError(),
         _status_error(502),
         _status_error(503),
@@ -789,8 +792,13 @@ async def test_an_unreachable_provider_spends_no_attempt(
 
 
 @pytest.mark.asyncio
-async def test_a_provider_500_still_spends_an_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
-    ch = _replaying(monkeypatch, _status_error(500))
+@pytest.mark.parametrize(
+    "error", [_status_error(500), httpx.UnsupportedProtocol("no such scheme: htps")]
+)
+async def test_a_failure_of_the_request_itself_still_spends_an_attempt(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    ch = _replaying(monkeypatch, error)
     res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
     written = ch.inserts[-1][1][0]
     assert res.unreachable == 0 and res.failures == ["q1: pending"]

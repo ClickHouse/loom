@@ -28,6 +28,7 @@ from typing import Any
 
 import httpx
 
+from server.llm.gateway import GatewayUnavailable
 from server.memory.app import extraction_queue as q
 from server.workers.holds import hold_seconds
 from server.workers.status import record_pass
@@ -101,11 +102,23 @@ def order_within_namespace(
     return groups
 
 
+# What a model provider or gateway that does not answer raises: no connection, a
+# timeout, an answer cut off, no gateway token to be had.
+_UNREACHABLE = (
+    httpx.TimeoutException,
+    httpx.NetworkError,
+    httpx.RemoteProtocolError,
+    httpx.ProxyError,
+    GatewayUnavailable,
+    TimeoutError,
+)
+
+
 def unreachable(e: BaseException) -> bool:
     """Whether a replay's failure is the model provider or gateway not answering
-    (no connection, a timeout, 502/503/504): the row's own fault it is not, so
-    it spends no attempt."""
-    if isinstance(e, (httpx.TransportError, asyncio.TimeoutError, TimeoutError)):
+    (`_UNREACHABLE`, or a 502, 503 or 504): the row is not at fault, so it spends
+    no attempt. A request it cannot make at all (a bad scheme) is not this."""
+    if isinstance(e, _UNREACHABLE):
         return True
     return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (502, 503, 504)
 
