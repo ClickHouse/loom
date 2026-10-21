@@ -23,6 +23,7 @@ import {
   git,
   postBounded,
   readStdinJson,
+  DIFF_ARGS,
   redactDiff,
   resolveServerUrl,
   resolveToken,
@@ -116,7 +117,7 @@ async function main() {
     return;
   }
 
-  const diff = git(["diff", "--no-ext-diff", "--no-color", "--unified=0", "HEAD", "--", ...changed], root, {
+  const diff = git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", ...changed], root, {
     timeoutMs: 2000,
     raw: true,
   });

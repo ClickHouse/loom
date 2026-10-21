@@ -702,9 +702,10 @@ const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----E
 const TOKEN_SHAPES_RE =
   /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
-// `::` is a scope operator (`PrivateKey::verify`), not an assignment.
+// A typed (`api_key: str = …`) or `:=` assignment counts; `::` is a scope
+// operator (`PrivateKey::verify`), not one.
 const SECRET_ASSIGNMENT_RE =
-  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*(?:=|:(?!:))\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
+  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*(?::\s*[\w.|<>[\]]{1,64}\s*=|:=|=|:(?![:=]))\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
 const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
@@ -754,6 +755,10 @@ export function redactHead(text, max, token = resolveToken()) {
   }
   return redactSecrets(s, token);
 }
+
+// What a hook's `git diff` passes so the user's diff settings cannot change what is
+// sent: no external tool, colour or textconv program, and git's own path prefixes.
+export const DIFF_ARGS = ["--no-ext-diff", "--no-color", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"];
 
 // A hunk header: its ranges, then the function context git appends to it.
 const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;

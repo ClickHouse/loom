@@ -359,11 +359,21 @@ test("shunt: a tracker search reaches tracker.duplicate_check redacted", async (
 test("blast radius and test gate: the diff reaches the server redacted", async () => {
   const { dir, tmp, transcript } = dirtySession();
   fs.appendFileSync(path.join(dir, "src/a.cpp"), 'const char* api_key = "s3cr3t-value";\n');
-  // A user's forced colour and external diff tool must not reach what is sent.
+  // A user's diff settings (colour, an external tool, a textconv filter, other
+  // path prefixes) must not change what is sent.
   const external = path.join(tmp, "ext-diff.sh");
   fs.writeFileSync(external, "#!/bin/sh\necho external-diff-output\n", { mode: 0o755 });
-  execFileSync("git", ["config", "color.diff", "always"], { cwd: dir });
-  execFileSync("git", ["config", "diff.external", external], { cwd: dir });
+  const textconv = path.join(tmp, "textconv.sh");
+  fs.writeFileSync(textconv, "#!/bin/sh\necho decrypted-by-textconv\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, ".gitattributes"), "*.cpp diff=conv\n");
+  for (const [key, value] of [
+    ["color.diff", "always"],
+    ["diff.external", external],
+    ["diff.conv.textconv", textconv],
+    ["diff.mnemonicPrefix", "true"],
+  ]) {
+    execFileSync("git", ["config", key, value], { cwd: dir });
+  }
   const bodies = await withCapturingServer(async (url) => {
     const edit = {
       tool_name: "Edit",
@@ -378,6 +388,7 @@ test("blast radius and test gate: the diff reaches the server redacted", async (
     const sent = bodies.find((b) => b.url === op);
     assert.ok(sent, `${op} not called: ${JSON.stringify(bodies.map((b) => b.url))}`);
     assert.ok(!sent.body.diff.includes("s3cr3t-value"), op);
+    assert.ok(!sent.body.diff.includes("decrypted-by-textconv"), op);
     assert.match(sent.body.diff, /api_key = "\[redacted\]"/, op);
     assert.match(sent.body.diff, /int g\(\) \{ return 1; \}/, `${op} keeps the rest of the diff`);
     assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);

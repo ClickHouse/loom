@@ -23,6 +23,7 @@ import {
   git,
   postBounded,
   readStdinJson,
+  DIFF_ARGS,
   redactDiff,
   resolveServerUrl,
   resolveToken,
@@ -83,7 +84,7 @@ async function main() {
   // The session's edits to this file, as the index will see them: post-image
   // line numbers, no context lines to subtract. Untracked = nothing depends
   // on it yet; empty = the edit was a no-op or already committed.
-  const diff = git(["diff", "--no-ext-diff", "--no-color", "--unified=0", "HEAD", "--", rel], root, {
+  const diff = git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, {
     timeoutMs: 2000,
     raw: true,
   });

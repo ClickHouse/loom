@@ -140,8 +140,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   diffs the file against HEAD (redacted with `redactDiff`) and asks code.impact
   (depth 1) what the touched symbols reach; injects one line — callers, tests
   reaching the change, and co-change partner files this session has not
-  touched. The same touched set
-  is reported once per session. LOOM_BLAST_RADIUS=off disables.
+  touched. The same touched set is reported once per session.
+  LOOM_BLAST_RADIUS=off disables.
 - **loom-capture.** PostToolUse and PostToolUseFailure record one episodic
   `observe.record` per tool call (zero-token heuristic typing, inputs and
   outputs truncated to 800 characters, the session's run id attached);

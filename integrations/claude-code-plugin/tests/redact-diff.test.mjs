@@ -76,6 +76,18 @@ test("text that is not in git's diff format is redacted as a body", () => {
   assert.ok(!fake.includes("hunter2"), fake);
 });
 
+test("typed and := assignments in a hunk body are redacted", () => {
+  const lines = [
+    '+apiKey := "s3cr3t-go"',
+    '+api_key: str = "s3cr3t-py"',
+    '+apiKey: string = "s3cr3t-ts"',
+    "+password: s3cr3t-yaml",
+  ];
+  const diff = ["diff --git a/c b/c", "+++ b/c", "@@ -1,0 +1,4 @@", ...lines, ""].join("\n");
+  const out = redactDiff(diff, 200_000, "");
+  assert.ok(!/s3cr3t/.test(out), out);
+});
+
 test("a C++ scope operator in a hunk header's context is not read as an assignment", () => {
   for (const ctx of ["bool PrivateKey::verify(int x)", "AccessToken::AccessToken(const String & s)"]) {
     const diff = ["diff --git a/k.cpp b/k.cpp", "+++ b/k.cpp", `@@ -1 +1 @@ ${ctx}`, "+x();", ""].join("\n");
