@@ -536,9 +536,7 @@ class ClickHouseSettings(BaseModel):
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
     # never set it in production.
     ch_capture_statements: str = ""
-    # HTTP connection pool size; the driver default (~8) exhausts under bulk
-    # writes plus workers. Size to expected request concurrency plus the connections
-    # batched inserts hold for their wait (docs/architecture/clickhouse.md#batched-inserts).
+    # HTTP connection pool size; include the connections batched inserts hold while they wait.
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
@@ -559,10 +557,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch the inserts written on every request (audit rows, transcript turns, outbox,
-    # evidence; list and pool sizing: docs/architecture/clickhouse.md#batched-inserts) so
-    # concurrent ones share a part; false commits them, one part each. Ledger flushes
-    # stay waited async inserts either way.
+    # Batch the inserts written on every request so concurrent ones share a part
+    # (docs/architecture/clickhouse.md#batched-inserts); false commits them.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.

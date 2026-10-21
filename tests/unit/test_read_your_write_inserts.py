@@ -194,9 +194,9 @@ class _WriteMarksCH:
 def test_write_marks_take_the_window_of_who_waits(
     monkeypatch: pytest.MonkeyPatch, switch: bool
 ) -> None:
-    """The request's bump waits the short window (committed with the switch off);
-    the timer's flush and the process-start mark take the background window, and
-    the flush is a waited async insert whether or not batching is on."""
+    """The timer's flush is a waited async insert on the background window whether
+    or not batching is on; the erasure's bump and the process-start mark write one
+    row each, so they stay committed."""
     import asyncio
 
     from server.core import namespace_write_marks as marks
@@ -211,9 +211,9 @@ def test_write_marks_take_the_window_of_who_waits(
         asyncio.run(marks.mark_process_start(ch=start_ch))
     finally:
         marks._reset_for_tests()
-    assert bump_ch.settings == [batched_insert_settings()]
+    assert bump_ch.settings == [committed_insert_settings()]
     assert flush_ch.settings == [async_insert_settings(background=True)]
-    assert start_ch.settings == [batched_insert_settings(background=True)]
+    assert start_ch.settings == [committed_insert_settings()]
 
 
 class _RecordingCH:

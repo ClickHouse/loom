@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batch the inserts written on every request (audit rows, transcript turns, outbox, evidence; list and pool sizing: docs/architecture/clickhouse.md#batched-inserts) so concurrent ones share a part; false commits them, one part each. Ledger flushes stay waited async inserts either way."
+          "description": "Batch the inserts written on every request so concurrent ones share a part (docs/architecture/clickhouse.md#batched-inserts); false commits them."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -256,7 +256,7 @@
         "ch_pool_maxsize": {
           "default": 64,
           "type": "integer",
-          "description": "HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus workers. Size to expected request concurrency plus the connections batched inserts hold for their wait (docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "HTTP connection pool size; include the connections batched inserts hold while they wait."
         },
         "ch_pool_wait_ms": {
           "default": 500,

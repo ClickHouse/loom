@@ -124,7 +124,7 @@ when deduplication dropped its first write, the
 flush, the policy witness's `agent_events` and `memory_exposures` rows,
 `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
 `memory_belief_sources`, `auth_attempts`, `memory_projection_failures`, the graph Undo
-markers, `namespace_write_marks`, the usage-event and carry-acknowledgement flushes, and
+markers, the `namespace_write_marks` flush, the usage-event and carry-acknowledgement flushes, and
 the waited entity-graph inserts of `memory.set`.
 
 ClickHouse collects the concurrent inserts into one table in one part per partition and
@@ -147,7 +147,7 @@ window, not ClickHouse's default of 450 statements, decides the flush.
 Two windows: an insert a request waits on (the `conversation.append` turn and embedding
 row, an audit row, the outbox row of a write, a ledger flush the history-policy gate
 waits for) waits at most `ch_batched_insert_wait_max_ms` (50 ms). An insert no request
-waits on (the usage-event flusher, the write-mark flush and process-start mark, webhook
+waits on (the usage-event flusher, the write-mark flush, webhook
 delivery attempts) waits up to `ch_batched_insert_background_wait_max_ms` (200 ms,
 ClickHouse's own default), so it collects more rows per part. A usage-event flush a
 request waits on because the buffer is full takes the short window; the two windows are
@@ -177,7 +177,7 @@ of `conversation.append` and `conversation.compact`, and the turn
 `conversation.save_message` writes again, the
 `conversation_embeddings` rows of `conversation.append`, `conversation.save_message`
 and `conversation.compact`, the `agent_events` flush, the outbox, webhook attempts,
-evidence, belief sources, the write-mark bump and process-start mark. Off, these
+evidence and belief sources. Off, these
 inserts are committed, one part each. The ledger flushes (`auth_attempts`, the
 carry-acknowledgement, write-mark and usage-event flushes, the policy witness's rows,
 `memory_projection_failures`, the graph Undo markers and the waited entity-graph

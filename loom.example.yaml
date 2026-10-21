@@ -71,9 +71,8 @@ settings:
   # never set it in production. [restart]
   # ch_capture_statements: ""
 
-  # HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus
-  # workers. Size to expected request concurrency plus the connections batched inserts
-  # hold for their wait (docs/architecture/clickhouse.md#batched-inserts). [restart]
+  # HTTP connection pool size; include the connections batched inserts hold while they
+  # wait. [restart]
   # ch_pool_maxsize: 64
 
   # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's
@@ -101,10 +100,8 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Batch the inserts written on every request (audit rows, transcript turns, outbox,
-  # evidence; list and pool sizing: docs/architecture/clickhouse.md#batched-inserts) so
-  # concurrent ones share a part; false commits them, one part each. Ledger flushes stay
-  # waited async inserts either way. [live]
+  # Batch the inserts written on every request so concurrent ones share a part
+  # (docs/architecture/clickhouse.md#batched-inserts); false commits them. [live]
   # ch_batched_inserts: true
 
   # Longest wait, ms, of a batched or waited async insert a request waits on for others

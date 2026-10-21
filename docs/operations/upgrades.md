@@ -77,8 +77,11 @@ checkout.
    background flushes a second (usage events, write marks, webhook attempts). Treat the
    result as a floor: a waiting insert also holds its connection through the flush, and
    a process at 200 writes a second refused writes with a pool at the bound (20) and
-   none at twice it. Raise `LOOM_CH_POOL_MAXSIZE` to
-   several times the bound, or start the process with `LOOM_CH_BATCHED_INSERTS=false`
+   none at twice it. Keep `LOOM_CH_POOL_MAXSIZE` at least several times the bound (the
+   default 64 covers about 300 batched inserts a second, for example 150
+   `conversation.append` a second); raise it when the bound times three passes the
+   current value, or when the process runs with a pool smaller than the default. A
+   process that cannot grow its pool starts with `LOOM_CH_BATCHED_INSERTS=false`
    ([batched inserts](../architecture/clickhouse.md#batched-inserts)). After the
    rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and
    `loom.ch.pool.overloaded_total`; if `waiters` stays above zero or `overloaded_total`
