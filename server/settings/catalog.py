@@ -1732,9 +1732,7 @@ class ErasureSettings(BaseModel):
     # `erasure.export` returns in its `conversations` section (default 64 MiB). A turn
     # has no size cap, so past this the section stops and is marked `truncated`; its
     # first turn is always returned.
-    erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(
-        default=67108864, ge=1
-    )
+    erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
 
     # ---- external erasure backends ----
     # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse

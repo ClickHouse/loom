@@ -2301,6 +2301,12 @@
           "type": "integer",
           "description": "Seconds between the entity extractor's mirror divergence heal, a FINAL-to-FINAL join of loom.memory and loom.memory_embeddings (343 GB/day if run every pass). Divergence arrives a few rows a day."
         },
+        "erasure_export_conversation_max_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most bytes of conversation text (content, reasoning and metadata) one `erasure.export` returns in its `conversations` section (default 64 MiB). A turn has no size cap, so past this the section stops and is marked `truncated`; its first turn is always returned."
+        },
         "erasure_mutation_wait_s": {
           "default": 3600,
           "type": "integer",

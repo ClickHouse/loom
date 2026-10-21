@@ -30,7 +30,7 @@ GDPR Article 20 portability.
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | Echo of the requested scope kind. |
 | `scope_value` | `str` | Echo of the requested user id or namespace. |
 | `requester` | `str` | Echo of who asked for the export. |
-| `counts` | `dict[str, int]` | Rows per section (`memory`, `knowledge`, `conversations`, `conversation_threads`, `agent_events`, `audit_log`) before truncation. |
+| `counts` | `dict[str, int]` | Rows returned per section (`memory`, `knowledge`, `conversations`, `conversation_threads`, `agent_events`, `audit_log`): at most `section_limit`, and the section's `truncated` says more exist. |
 | `memory` | `ErasureExportSection` | `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`. |
 | `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope. |
 | `conversations` | `ErasureExportSection` | `loom.conversations` rows in scope: transcript turns and saved messages (`is_saved`), tombstoned ones too when `include_tombstoned`. |

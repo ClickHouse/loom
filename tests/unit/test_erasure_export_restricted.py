@@ -32,6 +32,7 @@ def exports(monkeypatch):
 
     monkeypatch.setattr(h, "_export_memory", _mem)
     monkeypatch.setattr(h, "_export_knowledge", _empty)
+
     async def _no_turns(*_a, **_k):
         return [], False
 
@@ -191,7 +192,7 @@ async def test_a_user_export_carries_their_conversation_rows_and_audits_the_high
     exports, monkeypatch
 ) -> None:
     """A user's turns and saved messages are exported, a row of a restricted namespace
-    the caller may not read is not, and each one whose text reads as a credential is
+    the caller may not read is not, and each one whose text reads as high is
     labelled 'high' and audited as served."""
     key = "AKIA" + "ABCDEFGHIJKLMNOP"
 
@@ -329,7 +330,6 @@ def test_an_export_leaves_out_what_it_may_not_show_before_its_limit(shown, first
         exports.export_knowledge(ORG, "user_id", "u1", limit=1, shown=shown, ch=_Local())
     )
     assert [r["namespace"] for r in got] == [first]
-
 
 
 _TURNS = (

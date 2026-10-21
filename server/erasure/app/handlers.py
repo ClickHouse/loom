@@ -171,7 +171,7 @@ async def _export_knowledge(
 
 
 def _label_high(rows: list[dict[str, object]], fields: tuple[str, ...]) -> None:
-    """Set `sensitivity` to 'high' on each row whose text reads as a credential, as a
+    """Set `sensitivity` to 'high' on each row whose text reads as high, as a
     labelled memory row carries it, so the export audits it the same way."""
     for r in rows:
         r["sensitivity"] = "high" if any(reads_high(str(r[f])) for f in fields) else ""
