@@ -827,16 +827,17 @@ returns it.
   its end for a key that crosses it, in a worker thread, and also hold every chunk whose
   character range overlaps a credential, and every chunk whose own text reads as one (a
   chunk can start inside a word, where a pattern's word boundary falls). A private-key
-  block reads as a credential from its header to its closing line (to the end of the text
-  without one), so every chunk its body covers is held, though a body line does not read as
-  a key alone. A chunk of a long `memory.set` value is held by its own text whatever its
+  block reads as a credential from its header to its closing line (without one, through the
+  base64 characters, line breaks and `Proc-Type:` / `DEK-Info:` lines after the header, so
+  prose ends it), so
+  every chunk its body covers is held, though a body line does not read as a key alone. A chunk of a long `memory.set` value is held by its own text whatever its
   row's label; a `low` row stays findable through its own embedding.
   `memory.import_evidence` applies the same rule to each session's text rebuilt from its imported chunks: the chunks in
   `chunk_index` order, each one's overlap with the chunk before it dropped (a repeat of at
   least 50 characters; chunks with no overlap are joined whole), and a gap in `chunk_index`
   starts a new text. Imported chunks have no minimum length, so a key can run through a
   whole chunk; every chunk a key in the rebuilt text touches is held, and a private-key
-  block with no closing line holds every chunk to the end of that text. A session written
+  block with no closing line holds every chunk its body lines cover. A session written
   by two calls can hold two texts at one index, which leaves no single text to rebuild, so
   each chunk of such a session is held when its own text reads as a credential, or when it
   and a chunk at the next index that it overlaps (a repeat of at least 50 characters) make a

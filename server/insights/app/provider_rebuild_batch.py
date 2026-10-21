@@ -78,7 +78,7 @@ def _held_run(stored: Sequence[Mapping[str, Any]], at: int) -> list[tuple[int, s
     by_index: dict[int, list[Mapping[str, Any]]] = {}
     for chunk in stored:
         by_index.setdefault(int(chunk["chunk_index"]), []).append(chunk)
-    run = []
+    run: list[tuple[int, str]] = []
     for step in (-1, 1):
         n = at + step
         while n in by_index:
@@ -107,7 +107,11 @@ async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) 
             session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
             by_session.setdefault(session, []).append(index)
     # One write call stores at most this many chunks, so a key spans no more.
-    cap = max(settings.memory_chunks_max_per_call, IMPORT_MAX_ITEMS)
+    cap = max(
+        settings.memory_chunks_max_per_call,
+        settings.memory_set_chunk_max_chunks,
+        IMPORT_MAX_ITEMS,
+    )
     held = set()
     for session, indexes in by_session.items():
         ats = [int(rows[index]["chunk_index"]) for index in indexes]

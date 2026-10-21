@@ -431,6 +431,22 @@ def test_split_credentials_holds_every_chunk_of_a_private_key_block() -> None:
     assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
 
 
+def test_a_private_key_header_without_a_body_holds_only_its_own_chunk() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # A session quotes the header alone, and the closing line names another key type:
+    # prose after the header ends the block, so the later chunks stay plain.
+    header = "-----BEGIN RSA " + "PRIVATE KEY-----"
+    parts = [
+        f"A PEM file starts with a line like\n{header}\n(the body follows it as base64).",
+        " We moved the standup to Thursday mornings and nobody objected to the change.",
+        "The deploy plan is unchanged and the build passed.",
+        "-----END " + "PRIVATE KEY----- closes a PKCS#8 key instead.",
+    ]
+    chunks = [("s", i, part) for i, part in enumerate(parts)]
+    assert split_credentials(chunks) == [True, False, False, False]
+
+
 @pytest.mark.asyncio
 async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,

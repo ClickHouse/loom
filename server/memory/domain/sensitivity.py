@@ -44,10 +44,15 @@ HIGH: Final = "high"
 MEDIUM: Final = "medium"
 LEVELS: Final = ("", "low", "medium", "high")
 
-# A private-key block from its header to its closing line, or to the end of the text when
-# that is not in it: the base64 body runs past a chunk, and every chunk it covers is held.
+# A private-key block from its header to its closing line, or, when that is not in the
+# text, through the base64 characters, line breaks and `Proc-Type:` / `DEK-Info:` lines
+# after the header: the body runs past a chunk, and every chunk it covers is held. Prose
+# ends a block without a closing line, so a header quoted alone holds only its own chunk.
+# A body line can be any length: chunks joined whole can lose the line break between them.
 _PRIVATE_KEY_BLOCK = re.compile(
-    r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----.*?(-----END \1PRIVATE KEY-----|\Z)",
+    r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----"
+    r"(?:.*?-----END \1PRIVATE KEY-----"
+    r"|(?:[A-Za-z0-9+/=\r\n]|Proc-Type:[^\n]*|DEK-Info:[^\n]*)*)",
     re.S,
 )
 # The words a `password=…` style assignment starts with. The sweep's prefilter is built from
