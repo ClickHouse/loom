@@ -81,7 +81,7 @@ async def _extract(
     monkeypatch.setattr(settings, "memory_extract_coverage_sweep_auto_min_uncovered", 0)
     monkeypatch.setattr("server.memory.app.extract.extract._extractor_client", lambda **_: llm)
     result = await extract_from_messages(
-        messages, judge=False, coverage_sweep=False, agent_learnings=on
+        messages, operator_policy="", judge=False, coverage_sweep=False, agent_learnings=on
     )
     assert (AGENT_LEARNINGS_ANCHOR in llm.calls[0].system) is on
     return result.facts
@@ -142,7 +142,7 @@ async def test_a_rule_without_a_relation_asks_for_no_relation_backfill(
     monkeypatch.setattr(settings, "memory_extract_coverage_sweep_auto_min_uncovered", 0)
     monkeypatch.setattr("server.memory.app.extract.extract._extractor_client", lambda **_: llm)
     result = await extract_from_messages(
-        _MESSAGES, judge=False, coverage_sweep=False, agent_learnings=True
+        _MESSAGES, operator_policy="", judge=False, coverage_sweep=False, agent_learnings=True
     )
     # The rule is the only fact with two entities and no relation: no backfill call.
     assert len(llm.calls) == 1
@@ -159,7 +159,7 @@ async def test_the_fake_provider_files_rules_under_the_block(
     monkeypatch.setattr(settings, "llm_model", "fake-echo-1")
     llm_client_module.reset()
     result = await extract_from_messages(
-        _MESSAGES, judge=False, coverage_sweep=False, agent_learnings=True
+        _MESSAGES, operator_policy="", judge=False, coverage_sweep=False, agent_learnings=True
     )
     rules = [f for f in result.facts if f.about == "agent"]
     assert [f.value for f in rules] == [f"Assistant rule: {_RULE}"]
