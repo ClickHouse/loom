@@ -1,7 +1,9 @@
 """Is a vector index doing anything?
 
-Read-only probe of a table that carries a `vector_similarity` index (`--table`; no Loom
-table has one, so on `loom.memory_embeddings` it reports that and exits): part-count
+Read-only probe, over TLS, of a table shaped like `loom.memory_embeddings` (its
+`status`, `embedding_dim` and `tombstoned_at` columns) that carries a `vector_similarity`
+index (`--table`; no Loom table has one, so on `loom.memory_embeddings` it reports that
+and exits): part-count
 shape, HNSW index bytes, and, for a few namespaces and the whole org, how many granules
 the index lets the read skip (EXPLAIN indexes=1), the latency of the production-shaped
 query (FINAL, bare distance ORDER BY) against exact search, and recall of the indexed

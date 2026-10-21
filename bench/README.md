@@ -291,8 +291,8 @@ Latency, throughput and storage at scale.
   an HNSW index return stale versions under FINAL.
 - **`vector_index_vs_exact.py`** — exact scan, codes-first and an HNSW index
   on synthetic vectors under a tenant filter: whether the index runs, its
-  recall@10 and the bytes each read takes. Needs only a ClickHouse and the
-  `clickhouse-connect` package.
+  recall@10 and the bytes each read takes. Needs ClickHouse 26.8 or later and
+  the `clickhouse-connect` package.
 - **`search_switch_ab.py`** — a one-switch A/B on a running server.
 
 `scripts/ops/benchmark.py` (not in `bench/`) load-tests a single op: "does

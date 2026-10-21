@@ -16,12 +16,14 @@ all rows. The partitioned table is measured after the others, so its graphs do n
 compete with the single-part graph for the index cache; the last row reads the
 single-part graph again once they have.
 
-Needs no provider and no Loom server, only a ClickHouse you started for this. It writes
+Needs no provider and no Loom server, only ClickHouse 26.8 or later (the `Quantized`
+codec) that you started for this, and the `clickhouse-connect` package. It writes
 the `vb_*` tables into `--database` (created if missing, left in place) and drops the
 tables at the end, failed runs included, unless `--keep`. The run in
 docs/architecture/clickhouse.md#why-there-is-no-vector-index takes about 40 minutes and
-about 15 GiB of disk, plus room for `OPTIMIZE ... FINAL` to rewrite the largest table
-(about 4.5 GiB). `dev/ci_start_clickhouse.sh` starts a ClickHouse with user `loom`,
+about 15 GiB of disk once merged. The peak can reach about 30 GiB: each
+`OPTIMIZE ... FINAL` keeps the parts it replaced for `old_parts_lifetime` (480 s by
+default). `dev/ci_start_clickhouse.sh` starts a ClickHouse with user `loom`,
 password `loomdev`:
 
     LOOM_CH_CONTAINER=ch-vbench LOOM_CH_HOST_PORT=18433 LOOM_CH_NATIVE_HOST_PORT=19433 \
