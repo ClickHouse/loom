@@ -720,12 +720,17 @@ returns it.
   `memory.import_evidence` writes) is held this way. Chunks overlap and can be cut through
   a key, and a chunk that holds only a key's head or tail does not read as one on its own.
   The conversation and long-value writers check the whole text once and also hold every
-  chunk whose character range overlaps a credential. `memory.import_evidence` joins each
+  chunk whose character range overlaps a credential. A private-key block reads as a
+  credential from its header to its closing line (to the end of the text without one), so
+  every chunk its body covers is held, though a body line does not read as a key alone. `memory.import_evidence` joins each
   chunk with every chunk of its session at the next `chunk_index`, the overlap the second
   repeats from the first dropped (a repeat of at least 50 characters; chunks with no
   overlap are joined whole). A key shorter than a chunk is cut by at most one boundary, so
   pairs of neighbouring chunks are enough, and only the 1,000 characters each side of the
-  boundary are read. A session written twice holds two chunks at an index, and every pair
+  boundary are read. A private-key block is longer than a chunk: after a chunk that opens
+  one, alone or joined with the next, every chunk of the session at the following indexes
+  is held up to the one that holds the closing line, and to the session's last chunk when a
+  boundary cuts that line. A session written twice holds two chunks at an index, and every pair
   is read, once for each distinct pair of texts. A call reads at most 512 distinct pairs,
   and both chunks of a pair past that are held unread, so many versions of one session
   cannot make the check's cost grow with the square of their count. The check reads one

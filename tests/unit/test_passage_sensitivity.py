@@ -10,7 +10,12 @@ from typing import Any
 import pytest
 
 from server.memory.domain.search_types import SearchHit
-from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
+from tests.unit._fake_credentials import (
+    AWS_KEY_ID,
+    OPENAI_KEY,
+    PRIVATE_KEY_BLOCK,
+    PRIVATE_KEY_LINES,
+)
 
 _PLAIN = "We moved the standup to Thursday mornings and the deploy plan is unchanged."
 
@@ -337,6 +342,43 @@ def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> N
 
     head, tail = "plain words. " * 400 + _KEY_HEAD, _KEY_TAIL + " plain words." * 400
     assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
+
+
+@pytest.mark.asyncio
+async def test_every_chunk_a_private_key_block_covers_is_held_on_write() -> None:
+    from server.memory.app.chunk_projection import chunk_text_with_ranges
+    from server.memory.app.credential_passages import embed_plain
+    from server.memory.domain.sensitivity import overlaps_credential, reads_high
+
+    # The key's body runs past a chunk: only the first chunk holds its header.
+    text = "We rotated the deploy key.\n\n" + PRIVATE_KEY_BLOCK + "\n\nThe build passed."
+    chunks, ranges, _ = chunk_text_with_ranges(text, max_chunks=64)
+    contents = [c for c, _, _ in chunks]
+    assert len(contents) == 3 and not reads_high(contents[1])
+    seen: list[str] = []
+
+    async def embed(texts: list[str]) -> list[list[float]]:
+        seen.extend(texts)
+        return [[0.6, 0.8] for _ in texts]
+
+    out = await embed_plain(contents, embed, held=overlaps_credential(text, ranges))
+    assert [e.held for e in out] == [True, True, True]
+    assert not any(line in t for t in seen for line in PRIVATE_KEY_LINES)
+
+
+def test_split_credentials_holds_every_chunk_of_a_private_key_block() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # Imported chunks cut at line breaks: the header, the body, then the rest and the
+    # closing line. The chunk after the closing line is plain.
+    lines = PRIVATE_KEY_BLOCK.split("\n")
+    parts = ["\n".join(lines[:12]), "\n".join(lines[12:24]), "\n".join(lines[24:])]
+    chunks = [("s", i, part) for i, part in enumerate(parts)]
+    assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
+    # A header cut at a boundary opens the block all the same.
+    cut = [PRIVATE_KEY_BLOCK[:20], PRIVATE_KEY_BLOCK[20:900], PRIVATE_KEY_BLOCK[900:]]
+    chunks = [("s", i, part) for i, part in enumerate(cut)]
+    assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
 
 
 @pytest.mark.asyncio

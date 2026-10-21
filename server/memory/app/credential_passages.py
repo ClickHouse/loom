@@ -28,10 +28,10 @@ async def embed_plain(
     *,
     held: list[bool] | None = None,
 ) -> list[Embedded]:
-    """One entry per text; a text that reads as a credential, or that `held` marks (a chunk
-    holding part of one), never reaches `embed`."""
-    marked = held or [False] * len(texts)
-    holds = [h or reads_high(text) for text, h in zip(texts, marked, strict=True)]
+    """One entry per text; a text that reads as a credential never reaches `embed`. A caller
+    that passes `held` has already checked each text (its own credential overlaps its own
+    range), so `held` decides alone and no text is read again."""
+    holds = held if held is not None else [reads_high(text) for text in texts]
     plain = [text for text, h in zip(texts, holds, strict=True) if not h]
     produced = await embed(plain) if plain else []
     vectors = iter(produced)

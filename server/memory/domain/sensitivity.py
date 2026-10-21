@@ -31,6 +31,14 @@ HIGH: Final = "high"
 MEDIUM: Final = "medium"
 LEVELS: Final = ("", "low", "medium", "high")
 
+# A private-key block from its header to its closing line, or to the end of the text when
+# that is not in it: the base64 body runs past a chunk, and every chunk it covers is held.
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----.*?(-----END \1PRIVATE KEY-----|\Z)",
+    re.S,
+)
+_PRIVATE_KEY_END = re.compile(r"-----END (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----")
+
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
     re.compile(r"\bpk-lf-[0-9a-fA-F-]{16,}"),
@@ -38,7 +46,7 @@ _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b"),  # GitHub tokens
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b"),
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),  # Slack
-    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"),
+    _PRIVATE_KEY_BLOCK,
     re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),  # JWT
     re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),  # Google API key
     # `password=…`, `api_key: …`, `secret := …`, `token = …` followed by a
@@ -312,25 +320,50 @@ def _cut_at_boundary(first: str, second: str) -> bool:
 _MAX_JOINED_PAIRS = 512  # not a setting: security bound
 
 
+def _opens_private_key(text: str) -> bool:
+    """Whether `text` holds a private-key header with no closing line after it."""
+    return any(not m.group(2) for m in _PRIVATE_KEY_BLOCK.finditer(text))
+
+
 def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
     its own text or in the text it makes joined with a chunk of its session at the next index.
     Chunks with a gap in `chunk_index` are not joined. A key shorter than a chunk is cut by at
     most one boundary, so pairs of neighbouring chunks are enough. Pairs with the same
-    contents are read once, and both chunks of a pair past `_MAX_JOINED_PAIRS` are held."""
+    contents are read once, and both chunks of a pair past `_MAX_JOINED_PAIRS` are held.
+
+    A private-key block runs past a chunk: after a chunk that opens one and does not close
+    it, every chunk of its session is held up to and including the one with the closing
+    line. A closing line cut at a boundary is not seen, so the rest of the session is held."""
     held = [bool(credential_spans(content)) for _, _, content in chunks]
+    closes = [bool(_PRIVATE_KEY_END.search(content)) for _, _, content in chunks]
+    key_open = [_opens_private_key(content) for _, _, content in chunks]
     by_index: dict[tuple[Hashable, int], list[int]] = {}
     for i, (session, index, _) in enumerate(chunks):
         by_index.setdefault((session, index), []).append(i)
     cut: dict[tuple[str, str], bool] = {}
+    # Whether a private-key header cut at the pair's boundary leaves a block open there, which
+    # neither chunk shows alone. A pair held unread counts as one.
+    opened: dict[tuple[str, str], bool] = {}
     for (session, index), firsts in by_index.items():
         for a in firsts:
             for b in by_index.get((session, index + 1), []):
                 pair = (chunks[a][2], chunks[b][2])
                 if pair not in cut:
-                    cut[pair] = len(cut) >= _MAX_JOINED_PAIRS or _cut_at_boundary(*pair)
+                    read = len(cut) < _MAX_JOINED_PAIRS
+                    cut[pair] = not read or _cut_at_boundary(*pair)
+                    boundary = pair[0][-_BOUNDARY_REACH:] + pair[1][:_BOUNDARY_REACH]
+                    opened[pair] = cut[pair] and (not read or _opens_private_key(boundary))
                 if cut[pair]:
                     held[a] = held[b] = True
+                if opened[pair] and not closes[b]:
+                    key_open[b] = True
+    # In index order, so a block carried into a chunk is carried on from it.
+    for session, index in sorted(by_index, key=lambda k: k[1]):
+        if any(key_open[a] for a in by_index[(session, index)]):
+            for b in by_index.get((session, index + 1), []):
+                held[b] = True
+                key_open[b] = key_open[b] or not closes[b]
     return held
 
 
