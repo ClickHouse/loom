@@ -110,7 +110,8 @@ change between releases, and ops MCP does not serve with ‡.
 
 | You see | It means | Do |
 |---|---|---|
-| `memory_id` and `version` on a write | it persisted | only now say "saved" |
+| `memory_id` and `version` on a `memory.set`, `new_version` on a `memory.update` | it persisted | only now say "saved" |
+| `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key and identity; nothing was written | find the key with `memory.ask` or `memory.list`, then retry; never assume it saved |
 | `conflict_verdict: "conflict"`, `peers` | it contradicts a stored fact; both are marked | show both and ask which is current |
 | 409 `PINNED_CONFLICT` | a pinned fact holds that key, or one close to it; a write that does not pin never replaces it | if the pinned fact is wrong, `memory.update` it (the pin stays); if yours is a different fact, store it under its own key |
 | `conflict_verdict: "pending"` | the conflict judge runs after the write | the row is stored; `memory.get` later shows the settled `status` |
@@ -160,9 +161,9 @@ Read through the SDKs' typed helpers (Python `agent.memory.*`, which also
 cover revisions such as `agent.memory.update`; TypeScript `agent.recall`
 and `agent.ask`): they send the identity
 each op expects, `agent: "*"` included. A raw `agent.call` stamps your own
-`agent` and `-` for the rest, so on a read that defaults to every author
-(`memory.search`‡, `memory.ask`) it reads only your own rows unless you
-pass `agent: "*"`. In TypeScript, `agent.call` takes `userId`, `sessionId`
+`agent` and `-` for the rest, so on a read that filters on the author
+(`memory.search`‡, `memory.ask`, `memory.history`†, `conversation.search`†‡)
+it reads only your own rows unless you pass `agent: "*"`. In TypeScript, `agent.call` takes `userId`, `sessionId`
 and `runId` in its scope argument, not the body.
 
 A token minted with an `own_user` read scope refuses a read without
