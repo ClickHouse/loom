@@ -1,15 +1,12 @@
 """Learnings queue candidates from rules an assistant states about itself.
 
 Pure: the candidate's id, the assistant turns a rule cites and the bounded
-quotes one supporter's conversation gives, whether the user asked for the
-behaviour (user_requested, which drops the rule as the user's own request),
-the rationale a reviewer reads, and which agent's reads a promoted rule serves
-(serves_agent, hits_to_ask).
+quotes one supporter's conversation gives, the rationale a reviewer reads, and
+which agent's reads a promoted rule serves (serves_agent, hits_to_ask).
 """
 
 from __future__ import annotations
 
-import re
 import uuid
 from typing import Any
 
@@ -103,124 +100,6 @@ def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
         ),
         "",
     )
-
-
-# Words of a user turn that ask for a standing behaviour ("always answer me in French").
-_ASKS = {"always", "never", "don't", "dont"}  # not a setting: a word list
-# Words that open a question asking for a behaviour ("could you always ...?").
-_POLITE = {"can", "could", "would", "will"}  # not a setting: a word list
-# Words that name the user as the one a question asks something done to.
-_ME = {"me", "us"}  # not a setting: a word list
-# Words that ask for a behaviour before "you to" ("I want you to always ...").
-_WANTS = {"want", "need"}  # not a setting: a word list
-# Words that make a request or a rule ask for a behaviour not to happen.
-_NEGATIONS = {"never", "don't", "dont", "doesn't", "not", "won't"}  # not a setting: a word list
-# Words a rule and a request share without naming the same behaviour.
-_COMMON = set(
-    "a an the to in on of for and or with me my i you your user user's assistant always"
-    " never will please".split()
-)  # not a setting: a word list
-
-
-def _words(text: str) -> list[str]:
-    # Mobile keyboards type the typographic apostrophe (U+2019) in "don't".
-    text = text.lower().replace("\u2019", "'")
-    return re.findall(r"[a-z0-9'$]+", re.sub(r"\bdo not\b", "don't", text))
-
-
-def _stem(word: str) -> str:
-    # "replies" and "reply" share one stem, as "answers" and "answer" do.
-    if word.endswith("ies"):
-        return word.removesuffix("ies") + "y"
-    return word.removesuffix("s")
-
-
-def _stems(words: list[str]) -> set[str]:
-    return {_stem(word) for word in words if word not in _COMMON}
-
-
-def _opens_imperative(words: list[str], i: int) -> bool:
-    """Whether the ask word at `words[i]` opens an imperative: first in the words,
-    after "please" ("please always ..."), after "can/could/would/will you" ("could
-    you always ...") or after "want/need you to" ("I want you to always ..."). After
-    any other word ("I never ...", "You never told me ...") it states a fact."""
-    if i == 0 or words[i - 1] == "please":
-        return True
-    if words[i - 1] == "you":
-        return i >= 2 and words[i - 2] in _POLITE
-    return words[i - 1] == "to" and i >= 3 and words[i - 2] == "you" and words[i - 3] in _WANTS
-
-
-def _requested_words(sentence: str) -> list[str]:
-    """The words of `sentence` from the ask word that opens an imperative, or none.
-    A clause after a comma or semicolon opens one only with "always" ("From now on,
-    always ..."): one that opens with never or don't usually leaves out its subject
-    ("I called twice, never got my refund"). A question asks for a behaviour only
-    when it opens with can, could, would or will you and asks for something done to
-    the user ("Could you always answer me in French?"); "Do you always escalate
-    refunds?" and "Will you always escalate refunds?" ask about a policy."""
-    words = _words(sentence)
-    if not sentence.endswith("?"):
-        return _imperative_words(sentence, words)
-    if not (words[:1] and words[0] in _POLITE and words[1:2] == ["you"]):
-        return []
-    requested = _imperative_words(sentence, words)
-    return requested if _ME & set(requested) else []
-
-
-def _imperative_words(sentence: str, words: list[str]) -> list[str]:
-    """The words of `sentence` from the ask word that opens an imperative, or none."""
-    for i, word in enumerate(words):
-        if word in _ASKS and _opens_imperative(words, i):
-            return words[i:]
-    for match in re.finditer(r"[,;]\s", sentence):
-        clause = _words(sentence[match.end() :])
-        if clause[:1] == ["always"]:
-            return clause
-    return []
-
-
-def _negative(words: list[str], opening: str) -> bool:
-    """Whether `words` ask for a behaviour not to happen, read from the word that
-    opens the ask (`opening`), not from a negation later on ("Always answer me in
-    French, not English" asks for French). "only" and "anything but" ask for the
-    one behaviour they name ("Don't answer me in anything but French"), so they
-    read as positive."""
-    if "only" in words or "anything but" in " ".join(words):
-        return False
-    return opening in _NEGATIONS
-
-
-def _rule_opening(words: list[str]) -> str:
-    """The word that states a rule's polarity: the one after "assistant", or after
-    "does" or "will" there ("The assistant does not ...")."""
-    after = words[words.index("assistant") + 1 :] if "assistant" in words else words
-    if after[:1] and after[0] in {"does", "will"}:
-        after = after[1:]
-    return after[0] if after else ""
-
-
-def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]) -> bool:
-    """Whether the user turn before the earliest cited assistant turn in `messages`
-    (the session's earlier turns, then the request's) asks for the behaviour the
-    rule states (an agreed request is the user's preference): a sentence whose
-    requested words share at least two of the rule's words, and at least half of
-    them, and that asks for it to happen or not as the rule says. A request for
-    the opposite ("Never escalate my refund" before "I always escalate any refund")
-    is not agreed to, so its rule is filed. It reads English requests only; in
-    other languages only the extraction prompt keeps an agreed request from being
-    filed."""
-    asked = _user_turn_before(messages, min(cited))
-    rule_words = _words(str(fact.get("value") or ""))
-    rule = _stems(rule_words)
-    for sentence in re.findall(r"[^.!?\n]+[.!?]*", asked):
-        requested = _requested_words(sentence.strip())
-        shared = rule & _stems(requested[1:])
-        if len(shared) < 2 or 2 * len(shared) < len(rule):
-            continue
-        if _negative(requested, requested[0]) == _negative(rule_words, _rule_opening(rule_words)):
-            return True
-    return False
 
 
 def bounded_quotes(asked: str, said: str) -> tuple[str, str]:

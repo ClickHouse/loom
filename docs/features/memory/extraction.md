@@ -87,36 +87,9 @@ Coding captures never use it.
 
 Behaviour the assistant agrees to at the user's request is the user's preference, not a
 rule of the bot: "always answer me in French" answered with "I will always answer you in
-French" is a memory about the user. A rule is not filed when a sentence of the user turn
-before its earliest cited assistant turn, in `messages` or the earlier `last_messages`,
-meets all three of these:
-
-- **It requests the behaviour.** It opens an imperative with "always", "never", "don't"
-  or "do not": first in the sentence, after "please", after "can", "could", "would" or
-  "will" you, or after "want" or "need" you to. Or it opens a clause after a comma or
-  semicolon with "always" ("From now on, always ..."). A question counts only when it
-  opens with "can", "could", "would" or "will" you and its requested words name the
-  user as the one it is done to ("me" or "us"): "Could you always answer me in
-  French?".
-- **It overlaps the rule.** The words after the opening share at least two of the
-  rule's content words and at least half of them.
-- **It has the rule's polarity.** A request with "never", "don't" or "do not" matches a
-  rule with "never" or "not", except that "only" and "anything but" read as positive
-  ("Don't answer me in anything but French").
-
-The drop is counted in `loom.memory_drops` (stage `learnings.file`, reason
-`user_requested`). These still file the rule:
-
-- a statement: "I never received my refund over $500", "You never told me you escalate
-  refunds over $500", "I called twice, never got my refund over $500";
-- a question about the policy: "Do you always escalate refunds over $500?", "Will you
-  always escalate my refund over $500?";
-- a request on its topic: "Please refund my order";
-- a request for the opposite, which is not agreed to: "Never escalate my refund over
-  $500 to a human" before "I always escalate any refund over $500 to a human".
-
-The filter reads English requests only; in other languages only the prompt clause keeps
-an agreed request from being filed.
+French" is a memory about the user. The extraction prompt says so, and no check after
+it reads the user's request: a rule the model still returns for such a request is filed,
+and the reviewer rejects it.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule

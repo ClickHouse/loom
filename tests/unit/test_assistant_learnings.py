@@ -647,77 +647,6 @@ async def test_a_rule_citing_only_a_user_turn_is_never_filed(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "asked",
-    [
-        "Please always answer me in French.",
-        # A request phrased as a question.
-        "Could you always answer me in French?",
-        # The typographic apostrophe a mobile keyboard types.
-        "Don\u2019t answer me in anything but French.",
-        # "always" opening a clause after a comma.
-        "From now on, always answer me in French.",
-        # "want you to" asks as "could you" does.
-        "I want you to always answer me in French.",
-        # "do not" reads as "don't".
-        "Do not answer me in anything but French.",
-    ],
-)
-async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_filed(
-    queue: _Queue, monkeypatch: pytest.MonkeyPatch, asked: str
-) -> None:
-    drops: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        assistant_learnings,
-        "record_drop",
-        lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
-    )
-    state = _state(
-        "alice",
-        "s1",
-        messages=[
-            {"role": "user", "content": asked},
-            {"role": "assistant", "content": "Bien sûr, je vous répondrai toujours en français."},
-        ],
-    )
-    fact = _rule_fact(
-        key="assistant_rule_language",
-        value="The assistant always answers the user in French.",
-    )
-    assert await _file(state, fact) == 0
-    assert queue.rows == {} and queue.supporters == {}
-    assert drops == [("learnings.file", "user_requested", "assistant_rule_language")]
-    # A rule the user did not ask for is still filed after an unrelated request.
-    assert await _file(_state("bob", "s2")) == 1
-
-
-@pytest.mark.asyncio
-async def test_a_request_in_the_sessions_earlier_turns_is_never_filed(
-    queue: _Queue, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    drops: list[tuple[str, str, str]] = []
-    monkeypatch.setattr(
-        assistant_learnings,
-        "record_drop",
-        lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
-    )
-    state = _state(
-        "alice",
-        "s1",
-        last_messages=[{"role": "user", "content": "Please always answer me in French."}],
-        messages=[{"role": "assistant", "content": "I will always answer you in French."}],
-    )
-    fact = _rule_fact(
-        key="assistant_rule_language",
-        value="The assistant always answers the user in French.",
-        source_message_indices=[0],
-    )
-    assert await _file(state, fact) == 0
-    assert queue.rows == {} and queue.supporters == {}
-    assert drops == [("learnings.file", "user_requested", "assistant_rule_language")]
-
-
-@pytest.mark.asyncio
 async def test_the_asked_quote_comes_from_the_sessions_earlier_turns(queue: _Queue) -> None:
     state = _state(
         "alice",
@@ -730,69 +659,16 @@ async def test_the_asked_quote_comes_from_the_sessions_earlier_turns(queue: _Que
     assert supporter["asked"] == "Can you refund my $800 order?"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "asked",
-    [
-        # A request on the rule's topic that asks for no standing behaviour.
-        "Please refund my order over $500.",
-        # A question about the policy the bot states.
-        "Do you always escalate refunds over $500?",
-        "Will you always escalate refunds over $500?",
-        # A possessive names the user's thing, not the user as the one asked.
-        "Will you always escalate my refund over $500?",
-        # A complaint: "never" and "don't" in a statement ask for nothing.
-        "I never received my refund over $500.",
-        "You never told me you escalate refunds over $500.",
-        "I don't understand why my refund over $500 is stuck.",
-        # A clause after a comma that leaves out its subject.
-        "I called twice, never got my refund over $500.",
-        "I paid last week, don't see my refund over $500 yet.",
-        # A request for the opposite of the rule the assistant then states.
-        "Never escalate my refund over $500 to a human.",
-        "Do not escalate my refund over $500 to a human.",
-    ],
-)
-async def test_a_rule_after_a_users_turn_on_its_topic_is_filed(queue: _Queue, asked: str) -> None:
-    messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": _RULE}]
-    assert await _file(_state("alice", "s1", messages=messages)) == 1
-    assert list(queue.rows) == [_cid()]
-
-
-_ESCALATES = "The assistant always escalates any refund over $500 to a human."
-_NEVER_ESCALATES = "The assistant never escalates any refund over $500 to a human."
-_IN_FRENCH = "The assistant always answers the user in French."
-_REPLIES_IN_FRENCH = "The assistant always replies to the user in French."
-
-
-@pytest.mark.parametrize(
-    ("asked", "value", "agreed"),
-    [
-        ("Always escalate my refund over $500 to a human.", _ESCALATES, True),
-        ("Never escalate my refund over $500 to a human.", _NEVER_ESCALATES, True),
-        ("Never escalate my refund over $500 to a human.", _ESCALATES, False),
-        ("Always escalate my refund over $500 to a human.", _NEVER_ESCALATES, False),
-        # A negation after the opening ask word names an exclusion, not the polarity.
-        ("Please always answer me in French, not English.", _IN_FRENCH, True),
-        ("Always reply in French, never in English.", _REPLIES_IN_FRENCH, True),
-    ],
-)
-@pytest.mark.parametrize("indices", [[1], [3, 1]])
-def test_a_request_is_agreed_only_when_it_asks_what_the_rule_says(
-    asked: str, value: str, agreed: bool, indices: list[int]
-) -> None:
+def test_the_asked_quote_is_the_user_turn_before_the_earliest_cited_turn() -> None:
     messages = [
-        {"role": "user", "content": asked},
+        {"role": "user", "content": "Can you refund my $800 order?"},
         {"role": "assistant", "content": _RULE},
         {"role": "user", "content": "Thanks, and where is my parcel?"},
         {"role": "assistant", "content": f"It ships today. {_RULE}"},
     ]
-    # A rule cited at turn 3 before turn 1 is read from its earliest turn: the
-    # request is the user turn before turn 1.
-    fact = _rule_fact(value=value, source_message_indices=indices)
-    cited = assistant_rules.cited_assistant_turns(fact, messages)
-    assert cited == sorted(indices)
-    assert assistant_rules.user_requested(fact, messages, cited) is agreed
+    # Cited at turn 3 before turn 1: the quote is the user turn before turn 1.
+    fact = _rule_fact(evidence=_RULE, source_message_indices=[3, 1])
+    assert _quotes(fact, messages) == ("Can you refund my $800 order?", _RULE)
 
 
 # Built at runtime so the secret scanner does not read it as a leaked key.
