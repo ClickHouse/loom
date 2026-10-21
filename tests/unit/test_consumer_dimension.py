@@ -294,7 +294,7 @@ def test_effective_budget_ms_applies_the_deployment_multiplier_after_the_consume
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
             return {"v": time.time_ns()}
 
-        async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None):
+        async def insert(self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]):
             assert table == ro.TABLE
             written.extend(rows)
 
@@ -362,7 +362,7 @@ async def test_audit_row_has_a_consumer_column_outside_the_hash(
 
     class _CH:
         async def insert(
-            self, table: str, rows: list[dict[str, Any]], settings: Any = None
+            self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]
         ) -> None:
             inserted.append((table, rows))
 
@@ -507,7 +507,7 @@ def test_admin_budget_set_takes_a_consumer(
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
             return {"v": time.time_ns()}
 
-        async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None):
+        async def insert(self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]):
             assert table == ro.TABLE
             written.extend(rows)
 

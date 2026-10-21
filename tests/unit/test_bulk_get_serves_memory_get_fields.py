@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import server.memory.store as memory_repo
+from server.core.ch_writes import batched_insert_settings
 from server.memory.api.models_bulk import MemoryBulkGetInput
 from server.memory.api.models_crud import MemoryListInput
 from server.memory.app import query
@@ -122,12 +123,14 @@ async def test_list_reads_usage_only_when_the_projection_serves_it(served) -> No
 @pytest.mark.asyncio
 async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> None:
     inserts: list[list[dict[str, Any]]] = []
+    settings_seen: list[dict[str, Any]] = []
 
     class _CH:
         async def insert(
-            self, table: str, rows: list[dict[str, Any]], settings: Any = None
+            self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]
         ) -> None:
             inserts.append(rows)
+            settings_seen.append(settings)
 
     monkeypatch.setattr(audit, "get_client", lambda: _CH())
     subjects = [{"memory_key": "a", "memory_id": "1"}, {"memory_key": "b", "memory_id": "2"}]
@@ -139,6 +142,8 @@ async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> 
     )
     many, one = inserts
     assert len(many) == 2 and all(audit.row_matches_hash(r) for r in many + one)
+    # Written on every request, so both share parts with concurrent writers.
+    assert settings_seen == [batched_insert_settings(), batched_insert_settings()]
 
 
 @pytest.mark.asyncio

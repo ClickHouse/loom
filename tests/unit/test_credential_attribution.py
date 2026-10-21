@@ -185,7 +185,7 @@ async def test_audit_row_carries_token_id_outside_the_hash(monkeypatch: pytest.M
 
     class _CH:
         async def insert(
-            self, table: str, rows: list[dict[str, Any]], settings: Any = None
+            self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]
         ) -> None:
             inserted.append((table, rows))
 

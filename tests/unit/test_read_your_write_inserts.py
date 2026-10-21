@@ -15,6 +15,9 @@ These tests are deliberately about the SETTINGS rather than behaviour, because
 the failure mode is a plausible-looking future "optimization" — async insert is
 faster in isolation, and the cost only shows up as an intermittent test and an
 occasional agent that cannot find what it just wrote.
+
+The tables written on every request (audit rows, event flushes, ledgers) are
+batched instead: one committed insert per request makes one part per row there.
 """
 
 from __future__ import annotations
@@ -32,11 +35,23 @@ from server.core.ch_writes import batched_insert_settings  # noqa: E402
 
 
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
-    """Every `settings=` passed to a `ch.insert` for `table` (a dict literal, or
-    `batched_insert_settings()` resolved to its value), in one module or in
-    every module of a package directory."""
+    """Every `settings=` passed to a `ch.insert` for `table` (a dict literal,
+    `batched_insert_settings()` resolved to its value, or `{}` for an insert that
+    passes none), in one module or in every module of a package directory."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
-    nodes = [n for f in files for n in ast.walk(ast.parse(f.read_text()))]
+    trees = [ast.parse(f.read_text()) for f in files]
+    # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`.
+    table_names = {
+        target.id
+        for tree in trees
+        for stmt in tree.body
+        if isinstance(stmt, ast.Assign)
+        and isinstance(stmt.value, ast.Constant)
+        and stmt.value.value == table
+        for target in stmt.targets
+        if isinstance(target, ast.Name)
+    }
+    nodes = [n for tree in trees for n in ast.walk(tree)]
     found: list[dict[str, int]] = []
     for node in nodes:
         if not isinstance(node, ast.Call):
@@ -47,8 +62,13 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
         if not node.args:
             continue
         first = node.args[0]
-        if not (isinstance(first, ast.Constant) and first.value == table):
+        names_table = (isinstance(first, ast.Constant) and first.value == table) or (
+            isinstance(first, ast.Name) and first.id in table_names
+        )
+        if not names_table:
             continue
+        if not any(kw.arg == "settings" for kw in node.keywords):
+            found.append({})  # the client's defaults: a committed insert
         for kw in node.keywords:
             if kw.arg != "settings":
                 continue
@@ -87,6 +107,30 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
             f"{table} in {rel_path} is written with {s}. This table is read on the "
             "default search path, so a fire-and-forget insert lets memory.set "
             "return 200 before the memory can be found. Keep wait_for_async_insert = 1."
+        )
+
+
+BATCHED_TABLES = [
+    ("server/observability/audit.py", "loom.audit_log"),
+    ("server/observability/events.py", "loom.agent_events"),
+    ("server/knowledge/store/conversations.py", "loom.conversation_embeddings"),
+    ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox"),
+    ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts"),
+    ("server/memory/app/evidence.py", "loom.memory_evidence"),
+    ("server/memory/app/evidence.py", "loom.memory_belief_sources"),
+]
+
+
+@pytest.mark.parametrize("rel_path,table", BATCHED_TABLES)
+def test_tables_written_on_every_request_are_batched(rel_path: str, table: str) -> None:
+    """A committed insert per request makes one part per row in these tables;
+    batched, concurrent writers share parts and each still waits for its row."""
+    settings_seen = _insert_settings(ROOT / rel_path, table)
+    assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
+    for s in settings_seen:
+        assert s == batched_insert_settings(), (
+            f"{table} in {rel_path} is written with {s}; pass "
+            "`settings=batched_insert_settings()` so its inserts share parts."
         )
 
 
