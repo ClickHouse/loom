@@ -46,8 +46,9 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     class _CH:
         async def query_one(self, sql: str, params: dict[str, Any]) -> Any:
-            if "count()" in sql:  # the namespaces the trust made, released ones too
-                return {"n": sum(params["tag"] in r["tags"] for r in state["rows"].values())}
+            if "count()" in sql:  # the trust's live agent namespaces
+                live = [r for r in state["rows"].values() if r["active"]]
+                return {"n": sum(params["tag"] in r["tags"] for r in live)}
             if "namespace_grants" in sql:
                 return {"x": 1} if (params["ns"], params["who"]) in state["grants"] else None
             return state["rows"].get(params["ns"])
@@ -123,10 +124,10 @@ def test_the_trusts_tag_owner_and_limit_hold(world) -> None:
     for agent, said in (("taken", "not this trust's"), ("gone", "released")):
         r = c.post("/v1/admin/bots.provision_agent", json={"name": "fleet", "agent": agent})
         assert r.status_code == 422 and said in r.text
-    assert c.post(
-        "/v1/admin/bots.provision_agent", json={"name": "fleet", "agent": "a8"}
-    ).is_success
-    # The released one and a8 fill `max_agents` (2): the next is refused.
+    for agent in ("a7", "a8"):  # the released one gives its place back
+        r = c.post("/v1/admin/bots.provision_agent", json={"name": "fleet", "agent": agent})
+        assert r.is_success, r.text
+    # a7 and a8 fill `max_agents` (2): the next is refused.
     r = c.post("/v1/admin/bots.provision_agent", json={"name": "fleet", "agent": "a9"})
     assert r.status_code == 422 and "has made its agents" in r.text
     assert "fleet-a9" not in world["rows"]

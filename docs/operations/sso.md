@@ -250,7 +250,9 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
 
   Every trust bounds what it takes: a workload token living longer than
   `--max-token-age` seconds (exp less iat, default 3600) is refused, an agent
-  trust makes at most `--max-agents` agents (default 1000), and a trust needs
+  trust holds at most `--max-agents` live agents (default 1000; a released
+  agent's namespace gives its place back, though its name is never made again),
+  and a trust needs
   one claim with an exact value besides `iss`, `aud`, `exp`, `iat`, `nbf` and
   `jti`, which every token its issuer signs for Loom carries. Two trusts of one
   issuer that a single token could meet, one of them telling agents apart, are

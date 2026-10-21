@@ -233,10 +233,12 @@ async def _finish_grant(org: str, ns: str, who: str) -> bool:
 
 
 async def _made(org: str, trust: str) -> int:
-    """How many agent namespaces the trust has made, released ones too."""
+    """How many live agent namespaces the trust has: a released one gives its
+    place back (its name is never made again), and only an operator releases,
+    so an issuer naming agents without end still stops at the cap."""
     row = await get_client().query_one(
         "SELECT count() AS n FROM loom.namespaces FINAL "
-        "WHERE org = {org:String} AND has(tags, {tag:String})",
+        "WHERE org = {org:String} AND has(tags, {tag:String}) AND active = 1",
         params={"org": org, "tag": tag(trust)},
     )
     return int((row or {}).get("n") or 0)

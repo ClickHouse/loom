@@ -236,7 +236,7 @@ def _register_agent_trust_gauges(meter: Any, probe: Callable[[], CodeSeries] | N
     meter.create_observable_gauge(
         name="loom.auth.trust_agents",
         callbacks=[_cached_series(cache, "agent_trust_agents")],
-        description="Agents an active workload trust has made, released ones included, "
+        description="Live agents of an active workload trust (a released one does not count), "
         "as its --max-agents counts them, by loom.org and loom.trust",
         unit="1",
     )
