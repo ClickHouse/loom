@@ -68,16 +68,31 @@ public namespaces to browse and join, opened from the namespace picker) and **Gr
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)).
 
-A page's URL also names the namespace it shows, first in its query
+### A page's address and its namespace
+
+A page's URL names the namespace it shows, first in its query
 (`/memories?namespace=team-notes&memory=api%2Frate-limit`), so a reload or a shared link
-opens the same namespace. A link opens its namespace in that tab only and never saves it
-as the picked namespace; a URL without `?namespace=` opens the saved pick. A namespace the
-account cannot read opens a page that says so, with the namespace picker in the header and
-a way to continue in the namespace the account would otherwise open. On the bare root,
-`?view=` names the page by view id or path (`/?view=memories`, `/?view=admin/health`) and
-`?memory=<key>` opens that memory on Memories. The namespace picker shows each namespace's
-description, and folds code indexes, tracker records and every three or more memory
-namespaces whose names share a prefix (`col-`, `u-`) into groups of their own.
+shows the same namespace.
+
+- **A link's namespace** opens in that tab when the account can read it: a namespace its
+  token claims, or one it holds an active grant on. It is never saved as the picked
+  namespace.
+- **A namespace the account cannot read**, a pending request included, opens a page that
+  says so, with the namespace picker in the header and a way to continue in the default
+  namespace. Nothing of the link's namespace is read.
+- **A URL without `?namespace=`** opens the default namespace: the saved pick while the
+  account can still reach it, else a namespace it administers (its personal namespace
+  first, then its oldest admin grant), else its first claimed memory namespace. A token
+  that reaches only code indexes and tracker records opens the first of those.
+- **Back and Forward** never switch namespace: an entry made in another namespace opens
+  nothing it names, and the address names the page's namespace.
+- **On the bare root**, `?view=` names the page by view id or path (`/?view=memories`,
+  `/?view=admin/health`) and `?memory=<key>` opens that memory on Memories.
+- **A single sign-on** started on a page returns to it, within ten minutes.
+- **The namespace picker** shows each namespace's description, and folds code indexes,
+  tracker records and every three or more memory namespaces whose names share a prefix
+  into groups of their own. A uuid in a name counts as one part, so names built as
+  `<kind>-<owner uuid>-<id>` fold per owner.
 
 ### The admin drawer
 
@@ -118,9 +133,14 @@ routes serve the dashboard; they are not an integration surface.
 
 - Dashboard pages answer 503 until `frontend/dist/index.html` exists.
 - In auth-off mode there is no namespace switcher: the page serves
-  `LOOM_DEFAULT_NAMESPACE` only, and never persists a different pick.
+  `LOOM_DEFAULT_NAMESPACE` only, never persists a different pick, and ignores a URL's
+  `?namespace=`.
 - Choosing a namespace in the picker also saves it server-side as the person's default,
-  so MCP clients pick up the same namespace on their next call.
+  so MCP clients pick up the same namespace on their next call. A link's namespace is
+  never saved.
+- A token whose namespaces claim is `*` reads namespaces the picker does not list; a link
+  to one of those opens the page that says the account has no access.
+- The rail's links carry no namespace: one opened in a new tab shows the saved pick.
 - Admin badges poll only for a confirmed admin of a memory namespace; a code or tracker
   namespace has no conflicts or budget to count.
 
