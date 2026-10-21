@@ -16,12 +16,15 @@ from server.core.datetimes import parse_iso_dt
 from server.core.hashing import hash_text
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
 from server.memory.api.models_crud import MemoryDeleteInput
+from server.memory.app.assistant_learnings import file_assistant_rules
 from server.memory.app.pipeline_state import PipelineStep, StepCallable, WorkflowState
 from server.memory.domain.extracted_facts import (
     _disambiguate_key,
     _merge_extractions,
     _source_role_tags,
     foresight_end,
+    judge_verdict,
+    judged_confidence,
     keep_latest_per_key,
     keep_latest_relation_keyed,
 )
@@ -254,6 +257,7 @@ async def _step_llm_extract(
             # The WHOLE input decides, so a short
             # segment of a long transcript keeps the full prompt.
             compact_prompt=_use_compact_prompt(state.messages),
+            agent_learnings=_agent_learnings_on(state),
         )
 
     if len(segments) == 1:
@@ -589,6 +593,20 @@ def _is_coding_capture(state: WorkflowState) -> bool:
     return any(str(t).lower().startswith(_CODING_SOURCES) for t in (state.extra_tags or []))
 
 
+def _agent_learnings_on(state: WorkflowState) -> bool:
+    """Whether the extractor is asked for the assistant's rules about itself: when
+    the op turned them on (`state.agent_learnings`, settled once from the deployment
+    setting and the request). A coding session's assistant narrates its work, so a
+    coding capture never is; nor is a request with no agent to file for (a token
+    pinned to one end user that names no agent), or with no assistant turn to read a
+    rule from (a user-only call, an observation replay)."""
+    if _is_coding_capture(state) or not state.rule_agent:
+        return False
+    if not any(str(m.get("role") or "") == "assistant" for m in state.messages):
+        return False
+    return state.agent_learnings
+
+
 def _user_turns(messages: list[dict[str, Any]] | None) -> int:
     return sum(1 for m in messages or [] if str(m.get("role") or "") == "user")
 
@@ -738,10 +756,6 @@ async def _newest_wins(state: WorkflowState) -> bool:
         return False
 
 
-# Stored confidence for facts the write-time judge graded UNCERTAIN.
-# An ordering nudge only — bounded by the +0.1*confidence retrieval
-# tiebreak, not a calibrated probability.
-_UNCERTAIN_CONFIDENCE = 0.75
 # Stored confidence for facts the coverage sweep added.
 _SWEEP_CONFIDENCE = 0.85
 
@@ -781,17 +795,28 @@ async def _forget_plan(
     return facts, forget_keys, keep
 
 
+async def _file_agent_rules(state: WorkflowState) -> None:
+    """Move the rules the assistant stated about itself out of the batch and into
+    the learnings queue. Never a memory: an end user can talk a bot into saying
+    anything, and an agent-level row would reach every user of the bot."""
+    agent_rules = [f for f in state.extracted_facts if f.get("about") == "agent"]
+    if not agent_rules:
+        return
+    state.extracted_facts = [f for f in state.extracted_facts if f.get("about") != "agent"]
+    state.learning_candidates = await file_assistant_rules(state, agent_rules)
+
+
 async def _step_bulk_write(
     state: WorkflowState,
     config: dict[str, Any],
 ) -> WorkflowState:
     """Convert extracted_facts to bulk_set entries and write."""
     del config
-    # The deterministic passes read the messages, not
-    # the extractor's output — a session that is only "please forget X" /
-    # "got it" extracts to nothing and still has work here. Under an operator
-    # policy every row comes from the model that was given it, so no premise
-    # fact is added from the raw turns.
+    await _file_agent_rules(state)
+    # The deterministic passes read the messages, not the extractor's output — a session
+    # that is only "please forget X" / "got it" extracts to nothing and still has work
+    # here. Under an operator policy every row comes from the model that was given it,
+    # so no premise fact is added from the raw turns.
     premise_facts = (
         []
         if state.operator_policy
@@ -872,10 +897,9 @@ async def _step_bulk_write(
             if isinstance(r, (list, tuple)) and len(r) == 3:
                 rels.append((str(r[0]), str(r[1]), str(r[2])))
         derived = [d for d in (fact.get("derived") or []) if isinstance(d, dict)]
-        # Preserve the judge verdict in source_trace for audit/UI, and apply
-        # a bounded ordering nudge to confidence (CORRECT / unjudged keep 1.0).
-        verdict = str(fact.get("judge_verdict") or "").upper()
-        fact_confidence = _UNCERTAIN_CONFIDENCE if verdict == "UNCERTAIN" else 1.0
+        # The judge verdict goes to source_trace (audit/UI) and nudges confidence.
+        verdict = judge_verdict(fact)
+        fact_confidence = judged_confidence(verdict)
         # A coverage-sweep fact fills a gap; at equal similarity
         # the first pass's fact ranks first (0.1 * confidence in the score).
         if "coverage_sweep" in (fact.get("tags") or []):

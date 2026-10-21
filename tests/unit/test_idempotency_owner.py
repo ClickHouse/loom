@@ -90,8 +90,8 @@ def test_user_erasure_deletes_the_orgs_replay_rows_not_only_the_users_subject() 
 
 
 def test_a_saga_step_owns_the_table_in_both_scopes() -> None:
-    assert "idempotency.delete" in dict(saga_steps._UNCOUNTED_STEPS_NS)
-    assert "idempotency.delete" in dict(saga_steps._UNCOUNTED_STEPS_USER)
+    assert "idempotency.delete" in dict(saga_steps._LATE_STEPS_NS)
+    assert "idempotency.delete" in dict(saga_steps._LATE_STEPS_USER)
     (sub,) = [s for s in erasure_census._CENSUS if s.table == "loom.idempotency"]
     assert sub.owner("namespace") == sub.owner("user_id") == "idempotency.delete"
     assert "loom.idempotency" not in erasure_census.NO_MEMORY_CONTENT

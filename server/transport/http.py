@@ -773,7 +773,7 @@ def _success_headers(
     hint when one fires for this call, and the ignored-args header."""
     _stamp_timing(response, elapsed_ms)
     _mentor_headers(op, raw_body, result, response)
-    ignored = arg_header_value(op, raw_body)
+    ignored = arg_header_value(op, raw_body, result)
     if ignored:
         response.headers["X-Loom-Ignored-Args"] = ignored
 

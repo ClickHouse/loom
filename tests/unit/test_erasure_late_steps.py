@@ -1,7 +1,8 @@
-"""The saga steps for the tables the census did not count.
+"""The saga steps that run after the memory steps.
 Statement shapes through a stub client — keyed on (org, namespace) with the
 list form under a namespace_list saga, the user axis where the table has
-one, no FINAL on a plain MergeTree. CH-free."""
+one, no FINAL on a plain MergeTree. CH-free; the learnings queue's step runs on
+clickhouse-local in test_erasure_learnings_step.py."""
 
 from __future__ import annotations
 
@@ -76,7 +77,10 @@ def test_conversations_user_scope_uses_the_user_column() -> None:
         ),
         (ledger_steps.delete_events_by_namespace, ["loom.events"]),
         (ledger_steps.delete_memory_drops_by_namespace, ["loom.memory_drops"]),
-        (ledger_steps.delete_learnings_queue_by_namespace, ["loom.learnings_queue"]),
+        (
+            ledger_steps.delete_learnings_queue_by_namespace,
+            ["loom.learnings_supporters", "loom.learnings_queue"],
+        ),
         (ledger_steps.delete_consolidation_runs_by_namespace, ["loom.consolidation_runs"]),
         (ledger_steps.delete_projection_failures_by_namespace, ["loom.memory_projection_failures"]),
     ],
@@ -156,9 +160,9 @@ def test_a_purge_turns_the_conversation_tombstones_into_deletes() -> None:
     assert len(lw) == 1 and "loom.conversation_embeddings" in lw[0]
 
 
-def test_the_sagas_run_every_uncounted_step_in_the_scope_that_owns_it() -> None:
-    ns_steps = {name for name, _ in saga_steps._UNCOUNTED_STEPS_NS}
-    user_steps = {name for name, _ in saga_steps._UNCOUNTED_STEPS_USER}
+def test_the_sagas_run_every_late_step_in_the_scope_that_owns_it() -> None:
+    ns_steps = {name for name, _ in saga_steps._LATE_STEPS_NS}
+    user_steps = {name for name, _ in saga_steps._LATE_STEPS_USER}
     owners_ns = set(erasure_census.step_owners("namespace"))
     owners_user = set(erasure_census.step_owners("user_id"))
     assert ns_steps <= owners_ns, ns_steps - owners_ns

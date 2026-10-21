@@ -1,11 +1,12 @@
 # Codex plugin
 
 The Codex plugin gives Codex the same Loom integration as Claude Code: MCP tools, hooks
-that capture the session and load a primer, and the code shunt. Its scripts and skills
-are generated copies of the Claude Code plugin's; only the wiring in
-`integrations/codex-plugin/hooks/hooks.json` differs. Hooks and knobs are documented in
+that capture the session and load a primer, and the code shunt. Its scripts, skills and
+listing icon (`assets/`) are generated copies of the Claude Code plugin's; only the wiring
+in `integrations/codex-plugin/hooks/hooks.json` differs. Hooks and knobs are documented in
 [claude-code.md](claude-code.md); the exceptions are in
 [What differs from Claude Code](#what-differs-from-claude-code).
+What the plugin sends, and where, is in [data handling](claude-code.md#data-handling).
 
 ## Install
 

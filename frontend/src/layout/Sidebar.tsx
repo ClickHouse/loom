@@ -149,7 +149,15 @@ export const ADMIN_GROUPS: NavGroup[] = [
     ],
   },
 ];
-export const ADMIN_BASE: NavItem[] = ADMIN_GROUPS.flatMap((g) => g.items);
+/** Collections: the org's shared knowledge, which grants open. Every admin sees the ones
+ *  their grants reach, so it heads the Access group for all of them. */
+export const COLLECTIONS_ITEM: NavItem = {
+  id: "admin:collections",
+  label: "Collections",
+  icon: "folder-open",
+  scope: "org",
+};
+export const ADMIN_BASE: NavItem[] = [...ADMIN_GROUPS.flatMap((g) => g.items), COLLECTIONS_ITEM];
 
 /** A view that lives in the admin drawer: the `admin:` ids and the routes
  * filed there under a stable non-prefixed id (Flow). The drawer opens on a deep link to
@@ -171,8 +179,9 @@ export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "User
 export const ADMIN_PLATFORM_ONLY: NavItem[] = [
   { id: "admin:settings", label: "Deployment settings", icon: "settings", scope: "deployment" },
 ];
-/** The drawer's Access group: operator entries, shown to platform / org admins. */
-const ACCESS_GROUP: NavGroup = { label: "Access", items: ADMIN_OPERATOR_ONLY };
+/** The drawer's Access group: Collections, then the operator entries shown to platform /
+ *  org admins. */
+const ACCESS_GROUP: NavGroup = { label: "Access", items: [COLLECTIONS_ITEM, ...ADMIN_OPERATOR_ONLY] };
 const DEPLOYMENT_GROUP: NavGroup = { label: "Deployment", items: ADMIN_PLATFORM_ONLY };
 
 /** The operator entries the caller's claims open: Users for an org or platform admin,
@@ -185,8 +194,8 @@ export function operatorItems(whoami: WhoAmI | null): NavItem[] {
 }
 
 /** The drawer items a caller may see, in their groups — Review queue leads Review while
- *  there is something to review; the Access group only for platform / org admins, the
- *  Deployment group only for platform admins. */
+ *  there is something to review; Users in the Access group only for platform / org admins,
+ *  the Deployment group only for platform admins. */
 export function groupAdminItems(visible: NavItem[]): NavGroup[] {
   const byId = new Map(visible.map((i) => [i.id, i] as const));
   const out: NavGroup[] = [];
