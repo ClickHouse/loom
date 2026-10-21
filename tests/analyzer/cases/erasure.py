@@ -123,7 +123,14 @@ async def _exports(ch: RecordingCH, c: dict[str, Any]) -> None:
     )
     tombstoned = c["include_tombstoned"]
     await erasure_exports.export_conversations(
-        ORG, scope_type, value, include_tombstoned=tombstoned, limit=100, max_bytes=1000, ch=ch
+        ORG,
+        scope_type,
+        value,
+        include_tombstoned=tombstoned,
+        limit=100,
+        max_bytes=1000,
+        as_of=datetime(2026, 1, 2),
+        ch=ch,
     )
     await erasure_exports.export_conversation_threads(
         ORG, scope_type, value, include_tombstoned=tombstoned, limit=100, ch=ch

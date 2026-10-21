@@ -244,9 +244,9 @@ class ErasureExportOutput(BaseModel):
     # Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope.
     knowledge: ErasureExportSection
     # Turns and saved messages in scope with their `sensitivity`, up to
-    # `erasure_export_conversation_max_bytes` of text. `is_saved` marks a saved message,
-    # `sensitivity` is 'high' when the text reads as high, and tombstoned rows come too
-    # when `include_tombstoned`.
+    # `erasure_export_conversation_max_bytes` of text plus the turn that crosses it.
+    # `is_saved` marks a saved message, `sensitivity` is 'high' when the text reads as
+    # high, and tombstoned rows come too when `include_tombstoned`.
     conversations: ErasureExportSection
     # `loom.conversation_threads` rows in scope: each thread's title and metadata.
     conversation_threads: ErasureExportSection

@@ -5,6 +5,8 @@ labelling and audit included."""
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 import server.auth.authz as authz
@@ -198,7 +200,7 @@ async def test_a_user_export_carries_their_conversation_rows_and_audits_the_high
     key = "AKIA" + "ABCDEFGHIJKLMNOP"
 
     async def _conversations(
-        org, scope_type, scope_value, *, include_tombstoned, limit, max_bytes, shown
+        org, scope_type, scope_value, *, include_tombstoned, limit, max_bytes, as_of, shown
     ):
         assert scope_type == "user_id" and scope_value == "u1" and include_tombstoned
         assert max_bytes == h.settings.erasure_export_conversation_max_bytes
@@ -260,7 +262,7 @@ async def test_a_namespace_export_marks_conversations_truncated_past_the_byte_bu
     budget the section says so, though it holds fewer rows than `section_limit`."""
 
     async def _conversations(
-        org, scope_type, scope_value, *, include_tombstoned, limit, max_bytes, shown
+        org, scope_type, scope_value, *, include_tombstoned, limit, max_bytes, as_of, shown
     ):
         assert (scope_type, scope_value, limit) == ("namespace", STD, 11)
         return [_turn(STD, "m-1", "first")], True
@@ -345,8 +347,12 @@ _TURNS = (
     f" ('{ORG}', '{STD}', 'bot', 't2', 'm-other', 'user', 'dddd', 'u2',"
     " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL),"
     f" ('{ORG}', 'col-hidden', 'bot', 't3', 'm-col', 'user', 'eeee', 'u1',"
-    " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL)"
+    " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL),"
+    # Appended after the export started (`_AS_OF`): never read.
+    f" ('{ORG}', '{STD}', 'bot', 't1', 'm-later', 'user', 'ffff', 'u1',"
+    " '2026-03-01 00:00:00', false, NULL, NULL)"
 )
+_AS_OF = datetime(2026, 2, 1)
 
 
 class _LocalTurns:
@@ -369,6 +375,7 @@ def _read_turns(scope_type: str, scope_value: str, *, include_tombstoned=True, m
             include_tombstoned=include_tombstoned,
             limit=10,
             max_bytes=max_bytes,
+            as_of=_AS_OF,
             shown=Shown(collections=()),
             ch=_LocalTurns(),
         )
@@ -466,7 +473,6 @@ def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() 
     """A turn the size pass never measured is dropped, and the measured turn it pushed
     out of the text read's page marks the section truncated."""
     import asyncio
-    from datetime import datetime
 
     from server.erasure.store import exports
 
@@ -490,7 +496,14 @@ def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() 
 
     got, left_out = asyncio.run(
         exports.export_conversations(
-            ORG, "namespace", STD, include_tombstoned=True, limit=10, max_bytes=100, ch=_Racing()
+            ORG,
+            "namespace",
+            STD,
+            include_tombstoned=True,
+            limit=10,
+            max_bytes=100,
+            as_of=_AS_OF,
+            ch=_Racing(),
         )
     )
     assert [r["msg_id"] for r in got] == ["m1"] and left_out

@@ -277,6 +277,7 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         include_tombstoned=input.include_tombstoned,
         limit=input.section_limit + 1,
         max_bytes=settings.erasure_export_conversation_max_bytes,
+        as_of=now,
         shown=shown,
     )
     conv_rows, conv_count, conv_trunc = await _labelled_page(

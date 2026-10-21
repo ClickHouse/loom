@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any, cast
 
 from server.core.repo_base import _CHClient, _default_client
@@ -129,22 +129,23 @@ async def export_conversations(
     include_tombstoned: bool,
     limit: int,
     max_bytes: int,
+    as_of: datetime,
     shown: Shown = _EVERY,
     ch: _CHClient | None = None,
 ) -> tuple[list[ConversationExportRow], bool]:
     """Read loom.conversations rows (transcript turns and saved messages) in one
     namespace, or the ones one user owns, oldest first per thread, and whether
-    rows past `max_bytes` of text were left out.
+    rows past `max_bytes` of text were left out. Only turns stamped no later than
+    `as_of` (the export's start) are read.
 
     A turn has no size cap, so the rows stop once the text before a row reaches
     `max_bytes`. The first statement finds where they stop from the text lengths
     alone, and also returns the first row past the budget, which says more rows
-    exist. The second reads the text of the rows up to that point. Both read only
-    turns stamped no later than the export's start, so a turn appended meanwhile is
-    not read; one written with an earlier stamp of its own can still be read, and is
-    dropped, as the first statement never measured it. A measured turn such a write
-    pushes out of the page marks the section truncated, so the page can then even be
-    empty."""
+    exist. The second reads the text of the rows up to that point. Neither reads a
+    turn appended after `as_of`; one written meanwhile with an earlier stamp of its
+    own can still be read, and is dropped, as the first statement never measured it.
+    A measured turn such a write pushes out of the page marks the section truncated,
+    so the page can then even be empty."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     column = "user_id" if scope_type == "user_id" else "namespace"
@@ -156,7 +157,7 @@ async def export_conversations(
     params: dict[str, Any] = {
         "org": org,
         "scope": scope_value,
-        "as_of": datetime.now(UTC),
+        "as_of": as_of,
         **shown_params,
     }
     sizes = await ch.query_all(
