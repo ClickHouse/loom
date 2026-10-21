@@ -37,6 +37,7 @@ from server.settings.catalog import (
     MemoryAskSettings,
     MemorySearchSettings,
     MemorySettings,
+    MemoryWebhookSettings,
     ModelSettings,
     NamespaceSettings,
     ObservabilitySettings,
@@ -79,6 +80,7 @@ class Settings(
     NamespaceSettings,
     ErasureSettings,
     StorageSettings,
+    MemoryWebhookSettings,
     BaseSettings,
 ):
     # hide_input_in_errors: a load error names the field and the rule it broke,

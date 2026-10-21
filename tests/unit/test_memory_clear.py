@@ -16,7 +16,7 @@ async def test_clear_with_user_id_tombstones_across_tables(
 
     captured: dict[str, object] = {}
 
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
+    async def fake_bulk(*, org, namespace, user_id=None, agent=None, on_tombstoned=None, ch=None):
         captured.update(
             org=org,
             namespace=namespace,
@@ -53,7 +53,7 @@ async def test_clear_with_agent_only(
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, ch=None):
+    async def fake_bulk(*, org, namespace, user_id=None, agent=None, on_tombstoned=None, ch=None):
         return {"loom.memory": 3, "loom.memory_embeddings": 0}
 
     monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
@@ -178,3 +178,135 @@ async def test_clear_zero_rows_is_well_formed(
     )
     assert out.total == 0
     assert all(v == 0 for v in out.rows_affected.values())
+
+
+def _clear_ch(monkeypatch: pytest.MonkeyPatch, tombstoned: list[dict]):
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 0}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 2}])
+    if tombstoned:
+        ch.on("ORDER BY agent, user_id, session_id, memory_key", tombstoned, times=1)
+    return ch.install(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_clear_with_no_subscribers_reads_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A namespace with no webhook pays the counts and the mutations, never a row read."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    out = await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert out.rows_affected == {"loom.memory": 2, "loom.memory_embeddings": 2}
+    assert ch.statements("memory_id") == []
+    assert len(ch.statements("ALTER TABLE", kind="execute")) == 2
+
+
+@pytest.mark.asyncio
+async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+    from server.memory.store import lifecycle
+
+    def row(key: str) -> dict:
+        return {
+            "org": "acme",
+            "namespace": "chat",
+            "agent": "bot",
+            "user_id": "u1",
+            "session_id": "-",
+            "memory_key": key,
+            "memory_id": f"id-{key}",
+            "version": 7,
+        }
+
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read_age_s=0.0,
+        due_in_s=float("inf"),
+    )
+    monkeypatch.setattr(lifecycle, "CLEAR_PAGE_ROWS", 2)
+    ch = _clear_ch(monkeypatch, [row("a"), row("b"), row("c")])
+    announced: list[list[str]] = []
+
+    async def announce(changes) -> None:
+        announced.append([c["memory_key"] for _, c in changes])
+
+    monkeypatch.setattr(webhooks, "announce", announce)
+    await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert announced == [["a", "b"], ["c"]]
+    # One read fills every page, so the scope is scanned once.
+    (read,) = ch.statements("ORDER BY agent, user_id, session_id, memory_key")
+    assert read.kind == "raw_stream"
+    # The pages read back exactly the rows this clear's mutation stamped.
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert read.params["at"] == memory_alter.params["at"]
+
+
+@pytest.mark.asyncio
+async def test_clear_announces_before_the_embeddings_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed embeddings mutation answers 5xx, and a retry finds no live memory
+    rows: the tombstoned rows are announced before that step runs."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read_age_s=0.0,
+        due_in_s=float("inf"),
+    )
+    cleared = {"agent": "bot", "user_id": "u1", "session_id": "-", "memory_key": "a", "version": 1}
+    ch = _clear_ch(monkeypatch, [cleared])
+
+    async def execute(sql, params=None, **_kw):
+        if "loom.memory_embeddings" in sql:
+            raise TimeoutError("mutation timed out")
+
+    monkeypatch.setattr(ch, "execute", execute)
+    announced: list[str] = []
+
+    async def announce(changes) -> None:
+        announced.extend(c["memory_key"] for _, c in changes)
+
+    monkeypatch.setattr(webhooks, "announce", announce)
+    with pytest.raises(TimeoutError):
+        await handle_memory_clear(
+            MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+        )
+    assert announced == ["a"]
+
+
+@pytest.mark.asyncio
+async def test_clear_with_a_failed_read_back_still_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app import webhooks
+    from server.memory.app.handlers import handle_memory_clear
+    from server.observability import degradations
+
+    webhooks._registry._reset_for_tests(
+        {("acme", "chat"): (("wh1", frozenset({"memory.tombstoned"})),)},
+        read_age_s=0.0,
+        due_in_s=float("inf"),
+    )
+
+    def fail(sql, params):
+        raise TimeoutError("read timed out")
+
+    ch = _clear_ch(monkeypatch, [])
+    ch.on("ORDER BY agent, user_id, session_id, memory_key", fail)
+    noted: list[tuple[str, str]] = []
+    monkeypatch.setattr(degradations, "note", lambda area, what, e=None: noted.append((area, what)))
+    out = await handle_memory_clear(
+        MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
+    )
+    assert out.rows_affected == {"loom.memory": 2, "loom.memory_embeddings": 2}
+    assert noted == [("memory.webhook", "not_announced")]

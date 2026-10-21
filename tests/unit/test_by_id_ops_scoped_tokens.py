@@ -278,7 +278,9 @@ def redact_targets(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
     async def _find(org: str, memory_id: str, **_: Any) -> HistoryTarget | None:
         row = targets.get(memory_id)
-        return None if row is None else HistoryTarget.from_row(row)
+        if row is None:
+            return None
+        return HistoryTarget.from_row({**row, "org": org, "memory_id": memory_id})
 
     async def _head(identity: Any, key: str, **_: Any) -> MemoryRow:
         reached.append(identity.namespace)
