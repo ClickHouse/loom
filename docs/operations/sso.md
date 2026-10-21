@@ -130,10 +130,11 @@ The provider can never grant admin.
 A bot never signs in at the provider, and should hold no long-lived secret.
 Register it with the namespaces its data belongs in (usually a team namespace
 with more than one admin, registered first, in one org); its tokens are for
-`sa:<name>`, last an hour, and its writes are stamped `actor=process:sa:<name>`.
+`sa:<name>`, last an hour unless the bot allows longer and its request asks
+(below), and its writes are stamped `actor=process:sa:<name>`.
 
 - **A key.** Loom keeps the public half; the bot signs a short assertion for
-  each hour-long token (OAuth client credentials with `private_key_jwt`).
+  each token (OAuth client credentials with `private_key_jwt`).
 
   ```bash
   loom bot create --name triage-bot --org acme --namespace-role triage=writer \
@@ -284,6 +285,33 @@ sa:fleet:<agent>` ends one agent's, and `loom claim-release` frees its
   plane, and a trust at its cap refuses every new agent: alert on
   `loom.auth.agents_provisioned` and `loom.auth.trust_agents_used_ratio`
   ([what to alert on](./monitoring.md#what-to-alert-on)).
+
+- **How long a token lives.** A token lives an hour. A bot registered with
+  `--max-access-token-ttl SECONDS` (60 to 86,400; `"max_access_token_s"` on
+  `/v1/admin/bots.create`, listed by `/v1/admin/bots.list` and, when it is not
+  an hour, by `loom bot list`) gets a longer one when its request to
+  `/oauth/token` asks: `expires_in=<seconds>` beside the other form fields. It
+  gets what it asked up to that maximum (more is cut to it, not refused), and
+  the answer's `expires_in` says what it got; a maximum under an hour shortens
+  the default too. A CI or agent token still never outlives the workload token
+  handed over, so a control plane that wants day-long tokens hands over a
+  workload token that lives a day, on a trust whose `--max-token-age` takes
+  one. An `expires_in` that is not a whole number of seconds, or is under 60,
+  is refused with `invalid_request` before the proof is spent or counted.
+
+  A longer token is no harder to end: disabling or replacing the bot,
+  `loom revoke-token --subject`, `/v1/admin/revoke_subject` (with or without
+  `issued_before`) and `loom claim-release` refuse its tokens at once, whatever
+  their expiry, and `/oauth/revoke` keeps one token's revocation until that
+  token expires. What a token names is read when it is issued: a share or grant
+  made later reaches an agent at its next token, up to a day later with
+  day-long tokens, while revoking one does not wait for that. Deleting a
+  namespace (`namespace.delete`) does not end the bot tokens that name it, as
+  `loom claim-release` does: they keep their access until they expire, up to a
+  day for a bot that allows it, so replace or disable the bot, or revoke its
+  subject, to end them at once. Nor does rotating the issuer's signing key end
+  the Loom tokens already exchanged for its old tokens: they live until they
+  expire, so replace or disable the trust to end them at once.
 
 - `loom bot list` shows them; `loom bot disable --name …` refuses every later
   proof and revokes the tokens the bot holds, and `loom bot create --replace`
