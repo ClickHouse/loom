@@ -7,7 +7,8 @@ store an empty outcome. This module names such keys so the transports can say so
 
 - ``ignored_args``: the top-level keys the op's model has no field (or alias)
   for, minus the keys the transport itself reads (consumer, traffic class,
-  explain, the idempotency key);
+  explain, the idempotency key), plus the fields the op itself reports it did
+  not apply (its result's ``ignored_args``), listed first;
 - ``did_you_mean``: for each, the closest field name when one is close.
 
 An op that changes state (any op that is not ``Operation.read_only``: WRITER

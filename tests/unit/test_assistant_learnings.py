@@ -1396,24 +1396,21 @@ async def test_hits_at_the_search_cap_answer_without_a_second_search() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_short_first_pass_at_the_search_cap_runs_one_search() -> None:
-    """A first pass short of top_k found every hit there is: asking again for the
-    cap would send the same query."""
-    from server.knowledge.domain.documents import MAX_SEARCH_TOP_K
-
+async def test_a_short_first_pass_with_another_bots_rule_searches_wider() -> None:
+    """A search that folds sibling chunks cuts to top_k after the fold, so a pass
+    short of top_k can still leave hits out: it asks again."""
     other = ["source-kind:assistant_turn", "agent:sales-bot"]
-    hits = [{"id": 0, "tags": other}] + [{"id": i, "tags": []} for i in range(1, 40)]
+    hits = [{"id": 0, "tags": other}] + [{"id": i, "tags": []} for i in range(1, 4)]
+    wider = hits + [{"id": i, "tags": []} for i in range(4, 8)]
     searches: list[int] = []
 
     async def widen(k: int) -> list[dict[str, Any]]:
         searches.append(k)
-        return hits
+        return wider
 
-    served = await agent_rules.served_hits(
-        hits, widen, lambda h: h["tags"], "support-bot", MAX_SEARCH_TOP_K
-    )
-    assert served == hits[1:]
-    assert searches == []
+    served = await agent_rules.served_hits(hits, widen, lambda h: h["tags"], "support-bot", 5)
+    assert served == wider[1:6]
+    assert searches == [assistant_rules.hits_to_ask(5)]
 
 
 @pytest.mark.asyncio

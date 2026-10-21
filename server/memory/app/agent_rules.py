@@ -35,16 +35,16 @@ async def served_hits[H](
     top_k: int,
 ) -> list[H]:
     """The first `top_k` knowledge hits that serve `agent`. When another bot's rule
-    took a place among a full first pass of `hits` and more can be asked for,
-    `widen(n)` searches again for `n` hits; if that search fails, the hits served
-    from the first pass answer."""
+    took a place among `hits` and more can be asked for, `widen(n)` searches again
+    for `n` hits; if that search fails, the hits served from the first pass answer."""
     served = [h for h in hits if assistant_rules.serves_agent(tags_of(h), agent)]
-    # A first pass short of top_k found every hit there is, and at the cap a wider
-    # search would send the same query again.
-    full_pass = len(hits) >= top_k
-    if len(served) < len(hits) and full_pass and assistant_rules.hits_to_ask(top_k) > top_k:
+    # A first pass can come back short of top_k and still leave hits out: a search
+    # that folds sibling chunks of one section cuts to top_k after the fold. At the
+    # cap a wider search would send the same query again.
+    wider_k = assistant_rules.hits_to_ask(top_k)
+    if len(served) < len(hits) and wider_k > top_k:
         try:
-            wider = await widen(assistant_rules.hits_to_ask(top_k))
+            wider = await widen(wider_k)
             served = [h for h in wider if assistant_rules.serves_agent(tags_of(h), agent)]
         except Exception as e:  # noqa: BLE001 — the first pass's served hits still answer
             log.warning("knowledge search widened past other bots' rules failed: %s", e)

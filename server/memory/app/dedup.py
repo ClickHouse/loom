@@ -93,7 +93,7 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
             source_kind = t[len("source-kind:") :]
 
     candidate = None
-    # A bot's rule is written at user_id '-'; its approver is the row's actor.
+    # Seeder and supporters rows: the approver is the row's user_id.
     promoted_by = str(row.get("user_id") or "")
     if cand_id:
         from server.memory.store import learnings as learnings_repo
@@ -109,6 +109,7 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
                 # Its support lives in loom.learnings_supporters: distinct users.
                 stats = await learnings_repo.supporter_stats(input.org, input.namespace, [cand_id])
                 supporter_count = int(stats[0]["users"]) if stats else 0
+                # A bot's rule is written at user_id '-'; its approver is the row's actor.
                 promoted_by = str(row.get("actor") or "") or promoted_by
             candidate = _LineageCandidate(
                 candidate_id=cand_id,
