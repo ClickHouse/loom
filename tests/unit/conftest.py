@@ -692,6 +692,7 @@ def _model_call_holds_left_empty() -> Iterator[None]:
 
     holds._reset_for_tests()
     gateway._held.clear()
+    gateway._waited.clear()
 
 
 @pytest.fixture(autouse=True)

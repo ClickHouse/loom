@@ -100,6 +100,14 @@ _WAIT_S = 5.0  # not a setting: the common gateway default
 _WAIT_MAX_S = 300.0  # not a setting: a longer wait is asked about again after it
 _LOG_EVERY_S = 60.0  # not a setting: how often a refusal's log line repeats
 _logged_at: dict[tuple[int, str], float] = {}
+# A request's call (never a job's) asked to wait this long or less waits it out once in
+# process and lets its sender ask again, as Loom retried a busy provider before; a
+# second such answer for the same call defers it. Calls that waited, by identity,
+# route and body, when (time.monotonic).
+_WAIT_IN_PROCESS_S = 2.0  # not a setting: a wait a person's request can absorb
+_WAITED_KEEP_S = 30.0  # not a setting: longer than any sender's retries of one call
+_waited: dict[tuple[Identity, Route, int], float] = {}
+_sleep = asyncio.sleep
 
 
 class GatewayUnavailable(httpx.TransportError):
@@ -256,8 +264,10 @@ async def answered(response: httpx.Response) -> None:
     LOOM_INFERENCE_IDENTITY_REFUSALS_JSON lists is the call's identity's: one
     under "refused" raises `ModelCallRefused` and holds that identity's job calls
     to the same path and model for LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS, one
-    under "wait" `ModelCallDeferred`, held for its Retry-After. A success ends
-    the hold there. Runs on every response of the model client."""
+    under "wait" `ModelCallDeferred`, held for its Retry-After; a request's call asked
+    to wait two seconds or less waits once here and its sender asks again
+    (`_waited_in_process`). A success ends the hold there. Runs on every response
+    of the model client."""
     global _file_refused
     status = response.status_code
     if status == 401 and bearing():
@@ -279,7 +289,34 @@ async def answered(response: httpx.Response) -> None:
             if entry["status"] == status and all(
                 fields.get(f) == entry[f] for f in IDENTITY_REFUSAL_FIELDS if f in entry
             ):
+                if kind == "wait" and await _waited_in_process(response):
+                    return  # the sender's own retry asks again (the status is retryable)
                 raise _hold(response, entry, wait=kind == "wait")
+
+
+async def _waited_in_process(response: httpx.Response) -> bool:
+    """Whether a "wait" answer to a request's call was waited out here: a Retry-After of
+    `_WAIT_IN_PROCESS_S` or less, the first for this call (the same identity, route and
+    body) in `_WAITED_KEEP_S`. A job's call is held instead, and a second answer, or a
+    longer wait, defers the request (`ModelCallDeferred`)."""
+    from server.llm import customer
+
+    seconds = _retry_after(response)
+    if customer.job_call() or seconds > _WAIT_IN_PROCESS_S:
+        return False
+    request = response.request
+    try:
+        body = hash(request.content)
+    except httpx.RequestNotRead:  # streamed: no body to tell the call by
+        body = 0
+    key, now = (identity_of(request.headers), _route(request), body), time.monotonic()
+    if len(_waited) >= _HELD_MAX:
+        _waited.clear()
+    if now - _waited.get(key, -_WAITED_KEEP_S) < _WAITED_KEEP_S:
+        return False
+    _waited[key] = now
+    await _sleep(seconds)
+    return True
 
 
 def _judges_identities(request: httpx.Request) -> bool:
@@ -452,3 +489,4 @@ def _reset_for_tests() -> None:
     _file_token, _file_read_at, _file_refused = "", 0.0, False
     _held.clear()
     _logged_at.clear()
+    _waited.clear()

@@ -74,11 +74,14 @@ class _Gateway:
         self.agents: list[str] = []
         self.sent: list[httpx.Request] = []
         self.answered: set[str] = set()
+        self.slept: list[float] = []
 
     def answer(self, request: httpx.Request) -> httpx.Response:
         agent = request.headers.get("x-agent", "")
         self.agents.append(agent)
         self.sent.append(request)
+        if agent == "agent-w" and self.agents.count(agent) == 1:  # busy once, then answers
+            return _error(429, "rate_limit_error", _BUSY, **{"Retry-After": "1"})
         refusal = None if agent in self.answered else self._refusal(agent, request)
         if refusal is not None:
             return refusal
@@ -136,6 +139,11 @@ def wire(monkeypatch: pytest.MonkeyPatch, clock: ManualClock) -> Iterator[_Gatew
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     model_client = through_the_model_client(monkeypatch)
     monkeypatch.setattr(model_client, "_transport", httpx.MockTransport(gw.answer))
+
+    async def slept(seconds: float) -> None:
+        gw.slept.append(seconds)
+
+    monkeypatch.setattr(gateway, "_sleep", slept)
     for reset in (gateway._reset_for_tests, identity._reset_for_tests, llm_client.reset):
         reset()
     provider_health.reset()
@@ -242,8 +250,11 @@ def test_an_answer_is_matched_exactly_never_by_a_word_in_it(wire) -> None:
     assert provider_health.status()["degraded"]
 
 
-@pytest.mark.parametrize(("agent", "status", "wait"), [("agent-l", 429, 1), ("agent-t", 503, 30)])
-def test_a_wait_answer_is_deferred_for_its_retry_after(wire, agent, status, wait) -> None:
+@pytest.mark.parametrize(
+    ("agent", "status", "wait", "asked"),
+    [("agent-l", 429, 1, 2), ("agent-t", 503, 30, 1)],
+)
+def test_a_wait_answer_is_deferred_for_its_retry_after(wire, agent, status, wait, asked) -> None:
     _as(agent)
     with pytest.raises(ModelCallDeferred) as deferred:
         _complete()
@@ -251,8 +262,16 @@ def test_a_wait_answer_is_deferred_for_its_retry_after(wire, agent, status, wait
     detail = deferred.value.to_detail()
     assert (detail["gateway_status"], detail["retry_after_s"]) == (status, wait)
     assert deferred.value.headers() == {"Retry-After": str(wait)}
-    assert wire.agents == [agent]  # not retried here: the caller waits
+    # a wait of two seconds or less is waited out once here, then deferred; longer, at once
+    assert wire.agents == [agent] * asked and wire.slept == [1.0] * (asked - 1)
     assert not provider_health.status()["degraded"]
+
+
+def test_a_short_wait_on_a_request_is_waited_out_once_and_asked_again(wire) -> None:
+    _as("agent-w")  # too many requests in progress once, then answered
+    assert _complete().text == '["alice"]'
+    assert wire.agents == ["agent-w", "agent-w"] and wire.slept == [1.0]
+    assert not provider_health.status()["degraded"]  # the call ended answered
 
 
 def test_a_rate_limit_is_still_retried_and_still_the_providers(wire) -> None:
