@@ -88,7 +88,7 @@ def test_defaults_match_schema_for_omitted_columns() -> None:
 
 def test_top_key_facts_never_carry_a_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     # The digest is listed by memory.digests and sent to the outcome judge; a fact whose
-    # text reads as a credential stays out of its key facts, whatever the autodetect setting.
+    # text reads as high stays out of its key facts, whatever the autodetect setting.
     from server.memory.app.extract.handler import _top_key_facts
     from server.settings import settings
 

@@ -555,7 +555,7 @@ def _register_integrity_gauges(meter: Any, _reading: Callable[[str], Callable[[A
         name="loom.integrity.high_with_embedding",
         callbacks=[_reading("high_with_embedding")],
         description="Live high-sensitivity memory rows that still have a live "
-        "embedding row — a credential one similarity query away. "
+        "embedding row — a high value one similarity query away. "
         "Should be 0.",
         unit="1",
     )

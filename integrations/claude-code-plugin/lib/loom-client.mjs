@@ -754,6 +754,110 @@ export function redactHead(text, max, token = resolveToken()) {
   return redactSecrets(s, token);
 }
 
+// What a hook's `git diff` passes so the user's diff settings cannot change what is
+// sent: no external tool, colour or textconv program, git's own path prefixes, a
+// submodule as one line rather than its commit subjects, and nearby hunks kept
+// apart (`diff.interHunkContext` would merge them into one wider range).
+export const DIFF_ARGS = [
+  "--no-ext-diff",
+  "--no-color",
+  "--no-textconv",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+  "--submodule=short",
+  "--inter-hunk-context=0",
+];
+
+// A hunk header: its ranges, then the function context git appends to it.
+const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
+// TOKEN_SHAPES_RE without its global flag, so `test` keeps no position between calls.
+const TOKEN_SHAPE_RE = new RegExp(TOKEN_SHAPES_RE.source);
+const ACCESS_SPECIFIERS = new Set(["public:", "protected:", "private:"]);
+const NOT_FUNCTION_NAMES = new Set(["if", "for", "while", "switch", "return", "catch", "sizeof", "decltype"]);
+// Python's whitespace (`str.split()`, `str.strip()`) and line ends other than `\n`
+// (`str.splitlines()`), so the client reads a header the way the server does.
+const PY_SPACE = String.raw`\t\n\v\f\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000`;
+const PY_SPACE_RE = new RegExp(`[${PY_SPACE}]+`);
+const PY_TRIM_RE = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "g");
+const PY_LINE_END_RE = /[\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
+// Files whose hunk headers can name a function the code index holds. A hunk
+// header elsewhere (Markdown, YAML, `.env`) quotes whatever line came before the
+// change, so no name is sent for it. The list errs short: a code file left out
+// (an extensionless script) loses only the name, and the server matches its hunks
+// by line range.
+const FUNCTION_FILE_RE =
+  /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|py|pyi|pyw|ts|tsx|mts|cts|js|jsx|mjs|cjs|rs|go|java|vue|svelte|astro|proto|prisma|jsonnet|libsonnet|sh|bash|zsh|ksh|dash|mksh|bats|command)$/i;
+
+/** The function name in a hunk header's context, as the server reads it
+ *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
+ *  the first `(`, template arguments dropped, when it is a (scope-qualified)
+ *  identifier. Empty when there is no such identifier, when the word before it ends
+ *  in `=` or in a single `:` other than a C++ access specifier (`x = getpass(`,
+ *  `Password: value (`), or when it has a credential's shape (`token ghp_… (`). */
+export function hunkFunctionName(context) {
+  const ctx = String(context ?? "").replace(PY_TRIM_RE, "");
+  if (!ctx.includes("(")) return "";
+  // two passes drop one level of nested template arguments, as the server does
+  const head = ctx
+    .slice(0, ctx.indexOf("("))
+    .replace(/<[^<>]*>/g, "")
+    .replace(/<[^<>]*>/g, "");
+  const tokens = head.split(PY_SPACE_RE).filter(Boolean);
+  if (!tokens.length) return "";
+  const name = tokens[tokens.length - 1].replace(/^[&*]+|[&*]+$/g, "");
+  const before = tokens[tokens.length - 2] ?? "";
+  if (/(^|[^:]):$|=$/.test(before) && !ACCESS_SPECIFIERS.has(before)) return "";
+  if (NOT_FUNCTION_NAMES.has(name)) return "";
+  if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
+  // only the token shapes: SECRET_ASSIGNMENT_RE would read a `Secret::get` scope as an assignment
+  return TOKEN_SHAPE_RE.test(name) ? "" : name;
+}
+
+/** The part of a unified diff that code.impact and code.test_gate read, at most
+ *  `max` chars of whole lines: each file's `diff --git`, `---` and `+++` lines, and
+ *  each hunk header's ranges with only the function name the server would take
+ *  from its context (`@@ -1 +1 @@ name(`), for a code file. The changed lines, the
+ *  rest of the context and the other header lines (an `index` line's blob hashes)
+ *  are left out, so nothing in them is sent. */
+export function diffHeaders(diff, max) {
+  const out = [];
+  let built = 0;
+  let inFileHeader = false;
+  let skipFile = false;
+  let path = "";
+  for (const line of String(diff ?? "").split("\n")) {
+    let kept = null;
+    if (line.startsWith("diff --git ")) {
+      inFileHeader = true;
+      skipFile = false;
+    }
+    const end = line.search(PY_LINE_END_RE);
+    const hunk = HUNK_HEADER_RE.exec(end < 0 ? line : line.slice(0, end));
+    // a file header line the server would split is dropped with the file's hunks,
+    // which would otherwise be read as the previous file's
+    if (inFileHeader && end >= 0 && !hunk) skipFile = true;
+    if (skipFile) continue;
+    if (hunk) {
+      inFileHeader = false;
+      const name = FUNCTION_FILE_RE.test(path) ? hunkFunctionName(hunk[2]) : "";
+      kept = hunk[1] + (name ? ` ${name}(` : "");
+    } else if (inFileHeader && /^(diff --git |--- |\+\+\+ )/.test(line)) {
+      kept = line;
+      if (line.startsWith("+++ ")) path = line.slice(4).trim();
+    }
+    if (kept === null) continue;
+    const cost = (out.length ? 1 : 0) + kept.length;
+    if (built + cost > max) {
+      // a file header cut off from its hunks would make the server read the whole file
+      while (out.length && !out[out.length - 1].startsWith("@@")) out.pop();
+      break;
+    }
+    out.push(kept);
+    built += cost;
+  }
+  return out.join("\n");
+}
+
 /**
  * Run a hook's `main`. Whatever it throws, the hook exits 0: a hook never
  * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,

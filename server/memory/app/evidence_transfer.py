@@ -29,10 +29,10 @@ from server.memory.api.models_evidence_transfer import (
     MemoryImportEvidenceInput,
     MemoryImportEvidenceOutput,
 )
-from server.memory.app.credential_passages import embed_plain
 from server.memory.app.provenance import writer_actor
+from server.memory.app.sensitive_passages import embed_plain
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
-from server.memory.domain.sensitivity import split_credentials
+from server.memory.domain.sensitivity import joined_overlaps_high
 from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
@@ -166,7 +166,7 @@ async def handle_memory_export_evidence(
             )
             for r in rows[: input.limit]
         ]
-        kept = await _without_high(input, digests)
+        kept = await _without_held_evidence(input, digests)
         return MemoryExportEvidenceOutput(
             digests=kept, has_more=len(rows) > input.limit, held_high=len(digests) - len(kept)
         )
@@ -214,21 +214,23 @@ async def handle_memory_export_evidence(
         for r in rows
     ]
     next_cursor = _encode_cursor(chunks[-1].session_id, chunks[-1].chunk_index) if has_more else ""
-    # A chunk stored without a vector holds a credential, or the head or tail of one cut at
+    # A chunk stored without a vector holds a high shape, or the head or tail of one cut at
     # a chunk boundary, which its own text does not show.
-    kept = await _without_high(input, chunks, [int(r.get("embedding_dim") or 0) == 0 for r in rows])
+    kept = await _without_held_evidence(
+        input, chunks, [int(r.get("embedding_dim") or 0) == 0 for r in rows]
+    )
     return MemoryExportEvidenceOutput(
         chunks=kept, has_more=has_more, next_cursor=next_cursor, held_high=len(chunks) - len(kept)
     )
 
 
-async def _without_high(
+async def _without_held_evidence(
     input: MemoryExportEvidenceInput, items: list[Any], stored_held: list[bool] | None = None
 ) -> list[Any]:
-    """`items` without those `okf_evidence.evidence_is_high` holds home, given which of the
-    keys they are linked to were ever 'high', or that `stored_held` marks (a chunk stored
-    without a vector). With `include_high` they all go, and each one that would have been
-    held is audited as a key read of a 'high' row is."""
+    """The `items` that are exported: all but those `okf_evidence.evidence_is_high` keeps
+    back, given which of their linked keys were ever 'high', and those `stored_held` marks
+    (a chunk stored without a vector). With `include_high` every item is exported, and each
+    one that would have been kept back is audited as a key read of a 'high' row is."""
     if not items:
         return items
     import server.memory.store as memory_repo
@@ -316,13 +318,13 @@ async def handle_memory_import_evidence(
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
     if chunks:
-        # A chunk or digest that reads as a credential, or a chunk holding part of a key cut
+        # A chunk or digest that reads as high, or a chunk holding part of a key cut
         # at its boundary with the next, is written without a vector.
         embedded = await embed_plain(
             [c.content for c in chunks],
             lambda texts: _embed_all(embedder, texts),
             held=await asyncio.to_thread(
-                split_credentials, [(c.session_id, c.chunk_index, c.content) for c in chunks]
+                joined_overlaps_high, [(c.session_id, c.chunk_index, c.content) for c in chunks]
             ),
         )
         held = sum(1 for e in embedded if e.held)

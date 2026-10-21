@@ -8210,7 +8210,7 @@ class ConversationSaveMessageOutput(TypedDict, total=False):
             "deleted",
             "unsupported_role",
             "embed_failed",
-            "reads_as_credential",
+            "high_sensitivity",
         ]
     ]
     ts: Required[str]  # date-time as ISO-8601 text
