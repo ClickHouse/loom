@@ -84,6 +84,8 @@ def _repair(
 def _apply_code_facets(
     facts: list[ExtractedFact],
     messages: list[dict[str, object]],
+    *,
+    from_turns: bool,
 ) -> list[ExtractedFact]:
     """Populate `files` + `concepts` on each fact from its value and the
     source messages it cites. Deterministic, LLM-free, additive: a fact
@@ -92,6 +94,8 @@ def _apply_code_facets(
     Facets are drawn from the fact value PLUS the specific source messages
     the extractor cited (source_message_indices) — a path mentioned in the
     transcript but paraphrased out of the fact value still gets linked.
+    Without `from_turns` (an operator's extraction policy is in force) only
+    the value counts: the model may have left the rest out because of it.
     """
     if not facts:
         return facts
@@ -99,7 +103,8 @@ def _apply_code_facets(
     changed = False
     for f in facts:
         surfaces = [f.value]
-        for idx in f.source_message_indices or []:
+        cited = (f.source_message_indices or []) if from_turns else []
+        for idx in cited:
             if 0 <= idx < len(messages):
                 surfaces.append(str(messages[idx].get("content") or ""))
         files: list[str] = []

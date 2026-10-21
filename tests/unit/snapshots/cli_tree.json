@@ -3589,7 +3589,7 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Also export rows with sensitivity=high, the raw chunks and digests linked to them, and raw text that reads as a credential; the server audits each released item. bulk_get does not serve a high row past its retention window, so it is named and left out. Off by default: a mirror repository is a wider audience than the namespace's grants.",
+       "help": "Also export rows with sensitivity=high, the raw chunks and digests linked to them, and raw text that holds a high shape (a credential, card number, SSN or stated PIN); the server audits each released item. bulk_get does not serve a high row past its retention window, so it is named and left out. Off by default: a mirror repository is a wider audience than the namespace's grants.",
        "metavar": null
       }
      ]
@@ -11014,9 +11014,9 @@
        "const": null,
        "choices": null,
        "nargs": null,
-       "type": "builtins:int",
+       "type": "server.cli.ops:_positive_int",
        "required": false,
-       "help": "Candidate rows read per run (default 20000)",
+       "help": "Candidates found per run, labelled with --apply (default 20000)",
        "metavar": null
       },
       {
@@ -11051,7 +11051,7 @@
        "nargs": null,
        "type": null,
        "required": false,
-       "help": "Keep candidates carrying this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
+       "help": "Select only rows of this probe shape (repeatable); the phone shape is a ten-digit run and the noisiest, so apply credential + email first",
        "metavar": null
       },
       {

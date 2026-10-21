@@ -108,19 +108,116 @@ user's batches. Until a batch runs, `memory.search` and
 `memory.ask` report `pending_extraction`. With the worker off, deferred saves stay
 `pending`.
 
+## Operator extraction policy
+
+An org admin can say once what extraction never stores, for the whole org or for one
+namespace, and no request can drop or override it:
+
+```bash
+curl -sX POST http://localhost:7777/v1/extraction_policy.set \
+  -H "Authorization: Bearer $ORG_ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"org":"acme","scope":"org",
+       "policy":"Never store credentials, payment card data or health data."}'
+```
+
+- **Scope.** Every call names its `scope`: `org` (the org's own policy; `namespace` is
+  ignored, since an MCP session fills it in) or `namespace` (rules that `namespace` adds
+  to the org's). An extraction in a namespace runs under both, the org's rules first.
+  The namespace is the one the request resolves to: an end user's `@me` runs under the
+  policy set for their personal collection's name, and `@me` itself is refused as a scope.
+  A namespace policy covers that namespace only: a child collection does not inherit its
+  parent's, so a rule for a whole subtree belongs in the org's policy.
+  `extraction_policy.get` returns a scope's policy and the `effective` text its
+  extractions run under; for scope `org` it also lists in `namespace_policies` every
+  namespace that holds a policy of its own. `extraction_policy.clear` removes one
+  scope's policy: clearing a namespace's leaves the org's in force, and clearing a scope
+  that holds none writes nothing. A policy is at most 4,096 characters.
+- **Bound.** An org holds its own policy and at most
+  [`LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`](../../reference/configuration.md#extraction)
+  namespace policies (1,000 by default; one more is refused). Deleting a namespace leaves
+  its policy in place: it still counts toward the cap, and applies again if the name is
+  registered later, until `extraction_policy.clear` removes it; the org-scope
+  `extraction_policy.get` lists them. Every server holds every
+  org's policies and reads them all at each refresh, so the cap bounds each org's share
+  of that read (about 4 million characters at the default: about 4 MiB of ASCII text, up
+  to 16 MiB of multi-byte text); the read grows with the number of orgs that
+  hold a policy. A rule for every end user belongs in the org's policy, not in a policy
+  per personal collection.
+- **Who.** All three ops need `org_admin` of that org; setting and clearing are audited.
+  A writer, a namespace admin or an end-user token can neither set, clear nor read a
+  policy.
+- **Precedence.** The policy ends the model's system prompt, after the request's
+  `extraction_instructions`, inside an `OPERATOR EXTRACTION POLICY` block that says it
+  overrides every other instruction and anything the messages say. No request field
+  carries or removes it.
+- **What follows it.** Every model call of the memory, knowledge and observe planes
+  that writes stored text from raw text:
+  `memory.set_from_messages` inline and deferred (the queue reads the policy when it
+  replays the request) with its retries and its coverage sweep, the typed-record value
+  stage, the session digest, observation replays from the `observe_extract` worker and
+  that worker's event and hint notes, the `conversation.compact` summary, the
+  `session.brief_save` rewrite, the context lines `memory.bulk_set` writes with
+  `contextualize=true`, and the conversation titler. The block stays last, after any
+  retry addendum. The code plane's model-written file cards and chunk descriptions
+  describe indexed source, not a conversation, and do not follow it. Neither do the
+  model passes over rows already stored rather than over raw text, such as period
+  digests, profile consolidation, contrast reflections, `memory.consolidate` merges,
+  the structured profile worker (`server/memory/workers/structured_profile.py`) and
+  the entity extractor (`server/memory/workers/entity_extractor.py`). Those rows
+  include `memory.set` values, which no policy filtered.
+- **The trade-off.** While a policy is in force, the deterministic passes that add rows
+  the model left out, or copy from the raw turns what the model did not write, do not
+  run: recovered preferences, costs and ages; facts an assistant turn states as the
+  user's premise; a forget request's correction kept in the user's own words; code file
+  paths and concepts taken from the cited turns rather than the fact (a fact keeps those
+  in its own text); a fact's `speaker:<name>` tag and name entity taken from the cited
+  turns; and the action and file paths that an observe event or a hint note copies from
+  the raw tool calls. The model may have left those out because of the policy, and these
+  passes cannot read it. An extraction under a policy can therefore keep fewer facts
+  than the same extraction without one. `session.brief_save` never runs its
+  deterministic builder under a policy
+  ([session briefs](../conversations-and-sessions.md#session-briefs)).
+  `memory.set_from_messages` answers `under_operator_policy: true` when it ran under one
+  (a deferred request answers false: its extraction runs later, under the policy then
+  set).
+- **Cache.** The extraction response cache keys on the whole prompt, so a changed policy
+  never serves an answer cached under the old one.
+- **Propagation.** Every server reads the policies at most every
+  [`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS`](../../reference/configuration.md#provider),
+  and the server that took the change reads them at once. A server that cannot read them
+  for [`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`](../../reference/configuration.md#provider)
+  refuses inline extraction and `conversation.compact` with 503 and leaves queued requests
+  and threads to title waiting, rather than call the model without the policy;
+  `session.brief_save` also answers 503 (the client sends the events again), `bulk_set`
+  writes its entries without context lines, and the `observe_extract` worker leaves its
+  sessions to distill later. A replica of a build that predates the policy table extracts
+  without it; set a policy once every replica runs a build that reads it
+  ([rolling upgrades](../../architecture/rolling-upgrades.md)).
+
+The policy is an instruction to the model, not a filter: Loom does not check a written
+row against it. It does not change what is stored verbatim: evidence rows, verbatim
+chunks and recorded observations keep the turns as sent, and `memory.set` and
+`memory.bulk_set` write the caller's own text (`bulk_set`'s `contextualize` lines are
+the one model-written part, and they follow the policy). Pair it with the
+[blacklist](./conflicts-and-refusal.md) for exact patterns that must never be written.
+
 ## Operations
 
-| Op                         | Role   | Does                                                                         |
-| -------------------------- | ------ | ---------------------------------------------------------------------------- |
-| `memory.set_from_messages` | writer | Extract facts (or one typed record) from `messages` and write them.          |
-| `memory.extraction_status` | viewer | State of deferred batches. HTTP and SDK only.                                |
-| `memory.recall`            | viewer | Search the raw turns behind the namespace's memories by text, time and role. |
-| `memory.evidence`          | viewer | The source turns one memory was extracted from, with the supporting span.    |
-| `observe.record`           | writer | Record one tool observation into the episodic plane; no model call.          |
-| `observe.crystallize`      | writer | Mark a session's observations ready for the `observe_extract` worker.        |
+| Op                         | Role      | Does                                                                             |
+| -------------------------- | --------- | -------------------------------------------------------------------------------- |
+| `memory.set_from_messages` | writer    | Extract facts (or one typed record) from `messages` and write them.              |
+| `memory.extraction_status` | viewer    | State of deferred batches. HTTP and SDK only.                                    |
+| `memory.recall`            | viewer    | Search the raw turns behind the namespace's memories by text, time and role.     |
+| `memory.evidence`          | viewer    | The source turns one memory was extracted from, with the supporting span.        |
+| `observe.record`           | writer    | Record one tool observation into the episodic plane; no model call.              |
+| `observe.crystallize`      | writer    | Mark a session's observations ready for the `observe_extract` worker.            |
+| `extraction_policy.set`    | org_admin | Set the org's or a namespace's [extraction policy](#operator-extraction-policy). |
+| `extraction_policy.get`    | org_admin | Read a scope's policy and the effective one.                                     |
+| `extraction_policy.clear`  | org_admin | Remove a scope's policy.                                                         |
 
-Field lists: [operations reference](../../reference/operations.md#memory) and
-[observe](../../reference/operations.md#observe).
+Field lists: [operations reference](../../reference/operations.md#memory),
+[observe](../../reference/operations.md#observe) and
+[extraction_policy](../../reference/operations/extraction_policy.md).
 
 ### Request fields
 
@@ -130,7 +227,7 @@ Field lists: [operations reference](../../reference/operations.md#memory) and
 | `last_messages`                | Up to 20 earlier turns, shown for context and not re-extracted.                                                            |
 | `observation_date`             | `YYYY-MM-DD` anchor for relative dates. Unset: `LOOM_MEMORY_EXTRACT_OBSERVATION_DATE_DEFAULT` (`request_time`, today UTC). |
 | `extra_tags`                   | Added to every extracted fact. `source:<client>` marks a coding capture.                                                   |
-| `extraction_instructions`      | A prompt suffix (up to 4,096 characters).                                                                                  |
+| `extraction_instructions`      | A prompt suffix (up to 4,096 characters). The [operator's policy](#operator-extraction-policy) outranks it.                |
 | `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                   |
 | `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                             |
 | `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                          |

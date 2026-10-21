@@ -333,7 +333,7 @@ def test_split_credentials_reads_each_session_once(monkeypatch: pytest.MonkeyPat
     scanned: list[str] = []
     read_alone: list[str] = []
     spans = sensitivity.credential_spans
-    holds = sensitivity._holds_credential
+    holds = sensitivity._reads_high_text
 
     def counting_spans(text: str) -> list[tuple[int, int]]:
         scanned.append(text)
@@ -344,7 +344,7 @@ def test_split_credentials_reads_each_session_once(monkeypatch: pytest.MonkeyPat
         return holds(text)
 
     monkeypatch.setattr(sensitivity, "credential_spans", counting_spans)
-    monkeypatch.setattr(sensitivity, "_holds_credential", counting_holds)
+    monkeypatch.setattr(sensitivity, "_reads_high_text", counting_holds)
     assert sensitivity.split_credentials(chunks) == [False] * 256
     assert scanned == ["".join(c for s, _, c in chunks if s == name) for name in ("a", "b")]
     assert sum(len(t) for t in read_alone) <= sum(len(c) for _, _, c in chunks)

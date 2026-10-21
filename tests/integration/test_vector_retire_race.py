@@ -41,6 +41,17 @@ async def ch() -> Any:
     await c.disconnect()
 
 
+def _high_candidate(memory_id: str, ns: str, key: str) -> Any:
+    """The sweep's candidate for a high row of AGENT, with its sort key as `scan` reads it."""
+    from server.memory.app.sensitivity_sweep import SweepCandidate
+    from server.memory.store.sensitivity_sweep_sql import SORT_KEY
+
+    ident = (ORG, ns, AGENT, USER, SESSION, key)
+    return SweepCandidate(
+        memory_id, *ident, "high", ("credential",), dict(zip(SORT_KEY, ident, strict=True))
+    )
+
+
 def _memory_row(ns: str, version: int, value: str, sensitivity: str) -> dict[str, Any]:
     from server.memory import store as M
 
@@ -364,9 +375,7 @@ async def test_a_metadata_reemit_paused_across_a_retire_does_not_restore_the_vec
                         " AND memory_key = {k:String}",
                         params={"o": ORG, "n": ns, "k": key},
                     )
-                    cand = sensitivity_sweep.SweepCandidate(
-                        row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-                    )
+                    cand = _high_candidate(row["id"], ns, key)
                     res = await sensitivity_sweep.apply([cand], ch=ch)
                     assert res.errors == [] and res.embeddings_tombstoned == 1
                 assert await live_vectors() == 0
@@ -482,9 +491,7 @@ async def test_an_older_writes_late_vector_stays_under_a_newer_high_write(
             " AND namespace = {n:String} AND memory_key = {k:String}",
             params={"o": ORG, "n": ns, "k": key},
         )
-        cand = sensitivity_sweep.SweepCandidate(
-            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-        )
+        cand = _high_candidate(row["id"], ns, key)
         res = await sensitivity_sweep.apply([cand], ch=ch)
         assert res.errors == [] and res.high == 1
 
@@ -667,9 +674,7 @@ async def test_a_long_value_made_high_keeps_no_live_chunks(
                     " AND memory_key = {k:String}",
                     params={"o": ORG, "n": ns, "k": key},
                 )
-                cand = sensitivity_sweep.SweepCandidate(
-                    row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-                )
+                cand = _high_candidate(row["id"], ns, key)
                 res = await sensitivity_sweep.apply([cand], ch=ch)
                 assert res.errors == [] and res.high == 1
             assert await live_chunks() == 0
@@ -724,9 +729,7 @@ async def test_a_reindex_paused_across_a_high_relabel_leaves_no_vector(
             " AND namespace = {n:String} AND memory_key = {k:String}",
             params={"o": ORG, "n": ns, "k": key},
         )
-        cand = sensitivity_sweep.SweepCandidate(
-            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-        )
+        cand = _high_candidate(row["id"], ns, key)
         res = await sensitivity_sweep.apply([cand], ch=ch)
         assert res.errors == [] and res.high == 1
         paused.gate.set()
@@ -940,9 +943,7 @@ async def test_a_high_relabel_between_the_reindex_reads_leaves_no_vector(
             " AND namespace = {n:String} AND memory_key = {k:String}",
             params={"o": ORG, "n": ns, "k": key},
         )
-        cand = sensitivity_sweep.SweepCandidate(
-            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-        )
+        cand = _high_candidate(row["id"], ns, key)
         res = await sensitivity_sweep.apply([cand], ch=ch)
         assert res.errors == [] and res.high == 1
 
@@ -1026,9 +1027,7 @@ async def test_chunks_landing_between_the_sweeps_fence_and_its_relabel_are_retir
             params={"o": ORG, "n": ns, "k": key},
         )
         assert row["sensitivity"] == ""
-        cand = sensitivity_sweep.SweepCandidate(
-            row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-        )
+        cand = _high_candidate(row["id"], ns, key)
         sweep = asyncio.create_task(sensitivity_sweep.apply([cand], ch=ch))
         await asyncio.wait_for(s_entered.wait(), 30)  # fenced, not yet relabelled
         c_gate.set()
@@ -1080,9 +1079,7 @@ async def test_a_reindex_between_the_sweeps_fence_and_its_relabel_leaves_no_vect
         return await real_wv(*a, **kw)
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", paused_wv)
-    cand = sensitivity_sweep.SweepCandidate(
-        row["id"], ORG, ns, AGENT, "-", "-", key, "high", ("credential",)
-    )
+    cand = _high_candidate(row["id"], ns, key)
     try:
         sweep = asyncio.create_task(sensitivity_sweep.apply([cand], ch=ch))
         await asyncio.wait_for(entered.wait(), 30)

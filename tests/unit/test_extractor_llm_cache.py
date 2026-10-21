@@ -122,7 +122,13 @@ async def test_a_re_ingest_of_the_same_bytes_is_served_from_the_cache(extractor)
     from server.memory.app.extract import extract_from_messages
 
     first = await extract_from_messages(
-        _MSGS, judge=False, observation_date="2026-09-01", org="o", namespace="ns-a", llm_cache=True
+        _MSGS,
+        judge=False,
+        observation_date="2026-09-01",
+        org="o",
+        namespace="ns-a",
+        llm_cache=True,
+        operator_policy="",
     )
     await _settle()
     assert len(extractor.provider.calls) == 1
@@ -138,7 +144,13 @@ async def test_a_re_ingest_of_the_same_bytes_is_served_from_the_cache(extractor)
     assert "Lisbon" not in row["key"], "no prompt text in the key"
 
     second = await extract_from_messages(
-        _MSGS, judge=False, observation_date="2026-09-01", org="o", namespace="ns-b", llm_cache=True
+        _MSGS,
+        judge=False,
+        observation_date="2026-09-01",
+        org="o",
+        namespace="ns-b",
+        llm_cache=True,
+        operator_policy="",
     )
     assert len(extractor.provider.calls) == 1, "the second namespace's ingest made no call"
     assert (second.llm_cache_hits, second.llm_cache_misses) == (1, 0)
@@ -154,10 +166,10 @@ async def test_existing_memories_and_observation_date_change_the_key(extractor) 
     from server.memory.app.extract import extract_from_messages
 
     base = await extract_from_messages(
-        _MSGS, judge=False, observation_date="2026-09-01", llm_cache=True
+        _MSGS, judge=False, observation_date="2026-09-01", llm_cache=True, operator_policy=""
     )
     dated = await extract_from_messages(
-        _MSGS, judge=False, observation_date="2026-09-02", llm_cache=True
+        _MSGS, judge=False, observation_date="2026-09-02", llm_cache=True, operator_policy=""
     )
     known = await extract_from_messages(
         _MSGS,
@@ -165,6 +177,7 @@ async def test_existing_memories_and_observation_date_change_the_key(extractor) 
         observation_date="2026-09-01",
         existing_memories=[{"memory_key": "user_city", "value": "Lives in Lisbon."}],
         llm_cache=True,
+        operator_policy="",
     )
     assert len({base.prompt_key, dated.prompt_key, known.prompt_key}) == 3
     assert len(extractor.provider.calls) == 3, "three different prompts, three provider calls"
@@ -174,12 +187,12 @@ async def test_off_keys_the_prompt_but_makes_no_cache_read(extractor) -> None:
     from server.memory.app.extract import extract_from_messages
 
     out = await extract_from_messages(
-        _MSGS, judge=False, observation_date="2026-09-01", llm_cache=False
+        _MSGS, judge=False, observation_date="2026-09-01", llm_cache=False, operator_policy=""
     )
     assert out.prompt_key and (out.llm_cache_hits, out.llm_cache_misses) == (0, 0)
     assert extractor.store.inserted == [], "nothing written when the cache is off"
     again = await extract_from_messages(
-        _MSGS, judge=False, observation_date="2026-09-01", llm_cache=False
+        _MSGS, judge=False, observation_date="2026-09-01", llm_cache=False, operator_policy=""
     )
     assert again.prompt_key == out.prompt_key, (
         "the key is logged either way — the repeat share offline"

@@ -107,7 +107,7 @@ async def test_extract_from_messages_empty_input_no_llm_call(
     monkeypatch.setattr(settings, "llm_provider", "fake")
     monkeypatch.setattr(settings, "llm_model", "fake-echo-1")
     llm_client_module.reset()
-    result = await extract_from_messages([])
+    result = await extract_from_messages([], operator_policy="")
     assert result.facts == []
     assert result.llm_result.tokens_in == 0
 
@@ -195,6 +195,7 @@ async def test_extract_retries_once_on_zero_facts_from_nontrivial_input(
             },
         ],
         judge=False,
+        operator_policy="",
     )
     assert len(calls) == 2, "expected exactly one retry"
     assert "CRITICAL" in calls[1]["system"]
@@ -239,7 +240,7 @@ async def test_extract_no_retry_on_trivial_input(
         lambda: CountingClient(),
     )
 
-    result = await extract_from_messages([{"role": "user", "content": "hi"}])
+    result = await extract_from_messages([{"role": "user", "content": "hi"}], operator_policy="")
     assert call_count == 1, "expected exactly one call, no retry on 'hi'"
     assert result.facts == []
 
@@ -259,7 +260,8 @@ async def test_extract_from_messages_round_trip_via_fake_llm(
         [
             {"role": "user", "content": "My dog Bowie is seven years old."},
             {"role": "assistant", "content": "Got it, noted Bowie's age."},
-        ]
+        ],
+        operator_policy="",
     )
     assert result.facts, "expected at least one extracted fact"
     for fact in result.facts:
@@ -386,6 +388,7 @@ async def test_judge_drops_wrong_facts_and_attaches_verdicts(
             }
         ],
         judge=True,
+        operator_policy="",
     )
     assert len(result.facts) == 1
     assert result.facts[0].memory_key == "good"
@@ -433,6 +436,7 @@ async def test_judge_disabled_keeps_all_facts(
     result = await extract_from_messages(
         [{"role": "user", "content": "Substantive input. Two facts."}],
         judge=False,
+        operator_policy="",
     )
     assert len(result.facts) == 2
     assert len(calls) == 1  # extract only, no judge
@@ -624,6 +628,7 @@ async def test_extract_assistant_recommendation_no_ack_yields_fact(
             },
         ],
         judge=False,
+        operator_policy="",
     )
     assert len(result.facts) == 1
     fact = result.facts[0]
@@ -856,6 +861,7 @@ async def test_extract_duration_start_yields_anchored_fact(
         ],
         observation_date="2024-06-10",
         judge=False,
+        operator_policy="",
     )
     assert len(result.facts) == 1
     fact = result.facts[0]
@@ -902,6 +908,7 @@ async def test_extract_no_stated_duration_does_not_manufacture_one(
         ],
         observation_date="2024-06-10",
         judge=False,
+        operator_policy="",
     )
     assert len(result.facts) == 1
     fact = result.facts[0]
@@ -1020,6 +1027,7 @@ async def test_backstop_anchors_ambient_observation_without_touching_value(
         [{"role": "user", "content": "goldfinches"}],
         observation_date="2023-05-20",
         judge=False,
+        operator_policy="",
     )
     f = result.facts[0]
     # obs 2023-05-20, "about a week ago" -> 2023-05-13
@@ -1095,6 +1103,7 @@ async def test_judge_wrong_drop_is_counted_and_logged(
                 }
             ],
             judge=True,
+            operator_policy="",
         )
     assert [f.memory_key for f in result.facts] == ["good"]
     assert result.dropped_judge_wrong == 1

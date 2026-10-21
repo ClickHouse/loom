@@ -274,11 +274,22 @@ server-side. With `LOOM_SESSION_BRIEF_LLM` on (default) the model named by
 windows per save; without that model's key the deployment's LLM writes it, and with no
 LLM the deterministic builder writes goal, status, files, errors and pointers (no
 decisions or dead ends). `author` in the response says `llm`, `deterministic` or
-`model` (the calling agent wrote the sections). State sections are replaced on each
-revision; decisions, dead ends and done items accumulate. Every revision is kept in
-`loom.session_brief_revisions`; `revision=N` on `brief_get` reads one. A save that
-repeats the previous save's session and `event_cursor` is a retry and writes nothing;
-`if_revision` makes a save compare-and-set (409 on a mismatch).
+`model` (the calling agent wrote the sections). Under an operator's
+[extraction policy](memory/extraction.md#operator-extraction-policy) the builder never
+runs and no client summary is taken from the events. A window whose model call failed
+is skipped while the rest are revised. A save of events alone with no model to call (none
+configured, `use_llm: false`, or the org's model calls switched off before its first
+window was revised) writes nothing and answers `changed: false`, `reason: "not-revised"`;
+an org switched off after some windows were revised keeps those windows and revises no
+more. A save of events alone whose every model call failed, was held by an unread switch
+or did not parse is refused with 503 for the client to send again. A save that also
+carries the agent's `sections` writes them over the brief as it was in both cases, and
+takes nothing from the events.
+State sections are replaced on each revision; decisions, dead ends and done items
+accumulate. Every revision is kept in `loom.session_brief_revisions`; `revision=N` on
+`brief_get` reads one. A save that repeats the previous save's session and
+`event_cursor` is a retry and writes nothing; `if_revision` makes a save
+compare-and-set (409 on a mismatch).
 
 **Restoring is the person's choice.** The coding plugins save briefs at compaction and
 session end with zero model tokens on the client, and the session-start primer only

@@ -101,7 +101,7 @@ def evidence_keys(item: ChunkLike | DigestLike) -> list[str]:
 
 def evidence_is_high(item: ChunkLike | DigestLike, held_keys: set[str]) -> bool:
     """A chunk or digest stays home when it is linked to a key held home, or when its text
-    reads as a credential: raw text has no sensitivity column, so the detector memory.set
+    reads as `high`: raw text has no sensitivity column, so the detector memory.set
     runs decides."""
     if isinstance(item, DigestLike):
         facts, text = item.key_facts, item.summary_text

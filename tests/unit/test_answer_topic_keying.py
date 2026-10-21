@@ -294,6 +294,7 @@ async def test_assistant_chatter_produces_no_topic_keyed_fact(
             {"role": "user", "content": "thanks"},
         ],
         judge=False,
+        operator_policy="",
     )
 
     # Exactly one fact — the concrete answer. No "assistant offered to help".

@@ -152,6 +152,7 @@ async def test_iterative_local_retry_repairs_one_field(
     record, llm = await extract_typed_record_iterative(
         [{"role": "user", "content": "Spent 12.50 on coffee at Blue Bottle."}],
         schema,
+        operator_policy="",
     )
     assert isinstance(record, ExtractedRecord)
     # category validated on the first pass and FROZEN; amount repaired by
@@ -192,6 +193,7 @@ async def test_iterative_outer_fail_open_falls_back_to_empty(
     record, _llm = await extract_typed_record_iterative(
         [{"role": "user", "content": "Spent some money on coffee."}],
         schema,
+        operator_policy="",
     )
     # category validated; amount is written as the explicit unknown marker
     # (None) — never the fabricated 0.0 — and reported as stubbed.
@@ -231,6 +233,7 @@ async def test_iterative_object_absent_raises(
         await extract_typed_record_iterative(
             [{"role": "user", "content": "totally unrelated chatter here."}],
             {"category": "string"},
+            operator_policy="",
         )
     # Only the object-detect stage ran.
     assert len(client.calls) == 1
@@ -268,6 +271,7 @@ async def test_enum_field_is_stubbed_to_none_not_first_value(
         record, _llm = await extract_typed_record_iterative(
             [{"role": "user", "content": "Spent 4.50 on snacks."}],
             schema,
+            operator_policy="",
         )
     assert record.record["amount"] == 4.5
     assert record.record["category"] is None

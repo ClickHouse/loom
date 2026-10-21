@@ -14,6 +14,7 @@ from server.knowledge.api.models_conversations import ConversationCompactInput
 from server.knowledge.app import conversations as ch_mod
 from server.llm.client import LLMResult
 from tests.unit._fake_credentials import OPENAI_KEY
+from tests.unit.ch_fake import ConversationsCH
 
 
 @pytest.fixture(autouse=True)
@@ -40,32 +41,6 @@ def _turn(
         "run_id": run_id,
         "is_saved": saved,
     }
-
-
-class _FakeCH:
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
-        self.rows = rows
-        self.inserted: list[dict[str, Any]] = []  # loom.conversations rows
-        self.embedded: list[dict[str, Any]] = []  # loom.conversation_embeddings rows
-        self.sql: list[str] = []
-        self.executed: list[tuple[str, dict[str, Any]]] = []
-
-    async def query_all(self, sql: str, params: dict[str, Any] | None = None):
-        self.sql.append(sql)
-        # ClickHouse answers FINAL on a plain MergeTree with code 181.
-        assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
-        # The embeddings reconcile's re-read finds no row left to reconcile.
-        return [] if "FROM loom.conversation_embeddings FINAL" in sql else self.rows
-
-    async def query_one(self, sql: str, params: dict[str, Any] | None = None):
-        return None  # the shared embedding cache reads it as a miss
-
-    async def insert(self, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
-        (self.embedded if table == "loom.conversation_embeddings" else self.inserted).extend(rows)
-
-    async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any) -> None:
-        self.sql.append(sql)
-        self.executed.append((sql, params or {}))
 
 
 _EMBEDDING_FIELDS = (
@@ -113,7 +88,7 @@ def test_compact_reads_without_final_and_carries_the_threads_user(monkeypatch) -
         }
         for i in range(8)
     ]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
 
@@ -169,7 +144,7 @@ def test_compact_tombstones_only_the_messages_the_summary_read(monkeypatch) -> N
         }
         for i in range(6)
     ]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
 
@@ -234,7 +209,7 @@ def test_a_summary_that_cannot_be_embedded_compacts_nothing(monkeypatch) -> None
         }
         for i in range(6)
     ]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
     monkeypatch.setattr(ch_mod, "get_embedder", lambda: _DownEmbedder())
@@ -278,7 +253,7 @@ def test_a_rerun_on_a_compacted_thread_compacts_nothing(monkeypatch) -> None:
         }
         for i in range(2, 4)
     ]
-    fake = _FakeCH([summary, *kept])
+    fake = ConversationsCH([summary, *kept])
 
     class _NoLLM(_FakeLLM):
         async def complete(self, **kw: Any) -> LLMResult:
@@ -330,7 +305,7 @@ def test_a_large_turn_behind_a_summary_is_compacted_whole(monkeypatch) -> None:
     ]
     llm = _FakeLLM()
 
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
@@ -382,7 +357,7 @@ def test_an_earlier_summary_does_not_count_toward_min_to_compact(monkeypatch) ->
         async def complete(self, **kw: Any) -> LLMResult:
             raise AssertionError("three new turns are below min_to_compact")
 
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _NoLLM())
     out = asyncio.run(
@@ -433,7 +408,7 @@ def test_client_written_summaries_cannot_lift_the_prompt(
     ]
     llm = _FakeLLM()
 
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
@@ -491,7 +466,7 @@ def test_a_summary_past_the_allowance_stays_live_and_the_turns_compact(monkeypat
     ]
     llm = _FakeLLM()
 
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
@@ -626,7 +601,7 @@ def test_a_resent_compaction_replaces_the_summary_its_failed_run_left(monkeypatc
     ]
     llm = _FakeLLM()
 
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
@@ -711,7 +686,7 @@ def test_a_summary_inside_the_window_is_replaced_but_not_counted(
     ]
     llm = _FakeLLM()
 
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
     out = asyncio.run(
@@ -762,7 +737,7 @@ def test_a_summary_that_reads_as_a_credential_compacts_nothing(monkeypatch) -> N
             raise AssertionError("a credential summary must not reach the embedder")
 
     rows = [_turn(i, secret=i == 2, run_id="run-1") for i in range(6)]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _KeyLLM())
     monkeypatch.setattr(ch_mod, "get_embedder", lambda: _NoEmbedder())
@@ -792,7 +767,7 @@ def test_a_credential_turn_is_left_out_of_the_window_and_stays_live(monkeypatch)
             )
 
     rows = [_turn(i, secret=i == 1, run_id="run-1") for i in range(6)]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     llm = _EchoLLM()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
@@ -833,7 +808,7 @@ def test_compact_never_summarizes_or_tombstones_a_saved_turn(monkeypatch) -> Non
         }
         for i in range(8)
     ]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
 
@@ -859,7 +834,7 @@ def test_a_saved_and_a_credential_turn_both_stay_live(monkeypatch) -> None:
     import server.llm.client
 
     rows = [_turn(i, secret=i == 2, saved=i == 1) for i in range(7)]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     llm = _FakeLLM()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
@@ -890,7 +865,7 @@ def test_a_window_of_only_held_turns_has_nothing_to_compact(monkeypatch, held) -
         _turn(i, secret=held == "credential" and i < 4, saved=held == "saved" and i < 4)
         for i in range(5)
     ]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     llm = _FakeLLM()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: llm)
@@ -916,7 +891,7 @@ def test_long_turns_compact_and_the_check_stops_past_the_window(monkeypatch) -> 
         {**_turn(i), "role": "assistant", "content": f"turn {i} " + "x" * 6990} for i in range(6)
     ]
     rows += [_turn(6, secret=True), _turn(7)]
-    fake = _FakeCH(rows)
+    fake = ConversationsCH(rows)
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
     monkeypatch.setattr(server.llm.client, "get_llm_client", lambda: _FakeLLM())
     checked: list[str] = []
