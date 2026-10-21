@@ -5,33 +5,39 @@ ReplacingMergeTree, `index_granularity = 256`) in the database you point it at: 
 `Quantized`-coded, HNSW-indexed, and HNSW-indexed with one partition per named tenant.
 Tenants of 50%, 10%, 1% and 0.1% of the rows share one synthetic vector space (500
 clusters around a 16-dimensional latent space); the rest spread over 1000 namespaces.
-Each query is a noisy copy of a row its filter admits, and recall@10 is
-against the exact top 10 under the same filter. "index used" reads
-`ProfileEvents['USearchSearchCount']` from `system.query_log`, so it reports what ran.
+Each query is a noisy copy of a row its filter admits, and recall@10 is against the exact
+top 10 under the same filter. The read columns come from `system.query_log`: "index
+used" is `ProfileEvents['USearchSearchCount'] > 0`, "cache misses" is
+`VectorSimilarityIndexCacheMisses`, so they report what ran.
 
 Filters: `all` (none), a tenant `(org, namespace)` (the sort-key prefix every Loom read
-carries), and `hash100` / `hash10`, predicates outside the sort key that admit 10% and 1%
-of all rows.
+carries), and `10pct` / `1pct`, predicates outside the sort key that admit 10% and 1% of
+all rows. The partitioned table is measured after the others, so its graphs do not
+compete with the single-part graph for the index cache; the last row reads the
+single-part graph again once they have.
 
-Needs no provider and no Loom server; it writes tables `vb_*` and drops them on `--build`.
-Use a ClickHouse you started for this:
+Needs no provider and no Loom server, only a ClickHouse you started for this. It writes
+the `vb_*` tables into `--database` and drops them at the end unless `--keep`. The run in
+docs/architecture/clickhouse.md#why-there-is-no-vector-index (about 40 minutes and
+12 GiB of disk):
 
     PYTHONPATH=$PWD .venv/bin/python bench/vector_index_vs_exact.py \
-        --port 18433 --user loom --password loomdev --rows 100000 --dim 1536 --build
-
-Results and what they decided: docs/architecture/clickhouse.md#why-there-is-no-vector-index.
+        --port 18433 --user loom --password loomdev --rows 1000000 --dim 1536 --build
 """
 
 from __future__ import annotations
 
 import argparse
+import random
 import statistics
 import time
+import uuid
 
 import clickhouse_connect
-import numpy as np
 
 TENANTS = [("big", 0.50), ("mid", 0.10), ("small", 0.01), ("tiny", 0.001)]
+# Predicates outside the sort key, by the per-mille of rows they admit.
+HASH_FILTERS = {"10pct": 100, "1pct": 10}
 KINDS = ("plain", "codes", "hnsw", "hnsw_part")
 COLUMNS = """
     org LowCardinality(String), namespace LowCardinality(String), agent LowCardinality(String),
@@ -46,7 +52,8 @@ def ddl(name: str, dim: int, kind: str) -> str:
     partition = "toYYYYMM(created_at)"
     if kind == "hnsw_part":
         # One partition per named tenant, so a tenant filter selects whole parts.
-        partition = "if(namespace IN ('big', 'mid', 'small', 'tiny'), toString(namespace), 'rest')"
+        named = ", ".join(f"'{ns}'" for ns, _ in TENANTS)
+        partition = f"if(namespace IN ({named}), toString(namespace), 'rest')"
         kind = "hnsw"
     codec = f" CODEC(Quantized('rabitq', {dim}, 0))" if kind == "codes" else ""
     index = (
@@ -93,10 +100,11 @@ def build(ch, rows: int, dim: int) -> None:
               FROM numbers({rows}))
     """
     t = time.monotonic()
+    # Small blocks: the projection holds rows x dim x 16 floats per block.
     ch.command(
         f"INSERT INTO vb_plain {select}", settings={"max_block_size": 256, "max_threads": 16}
     )
-    print(f"insert plain: {time.monotonic() - t:.1f}s", flush=True)
+    print(f"insert plain (generates the vectors): {time.monotonic() - t:.1f}s", flush=True)
     for kind in KINDS[1:]:
         t = time.monotonic()
         ch.command(
@@ -106,40 +114,85 @@ def build(ch, rows: int, dim: int) -> None:
     for kind in KINDS:
         t = time.monotonic()
         ch.command(f"OPTIMIZE TABLE vb_{kind} FINAL")
-        print(f"optimize {kind}: {time.monotonic() - t:.1f}s", flush=True)
+        print(f"merge {kind} into one part per partition: {time.monotonic() - t:.1f}s", flush=True)
 
 
-def predicate(ns: str) -> str:
-    if ns == "all":
+def predicate(name: str) -> str:
+    if name == "all":
         return ""
-    if ns.startswith("hash"):
-        return f"WHERE cityHash64(memory_key) % 1000 < {int(ns[4:])}"
+    if name in HASH_FILTERS:
+        return f"WHERE modulo(cityHash64(memory_key), 1000) < {HASH_FILTERS[name]}"
     return (
         "PREWHERE org = 'o' AND namespace = {ns:String}"
         " WHERE tombstoned_at IS NULL AND embedding_dim > 0"
     )
 
 
-def topk(ch, table: str, ns: str, q: list[float], *, final: bool, settings: dict, limit: int = 10):
+def nearest(ch, table: str, name: str, q: list[float], *, final: bool, limit: int, settings: dict):
     sql = f"""
-        SELECT memory_key FROM {table} {"FINAL" if final else ""} {predicate(ns)}
+        SELECT memory_key FROM {table} {"FINAL" if final else ""} {predicate(name)}
         ORDER BY cosineDistance(embedding, {{q:Array(Float32)}}) ASC
         LIMIT {limit}
     """
     t = time.monotonic()
-    rows = ch.query(sql, parameters={"ns": ns, "q": q}, settings=settings).result_rows
+    rows = ch.query(sql, parameters={"ns": name, "q": q}, settings=settings).result_rows
     return [r[0] for r in rows], (time.monotonic() - t) * 1000
 
 
-def logged(ch, tag: str) -> tuple[int, float, float]:
-    """Index searches, mean rows read and mean MiB read of the timed queries tagged `tag`."""
+def logged(ch, tag: str) -> tuple[int, int, float, float]:
+    """Index searches, index cache misses, mean rows read and mean MiB read of the
+    queries tagged `tag`."""
     ch.command("SYSTEM FLUSH LOGS")
     r = ch.query(
-        "SELECT sum(ProfileEvents['USearchSearchCount']), avg(read_rows), avg(read_bytes) / 1048576"
+        "SELECT sum(ProfileEvents['USearchSearchCount']),"
+        " sum(ProfileEvents['VectorSimilarityIndexCacheMisses']),"
+        " avg(read_rows), avg(read_bytes) / 1048576"
         " FROM system.query_log WHERE type = 'QueryFinish' AND log_comment = {t:String}",
         parameters={"t": tag},
     ).result_rows[0]
-    return int(r[0]), float(r[1]), float(r[2])
+    return int(r[0]), int(r[1]), float(r[2]), float(r[3])
+
+
+POST = {"vector_search_filter_strategy": "postfilter"}
+# (label, table, FINAL, LIMIT, settings). recall@10 counts the exact top 10 found in the
+# LIMIT rows a variant returns; the fact leg asks for at least 60 and reranks them.
+VARIANTS = [
+    ("exact FINAL", "vb_plain", True, 10, {}),
+    (
+        "codes-first x3 FINAL",
+        "vb_codes",
+        True,
+        10,
+        {"vector_search_use_quantized_codes": 1, "vector_search_index_fetch_multiplier": 3},
+    ),
+    (
+        "codes-first x1 FINAL, LIMIT 60",
+        "vb_codes",
+        True,
+        60,
+        {"vector_search_use_quantized_codes": 1, "vector_search_index_fetch_multiplier": 1},
+    ),
+    ("hnsw FINAL", "vb_hnsw", True, 10, {}),
+    ("hnsw x1", "vb_hnsw", False, 10, POST),
+    ("hnsw x10", "vb_hnsw", False, 10, {**POST, "vector_search_index_fetch_multiplier": 10}),
+    ("hnsw x100", "vb_hnsw", False, 10, {**POST, "vector_search_index_fetch_multiplier": 100}),
+    (
+        "hnsw x100 ef1024",
+        "vb_hnsw",
+        False,
+        10,
+        {
+            **POST,
+            "vector_search_index_fetch_multiplier": 100,
+            "hnsw_candidate_list_size_for_search": 1024,
+        },
+    ),
+]
+PARTITIONED = [
+    ("hnsw, partition per tenant, FINAL", "vb_hnsw_part", True, 10, {}),
+    ("hnsw, partition per tenant", "vb_hnsw_part", False, 10, {}),
+]
+CACHE_CHECK = [("hnsw x1, after the partitioned graphs loaded", "vb_hnsw", False, 10, POST)]
 
 
 def main() -> None:
@@ -153,6 +206,7 @@ def main() -> None:
     ap.add_argument("--dim", type=int, default=1536)
     ap.add_argument("--queries", type=int, default=30, help="queries per filter")
     ap.add_argument("--build", action="store_true", help="(re)create and fill the tables first")
+    ap.add_argument("--keep", action="store_true", help="leave the tables behind")
     args = ap.parse_args()
     if args.build:
         admin = clickhouse_connect.get_client(
@@ -171,99 +225,77 @@ def main() -> None:
         build(ch, args.rows, args.dim)
     for kind in KINDS:
         r = ch.query(
-            f"SELECT count(), sum(rows), formatReadableSize(sum(data_compressed_bytes)),"
-            f" formatReadableSize(sum(secondary_indices_compressed_bytes)) FROM system.parts"
-            f" WHERE database = currentDatabase() AND table = 'vb_{kind}' AND active"
+            "SELECT count(), sum(rows), formatReadableSize(sum(data_compressed_bytes)),"
+            " formatReadableSize(sum(secondary_indices_compressed_bytes)) FROM system.parts"
+            " WHERE database = currentDatabase() AND table = {t:String} AND active",
+            parameters={"t": f"vb_{kind}"},
         ).result_rows[0]
-        print(f"vb_{kind}: parts={r[0]} rows={r[1]} data={r[2]} index={r[3]}")
+        print(f"vb_{kind}: parts={r[0]} rows={r[1]} table data={r[2]} index={r[3]}")
 
-    rng = np.random.default_rng(7)
-    exact = {"vector_search_filter_strategy": "prefilter"}
-    post = {"vector_search_filter_strategy": "postfilter"}
-    variants = [
-        ("exact plain FINAL", "vb_plain", True, exact),
-        (
-            "exact codes-first FINAL",
-            "vb_codes",
-            True,
-            {"vector_search_use_quantized_codes": 1, "vector_search_index_fetch_multiplier": 3},
-        ),
-        ("hnsw FINAL", "vb_hnsw", True, {}),
-        ("hnsw x1", "vb_hnsw", False, post),
-        ("hnsw x10", "vb_hnsw", False, {**post, "vector_search_index_fetch_multiplier": 10}),
-        ("hnsw x100", "vb_hnsw", False, {**post, "vector_search_index_fetch_multiplier": 100}),
-        (
-            "hnsw x100 ef1024",
-            "vb_hnsw",
-            False,
-            {
-                **post,
-                "vector_search_index_fetch_multiplier": 100,
-                "hnsw_candidate_list_size_for_search": 1024,
-            },
-        ),
-        (
-            "hnsw x10 ef1024 rescored",
-            "vb_hnsw",
-            False,
-            {
-                **post,
-                "vector_search_index_fetch_multiplier": 10,
-                "hnsw_candidate_list_size_for_search": 1024,
-                "vector_search_with_rescoring": 1,
-            },
-        ),
-        ("hnsw, partition per tenant, FINAL", "vb_hnsw_part", True, {}),
-        ("hnsw, partition per tenant", "vb_hnsw_part", False, {}),
-    ]
-    print(f"\nrows={args.rows} dim={args.dim} queries/filter={args.queries}")
+    # Tags carry a run id: system.query_log keeps every earlier run's rows.
+    run = uuid.uuid4().hex[:8]
+    rnd = random.Random(7)
+    filters = ["all"] + [ns for ns, _ in TENANTS] + list(HASH_FILTERS)
+    queries: dict[str, list[list[float]]] = {}
+    truth: dict[str, list[set[str]]] = {}
+    admitted: dict[str, int] = {}
+    for name in filters:
+        cond = predicate(name)
+        admitted[name] = ch.query(
+            f"SELECT count() FROM vb_plain {cond}", parameters={"ns": name}
+        ).result_rows[0][0]
+        seeds = ch.query(
+            f"SELECT embedding FROM vb_plain {cond}"
+            " ORDER BY cityHash64(memory_key) LIMIT {n:UInt32}",
+            parameters={"ns": name, "n": args.queries},
+        ).result_rows
+        queries[name] = [[x + rnd.gauss(0, 0.05) for x in s[0]] for s in seeds]
+        truth[name] = [
+            set(nearest(ch, "vb_plain", name, q, final=True, limit=10, settings={})[0])
+            for q in queries[name]
+        ]
+
+    print(f"\nrows={args.rows} dim={args.dim} queries/filter={args.queries} run={run}")
     print(
-        "| filter | rows admitted | variant | index used | recall@10"
+        "| filter | rows admitted | variant | index used | cache misses | recall@10"
         " | p50 ms | p95 ms | rows read | MiB read |"
     )
-    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
-    for ns in ["all"] + [t[0] for t in TENANTS] + ["hash100", "hash10"]:
-        if ns == "all" or ns.startswith("hash"):
-            cond = predicate(ns)
-            n_ns = ch.query(f"SELECT count() FROM vb_plain {cond}").result_rows[0][0]
-            seeds = ch.query(
-                f"SELECT embedding FROM vb_plain {cond} ORDER BY memory_key LIMIT {args.queries}"
-            ).result_rows
-        else:
-            n_ns = ch.query(
-                "SELECT count() FROM vb_plain WHERE namespace = {ns:String}", parameters={"ns": ns}
-            ).result_rows[0][0]
-            seeds = ch.query(
-                "SELECT embedding FROM vb_plain WHERE namespace = {ns:String}"
-                " ORDER BY cityHash64(memory_key) LIMIT {n:UInt32}",
-                parameters={"ns": ns, "n": args.queries},
-            ).result_rows
-        queries = [
-            (np.array(s[0], dtype=np.float32) + rng.normal(0, 0.05, args.dim))
-            .astype(np.float32)
-            .tolist()
-            for s in seeds
-        ]
-        truth = [set(topk(ch, "vb_plain", ns, q, final=True, settings=exact)[0]) for q in queries]
-        for label, table, final, st in variants:
-            if ns.startswith("hash") and table == "vb_hnsw_part":
-                continue
-            topk(ch, table, ns, queries[0], final=final, settings=st)  # warm
-            tag = f"vb:{args.rows}:{ns}:{label}"
-            recalls, times = [], []
-            for q, tr in zip(queries, truth, strict=True):
-                got, ms = topk(ch, table, ns, q, final=final, settings={**st, "log_comment": tag})
-                recalls.append(len(tr & set(got)) / max(1, len(tr)))
-                times.append(ms)
-            times.sort()
-            p95 = times[min(len(times) - 1, int(len(times) * 0.95))]
-            searches, read_rows, read_mib = logged(ch, tag)
-            print(
-                f"| {ns} | {n_ns} | {label} | {'yes' if searches else 'no'}"
-                f" | {statistics.mean(recalls):.3f} |"
-                f" {statistics.median(times):.0f} | {p95:.0f} | {read_rows:.0f} | {read_mib:.1f} |",
-                flush=True,
-            )
+    print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    passes = [(VARIANTS, filters), (PARTITIONED, ["all"] + [ns for ns, _ in TENANTS])]
+    passes.append((CACHE_CHECK, ["all"]))
+    for variants, names in passes:
+        for name in names:
+            for label, table, final, limit, st in variants:
+                nearest(ch, table, name, queries[name][0], final=final, limit=limit, settings=st)
+                tag = f"vb:{run}:{name}:{label}"
+                recalls, times = [], []
+                for q, tr in zip(queries[name], truth[name], strict=True):
+                    got, ms = nearest(
+                        ch,
+                        table,
+                        name,
+                        q,
+                        final=final,
+                        limit=limit,
+                        settings={**st, "log_comment": tag},
+                    )
+                    recalls.append(len(tr & set(got)) / max(1, len(tr)))
+                    times.append(ms)
+                times.sort()
+                p95 = times[min(len(times) - 1, int(len(times) * 0.95))]
+                searches, misses, read_rows, read_mib = logged(ch, tag)
+                if name == "all" and label == "hnsw x1" and not searches:
+                    raise SystemExit("an unfiltered read searched no index: the event name changed")
+                print(
+                    f"| {name} | {admitted[name]} | {label} | {'yes' if searches else 'no'}"
+                    f" | {misses} | {statistics.mean(recalls):.3f}"
+                    f" | {statistics.median(times):.0f} | {p95:.0f} | {read_rows:.0f}"
+                    f" | {read_mib:.1f} |",
+                    flush=True,
+                )
+    if not args.keep:
+        for kind in KINDS:
+            ch.command(f"DROP TABLE IF EXISTS vb_{kind} SYNC")
 
 
 if __name__ == "__main__":

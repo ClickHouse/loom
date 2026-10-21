@@ -1,13 +1,12 @@
-"""Does the HNSW index return the same top-k as brute force for SMALL tenants?
+"""Does the production read return the same top-k as brute force for SMALL tenants?
 
-loom.memory_embeddings is one table, one `vector_similarity` index, many org/namespace
-tenants. The identity tuple is a PREWHERE filter, so a tenant holding 0.1% of the rows
-depends on ClickHouse's filter strategy (auto: prefilter when selective, else postfilter
-with `vector_search_index_fetch_multiplier`) to get its own neighbours back rather than
-the table's. Loom relies on the engine rather than partitioning the index per tenant; on
-CH 26.7.1 a tenant at 0.13% share agreed 100%. This bench keeps that a standing
-assertion so a CH upgrade or a 10× larger table cannot silently turn small tenants'
-recall into noise.
+loom.memory_embeddings is one table holding many org/namespace tenants, and the
+identity tuple is a PREWHERE filter. The bench compares a read with skip indexes on
+against the same read with `use_skip_indexes = 0`. With no vector index on the table
+they agree by construction; if a `vector_similarity` index is ever added, a small
+tenant could get the table's neighbours instead of its own
+(docs/architecture/clickhouse.md#why-there-is-no-vector-index). This bench keeps that a
+standing assertion against a live deployment.
 
     python bench/vector_tenant_recall.py --tenants 3 --probes 6 --min-agreement 0.95
 
