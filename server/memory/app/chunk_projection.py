@@ -392,9 +392,8 @@ async def write_memory_chunks(
     if not rows:
         return
 
-    # Waited for, for the same reason the caller is: chunks are read
-    # on the default bm25_hybrid search path, so a query landing right after the
-    # write must find them; a fire-and-forget insert would break that.
+    # Waited for, like the caller: chunks are read on the default bm25_hybrid
+    # path, so a query right after the write must find them.
     await ch.insert(
         "loom.memory_chunks",
         rows,

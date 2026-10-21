@@ -31,8 +31,8 @@ async def test_batched_inserts_are_read_back_share_parts_and_land_once_per_token
 
         # Read back at once: the insert returned after its part was written.
         await c.insert(table, [{"k": "one", "v": "a"}], settings=batched_insert_settings())
-        row = await c.query_one(f"SELECT count() AS n FROM {table} WHERE k = 'one'")
-        assert row is not None and row["n"] == 1
+        got_one = await c.query_all(f"SELECT k, v FROM {table} WHERE k = 'one'")
+        assert got_one == [{"k": "one", "v": "a"}]
 
         # Concurrent inserts share parts: fewer parts than inserts.
         await asyncio.gather(
