@@ -32,9 +32,11 @@ _NEVER_STAMPED_PREFIXES = ("run.", "code.")
 # Ops whose `run_id` is part of the row's SCOPE, not its
 # provenance. A working-memory block written with the session's run lands at
 # run scope, where no other connection, the primer, or a later `replace`
-# addressed without it ever reads it. A conversation thread's `run_id` is its
-# binding: an update that names none keeps it. They stay labelled on the ledger.
-_RUN_SCOPED_PREFIXES = ("working_memory.", "conversation.update")
+# addressed without it ever reads it. They stay labelled on the ledger.
+_RUN_SCOPED_PREFIXES = ("working_memory.",)
+# The same, by op name: a conversation thread's `run_id` is its binding, so an
+# update that names none keeps it.
+_RUN_SCOPED_OPS = frozenset({"conversation.update"})
 # Reads the session run labels although their input carries no `run_id`:
 # `search.query` (the `loom_search` tool) is the read agents call most.
 _LABELLED_READS = frozenset({"search.query"})
@@ -130,7 +132,8 @@ def stamps_run(op: Any) -> bool:
     that is not `read_only` (a read's `run_id` is a filter) among those
     `takes_run` admits — the rule the MCP `readOnlyHint` reads, so an
     audited or `writes` op a viewer may call is stamped like any write."""
-    if not takes_run(op) or str(getattr(op, "name", "")).startswith(_RUN_SCOPED_PREFIXES):
+    name = str(getattr(op, "name", ""))
+    if not takes_run(op) or name.startswith(_RUN_SCOPED_PREFIXES) or name in _RUN_SCOPED_OPS:
         return False
     return not op.read_only
 

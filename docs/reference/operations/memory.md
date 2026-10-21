@@ -632,7 +632,7 @@ List the session digests of a namespace.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
-| `session_id` | `str` | `'*'` | The session or conversation the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'*'` | One session's digests; "*" or "-" = every session. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `limit` | `int` | `200` | At most this many digests, oldest session first; `truncated` says more exist. |
 
@@ -682,7 +682,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `kind` | `str` | `'chunks'` | `edges` pages the namespace's live operator_edges. |
-| `session_id` | `str` | `''` | optional: one session only |
+| `session_id` | `str` | `''` | optional: one session only; "" or "-" = every session |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
 | `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text holds a high shape (a credential, card number, SSN or stated PIN). |

@@ -19,6 +19,7 @@ class MemoryDigestsInput(_Identity):
     "*" (the default of a namespace audit) or "-" lists every session; a concrete
     session id lists that one."""
 
+    # One session's digests; "*" or "-" = every session.
     session_id: str = "*"
     # At most this many digests, oldest session first; `truncated` says more exist.
     limit: int = Field(default=200, ge=1, le=2000)

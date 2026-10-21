@@ -160,3 +160,49 @@ def test_run_grade_reads_the_sentinel_as_the_unnamed_target(run_id, session_id, 
 def test_run_grade_still_needs_one_target():
     with pytest.raises(ValidationError):
         RunGradeInput(**_ID, run_id="-", session_id="-", grade="pass")
+
+
+async def test_cost_summary_reads_the_user_sentinel_as_every_user(monkeypatch):
+    from datetime import date
+
+    from server.insights.api.models_cost import CostSummaryInput
+    from server.insights.app import cost as cost_app
+    from server.insights.store import cost as cost_store
+
+    seen: list[tuple[dict[str, Any], bool]] = []
+
+    async def summary_rows(_where: str, params: dict[str, Any], *, scan: bool, **_k: Any):
+        seen.append((params, scan))
+        return []
+
+    async def ask_cache_totals(*_a: Any, **_k: Any) -> tuple[int, float]:
+        return 0, 0.0
+
+    monkeypatch.setattr(cost_app, "get_client", lambda: None)
+    monkeypatch.setattr(cost_store, "summary_rows", summary_rows)
+    monkeypatch.setattr(cost_store, "ask_cache_totals", ask_cache_totals)
+    day = date(2026, 1, 1)
+    await cost_app.handle_cost_summary(
+        CostSummaryInput(**_ID, from_date=day, to_date=day, user_id="-")
+    )
+    params, scan = seen[0]
+    assert "-" not in params.values()
+    assert scan is False
+
+
+async def test_evidence_export_reads_the_session_sentinel_as_every_session(monkeypatch):
+    from server.memory.api.models_evidence_transfer import MemoryExportEvidenceInput
+    from server.memory.app import evidence_transfer
+
+    seen: list[dict[str, Any]] = []
+
+    class _CH:
+        async def query_all(self, _sql: str, params: Any = None) -> list[Any]:
+            seen.append(params)
+            return []
+
+    monkeypatch.setattr(evidence_transfer, "get_client", lambda: _CH())
+    await evidence_transfer.handle_memory_export_evidence(
+        MemoryExportEvidenceInput(**_ID, kind="digests", session_id="-")
+    )
+    assert seen and "sid" not in seen[0]
