@@ -25,7 +25,12 @@ from typing import Any
 
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now as _now
-from server.core.errors import AuthInsufficientError, IdentityIncompleteError, NotFoundError
+from server.core.errors import (
+    AuthInsufficientError,
+    IdentityIncompleteError,
+    NotFoundError,
+    ValidationError,
+)
 from server.core.naming import SENTINEL, named, names_session
 from server.identity.app.request_scope import request_narrowed, request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, row_in_read_scope
@@ -885,6 +890,8 @@ async def handle_run_grade(input: RunGradeInput) -> RunGradeOutput:
     twice."""
     from server.memory.app import proposals as _proposals
 
+    if not (input.run_id or input.session_id):
+        raise ValidationError("pass exactly one of run_id or session_id")
     ch = get_client()
     rows = await _runs_to_grade(ch, input)
     if not rows:

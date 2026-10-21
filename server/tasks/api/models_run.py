@@ -283,9 +283,10 @@ class RunGradeInput(BaseModel):
 
     @model_validator(mode="after")
     def _one_target(self) -> RunGradeInput:
-        self.run_id = named(self.run_id) or ""
-        self.session_id = named(self.session_id) or ""
-        if bool(self.run_id.strip()) == bool(self.session_id.strip()):
+        # Naming neither is refused by the handler, after the read-scope gate.
+        self.run_id = named(self.run_id.strip()) or ""
+        self.session_id = named(self.session_id.strip()) or ""
+        if self.run_id and self.session_id:
             raise ValueError("pass exactly one of run_id or session_id")
         return self
 

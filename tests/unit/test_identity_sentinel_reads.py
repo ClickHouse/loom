@@ -174,9 +174,13 @@ def test_run_grade_reads_the_sentinel_as_the_unnamed_target(run_id, session_id, 
     assert (g.run_id, g.session_id) == target
 
 
-def test_run_grade_still_needs_one_target():
-    with pytest.raises(ValidationError):
-        RunGradeInput(**_ID, run_id="-", session_id="-", grade="pass")
+async def test_run_grade_with_only_sentinels_names_no_target(monkeypatch):
+    from server.core.errors import ValidationError as LoomValidationError
+    from server.tasks.app import run as h
+
+    monkeypatch.setattr(h, "get_client", lambda: None)
+    with pytest.raises(LoomValidationError):
+        await h.handle_run_grade(RunGradeInput(**_ID, run_id="-", session_id="-", grade="pass"))
 
 
 async def test_cost_summary_reads_the_user_sentinel_as_every_user(monkeypatch):
