@@ -118,6 +118,10 @@ class Operation:
     # through a hand-written synthetic descriptor under a name clients already
     # hold (`search.query` is the `loom_search` tool).
     mcp_tool: str = ""
+    # What an `audit=True` row records of the input; None records the whole input. An
+    # op whose input carries text an erasure must reach records a hash instead, since
+    # `loom.audit_log` outlives erasures.
+    audit_subject: Callable[[Any], dict[str, Any]] | None = None
 
     @property
     def read_only(self) -> bool:

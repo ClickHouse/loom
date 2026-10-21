@@ -134,6 +134,15 @@ schema. These rules keep that safe. The operator procedure is in
     promoted bot rule to every agent in the namespace. To keep a rule to its bot,
     delete the documents tagged `source-kind:assistant_turn` with `knowledge.delete`
     before the rollback; otherwise accept the wider serving.
+16. **A namespace guide** (`namespace.guide_set`): N-1 does not serve the guide ops,
+    shows no guide in `namespace.browse`, `namespace.get` or the session-start pack,
+    and a namespace erasure it runs has no step for `loom.namespace_guides`. So
+    `namespace.guide_set` answers 503 `OVERLOADED` while any live replica's schema
+    version (`loom.instances`) is below 65, or no heartbeat has been read: no guide is
+    written while an N-1 replica could erase its namespace. A rollback to N-1 after
+    guides exist leaves them in place, and a namespace erasure N-1 runs then leaves
+    them too; run that erasure again once N serves. `tests/unit/test_namespace_guide.py`
+    checks the refusal; the mixed-version gate does not.
 
 ## What checks them
 

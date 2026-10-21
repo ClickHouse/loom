@@ -1135,6 +1135,9 @@ export interface BrowseEntry {
   my_role?: string;
   repo?: string;
   branch?: string;
+  /** The namespace's guide, on a public row or one the caller belongs to: its current revision (0 = none) and one-line summary. */
+  guide_revision?: number;
+  guide_summary?: string;
 }
 
 export async function browseNamespaces(
@@ -1148,6 +1151,41 @@ export async function browseNamespaces(
   if (opts.includeClosed) body["include_closed"] = true;
   const r = await post<{ rows: BrowseEntry[] }>("/v1/namespace.browse", body, opts.signal);
   return r.rows;
+}
+
+/** A namespace's guide (`namespace.guide_get`); `revision` 0 when it never had one. */
+export interface NamespaceGuide {
+  found: boolean;
+  revision: number;
+  content: string;
+  summary: string;
+  note: string;
+  updated_by: string;
+  updated_at: string | null;
+}
+
+export interface GuideSaveResult {
+  written: boolean;
+  /** The guide moved past `expected_revision`: nothing was written, `current` is what is there now. */
+  conflict: boolean;
+  revision: number;
+  current: NamespaceGuide | null;
+}
+
+export async function getNamespaceGuide(
+  org: string,
+  namespace: string,
+  opts: RequestOpts = {},
+): Promise<NamespaceGuide> {
+  return post<NamespaceGuide>("/v1/namespace.guide_get", { org, namespace }, opts.signal);
+}
+
+export async function saveNamespaceGuide(
+  org: string,
+  namespace: string,
+  edit: { content: string; summary: string; note: string; expected_revision: number },
+): Promise<GuideSaveResult> {
+  return post<GuideSaveResult>("/v1/namespace.guide_set", { org, namespace, ...edit });
 }
 
 export interface JoinResponse {

@@ -121,6 +121,35 @@ async def _advisory_health(
         )
 
 
+async def _pack_namespace_guide(st: _PackState) -> None:
+    """The namespace's guide (`namespace.guide_get`): what the namespace holds and
+    how to use it, cut to the section budget, under a line naming its revision,
+    writer and summary. Nothing when the namespace has none."""
+    from server.identity.app.namespace_guide import current_guide
+
+    input = st.input
+    if not st.wanted("namespace_guide"):
+        return
+    guide = await current_guide(input.org, input.namespace)
+    if not guide.found:
+        return
+    # One item: every line of the guide indented under its head, so a line of the
+    # stored text cannot pass as an item with its own by=.
+    head = f"- [guide/{guide.revision}{author_label([guide.updated_by])}] {guide.summary}"
+    body = one_item(f"{head}\n{guide.content}")
+    budget = _section_budget(input, "namespace_guide", st.default_section_tokens["namespace_guide"])
+    # Measured as `put` stores it (escaped), which is what its trim cuts.
+    if len(escape_data(body)) > budget:
+        body = one_item(f"{head} (full text: namespace.guide_get)\n{guide.content}")
+    st.put(
+        "namespace_guide",
+        body,
+        citations=[f"guide:{guide.revision}"],
+        source_count=1,
+        extra_meta={"revision": guide.revision},
+    )
+
+
 async def _advisory_mentor(
     input: ContextPackInput, wanted: Callable[[str], bool], put: Callable[..., None]
 ) -> None:
@@ -831,6 +860,7 @@ async def _gather_sections(st: _PackState) -> None:
         _pack_working_memory(st),
         _pack_profile(st),
         _advisory_health(input, st.wanted, st.put),
+        _pack_namespace_guide(st),
         _advisory_mentor(input, st.wanted, st.put),
         _pack_memory_stack(st),
         _pack_memories(st),

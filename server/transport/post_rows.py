@@ -103,7 +103,11 @@ async def post_handler_rows(
                     org=org,
                     namespace=namespace,
                     actor=actor,
-                    subject=_audit_subject(input_obj),
+                    subject=(
+                        op.audit_subject(input_obj)
+                        if op.audit_subject
+                        else _audit_subject(input_obj)
+                    ),
                 ),
             )
         )

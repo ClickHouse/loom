@@ -311,6 +311,8 @@ _CENSUS: tuple[Substrate, ...] = (
         "learnings_queue.delete",
         "learnings_queue.delete",
     ),
+    # A namespace's guide: free text its writers wrote about the namespace.
+    Substrate("loom.namespace_guides", "1", None, "namespace_guides.delete", None),
     # Task inbox plane: the brief and the notes quote source
     # and issue text; keyed on the inbox's owner namespace, no user axis.
     Substrate("loom.tasks", "is_deleted = 0", None, "tasks.delete", None),

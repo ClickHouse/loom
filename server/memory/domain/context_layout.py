@@ -18,7 +18,16 @@ DATA_NOTE = (
 # working_memory and profile escape their own values inside their XML; the advisory
 # sections (namespace_health, mentor) are written by the server.
 RECALLED_SECTIONS = frozenset(
-    {"memory_stack", "memories", "procedures", "decisions", "knowledge", "conversations", "runs"}
+    {
+        "namespace_guide",
+        "memory_stack",
+        "memories",
+        "procedures",
+        "decisions",
+        "knowledge",
+        "conversations",
+        "runs",
+    }
 )
 
 
@@ -84,6 +93,7 @@ _DEFAULT_SECTION_ORDER = [
     "working_memory",
     "profile",
     "namespace_health",
+    "namespace_guide",
     "mentor",
     "memory_stack",
     "memories",
@@ -102,6 +112,7 @@ _DEFAULT_SECTION_TOKENS: dict[str, dict[str, int]] = {
         "working_memory": 500,
         "memory_stack": 900,
         "namespace_health": 100,
+        "namespace_guide": 200,
         "mentor": 120,
         "profile": 700,
         "memories": 500,
@@ -115,6 +126,7 @@ _DEFAULT_SECTION_TOKENS: dict[str, dict[str, int]] = {
         "working_memory": 500,
         "memory_stack": 700,
         "namespace_health": 100,
+        "namespace_guide": 200,
         "mentor": 120,
         "profile": 450,
         "memories": 750,
@@ -128,6 +140,7 @@ _DEFAULT_SECTION_TOKENS: dict[str, dict[str, int]] = {
         "working_memory": 400,
         "memory_stack": 700,
         "namespace_health": 100,
+        "namespace_guide": 200,
         "mentor": 120,
         "profile": 350,
         "memories": 900,
@@ -141,6 +154,7 @@ _DEFAULT_SECTION_TOKENS: dict[str, dict[str, int]] = {
         "working_memory": 600,
         "memory_stack": 900,
         "namespace_health": 100,
+        "namespace_guide": 200,
         "mentor": 120,
         "profile": 400,
         "memories": 700,
@@ -157,6 +171,7 @@ _BLOCK_LABELS = {
     "memory_stack": "core.memory_stack",
     "profile": "core.profile",
     "namespace_health": "core.namespace_health",
+    "namespace_guide": "core.namespace_guide",
     "memories": "recall.memories",
     "procedures": "skill.procedures",
     "decisions": "governance.decisions",
@@ -187,12 +202,13 @@ def _tokens_estimate(text: str) -> int:
 def _stable_sections(input: Any) -> set[str]:
     """Sections whose content does not depend on `query` / `situation`.
 
-    working_memory, profile, namespace_health and mentor never do. memory_stack seeds its knowledge
-    and procedure layers from the situation or query, so it is stable only
+    working_memory, profile, namespace_health, namespace_guide and mentor never do.
+    memory_stack seeds its knowledge and procedure layers from the situation or
+    query, so it is stable only
     when neither is given. The memories section is stable only for the
     zero-query startup recall (pins + recency); a query makes it a search.
     procedures, knowledge and conversations always need a query."""
-    stable = {"working_memory", "profile", "namespace_health", "mentor"}
+    stable = {"working_memory", "profile", "namespace_health", "namespace_guide", "mentor"}
     seeded = bool((input.situation or input.query or "").strip())
     if not seeded:
         stable.add("memory_stack")

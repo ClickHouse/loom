@@ -64,7 +64,9 @@ The left rail groups pages into Memory, Activity and Sources. Every page has its
 | **Settings**                 | `/settings`      | Two tabs: **Tokens** (mint and list tokens and service accounts, client setup snippets) and **Memory** (`?tab=memory`: patterns never to save, and seeding memory from a document).                                                                                                                                                                |
 
 Two views are reached from elsewhere rather than the rail: **Spaces** (`/spaces`,
-public namespaces to browse and join, opened from the namespace picker) and **Graph**
+public namespaces to browse and join, with each one's
+[guide](namespaces-and-sharing.md#a-namespaces-guide), opened from the namespace
+picker) and **Graph**
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)).
 

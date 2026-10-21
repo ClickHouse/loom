@@ -359,6 +359,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "memory_schema.list": "value schemas",
     # A narrowed token is not told the subject that set the schema (updated_by).
     "profile_schema.get": "operator configuration: property names and descriptions",
+    # The same text the session-start pack gives such a token; the writer (updated_by)
+    # is not shown. Not guide_history: it lists every revision's writer.
+    "namespace.guide_get": "the namespace's conventions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,
     # when they were seen and what they cost.

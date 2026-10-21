@@ -81,6 +81,7 @@ def test_conversations_user_scope_uses_the_user_column() -> None:
             ledger_steps.delete_learnings_queue_by_namespace,
             ["loom.learnings_supporters", "loom.learnings_queue"],
         ),
+        (ledger_steps.delete_namespace_guides_by_namespace, ["loom.namespace_guides"]),
         (ledger_steps.delete_consolidation_runs_by_namespace, ["loom.consolidation_runs"]),
         (ledger_steps.delete_projection_failures_by_namespace, ["loom.memory_projection_failures"]),
     ],

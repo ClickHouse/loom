@@ -116,6 +116,7 @@ def test_the_journal_files() -> None:
         "062_extraction_policies.sql",
         "063_memory_webhooks.sql",
         "064_learnings_agent_and_supporters.sql",
+        "065_namespace_guides.sql",
     ]
 
 

@@ -18,7 +18,10 @@ from server.transport import post_rows
 
 
 def _op(**kw: Any) -> SimpleNamespace:
-    return SimpleNamespace(name="memory.set", budget_p99_ms=10, audit=True, idempotent=True, **kw)
+    fields = {"audit_subject": None, **kw}
+    return SimpleNamespace(
+        name="memory.set", budget_p99_ms=10, audit=True, idempotent=True, **fields
+    )
 
 
 def _call(**kw: Any) -> None:
@@ -102,3 +105,34 @@ def test_the_shared_gather_never_raises_for_either_transport(caplog) -> None:
         )
     )
     assert "http audit emit failed for memory.set" in caplog.text
+
+
+def test_an_op_s_audit_subject_replaces_the_input_in_its_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subjects: list[Any] = []
+
+    async def _audit(**kw: Any) -> None:
+        subjects.append(kw["subject"])
+
+    monkeypatch.setattr(budgets, "effective_budget_ms", lambda op, b: b)
+    monkeypatch.setattr(common, "emit_op_audit", _audit)
+    op = _op(audit_subject=lambda body: {"chars": 3})
+    body = SimpleNamespace(model_dump=lambda mode: {"content": "secret"})
+    asyncio.run(
+        post_rows.post_handler_rows(
+            op,
+            transport="mcp",
+            request_id="r",
+            org="o",
+            namespace="n",
+            agent="a",
+            actor="human:x",
+            input_obj=body,
+            elapsed_ms=1,
+            response_body={"ok": True},
+            idem=(None, None),
+            replay_headers={},
+        )
+    )
+    assert subjects == [{"chars": 3}]

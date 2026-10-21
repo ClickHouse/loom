@@ -9,6 +9,7 @@ in server/identity/api/ops_namespace.py.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -33,9 +34,11 @@ from server.identity.api.models import (
     _BrowseEntry,
     _NamespaceEntry,
 )
+from server.identity.app.namespace_guide import current_guide
 from server.identity.domain import join_policy as _jp
 from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
+from server.identity.store import namespace_guides
 from server.identity.store import namespaces as namespaces_repo
 from server.memory.app import namespace_retrieval_defaults as _rd
 from server.memory.domain import code_change
@@ -529,7 +532,9 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
     # round-trip.
     from server.memory.app.namespace_types import list_type_configs
 
-    tag_registry = await list_type_configs(input.org, input.namespace)
+    tag_registry, guide = await asyncio.gather(
+        list_type_configs(input.org, input.namespace), current_guide(input.org, input.namespace)
+    )
     return NamespaceGetOutput(
         found=True,
         namespace=row["namespace"],
@@ -575,6 +580,8 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         # Only on the found branch: the transport's restricted gate has already admitted the
         # caller to this row, so the word says nothing the caller could not read.
         classification=("restricted" if row.get("classification") == "restricted" else "standard"),
+        guide_revision=guide.revision,
+        guide_summary=guide.summary,
         created_at=row["created_at"],
         updated_at=max(row["updated_at"], row["created_at"]),
     )
@@ -669,6 +676,30 @@ async def _my_standing(org: str, subject: str) -> dict[str, tuple[_Standing, str
     return out
 
 
+async def _restricted_names(org: str) -> set[str] | None:
+    """Every namespace of `org` restricted by its directory row or its repository
+    config; None when the directory cannot be read."""
+    from server.auth.directory import ClassificationUnavailable, directory
+
+    try:
+        names = set(await directory().restricted_set(org))
+    except ClassificationUnavailable:
+        return None
+    return names | directory().restricted_code_namespaces(org)
+
+
+def _guide_shown(
+    row: dict[str, Any], standing: tuple[_Standing, str], hidden: set[str] | None
+) -> bool:
+    """Whether a directory row shows its guide's summary: a public row's to the
+    org, a private code row's (listed to everyone) to its members, and never a
+    restricted row's, whose reads take a token naming it. Unknown restrictions
+    (`hidden` None) show none."""
+    if hidden is None or str(row["namespace"]) in hidden:
+        return False
+    return row.get("visibility") == "public" or standing[0] == "member"
+
+
 async def handle_namespace_browse(
     input: NamespaceBrowseInput,
 ) -> NamespaceBrowseOutput:
@@ -703,11 +734,22 @@ async def handle_namespace_browse(
         "lim": input.limit,
         "col_prefix": COLLECTION_PREFIX,
     }
+    hidden = await _restricted_names(input.org)
     if input.query:
-        where.append(
-            "(positionCaseInsensitive(n.namespace, {q:String}) > 0 "
-            "OR positionCaseInsensitive(n.description, {q:String}) > 0)"
-        )
+        match = [
+            "positionCaseInsensitive(n.namespace, {q:String}) > 0",
+            "positionCaseInsensitive(n.description, {q:String}) > 0",
+        ]
+        # A guide summary matches only where the row shows it, in SQL, before the
+        # LIMIT: whether a row (or a page's other rows) comes back must not spell out
+        # a summary the caller may not see. Unknown restrictions match none.
+        if hidden is not None:
+            match.append(
+                "(toString(n.visibility) = 'public' AND n.namespace NOT IN {hidden:Array(String)} "
+                f"AND n.namespace IN ({namespace_guides.SUMMARY_MATCH_SQL}))"
+            )
+            params["hidden"] = sorted(hidden)
+        where.append("(" + " OR ".join(match) + ")")
         params["q"] = input.query
     if input.kinds:
         where.append("ifNull(n.kind, 'memory') IN {kinds:Array(String)}")
@@ -738,6 +780,7 @@ async def handle_namespace_browse(
         """,
         params=params,
     )
+    guides = await namespace_guides.summaries(input.org, [str(r["namespace"]) for r in rows])
     caller = resolve_subject(None)
     mine: dict[str, tuple[_Standing, str]] = await _my_standing(input.org, caller) if caller else {}
     from server.code.domain.index.repos import repo_for_namespace
@@ -750,6 +793,7 @@ async def handle_namespace_browse(
         standing: tuple[_Standing, str] = mine.get(r["namespace"], ("none", ""))
         is_code = str(r.get("kind") or "memory") == "code"
         cfg = repo_for_namespace(input.org, r["namespace"]) if is_code else None
+        guide = guides.get(r["namespace"]) if _guide_shown(r, standing, hidden) else None
         out.append(
             _BrowseEntry(
                 kind=str(r.get("kind") or "memory"),
@@ -765,6 +809,8 @@ async def handle_namespace_browse(
                 my_role=standing[1],
                 repo=str(getattr(cfg, "repo", "") or ""),
                 branch=str(getattr(cfg, "git_branch", "") or ""),
+                guide_revision=int(guide["revision"]) if guide else 0,
+                guide_summary=str(guide["summary"]) if guide else "",
             )
         )
     return NamespaceBrowseOutput(rows=out)

@@ -185,6 +185,7 @@ _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
     ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_namespace),
     ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_namespace),
+    ("namespace_guides.delete", ledger_steps.delete_namespace_guides_by_namespace),
     ("tasks.delete", ledger_steps.delete_tasks_by_namespace),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_namespace),
     ("curation.tombstone", ledger_steps.tombstone_curation_by_namespace),
