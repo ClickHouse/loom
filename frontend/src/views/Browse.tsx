@@ -18,7 +18,7 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
-import { isPersonalCollection } from "../lib/namespace";
+import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
@@ -92,6 +92,7 @@ export function Browse() {
   // Per-namespace current role so the row can offer "Request upgrade"
   // when the caller is already a member but at a role below admin.
   const [myRole, setMyRole] = useState<Record<string, "viewer" | "writer" | "admin" | "jwt">>({});
+  const [mineRows, setMineRows] = useState<MyNamespaceEntry[] | null>(null);
   const [pending, setPending] = useState<Set<string>>(new Set());
   // Namespaces I can invite to (admin, active), memory ones and code / tracker ones apart.
   const [adminNs, setAdminNs] = useState<MyNamespaceEntry[]>([]);
@@ -124,6 +125,7 @@ export function Browse() {
       // Code namespaces are surfaced in the Code section, not as joinable memory.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
+      setMineRows(mineRows);
       setMine(new Set(mineRows.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRows.map((r) => [r.namespace, r.role])));
       setPending(new Set(mineRows.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
@@ -469,8 +471,8 @@ export function Browse() {
           }}
           org={identity.org}
           namespace={guideNs}
-          // `jwt`: the token names the namespace without a grant row; the server decides.
-          canEdit={["writer", "admin", "jwt"].includes(myRole[guideNs] ?? "") && !isPersonalCollection(guideNs)}
+          // The Memories header's rule, from the same rows: one answer for one caller.
+          canEdit={canEditGuide(roleOnNamespace(whoami, mineRows, guideNs), guideNs)}
           onSaved={load}
         />
       )}
@@ -497,8 +499,10 @@ interface SpaceActions {
 
 /**
  * One space: line 1 the namespace in mono and its visibility, line 2 its
- * description; at the right its member count, the one inline action and the More menu.
- * The name is the row's open button (`data-row-open`), stretched over the row.
+ * description, line 3 its guide's summary when it has one (a link to the guide for a
+ * member, raised above the open button); at the right its member count, the one inline
+ * action and the More menu. The name is the row's open button (`data-row-open`), stretched
+ * over the row.
  * Memoised: two hundred rows of badges, buttons and menus rendered again on every
  * keystroke in the search.
  */

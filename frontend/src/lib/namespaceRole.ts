@@ -3,6 +3,7 @@ import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { invalidateShared, sharedMine } from "./sharedReads";
 import { useStore } from "./state";
 import { hasAdminClaim } from "./role";
+import { isPersonalCollection } from "./namespace";
 
 /**
  * The caller's role on one namespace — what the role chip next to ScopeBadge shows and
@@ -93,4 +94,11 @@ export function useNamespaceRole(namespace: string | undefined): NamespaceRole |
     };
   }, [org, needsFetch, namespace]);
   return roleOnNamespace(whoami, stored ?? fetched, namespace ?? "");
+}
+
+/** Whether the caller may write the namespace's guide: a known writer or admin only (the
+ *  role decides which screen the guide opens on, so an unknown one reads), and never an end
+ *  user's personal collection, which takes no guide. */
+export function canEditGuide(role: NamespaceRole | null, namespace: string): boolean {
+  return (role === "writer" || role === "admin") && !isPersonalCollection(namespace);
 }

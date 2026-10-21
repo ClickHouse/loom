@@ -4,8 +4,7 @@ import { getNamespaceGuide, type Identity, type NamespaceGuide } from "../api";
 import { GuideDialog } from "../flows/GuideDialog";
 import { IconButton } from "./IconButton";
 import { useAbortableEffect } from "../lib/hooks";
-import { isPersonalCollection } from "../lib/namespace";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { canEditGuide, useNamespaceRole } from "../lib/namespaceRole";
 import { Tip } from "./ui";
 
 /**
@@ -24,9 +23,7 @@ export function NamespaceGuideButton({
   compact?: boolean;
 }) {
   const role = useNamespaceRole(identity.namespace);
-  // A known writer only: the role decides which screen the guide opens on, and an end
-  // user's personal collection takes no guide (the server refuses the save).
-  const writer = (role === "writer" || role === "admin") && !isPersonalCollection(identity.namespace);
+  const writer = canEditGuide(role, identity.namespace);
   const describedBy = useId();
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [open, setOpen] = useState(false);

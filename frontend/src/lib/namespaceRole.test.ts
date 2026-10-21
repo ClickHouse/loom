@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { canWrite, roleOnNamespace } from "./namespaceRole";
+import { canWrite, roleOnNamespace, canEditGuide } from "./namespaceRole";
 
 // The role chip and the write-CTA gate share this one rule.
 
@@ -64,5 +64,18 @@ describe("canWrite", () => {
     expect(canWrite("writer")).toBe(true);
     expect(canWrite("admin")).toBe(true);
     expect(canWrite(null)).toBe(true);
+  });
+});
+
+describe("canEditGuide", () => {
+  it("lets a known writer or admin write a namespace's guide", () => {
+    expect(canEditGuide("writer", "team")).toBe(true);
+    expect(canEditGuide("admin", "personal-alice")).toBe(true);
+  });
+
+  it("keeps a viewer, an unknown role and a personal collection reading", () => {
+    expect(canEditGuide("viewer", "team")).toBe(false);
+    expect(canEditGuide(null, "team")).toBe(false);
+    expect(canEditGuide("admin", "col-me-alice")).toBe(false);
   });
 });
