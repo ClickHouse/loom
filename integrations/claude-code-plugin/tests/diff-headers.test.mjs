@@ -187,6 +187,8 @@ test("a cut never splits a line", () => {
     const out = diffHeaders(diff, max);
     assert.ok(out.length <= max, `${max}: ${out.length}`);
     for (const line of out.split("\n").filter(Boolean)) assert.ok(diff.split("\n").includes(line), `${max}: ${line}`);
+    // a file header with no hunk after it would make the server seed the whole file
+    assert.ok(out === "" || out.split("\n").at(-1).startsWith("@@"), `${max}: ends in ${out.split("\n").at(-1)}`);
   }
 });
 

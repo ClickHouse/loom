@@ -809,9 +809,7 @@ export function hunkFunctionName(context) {
   if (/(^|[^:]):$|=$/.test(before) && !ACCESS_SPECIFIERS.has(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
   if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
-  // the identifier test above rejects `=`, `.` and a lone `:`, so a name cannot be an
-  // assignment's value; of the redaction patterns only the token shapes are applied
-  // (`SECRET_ASSIGNMENT_RE` would read a `Secret::get` scope as one)
+  // only the token shapes: SECRET_ASSIGNMENT_RE would read a `Secret::get` scope as an assignment
   return TOKEN_SHAPE_RE.test(name) ? "" : name;
 }
 
@@ -849,7 +847,11 @@ export function diffHeaders(diff, max) {
     }
     if (kept === null) continue;
     const cost = (out.length ? 1 : 0) + kept.length;
-    if (built + cost > max) break;
+    if (built + cost > max) {
+      // a file header cut off from its hunks would make the server read the whole file
+      while (out.length && !out[out.length - 1].startsWith("@@")) out.pop();
+      break;
+    }
     out.push(kept);
     built += cost;
   }
