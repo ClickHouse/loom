@@ -25,7 +25,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core.repo_base import _CHClient
-from server.memory.store.sensitivity_sweep_sql import AGENT_KEY, SORT_KEY
+from server.memory.store.sensitivity_sweep_sql import AGENT_KEY, SORT_KEY, past_agent
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
@@ -33,10 +33,6 @@ if TYPE_CHECKING:
     from server.memory.app.sensitivity_sweep import ApplyResult, SweepReport
 
 log = logging.getLogger(__name__)
-
-# The sort key columns the cursor keeps. The rest name a user and a memory, which erasure
-# does not clear from `loom.worker_status`.
-CURSOR_KEY = AGENT_KEY
 
 
 async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
@@ -97,8 +93,8 @@ def _resume_past_agent(report: SweepReport, result: ApplyResult) -> bool:
         return report.last_page_had_stale_key
     if not result.failed:
         return False
-    stopped_in = [report.resume_after[col] for col in CURSOR_KEY]
-    return all([c.sort_key[col] for col in CURSOR_KEY] == stopped_in for c, _ in result.failed)
+    stopped_in = past_agent(report.resume_after)
+    return all(past_agent(c.sort_key) == stopped_in for c, _ in result.failed)
 
 
 def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
@@ -113,10 +109,11 @@ def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:
     if not key:
         return "[]"
     if not past and len(key) == len(SORT_KEY):
-        text = json.dumps([str(key[col]) for col in CURSOR_KEY], ensure_ascii=False)
+        # The cursor keeps the agent columns only; the user and memory key would outlive an erasure.
+        text = json.dumps([str(key[col]) for col in AGENT_KEY], ensure_ascii=False)
         if len(text) <= pass_context.MAX_CURSOR:
             return text
-    columns = [col for col in CURSOR_KEY if col in key]
+    columns = [col for col in AGENT_KEY if col in key]
     while columns:
         text = json.dumps({"past": [str(key[col]) for col in columns]}, ensure_ascii=False)
         if len(text) <= pass_context.MAX_CURSOR:
@@ -136,14 +133,14 @@ def cursor_key(text: str) -> dict[str, Any] | None:
         return None
     if isinstance(parts, dict) and list(parts) == ["past"]:
         past = parts["past"]
-        if not isinstance(past, list) or not 1 <= len(past) <= len(CURSOR_KEY):
+        if not isinstance(past, list) or not 1 <= len(past) <= len(AGENT_KEY):
             return None
-        return dict(zip(CURSOR_KEY, map(str, past), strict=False))
-    if not isinstance(parts, list) or len(parts) != len(CURSOR_KEY):
+        return dict(zip(AGENT_KEY, map(str, past), strict=False))
+    if not isinstance(parts, list) or len(parts) != len(AGENT_KEY):
         return None
     key = dict.fromkeys(SORT_KEY, "")
-    key.update(zip(CURSOR_KEY, map(str, parts), strict=True))
+    key.update(zip(AGENT_KEY, map(str, parts), strict=True))
     return key
 
 
-__all__ = ["CURSOR_KEY", "cursor_key", "cursor_text", "run_pass"]
+__all__ = ["cursor_key", "cursor_text", "run_pass"]

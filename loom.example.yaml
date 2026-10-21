@@ -2922,7 +2922,7 @@ settings:
 
   # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
   # other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are
-  # left to `loom sensitivity-sweep --only-shape`. [restart]
+  # left to the operator's `loom sensitivity-sweep --apply`. [restart]
   # sensitivity_sweep_shapes: "credential,email"
 
   # Tag rows mentioning a protected attribute or common proxy with `attribute:<class>`

@@ -2421,7 +2421,7 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_pages_per_pass: Annotated[int, LIVE] = Field(default=10, ge=1, le=1000)
     # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
     # other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are
-    # left to `loom sensitivity-sweep --only-shape`.
+    # left to the operator's `loom sensitivity-sweep --apply`.
     sensitivity_sweep_shapes: str = "credential,email"
     # Tag rows mentioning a protected attribute or common proxy with
     # `attribute:<class>` at write time (gender, religion, health, age, family,
