@@ -702,11 +702,19 @@ const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----E
 const TOKEN_SHAPES_RE =
   /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
-// A typed (`api_key: str = …`, with a space before `=`, so a base64 value's `=`
-// padding is not read as one) or `:=` assignment counts; `::` is a scope operator
-// (`PrivateKey::verify`), not one.
-const SECRET_ASSIGNMENT_RE =
-  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*(?::\s*[\w.|<>[\]]{1,64}[ \t]+=[ \t]*|:=|=|:(?![:=]))\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
+// `:=` assigns; `::` is a scope operator (`PrivateKey::verify`), not an assignment.
+// A quoted value with no closing quote (cut off, as git cuts a hunk header's
+// context) goes to the end of its line.
+const SECRET_NAME = String.raw`\b[\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?`;
+const SECRET_VALUE = String.raw`("[^"]*"|'[^']*'|"[^"\n]*|'[^'\n]*|[^\s"'\\,;}]+)`;
+const SECRET_ASSIGNMENT_RE = new RegExp(String.raw`(${SECRET_NAME}\s*(?::=|=|:(?![:=]))\s*)${SECRET_VALUE}`, "gi");
+// A typed assignment (`api_key: str = "…"`): the pass above takes the type for
+// the value, so the value after the `=` that follows it goes too. `==` compares.
+// A literal value is matched; a call or a container (`= load("…")`) is not.
+const TYPED_SECRET_RE = new RegExp(
+  String.raw`(${SECRET_NAME}\s*:\s*\[redacted\][^=\n]{0,64}?[ \t]=(?!=)[ \t]*)${SECRET_VALUE}`,
+  "gi",
+);
 const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
@@ -729,6 +737,7 @@ export function redactSecrets(text, token = resolveToken()) {
     .replace(PRIVATE_KEY_RE, "[redacted private key]")
     .replace(TOKEN_SHAPES_RE, "[redacted]")
     .replace(SECRET_ASSIGNMENT_RE, (_, name, value) => name + quoted(value, "[redacted]"))
+    .replace(TYPED_SECRET_RE, (_, name, value) => name + quoted(value, "[redacted]"))
     .replace(JWT_RE, "[redacted]")
     .replace(BEARER_RE, "$1 [redacted]")
     .replace(BASIC_AUTH_RE, "$1 [redacted]")
@@ -771,8 +780,8 @@ const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/s;
  *  private key) would otherwise swallow them. The function context after a
  *  hunk header's ranges, and each hunk body on its own, are redacted, so a
  *  match never reaches past its hunk. Text before the first `diff --git` is
- *  redacted as a body. Reading stops once `max` chars plus the redaction margin
- *  are built. */
+ *  redacted as a body. Redaction stops once `max` chars plus the redaction
+ *  margin are built. */
 export function redactDiff(diff, max, token = resolveToken()) {
   const out = [];
   let built = 0;

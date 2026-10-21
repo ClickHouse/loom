@@ -2,7 +2,7 @@
 // (`+++ ` paths and `@@` hunk headers) and stays within the server's bound.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { redactDiff } from "../lib/loom-client.mjs";
+import { redactDiff, redactSecrets } from "../lib/loom-client.mjs";
 
 const DIFF = [
   "diff --git a/app.env b/app.env",
@@ -126,4 +126,33 @@ test("the result never exceeds the bound, with or without redactions", () => {
   const withSecret = big.replace(body, "+token=" + "z".repeat(40) + "\n");
   assert.ok(redactDiff(withSecret, 200_000, "").length <= 200_000);
   assert.ok(redactDiff("x".repeat(210_000), 200_000, "").length <= 200_000);
+});
+
+test("assignment shapes: the value goes, the code around it stays", () => {
+  const cases = [
+    // [input, a secret that must not survive, text that must survive]
+    ["token: abc123secret == expected", "abc123secret", "== expected"],
+    ["token: abc123==", "abc123", "token: "],
+    ['api_key: str | None = "s3cr3t-union"', "s3cr3t-union", "api_key: "],
+    ['let api_key: &str = "s3cr3t-ref"', "s3cr3t-ref", "let api_key: "],
+    ['token: dict[str, str] = "s3cr3t-dict"', "s3cr3t-dict", "token: "],
+    ['apiKey := "s3cr3t-go"', "s3cr3t-go", "apiKey :="],
+    ['SECRET_KEY="s3cr3t-unterminated', "s3cr3t-unterminated", "SECRET_KEY="],
+    ["x = PrivateKey::verify(a)", null, "PrivateKey::verify(a)"],
+  ];
+  for (const [input, secret, kept] of cases) {
+    const out = redactSecrets(input, "");
+    if (secret) assert.ok(!out.includes(secret), `${input} -> ${out}`);
+    assert.ok(out.includes(kept), `${input} -> ${out}`);
+  }
+  const twoLines = redactSecrets('SECRET_KEY="s3cr3t-cut\nnext line stays', "");
+  assert.ok(twoLines.includes("next line stays"), twoLines);
+});
+
+test("a quoted secret cut off in a hunk header's context is redacted", () => {
+  const ctx = 'SECRET_KEY="' + "v".repeat(60);
+  const diff = ["diff --git a/.env b/.env", "+++ b/.env", `@@ -3 +3 @@ ${ctx}`, "-X=1", "+X=2", ""].join("\n");
+  const out = redactDiff(diff, 200_000, "");
+  assert.ok(!out.includes("vvvv"), out);
+  assert.ok(out.includes("@@ -3 +3 @@ SECRET_KEY="), out);
 });
