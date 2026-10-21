@@ -23,4 +23,16 @@ class DefaultChange:
 
 
 # Oldest first.
-DEFAULT_CHANGES: tuple[DefaultChange, ...] = ()
+DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
+    DefaultChange(
+        version="1.0.0",
+        name="extraction_queue_max_attempts",
+        old=3,
+        new=8,
+        why=(
+            "A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, "
+            "and an unreachable provider spends none: eight attempts span about two hours "
+            "instead of three back to back."
+        ),
+    ),
+)

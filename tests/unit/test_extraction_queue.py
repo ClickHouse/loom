@@ -16,13 +16,16 @@ CH-free: the CH client is a stub.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
+from server.core.errors import ModelCallDeferred, ModelCallRefused
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.llm.identity import IdentityUnread
 from server.memory.api.models_bulk import MemorySetFromMessagesInput, _Message
 from server.memory.app import extraction_queue as q
 from server.memory.app import extraction_queue as queue
@@ -715,3 +718,208 @@ def test_the_supervisor_pass_reads_its_config_from_settings(
     assert worker._config_from_settings() == worker.ExtractionQueueConfig(
         max_batches_per_pass=5, lease_seconds=120, max_attempts=2, namespace_concurrency=1
     )
+
+
+# ---------------------------------------------------------------- held, backoff, TTL
+
+
+def _replaying(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> StubCH:
+    """A queue holding one claimed row (two attempts spent) whose replay raises `error`."""
+    ch = StubCH()
+    ch.query_all_returns = [[_stored_row(queue_id="q1", attempts=2)]]
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+
+    async def _fake_handler(inp: Any) -> Any:
+        raise error
+
+    from server.memory.app.extract import handler as extract_handler_mod
+
+    monkeypatch.setattr(extract_handler_mod, "handle_memory_set_from_messages", _fake_handler)
+    return ch
+
+
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://gateway.example/v1/chat/completions")
+    response = httpx.Response(status, request=request)
+    return httpx.HTTPStatusError(f"{status}", request=request, response=response)
+
+
+def test_a_failed_attempt_waits_15_s_then_a_minute_then_5_then_30() -> None:
+    assert [q.backoff_s(n) for n in range(1, 8)] == [15, 60, 300, 1800, 1800, 1800, 1800]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_attempt_is_claimed_again_only_after_its_backoff() -> None:
+    ch = StubCH()
+    before = datetime.now(UTC)
+    row = _stored_row(status=q.STATUS_RUNNING, attempts=1)
+    assert await q.mark_error(row, error="x", max_attempts=8, ch=ch) == q.STATUS_PENDING
+    written = ch.inserts[-1][1][0]
+    assert written["attempts"] == 2
+    assert timedelta(seconds=59) < written["lease_until"] - before <= timedelta(seconds=61)
+    last = _stored_row(status=q.STATUS_RUNNING, attempts=7)
+    assert await q.mark_error(last, error="x", max_attempts=8, ch=ch) == q.STATUS_FAILED
+    assert ch.inserts[-1][1][0]["lease_until"] == datetime(1970, 1, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("no route to the gateway"),
+        httpx.ReadTimeout("the gateway did not answer"),
+        TimeoutError(),
+        _status_error(502),
+        _status_error(503),
+        _status_error(504),
+    ],
+)
+async def test_an_unreachable_provider_spends_no_attempt(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    ch = _replaying(monkeypatch, error)
+    before = datetime.now(UTC)
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    written = ch.inserts[-1][1][0]
+    assert (res.unreachable, res.failures) == (1, [])
+    assert (written["status"], written["attempts"]) == (q.STATUS_PENDING, 2)
+    assert written["last_error"].startswith("unreachable: ")
+    # the wait the next attempt would have: the third's, 5 minutes
+    assert timedelta(seconds=299) < written["lease_until"] - before <= timedelta(seconds=301)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_500_still_spends_an_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
+    ch = _replaying(monkeypatch, _status_error(500))
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=8))
+    written = ch.inserts[-1][1][0]
+    assert res.unreachable == 0 and res.failures == ["q1: pending"]
+    assert written["attempts"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "hold"),
+    [
+        (ModelCallRefused("refused", hold_s=600.0, gateway_status=429), 600),
+        (ModelCallDeferred("wait", hold_s=1.0, gateway_status=429, retry_after_s=1), 1),
+        (IdentityUnread("the identity headers could not read namespace o/n"), 30),
+    ],
+)
+async def test_a_held_replay_is_marked_held_with_its_reason_until_its_hold_ends(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException, hold: int
+) -> None:
+    ch = _replaying(monkeypatch, error)
+    before = datetime.now(UTC)
+    res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
+    written = ch.inserts[-1][1][0]
+    assert (res.skipped, res.failures) == (1, [])
+    assert (written["status"], written["attempts"]) == (q.STATUS_HELD, 2)  # not `running`
+    assert written["last_error"].startswith(f"held: {type(error).__name__}")
+    left = written["lease_until"] - before
+    assert timedelta(seconds=hold - 1) < left <= timedelta(seconds=hold + 1)
+
+
+class _Queue:
+    """loom.memory_extraction_queue as the claim reads it: each row's newest version,
+    the waiting rows past their lease, less every enqueuer, namespace and user with
+    a request held now, the oldest first, at most `lim`."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = {r["queue_id"]: r for r in rows}
+        self.sql: list[str] = []
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
+        params = params or {}
+        self.sql.append(sql)
+        now = datetime.now(UTC)
+        held = {
+            _attribution(r)
+            for r in self.rows.values()
+            if r["status"] == q.STATUS_HELD and r["lease_until"] >= now
+        }
+        live = [
+            r
+            for r in self.rows.values()
+            if r["status"] in params["waiting"]
+            and r["lease_until"] < now
+            and _attribution(r) not in held
+        ]
+        return [dict(r) for r in sorted(live, key=lambda r: r["enqueued_at"])[: params["lim"]]]
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
+        self.rows.update({r["queue_id"]: r for r in rows})
+
+
+def _attribution(r: dict[str, Any]) -> tuple[str, str, str, str]:
+    return (r["org"], r["namespace"], r["user_id"], q.enqueued_actor(r))
+
+
+def _queued(queue_id: str, by: str, minute: int, **kw: Any) -> dict[str, Any]:
+    payload, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by=by)
+    enqueued = datetime(2026, 9, 12, 8, minute, tzinfo=UTC)
+    return _stored_row(queue_id=queue_id, payload=payload, enqueued_at=enqueued, **kw)
+
+
+@pytest.mark.asyncio
+async def test_the_claim_takes_other_work_while_an_enqueuer_is_held() -> None:
+    later = datetime.now(UTC) + timedelta(minutes=10)
+    table = _Queue(
+        [
+            _queued("a-held", "process:sa:t:agent-a", 0, status=q.STATUS_HELD, lease_until=later),
+            _queued("a-next", "process:sa:t:agent-a", 1),  # the oldest pending
+            _queued("b-1", "process:sa:t:agent-b", 2),
+            _queued("b-2", "process:sa:t:agent-b", 3),
+        ]
+    )
+    claimed = await q.claim_batch(limit=1, lease_seconds=600, ch=table)
+    assert [r["queue_id"] for r in claimed] == ["b-1"]  # not agent-a's, which would be held
+    assert "WHERE status = {held:String} AND lease_until >= now64(3)" in table.sql[0]
+    table.rows["a-held"]["lease_until"] = datetime.now(UTC) - timedelta(seconds=1)
+    claimed = await q.claim_batch(limit=3, lease_seconds=600, ch=table)
+    assert [r["queue_id"] for r in claimed] == ["a-held", "a-next", "b-2"]  # the hold is over
+
+
+@pytest.mark.asyncio
+async def test_a_request_still_waiting_on_its_last_day_is_dropped_with_a_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import drops
+
+    ch = StubCH()
+    held = _stored_row(queue_id="h", status=q.STATUS_HELD, last_error="held: refused")
+    ch.query_all_returns = [[held, _stored_row(queue_id="p")]]
+    recorded: list[tuple[list[Any], str, str]] = []
+
+    async def write_drops(items: list[Any], stage: str, reason: str, *, ch: Any = None) -> None:
+        recorded.append((items, stage, reason))
+
+    monkeypatch.setattr(drops, "write_drops", write_drops)
+    assert await q.drop_expiring(ch=ch) == 2
+    sql, params = ch.query_all_calls[0]
+    assert "toIntervalDay({days:UInt32})" in sql and params["days"] == q.TTL_DAYS - 1
+    assert set(params["waiting"]) == {q.STATUS_PENDING, q.STATUS_RUNNING, q.STATUS_HELD}
+    assert recorded == [
+        ([("o", "n", "h")], "extraction_queue", "held_past_ttl"),
+        ([("o", "n", "p")], "extraction_queue", "waited_past_ttl"),
+    ]
+    marked = ch.inserts[-1][1]
+    assert [r["status"] for r in marked] == [q.STATUS_FAILED, q.STATUS_FAILED]
+    assert "(held: refused)" in marked[0]["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_held_batches_count_as_not_yet_extracted() -> None:
+    ch = StubCH()
+    ch.query_one_returns = [{"n": 3}]
+    assert await q.pending_count(org="o", namespace="n", ch=ch) == 3
+    sql, params = ch.query_one_calls[0]
+    assert "status IN {waiting:Array(String)}" in sql and q.STATUS_HELD in params["waiting"]
+
+
+def test_the_ttl_drop_follows_the_tables_ttl() -> None:
+    from pathlib import Path
+
+    ddl = (Path(__file__).resolve().parents[2] / "schemas" / "schema.sql").read_text()
+    table = ddl.split("CREATE TABLE IF NOT EXISTS loom.memory_extraction_queue", 1)[1]
+    assert f"TTL enqueued_at + toIntervalDay({q.TTL_DAYS})" in table.split(";", 1)[0]

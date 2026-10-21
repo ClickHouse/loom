@@ -95,12 +95,18 @@ last `--days` are left alone. It never deletes.
 | Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS` | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) onto the queue.        |
 
 The `extraction_queue` worker replays a deferred request through the same handler. A
-failed replay retries until `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS`, then becomes `failed`
-with `last_error`. `memory.extraction_status` reports batches by `queue_id` or `status`
-(`pending`, `running`, `done`, `failed`); a token bounded to one user sees only that
-user's batches. Until a batch runs, `memory.search` and
-`memory.ask` report `pending_extraction`. With the worker off, deferred saves stay
-`pending`.
+failed replay waits 15 seconds, then 1, 5 and 30 minutes between attempts, and after
+`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` (8) becomes `failed` with `last_error`. A model
+provider or gateway that cannot be reached (no connection, a timeout, 502, 503 or 504)
+spends no attempt. A replay whose model call is held (the org's model calls switched off,
+or the enqueuer's identity refused or asked to wait by the gateway) becomes `held` with the
+reason until the hold ends, also with no attempt spent; meanwhile the worker claims other
+work, none of that enqueuer's requests in the namespace. A request still waiting a day
+before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
+`memory.extraction_status` reports batches by `queue_id` or `status` (`pending`,
+`running`, `held`, `done`, `failed`); a token bounded to one user sees only that user's
+batches. Until a batch runs, `memory.search` and `memory.ask` report
+`pending_extraction`. With the worker off, deferred saves stay `pending`.
 
 ## Operations
 

@@ -2374,10 +2374,10 @@
           "description": "Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass."
         },
         "extraction_queue_max_attempts": {
-          "default": 3,
+          "default": 8,
           "minimum": 0,
           "type": "integer",
-          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed."
+          "description": "Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none."
         },
         "extraction_queue_max_batches_per_pass": {
           "default": 8,

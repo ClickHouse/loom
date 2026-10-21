@@ -390,8 +390,10 @@ gateway.
   provider failure, never retried, and another 429 a rate limit, retried.
 - **Skip, not stall.** A job leaves held work out of its next selections while the hold
   lasts (`server/workers/holds.py`), so its batch goes to other identities' work instead of
-  filling again with work that would only be held. The profile fold leaves the identity out of
-  its scan; the embedding worker leaves the held stubs out and, while any identity is held,
+  filling again with work that would only be held. The extraction queue marks the request
+  `held` with the reason until the hold ends, and claims none of that enqueuer's other
+  requests in the namespace meanwhile; the profile fold leaves the identity out of its scan;
+  the embedding worker leaves the held stubs out and, while any identity is held,
   reads four times its batch and drops the held identities' stubs before calling. The batch
   embedders (the embedding workers, `loom reembed`, a model rebuild) hold one group at a time
   (`customer.GROUP_HOLDS`: an org switched off, an identity refused, asked to wait or unread),

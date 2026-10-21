@@ -11256,7 +11256,7 @@ class MemoryExtractionStatusInput(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     queue_id: NotRequired[str]
-    status: NotRequired[Literal["", "pending", "running", "done", "failed"]]
+    status: NotRequired[Literal["", "pending", "running", "held", "done", "failed"]]
     limit: NotRequired[int]
 
 
@@ -11270,7 +11270,7 @@ class MemoryExtractionStatusBody(TypedDict, total=False):
     session_id: NotRequired[str]
     run_id: NotRequired[str]
     queue_id: NotRequired[str]
-    status: NotRequired[Literal["", "pending", "running", "done", "failed"]]
+    status: NotRequired[Literal["", "pending", "running", "held", "done", "failed"]]
     limit: NotRequired[int]
 
 

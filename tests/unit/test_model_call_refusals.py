@@ -408,7 +408,9 @@ def test_the_extraction_queue_leaves_a_refused_row_without_spending_an_attempt(
 
     async def replay(row: dict[str, Any]) -> int:
         if row["queue_id"] == "a":
-            raise ModelCallRefused("refused", gateway_status=429, gateway_code="budget_exceeded")
+            raise ModelCallRefused(
+                "refused", hold_s=600.0, gateway_status=429, gateway_code="budget_exceeded"
+            )
         return 2
 
     async def mark_done(row: dict[str, Any], **_: Any) -> None:
@@ -418,17 +420,24 @@ def test_the_extraction_queue_leaves_a_refused_row_without_spending_an_attempt(
         errors.append(row["queue_id"])
         return "pending"
 
+    async def mark_held(row: dict[str, Any], *, reason: str, seconds: float, **_: Any) -> None:
+        held.append((row["queue_id"], reason.split(":")[0], seconds))
+
     async def off() -> frozenset[str]:
         return frozenset()
 
+    held: list[tuple[str, str, float]] = []
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
     monkeypatch.setattr(customer, "switched_off_orgs", off)
     for name, fn in (("claim_batch", claim), ("drop_waiting", drop), ("replay_row", replay)):
         monkeypatch.setattr(q, name, fn)
+    monkeypatch.setattr(q, "drop_expiring", drop)
     monkeypatch.setattr(q, "mark_done", mark_done)
     monkeypatch.setattr(q, "mark_error", mark_error)
+    monkeypatch.setattr(q, "mark_held", mark_held)
     result = asyncio.run(worker.run_pass(worker.ExtractionQueueConfig()))
     assert (result.skipped, done, errors) == (1, ["b"], [])
+    assert held == [("a", "ModelCallRefused", 600.0)]  # held for its cooldown, not `running`
 
 
 def test_the_embedding_worker_leaves_a_refused_identitys_rows(wire, monkeypatch) -> None:

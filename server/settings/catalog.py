@@ -1886,8 +1886,10 @@ class ExtractionSettings(BaseModel):
     # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping
     # worker may claim a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
-    # Attempts before a failing batch stops returning to `pending` and is marked failed.
-    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=0)
+    # Attempts before a failing batch stops returning to `pending` and is marked failed;
+    # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
+    # gateway that cannot be reached, or a held call, spends none.
+    extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
     extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)

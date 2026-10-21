@@ -4459,7 +4459,7 @@ export interface MemoryExtractionStatusInput {
   session_id?: string;
   run_id?: string;
   queue_id?: string;
-  status?: "" | "pending" | "running" | "done" | "failed";
+  status?: "" | "pending" | "running" | "held" | "done" | "failed";
   limit?: number;
 }
 

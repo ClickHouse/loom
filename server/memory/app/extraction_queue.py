@@ -10,11 +10,19 @@ Row lifecycle on `loom.memory_extraction_queue` (ReplacingMergeTree(version),
 every transition is a full mirrored row):
 
     pending --claim--> running --done--> done
-                          \\--error--> pending (attempts+1)  | failed (>= max)
+                          |--error--> pending (attempts+1, backoff) | failed (>= max)
+                          |--unreachable--> pending (backoff, no attempt spent)
+                          \\--held--> held (until the hold ends, no attempt spent)
 
-A `running` row whose `lease_until` has passed is reclaimable: a worker that
-died mid-extraction does not strand the batch. Extraction is idempotent under
-the memory plane's hash dedup, so a rare double replay writes no second copy.
+`lease_until` is when a row may be claimed (again): a `running` row whose lease
+has passed is reclaimable, so a worker that died mid-extraction does not strand
+the batch; a failed attempt waits 15 s, 1, 5, then 30 minutes; a `held` row (its
+org switched off, or its identity refused, asked to wait or unread) waits for its
+hold, and while it does the enqueuer's other requests in that namespace and for
+that user are not claimed either. A request still waiting a day before the
+table's 30-day TTL is dropped with a memory_drops record, never removed unseen.
+Extraction is idempotent under the memory plane's hash dedup, so a rare double
+replay writes no second copy.
 """
 
 from __future__ import annotations
@@ -35,8 +43,21 @@ TABLE = "loom.memory_extraction_queue"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
+STATUS_HELD = "held"
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
+# Not yet extracted: what `pending_count` counts and the TTL drop looks at.
+WAITING = (STATUS_PENDING, STATUS_RUNNING, STATUS_HELD)
+
+# The wait before the next claim after a failed attempt, by attempts so far (the last
+# repeats); after the model provider or gateway could not be reached, the wait the
+# next attempt would have, no attempt spent.
+_BACKOFF_S = (15, 60, 300, 1800)  # not a setting: 15 s, a minute, 5 minutes, 30 minutes
+# The table's TTL (`enqueued_at + 30 days`), and a waiting request's last day in it,
+# when it is dropped with a record instead of removed unseen.
+TTL_DAYS = 30  # not a setting: the table's DDL (schemas/schema.sql) sets it
+_LAST_DAY = TTL_DAYS - 1  # not a setting: follows the table's TTL
+_DROP_PER_PASS = 500  # not a setting: the rest are dropped on the next passes
 
 # Columns of the queue table, in insert order. A new column belongs here AND in
 # `_mirror` — the RMT contract is the same as loom.memory's.
@@ -158,6 +179,11 @@ def _mirror(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
     return out
 
 
+def backoff_s(attempts: int) -> int:
+    """The wait before the claim after the `attempts`-th failed attempt."""
+    return _BACKOFF_S[min(max(attempts, 1), len(_BACKOFF_S)) - 1]
+
+
 async def claim_batch(
     *,
     limit: int,
@@ -167,10 +193,13 @@ async def claim_batch(
     namespace_filter: str | None = None,
     exclude_orgs: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Oldest pending (or lease-expired running) rows, rewritten `running`
-    with a fresh lease. Returns the claimed rows (post-rewrite projection).
-    `exclude_orgs` (orgs whose model calls are switched off) leaves their rows
-    pending and unclaimed.
+    """The oldest claimable rows (pending, lease-expired running, or held past
+    their hold, each past its `lease_until`), rewritten `running` with a fresh
+    lease. Returns the claimed rows (post-rewrite projection). `exclude_orgs`
+    (orgs whose model calls are switched off) leaves their rows unclaimed, and so
+    does a request held now its enqueuer's other requests in that namespace and
+    for that user: the batch is other work, never rows that would only be held
+    again.
 
     FINAL collapses the RMT so a row already marked done by another replica is
     not seen as pending. The claim write itself is not atomic across replicas;
@@ -181,8 +210,9 @@ async def claim_batch(
     ch = ch or get_client()
     scope = ""
     params: dict[str, Any] = {
-        "pending": STATUS_PENDING,
-        "running": STATUS_RUNNING,
+        "waiting": list(WAITING),
+        "held": STATUS_HELD,
+        "by": ENQUEUED_BY_KEY,
         "lim": int(limit),
     }
     if org_filter is not None:
@@ -199,8 +229,13 @@ async def claim_batch(
         f"""
         SELECT {cols}
         FROM {TABLE} FINAL
-        WHERE (status = {{pending:String}}
-               OR (status = {{running:String}} AND lease_until < now64(3)))
+        WHERE status IN {{waiting:Array(String)}} AND lease_until < now64(3)
+          -- an enqueuer, namespace and user with a request held now: none claimed
+          AND (org, namespace, user_id, JSONExtractString(payload, {{by:String}})) NOT IN (
+              SELECT org, namespace, user_id, JSONExtractString(payload, {{by:String}})
+              FROM {TABLE} FINAL
+              WHERE status = {{held:String}} AND lease_until >= now64(3)
+          )
           {scope}
         ORDER BY enqueued_at ASC
         LIMIT {{lim:UInt32}}
@@ -235,27 +270,73 @@ async def mark_error(
     max_attempts: int,
     ch: Any | None = None,
 ) -> str:
-    """Record a failed attempt. Back to `pending` while attempts remain,
-    `failed` once `max_attempts` is reached. Returns the new status."""
+    """Record a failed attempt. Back to `pending` while attempts remain, claimed
+    again after `backoff_s(attempts)`; `failed` once `max_attempts` is reached.
+    Returns the new status."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
     attempts = int(row.get("attempts") or 0) + 1
-    status = STATUS_FAILED if attempts >= max(1, int(max_attempts)) else STATUS_PENDING
+    failed = attempts >= max(1, int(max_attempts))
     await ch.insert(
         TABLE,
         [
             _mirror(
                 row,
-                status=status,
+                status=STATUS_FAILED if failed else STATUS_PENDING,
                 attempts=attempts,
                 last_error=str(error)[:2000],
-                lease_until=_EPOCH,
+                lease_until=_EPOCH if failed else _now() + timedelta(seconds=backoff_s(attempts)),
             )
         ],
         settings=_SYNC,
     )
-    return status
+    return STATUS_FAILED if failed else STATUS_PENDING
+
+
+async def mark_unreachable(row: dict[str, Any], *, error: str, ch: Any | None = None) -> None:
+    """The model provider or gateway could not be reached: back to `pending` with
+    no attempt spent, claimed again after the wait the next attempt would have."""
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    wait = backoff_s(int(row.get("attempts") or 0) + 1)
+    await ch.insert(
+        TABLE,
+        [
+            _mirror(
+                row,
+                status=STATUS_PENDING,
+                last_error=f"unreachable: {error}"[:2000],
+                lease_until=_now() + timedelta(seconds=wait),
+            )
+        ],
+        settings=_SYNC,
+    )
+
+
+async def mark_held(
+    row: dict[str, Any], *, reason: str, seconds: float, ch: Any | None = None
+) -> None:
+    """The replay's model call was held (its org switched off, its identity refused,
+    asked to wait or unread): `held` with the reason, no attempt spent, claimable
+    once the hold ends; meanwhile no other request of its enqueuer, namespace and
+    user is claimed (`claim_batch`)."""
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    await ch.insert(
+        TABLE,
+        [
+            _mirror(
+                row,
+                status=STATUS_HELD,
+                last_error=f"held: {reason}"[:2000],
+                lease_until=_now() + timedelta(seconds=max(0.0, float(seconds))),
+            )
+        ],
+        settings=_SYNC,
+    )
 
 
 async def drop_waiting(
@@ -279,8 +360,7 @@ async def drop_waiting(
     ch = ch or get_client()
     scope = ""
     params: dict[str, Any] = {
-        "pending": STATUS_PENDING,
-        "running": STATUS_RUNNING,
+        "waiting": list(WAITING),
         "orgs": sorted(orgs),
         "days": int(older_than_days),
         "lim": settings.model_calls_off_drop_per_pass,
@@ -296,7 +376,7 @@ async def drop_waiting(
         f"""
         SELECT {cols}
         FROM {TABLE} FINAL
-        WHERE status IN ({{pending:String}}, {{running:String}})
+        WHERE status IN {{waiting:Array(String)}}
           AND has({{orgs:Array(String)}}, org)
           AND enqueued_at < now64(3) - toIntervalDay({{days:UInt32}})
           AND org IN (
@@ -326,6 +406,68 @@ async def drop_waiting(
     return len(rows)
 
 
+async def drop_expiring(
+    *,
+    ch: Any | None = None,
+    org_filter: str | None = None,
+    namespace_filter: str | None = None,
+) -> int:
+    """Drop the requests still waiting (pending, running or held) on their last day
+    before the table's TTL would remove them, each with a memory_drops record
+    (reason `held_past_ttl` for one held, `waited_past_ttl` for any other) written
+    before it is marked `failed`. Returns how many."""
+    from server.core.ch import get_client
+    from server.memory.app.drops import write_drops
+
+    ch = ch or get_client()
+    scope = ""
+    params: dict[str, Any] = {"waiting": list(WAITING), "days": _LAST_DAY, "lim": _DROP_PER_PASS}
+    if org_filter is not None:
+        scope += " AND org = {org_f:String}"
+        params["org_f"] = org_filter
+    if namespace_filter is not None:
+        scope += " AND namespace = {ns_f:String}"
+        params["ns_f"] = namespace_filter
+    cols = ", ".join(COLUMNS)
+    rows = await ch.query_all(
+        f"""
+        SELECT {cols}
+        FROM {TABLE} FINAL
+        WHERE status IN {{waiting:Array(String)}}
+          AND enqueued_at < now64(3) - toIntervalDay({{days:UInt32}})
+          {scope}
+        ORDER BY enqueued_at ASC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+    if not rows:
+        return 0
+    for reason, held in (("held_past_ttl", True), ("waited_past_ttl", False)):
+        items = [
+            (str(r["org"]), str(r["namespace"]), str(r.get("queue_id") or ""))
+            for r in rows
+            if (r.get("status") == STATUS_HELD) is held
+        ]
+        if items:
+            await write_drops(items, "extraction_queue", reason, ch=ch)
+    why = f"dropped: still waiting after {_LAST_DAY} days, a day before the {TTL_DAYS}-day TTL"
+    await ch.insert(
+        TABLE,
+        [
+            _mirror(
+                dict(r),
+                status=STATUS_FAILED,
+                last_error=f"{why} ({r.get('last_error') or 'never run'})"[:2000],
+                lease_until=_EPOCH,
+            )
+            for r in rows
+        ],
+        settings=_SYNC,
+    )
+    return len(rows)
+
+
 async def pending_count(
     *,
     org: str,
@@ -334,19 +476,14 @@ async def pending_count(
     user_id: str | None = None,
     ch: Any | None = None,
 ) -> int:
-    """Batches not yet extracted (pending or running) in the scope a reader
+    """Batches not yet extracted (pending, running or held) in the scope a reader
     is searching. `agent="*"` / None and `user_id` None widen the scope the
     way memory.search does."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
     scope = ""
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        "pending": STATUS_PENDING,
-        "running": STATUS_RUNNING,
-    }
+    params: dict[str, Any] = {"org": org, "ns": namespace, "waiting": list(WAITING)}
     if agent and agent != "*":
         scope += " AND agent = {agent:String}"
         params["agent"] = agent
@@ -358,7 +495,7 @@ async def pending_count(
         SELECT count() AS n
         FROM {TABLE} FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND status IN ({{pending:String}}, {{running:String}})
+          AND status IN {{waiting:Array(String)}}
           {scope}
         """,
         params=params,
@@ -424,15 +561,22 @@ __all__ = [
     "READ_SCOPE_KEY",
     "STATUS_DONE",
     "STATUS_FAILED",
+    "STATUS_HELD",
     "STATUS_PENDING",
     "STATUS_RUNNING",
     "TABLE",
+    "TTL_DAYS",
+    "WAITING",
+    "backoff_s",
     "claim_batch",
+    "drop_expiring",
     "enqueue",
     "enqueued_actor",
     "list_status",
     "mark_done",
     "mark_error",
+    "mark_held",
+    "mark_unreachable",
     "payload_for",
     "pending_count",
 ]
