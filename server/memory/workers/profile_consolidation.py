@@ -45,6 +45,9 @@ log = logging.getLogger(__name__)
 # until its hold ends: the selection leaves them out meanwhile, so the pass's slots go to
 # identities whose fold can run.
 _HELD: Held[tuple[str, str, str]] = Held()
+# A pass reads this many times its slots: an identity whose fold is held in the pass
+# (a hold outlasts no pass of a six-hourly fold) gives its slot to the next one read.
+_OVERFETCH = 4  # not a setting: room for the held identities at the top of the ranking
 
 _FOLD_SYSTEM = (
     "You maintain a concise standing profile for an AI assistant. Given a list "
@@ -133,7 +136,7 @@ async def run_pass(
             """.replace("/*held*/", held_sql),
             params={
                 "minm": int(cfg.min_memories),
-                "lim": int(max(1, cfg.max_identities_per_pass)),
+                "lim": int(max(1, cfg.max_identities_per_pass)) * _OVERFETCH,
                 "types": ["preference", "decision"],
                 "label": cfg.label,
                 "cool": int(max(0, cfg.cooldown_seconds)),
@@ -143,29 +146,43 @@ async def run_pass(
                 "cli": CLI_ACTOR_PREFIX,
             },
         )
-        result.identities_scanned = len(identities)
-        for row in identities:
-            try:
-                if await _consolidate_identity(ch, row, cfg):
-                    result.profiles_written += 1
-            except customer.GROUP_HOLDS as e:
-                # A held call is no failure: the identity is folded once its org or
-                # identity is back, and takes no slot until its hold ends.
-                _HELD.hold(
-                    [(str(row["org"]), str(row["namespace"]), str(row["user_id"]))], hold_seconds(e)
-                )
-            except customer.HOLDS:
-                continue  # a switch gone unread holds every identity: the next pass tries
-            except Exception as e:
-                result.errors += 1
-                log.exception("profile consolidation failed for %s", dict(row))
-                pass_context.note_failure(e, str(row.get("namespace") or ""))
+        await _fold(ch, identities, cfg, result)
         rec.outcome = {
             "identities_scanned": result.identities_scanned,
             "profiles_written": result.profiles_written,
             "errors": result.errors,
         }
     return result
+
+
+async def _fold(
+    ch: Any,
+    identities: list[dict[str, Any]],
+    cfg: ProfileConsolidationConfig,
+    result: ProfileConsolidationResult,
+) -> None:
+    """Fold `identities` in their order until the pass's slots are spent. A held
+    fold is no failure and takes no slot: the identity is left out of the next
+    selections until its hold ends, and the next identity read takes its place."""
+    slots = max(1, cfg.max_identities_per_pass)
+    for row in identities:
+        if slots <= 0:
+            break
+        result.identities_scanned += 1
+        try:
+            if await _consolidate_identity(ch, row, cfg):
+                result.profiles_written += 1
+            slots -= 1
+        except customer.GROUP_HOLDS as e:
+            key = (str(row["org"]), str(row["namespace"]), str(row["user_id"]))
+            _HELD.hold([key], hold_seconds(e))
+        except customer.HOLDS:
+            return  # a switch gone unread holds every identity: the next pass tries
+        except Exception as e:
+            slots -= 1
+            result.errors += 1
+            log.exception("profile consolidation failed for %s", dict(row))
+            pass_context.note_failure(e, str(row.get("namespace") or ""))
 
 
 async def _consolidate_identity(

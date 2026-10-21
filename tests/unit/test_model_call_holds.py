@@ -237,12 +237,14 @@ def test_the_profile_fold_gives_a_held_identitys_slot_to_the_next(clock, monkeyp
         switch_off()
         return asyncio.run(w.run_pass(w.ProfileConsolidationConfig(max_identities_per_pass=1)))
 
-    assert run().errors == 0 and folded == ["u-big"]  # a held fold is no failure
-    assert run().profiles_written == 1 and folded == ["u-big", "u-small"]
-    assert ch.sent[1]["held"] == [("acme", "n", "u-big")]
+    first = run()  # one slot: the held identity gives it to the next one read
+    assert (first.errors, first.profiles_written) == (0, 1)
+    assert folded == ["u-big", "u-small"] and ch.sent[0]["lim"] == 4  # read 4x the slots
+    assert run().profiles_written == 1 and folded[2:] == ["u-small"]
+    assert ch.sent[1]["held"] == [("acme", "n", "u-big")]  # left out while it is held
     clock.advance(600)
     run()
-    assert folded[-1] == "u-big" and "held" not in ch.sent[-1]  # the hold is over
+    assert folded[3] == "u-big" and "held" not in ch.sent[-1]  # the hold is over
 
 
 class _ByOrg:
