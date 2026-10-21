@@ -559,8 +559,9 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batch the inserts written on every request so concurrent ones share a part
-    # (docs/architecture/clickhouse.md#batched-inserts); false commits them.
+    # Batch the audit, transcript, event-ledger, webhook and evidence inserts so
+    # concurrent ones share a part (docs/architecture/clickhouse.md#batched-inserts);
+    # false commits them. The ledger flushes stay waited async inserts either way.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
@@ -4925,9 +4926,9 @@ class TrackerSettings(BaseModel):
 # registered op has an entry (tests/unit/test_op_budgets.py). A deployment tunes them
 # without editing this table: `latency_budget_overrides` (one op, in ms or "<n>x"),
 # `latency_budget_overrides_by_consumer` (one consumer), `latency_budget_multiplier`
-# (all of them), and `POST /v1/admin/budget.set` while Loom runs. Each batched insert
-# an op awaits adds up to `ch_batched_insert_wait_max_ms` (50 ms) with
-# `ch_batched_inserts` on, the default; "+ ... wait" below names those waits.
+# (all of them), and `POST /v1/admin/budget.set` while Loom runs. Each batched or
+# waited async insert an op awaits adds up to `ch_batched_insert_wait_max_ms` (50 ms);
+# "+ ... wait" below names those waits.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
     "admin.users": 300,

@@ -675,8 +675,9 @@ class CHClient:
             keepalive_timeout=float(settings.ch_keepalive_timeout),
             # Writes are committed: the INSERT returns after the part is
             # written. An insert sent with `ch_writes.batched_insert_settings()`
-            # (the rows written on every request: audit, transcript turns,
-            # ledgers) shares a part with concurrent inserts instead.
+            # (audit rows, transcript turns, the agent_events flush) or
+            # `async_insert_settings()` (the ledger flushes) shares a part with
+            # concurrent inserts instead.
             # insert_deduplicate is 0 for the session; every insert turns dedup
             # on with its own per-batch token (ch_writes.dedup_settings), so
             # identical event rows in separate batches all land.
