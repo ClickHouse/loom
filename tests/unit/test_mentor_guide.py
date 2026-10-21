@@ -8,6 +8,7 @@ import re
 
 import server
 from server.core.paths import AGENT_GUIDE_DIR, REPO_ROOT
+from server.identity.domain.read_scope import honours_read_scope
 from server.insights.api.models_mentor import MentorGuideInput
 from server.insights.app.mentor_guide import handle_mentor_guide
 from server.operations.registry import OPERATIONS_BY_NAME
@@ -59,3 +60,13 @@ def test_skill_frontmatter_follows_agent_skills_shape() -> None:
     description = re.search(r'^description: "(.*)"$', front.group(1), re.M)
     assert description and "WHEN:" in description.group(1)
     assert len(description.group(1)) <= 1024
+
+
+def test_a_token_narrowed_to_one_user_may_read_the_guide() -> None:
+    # The guide holds no memory, and the primer names it on every connection.
+    assert honours_read_scope("mentor.guide")
+
+
+def test_the_image_ships_the_guide() -> None:
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text()
+    assert "COPY skills/loom ./skills/loom" in dockerfile

@@ -369,7 +369,7 @@ class Agent:
         every plane with its ops (`"reference"`), or both (`"all"`). Put it
         in the system prompt of an agent that has no plugin to carry it."""
         out = await self.call("mentor.guide", {"part": part}, timeout_s=10.0)
-        return str(out.get("text", "")) if isinstance(out, dict) else ""
+        return str(out["text"])
 
     def _start_mentor_brief(self) -> None:
         """With `mentor_brief=True`, the first call also runs `mentor()` in

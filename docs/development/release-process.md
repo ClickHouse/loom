@@ -15,13 +15,14 @@ Bump each of these in the release commit:
 | Root skills          | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                                                                    |
 | Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
 
-The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Three checks keep the numbers consistent:
+The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo` and `loom report` report it. Four checks keep the numbers consistent:
 
-| Check                                    | Asserts                                                                    |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
-| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml`, and every surface reports it |
-| `npm run check:version` (TypeScript SDK) | its four version sources agree                                             |
-| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                    |
+| Check                                    | Asserts                                                                         |
+| ---------------------------------------- | ------------------------------------------------------------------------------- |
+| `tests/unit/test_release_version.py`     | `server/__init__.py` equals `pyproject.toml`, and every surface reports it      |
+| `npm run check:version` (TypeScript SDK) | its four version sources agree                                                  |
+| `tests/unit/test_codex_plugin.py`        | both plugin manifests carry one version                                         |
+| `tests/unit/test_mentor_guide.py`        | the `loom` skill's version equals `.claude-plugin/plugin.json` and the server's |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 

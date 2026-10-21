@@ -11,8 +11,8 @@ description: "How an agent uses Loom: memory, documents, working state, runs and
 Loom is a server that remembers for you. What you store outlives your
 context window and your process, is shared with every agent and person in
 the same namespace, and comes back ranked, versioned and with its source.
-Every capability is an operation (op) such as `memory.set`, served three
-ways from one registry:
+Every capability is an operation (op) such as `memory.set`, declared once
+and served over MCP and HTTP; the SDKs wrap HTTP:
 
 | You reach it through | An op is called as |
 |---|---|
@@ -22,9 +22,12 @@ ways from one registry:
 | HTTP | `POST /v1/memory.set` with `Authorization: Bearer <token>` and a JSON body |
 
 The fields are the same everywhere. `loom_op {op: "help", query: "<words>"}`
-(MCP) or `ops.capabilities` lists every op this server serves, with the
-role each one needs. The full catalog of planes is in `reference.md` beside this file;
-over the wire, `mentor.guide` with `part: "reference"` returns it.
+(MCP) finds ops by words, with their arguments; `ops.capabilities` lists
+every op this server serves, with the role each one needs. The full catalog of planes is in `reference.md` beside this file;
+over the wire, `mentor.guide` with `part: "reference"` returns it. It marks
+experimental ops with †: their fields may change between releases, and
+several ops below are experimental (`search.query`, `context.offload`,
+`knowledge.upsert`, `task.create`, `decision.record`, `blacklist.add`).
 
 ## Why use it
 
@@ -101,6 +104,7 @@ over the wire, `mentor.guide` with `part: "reference"` returns it.
 | `memory_id` and `version` on a write | it persisted | only now say "saved" |
 | `conflict_verdict: "conflict"`, `peers` | it contradicts a stored fact; both are marked | show both and ask which is current |
 | 409 `PINNED_CONFLICT` | a person pinned the existing fact | report it; never retry under a new key |
+| `conflict_verdict: "pending"` | the conflict judge runs after the write | the row is stored; `memory.get` later shows the settled `status` |
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
 | `abstain: true` on a read | nothing cleared the relevance floor | treat it as "not in Loom" and use your other context; never present the nearest weak hit as the answer |
@@ -148,5 +152,5 @@ Then `namespace.validate` and fix findings on the keys you wrote. Say
 - Calling `conversation.append` when a plugin already captures the session:
   every turn is stored twice.
 
-`namespace.audit` finds these in a namespace you own; `reference.md` lists
+`namespace.audit` finds these in a namespace you read; `reference.md` lists
 each plane with its ops.

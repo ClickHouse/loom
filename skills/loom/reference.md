@@ -163,7 +163,7 @@ the billing service".
 
 | Op | Use it to |
 |---|---|
-| `task.create`† | Post work into another agent's inbox (`kind`, `brief`). The owner decides how far to trust each poster. |
+| `task.create`† | Post work into another agent's inbox (`inbox`, `kind`, `title`, optional `brief`). The owner decides how far to trust each poster. |
 | `task.pull`†, `task.heartbeat`†, `task.complete`† | Claim your next task, keep the claim alive with its fence, finish it. |
 | `task.updates`† | Follow a task you posted. |
 | `decision.record`†, `decision.precedents`†, `decision.outcome`† | Record a choice with its reasons; find past decisions in similar cases; report how it went. |
@@ -173,7 +173,7 @@ the billing service".
 
 | Op | Use it to |
 |---|---|
-| `conflicts.list`, `conflicts.resolve` | Contradictions waiting for a decision; settle one. |
+| `conflicts.list`, `conflicts.resolve` | Contradictions waiting for a decision; settle one (admin). |
 | `blacklist.add`†, `blacklist.list` | Refuse a pattern the user never wants stored (422 `BLACKLISTED`). |
 | `namespace.validate` | Check the rows you wrote for shape problems. |
 | `namespace.audit` | Find whole-namespace mistakes (documents as memories, hash keys, coordination as memory). |
@@ -209,5 +209,5 @@ the repository.
 | Op | Use it to |
 |---|---|
 | `namespace.list_mine` | The namespaces your token reaches. |
-| `grants.create`, `grants.list` | Share a namespace with another agent or person (owner). |
+| `grants.create`, `grants.list` | Share a namespace with another agent or person (admin). |
 | `erasure.request`, `erasure.status`† | Erase everything about a user or subject, across every table that can hold memory content. |
