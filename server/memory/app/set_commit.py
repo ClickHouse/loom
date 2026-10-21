@@ -14,7 +14,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -248,14 +248,28 @@ async def _lift_after_insert(
     return w.version
 
 
+def _only_reinforces(w: _SetWrite) -> bool:
+    """The same value said again with the same tags, expiry, confidence and valid_at:
+    the new version only reinforces the live row."""
+    if not w.restated:
+        return False
+    row, existing = w.memory_row, w.existing
+    return (
+        sorted(row.get("tags") or []) == sorted(existing.tags or [])
+        and to_naive_utc(row.get("expires_at")) == to_naive_utc(existing.expires_at)
+        and row.get("confidence") == existing.confidence
+        and to_naive_utc(row.get("valid_at")) == to_naive_utc(existing.valid_at)
+    )
+
+
 async def _announce_set(w: _SetWrite) -> None:
     """The row just inserted, to the namespace's webhooks: a new key is written, a new
-    value of one is revised, and the same value said again (a reinforcement) is no
-    change to announce. A proposal is not served, so it is announced when
-    `memory.proposal_decide` accepts it. Called once the row is in, even when the rest
-    of the write fails, so the event is not lost: a retry of the same value is a
-    restatement and announces nothing."""
-    if w.restated or w.memory_row.get("status") == "proposed":
+    value, tags, expiry, confidence or valid_at of one is revised, and the same row said
+    again (a reinforcement) is no change to announce. A proposal is not served, so it is
+    announced when `memory.proposal_decide` accepts it. Called once the row is in, even
+    when the rest of the write fails, so the event is not lost: a retry of the same
+    write is a reinforcement and announces nothing."""
+    if _only_reinforces(w) or w.memory_row.get("status") == "proposed":
         return
     event: EventType = "memory.revised" if w.had_existing_row else "memory.written"
     await webhooks.announce([(event, w.memory_row)])

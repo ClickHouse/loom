@@ -17,7 +17,6 @@ import hashlib
 import hmac
 import json
 import logging
-import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -139,12 +138,10 @@ def test_an_event_type_outside_the_fixed_set_is_refused() -> None:
 
 
 @pytest.fixture
-def registry(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], Any]:
+def registry() -> dict[tuple[str, str], Any]:
     """This process's copy of the registry, fresh for the test."""
     hooks: dict[tuple[str, str], Any] = {}
-    monkeypatch.setattr(app, "_hooks", hooks)
-    monkeypatch.setattr(app, "_loaded", True)
-    monkeypatch.setattr(app, "_last_read", float("inf"))
+    app._registry._reset_for_tests(hooks, read=True, refresh_s=float("inf"))
     return hooks
 
 
@@ -164,6 +161,10 @@ def _registration(webhook_id: str, namespace: str = "chat", **over: Any) -> dict
     }
 
 
+def _unread_registry() -> None:
+    app._registry._reset_for_tests({}, read=False, refresh_s=0.0)
+
+
 @pytest.mark.asyncio
 async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
     monkeypatch: pytest.MonkeyPatch,
@@ -178,13 +179,9 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
         return answer[0]
 
     monkeypatch.setattr(store, "live_webhooks", live)
-    monkeypatch.setattr(app, "_hooks", {})
-    monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_last_read", float("-inf"))
     monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
+    _unread_registry()
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
-    # The next read is due an interval after this one landed.
-    assert 0 <= time.monotonic() - app._last_read < 5
     # Within the interval the copy serves without a read.
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
     assert len(reads) == 1
@@ -201,28 +198,6 @@ async def test_the_registry_copy_is_read_again_and_kept_when_a_read_fails(
 
 
 @pytest.mark.asyncio
-async def test_a_lowered_refresh_interval_applies_to_the_next_write(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """memory_webhook_refresh_seconds is read on every write, not when the last read ended."""
-    reads: list[int] = []
-
-    async def live() -> list[dict[str, Any]]:
-        reads.append(1)
-        return [_registration("wh1")]
-
-    monkeypatch.setattr(store, "live_webhooks", live)
-    monkeypatch.setattr(app, "_loaded", True)
-    monkeypatch.setattr(app, "_last_read", time.monotonic() - 60)
-    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 3600.0)
-    await app.subscribers("acme", "chat", "memory.written")
-    assert reads == []
-    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 10.0)
-    assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
-    assert reads == [1]
-
-
-@pytest.mark.asyncio
 async def test_writes_on_a_cold_copy_wait_for_the_first_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -236,9 +211,7 @@ async def test_writes_on_a_cold_copy_wait_for_the_first_read(
         return [_registration("wh1")]
 
     monkeypatch.setattr(store, "live_webhooks", slow_live)
-    monkeypatch.setattr(app, "_hooks", {})
-    monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_last_read", float("-inf"))
+    _unread_registry()
     both = await asyncio.gather(
         app.subscribers("acme", "chat", "memory.written"),
         app.subscribers("acme", "chat", "memory.written"),
@@ -247,22 +220,24 @@ async def test_writes_on_a_cold_copy_wait_for_the_first_read(
 
 
 @pytest.mark.asyncio
-async def test_a_cold_read_that_fails_announces_nothing_and_the_next_write_reads_again(
+async def test_a_cold_read_that_fails_announces_nothing_until_a_read_lands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reads: list[int] = []
     notes: list[tuple[str, str]] = []
+    answer: list[Any] = [RuntimeError("ClickHouse is away")]
 
-    async def slow_failing() -> list[dict[str, Any]]:
+    async def slow_live() -> list[dict[str, Any]]:
         reads.append(1)
         await asyncio.sleep(0.05)
-        raise RuntimeError("ClickHouse is away")
+        if isinstance(answer[0], Exception):
+            raise answer[0]
+        return answer[0]
 
-    monkeypatch.setattr(store, "live_webhooks", slow_failing)
-    monkeypatch.setattr(app, "_hooks", {})
-    monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_last_read", float("-inf"))
+    monkeypatch.setattr(store, "live_webhooks", slow_live)
+    monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
     monkeypatch.setattr(app.degradations, "note", lambda p, e, r="": notes.append((p, e)))
+    _unread_registry()
     ch = RecordingCH().install(monkeypatch)
     # Two writes at once: the second takes the first's failed read, not a second one.
     await asyncio.gather(
@@ -271,9 +246,12 @@ async def test_a_cold_read_that_fails_announces_nothing_and_the_next_write_reads
     )
     assert len(reads) == 1 and ch.inserted("memory_webhook_outbox") == []
     assert ("memory.webhook", "registry_unread") in notes
-    # Nothing has loaded, so the next write reads again.
+    # The failed read waits its interval like any other; a change made here reads at once.
+    answer[0] = [_registration("wh1")]
+    app.forget_registry()
     await app.announce([("memory.written", _change())])
     assert len(reads) == 2
+    assert [r["webhook_id"] for r in ch.inserted("memory_webhook_outbox")] == ["wh1"]
 
 
 @pytest.mark.asyncio
@@ -291,24 +269,18 @@ async def test_a_change_made_during_a_read_reads_the_registry_again_on_the_next_
         return answer
 
     monkeypatch.setattr(store, "live_webhooks", live)
-    monkeypatch.setattr(app, "_hooks", {})
-    monkeypatch.setattr(app, "_loaded", False)
-    monkeypatch.setattr(app, "_last_read", float("-inf"))
     monkeypatch.setattr(settings, "memory_webhook_refresh_seconds", 30.0)
+    _unread_registry()
     assert await app.subscribers("acme", "chat", "memory.written") == []
-    assert app._last_read == float("-inf")
     assert await app.subscribers("acme", "chat", "memory.written") == ["wh1"]
-    assert 0 <= time.monotonic() - app._last_read < 5
+    assert answers == []
 
 
 @pytest.mark.asyncio
-async def test_a_loaded_copy_serves_while_a_refresh_is_under_way(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(app, "_hooks", {("acme", "chat"): (("wh1", frozenset(EVENT_TYPES)),)})
-    monkeypatch.setattr(app, "_loaded", True)
-    monkeypatch.setattr(app, "_last_read", float("-inf"))  # due again
-    async with app._lock:  # another write is refreshing
+async def test_a_loaded_copy_serves_while_a_refresh_is_under_way() -> None:
+    hooks = {("acme", "chat"): (("wh1", frozenset(EVENT_TYPES)),)}
+    app._registry._reset_for_tests(hooks, read=True, refresh_s=0.0)  # due again
+    async with app._registry._lock:  # another write is refreshing
         got = await asyncio.wait_for(app.subscribers("acme", "chat", "memory.written"), 1)
     assert got == ["wh1"]
 
@@ -418,10 +390,35 @@ async def test_memory_set_announces_a_change_and_never_a_restatement(
 ) -> None:
     from server.memory.app.set_commit import _announce_set
 
-    row = {"memory_key": "k", "version": 42}
-    w = SimpleNamespace(had_existing_row=existing, restated=restated, memory_row=row)
+    live = _memory_row("k", tags=["tea"]) if existing else None
+    row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
+    row |= {"confidence": 0.8, "valid_at": None}
+    w = SimpleNamespace(had_existing_row=existing, restated=restated, memory_row=row, existing=live)
     await _announce_set(w)  # type: ignore[arg-type]
     assert announced == ([[(event, row)]] if event else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"tags": ["tea", "green"]},
+        {"expires_at": datetime.now(UTC) + timedelta(seconds=60)},
+        {"confidence": 0.5},
+        {"valid_at": NOW},
+    ],
+)
+async def test_memory_set_of_the_same_value_with_new_fields_is_revised(
+    announced: list[Any], change: dict[str, Any]
+) -> None:
+    from server.memory.app.set_commit import _announce_set
+
+    row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
+    row |= {"confidence": 0.8, "valid_at": None, **change}
+    live = _memory_row("k", tags=["tea"])
+    w = SimpleNamespace(had_existing_row=True, restated=True, memory_row=row, existing=live)
+    await _announce_set(w)  # type: ignore[arg-type]
+    assert announced == [[("memory.revised", row)]]
 
 
 @pytest.mark.asyncio
@@ -567,6 +564,42 @@ async def test_a_rollback_announces_revisions_revivals_and_tombstones(
         ("memory.tombstoned", "was_gone"),
         ("memory.tombstoned", "born_later"),
     }
+
+
+@pytest.mark.asyncio
+async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
+    monkeypatch: pytest.MonkeyPatch, announced: list[Any]
+) -> None:
+    from server.memory.app import blacklist_sweep
+
+    rows = {"m-a": _memory_row("user/phone"), "m-b": _memory_row("user/contact")}
+
+    class _Matches:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [{"memory_id": mid, "namespace": "chat"} for mid in rows]
+
+    async def tombstone(org: str, ids: list[str], *, update: Any, version: int, **k: Any) -> int:
+        for mid in ids:
+            update(rows[mid])
+        return len(ids)
+
+    monkeypatch.setattr(memory_repo, "tombstone_cascade_by_ids", tombstone)
+    result = await blacklist_sweep.sweep_pattern(
+        org="acme",
+        namespace="chat",
+        pattern_id="p1",
+        pattern="555-0100",
+        pattern_type="substring",
+        scope="namespace",
+        ch=_Matches(),
+    )
+    assert result.tombstoned == 2
+    (call,) = announced  # one insert for the sweep
+    assert {(e, c["memory_key"]) for e, c in call} == {
+        ("memory.tombstoned", "user/phone"),
+        ("memory.tombstoned", "user/contact"),
+    }
+    assert len({c["version"] for _, c in call}) == 1  # the tombstones' one version
 
 
 @pytest.mark.asyncio
