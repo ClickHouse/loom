@@ -685,7 +685,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
-| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row, or whose text reads as a credential. |
+| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row or whose text reads as a credential, and the chunks stored without a vector (one may hold part of a key). |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

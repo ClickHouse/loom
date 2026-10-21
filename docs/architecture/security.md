@@ -718,7 +718,8 @@ that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search l
 it. Chunks overlap and can be cut through a key, so the conversation and long-value
 writers check the whole text once and also hold every chunk whose character range
 overlaps a credential: a chunk that holds only a key's head or tail does not read as one
-on its own. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
+on its own. `memory.import_evidence` checks each session's imported chunks joined in
+`chunk_index` order the same way. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
 leaves out one that reads as a credential, and audits a key read of either. This holds for
 a chunk of a long `memory.set` value whatever its row's label; a `low` row stays findable
 through its own embedding. A session digest whose text reads as a
@@ -770,8 +771,9 @@ the reads that serve passages check their text too:
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
   credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`
-  version, and those whose text reads as a credential, unless asked with `include_high`
-  (each one it then releases is audited). `bodies: "source"` leaves out a passage whose text
+  version, those whose text reads as a credential and chunks stored without a vector (which
+  includes a chunk holding only part of a key), unless asked with `include_high` (each one
+  it then releases is audited). `bodies: "source"` leaves out a passage whose text
   reads as a credential.
 
 Other raw text is served to readers of the namespace, or sent to a model, as it is: a

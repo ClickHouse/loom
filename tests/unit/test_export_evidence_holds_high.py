@@ -25,9 +25,14 @@ class _CH:
                 {"session_id": "s3", "summary_text": f"the key is {_KEY}", "derived_from": []},
             ]
         return [
-            {"session_id": "s", "chunk_index": 0, "content": "plain talk"},
-            {"session_id": "s", "chunk_index": 1, "content": "about the vault"},
-            {"session_id": "s", "chunk_index": 2, "content": f"the key is {_KEY}"},
+            {"session_id": "s", "chunk_index": 0, "content": "plain talk", "embedding_dim": 2},
+            {"session_id": "s", "chunk_index": 1, "content": "about the vault", "embedding_dim": 2},
+            {
+                "session_id": "s",
+                "chunk_index": 2,
+                "content": f"the key is {_KEY}",
+                "embedding_dim": 0,
+            },
         ]
 
 

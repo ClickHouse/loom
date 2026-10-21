@@ -13,8 +13,9 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
-from server.memory.app.credential_passages import embed_plain, overlaps_credential
+from server.memory.app.credential_passages import embed_plain
 from server.memory.app.projection_errors import record_input_projection_failure
+from server.memory.domain.sensitivity import overlaps_credential
 
 log = logging.getLogger(__name__)
 

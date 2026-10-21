@@ -264,6 +264,16 @@ def credential_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
+    """For each [start, end) range of `source` (a chunk's place in the text it was cut from),
+    whether it overlaps a credential in `source`. A chunk cut through a key holds only its
+    head or its tail, which does not read as a credential on its own."""
+    spans = credential_spans(source)
+    return [
+        any(start < s_end and s_start < end for s_start, s_end in spans) for start, end in ranges
+    ]
+
+
 # Spare rows a read asks for, so a passage it holds back for reading as a credential does
 # not leave the page short.
 HELD_MARGIN = 2  # not a setting: algorithm shape, sized to how rarely a row is held

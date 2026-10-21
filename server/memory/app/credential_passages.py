@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple
 
-from server.memory.domain.sensitivity import credential_spans, reads_high
+from server.memory.domain.sensitivity import reads_high
 
 
 class Embedded(NamedTuple):
@@ -20,16 +20,6 @@ class Embedded(NamedTuple):
     def written(self) -> bool:
         """Stored: with its vector, or held without one. A failed embed is not."""
         return self.held or bool(self.vector)
-
-
-def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
-    """For each [start, end) range of `source` (a chunk's place in the text it was cut from),
-    whether it overlaps a credential in `source`. A chunk cut through a key holds only its
-    head or its tail, which does not read as a credential on its own."""
-    spans = credential_spans(source)
-    return [
-        any(start < s_end and s_start < end for s_start, s_end in spans) for start, end in ranges
-    ]
 
 
 async def embed_plain(

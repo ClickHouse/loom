@@ -31,6 +31,7 @@ from server.memory.api.models_evidence_transfer import (
 from server.memory.app.credential_passages import embed_plain
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.okf_evidence import evidence_is_high, evidence_keys
+from server.memory.domain.sensitivity import overlaps_credential
 from server.observability import audit as _audit
 
 log = logging.getLogger(__name__)
@@ -176,7 +177,7 @@ async def handle_memory_export_evidence(
     rows = await ch.query_all(
         f"""
         SELECT session_id, chunk_index, content_sha256, content, agent, user_id,
-               parent_memory_key, line_start, line_end, created_at, source_url
+               parent_memory_key, line_start, line_end, created_at, source_url, embedding_dim
         FROM loom.memory_chunks FINAL
         WHERE {" AND ".join(where)}
         ORDER BY session_id ASC, chunk_index ASC
@@ -212,24 +213,31 @@ async def handle_memory_export_evidence(
         for r in rows
     ]
     next_cursor = _encode_cursor(chunks[-1].session_id, chunks[-1].chunk_index) if has_more else ""
-    kept = await _without_high(input, chunks)
+    # A chunk stored without a vector holds a credential, or the head or tail of one cut at
+    # a chunk boundary, which its own text does not show.
+    kept = await _without_high(input, chunks, [int(r.get("embedding_dim") or 0) == 0 for r in rows])
     return MemoryExportEvidenceOutput(
         chunks=kept, has_more=has_more, next_cursor=next_cursor, held_high=len(chunks) - len(kept)
     )
 
 
-async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> list[Any]:
+async def _without_high(
+    input: MemoryExportEvidenceInput, items: list[Any], stored_held: list[bool] | None = None
+) -> list[Any]:
     """`items` without those `okf_evidence.evidence_is_high` holds home, given which of the
-    keys they are linked to were ever 'high'. With `include_high` they all go, and each one
-    that would have been held is audited as a key read of a 'high' row is."""
+    keys they are linked to were ever 'high', or that `stored_held` marks (a chunk stored
+    without a vector). With `include_high` they all go, and each one that would have been
+    held is audited as a key read of a 'high' row is."""
     if not items:
         return items
     import server.memory.store as memory_repo
 
     linked = [k for item in items for k in evidence_keys(item) if k]
     high = await memory_repo.high_keys(input.org, input.namespace, linked)
+    marked = stored_held or [False] * len(items)
+    held = [h or evidence_is_high(item, high) for item, h in zip(items, marked, strict=True)]
     if not input.include_high:
-        return [item for item in items if not evidence_is_high(item, high)]
+        return [item for item, h in zip(items, held, strict=True) if not h]
     await _audit.emit_many(
         "memory.sensitive_read",
         org=input.org,
@@ -242,8 +250,8 @@ async def _without_high(input: MemoryExportEvidenceInput, items: list[Any]) -> l
                 **({"chunk_index": item.chunk_index} if input.kind == "chunks" else {}),
                 "memory_keys": [k for k in evidence_keys(item) if k],
             }
-            for item in items
-            if evidence_is_high(item, high)
+            for item, h in zip(items, held, strict=True)
+            if h
         ],
     )
     return items
@@ -286,6 +294,27 @@ async def _refused(
     return False
 
 
+def _split_credentials(chunks: list[EvidenceChunk]) -> list[bool]:
+    """For each chunk, whether it overlaps a credential in its session's chunks joined in
+    `chunk_index` order: a key cut at a chunk boundary reads as one only when joined."""
+    held = [False] * len(chunks)
+    sessions: dict[str, list[int]] = {}
+    for i, c in enumerate(chunks):
+        sessions.setdefault(c.session_id, []).append(i)
+    for positions in sessions.values():
+        positions.sort(key=lambda i: chunks[i].chunk_index)
+        ranges: list[tuple[int, int]] = []
+        start = 0
+        for i in positions:
+            end = start + len(chunks[i].content)
+            ranges.append((start, end))
+            start = end
+        source = "".join(chunks[i].content for i in positions)
+        for i, overlaps in zip(positions, overlaps_credential(source, ranges), strict=True):
+            held[i] = overlaps
+    return held
+
+
 async def handle_memory_import_evidence(
     input: MemoryImportEvidenceInput,
 ) -> MemoryImportEvidenceOutput:
@@ -307,9 +336,12 @@ async def handle_memory_import_evidence(
     out.skipped += len(input.chunks) - len(chunks)
     importer_user = _importer_user(input)
     if chunks:
-        # A chunk or digest that reads as a credential is written without a vector.
+        # A chunk or digest that reads as a credential, or a chunk holding part of a key cut
+        # at its boundary with the next, is written without a vector.
         embedded = await embed_plain(
-            [c.content for c in chunks], lambda texts: _embed_all(embedder, texts)
+            [c.content for c in chunks],
+            lambda texts: _embed_all(embedder, texts),
+            held=_split_credentials(chunks),
         )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []

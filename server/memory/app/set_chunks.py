@@ -28,7 +28,8 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
-from server.memory.app.credential_passages import embed_plain, overlaps_credential
+from server.memory.app.credential_passages import embed_plain
+from server.memory.domain.sensitivity import overlaps_credential
 
 log = logging.getLogger(__name__)
 

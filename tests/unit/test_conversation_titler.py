@@ -250,8 +250,8 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
 
 @pytest.mark.asyncio
 async def test_a_thread_whose_turns_all_hold_a_key_is_marked_and_skipped(monkeypatch) -> None:
-    """Left unmarked, such a thread took a scan slot on every pass and starved older
-    untitled threads."""
+    """A thread whose eight opening turns all read as a credential is marked, so it no
+    longer takes a scan slot on later passes."""
     turns = [{"role": "user", "content": f"my key is {OPENAI_KEY}"}] * 8
     ch = StubCH([_CAND], turns, None)
     _patch(monkeypatch, ch)

@@ -279,6 +279,80 @@ async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_ve
     assert emb.seen == [_PLAIN]
 
 
+@pytest.mark.asyncio
+async def test_a_key_split_across_two_chunks_is_exported_as_held_and_imported_without_a_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither half of the key reads as a credential on its own: the export holds both by
+    their missing vectors, and the import reads them joined."""
+    import server.embedding as embmod
+    import server.memory.store as memory_repo
+    from server.memory.api.models_evidence_transfer import (
+        MemoryExportEvidenceInput,
+        MemoryImportEvidenceInput,
+    )
+    from server.memory.app import chunk_links, evidence_transfer
+    from server.memory.domain.sensitivity import reads_high
+    from server.observability import audit
+
+    head, tail = f"deploy with {OPENAI_KEY[:18]}", f"{OPENAI_KEY[18:]} then restart"
+    assert not reads_high(head) and not reads_high(tail)
+    stored = [
+        {"session_id": "s", "chunk_index": 0, "content": _PLAIN, "embedding_dim": 2},
+        {"session_id": "s", "chunk_index": 1, "content": head, "embedding_dim": 0},
+        {"session_id": "s", "chunk_index": 2, "content": tail, "embedding_dim": 0},
+    ]
+
+    class _Export:
+        async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+            return stored
+
+    async def no_links(*_: Any, **__: Any) -> dict[tuple[str, int], list[str]]:
+        return {}
+
+    async def no_high_keys(*_: Any, **__: Any) -> set[str]:
+        return set()
+
+    audited: list[dict[str, Any]] = []
+
+    async def emit_many(event: str, *, subjects: list[dict[str, Any]], **_: Any) -> None:
+        audited.extend(subjects)
+
+    monkeypatch.setattr(evidence_transfer, "get_client", lambda: _Export())
+    monkeypatch.setattr(chunk_links, "chunk_memory_keys", no_links)
+    monkeypatch.setattr(memory_repo, "high_keys", no_high_keys)
+    monkeypatch.setattr(audit, "emit_many", emit_many)
+
+    def export(include_high: bool) -> Any:
+        return evidence_transfer.handle_memory_export_evidence(
+            MemoryExportEvidenceInput(org="o", namespace="n", include_high=include_high)
+        )
+
+    held = await export(include_high=False)
+    assert [c.chunk_index for c in held.chunks] == [0] and held.held_high == 2
+    assert audited == []
+    released = await export(include_high=True)
+    assert [c.chunk_index for c in released.chunks] == [0, 1, 2]
+    assert [a["chunk_index"] for a in audited] == [1, 2]
+
+    async def not_refused(*_: Any, **__: Any) -> bool:
+        return False
+
+    ch, emb = _CH(), _Embedder()
+    monkeypatch.setattr(evidence_transfer, "get_client", lambda: ch)
+    monkeypatch.setattr(embmod, "get_embedder", lambda: emb)
+    monkeypatch.setattr(evidence_transfer, "_refused", not_refused)
+    monkeypatch.setattr(evidence_transfer, "_importer_user", lambda _input: None)
+    await evidence_transfer.handle_memory_import_evidence(
+        MemoryImportEvidenceInput(
+            org="o", namespace="other", agent="a", chunks=list(reversed(released.chunks))
+        )
+    )
+    dims = {r["chunk_index"]: r["embedding_dim"] for r in ch.inserts["loom.memory_chunks"]}
+    assert dims == {0: 2, 1: 0, 2: 0}
+    assert emb.seen == [_PLAIN]
+
+
 def _hit(key: str, excerpt: str, rank: float) -> SearchHit:
     return SearchHit(
         memory_key=key,
