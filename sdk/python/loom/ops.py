@@ -201,6 +201,7 @@ OpName = Literal[
     "memory.evidence",
     "memory.export_evidence",
     "memory.exposure_summary",
+    "memory.extraction_retry_mine",
     "memory.extraction_status",
     "memory.extraction_status_mine",
     "memory.for_file",
@@ -539,6 +540,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.evidence",
     "memory.export_evidence",
     "memory.exposure_summary",
+    "memory.extraction_retry_mine",
     "memory.extraction_status",
     "memory.extraction_status_mine",
     "memory.for_file",
@@ -2656,6 +2658,18 @@ OPS: dict[str, OpSpec] = {
         "admin",
         "experimental",
         300,
+        False,
+        False,
+    ),
+    "memory.extraction_retry_mine": OpSpec(
+        "memory.extraction_retry_mine",
+        "MemoryExtractionRetryMineInput",
+        "MemoryExtractionRetryMineBody",
+        "MemoryExtractionRetryMineOutput",
+        True,
+        "writer",
+        "experimental",
+        150,
         False,
         False,
     ),
@@ -11556,6 +11570,28 @@ class ExposureSummaryRow(TypedDict, total=False):
     fraction: Required[float]
     first_hour: Required[str]  # date-time as ISO-8601 text
     last_hour: Required[str]  # date-time as ISO-8601 text
+
+
+class MemoryExtractionRetryMineInput(TypedDict, total=False):
+    "Replay your failed deferred memory.set_from_messages batches once more, by queue_id."
+
+    org: Required[str]
+    namespace: Required[str]
+    queue_ids: Required[list[str]]
+
+
+class MemoryExtractionRetryMineBody(TypedDict, total=False):
+    "Replay your failed deferred memory.set_from_messages batches once more, by queue_id."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    queue_ids: Required[list[str]]
+
+
+class MemoryExtractionRetryMineOutput(TypedDict, total=False):
+    requeued: NotRequired[list[str]]
+    not_failed: NotRequired[list[str]]
+    unknown: NotRequired[list[str]]
 
 
 class MemoryExtractionStatusInput(TypedDict, total=False):

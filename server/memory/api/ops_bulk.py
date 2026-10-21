@@ -7,6 +7,8 @@ from server.memory.api.models_bulk import (
     MemoryBulkGetOutput,
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
+    MemoryExtractionRetryMineInput,
+    MemoryExtractionRetryMineOutput,
     MemoryExtractionStatusInput,
     MemoryExtractionStatusMineInput,
     MemoryExtractionStatusMineOutput,
@@ -19,6 +21,7 @@ from server.memory.api.models_bulk import (
 from server.memory.app.bulk_set import handle_memory_bulk_set
 from server.memory.app.curation import handle_memory_import_curated
 from server.memory.app.extract.handler import (
+    handle_memory_extraction_retry_mine,
     handle_memory_extraction_status,
     handle_memory_extraction_status_mine,
     handle_memory_set_from_messages,
@@ -71,6 +74,19 @@ memory_extraction_status_mine = Operation(
     handler=handle_memory_extraction_status_mine,
     idempotent=True,
     required_role=Role.VIEWER,
+    audit=False,
+)
+
+# One more replay of the caller's own failed batches, by id, under the same bounds. A
+# retried call finds a requeued batch `pending` and leaves it, so it is safe to retry.
+memory_extraction_retry_mine = Operation(
+    name="memory.extraction_retry_mine",
+    maturity="experimental",
+    input_model=MemoryExtractionRetryMineInput,
+    output_model=MemoryExtractionRetryMineOutput,
+    handler=handle_memory_extraction_retry_mine,
+    idempotent=True,
+    required_role=Role.WRITER,
     audit=False,
 )
 

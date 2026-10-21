@@ -734,6 +734,24 @@ Per-(actor, agent) distinct memory keys returned by reads of a namespace over a 
 | `namespace_rows` | `int` | Live (untombstoned) memories in the namespace: the denominator of `fraction`. |
 | `rows` | `list[_ExposureSummaryRow]` | One row per (actor, agent) that read the namespace in the window, most keys first. |
 
+## `memory.extraction_retry_mine`
+
+Replay your failed deferred memory.set_from_messages batches once more, by queue_id.
+
+`POST /v1/memory.extraction_retry_mine` · MCP `loom_memory_extraction_retry_mine` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `queue_ids` | `list[str]` | required | The ids deferred memory.set_from_messages calls returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `requeued` | `list[str]` | The asked batches put back to `pending` for one more replay, in the order asked. |
+| `not_failed` | `list[str]` | The asked batches you queued that had not failed (`pending`, `running` or `done`): nothing to replay. |
+| `unknown` | `list[str]` | The asked ids no batch of yours answers to, as memory.extraction_status_mine's. |
+
 ## `memory.extraction_status`
 
 State of deferred set_from_messages batches.

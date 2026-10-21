@@ -4526,6 +4526,18 @@ export interface MemoryExposureSummaryOutput {
   rows: ExposureSummaryRow[];
 }
 
+export interface MemoryExtractionRetryMineInput {
+  org: string;
+  namespace: string;
+  queue_ids: string[];
+}
+
+export interface MemoryExtractionRetryMineOutput {
+  requeued?: string[];
+  not_failed?: string[];
+  unknown?: string[];
+}
+
 export interface MemoryExtractionStatusInput {
   org: string;
   namespace: string;
@@ -9062,6 +9074,7 @@ export type OpName =
   | "memory.evidence"
   | "memory.export_evidence"
   | "memory.exposure_summary"
+  | "memory.extraction_retry_mine"
   | "memory.extraction_status"
   | "memory.extraction_status_mine"
   | "memory.for_file"
@@ -9400,6 +9413,7 @@ export interface OpMap {
   "memory.evidence": { input: MemoryEvidenceInput; output: MemoryEvidenceOutput };
   "memory.export_evidence": { input: MemoryExportEvidenceInput; output: MemoryExportEvidenceOutput };
   "memory.exposure_summary": { input: MemoryExposureSummaryInput; output: MemoryExposureSummaryOutput };
+  "memory.extraction_retry_mine": { input: MemoryExtractionRetryMineInput; output: MemoryExtractionRetryMineOutput };
   "memory.extraction_status": { input: MemoryExtractionStatusInput; output: MemoryExtractionStatusOutput };
   "memory.extraction_status_mine": { input: MemoryExtractionStatusMineInput; output: MemoryExtractionStatusMineOutput };
   "memory.for_file": { input: MemoryForFileInput; output: MemoryForFileOutput };
@@ -9738,6 +9752,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.evidence", group: "memory", method: "evidence", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "memory.export_evidence", group: "memory", method: "exportEvidence", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "memory.exposure_summary", group: "memory", method: "exposureSummary", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
+  { name: "memory.extraction_retry_mine", group: "memory", method: "extractionRetryMine", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: false },
   { name: "memory.extraction_status", group: "memory", method: "extractionStatus", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.extraction_status_mine", group: "memory", method: "extractionStatusMine", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.for_file", group: "memory", method: "forFile", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
@@ -9917,4 +9932,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 335;
+export const GENERATED_OP_COUNT = 336;

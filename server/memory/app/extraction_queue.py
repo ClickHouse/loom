@@ -426,25 +426,30 @@ async def list_status(
     return [dict(r) for r in rows]
 
 
-async def list_own_status(
+# What memory.extraction_status_mine reports of a batch: its state, never its payload.
+_STATUS_COLUMNS = (
+    "queue_id, agent, user_id, session_id, status, attempts, message_count, content_chars, "
+    "written, last_error, enqueued_at, updated_at"
+)
+
+
+async def _own_rows(
+    ch: Any,
+    columns: str,
     *,
     org: str,
     namespace: str,
     queue_ids: list[str],
     enqueued_by: str,
     scope: ReadFilters,
-    ch: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """The batches among `queue_ids` that `enqueued_by` queued in (org, namespace),
-    inside `scope`, newest first, payload excluded: `memory.extraction_status_mine`.
+    """`columns` of the batches among `queue_ids` that `enqueued_by` queued in (org,
+    namespace), inside `scope`, newest first.
 
     The id and the read scope's user and session are sort-key columns, which every
     version of a batch shares, so they filter in PREWHERE under FINAL, and only the
     asked batches' payloads are read for the enqueuer they store (`ENQUEUED_BY_KEY`,
     '' for a row a dev-mode server queued)."""
-    from server.core.ch import get_client
-
-    ch = ch or get_client()
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -455,9 +460,7 @@ async def list_own_status(
     in_scope = scope_and(scope, params)
     rows = await ch.query_all(
         f"""
-        SELECT queue_id, agent, user_id, session_id, status, attempts,
-               message_count, content_chars, written, last_error,
-               enqueued_at, updated_at
+        SELECT {columns}
         FROM {TABLE} FINAL
         PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND queue_id IN {{qids:Array(String)}}{in_scope}
@@ -468,6 +471,69 @@ async def list_own_status(
         params=params,
     )
     return [dict(r) for r in rows]
+
+
+async def list_own_status(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    ch: Any | None = None,
+) -> list[dict[str, Any]]:
+    """The batches among `queue_ids` that `enqueued_by` queued in (org, namespace),
+    inside `scope`, newest first, payload excluded: `memory.extraction_status_mine`."""
+    from server.core.ch import get_client
+
+    return await _own_rows(
+        ch or get_client(),
+        _STATUS_COLUMNS,
+        org=org,
+        namespace=namespace,
+        queue_ids=queue_ids,
+        enqueued_by=enqueued_by,
+        scope=scope,
+    )
+
+
+async def requeue_own_failed(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    max_attempts: int,
+    ch: Any | None = None,
+) -> tuple[list[str], list[str]]:
+    """Put the `failed` batches among `queue_ids` that `enqueued_by` queued in (org,
+    namespace), inside `scope`, back to `pending` with one attempt left under
+    `max_attempts`, so the next pass replays each once more and a failure marks it
+    `failed` again: `memory.extraction_retry_mine`. Returns (the ids requeued, the
+    ids of the principal's other asked batches, which had not failed)."""
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    rows = await _own_rows(
+        ch,
+        ", ".join(COLUMNS),
+        org=org,
+        namespace=namespace,
+        queue_ids=queue_ids,
+        enqueued_by=enqueued_by,
+        scope=scope,
+    )
+    failed = [r for r in rows if r.get("status") == STATUS_FAILED]
+    if failed:
+        left = max(0, int(max_attempts) - 1)
+        again = [
+            _mirror(r, status=STATUS_PENDING, attempts=left, lease_until=_EPOCH) for r in failed
+        ]
+        await ch.insert(TABLE, again, settings=_SYNC)
+    requeued = {str(r["queue_id"]) for r in failed}
+    others = {str(r["queue_id"]) for r in rows} - requeued
+    return [q for q in queue_ids if q in requeued], [q for q in queue_ids if q in others]
 
 
 __all__ = [
@@ -489,6 +555,7 @@ __all__ = [
     "mark_error",
     "payload_for",
     "pending_count",
+    "requeue_own_failed",
 ]
 
 

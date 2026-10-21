@@ -19,6 +19,8 @@ from server.embedding import get_embedder
 from server.memory.api.models_bulk import (
     REFUSED,
     MemoryBulkSetInput,
+    MemoryExtractionRetryMineInput,
+    MemoryExtractionRetryMineOutput,
     MemoryExtractionStatusInput,
     MemoryExtractionStatusMineInput,
     MemoryExtractionStatusMineOutput,
@@ -174,6 +176,35 @@ async def handle_memory_extraction_status_mine(
         unknown=[qid for qid in asked if qid not in found],
         pending=sum(1 for r in rows if r.get("status") not in finished),
         failed=sum(1 for r in rows if r.get("status") == extraction_queue.STATUS_FAILED),
+    )
+
+
+async def handle_memory_extraction_retry_mine(
+    input: MemoryExtractionRetryMineInput,
+) -> MemoryExtractionRetryMineOutput:
+    """memory.extraction_retry_mine — one more replay of the caller's own failed batches,
+    by id, under the bounds memory.extraction_status_mine reads with: each `failed` batch
+    its principal queued in this namespace, inside its read scope, goes back to `pending`
+    with one attempt left (`extraction_queue_max_attempts`)."""
+    from server.identity.app.request_scope import request_scope
+    from server.memory.app import extraction_queue
+    from server.memory.app.provenance import writer_actor
+    from server.settings import settings
+
+    asked = list(dict.fromkeys(input.queue_ids))
+    requeued, not_failed = await extraction_queue.requeue_own_failed(
+        org=input.org,
+        namespace=input.namespace,
+        queue_ids=asked,
+        enqueued_by=writer_actor(),
+        scope=request_scope(),
+        max_attempts=settings.extraction_queue_max_attempts,
+    )
+    known = set(requeued) | set(not_failed)
+    return MemoryExtractionRetryMineOutput(
+        requeued=requeued,
+        not_failed=not_failed,
+        unknown=[qid for qid in asked if qid not in known],
     )
 
 

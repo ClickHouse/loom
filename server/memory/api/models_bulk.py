@@ -556,3 +556,23 @@ class MemoryExtractionStatusMineOutput(BaseModel):
     pending: int = 0
     # Of the returned batches, how many ended `failed`.
     failed: int = 0
+
+
+class MemoryExtractionRetryMineInput(MemoryExtractionStatusMineInput):
+    """Replay your failed deferred memory.set_from_messages batches once more, by queue_id.
+
+    Each `failed` batch the calling principal queued in this namespace, inside the token's
+    read scope, goes back to `pending` for one more replay; if that replay fails too, it
+    is `failed` again. Batches still waiting or done are left alone; any other id is
+    listed in `unknown`, as an id never queued is.
+    """
+
+
+class MemoryExtractionRetryMineOutput(BaseModel):
+    # The asked batches put back to `pending` for one more replay, in the order asked.
+    requeued: list[str] = Field(default_factory=list)
+    # The asked batches you queued that had not failed (`pending`, `running` or `done`):
+    # nothing to replay.
+    not_failed: list[str] = Field(default_factory=list)
+    # The asked ids no batch of yours answers to, as memory.extraction_status_mine's.
+    unknown: list[str] = Field(default_factory=list)

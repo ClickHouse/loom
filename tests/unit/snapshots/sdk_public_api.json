@@ -969,6 +969,10 @@
               "body",
               "options"
             ],
+            "extraction_retry_mine": [
+              "body",
+              "options"
+            ],
             "extraction_status": [
               "body",
               "options"

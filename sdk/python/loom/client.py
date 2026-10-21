@@ -1578,6 +1578,15 @@ class MemoryOps:
             await self._agent.call("memory.exposure_summary", body, **options),
         )
 
+    async def extraction_retry_mine(
+        self, body: _ops.MemoryExtractionRetryMineBody | None = None, /, **options: Any
+    ) -> _ops.MemoryExtractionRetryMineOutput:
+        """`memory.extraction_retry_mine`."""
+        return cast(
+            "_ops.MemoryExtractionRetryMineOutput",
+            await self._agent.call("memory.extraction_retry_mine", body, **options),
+        )
+
     async def extraction_status(
         self, body: _ops.MemoryExtractionStatusBody | None = None, /, **options: Any
     ) -> _ops.MemoryExtractionStatusOutput:
