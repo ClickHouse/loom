@@ -51,7 +51,9 @@ change between releases, and ops MCP does not serve with ‡.
 
 1. **Load context once.** `context.pack` with a `query` describing the task
    (default 2,000 tokens) returns profile, working memory, relevant
-   memories and procedures, rendered for your prompt. Add
+   memories and procedures, rendered for your prompt. Its memories narrow
+   to the `session_id` you send; step 3 recalls what earlier sessions
+   learned. Add
    `include_knowledge`, `include_conversations` or `include_runs` when the
    task needs them.
 2. **Open a run** for a task with an outcome: `run.begin(goal=...)`. Put
@@ -61,7 +63,7 @@ change between releases, and ops MCP does not serve with ‡.
    header labels a read without filtering it). In Python,
    `agent.run_scope(...)` stamps writes and labels reads for you, except
    that the typed `agent.memory.update` sends no run: inside a run, revise
-   through `agent.call("memory.update", {...})`; in TypeScript,
+   through `agent.call("memory.update", {"agent": "*", ...})`; in TypeScript,
    pass `runId` in the scope argument of writes, working-memory calls and
    `contextPack`, never of `recall` or `ask`; over MCP, the connection's own
    run labels reads.
@@ -112,7 +114,7 @@ change between releases, and ops MCP does not serve with ‡.
 
 | You see | It means | Do |
 |---|---|---|
-| a `version` (`new_version` on a `memory.update`) with `noop` false | it persisted | only now say "saved" |
+| a `version` with `noop` false on a `memory.set`; `updated: true` on a `memory.update` | it persisted | only now say "saved" |
 | `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key for the identity you sent; nothing was written | resend with `agent: "*"` when another agent wrote it; never assume it saved |
 | 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | resend with the candidate's `agent`, `user_id` and `session_id`, or use `memory.update_by_id` with its id |
 | `conflict_verdict: "conflict"`, `peers` on a `memory.set` (`conflict_peers`, a count, on a `memory.update`) | it contradicts a stored fact; both are marked | show both (read a revision's peers with `memory.ask`) and ask which is current |
@@ -143,7 +145,9 @@ cover the loop:
   `agent`, which narrows most reads and `memory.update` to rows you wrote.
   The typed search, ask and update helpers (Python `agent.memory.search`,
   `ask`, `update`; TypeScript `agent.recall`, `agent.ask`) already read
-  every author.
+  every author. Not on `context.pack` or `working_memory.*`: they read
+  your own agent's blocks and profile, and an `agent: "*"` there finds
+  none.
 - **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
   read narrows it to those rows. `search.query`† has none of them; to read
   one user's rows, use `memory.ask` with `user_id`.
