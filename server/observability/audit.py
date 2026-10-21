@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.ch_writes import batched_insert_settings
 from server.observability.instance import stamp_row
 
 log = logging.getLogger(__name__)
@@ -96,7 +97,7 @@ async def emit(
             ts=ts,
             consumer=consumer,
         )
-        await get_client().insert("loom.audit_log", [row])
+        await get_client().insert("loom.audit_log", [row], settings=batched_insert_settings())
         return str(row["row_hash"])
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit failed for event_type=%s: %s", event_type, e)
@@ -116,7 +117,7 @@ async def emit_many(
         return
     try:
         rows = [_audit_row(event_type, org, namespace, actor, s) for s in subjects]
-        await get_client().insert("loom.audit_log", rows)
+        await get_client().insert("loom.audit_log", rows, settings=batched_insert_settings())
     except Exception as e:  # fail open: an audit write never fails the op it records
         log.exception("audit.emit_many failed for event_type=%s: %s", event_type, e)
 

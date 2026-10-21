@@ -78,9 +78,9 @@ async def test_resolve_entities_for_write_is_namespace_scoped_and_persists() -> 
     assert rows[0]["mention_text"] == "northwind ai"
     assert rows[0]["canonical_text"] == "northwindai"
     assert rows[0]["strategy"] == "fuzzy"
-    # Synchronous insert: later sessions of the same multi-session ingest
-    # must be able to read this resolution back immediately.
-    assert settings["async_insert"] == 0
+    # Waited for: later sessions of the same multi-session ingest must be
+    # able to read this resolution back immediately.
+    assert settings["async_insert"] == 1
     assert settings["wait_for_async_insert"] == 1
 
 

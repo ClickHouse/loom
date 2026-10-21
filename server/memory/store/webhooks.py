@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import own_write_reads
+from server.core.ch_writes import batched_insert_settings
 from server.core.repo_base import _CHClient, _default_client
 
 WEBHOOKS = "loom.memory_webhooks"
@@ -167,14 +168,18 @@ async def insert_outbox(rows: list[dict[str, Any]], *, ch: _CHClient | None = No
     if not rows:
         return
     ch = ch or _default_client()
-    await ch.insert(OUTBOX, [_whole(r, OUTBOX_COLS) for r in rows], settings=_COMMITTED)
+    await ch.insert(
+        OUTBOX, [_whole(r, OUTBOX_COLS) for r in rows], settings=batched_insert_settings()
+    )
 
 
 async def insert_attempts(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
     if not rows:
         return
     ch = ch or _default_client()
-    await ch.insert(ATTEMPTS, [_whole(r, ATTEMPT_COLS) for r in rows], settings=_COMMITTED)
+    await ch.insert(
+        ATTEMPTS, [_whole(r, ATTEMPT_COLS) for r in rows], settings=batched_insert_settings()
+    )
 
 
 async def due_events(

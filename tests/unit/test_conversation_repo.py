@@ -68,7 +68,29 @@ async def test_append_omits_ts_when_none() -> None:
     await append(msg, ch=ch)
     _, rows, settings = ch.insert_calls[0]
     assert "ts" not in rows[0]  # CH defaults to now()
-    assert settings.get("async_insert") == 0
+    assert settings.get("async_insert") == 1 and settings.get("wait_for_async_insert") == 1
+
+
+@pytest.mark.asyncio
+async def test_an_append_once_per_identity_is_committed_with_the_identity_token() -> None:
+    """Every writer of one turn's identity sends it committed: a replicated table
+    deduplicates committed and buffered inserts separately."""
+    ch = StubCH()
+    msg = MessageInsert(
+        org="clickhouse",
+        namespace="ns",
+        agent="bot",
+        thread_id="t-1",
+        msg_id="m-1",
+        role="user",
+        content="hi",
+    )
+    await append(msg, once_per_identity=True, ch=ch)
+    await append(msg, once_per_identity=True, ch=ch)
+    (_, _, first), (_, _, second) = ch.insert_calls
+    assert first["async_insert"] == 0 and first["wait_for_async_insert"] == 1
+    assert first["insert_deduplication_token"].startswith("conversation-turn:")
+    assert first == second
 
 
 @pytest.mark.asyncio

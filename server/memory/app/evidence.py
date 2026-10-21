@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_text as _sha256_text
 
@@ -85,7 +86,7 @@ async def write_evidence_rows(
     await ch.insert(
         "loom.memory_evidence",
         rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=batched_insert_settings(),
     )
     return out
 
@@ -137,5 +138,5 @@ async def link_belief_sources(
     await ch.insert(
         "loom.memory_belief_sources",
         rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=batched_insert_settings(),
     )

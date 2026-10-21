@@ -124,7 +124,9 @@ async def test_emit_many_writes_rows_that_verify_like_emit_rows(monkeypatch) -> 
     inserts: list[list[dict[str, Any]]] = []
 
     class _CH:
-        async def insert(self, table: str, rows: list[dict[str, Any]]) -> None:
+        async def insert(
+            self, table: str, rows: list[dict[str, Any]], settings: Any = None
+        ) -> None:
             inserts.append(rows)
 
     monkeypatch.setattr(audit, "get_client", lambda: _CH())

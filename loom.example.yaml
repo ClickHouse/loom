@@ -100,6 +100,16 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
+  # Longest a batched insert (audit, transcript and ledger rows written on every
+  # request) waits, ms, for concurrent inserts into the same table to share its part.
+  # Under load each such insert waits about this long; parts per table per second are at
+  # most 1000 / this. [live]
+  # ch_batched_insert_wait_max_ms: 50
+
+  # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
+  # sparse. At most `ch_batched_insert_wait_max_ms`. [live]
+  # ch_batched_insert_wait_min_ms: 10
+
   # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot
   # gate. [restart]
   # ch_pool_wait_ms: 500

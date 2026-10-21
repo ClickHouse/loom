@@ -89,3 +89,24 @@ def test_committed_idiom_passes_through_and_fire_and_forget_turns_dedup_off() ->
     pinned = {"async_insert": 1, "wait_for_async_insert": 0, "async_insert_deduplicate": 1}
     assert ch_writes.normalize_insert_settings(pinned) == pinned
     assert ch_writes.normalize_insert_settings(None) is None
+
+
+def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batched insert is answered once its part is written, and its wait bounds
+    are read at call time (live settings); a minimum above the maximum is capped."""
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_max_ms", 50)
+    assert ch_writes.batched_insert_settings() == {
+        "async_insert": 1,
+        "wait_for_async_insert": 1,
+        "async_insert_busy_timeout_min_ms": 10,
+        "async_insert_busy_timeout_max_ms": 50,
+    }
+    monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 80)
+    s = ch_writes.batched_insert_settings()
+    assert s["async_insert_busy_timeout_min_ms"] == 50 == s["async_insert_busy_timeout_max_ms"]
+    # A retried batch still lands once: the token goes through the async switch.
+    token = ch_writes.dedup_settings("t", s)
+    assert token["async_insert_deduplicate"] == 1 and token["insert_deduplication_token"] == "t"

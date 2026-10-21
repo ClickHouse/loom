@@ -27,6 +27,7 @@ test runner.
 | Code index               | Does the code index find definitions, callers and conceptual answers, and abstain on the rest? | `code_intel_qa.py`, `code_plane_ablation.py`, `code_shunt_tokens.py`, `code_ask_cache_threshold/`                |
 | Tracker                  | Does `tracker.similar` find the older duplicate an issue was closed against?                   | `tracker_similar_bench.py`                                                                                       |
 | Latency and index health | Where does search time go; does the vector index return what brute force would?                | `search_latency.py`, `vector_tenant_recall.py`, `ann_final_staleness.py`, `scripts/ops/benchmark.py`             |
+| Write load               | What latency and how many ClickHouse parts does a sustained write rate cost?                   | `write_rate.py`                                                                                                  |
 | Consumer acceptance      | Does one kind of deployment get precise answers at an acceptable cost?                         | `acceptance/{code_agent,memory_app,plugin,harness}.py`                                                           |
 
 [`bench/memoryarena/`](../../bench/memoryarena/README.md) (an agent gym that scores later

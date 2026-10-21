@@ -28,6 +28,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from server.core.ch_writes import batched_insert_settings  # noqa: E402
+
 
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
     """Every `settings=` dict literal passed to a `ch.insert` for `table`, in
@@ -47,7 +49,16 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
         if not (isinstance(first, ast.Constant) and first.value == table):
             continue
         for kw in node.keywords:
-            if kw.arg != "settings" or not isinstance(kw.value, ast.Dict):
+            if kw.arg != "settings":
+                continue
+            value = kw.value
+            if (
+                isinstance(value, ast.Call)
+                and getattr(value.func, "id", "") == "batched_insert_settings"
+            ):
+                found.append(batched_insert_settings())
+                continue
+            if not isinstance(kw.value, ast.Dict):
                 continue
             d: dict[str, int] = {}
             for k, v in zip(kw.value.keys, kw.value.values, strict=True):

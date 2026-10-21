@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict
 
 from server.core import bm25
 from server.core.ch import caller_shaped, own_write_reads, sequential_reads
+from server.core.ch_writes import batched_insert_settings
 from server.core.errors import OverloadedError
 from server.core.repo_base import _CHClient, _default_client, param_slices
 from server.identity.domain.read_scope import ReadFilters, scope_where
@@ -186,12 +187,17 @@ async def append(
     }
     if msg.ts is not None:
         row["ts"] = msg.ts
-    settings: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
+    settings = batched_insert_settings()
     if once_per_identity:
+        # Committed: a replicated table keeps the tokens of committed and of
+        # buffered inserts apart, so every writer of an identity sends it alike.
         identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
-        settings["insert_deduplication_token"] = (
-            "conversation-turn:" + hashlib.sha256(identity.encode()).hexdigest()
-        )
+        settings = {
+            "async_insert": 0,
+            "wait_for_async_insert": 1,
+            "insert_deduplication_token": "conversation-turn:"
+            + hashlib.sha256(identity.encode()).hexdigest(),
+        }
     await ch.insert("loom.conversations", [row], settings=settings)
 
 
@@ -819,7 +825,7 @@ async def insert_embedding(
     await ch.insert(
         "loom.conversation_embeddings",
         [cast(dict[str, Any], row)],
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=batched_insert_settings(),
     )
 
 

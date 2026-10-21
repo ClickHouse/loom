@@ -678,9 +678,10 @@ class CHClient:
             # does, so the pool never holds a peer-closed TLS transport.
             keepalive_timeout=float(settings.ch_keepalive_timeout),
             # Writes are committed: the INSERT returns after the part is
-            # written (at loom's write rates the async buffer does not batch and
-            # only adds queueing). Block dedup stays off: identical event rows
-            # (agent_events, audit_log) are legitimate and must all land.
+            # written. The tables written on every request batch server-side
+            # instead (`ch_writes.batched_insert_settings`). Block dedup stays
+            # off: identical event rows (agent_events, audit_log) are legitimate
+            # and must all land.
             settings={
                 "async_insert": 0,
                 "wait_for_async_insert": 1,
