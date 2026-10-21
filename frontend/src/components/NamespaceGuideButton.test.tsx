@@ -92,4 +92,21 @@ describe("NamespaceGuideButton", () => {
     await waitFor(() => expect(api.getNamespaceGuide).toHaveBeenCalledTimes(3));
     expect(guideButton()).toHaveAccessibleDescription("Revision 3: Per-account plans");
   });
+
+  it("forgets the last namespace's guide the moment another namespace is shown", async () => {
+    vi.mocked(api.getNamespaceGuide)
+      .mockResolvedValueOnce(GUIDE)
+      .mockReturnValueOnce(new Promise(() => {}));
+    const { rerender } = render(<NamespaceGuideButton identity={identity} />);
+    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription("Revision 3: Per-account plans"));
+    rerender(<NamespaceGuideButton identity={{ org: "o", namespace: "other" }} />);
+    expect(guideButton()).toHaveAccessibleDescription("How this namespace is laid out, for agents and people");
+  });
+
+  it("is an icon named Guide where the title row is narrow", async () => {
+    vi.mocked(api.getNamespaceGuide).mockResolvedValue(GUIDE);
+    render(<NamespaceGuideButton identity={identity} compact />);
+    await waitFor(() => expect(guideButton()).toHaveAccessibleDescription(/Revision 3: Per-account plans/));
+    expect(guideButton()).not.toHaveTextContent("Guide");
+  });
 });

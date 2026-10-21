@@ -16,7 +16,7 @@ interface Props {
   namespace: string;
   /** A writer or admin edits; everyone else reads. */
   canEdit: boolean;
-  /** Open on the editor once the guide is read (a writer's "Write the guide"). */
+  /** Open on the editor once the guide is read (the Memories header, for a namespace with no guide). */
   startEditing?: boolean;
   onSaved: () => void;
 }
@@ -31,7 +31,7 @@ const STARTER = `## What this namespace holds
 - \`<tag>\`: what it marks
 
 ## How to use it
-- Look up by key before searching.
+- …
 `;
 
 /**

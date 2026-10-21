@@ -610,9 +610,16 @@ const SpaceRow = memo(function SpaceRow({
             (canReadGuide ? (
               // Above the row's stretched open button, so it takes its own click; the
               // summary is the link's name.
-              <span className="list-row-control mt-0.5 inline-block max-w-full truncate align-top text-xs">
-                <Link component="button" type="button" size="sm" onClick={() => actions.guide(namespace)}>
-                  Guide: {guideSummary}
+              // The link truncates its own text, so the wrapper clips nothing, not even its ring.
+              <span className="list-row-control mt-0.5 flex max-w-full min-w-0">
+                <Link
+                  component="button"
+                  type="button"
+                  size="xs"
+                  className="min-w-0 max-w-full"
+                  onClick={() => actions.guide(namespace)}
+                >
+                  <span className="truncate">Guide: {guideSummary}</span>
                 </Link>
               </span>
             ) : (

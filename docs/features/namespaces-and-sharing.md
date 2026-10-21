@@ -157,11 +157,10 @@ the whole guide is for its members (`namespace.join`). In the dashboard, the Mem
 page header has a **Guide** button beside **Add memory**, described by the guide's
 revision and summary; on a namespace with no guide it opens a writer straight into the
 editor, on an outline of what a newcomer asks (what the namespace holds, its keys, its
-tags, how to use it) that must be filled in before it saves. Spaces shows a public
-namespace's guide summary under its description; for a namespace you belong to, the
-summary and the **Guide** menu item open the guide. A writer edits it there, saving from
-the revision they opened, as an agent does. A namespace erasure deletes every revision
-of its guide.
+tags, how to use it) that cannot be saved unchanged. Spaces shows a public namespace's
+guide summary under its description; for a namespace you belong to, the summary and the
+**Guide** menu item open the guide. A writer edits it there, saving from the revision
+they opened, as an agent does. A namespace erasure deletes every revision of its guide.
 
 ## The mentor
 

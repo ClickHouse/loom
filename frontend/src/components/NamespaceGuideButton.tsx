@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { getNamespaceGuide, type Identity, type NamespaceGuide } from "../api";
 import { GuideDialog } from "../flows/GuideDialog";
+import { IconButton } from "./IconButton";
 import { useAbortableEffect } from "../lib/hooks";
 import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { Tip } from "./ui";
@@ -13,7 +14,14 @@ import { Tip } from "./ui";
  * (its summary, or that there is none); a writer of a namespace without one lands straight
  * in the editor.
  */
-export function NamespaceGuideButton({ identity }: { identity: Pick<Identity, "org" | "namespace"> }) {
+export function NamespaceGuideButton({
+  identity,
+  compact = false,
+}: {
+  identity: Pick<Identity, "org" | "namespace">;
+  /** An icon alone, named "Guide", where the title row has no room for a label (a phone). */
+  compact?: boolean;
+}) {
   const role = useNamespaceRole(identity.namespace);
   const writer = canWrite(role);
   const describedBy = useId();
@@ -50,17 +58,28 @@ export function NamespaceGuideButton({ identity }: { identity: Pick<Identity, "o
 
   return (
     <>
-      <Tip content={about}>
-        <Button
+      {compact ? (
+        <IconButton
+          icon="info-in-circle"
+          label="Guide"
+          tooltip={about}
           type="secondary"
-          htmlType="button"
-          iconLeft="info-in-circle"
           aria-describedby={describedBy}
           onClick={() => setOpen(true)}
-        >
-          Guide
-        </Button>
-      </Tip>
+        />
+      ) : (
+        <Tip content={about}>
+          <Button
+            type="secondary"
+            htmlType="button"
+            iconLeft="info-in-circle"
+            aria-describedby={describedBy}
+            onClick={() => setOpen(true)}
+          >
+            Guide
+          </Button>
+        </Tip>
+      )}
       <span id={describedBy} className="sr-only">
         {about}
       </span>

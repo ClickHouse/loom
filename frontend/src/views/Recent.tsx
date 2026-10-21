@@ -612,7 +612,7 @@ function MemoryList() {
         title="Memories"
         actions={
           <>
-            <NamespaceGuideButton identity={identity} />
+            <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyNamespace && (
               <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
@@ -624,7 +624,7 @@ function MemoryList() {
           </>
         }
       >
-        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
+        {/* The phone's top bar names the namespace; the title row keeps its actions beside it. */}
         <span className="hidden sm:contents">
           <ScopeBadge kind="namespace" value={identity.namespace} />
         </span>
