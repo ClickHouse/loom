@@ -1,10 +1,11 @@
-"""One process's copy of a small table for a fail-closed check, read when a call finds it due.
+"""One process's copy of a small table that every call reads, refreshed when a call finds it due.
 
-The check is made on every call. The copy reads the whole table when a read is due:
-`refresh_s` after the last read ended, or at once after a change made in this process
-(`note_change`). While a read runs, a call is served the copy in hand if that copy is young
-enough and no change made here waits; otherwise it waits for the read. `get` answers None
-when the copy is older than `max_stale_s`, and the caller refuses.
+The copy reads the whole table when a read is due: `refresh_s` after the last read ended,
+or at once after a change made in this process (`note_change`). While a read runs, a call is
+served the copy in hand if that copy is young enough and no change made here waits;
+otherwise it waits for the read. `get` answers None when the copy is older than
+`max_stale_s` or was never read: a security check refuses then, and a best-effort reader
+such as the memory webhook registry treats it as empty.
 """
 
 from __future__ import annotations

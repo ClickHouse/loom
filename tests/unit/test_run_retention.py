@@ -69,8 +69,19 @@ class _FakeCH:
 
 
 class _Existing:
+    """The live row `write_versions_by_ids` hands the update: identity and confidence."""
+
     def __init__(self, confidence: float) -> None:
         self.confidence = confidence
+        self.org, self.namespace, self.memory_id = "o", "n", "m1"
+        self.agent, self.user_id, self.session_id = "a", "-", "-"
+        self.memory_key = "fact"
+
+
+def _overrides(update: dict[str, Any]) -> dict[str, Any]:
+    """The update's columns but its version, which the webhook event repeats."""
+    assert isinstance(update.pop("version"), int)
+    return update
 
 
 def _run(coro: Any) -> Any:
@@ -103,7 +114,7 @@ def test_demote_writes_scaled_confidence_and_mirrors_it(monkeypatch) -> None:
     mirrored: list[tuple[str, dict[str, Any]]] = []
 
     async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
-        written.append((ids, update(_Existing(0.8))))
+        written.append((ids, _overrides(update(_Existing(0.8)))))
         return len(ids)
 
     async def fake_mirror(row: Any, **overrides: Any) -> None:
@@ -150,7 +161,7 @@ def test_expire_sets_expiry_and_demote_post_action(monkeypatch) -> None:
     mirrored: list[tuple[str, dict[str, Any]]] = []
 
     async def fake_write(org: str, ids: list[str], update: Any, *, ch: Any = None) -> int:
-        written.append(update(_Existing(0.8)))
+        written.append(_overrides(update(_Existing(0.8))))
         return len(ids)
 
     async def fake_mirror(row: Any, **overrides: Any) -> None:

@@ -13,8 +13,10 @@ rather than returning an empty result that a wrong query would also get:
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,7 +29,7 @@ Answer = Rows | Callable[[str, dict[str, Any]], Rows]
 
 @dataclass(frozen=True)
 class Statement:
-    kind: str  # query_one | query_all | execute | insert
+    kind: str  # query_one | query_all | raw_stream | execute | insert
     sql: str
     params: dict[str, Any]
     table: str | None = None
@@ -94,6 +96,22 @@ class RecordingCH:
     ) -> dict[str, Any] | None:
         rows = self._read("query_one", sql, params)
         return rows[0] if rows else None
+
+    @asynccontextmanager
+    async def raw_stream(
+        self, sql: str, params: dict[str, Any] | None = None, **_: Any
+    ) -> AsyncIterator[AsyncIterator[bytes]]:
+        """A read's rows as `FORMAT JSONEachRow` bytes, each row split across two
+        chunks, so a reader that assumes whole lines per chunk fails."""
+        rows = self._read("raw_stream", sql, params)
+
+        async def chunks() -> AsyncIterator[bytes]:
+            for row in rows:
+                line = (json.dumps(row) + "\n").encode()
+                yield line[: len(line) // 2]
+                yield line[len(line) // 2 :]
+
+        yield chunks()
 
     async def execute(
         self,

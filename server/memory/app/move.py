@@ -26,6 +26,7 @@ from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
 from server.memory.api.models_move import MemoryMoveInput, MemoryMoveOutput
 from server.memory.app import handlers as _mem
 from server.memory.app import set_chunks as _set_chunks
+from server.memory.app import webhooks
 from server.memory.app import write as write_mod
 from server.memory.domain import lock as _lock
 from server.memory.domain import provenance as _prov
@@ -147,6 +148,8 @@ async def _redirect_source(source: MemoryRow, dest_id: str, ch: Any) -> None:
         updated_at=now,
     )
     await memory_repo.insert_memory_versions([row], ch=ch)
+    # The source key now reads as a redirect to the destination.
+    await webhooks.announce([("memory.revised", row)])
     try:
         mirror = await memory_repo.embedding_mirror_for_keys(
             source.org, source.namespace, [source.memory_key], ch=ch
