@@ -513,6 +513,12 @@ def enabled_workers() -> list[WorkerSpec]:
     return [_spec_for(row) for row in _WORKERS if _is_enabled(row)]
 
 
+def pass_deadline_seconds(name: str) -> float:
+    """The deadline the supervisor enforces on a pass of worker `name`."""
+    row = next(row for row in _WORKERS if row.name == name)
+    return _spec_for(row).deadline_seconds()
+
+
 def worker_meta() -> dict[str, dict[str, float | bool]]:
     """Enable state and cadence of EVERY worker, disabled ones included —
     what `/v1/admin/workers.status` renders beside the supervised set."""

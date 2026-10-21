@@ -39,7 +39,7 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     from server.core.repo_base import _default_client
     from server.memory.app import sensitivity_sweep as sweep
     from server.settings import settings
-    from server.workers.registry import default_max_pass_seconds
+    from server.workers.registry import pass_deadline_seconds
 
     ch = ch or _default_client()
     window = max(1, int(settings.sensitivity_sweep_window_days))
@@ -55,9 +55,10 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
             only_shapes=shapes or None,
             start_after=start,
             skip_noisy_agents=True,
-            # Half the pass deadline, so the pass applies what it found and stores its
-            # cursor before the supervisor cancels it.
-            seconds=default_max_pass_seconds(settings.sensitivity_sweep_interval_seconds) / 2,
+            # The other half applies what the scan found and stores the cursor before the
+            # supervisor cancels the pass.
+            # not a setting: half the pass deadline, derived from it
+            seconds=pass_deadline_seconds("sensitivity_sweep") / 2,
             ch=ch,
         )
         result = await sweep.apply(report.candidates, ch=ch)

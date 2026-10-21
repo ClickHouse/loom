@@ -1045,7 +1045,9 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 500)
     monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 3)
     monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
+    monkeypatch.setattr(settings, "sensitivity_sweep_interval_seconds", 86400)
     out = await w.run_pass(ch=_CH())  # type: ignore[arg-type]
+    assert seen["seconds"] == 450  # half the 900 s pass deadline
     assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["page_size"] == 500
     assert seen["pages"] == 3
     assert seen["only_shapes"] == ["credential", "email"]  # the phone shape is the operator's
