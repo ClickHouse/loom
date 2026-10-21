@@ -674,3 +674,23 @@ def test_the_list_is_bounded_and_narrowed_by_time(store: _Store) -> None:
     )
     padded = c.get("/v1/admin/revocations", params={"subject": " sa:old-1 "}).json()
     assert [row["jti"] for row in padded["revocations"]] == ["sa:old-1"]
+
+
+def test_recording_a_later_alias_failure_still_audits_earlier_revocations(store, monkeypatch):
+    store.accounts.append(
+        {"org": "acme", "owner_email": "account-id", "contact_email": "lee@example.com"}
+    )
+    insert = store.insert
+
+    async def fail_login_subject(table, rows, **kwargs):
+        if table == "loom.revoked_tokens" and any(r["jti"] == "account-id" for r in rows):
+            raise ConnectionError("revocation write unavailable")
+        return await insert(table, rows, **kwargs)
+
+    monkeypatch.setattr(store, "insert", fail_login_subject)
+    with pytest.raises(ConnectionError):
+        _client().post(
+            "/v1/admin/revoke_subject", json={"org": "acme", "subject": "lee@example.com"}
+        )
+    assert set(store.revoked()) == {"lee@example.com"}
+    assert [row["subject"]["token_id"] for row in store.audits] == ["lee@example.com"]

@@ -185,12 +185,14 @@ async def revoke_in_org(
     email. Raises, revoking nothing, when the directory cannot be read."""
     from server.auth.aliases import spellings
 
-    recorded = [
-        (s, await record(s, by=by, reason=reason, at=at))
-        for s in await spellings(org, subject.strip())
-    ]
-    completed = []
+    recorded = []
     errors = []
+    for s in await spellings(org, subject.strip()):
+        try:
+            recorded.append((s, await record(s, by=by, reason=reason, at=at)))
+        except Exception as e:  # noqa: BLE001 — finish every revocation that was recorded
+            errors.append(e)
+    completed = []
     for s, (row, kept) in recorded:
         try:
             completed.append((s, await finish(s, row, kept, by=by, org=org)))
