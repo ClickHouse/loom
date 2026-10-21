@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
+from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+
 
 @pytest.mark.asyncio
 async def test_clear_with_user_id_tombstones_across_tables(
@@ -178,6 +180,217 @@ async def test_clear_zero_rows_is_well_formed(
     )
     assert out.total == 0
     assert all(v == 0 for v in out.rows_affected.values())
+
+
+@pytest.mark.asyncio
+async def test_clear_star_agent_tombstones_without_an_agent_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The statement a star-agent clear runs filters on the user alone."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id="u1", agent="*", confirm_subject="u1"
+        )
+    )
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert "user_id = {" in memory_alter.sql
+    assert "agent = {" not in memory_alter.sql
+    assert "agent" not in memory_alter.params
+
+
+@pytest.mark.asyncio
+async def test_clear_star_user_tombstones_without_a_user_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The statement a star-user clear runs filters on the agent alone."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id="*", agent="bot", confirm_subject="bot"
+        )
+    )
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert "agent = {" in memory_alter.sql
+    assert "user_id = {" not in memory_alter.sql
+    assert "uid" not in memory_alter.params
+
+
+# (agent, user_id, session_id, memory_key, lock_mode) rows; the first is always locked.
+_STAR_AGENT_ROWS = [
+    ("A", "u1", "-", "K", "read_only"),
+    ("B", "u1", "-", "K", ""),
+    ("B", "u1", "-", "J", ""),
+    ("B", "u2", "-", "K", ""),  # another user: outside the clear
+]
+_STAR_USER_ROWS = [
+    ("A", "u1", "-", "K", "read_only"),
+    ("A", "u2", "-", "K", ""),
+    ("A", "u2", "-", "J", ""),
+    ("B", "u2", "-", "K", ""),  # another agent: outside the clear
+]
+_SESSION_ROWS = [
+    ("A", "u1", "s1", "K", "read_only"),
+    ("A", "u1", "s2", "K", ""),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not CLICKHOUSE, reason="clickhouse binary not installed")
+@pytest.mark.parametrize(
+    ("user_id", "agent", "rows", "live"),
+    [
+        ("u1", "*", _STAR_AGENT_ROWS, [("A", "u1", "-", "K"), ("B", "u2", "-", "K")]),
+        ("*", "A", _STAR_USER_ROWS, [("A", "u1", "-", "K"), ("B", "u2", "-", "K")]),
+        ("u1", "A", _SESSION_ROWS, [("A", "u1", "s1", "K")]),
+    ],
+    ids=["star-agent", "star-user", "same-key-other-session"],
+)
+async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
+    monkeypatch: pytest.MonkeyPatch,
+    user_id: str,
+    agent: str,
+    rows: list[tuple[str, str, str, str, str]],
+    live: list[tuple[str, str, str, str]],
+) -> None:
+    """The embeddings mutation a clear builds, run on schema.sql's tables: a key locked
+    under one identity keeps that identity's vector, and only that one."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+    from tests.unit.ch_fake import RecordingCH
+
+    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
+    ch.on("SELECT count() AS n", [{"n": 1}])
+    ch.install(monkeypatch)
+    subject = agent if user_id == "*" else user_id
+    out = await handle_memory_clear(
+        MemoryClearInput(
+            org="o", namespace="n", user_id=user_id, agent=agent, confirm_subject=subject
+        )
+    )
+    assert out.locked_skipped == 1
+    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
+
+    cols = "org, namespace, agent, user_id, session_id, memory_key, version"
+    setup = [
+        "SET enable_quantized_codec = 1",
+        ddl("memory"),
+        ddl("memory_embeddings"),
+        *(
+            f"INSERT INTO loom.memory ({cols}, memory_id, lock_mode)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1, generateUUIDv4(), '{mode}'"
+            for a, u, s, k, mode in rows
+        ),
+        *(
+            f"INSERT INTO loom.memory_embeddings ({cols}, embedding, memory_key_embedding)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1,"
+            # Both vector columns at the codec's declared dimension.
+            " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
+            for a, u, s, k, _ in rows
+        ),
+        emb_alter.sql,
+    ]
+    got = run(
+        setup,
+        "SELECT agent, user_id, session_id, memory_key FROM loom.memory_embeddings FINAL"
+        " WHERE tombstoned_at IS NULL ORDER BY agent, user_id, session_id, memory_key",
+        emb_alter.params,
+    )
+    assert [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in got] == live
+
+
+@pytest.mark.asyncio
+async def test_clear_refuses_star_as_confirm_subject() -> None:
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="clickhouse",
+                namespace="finance",
+                user_id="alice",
+                agent="*",
+                confirm_subject="*",
+            )
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "CONFIRM_SUBJECT_MISMATCH"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("u1", "-")])
+async def test_dash_never_confirms_a_clear(user_id: str, agent: str) -> None:
+    """'-' is a value anyone can type, so it never confirms, even as a literal scope."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="clickhouse",
+                namespace="finance",
+                user_id=user_id,
+                agent=agent,
+                confirm_subject="-",
+            )
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "CONFIRM_SUBJECT_MISMATCH"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("user_id", "agent"), [("-", "bot"), ("u1", "-")])
+async def test_clear_accepts_dash_beside_a_named_axis(
+    monkeypatch: pytest.MonkeyPatch, user_id: str, agent: str
+) -> None:
+    """'-' beside a concrete value is a literal scope: both filters reach the statement."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    ch = _clear_ch(monkeypatch, [])
+    named = agent if user_id == "-" else user_id
+    await handle_memory_clear(
+        MemoryClearInput(
+            org="acme", namespace="chat", user_id=user_id, agent=agent, confirm_subject=named
+        )
+    )
+    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
+    assert "user_id = {" in memory_alter.sql and "agent = {" in memory_alter.sql
+    assert (memory_alter.params["uid"], memory_alter.params["agent"]) == (user_id, agent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user_id", "agent"),
+    [("*", "*"), ("-", "*"), ("*", "-"), ("-", None), (None, "-"), ("-", "-")],
+)
+async def test_clear_refuses_a_scope_that_names_nobody(
+    user_id: str | None, agent: str | None
+) -> None:
+    """An open axis beside another open one, or beside '-' (no user, no agent), selects most of
+    a namespace: erasure's job."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="clickhouse",
+                namespace="finance",
+                user_id=user_id,
+                agent=agent,
+                confirm_subject="-" if "-" in (user_id, agent) else "*",
+            )
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "MISSING_SCOPE"
 
 
 def _clear_ch(monkeypatch: pytest.MonkeyPatch, tombstoned: list[dict]):
