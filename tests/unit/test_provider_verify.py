@@ -11,11 +11,11 @@ from server.insights.store.provider_verify import (
     verify_live_key_uniqueness,
     verify_reembedded_target,
 )
+from tests.unit._fake_credentials import AWS_KEY_ID
 
 
-@pytest.fixture
-def verification():
-    names = StagingNames(uuid4(), "memory_embeddings")
+def _verification(table: str = "memory_embeddings"):
+    names = StagingNames(uuid4(), table)
     schema = SourceSchema(
         uuid4(),
         "ReplacingMergeTree",
@@ -29,6 +29,7 @@ def verification():
         "missing": 0,
         "metadata_errors": 0,
         "vector_errors": 0,
+        "emptied": 0,
     }
     client = AsyncMock()
     client.query_one.side_effect = [
@@ -45,6 +46,11 @@ def verification():
     return (names, schema, snapshot, target, "b" * 64), client, result
 
 
+@pytest.fixture
+def verification():
+    return _verification()
+
+
 @pytest.mark.asyncio
 async def test_complete_verified_target_returns_logical_count(verification):
     args, client, _ = verification
@@ -57,8 +63,108 @@ async def test_complete_verified_target_returns_logical_count(verification):
     assert params == {"model": "target", "dim": 3}
 
 
+def _emptied_rows(texts: list[str]) -> list[list[dict]]:
+    """The two reads of one page: the target's empty ordinals, then their snapshot text.
+    The fixture's table has two vector columns; the first is the one left empty."""
+    ordinals = [4 + i for i in range(len(texts))]
+    return [
+        [{"ordinal": o, "emptied": [True, False]} for o in ordinals],
+        [
+            {"ordinal": o, "text": t, "has_vector": [True, True], "live": True}
+            for o, t in zip(ordinals, texts, strict=True)
+        ],
+    ]
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["missing", "metadata_errors", "vector_errors"])
+async def test_an_emptied_passage_that_reads_as_a_credential_verifies(verification):
+    args, client, result = verification
+    result["emptied"] = 2
+    client.query_all.side_effect = _emptied_rows([f"key {AWS_KEY_ID}", f"also {AWS_KEY_ID}"])
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, text_column="content", ch=client
+    )
+    assert count == 3
+    target_sql, source_sql = (c.args[0] for c in client.query_all.await_args_list)
+    # A page of the target's empty ordinals, then the snapshot text of those only.
+    assert "_loom_rebuild_ordinal > {after:UInt64}" in target_sql and "LIMIT" in target_sql
+    assert "(`embedding`.size0 = 0 OR `memory_key_embedding`.size0 = 0)" in target_sql
+    assert "AS emptied" in target_sql
+    assert "AND isNull(tombstoned_at)" in target_sql  # a tombstone is staged empty
+    assert "IN {ordinals:Array(UInt64)}" in source_sql and "`content` AS text" in source_sql
+    assert "JOIN" not in target_sql + source_sql
+    assert client.query_all.await_args_list[1].args[1] == {"ordinals": [4, 5]}
+
+
+@pytest.mark.asyncio
+async def test_an_emptied_plain_passage_fails_verification(verification):
+    args, client, result = verification
+    result["emptied"] = 2
+    client.query_all.side_effect = _emptied_rows([f"key {AWS_KEY_ID}", "a plain turn"])
+    with pytest.raises(ValueError, match="failed verification"):
+        await verify_reembedded_target(
+            *args, model="target", dimensions=3, text_column="content", ch=client
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source",
+    [
+        # An all-zero placeholder in the emptied column, which rebuilds empty.
+        {"has_vector": [False, True], "live": True},
+        # A tombstoned row, which rebuilds empty.
+        {"has_vector": [True, True], "live": False},
+    ],
+)
+async def test_an_emptied_row_that_lost_no_vector_is_not_counted(verification, source):
+    """Plain text, yet accepted: the row's source held no real vector in the emptied
+    column, or the row is tombstoned."""
+    args, client, result = verification
+    result["emptied"] = 1
+    client.query_all.side_effect = [
+        [{"ordinal": 4, "emptied": [True, False]}],
+        [{"ordinal": 4, "text": "a plain turn", **source}],
+    ]
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, text_column="content", ch=client
+    )
+    assert count == 3
+
+
+@pytest.mark.asyncio
+async def test_the_emptied_ordinals_are_read_a_page_at_a_time(verification, monkeypatch):
+    from server.insights.store import provider_verify
+
+    monkeypatch.setattr(provider_verify, "_EMPTIED_PAGE", 2)
+    args, client, result = verification
+    result["emptied"] = 3
+    first, first_text = _emptied_rows([f"key {AWS_KEY_ID}", f"key {AWS_KEY_ID}"])
+    client.query_all.side_effect = [
+        first,
+        first_text,
+        [{"ordinal": 12, "emptied": [True, False]}],
+        [{"ordinal": 12, "text": f"key {AWS_KEY_ID}", "has_vector": [True, True], "live": True}],
+    ]
+    count = await verify_reembedded_target(
+        *args, model="target", dimensions=3, text_column="content", ch=client
+    )
+    assert count == 3
+    afters = [c.args[1].get("after") for c in client.query_all.await_args_list]
+    assert afters == [0, None, 5, None]
+
+
+@pytest.mark.asyncio
+async def test_an_emptied_row_fails_a_table_that_holds_no_passages(verification):
+    args, client, result = verification
+    result["emptied"] = 1
+    with pytest.raises(ValueError, match="failed verification"):
+        await verify_reembedded_target(*args, model="target", dimensions=3, ch=client)
+    client.query_all.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["missing", "metadata_errors", "vector_errors", "emptied"])
 async def test_any_error_blocks_publication(verification, field):
     args, client, result = verification
     result[field] = 1
