@@ -59,9 +59,9 @@ change between releases, and ops MCP does not serve with ‡.
    `context.pack`, and keep it off `memory.search`‡ and `memory.ask`, where
    a `run_id` filters to the run's own rows (over HTTP, the `X-Loom-Run-Id`
    header labels a read without filtering it). In Python,
-   `agent.run_scope(...)` does this for the typed helpers except
-   `agent.memory.update` and `update_by_id`, which need `run_id=` passed
-   (a raw `agent.call` to `memory.update` gets it); in TypeScript,
+   `agent.run_scope(...)` stamps writes and labels reads for you, except
+   that the typed `agent.memory.update` sends no run: inside a run, revise
+   through `agent.call("memory.update", {...})`; in TypeScript,
    pass `runId` in the scope argument of writes, working-memory calls and
    `contextPack`, never of `recall` or `ask`; over MCP, the connection's own
    run labels reads.
@@ -112,7 +112,7 @@ change between releases, and ops MCP does not serve with ‡.
 
 | You see | It means | Do |
 |---|---|---|
-| `memory_id` and `version` on a `memory.set`, `new_version` on a `memory.update` | it persisted | only now say "saved" |
+| a `version` (`new_version` on a `memory.update`) with `noop` false | it persisted | only now say "saved" |
 | `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key for the identity you sent; nothing was written | resend with `agent: "*"` when another agent wrote it; never assume it saved |
 | 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | resend with the candidate's `agent`, `user_id` and `session_id`, or use `memory.update_by_id` with its id |
 | `conflict_verdict: "conflict"`, `peers` on a `memory.set` (`conflict_peers`, a count, on a `memory.update`) | it contradicts a stored fact; both are marked | show both (read a revision's peers with `memory.ask`) and ask which is current |
@@ -135,43 +135,25 @@ read boundary: everyone who reads it reads every row in it. On writes, set
 end user when you serve many, `session_id` to the conversation or job, and
 `run_id` to the task execution.
 
-On reads the same fields select rows, and each read op treats them its own
-way; its field list (operations reference, `loom_op` help) says how. The
-reads the loop uses:
+On reads the same fields select rows, and ops differ in how; each op's
+field list (`loom_op` help, the operations reference) says how. Three rules
+cover the loop:
 
-- `search.query`† reads every author and user in the namespaces it fans out
-  to (`namespaces_skipped` names any it cut); it has no `user_id` or
-  `session_id`. To read one user's rows, use
-  `memory.ask` or `memory.search`‡ with `user_id`.
-- `memory.search`‡ and `memory.ask` read every author unless you name an
-  `agent`; a `user_id` or `session_id` narrows them to those rows.
-- `context.pack` has two memory parts. Its relevant memories (with a
-  `query`, or in `mode: "startup"` without one) come from every author,
-  narrowed by `user_id` and `session_id`. Its memory stack, in every mode,
-  holds only your own agent's pinned and recently recalled rows under
-  exactly that `user_id` and `session_id`. A pack that names this
-  session's `session_id` recalls only this session's memories; keep it on
-  anyway, because the pack picks this session's working-memory blocks by
-  it, and read what earlier sessions learned with `search.query`† or
-  `memory.ask`.
-- `memory.get` and `memory.delete` take your row under the key, else the
-  same user's row under another agent.
-- `memory.list` needs `agent` and matches `agent`, `user_id` and
-  `session_id` exactly (`user_id` and `session_id` default to `-`); `"*"`
-  on a field reads every value.
+- **Every author: send `agent: "*"`.** A raw `agent.call` stamps your own
+  `agent`, which narrows most reads and `memory.update` to rows you wrote.
+  The typed search, ask and update helpers (Python `agent.memory.search`,
+  `ask`, `update`; TypeScript `agent.recall`, `agent.ask`) already read
+  every author.
+- **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
+  read narrows it to those rows. `search.query`† has none of them; to read
+  one user's rows, use `memory.ask` with `user_id`.
+- **Keep `session_id` on `context.pack`.** The pack picks this session's
+  working-memory blocks by it, and its recalled memories narrow to that
+  session too: ask `search.query`† or `memory.ask` for what earlier
+  sessions learned.
 
-Whenever you mean rows from every author, say so: a raw `agent.call`
-stamps your own `agent` (and `-` for the rest), and every op that looks
-rows up by author then sees only yours. Pass `agent: "*"` on those calls:
-reads (`memory.search`‡, `memory.ask`, `memory.list`, `memory.history`†,
-`conversation.search`†‡) and revisions by key (`memory.update`).
-`memory.related`† looks its source key up under your exact identity, so
-name the identity that wrote it. In the Python helpers the argument is
-`agent_id="*"` (`agent.memory.list` takes none, so list every author
-through `agent.call`); `agent.memory.search`, `agent.memory.ask` and
-`agent.memory.update`, and TypeScript `agent.recall` and `agent.ask`,
-already read every author. In TypeScript, `agent.call` takes
-`userId`, `sessionId` and `runId` in its scope argument, not the body.
+In TypeScript, `agent.call` takes `userId`, `sessionId` and `runId` in its
+scope argument, not the body.
 
 A token minted with an `own_user` read scope refuses a read without
 `user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it, unless it is

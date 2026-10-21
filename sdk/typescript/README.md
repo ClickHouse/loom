@@ -153,7 +153,7 @@ const loom = new LoomClient({ baseUrl, apiKey, logger: myPinoAdapter, logLevel: 
 
 `await bot.guide()` returns how to use Loom, written for a model: the loop,
 where each kind of state goes and how to read what comes back
-(`mentor.guide`, the `loom` skill in `skills/loom/`). Put it in the system
+(the experimental `mentor.guide`, the `loom` skill in `skills/loom/`). Put it in the system
 prompt of an agent that has no plugin to carry it; `guide("reference")` returns
 every plane with its ops.
 

@@ -24,7 +24,7 @@ adapters).
 Install either the `loom` plugin or `loom-code-skill`, not both: each ships a
 skill named `loom-code`, and the model would see two. The `loom` skill is the
 usage guide for an agent with no plugin; the plugin's own skills cover the same
-ground, and an SDK or HTTP agent fetches the guide with `mentor.guide`.
+ground, and an SDK or HTTP agent fetches the guide with the experimental `mentor.guide`.
 
 ## Where captured chat goes
 

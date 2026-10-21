@@ -129,14 +129,12 @@ on loses that boost.
 | `run.get`, `run.list`‡ | A run's record, with `over_budget`; recent runs. |
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
-Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
-Its typed helpers carry the run's `run_id` on every call (except
-`agent.memory.update` and `update_by_id`, which take `run_id=` from you), and on
-`memory.search`‡ and `memory.ask` send it as the `X-Loom-Run-Id` header (a
-body `run_id` there filters to the run's rows; `memory.list` gets the
-header too and has no run filter). A raw `agent.call` inside
-the scope gets it only on writes (memory writes, `observe.record`, and
-working-memory `set` and `append`), and as the header on recall reads.
+Python: `async with agent.run_scope(goal=...) as run:` opens and closes it,
+stamps the run's `run_id` on writes and labels recall reads with the
+`X-Loom-Run-Id` header (a body `run_id` on `memory.search`‡ or `memory.ask`
+filters to the run's rows). The typed `agent.memory.update` sends no run,
+and `memory.update_by_id` has no run field: revise by key through
+`agent.call` inside a run.
 
 ## Conversations and session briefs
 

@@ -88,7 +88,7 @@ print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 
 `await agent.guide()` returns how to use Loom, written for a model: the loop,
 where each kind of state goes and how to read what comes back
-(`mentor.guide`, the `loom` skill in `skills/loom/`). Put it in the system
+(the experimental `mentor.guide`, the `loom` skill in `skills/loom/`). Put it in the system
 prompt of an agent that has no plugin to carry it; `part="reference"` returns
 every plane with its ops.
 
