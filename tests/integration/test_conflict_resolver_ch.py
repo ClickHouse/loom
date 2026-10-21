@@ -3489,13 +3489,13 @@ async def test_a_plain_restore_of_a_live_row_takes_no_lock(ch, wired, monkeypatc
     org, _ = wired
     await _set(org, "s1", "plain_key", "A plain row")
     taken: list[str] = []
-    real = restore._undo_lock
+    real = restore._key_lock
 
-    def spy(input: Any) -> Any:
+    def spy(input: Any, what: str) -> Any:
         taken.append(input.memory_key)
-        return real(input)
+        return real(input, what)
 
-    monkeypatch.setattr(restore, "_undo_lock", spy)
+    monkeypatch.setattr(restore, "_key_lock", spy)
     out = await restore.handle_memory_restore(
         MemoryRestoreInput(
             org=org,

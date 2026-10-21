@@ -77,4 +77,4 @@ async def test_the_undo_of_a_delete_takes_the_keys_write_lock(monkeypatch) -> No
     undo = MemoryRestoreInput(org="o", namespace="ns", agent="a", memory_key="k")
     with pytest.raises(PreconditionFailedError) as e:
         await restore.handle_memory_restore(undo)
-    assert e.value.status_code == 409 and "retry the undo" in str(e.value).lower()
+    assert e.value.status_code == 409 and "retry the restore" in str(e.value).lower()

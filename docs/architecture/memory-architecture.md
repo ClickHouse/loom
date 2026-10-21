@@ -1209,7 +1209,7 @@ key is marked dead), and appends every outcome in one insert: `delivered`, `pend
 its next attempt, or `dead`. Attempt rows hold event ids and counters only, so an erasure
 that deletes an event while a pass is in flight leaves nothing a later pass can send. An
 outbox insert that fails never fails the write. During a rolling upgrade an N-1 replica
-writes no outbox rows ([rule 14](rolling-upgrades.md#the-rules)).
+writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 [Change webhooks](../features/memory/writing.md#change-webhooks) has the caller's view.
 
 ## Invariants

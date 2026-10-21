@@ -51,8 +51,9 @@ async def _read_restorable(input: MemoryRestoreInput) -> MemoryRow | None:
     )
 
 
-def _undo_lock(input: MemoryRestoreInput) -> AbstractAsyncContextManager[None]:
-    """The key's write lock for an Undo (`key_write_lock.key_lock_for`)."""
+def _key_lock(input: MemoryRestoreInput, what: str) -> AbstractAsyncContextManager[None]:
+    """The key's write lock for a restore (`key_write_lock.key_lock_for`); `what` names it
+    in the answer when the lock is busy."""
     return key_write_lock.key_lock_for(
         input.org,
         input.namespace,
@@ -60,7 +61,7 @@ def _undo_lock(input: MemoryRestoreInput) -> AbstractAsyncContextManager[None]:
         input.user_id,
         input.session_id,
         input.memory_key,
-        what="the Undo",
+        what=what,
         operation="memory.restore",
     )
 
@@ -68,7 +69,7 @@ def _undo_lock(input: MemoryRestoreInput) -> AbstractAsyncContextManager[None]:
 async def _restore_superseded(input: MemoryRestoreInput, ch: Any) -> MemoryRestoreOutput:
     # A conditional revision holds the key's write lock from its read to its insert; the
     # Undo does too, or it could write the retired value back over that revision.
-    async with _undo_lock(input):
+    async with _key_lock(input, "the Undo"):
         existing = await _read_restorable(input)
         if existing is None:
             return MemoryRestoreOutput(restored=False)
@@ -552,7 +553,7 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
 
     # The key's write lock, as the Undo of a retirement takes it: a conditional revision
     # holds it from its read to its insert, and this must not write over that revision.
-    async with _undo_lock(input):
+    async with _key_lock(input, "the restore"):
         new_version = next_version()
         # Full-column get_by_key so the restore mirrors every persisted column.
         restore_identity = memory_repo.Identity(

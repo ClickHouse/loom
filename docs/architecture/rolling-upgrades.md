@@ -214,7 +214,7 @@ schema. These rules keep that safe. The operator procedure is in
     `loom.extraction_policies` and extracts without it. Set a policy only once no N-1
     replica serves. A rollback leaves the rows in place but no replica applies them
     until the build that reads them is back.
-14. **A new side effect of a write** (such as memory webhook events): N-1 does not
+22. **A new side effect of a write** (such as memory webhook events): N-1 does not
     perform it. A memory write served by an N-1 replica leaves no
     `loom.memory_webhook_outbox` row, so it sends no event, and an erasure saga run by
     N-1 has no step for the outbox and its census does not count it. Webhooks are

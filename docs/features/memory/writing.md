@@ -313,9 +313,12 @@ These writes send no event:
 - the supersessions a write makes of other rows: the older same-key rows the `newest_wins`
   conflict policy retires, and the peers a `refines` verdict supersedes. The new row's own
   event is sent.
-- the status a conflict verdict lands after the write, inline or from the deferred judge
-  (`conflicted` on the row and its peers, `duplicate` on the row). The write's own event is
-  sent.
+- what the conflict resolver lands after the write, minutes later: the rows it retires
+  (`superseded`, under another key too), and the `conflicted` flags it sets or clears. The
+  write's own event was sent before, so a receiver that mirrors what Loom serves reads
+  `memory.auto_retirements` for the rows retired since.
+- the `conflicted` and `duplicate` status the write's own check lands. The write's own event
+  is sent.
 - the undo of an automatic supersession through `memory.restore`
 - copies into another namespace (`memory.copy_to`, `memory.cross_promote`)
 - `namespace.restore` from a snapshot
