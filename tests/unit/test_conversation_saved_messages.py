@@ -627,7 +627,7 @@ async def test_a_session_bounded_token_cannot_search_saved_messages() -> None:
     with read_filters_bound(None, scope), pytest.raises(AuthInsufficientError):
         await conversations.handle_conversation_search_saved_messages(
             ConversationSearchSavedMessagesInput(
-                org="o", namespace="n", agent="librechat", user_id="u-1", query="q"
+                org="o", namespace="n", agent="chat-bot", user_id="u-1", query="q"
             )
         )
 
@@ -636,7 +636,7 @@ def _unsave_input(user_id: str = "u-1") -> ConversationUnsaveMessageInput:
     return ConversationUnsaveMessageInput(
         org="o",
         namespace="n",
-        agent="librechat",
+        agent="chat-bot",
         conversation_id="c-1",
         message_id="m-1",
         user_id=user_id,
@@ -728,7 +728,7 @@ async def test_the_saved_list_cursor_carries_the_conversation_and_the_message(
     monkeypatch.setattr(conversation_repo, "list_saved_messages", fake_list)
     first = await conversations.handle_conversation_list_saved_messages(
         ConversationListSavedMessagesInput(
-            org="o", namespace="n", agent="librechat", user_id="u-1", limit=1
+            org="o", namespace="n", agent="chat-bot", user_id="u-1", limit=1
         )
     )
     assert [r.message_id for r in first.rows] == ["m-2"]
@@ -736,7 +736,7 @@ async def test_the_saved_list_cursor_carries_the_conversation_and_the_message(
 
     await conversations.handle_conversation_list_saved_messages(
         ConversationListSavedMessagesInput(
-            org="o", namespace="n", agent="librechat", user_id="u-1", cursor=first.next_cursor
+            org="o", namespace="n", agent="chat-bot", user_id="u-1", cursor=first.next_cursor
         )
     )
     assert seen == [None, (at, "c-1", "m-2")]
@@ -782,7 +782,7 @@ async def test_saved_status_answers_in_the_order_asked_without_repeats(
         ConversationSavedStatusInput(
             org="o",
             namespace="n",
-            agent="librechat",
+            agent="chat-bot",
             user_id="u-1",
             conversation_id="c-1",
             message_ids=["m-3", "m-2", "m-1", "m-3"],
