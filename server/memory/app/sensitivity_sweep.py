@@ -170,9 +170,9 @@ class SweepReport:
     # when the candidates were cut to the limit. None when the scan read from the first key
     # to the last, so the next pass starts again at the first.
     resume_after: dict[str, Any] | None = None
-    # Whether the read that set `resume_after` stopped on a page whose FINAL read gave fewer
-    # rows than the page had keys: a key whose only match is an older version gives no row,
-    # and such a page never moves the scan past its agent.
+    # Whether the read that set `resume_after` stopped on a page whose FINAL read gave no
+    # current row for one of its keys (a key whose only match is an older version). Such a
+    # page never moves the scan past its agent.
     last_page_short: bool = False
 
     @property
@@ -311,7 +311,8 @@ class _Range:
 
     reached_end: bool  # the range's last key was read
     last: dict[str, Any]  # the key the next page would start after
-    # The range stopped before its end on a page whose FINAL read gave fewer rows than keys.
+    # The range stopped before its end on a page whose FINAL read gave no current row for
+    # one of its keys (a key whose only match is an older version).
     last_page_short: bool = False
 
 

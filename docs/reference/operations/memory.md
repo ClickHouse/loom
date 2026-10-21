@@ -394,7 +394,7 @@ Periodic consolidation pass — merges fragmented memories about the same subjec
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `consolidated` | `list[MemoryConsolidateResult]` | One entry per cluster merged (or that would be, under `dry_run`). |
-| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled nor reading as `high` (never sent to the merge model). |
+| `examined` | `int` | Eligible rows read: live, unpinned, unlocked, embedded, older than `min_age_seconds`, and neither labelled `high` nor reading as `high` (never sent to the merge model). |
 | `clusters_found` | `int` | Clusters of two or more rows found. |
 | `clusters_failed` | `int` | Clusters whose merge LLM call failed or returned an unparseable / incomplete JSON object. |
 | `clusters_refused_lossy` | `int` | Of the failed clusters, those the merge guard refused because the merged text lost a date, quantity, identifier, name or negation one source carried; the sources stay as they were. |
