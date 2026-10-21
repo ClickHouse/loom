@@ -12,8 +12,7 @@ from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
-from server.memory.app.provenance import request_rule_agent
-from server.memory.domain import assistant_rules
+from server.memory.app.provenance import request_rule_agent, served_hits
 
 log = logging.getLogger(__name__)
 
@@ -276,8 +275,8 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
         agent = request_rule_agent(input.agent)
         top_k = int(input.knowledge_top_k)
 
-        async def search(k: int) -> tuple[list[Any], list[Any]]:
-            hits = await hybrid_search(
+        async def search(k: int) -> list[Any]:
+            return await hybrid_search(
                 _KSQ(
                     org=input.org,
                     namespaces=(input.namespace,),
@@ -286,14 +285,10 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
                     top_k=k,
                 )
             )
-            # Another bot's promoted rule is not a rule about this agent.
-            return hits, [h for h in hits if assistant_rules.serves_agent(h.tags, agent)]
 
-        hits, khits = await search(top_k)
-        if len(khits) < len(hits):
-            # Other bots' rules took places: ask again with room for them.
-            _, khits = await search(assistant_rules.hits_to_ask(top_k))
-        for h in khits[:top_k]:
+        # Another bot's promoted rule is not a rule about this agent.
+        khits = await served_hits(await search(top_k), search, lambda h: h.tags, agent, top_k)
+        for h in khits:
             val = str(getattr(h, "content", "") or "")
             if not val:
                 continue

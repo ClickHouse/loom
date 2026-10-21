@@ -106,8 +106,9 @@ See [tasks and decisions](features/tasks-and-decisions.md).
 retrieval. Distinct from a memory: it is reference material, not a belief.
 See [knowledge documents](features/knowledge.md).
 
-**Learning** — a candidate for promotion to the shared layer, waiting in
-`loom.learnings_queue` for a person to review it (`learnings.list`, `learnings.review`).
+**Learning** — a candidate waiting in `loom.learnings_queue` for a person's decision
+(`learnings.list`, `learnings.review`): a fact several writers back, promoted to the shared
+layer, or a rule a bot stated about itself, promoted to the namespace's knowledge.
 
 **`log_comment`** — the ClickHouse query setting Loom fills with the calling op, worker
 or CLI command, so `system.query_log` attributes every statement.

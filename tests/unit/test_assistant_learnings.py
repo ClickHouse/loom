@@ -155,26 +155,30 @@ def test_the_candidate_id_is_one_per_agent_key_and_rule_text() -> None:
     assert _cid() != _cid("The assistant refunds anything without asking.")
 
 
+def _quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
+    return assistant_rules.bounded_quotes(*assistant_rules.cited_texts(fact, messages))
+
+
 def test_a_supporters_quotes_are_its_user_turn_then_the_cited_evidence() -> None:
     asked = "Can you refund my $800 order?"
-    assert assistant_rules.quotes(_rule_fact(evidence=_RULE), _MESSAGES) == (asked, _RULE)
+    assert _quotes(_rule_fact(evidence=_RULE), _MESSAGES) == (asked, _RULE)
     # No evidence span: the cited assistant turn.
-    assert assistant_rules.quotes(_rule_fact(), _MESSAGES) == (
+    assert _quotes(_rule_fact(), _MESSAGES) == (
         asked,
         f"{_RULE} Someone will reply within a day.",
     )
     # Both are bounded.
     long = [{"role": "user", "content": "ask " * 200}, {"role": "assistant", "content": "w " * 400}]
-    asked_long, said_long = assistant_rules.quotes(_rule_fact(), long)
+    asked_long, said_long = _quotes(_rule_fact(), long)
     assert len(asked_long) <= 200 and len(said_long) <= 400
     # No user turn before the rule: no user quote.
     alone = [{"role": "assistant", "content": _RULE}]
-    assert assistant_rules.quotes(_rule_fact(source_message_indices=[0]), alone) == ("", _RULE)
+    assert _quotes(_rule_fact(source_message_indices=[0]), alone) == ("", _RULE)
     # No assistant turn cited: no user quote, not the user's later, unrelated turns.
     later = [*_MESSAGES, {"role": "user", "content": "I live in Porto."}]
     for indices in ([], [0, 2]):
         fact = _rule_fact(evidence=_RULE, source_message_indices=indices)
-        assert assistant_rules.quotes(fact, later) == ("", _RULE)
+        assert _quotes(fact, later) == ("", _RULE)
     assert assistant_rules.rationale(asked, _RULE) == f'User: "{asked}"\nAssistant: "{_RULE}"'
     assert assistant_rules.rationale("", _RULE) == f'Assistant: "{_RULE}"'
 
@@ -359,9 +363,9 @@ def test_a_quote_that_reads_as_a_credential_is_stored_blank() -> None:
         {"role": "user", "content": f"My key is {_KEY_ID}, refund me."},
         {"role": "assistant", "content": f"{_RULE} I saw {_KEY_ID}."},
     ]
-    assert assistant_rules.quotes(_rule_fact(), leaky) == ("", "")
+    assert _quotes(_rule_fact(), leaky) == ("", "")
     # Only the quote that leaks is blanked.
-    assert assistant_rules.quotes(_rule_fact(evidence=_RULE), leaky) == ("", _RULE)
+    assert _quotes(_rule_fact(evidence=_RULE), leaky) == ("", _RULE)
 
 
 # Built at runtime too: a JWT the scanner would otherwise read as leaked.
@@ -379,7 +383,7 @@ def test_a_credential_the_cut_would_split_still_blanks_the_quote() -> None:
     said = "b" * 380 + " " + _JWT
     messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": said}]
     # Cut first, neither half reads as a credential; read whole, both do.
-    assert assistant_rules.quotes(_rule_fact(), messages) == ("", "")
+    assert _quotes(_rule_fact(), messages) == ("", "")
 
 
 @pytest.mark.asyncio
@@ -406,6 +410,19 @@ async def test_a_blacklisted_quote_is_stored_blank(queue: _Queue, blacklist: lis
         "",
         f"{_RULE} Someone will reply within a day.",
     )
+
+
+@pytest.mark.asyncio
+async def test_a_blacklisted_quote_the_cut_would_split_is_stored_blank(
+    queue: _Queue, blacklist: list[str]
+) -> None:
+    # The pattern starts before the user quote's 200th character and ends after it,
+    # and holds a double space the quote's folded spacing would remove.
+    blacklist.append("card 4111  1111 1111 1111")
+    asked = "a" * 184 + " card 4111  1111 1111 1111, refund my $800 order"
+    messages = [{"role": "user", "content": asked}, *_MESSAGES[1:]]
+    assert await _file(_state("alice", "s1", messages=messages)) == 1
+    assert queue.supporters[(_cid(), "alice", "s1")]["asked"] == ""
 
 
 @pytest.mark.asyncio
@@ -1121,6 +1138,18 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
     uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
     assert uris == ["support-rule", "refunds.md"]
     assert asked == [2, assistant_rules.hits_to_ask(2)]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_wider_search_answers_the_first_pass_served_hits() -> None:
+    other = ["source-kind:assistant_turn", "agent:sales-bot"]
+    hits = [{"id": 1, "tags": other}, {"id": 2, "tags": []}]
+
+    async def widen(_k: int) -> list[dict[str, Any]]:
+        raise RuntimeError("search down")
+
+    served = await provenance.served_hits(hits, widen, lambda h: h["tags"], "support-bot", 2)
+    assert served == [{"id": 2, "tags": []}]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

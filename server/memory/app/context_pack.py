@@ -21,8 +21,7 @@ from server.memory.api.models_procedure import ProcedureMatchInput
 from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
-from server.memory.app.provenance import request_rule_agent
-from server.memory.domain import assistant_rules
+from server.memory.app.provenance import request_rule_agent, served_hits
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
@@ -691,7 +690,7 @@ async def _pack_knowledge(st: _PackState) -> None:
 
     agent = request_rule_agent(input.agent)
 
-    async def search(top_k: int) -> tuple[list[Any], list[Any]]:
+    async def search(top_k: int) -> list[Any]:
         out = await handle_knowledge_search(
             KnowledgeSearchInput(
                 org=input.org,
@@ -701,14 +700,12 @@ async def _pack_knowledge(st: _PackState) -> None:
                 namespace_scope="all_mine",
             )
         )
-        # Another bot's promoted rule is not a rule about this agent.
-        return out.results, [h for h in out.results if assistant_rules.serves_agent(h.tags, agent)]
+        return list(out.results)
 
-    hits, results = await search(input.top_k)
-    if len(results) < len(hits):
-        # Other bots' rules took places: ask again with room for them.
-        _, results = await search(assistant_rules.hits_to_ask(input.top_k))
-    results = results[: input.top_k]
+    # Another bot's promoted rule is not a rule about this agent.
+    results = await served_hits(
+        await search(input.top_k), search, lambda h: h.tags, agent, input.top_k
+    )
     if results:
         evidence = [
             EvidenceItem(

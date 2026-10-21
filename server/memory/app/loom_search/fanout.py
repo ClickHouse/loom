@@ -22,8 +22,7 @@ from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
-from server.memory.app.provenance import request_rule_agent
-from server.memory.domain import assistant_rules
+from server.memory.app.provenance import request_rule_agent, served_hits
 
 # Query words that name nothing in a profile section — otherwise "where does
 # the user live" matches every persona that says "user".
@@ -273,25 +272,17 @@ async def search_sections(
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
-        rule_agent = request_rule_agent(agent)
 
-        def served(section: dict[str, Any]) -> list[dict[str, Any]]:
-            # Another bot's promoted rule is not a rule about this agent.
-            return [
-                h for h in section["results"] if assistant_rules.serves_agent(h["tags"], rule_agent)
-            ]
+        async def widen(k: int) -> list[dict[str, Any]]:
+            wider = await knowledge_with_repo_docs(know_input.model_copy(update={"top_k": k}))
+            results: list[dict[str, Any]] = wider.model_dump()["results"]
+            return results
 
         know = know_result.model_dump()
-        kept = served(know)
-        if len(kept) < len(know["results"]):
-            # Other bots' rules took places: ask again with room for them.
-            wider = know_input.model_copy(update={"top_k": assistant_rules.hits_to_ask(top_k)})
-            try:
-                know = (await knowledge_with_repo_docs(wider)).model_dump()
-                kept = served(know)
-            except Exception:  # noqa: BLE001 — the first pass's hits still answer
-                pass
-        know["results"] = kept[:top_k]
+        # Another bot's promoted rule is not a rule about this agent.
+        know["results"] = await served_hits(
+            know["results"], widen, lambda h: h["tags"], request_rule_agent(agent), top_k
+        )
         payload["knowledge"] = knowledge_above_floor(know)
     payload["profile"] = {
         "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)

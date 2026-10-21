@@ -54,12 +54,11 @@ def _bounded(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
-    """What one supporter's conversation shows a reviewer: the user turn before the
-    cited assistant turn (blank when none is cited), and the rule as said (the span
-    the extractor cited as evidence, else the cited assistant turn, else the rule
-    itself), each bounded. A quote that reads as a credential is left blank, so no
-    secret lands in the queue."""
+def cited_texts(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, str]:
+    """What one supporter's conversation shows a reviewer, whole: the user turn
+    before the cited assistant turn (blank when none is cited), and the rule as
+    said (the span the extractor cited as evidence, else the cited assistant turn,
+    else the rule itself). Checked whole, then cut by `bounded_quotes`."""
     cited = [
         i
         for i in fact.get("source_message_indices") or []
@@ -76,7 +75,12 @@ def quotes(fact: dict[str, Any], messages: list[dict[str, Any]]) -> tuple[str, s
             (str(m.get("content") or "") for m in reversed(before) if m.get("role") == "user"),
             "",
         )
-    said = said or str(fact.get("value") or "")
+    return asked, said or str(fact.get("value") or "")
+
+
+def bounded_quotes(asked: str, said: str) -> tuple[str, str]:
+    """The quotes a supporter row stores, each bounded. A quote that reads as a
+    credential is left blank, so no secret lands in the queue."""
     # Read whole: a credential the cut would split no longer reads as one.
     return (
         "" if reads_high(asked) else _bounded(asked, _USER_CHARS),

@@ -66,13 +66,15 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
         state.org, state.namespace, cid, state.user_id, state.session_id
     )
     if new_supporter:
-        asked, said = assistant_rules.quotes(fact, state.messages)
+        asked, said = assistant_rules.cited_texts(fact, state.messages)
         # A quote that matches a blacklist pattern is left blank, as one that reads
-        # as a credential is.
+        # as a credential is. Checked whole: the cut and the folded spacing could
+        # split a pattern or change its spacing.
         if asked and await _blacklisted(state, key, asked):
             asked = ""
         if said and await _blacklisted(state, key, said):
             said = ""
+        asked, said = assistant_rules.bounded_quotes(asked, said)
         await learnings_repo.insert_supporter(
             {
                 "org": state.org,
