@@ -53,6 +53,7 @@ export const OP_MIN_ROLE = {
   "blacklist.list": { min: "viewer", by: "namespace" },
   "blacklist.add": { min: "writer", by: "namespace" },
   "blacklist.remove": { min: "admin", by: "namespace" },
+  "memory.auto_retirements": { min: "viewer", by: "namespace" },
   "memory.list": { min: "viewer", by: "namespace" },
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches
   // `namespace.audit` (VIEWER); the inspector's "Rename (keep redirect)" only to one that

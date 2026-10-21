@@ -319,10 +319,9 @@ export function Sidebar() {
             }),
         );
       }
-      if (canCall("audit.list", roleHere, whoami)) {
+      if (canCall("memory.auto_retirements", roleHere, whoami)) {
         tasks.push(
-          // The five newest auto-resolve records (the newest may list nothing the tab shows):
-          // enough to know the Auto-resolved tab is not empty.
+          // Whether the Auto-resolved tab has a row (`hasAutoResolved` says what it reads).
           // Shared with the Review queue page, which asks the same question.
           sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
             .then((found) => {

@@ -87,10 +87,11 @@ export function ReviewQueue() {
   const hasAuto = probedAuto?.scope === scopeKey && probedAuto.found;
   // The Auto-resolved panel reads its rows when the tab is first opened, then stays mounted.
   const [autoOpened, setAutoOpened] = useState(false);
-  // audit.list is asked only by a role known to reach it.
+  // The tab lists retirements and reads their Undo records (audit.list): asked only by a
+  // role known to reach both.
   const whoami = useStore((s) => s.whoami);
   const role = useNamespaceRole(identity.namespace);
-  const auditReadable = canCall("audit.list", role, whoami);
+  const autoReadable = canCall("memory.auto_retirements", role, whoami) && canCall("audit.list", role, whoami);
   const tabbed = hasLearnings || hasExceptions || hasAuto;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
@@ -127,7 +128,7 @@ export function ReviewQueue() {
   useAbortableEffect(
     (_signal, live) => {
       setProbedAuto(null);
-      if (!auditReadable) {
+      if (!autoReadable) {
         // The Auto-resolved tab goes with the access: leave it for Conflicts.
         setTab((t) => (t === "auto" ? "conflicts" : t));
         setAutoOpened(false);
@@ -140,7 +141,7 @@ export function ReviewQueue() {
         })
         .catch(() => {});
     },
-    [identity.org, identity.namespace, auditReadable],
+    [identity.org, identity.namespace, autoReadable],
   );
 
   return (
