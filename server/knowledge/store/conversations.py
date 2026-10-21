@@ -826,7 +826,7 @@ async def insert_embedding(
     embeds, or the summary conversation.compact writes."""
     ch = ch or _default_client()
     insert_settings = embedding_insert_settings(row["embedding"])
-    batched = insert_settings is not COMMITTED_INSERT_SETTINGS
+    batched = insert_settings.get("async_insert") == 1
     try:
         await ch.insert(
             "loom.conversation_embeddings", [cast(dict[str, Any], row)], settings=insert_settings
@@ -853,7 +853,7 @@ def embedding_insert_settings(vector: list[float]) -> dict[str, Any]:
     width = codes_state.stored_width(table, "embedding")
     if width == int(settings.embedding_dim) and len(vector) in (0, width):
         return batched_insert_settings()
-    return COMMITTED_INSERT_SETTINGS
+    return dict(COMMITTED_INSERT_SETTINGS)
 
 
 async def tombstone_thread(

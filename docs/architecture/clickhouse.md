@@ -147,14 +147,14 @@ request waits on because the buffer is full takes the short window; the two wind
 two insert shapes, so they fill separate buffers.
 
 ClickHouse's own target is about one insert, one part, a second per table, with 1,000
-rows or more per insert. These windows stay well short of it: at 100
-`conversation.append` calls a second a `conversations` part holds about 6 rows (about 16
-parts a second), against one row per part committed. Batching trades latency for parts:
-each waited insert adds up to its window, and holds its pooled connection meanwhile, so
-size the ClickHouse connection pool (`ch_pool_maxsize`) up with it; an in-process client
-writing 200 rows a second exhausted its pool once in two runs. `ch_batched_inserts`
-(live, on by default) switches batching off: every insert is then sent committed, one
-part each, as before. Turn it off on a deployment with little traffic where latency
+rows or more per insert. These windows stay well short of it; they cut the part rate
+from one per insert to the rate above. Batching trades latency for parts: each waited
+insert adds up to its window, and holds its pooled connection meanwhile. A sustained R
+batched inserts a second therefore hold about R × `ch_batched_insert_wait_max_ms` / 1000
+connections, and the ClickHouse connection pool (`ch_pool_maxsize`) is sized for that on
+top of the other statements. `ch_batched_inserts` (live, on by default) switches
+batching off: the batched inserts are then sent committed, one part each, and
+fire-and-forget inserts are unchanged. Turn it off on a deployment with little traffic where latency
 matters more than parts: with writes too sparse to share a part, each insert still waits
 `ch_batched_insert_wait_min_ms`.
 

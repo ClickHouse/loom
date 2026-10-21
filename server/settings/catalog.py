@@ -562,7 +562,8 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False sends every insert committed, one part each, as before.
+    # returns once written. False sends the inserts that would be batched as committed
+    # inserts, one part each; fire-and-forget inserts are unchanged.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript
     # turns, request ledgers) for concurrent inserts to share its part; the pooled
@@ -5243,9 +5244,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search_trace_log": 200,
     # A set's version inserts plus the conflict and dedup reads: p50 1,062 ms and
     # p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier = 4 s sits at that
-    # p99, so a violation is a signal. Its outbox row (namespaces with a webhook) is a
-    # batched insert that waits up to ch_batched_insert_wait_max_ms (50), which fits
-    # the 300 ms between that p99 and the 4 s ceiling.
+    # p99, so a violation is a signal. Its audit row, the waited entity-triple inserts
+    # and (in a namespace with a webhook) its outbox row are batched inserts that each
+    # wait up to ch_batched_insert_wait_max_ms (50), about 150 ms in all, inside the
+    # 300 ms between that p99 and the 4 s ceiling.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms,
     # and about four batched inserts in sequence each wait up to

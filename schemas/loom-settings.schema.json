@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False sends every insert committed, one part each, as before."
+          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False sends the inserts that would be batched as committed inserts, one part each; fire-and-forget inserts are unchanged."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

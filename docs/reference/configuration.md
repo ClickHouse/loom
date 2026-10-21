@@ -131,7 +131,7 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TIMEOUT_READ_S` | `float` | `30.0` |  | Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads. |
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
-| `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batched inserts: concurrent inserts into one table share a part and each still returns once written. False sends every insert committed, one part each, as before. |
+| `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batched inserts: concurrent inserts into one table share a part and each still returns once written. False sends the inserts that would be batched as committed inserts, one part each; fire-and-forget inserts are unchanged. |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest wait, ms, of a batched insert a request waits on (audit rows, transcript turns, request ledgers) for concurrent inserts to share its part; the pooled connection is held meanwhile. |
 | `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of a batched insert no request waits on (the usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's own default. |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait. |
