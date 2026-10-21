@@ -12,6 +12,8 @@ import pytest
 
 from scripts.ops import vector_codec_rebuild as vcr
 from server.core.schema import table_rebuild as tr
+from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL
+from tests.unit.codec_states import SENT, STATES, USABLE, codec_rows, settings
 
 ARRAY = """CREATE TABLE loom.memory_chunks
 (
@@ -35,11 +37,16 @@ class _CH:
     def __init__(self, **tables: dict[str, Any]) -> None:
         self.t = tables
         self.commands: list[str] = []
+        self.sent: list[tuple[str, dict[str, Any]]] = []  # (statement, its settings)
         self.patches: dict[str, int] = {}
         self.uuids = iter(f"u{i}" for i in range(100))
+        self.codec_rows = codec_rows("writable", "writable")
+        self.delta = 0  # rows a delta finds above the destination's version
 
     def query(self, sql: str, parameters: Any = None, settings: Any = None) -> _R:
         p = parameters or {}
+        if sql == CODEC_SETTINGS_SQL:
+            return _R(self.codec_rows)
         if sql.startswith("SHOW CREATE TABLE loom."):
             return _R([(self.t[sql.split("loom.", 1)[1]]["ddl"],)])
         if "FROM system.tables" in sql:
@@ -47,8 +54,8 @@ class _CH:
             return _R([("ReplacingMergeTree", row["uuid"], "2000-01-01")] if row else [])
         if "system.one" in sql:
             return _R([("h", "26.8.8.8")])
-        if sql == "SELECT 1" or "system.replicas" in sql or "compression_codec FROM" in sql:
-            return _R([] if sql != "SELECT 1" else [(1,)])
+        if "system.replicas" in sql or "compression_codec FROM" in sql:
+            return _R([])
         if "version(), hostName()" in sql:
             return _R([("26.8.8.8", "h")])
         if "FROM system.columns" in sql:
@@ -73,12 +80,13 @@ class _CH:
         if "max(" in sql:
             return _R([(rows,)])
         if "WHERE created_at >" in sql:
-            return _R([(0,)])
+            return _R([(self.delta,)])
         return _R([(rows,)])
 
     def command(self, stmt: str, parameters: Any = None, settings: Any = None) -> None:
         s = " ".join(stmt.split())
         self.commands.append(s)
+        self.sent.append((s, dict(settings or {})))
         w = s.replace("loom.", "").split()
         if s.startswith("CREATE TABLE"):
             self.t[w[2]] = {"ddl": stmt, "rows": 0, "uuid": next(self.uuids)}
@@ -241,9 +249,60 @@ def test_a_repair_names_the_diverged_keys_as_literals() -> None:
         _CH(memory_chunks=_live()),
         vcr.parse(["--table", "memory_chunks", "--columns", "embedding"]),
     )
+    assert job.codec == settings()  # read before `q` below answers only keys
     cmds: list[str] = []
     job.q = lambda sql, **_: [("o", "n")] * (vcr.REPAIR_BATCH + 1)  # type: ignore[method-assign]
     job.cmd = lambda sql, **_: cmds.append(sql)  # type: ignore[method-assign]
     n = job.repair_into("t_rebuild", "t", "SELECT *", " FINAL", "created_at", ["org", "namespace"])
     assert n == vcr.REPAIR_BATCH + 1 and len(cmds) == 2
     assert all("IN (('o', 'n')" in c and "SELECT" not in c.split(" IN ", 1)[1] for c in cmds)
+
+
+@pytest.mark.parametrize("codec", STATES)
+def test_the_rebuild_runs_only_where_the_codec_can_be_on(codec: str, capsys: Any) -> None:
+    """Readonly at 0 or absent refuses before any write; readonly at 1 is on already
+    and is sent with no statement, the copy and the deltas included."""
+    ch = _CH(memory_chunks=_live())
+    ch.codec_rows, ch.delta = codec_rows(codec, "writable"), 1
+    if not USABLE[codec]:
+        assert _run(ch, "--yes") == tr.REFUSED and _writes(ch) == []
+        assert "enable_quantized_codec is absent (before 26.8) or held at 0" in (
+            capsys.readouterr().out
+        )
+        return
+    assert _run(ch, "--yes") == tr.OK
+    create = next(st for s, st in ch.sent if s.startswith("CREATE"))
+    assert create == ({"enable_quantized_codec": 1} if SENT[codec] else {})
+    copies = [st for s, st in ch.sent if s.startswith("INSERT")]
+    assert len(copies) > 1  # the copy and the deltas
+    assert all(("enable_quantized_codec" in st) is SENT[codec] for st in copies)
+
+
+@pytest.mark.parametrize("chain", STATES)
+def test_a_chain_runs_only_where_suspicious_codecs_can_be_on(chain: str, capsys: Any) -> None:
+    ch = _CH(memory_chunks=_live())
+    ch.codec_rows = codec_rows("on", chain)
+    if not USABLE[chain]:
+        assert _run(ch, "--chain", "LZ4", "--yes") == tr.REFUSED and _writes(ch) == []
+        assert "--chain LZ4 needs allow_suspicious_codecs" in capsys.readouterr().out
+        assert _run(ch, "--yes") == tr.OK  # the bare codec still moves
+        return
+    assert _run(ch, "--chain", "LZ4", "--yes") == tr.OK
+    create = next(st for s, st in ch.sent if s.startswith("CREATE"))
+    assert create == ({"allow_suspicious_codecs": 1} if SENT[chain] else {})
+    assert f"CODEC(Quantized('rabitq', {DIM}, 0), LZ4)" in ch.t["memory_chunks"]["ddl"]
+
+
+@pytest.mark.parametrize("codec", STATES)
+def test_a_rollback_sends_the_codec_setting_only_where_it_is_writable(codec: str) -> None:
+    """The way back to the plain layout works wherever the setting stands now."""
+    coded = ARRAY.replace("CODEC(NONE)", f"CODEC(Quantized('rabitq', {DIM}, 0))")
+    ch = _CH(
+        memory_chunks={"ddl": coded, "rows": 5, "uuid": "a"}, memory_chunks_pre_rebuild=_live()
+    )
+    ch.codec_rows, ch.delta = codec_rows(codec, "off"), 2
+    assert _run(ch, "--rollback", "--yes") == tr.OK
+    copies = [st for s, st in ch.sent if s.startswith("INSERT")]
+    assert copies and all(
+        st == ({"enable_quantized_codec": 1} if SENT[codec] else {}) for st in copies
+    )

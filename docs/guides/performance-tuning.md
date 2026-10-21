@@ -63,8 +63,8 @@ deployment and overridden per request, so a change can be A/B-tested on one call
 
 ## Vector reads
 
-Vector columns are `Array(BFloat16)`; on a server with the `Quantized` codec the migrator
-creates them coded ([ClickHouse](../architecture/clickhouse.md)).
+Vector columns are `Array(BFloat16)`; where `enable_quantized_codec` can be on the migrator
+creates them coded ([ClickHouse](../architecture/clickhouse.md#gated-clickhouse-settings)).
 
 | Lever                      | Setting                                                                                           | Trade                                                                                                                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |

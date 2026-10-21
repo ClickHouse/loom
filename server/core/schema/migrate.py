@@ -63,6 +63,7 @@ from server.core.schema.migrate_lease import (
     LeaseConfig,
     bootstrap_keeper_lock,
 )
+from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL, NO_CODEC, CodecSettings
 
 if TYPE_CHECKING:
     from clickhouse_connect.driver.client import Client
@@ -467,16 +468,15 @@ def _tolerated_errors(sql: str) -> set[int]:
     return {int(m.group(1)) for m in _TOLERATE_RE.finditer(sql)}
 
 
-def _codec_supported(ch: Client) -> bool:
-    """Does this server know the Quantized codec (26.8+)? A fresh table is
-    created coded where it does, plain where it does not. Probed once per run."""
+def _codec_settings(ch: Client) -> CodecSettings:
+    """How this server takes the codec settings (`CodecSettings`), read before
+    any is sent. A fresh table is created coded where this user can have
+    `enable_quantized_codec` on, plain where not. Probed once per run."""
     try:
-        rows = ch.query(
-            "SELECT count() FROM system.settings WHERE name = 'enable_quantized_codec'"
-        ).result_rows
-        return bool(rows and rows[0][0])
+        rows = ch.query(CODEC_SETTINGS_SQL).result_rows
     except Exception:  # noqa: BLE001 — an older server: plain layout
-        return False
+        return NO_CODEC
+    return CodecSettings.from_rows(rows)
 
 
 def _install_vector_width(ch: Client) -> int | None:
@@ -511,14 +511,19 @@ def _install_vector_width(ch: Client) -> int | None:
     return None if plain else int(settings.embedding_dim)
 
 
-def _new_table_layout(ch: Client) -> tuple[int | None, str]:
+def _new_table_layout(ch: Client, codec: CodecSettings) -> tuple[int | None, str]:
     """The width new vector tables are coded at (None: plain), and a line saying why."""
-    from server.core.schema.vector_codec_ddl import codable
+    from server.core.schema.vector_codec_ddl import CHAIN_SETTING, CODEC_SETTING, codable
 
-    if not _codec_supported(ch):
+    if not codec.listed(CODEC_SETTING):
         return (
             None,
             "vector tables created plain: no Quantized codec here (it needs 26.8 or later)",
+        )
+    if not codec.codec:
+        return None, (
+            f"vector tables created plain: {CODEC_SETTING} is held at 0 here; "
+            "scripts/ops/vector_codec_rebuild.py codes them once it is on"
         )
     width = _install_vector_width(ch)
     if width is None:
@@ -527,6 +532,11 @@ def _new_table_layout(ch: Client) -> tuple[int | None, str]:
         return None, (
             f"vector tables created plain: width {width} is not a multiple of 8, "
             "which the Quantized codec needs"
+        )
+    if not codec.chain:
+        return width, (
+            "Quantized codec available: fresh vector tables are created coded, with no "
+            f"general codec after it ({CHAIN_SETTING} is held at 0 here)"
         )
     return width, "Quantized codec available: fresh vector tables are created coded"
 
@@ -593,6 +603,7 @@ def _apply_file(
     nlp_ok: bool = True,
     coded: bool = False,
     codec_dim: int = 0,
+    codec: CodecSettings = NO_CODEC,
     sync: SyncPolicy = NO_SYNC,
     dims: bool = False,
 ) -> None:
@@ -611,8 +622,9 @@ def _apply_file(
         if stmt in rebuilds:
             table_rebuild.apply(ch, rebuilds[stmt], stmt)
             continue
+        codec_settings: dict[str, int] = {}
         if coded:
-            from server.core.schema.vector_codec_ddl import rewrite_statement, statement_settings
+            from server.core.schema.vector_codec_ddl import rewrite_statement
 
             rewritten = rewrite_statement(stmt, codec_dim)
             if rewritten is None:
@@ -620,15 +632,14 @@ def _apply_file(
                 continue
             if rewritten != stmt:
                 print("    ~ vector columns created with the Quantized codec")
-            stmt = rewritten
+            stmt, codec_settings = codec.statement(rewritten)
         stmt = definer_rewrite(stmt)
         if dims:
             stmt = dimensions_rewrite(stmt)
         settings = _stmt_experimental_settings(stmt) or {}
         settings.update(_consistency_settings(stmt))
         settings.update(sync.settings_for(stmt))
-        if coded:
-            settings.update(statement_settings(stmt))
+        settings.update(codec_settings)
         if not nlp_ok:
             # The server forbids enabling NLP functions (ClickHouse Cloud),
             # and there it accepts stem() without the flag.
@@ -736,6 +747,7 @@ def _run_file(
     sync: SyncPolicy,
     dims: bool = False,
     codec_dim: int = 0,
+    codec: CodecSettings = NO_CODEC,
 ) -> None:
     """Apply one file, then wait for the mutations it started."""
     from server.settings import settings as _s
@@ -743,7 +755,15 @@ def _run_file(
     tables = _mutated_tables(f.read_text())
     before = {(r[0], r[1]) for r in _pending_mutations(ch, tables)} if tables else set()
     _apply_file(
-        ch, f, dry=False, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim, sync=sync, dims=dims
+        ch,
+        f,
+        dry=False,
+        nlp_ok=nlp_ok,
+        coded=coded,
+        codec_dim=codec_dim,
+        codec=codec,
+        sync=sync,
+        dims=dims,
     )
     if tables:
         _await_mutations(ch, tables, before, wait_s=float(_s.migrate_mutation_wait_s))
@@ -766,7 +786,8 @@ def _apply_pending(
     # Probe NLP support once: it decides whether the NLP experimental flag is
     # sent at all (ClickHouse Cloud forbids it).
     nlp_ok = _nlp_available(ch)
-    width, layout = _new_table_layout(ch)
+    codec = _codec_settings(ch)
+    width, layout = _new_table_layout(ch, codec)
     coded, codec_dim = width is not None, width or 0
     dims = _dimensions_setting_known(ch)
     sync = NO_SYNC if dry else sync_policy(ch)
@@ -794,10 +815,19 @@ def _apply_pending(
             print(f"  → {f.name}")
         try:
             if dry:
-                _apply_file(ch, f, dry=True, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim)
+                _apply_file(
+                    ch, f, dry=True, nlp_ok=nlp_ok, coded=coded, codec_dim=codec_dim, codec=codec
+                )
             else:
                 _run_file(
-                    ch, f, nlp_ok=nlp_ok, coded=coded, sync=sync, dims=dims, codec_dim=codec_dim
+                    ch,
+                    f,
+                    nlp_ok=nlp_ok,
+                    coded=coded,
+                    sync=sync,
+                    dims=dims,
+                    codec_dim=codec_dim,
+                    codec=codec,
                 )
                 _record(ch, f.name, _checksum(f.read_text()))
                 print(f"  ✓ {f.name}")

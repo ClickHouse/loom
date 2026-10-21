@@ -181,7 +181,7 @@ def _pending_run(monkeypatch, tmp_path: Path, answers: list[list[tuple]], wait_s
 
     monkeypatch.setattr(settings, "migrate_mutation_wait_s", wait_s)
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
-    monkeypatch.setattr(mig, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(mig, "_codec_settings", lambda ch: mig.NO_CODEC)
     monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: ALL)
     monkeypatch.setattr(mig, "_sync_level", lambda ch: 2)
     clock = _Clock()
@@ -230,7 +230,7 @@ def test_tolerate_error_still_skips_and_the_file_records(monkeypatch, tmp_path) 
 
     monkeypatch.setattr(settings, "migrate_mutation_wait_s", 30)
     monkeypatch.setattr(mig, "_nlp_available", lambda ch: True)
-    monkeypatch.setattr(mig, "_codec_supported", lambda ch: False)
+    monkeypatch.setattr(mig, "_codec_settings", lambda ch: mig.NO_CODEC)
     monkeypatch.setattr(mig, "_sync_settings_accepted", lambda ch: ALL)
     monkeypatch.setattr(mig, "_sync_level", lambda ch: 2)
 

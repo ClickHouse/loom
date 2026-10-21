@@ -6,10 +6,12 @@ from uuid import uuid4
 
 import pytest
 
+from server.core.schema.vector_codec_ddl import CODEC_SETTINGS_SQL
 from server.insights.domain.provider_prepared_ddl import PreparedDDL
 from server.insights.store import provider_prepared as prepared
 from server.insights.store.provider_staging import SourceSchema, StagingNames, completion_marker
 from server.insights.store.provider_target import target_marker
+from tests.unit.codec_states import PAIRS, SENT, SHAPES, STATES, USABLE, dict_rows
 
 
 @pytest.fixture
@@ -140,19 +142,104 @@ async def test_content_comparison_fails_closed_when_unknown(result):
         await prepared._verify_copy(names, schema, client)
 
 
+_CHAINED = PreparedDDL(
+    "CREATE TABLE candidate (embedding Array(BFloat16) CODEC(Quantized('rabitq', 8, 0), LZ4))",
+    ("embedding",),
+)
+_UNCHAINED = "CREATE TABLE candidate (embedding Array(BFloat16) CODEC(Quantized('rabitq', 8, 0)))"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("available", ["enable_quantized_codec", "allow_experimental_codecs"])
 async def test_coded_create_uses_the_available_setting_and_preserves_chained_codec(available):
     client = AsyncMock()
-    client.query_all.return_value = [{"name": available}]
-    plan = PreparedDDL(
-        "CREATE TABLE candidate (embedding Array(BFloat16) CODEC(Quantized('rabitq', 8, 0), LZ4))",
-        ("embedding",),
+    client.query_all.return_value = dict_rows(
+        **{available: "writable", "allow_suspicious_codecs": "writable"}
     )
-    await prepared._create_candidate(plan, client)
+    await prepared._create_candidate(_CHAINED, client)
+    assert client.query_all.await_args.args == (CODEC_SETTINGS_SQL,)
     client.execute.assert_awaited_once_with(
-        plan.sql, settings={available: 1, "allow_suspicious_codecs": 1}
+        _CHAINED.sql, settings={available: 1, "allow_suspicious_codecs": 1}
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("codec", "chain"), PAIRS)
+async def test_coded_create_follows_the_codec_settings_it_reads(codec, chain):
+    """Every state pair on 26.8+: refused before any DDL where the codec cannot be
+    on, the chain kept where allow_suspicious_codecs can be, and a setting sent
+    only where it is writable."""
+    client = AsyncMock()
+    client.query_all.return_value = dict_rows(
+        enable_quantized_codec=codec, allow_suspicious_codecs=chain
+    )
+    if not USABLE[codec]:
+        with pytest.raises(ValueError, match="setting is unavailable"):
+            await prepared._create_candidate(_CHAINED, client)
+        client.execute.assert_not_awaited()
+        return
+    await prepared._create_candidate(_CHAINED, client)
+    kept = USABLE[chain]
+    sent = {"enable_quantized_codec": 1} if SENT[codec] else {}
+    sent |= {"allow_suspicious_codecs": 1} if kept and SENT[chain] else {}
+    client.execute.assert_awaited_once_with(_CHAINED.sql if kept else _UNCHAINED, settings=sent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", SHAPES)
+async def test_a_constraint_holds_the_codec_settings_as_readonly_does(shape):
+    """`<max>0</max>` or `<disallowed>1</disallowed>` shows readonly = 0 and still refuses 1."""
+    client = AsyncMock()
+    client.query_all.return_value = dict_rows(
+        enable_quantized_codec=shape, allow_suspicious_codecs="on"
+    )
+    if not USABLE[shape]:
+        with pytest.raises(ValueError, match="setting is unavailable"):
+            await prepared._create_candidate(_CHAINED, client)
+        client.execute.assert_not_awaited()
+    else:
+        await prepared._create_candidate(_CHAINED, client)
+        sent = {"enable_quantized_codec": 1} if SENT[shape] else {}
+        client.execute.assert_awaited_once_with(_CHAINED.sql, settings=sent)
+    client = AsyncMock()
+    client.query_all.return_value = dict_rows(
+        enable_quantized_codec="on", allow_suspicious_codecs=shape
+    )
+    await prepared._create_candidate(_CHAINED, client)
+    sent = {"allow_suspicious_codecs": 1} if SENT[shape] else {}
+    client.execute.assert_awaited_once_with(
+        _CHAINED.sql if USABLE[shape] else _UNCHAINED, settings=sent
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gate", STATES)
+async def test_a_server_without_enable_quantized_codec_takes_the_experimental_gate(gate):
+    """26.7 gates the codec with allow_experimental_codecs, in the same four states."""
+    client = AsyncMock()
+    client.query_all.return_value = dict_rows(
+        allow_experimental_codecs=gate, allow_suspicious_codecs="on"
+    )
+    if not USABLE[gate]:
+        with pytest.raises(ValueError, match="setting is unavailable"):
+            await prepared._create_candidate(_CHAINED, client)
+        client.execute.assert_not_awaited()
+        return
+    await prepared._create_candidate(_CHAINED, client)
+    sent = {"allow_experimental_codecs": 1} if SENT[gate] else {}
+    client.execute.assert_awaited_once_with(_CHAINED.sql, settings=sent)
+
+
+@pytest.mark.asyncio
+async def test_a_held_off_codec_setting_is_not_replaced_by_the_experimental_one():
+    """On 26.8+ enable_quantized_codec is the gate even where it cannot be on."""
+    client = AsyncMock()
+    client.query_all.return_value = dict_rows(
+        enable_quantized_codec="off", allow_experimental_codecs="writable"
+    )
+    with pytest.raises(ValueError, match="setting is unavailable"):
+        await prepared._create_candidate(_CHAINED, client)
+    client.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio

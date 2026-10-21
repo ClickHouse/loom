@@ -16,6 +16,7 @@ import pytest
 import server.core.ch as ch_mod
 from server.core.errors import CodedWidthMismatchError
 from server.core.vectors import codes_state
+from tests.unit.codec_states import dict_rows
 
 COLUMNS = ("embedding", "memory_key_embedding")
 
@@ -32,7 +33,7 @@ class _Table:
     # The probe's client.
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         if "system.settings" in sql:
-            return [{"n": 1}]  # a server with the Quantized codec
+            return dict_rows(enable_quantized_codec="writable")  # a server with the codec
         if "system.columns" in sql:
             self.probes += 1
             codec = f"CODEC(Quantized('rabitq', {self.width}, 0))"
