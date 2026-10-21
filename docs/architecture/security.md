@@ -787,7 +787,10 @@ rewritten:
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
   whose last turn reads as a credential, and an empty `title` for a title that reads as
   one. Both listings check the excerpt they show and 1,024 characters past it, so a key
-  that crosses the cut is caught.
+  that crosses the cut is caught. `memory.digests` shows an empty `summary_text`, and
+  `memory.outline` an empty `headline`, for a session digest whose text reads as a
+  credential (one an earlier build wrote), and `memory.digests` leaves out key facts that
+  read as one.
   The conversation titler never sends a turn that reads as a credential
   to its model and never stores a title that reads as one: it marks the thread
   `title_refused` in its metadata instead, as it does a thread whose first eight user
@@ -805,11 +808,9 @@ rewritten:
 
 Other raw text is served to readers of the namespace, or sent to a model, as it is: a
 caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
-its own text, not by the rows it holds), the session digests `memory.digests` lists (their
-summary text; key facts that read as a credential are left out) and the headlines
-`memory.outline` shows from them and the digest lines of
-the runs manifest, what the session-summary draft (the conversation turns), the
-period-digest draft and the outcome judge (session digest text) send their model,
+its own text, not by the rows it holds), the digest lines of the runs manifest, what the
+session-summary draft (the conversation turns), the period-digest draft and the outcome
+judge (session digest text) send their model,
 `memory.recall`'s raw turns, a title a caller set with `conversation.create` or
 `conversation.update` as `conversation.get` serves it, and a thread's own turns as
 `conversation.get` and `conversation.list` serve them. Those two read one thread by its id

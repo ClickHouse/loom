@@ -54,7 +54,7 @@ from server.memory.api.models_temporal import (
     _OutlineSession,
 )
 from server.memory.app.provenance import writer_actor
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.memory.domain.temporal_sql import status_predicate
 from server.memory.store.history import HistoryTarget
 from server.memory.store.rows import MemoryRow
@@ -144,7 +144,8 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
         rows=[
             _DigestRow(
                 session_id=str(r.get("session_id") or ""),
-                summary_text=str(r.get("summary_text") or ""),
+                # every reader of the namespace sees this listing: no credential text
+                summary_text=_listed(r.get("summary_text")),
                 # a digest an earlier build wrote may still hold a credential as a key fact
                 key_facts=[str(k) for k in (r.get("key_facts") or []) if not value_reads_high(k)],
                 derived_from=[str(k) for k in (r.get("derived_from") or [])],
@@ -158,9 +159,15 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
     )
 
 
+def _listed(text: Any) -> str:
+    """A digest's text for a namespace-wide listing: empty when it reads as a credential."""
+    t = str(text or "")
+    return "" if reads_high(t) else t
+
+
 def _headline(text: Any, limit: int = 160) -> str:
     """The first sentence or line of a digest, clipped."""
-    t = " ".join(str(text or "").split())
+    t = " ".join(_listed(text).split())
     for sep in (". ", "; ", " — "):
         i = t.find(sep)
         if 0 < i < limit:

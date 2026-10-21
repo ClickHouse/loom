@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
+
 
 class EvidenceChunk(BaseModel):
     session_id: str
@@ -85,10 +87,10 @@ class MemoryImportEvidenceInput(BaseModel):
     # Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped,
     # one that reads as a credential is inserted without a vector, and a key cut between
     # two calls' chunks is not found.
-    chunks: list[EvidenceChunk] = Field(default_factory=list, max_length=256)
+    chunks: list[EvidenceChunk] = Field(default_factory=list, max_length=IMPORT_MAX_ITEMS)
     # Session digests to re-embed and insert (≤256); empty summaries are skipped, and one
     # whose text reads as a credential is inserted without a vector.
-    digests: list[EvidenceDigest] = Field(default_factory=list, max_length=256)
+    digests: list[EvidenceDigest] = Field(default_factory=list, max_length=IMPORT_MAX_ITEMS)
     # Stamped into memory_chunks.source_url when the chunk carries none.
     source_trace: str = Field(default="okf-import", max_length=512)
 

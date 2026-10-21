@@ -64,3 +64,18 @@ async def test_concrete_session_filters(monkeypatch: pytest.MonkeyPatch) -> None
     )
     assert "session_id = {s:String}" in ch.sql and ch.params["s"] == "ns:session_2"
     assert out.rows == [] and out.truncated is False
+
+
+@pytest.mark.asyncio
+async def test_a_digest_that_reads_as_a_credential_is_listed_without_its_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.unit._fake_credentials import OPENAI_KEY
+
+    rows = [
+        {"session_id": "ns:s1", "summary_text": f"The user pasted {OPENAI_KEY}.", "key_facts": []},
+        {"session_id": "ns:s2", "summary_text": "Planned the retreat.", "key_facts": []},
+    ]
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(rows))
+    out = await cur.handle_memory_digests(MemoryDigestsInput(org="o", namespace="n", agent="a"))
+    assert [r.summary_text for r in out.rows] == ["", "Planned the retreat."]

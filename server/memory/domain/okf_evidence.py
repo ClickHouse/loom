@@ -35,6 +35,9 @@ DIGEST_DIR = "digests"
 EVIDENCE_DIRS = frozenset({EVIDENCE_DIR, DIGEST_DIR})
 EVIDENCE_TYPE = "Evidence"
 DIGEST_TYPE = "Digest"
+# Chunks, and digests, per memory.import_evidence call. The CLI batches by it and keeps
+# each session in one call, so a key cut between two chunks is found.
+IMPORT_MAX_ITEMS = 256  # not a setting: wire bound
 
 
 @dataclass

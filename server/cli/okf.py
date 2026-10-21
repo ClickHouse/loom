@@ -680,14 +680,11 @@ def _walk_evidence(root: Path) -> tuple[list[okf_ev.ChunkRecord], list[okf_ev.Di
     return okf_ev.parse_files(files)
 
 
-# Items per memory.import_evidence call: the op's own cap.
-_IMPORT_BATCH = 256  # not a setting: wire bound (MemoryImportEvidenceInput max_length)
-
-
 def _session_batches(chunks: list[okf_ev.ChunkRecord]) -> list[list[okf_ev.ChunkRecord]]:
-    """The chunks in calls of at most `_IMPORT_BATCH`, each session's chunks whole and in
-    `chunk_index` order. The server finds a key cut at a chunk boundary only when both
-    chunks arrive in one call, so only a session longer than the cap is split."""
+    """The chunks in calls of at most `okf_ev.IMPORT_MAX_ITEMS`, each session's chunks
+    whole and in `chunk_index` order. The server finds a key cut at a chunk boundary
+    only when both chunks arrive in one call, so only a session longer than the cap is
+    split."""
     sessions: dict[str, list[okf_ev.ChunkRecord]] = {}
     for c in chunks:
         sessions.setdefault(c.session_id, []).append(c)
@@ -695,12 +692,12 @@ def _session_batches(chunks: list[okf_ev.ChunkRecord]) -> list[list[okf_ev.Chunk
     current: list[okf_ev.ChunkRecord] = []
     for session in sessions.values():
         session.sort(key=lambda c: c.chunk_index)
-        if current and len(current) + len(session) > _IMPORT_BATCH:
+        if current and len(current) + len(session) > okf_ev.IMPORT_MAX_ITEMS:
             batches.append(current)
             current = []
-        while len(session) > _IMPORT_BATCH:
-            batches.append(session[:_IMPORT_BATCH])
-            session = session[_IMPORT_BATCH:]
+        while len(session) > okf_ev.IMPORT_MAX_ITEMS:
+            batches.append(session[: okf_ev.IMPORT_MAX_ITEMS])
+            session = session[okf_ev.IMPORT_MAX_ITEMS :]
         current += session
     if current:
         batches.append(current)
@@ -761,8 +758,8 @@ async def _import_evidence(
     batches: list[dict[str, Any]] = []
     for group in _session_batches(chunks):
         batches.append({**payload_base, "chunks": [_chunk(c) for c in group]})
-    for i in range(0, len(digests), _IMPORT_BATCH):
-        digest_group = digests[i : i + _IMPORT_BATCH]
+    for i in range(0, len(digests), okf_ev.IMPORT_MAX_ITEMS):
+        digest_group = digests[i : i + okf_ev.IMPORT_MAX_ITEMS]
         batches.append({**payload_base, "digests": [_digest(d) for d in digest_group]})
     for body in batches:
         try:
