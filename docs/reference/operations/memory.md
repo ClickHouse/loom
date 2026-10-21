@@ -2228,9 +2228,9 @@ Key-addressed update: the fact changed or got more specific.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `memory_key` | `str` | required | The key to update, resolved across the namespace unless an identity field below narrows it. |
 | `value` | `dict[str, Any] \| list[Any] \| str \| int \| float \| bool \| None` | `None` | None = keep the current value (a tags/concepts-only rewrite). |
-| `agent` | `str` | `''` | Optional identity narrowing; "", "-" or "*" = any row under the namespace. |
-| `user_id` | `str` | `''` | The end user the row belongs to; `'-'` for none. |
-| `session_id` | `str` | `''` | The session or conversation the row belongs to; `'-'` for none. |
+| `agent` | `str` | `''` | Narrows the key to rows written by this agent; "", "-" or "*" = any agent. |
+| `user_id` | `str` | `''` | Narrows the key to this user's rows; "" or "-" = any user. |
+| `session_id` | `str` | `''` | Narrows the key to this session's rows; "" or "-" = any session. |
 | `run_id` | `str` | `''` | The run this revision is made under: stamped on the new version's row so the run ledger and the `acted` fold see that this run rewrote the key. |
 | `tags` | `list[str] \| None` | `None` | Replace the row's tags (lowercased); None keeps them, [] clears them. |
 | `concepts` | `list[str] \| None` | `None` | Replace the row's code concepts (symbol, library and error names); None keeps them. |

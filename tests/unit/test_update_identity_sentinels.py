@@ -39,6 +39,11 @@ async def test_the_identity_sentinels_resolve_the_key_namespace_wide(identity):
     assert not {"agent", "user_id", "session_id"} & params.keys()
 
 
+async def test_a_user_or_session_star_is_a_literal_value_as_in_ask():
+    params = await _resolution_params(user_id="*", session_id="*")
+    assert (params["user_id"], params["session_id"]) == ("*", "*")
+
+
 async def test_a_named_identity_still_narrows_the_key():
     params = await _resolution_params(agent="writer", user_id="u1", session_id="s1")
     assert (params["agent"], params["user_id"], params["session_id"]) == ("writer", "u1", "s1")

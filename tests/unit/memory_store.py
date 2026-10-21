@@ -183,9 +183,9 @@ class MemoryStore:
             and r["memory_key"] == input.memory_key
             and r["tombstoned_at"] is None
             and r["status"] in ("active", "duplicate", "conflicted")
+            and getattr(input, "agent", None) in (None, "", "-", "*", r["agent"])
             and all(
-                getattr(input, f, None) in (None, "", "-", "*", r[f])
-                for f in ("agent", "user_id", "session_id")
+                getattr(input, f, None) in (None, "", "-", r[f]) for f in ("user_id", "session_id")
             )
         ]
         return sorted(rows, key=lambda r: -int(r["version"]))

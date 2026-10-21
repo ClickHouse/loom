@@ -196,7 +196,8 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
                     f"memory_key {input.memory_key!r} is live under "
                     f"{len(rows)} identity tuples in namespace "
                     f"{input.namespace!r}; pass agent/user_id/session_id to "
-                    "narrow it, or memory.update_by_id with one of the ids"
+                    "narrow it, or memory.update_by_id with one of the ids (a row "
+                    "with no user or session is reached only by its id)"
                 ),
                 "memory_key": input.memory_key,
                 "candidates": [c.model_dump() for c in rows],
@@ -243,10 +244,12 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
         "ns": input.namespace,
         "key": input.memory_key,
     }
-    # "-" (the identity sentinel the SDKs stamp) and "*" mean unset, as in memory.ask.
+    # "-" (the identity sentinel the SDKs stamp) means unset, and "*" too for agent,
+    # as in memory.ask.
     for col in ("agent", "user_id", "session_id"):
         val = getattr(input, col, "") or ""
-        if val not in ("", SENTINEL, "*"):
+        unset = ("", SENTINEL, "*") if col == "agent" else ("", SENTINEL)
+        if val not in unset:
             where.append(f"{col} = {{{col}:String}}")
             params[col] = val
     sql = f"""
