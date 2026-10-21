@@ -131,7 +131,9 @@ def stamps_run(op: Any) -> bool:
     """Whether a registry op's `run_id` argument takes the session run: an op
     that is not `read_only` (a read's `run_id` is a filter) among those
     `takes_run` admits — the rule the MCP `readOnlyHint` reads, so an
-    audited or `writes` op a viewer may call is stamped like any write."""
+    audited or `writes` op a viewer may call is stamped like any write — except
+    ops whose `run_id` scopes or binds the row (`_RUN_SCOPED_PREFIXES`,
+    `_RUN_SCOPED_OPS`)."""
     name = str(getattr(op, "name", ""))
     if not takes_run(op) or name.startswith(_RUN_SCOPED_PREFIXES) or name in _RUN_SCOPED_OPS:
         return False

@@ -23,6 +23,23 @@ from server.tasks.store import runs as runs_store
 _ID = {"org": "o", "namespace": "ns"}
 
 
+@pytest.mark.parametrize(
+    ("value", "wildcard", "out"),
+    [
+        (None, False, None),
+        ("", False, None),
+        ("-", False, None),
+        ("*", False, "*"),
+        ("*", True, None),
+        ("u1", True, "u1"),
+    ],
+)
+def test_named_reads_empty_and_the_sentinel_as_unset(value, wildcard, out):
+    from server.core.naming import named
+
+    assert named(value, wildcard=wildcard) == out
+
+
 async def test_conversation_list_reads_run_sentinel_as_no_run_filter(monkeypatch):
     seen: dict[str, Any] = {}
 

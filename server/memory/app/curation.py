@@ -245,7 +245,7 @@ async def handle_memory_outline(input: MemoryOutlineInput) -> MemoryOutlineOutpu
             for r in comms
         ]
     profile_chars = 0
-    if str(getattr(input, "user_id", "") or "-") != "-":
+    if named(input.user_id):
         prof = await ch.query_all(
             "SELECT length(value) AS chars FROM loom.memory FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} AND user_id = {u:String} "
