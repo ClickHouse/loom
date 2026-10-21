@@ -511,7 +511,7 @@ curl -s "$LOOM_BASE_URL/v1/knowledge.search" -H "Authorization: Bearer $END_USER
 - Ids are lowercase letters, digits and `._@-`. `namespace: "@me"` is the user's personal
   collection: only they reach it, and it takes no grant.
 - Of the ops that name no namespace, an end user may call `collection.create`,
-  `collection.list`, `namespace.list_mine` and `grants.pending_for_me`, but no directory
+  `collection.list`, `namespace.list_mine`, `grants.pending_for_me` and `mentor.guide`, but no directory
   self-service (`namespace.register`, `namespace.join`, `namespace.browse`).
 - An agent's files: a collection granted to `agent:<id>`, searched with
   `knowledge.search` and `namespaces: ["<that collection>", "@me"]`, so the search reads

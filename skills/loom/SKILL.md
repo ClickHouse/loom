@@ -127,9 +127,11 @@ your stable name (authorship, not isolation), `user_id` to the end user when
 you serve many, `session_id` to the conversation or job, and `run_id` to the
 task execution. A token minted with an `own_user` read scope refuses a read
 without `user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it.
-Such a token, and an end user's, reaches fewer ops: namespace-wide ones
-(`namespace.validate`, `blacklist.add`, `mentor.brief`) answer 403
-`AUTH_INSUFFICIENT` naming the op; skip that step.
+Such a token, and an end user's, reaches only ops that keep their answer
+inside that user: any other op answers 403 `AUTH_INSUFFICIENT` naming it.
+That covers namespace-wide reads (`namespace.validate`, `mentor.brief`),
+namespace-wide refusals (`blacklist.add`) and revisions by key or id
+(`memory.update`, `memory.move`); skip that step or ask the owner.
 
 ## End-of-task review
 

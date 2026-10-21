@@ -10,7 +10,10 @@ repository) has every field.
 Calling convention, by surface: MCP tool `loom_<op_with_underscores>` or
 `loom_op {op, arguments}`; Python `await agent.call("<op>", {...})`;
 TypeScript `await agent.call("<op>", {...})`; HTTP `POST /v1/<op>`. The SDKs
-stamp `org`, `namespace` and `agent` for you; over HTTP you send them.
+stamp `org`, `namespace` and `agent` for you; over HTTP you send them. Ops
+marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
+`loom_search` searches memory, knowledge and conversations, and the rest are
+SDK and HTTP only.
 
 ## Durable memory — facts by meaning
 
@@ -23,10 +26,10 @@ on a row.
 |---|---|
 | `memory.set` | Store or revise one fact (`memory_key`, `value`, `tags`, `entities`, `confidence`, `valid_at`, `source_resource_id`, `ttl_seconds`). |
 | `memory.set_from_messages` | Hand over a transcript; the server extracts the durable facts under short keys. |
-| `memory.search` | Ranked hits with scores, `abstain` and provenance. `recipe`: `fast`, `balanced`, `quality`, `verbatim`, `temporal`, `graph`. |
+| `memory.search`‡ | Ranked hits with scores, `abstain` and provenance. `recipe`: `fast`, `balanced`, `quality`, `verbatim`, `temporal`, `graph`. |
 | `memory.ask` | A synthesised answer with citations, or an abstain. |
 | `memory.brief` | Orientation on a task: an answer, its grounding, unknowns, what to read next. |
-| `memory.get`, `memory.bulk_get`, `memory.list` | Read by exact key, many keys, or a key `prefix`. |
+| `memory.get`, `memory.bulk_get`‡, `memory.list` | Read by exact key, many keys, or a key `prefix`. |
 | `memory.update`, `memory.update_by_id` | Revise an existing row; `if_match_sha256` refuses a stale overwrite. |
 | `memory.delete` | Retire a fact by key: yours, else the same user's row under another agent. |
 | `memory.pin`† | Save a fact and protect it: a write that does not pin never replaces it. |
@@ -65,7 +68,7 @@ here and one short claim pointing at it in memory.
 |---|---|
 | `knowledge.upsert`† | Add or replace the document at a `source_uri` (preferred for anything you may update). |
 | `knowledge.add`, `knowledge.bulk_add` | Store one, or up to 500, documents. |
-| `knowledge.search` | Hybrid passage search (vector and keyword). |
+| `knowledge.search`‡ | Hybrid passage search (vector and keyword). |
 | `knowledge.get`, `knowledge.outline`† | The full text; the table of contents or one section. |
 | `knowledge.synthesize`† | Run a task (a summary, an evidence sweep) over whole documents. |
 | `knowledge.list` | Inventory by tag or URI prefix. |
@@ -118,7 +121,7 @@ on loses that boost.
 |---|---|
 | `run.begin` | Open a run (`goal`, optional `budget_usd`, `budget_seconds`); returns `run_id`. |
 | `run.complete` | Close it: `status`, `memories_used` (what you relied on), `final_response`, an optional reflection. |
-| `run.get`, `run.list` | A run's record, with `over_budget`; recent runs. |
+| `run.get`, `run.list`‡ | A run's record, with `over_budget`; recent runs. |
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
 Python: `async with agent.run_scope(goal=...) as run:` opens and closes it
@@ -129,7 +132,7 @@ and stamps `run_id` on every call inside.
 | Op | Use it to |
 |---|---|
 | `conversation.append` | Store a turn of a thread (only when the namespace owner turned logging on; `stored: false` otherwise). Idempotent on `msg_id`. |
-| `conversation.search`†, `conversation.threads` | Find past turns; list threads. |
+| `conversation.search`†‡, `conversation.threads` | Find past turns; list threads. |
 | `session.brief_save`†, `session.brief_get`†, `session.brief_list`† | Save and restore the condensed state of one line of work for a later session or another agent. |
 
 Storing a turn does not create a memory; send the transcript to
@@ -147,7 +150,7 @@ reported runs; Loom never executes it.
 | `procedure.add` | Register a procedure (`name`, `situation`, `steps`, optional `graph`). |
 | `procedure.record_run`† | Report one execution: the path taken, `ok`, a note. |
 | `procedure.evolve`†, `procedure.revise`† | Fold runs in (proven path, dead ends); propose a new shape. |
-| `learnings.list`† | Memories flagged as worth promoting to a shared namespace, awaiting review. |
+| `learnings.list`†‡ | Memories flagged as worth promoting to a shared namespace, awaiting review. |
 
 ## Entity graph — what is connected to what
 
@@ -160,7 +163,7 @@ the billing service".
 |---|---|
 | `facts.traverse`, `facts.list` | Walk from an entity; list triples. |
 | `facts.path`†, `facts.related`† | A path between two entities; neighbours. |
-| `memory.search` with `recipe: "graph"` | Search that follows graph edges. |
+| `memory.search`‡ with `recipe: "graph"` | Search that follows graph edges (`loom_search` takes the same `recipe`). |
 
 ## Coordination between agents
 
@@ -176,8 +179,8 @@ the billing service".
 
 | Op | Use it to |
 |---|---|
-| `conflicts.list`, `conflicts.resolve` | Contradictions waiting for a decision; settle one (admin). |
-| `blacklist.add`†, `blacklist.list` | Refuse a pattern the user never wants stored (422 `BLACKLISTED`). |
+| `conflicts.list`‡, `conflicts.resolve`‡ | Contradictions waiting for a decision; settle one (admin). |
+| `blacklist.add`†, `blacklist.list`‡ | Refuse a pattern the user never wants stored (422 `BLACKLISTED`). |
 | `namespace.validate` | Check the rows you wrote for shape problems. |
 | `namespace.audit` | Find whole-namespace mistakes (documents as memories, hash keys, coordination as memory). |
 | `mentor.brief` | Your usage profile, the planes you are not using and the counts behind each hint. |
@@ -213,4 +216,4 @@ the repository.
 |---|---|
 | `namespace.list_mine` | The namespaces your token reaches. |
 | `grants.create`, `grants.list` | Share a namespace with another agent or person (admin). |
-| `erasure.request`, `erasure.status`† | Erase everything about a user or subject, across every table that can hold memory content. |
+| `erasure.request`, `erasure.status`†‡ | Erase everything about a user or subject, across every table that can hold memory content. |

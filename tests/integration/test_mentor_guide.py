@@ -11,15 +11,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from tests.integration._resources import unique_org  # noqa: E402
+
+ORG = unique_org("mentor-guide")
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("part", ["skill", "reference", "all"])
-async def test_a_viewer_reads_each_part_of_the_guide(control_plane_url: str, part: str) -> None:
-    from server.auth.jwt import mint_token
-
-    token = mint_token(
-        subject="sa-guide-reader", org="clickhouse", namespaces=["eng-tooling"], roles=["VIEWER"]
-    )
+async def test_a_viewer_reads_each_part_of_the_guide(
+    control_plane_url: str, mint_test_token, part: str
+) -> None:
+    token = mint_test_token(org=ORG, namespaces=["guide-reader"], roles=["viewer"])
     async with httpx.AsyncClient(
         base_url=control_plane_url, timeout=10.0, headers={"Authorization": f"Bearer {token}"}
     ) as c:

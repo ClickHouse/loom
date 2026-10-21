@@ -89,7 +89,8 @@ refresh before it signs with it.
 Ids are lowercase (`server/core/principals.py`), so two spellings never name one user; a
 SCIM member is the service's own lowercase user id, not an identity provider's. Of the
 org-level ops (those that name no namespace to gate), an end user may call only
-`collection.create`, `collection.list`, `namespace.list_mine` and `grants.pending_for_me`.
+`collection.create`, `collection.list`, `namespace.list_mine`, `grants.pending_for_me` and
+`mentor.guide` (the static agent guide).
 An end-user token is served by the op endpoint and `knowledge.download`; MCP, `/v1/me/*`,
 the admin routes and the task watch refuse it (403). A trusted caller
 (`LOOM_TRUSTED_CALLERS`) acts for Loom subjects only and cannot assert a subject spelled

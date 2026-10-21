@@ -14,6 +14,7 @@ from server.core.paths import AGENT_GUIDE_DIR, REPO_ROOT
 from server.insights.api.models_mentor import MentorGuideInput
 from server.insights.app.mentor_guide import handle_mentor_guide
 from server.operations.registry import OPERATIONS_BY_NAME
+from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.transport import gates
 
 
@@ -58,16 +59,23 @@ def test_the_skill_lists_every_experimental_op_it_names() -> None:
     assert set(re.findall(r"`([a-z_.]+)`", listed.group(1))) == experimental
 
 
-def test_experimental_ops_in_the_reference_carry_the_marker() -> None:
+def test_ops_in_the_reference_carry_the_experimental_and_not_on_mcp_markers() -> None:
     for row in re.findall(r"^\| (`[^|]+)\|", _guide("reference").text, re.M):
-        for name, mark in re.findall(r"`([a-z_.]+)`(†?)", row):
+        for name, experimental, hidden in re.findall(r"`([a-z_.]+)`(†?)(‡?)", row):
             if name in OPERATIONS_BY_NAME:
-                experimental = OPERATIONS_BY_NAME[name].maturity == "experimental"
-                assert bool(mark) == experimental, name
+                assert bool(experimental) == (
+                    OPERATIONS_BY_NAME[name].maturity == "experimental"
+                ), name
+                assert bool(hidden) == (name in _MCP_HIDDEN_OPS), name
 
 
-# The tokens the primer names the guide to, with the roles the server gives them
-# (an end user's: server/auth/jwt.py).
+def test_the_skill_names_no_op_mcp_refuses() -> None:
+    # SKILL.md carries no ‡ marker: every op it sends an agent to runs over MCP too.
+    assert not _named_ops(_guide("skill").text) & _MCP_HIDDEN_OPS
+
+
+# Every kind of token that may read the guide, with the roles the server gives it
+# (an end user's: server/auth/jwt.py; an end user reaches it over HTTP, not MCP).
 _CALLERS = {
     "viewer": AuthInfo(
         subject="sa:bot",
@@ -98,8 +106,8 @@ _CALLERS = {
 
 
 @pytest.mark.parametrize("caller", sorted(_CALLERS))
-def test_every_caller_the_primer_names_the_guide_to_is_admitted(caller: str) -> None:
-    # The guide holds no memory, and the primer names it on every connection.
+def test_every_token_that_may_read_the_guide_is_admitted(caller: str) -> None:
+    # The guide holds no memory.
     auth = _CALLERS[caller]
     op = OPERATIONS_BY_NAME["mentor.guide"]
     target = gates.authz_target(op, org="acme", namespace=None, auth=auth)
