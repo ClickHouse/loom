@@ -52,6 +52,9 @@ describe("TokenGate", () => {
     render(<TokenGate onLogin={() => undefined} />);
     expect(screen.getByText(/Running this yourself\?/)).toBeInTheDocument();
     expect(screen.getByText("loom mint-token …")).toBeInTheDocument();
+    // `/me`, where the server serves the dashboard: the root may redirect elsewhere, and a
+    // redirect carries the fragment, token and all.
+    expect(screen.getByText("<server>/me#token=<jwt>")).toBeInTheDocument();
     expect(screen.getByText("LOOM_AUTH_REQUIRED=false")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tokens and grants (opens in a new tab)" })).toHaveAttribute(
       "href",

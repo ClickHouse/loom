@@ -56,7 +56,7 @@ function rememberSignInStart(): void {
   }
 }
 
-/** Sends the browser to the identity provider; it comes back to `/#token=…`. */
+/** Sends the browser to the identity provider; it comes back to `/me#token=…`. */
 function SsoGate({ reason }: { reason?: GateReason }) {
   return (
     <GateShell>
@@ -307,7 +307,7 @@ function PasswordGate({ onLogin, reason = null }: TokenGateProps) {
       </p>
       <div className="mt-2 text-center text-xs leading-relaxed text-text-muted">
         Running this yourself? Mint a token with <code>loom mint-token …</code> and open{" "}
-        <code>&lt;server&gt;/#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
+        <code>&lt;server&gt;/me#token=&lt;jwt&gt;</code>, or set <code>LOOM_AUTH_REQUIRED=false</code> for a single-user
         install. See{" "}
         <ExternalLink href={DOCS_TOKENS_URL} size="sm">
           Tokens and grants

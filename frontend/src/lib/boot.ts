@@ -52,7 +52,7 @@ export const SIGN_IN_FROM = "loom_sign_in_from_v1";
 
 /** A login link's token, taken before anything else can fail: the `#token=` fragment's (a
  *  `?token=` query is never taken, since it reaches the server and its logs), and whether
- *  it came back to the bare root (`/`, or `/me` from a server that lands there), where a
+ *  it came back to the bare root (`/me`, where the server lands a sign-in, or `/`), where a
  *  sign-in returns to the page it started on. Either form leaves the address and its
  *  history at once, so no token lingers in a copied link, a reload or a failure report.
  *  Null when the address carries neither. */
