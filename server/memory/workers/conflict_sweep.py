@@ -63,6 +63,7 @@ async def rejudge(r: dict[str, Any], *, ch: _CHClient) -> str:
     from server.identity.domain.read_scope import read_filters_bound
     from server.memory.app import conflict_deferred as cd
     from server.memory.app import conflicts as cf
+    from server.memory.domain.trust import subject_of
 
     key = _key(r)
     version, created_at = int(r["version"]), r["created_at"]
@@ -106,6 +107,7 @@ async def rejudge(r: dict[str, Any], *, ch: _CHClient) -> str:
                 version=version,
                 created_at=created_at,
                 content_sha256=sha,
+                subject=subject_of(str(getattr(mem, "actor", "") or "")),  # the write's writer
             )
         if not await cd.still_current(ident, sha):
             return cd.MOVED

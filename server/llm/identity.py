@@ -95,6 +95,12 @@ def splits() -> bool:
     return bool(settings.identity_headers())
 
 
+def reads_writer() -> bool:
+    """Whether the identity headers name more than a call's org and namespace (its
+    subject), so a job finds each row's writer before calling for it."""
+    return bool(_used() & _BY_SUBJECT)
+
+
 async def render(a: Attribution) -> tuple[tuple[str, str], ...]:
     """The identity headers of a call made for `a`, in their configured order;
     a header whose template renders empty is left out."""

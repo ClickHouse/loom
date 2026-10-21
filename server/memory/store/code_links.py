@@ -448,7 +448,7 @@ async def code_namespaces(*, ch: _CHClient | None = None) -> list[tuple[str, str
 
 
 _HEADS = """
-SELECT org, namespace, agent, user_id, session_id, memory_key,
+SELECT org, namespace, agent, user_id, session_id, memory_key, actor,
        toString(memory_id) AS mid, value, tags, files,
        toString(content_sha256) AS sha,
        CAST(status AS String) AS status, tombstoned_at,

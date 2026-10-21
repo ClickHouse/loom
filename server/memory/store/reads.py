@@ -347,6 +347,43 @@ async def actors_by_key(
     return out
 
 
+async def session_writers(
+    keys: Sequence[tuple[str, str, str, str, str]], *, ch: _CHClient | None = None
+) -> dict[tuple[str, str, str, str, str], str]:
+    """The newest principal writer (`actor`) of each session's live memories, by
+    (org, namespace, agent, user_id, session_id): whom a job's model call over the
+    session is for. A pipeline's own actor names no principal and is passed over; a
+    session whose memories record none is absent."""
+    from server.memory.domain.provenance import CLI_ACTOR_PREFIX, PIPELINE_ACTORS
+
+    if not keys:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT org, namespace, agent, user_id, session_id,
+               argMaxIf(actor, created_at,
+                        actor != '' AND NOT has({pipeline:Array(String)}, actor)
+                        AND NOT startsWith(actor, {cli:String})) AS writer
+        FROM loom.memory
+        WHERE (org, namespace, agent, user_id, session_id)
+              IN {keys:Array(Tuple(String, String, String, String, String))}
+          AND tombstoned_at IS NULL
+        GROUP BY org, namespace, agent, user_id, session_id
+        """,
+        params={
+            "keys": sorted({tuple(str(x) for x in k) for k in keys}),
+            "pipeline": sorted(PIPELINE_ACTORS),
+            "cli": CLI_ACTOR_PREFIX,
+        },
+    )
+    out: dict[tuple[str, str, str, str, str], str] = {}
+    for r in rows:
+        if writer := str(r.get("writer") or ""):
+            out[(r["org"], r["namespace"], r["agent"], r["user_id"], r["session_id"])] = writer
+    return out
+
+
 async def get_many_by_keys(
     identity: Identity,
     memory_keys: list[str],

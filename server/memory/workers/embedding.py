@@ -23,7 +23,8 @@ from typing import Any
 import server.memory.store as memory_repo
 from server.core.errors import ModelCallRefused
 from server.embedding import get_embedder
-from server.llm import customer
+from server.llm import customer, identity
+from server.memory.domain.trust import subject_of
 from server.workers import pass_context
 from server.workers.status import record_pass
 
@@ -174,24 +175,51 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+async def _writers(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], str]:
+    """The writer (`actor`) of each stub's memory, by identity key: a stub's model
+    call is its writer's. A shared-scope stub, whose row records no writer, is absent."""
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    by_org: dict[str, set[tuple[str, str]]] = {}
+    for r in rows:
+        by_org.setdefault(str(r["org"]), set()).add((str(r["namespace"]), str(r["memory_key"])))
+    out: dict[tuple[str, ...], str] = {}
+    for org, keys in by_org.items():
+        found = await memory_repo.actors_by_key(org, sorted(keys), scope=WHOLE_NAMESPACE)
+        for (ns, key), heads in found.items():
+            for h in heads:
+                out[(org, ns, h["agent"], h["user_id"], h["session_id"], key)] = h["actor"]
+    return out
+
+
+def _attribution(r: dict[str, Any], writers: dict[tuple[str, ...], str]) -> Any:
+    """Whom a stub's call is for: its writer, else its namespace's agent."""
+    key = tuple(str(r.get(c) or "") for c in IDENTITY_COLUMNS)
+    return customer.Attribution(
+        str(r.get("org") or ""),
+        namespace=str(r.get("namespace") or ""),
+        subject=subject_of(writers.get(key, "")),
+        user_id=str(r.get("user_id") or ""),
+    )
+
+
+# The identity tuple and key of a memory row, in `_writers`' key order.
+IDENTITY_COLUMNS = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+
+
 async def _embed_rows(
     embedder: Any, rows: list[dict[str, Any]]
 ) -> list[tuple[list[float] | None, str]]:
     """`_embed_batch` per org and identity, in the rows' order: a pass picks
-    stubs of every org, and one model call names a single customer and identity.
-    An org switched off since the stubs were picked, or an identity the gateway
-    refused, gets `(None, SWITCHED_OFF)`: its rows are left as they are, attempts
-    untouched, and the other groups go on. A switch gone stale mid-pass
-    (`SwitchUnread`) stops the pass before its write."""
+    stubs of every org, and one model call names a single customer and identity
+    (each stub's writer's, else its namespace's agent's). An org switched off
+    since the stubs were picked, or an identity the gateway refused, gets
+    `(None, SWITCHED_OFF)`: its rows are left as they are, attempts untouched,
+    and the other groups go on. A switch gone stale mid-pass (`SwitchUnread`)
+    stops the pass before its write."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
-    groups = await customer.groups(
-        customer.Attribution(
-            str(r.get("org") or ""),
-            namespace=str(r.get("namespace") or ""),
-            user_id=str(r.get("user_id") or ""),
-        )
-        for r in rows
-    )
+    writers = await _writers(rows) if identity.reads_writer() else {}
+    groups = await customer.groups(_attribution(r, writers) for r in rows)
     for who, positions in groups.items():
         embedded: list[tuple[list[float] | None, str]]
         try:

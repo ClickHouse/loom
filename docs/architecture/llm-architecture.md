@@ -335,11 +335,18 @@ them beside the customer header on every chat, embedding, rerank and classify re
   placeholder is left out when its value is unknown; text around a placeholder is sent as
   written. A value is percent-encoded only where a header cannot carry it (a space, `%`,
   anything outside printable ASCII). A prefix claim (`tenant_id=acme-*`) names no tenant.
-- **Where a job finds the writer.** A deferred `memory.set_from_messages` stores its enqueuer
-  on the queue row, and the entity extractor reads each memory's `actor`. The other jobs know
-  the namespace and user_id of their rows, and a row in an agent's own namespace (owned by
-  `sa:<trust>:<agent>`, the home its trust made on the agent's first token exchange) is that
-  agent's. Only the deployment's own calls (`customer.system()`) name no one.
+- **Writer first.** A job's call is for the principal that wrote the row: the subject in its
+  `actor` (`human:` or `process:` and a token's subject). A pipeline's own actor
+  (`process:extraction-worker`, `process:cli:<command>`, `provenance.PIPELINE_ACTORS`) is no
+  principal. A deferred `memory.set_from_messages` stores its enqueuer on the queue row; the
+  entity extractor, the embedding worker, projection repair and the code-link judge read the
+  writer of the memory they work on; observe-extract takes the newest writer of the session's
+  observations, a profile fold the newest writer of its facts, reflection and the period digest
+  the newest writer of the session's memories (`memory_repo.session_writers`), and the conflict
+  sweep the write's writer. Only a row that records no principal (a conversation turn, a
+  shared-scope vector) takes the agent whose own namespace it is in (owned by
+  `sa:<trust>:<agent>`, the home its trust made on the agent's first token exchange). Only the
+  deployment's own calls (`customer.system()`) name no one.
 - **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
   model rebuild) groups them by what the templates read (`customer.groups`), so one call never
   carries two agents' texts.

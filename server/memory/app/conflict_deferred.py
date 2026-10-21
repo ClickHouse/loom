@@ -192,6 +192,7 @@ def schedule_settle(
     pj = getattr(conflict_result, "pending_judge", None)
     if pj is None or getattr(conflict_result, "verdict", "") != PENDING:
         return None
+    from server.auth.context import current_caller
     from server.core.logging_config import request_id_var
 
     request_id = str(request_id_var.get() or "")
@@ -210,6 +211,7 @@ def schedule_settle(
                 content_sha256=content_sha256,
                 cfg=cfg,
                 request_id=request_id,
+                subject=current_caller()[0],  # the write's writer: the request's caller
             ),
             name="loom-conflict-judge",
         )
@@ -230,16 +232,17 @@ async def settle(
     content_sha256: str = "",
     cfg: Any = None,
     request_id: str = "",
+    subject: str = "",
 ) -> str:
     """Judge, fold and land the verdict on the row, then stamp the write's
-    (`version`) `conflict_checked_at`; returns the settled verdict (`error` when the
-    settle itself failed — the row stays as inserted, its mark left for the
-    conflict sweep; `moved` when a newer write took the key while the judge ran,
+    (`version`) `conflict_checked_at`, the judge's model call made for the write's
+    writer (`subject`; '' for none: the namespace's agent). Returns the settled
+    verdict (`error` when the settle itself failed — the row stays as inserted, its
+    mark left for the conflict sweep; `moved` when a newer write took the key while the judge ran,
     which lands nothing; `held` when the model-call switch held the judge's call,
     which stamps nothing, so the sweep judges it once the org is back). Never
     raises. Writes one `memory_drops` row and one ledger row
     (`memory.set.settle`, the write's `request_id`)."""
-    from server.auth.context import current_caller
     from server.memory.app import conflicts as cf
     from server.memory.app.drops import record_drop
     from server.observability import cost_accumulator
@@ -252,11 +255,10 @@ async def settle(
     verdict = "error"
     result: Any = None
     try:
-        # The write's: this task runs in a copy of its request's context.
         with customer.for_org(
             str(ident.org),
             namespace=str(ident.namespace),
-            subject=current_caller()[0],
+            subject=subject,
             user_id=str(getattr(ident, "user_id", "") or ""),
         ):
             result = await cf.settle_deferred_judgement(pj)

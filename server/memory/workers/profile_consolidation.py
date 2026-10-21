@@ -25,7 +25,9 @@ from server.llm import client as llm_client
 from server.llm import customer
 from server.memory.app import profile as profile_app
 from server.memory.domain.profile_facts import render_fold_input
+from server.memory.domain.provenance import CLI_ACTOR_PREFIX, PIPELINE_ACTORS
 from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.trust import subject_of
 from server.memory.store.profile_sources import user_facts
 from server.observability import cost_accumulator
 from server.observability.genai import llm_stage
@@ -85,11 +87,15 @@ async def run_pass(
         # before the LIMIT: filtering after it would hand back the same
         # just-folded top identities every pass and never reach the rest.
         # `updated_at`, not `created_at`: a rewrite keeps the section's
-        # creation time.
+        # creation time. The fold's model call is for the newest principal that
+        # wrote the identity's facts (`writer`; a pipeline is none).
         identities = await ch.query_all(
             """
             SELECT m.org AS org, m.namespace AS namespace, m.user_id AS user_id,
-                   count() AS n
+                   count() AS n,
+                   argMaxIf(m.actor, m.version,
+                            m.actor != '' AND NOT has({pipeline:Array(String)}, m.actor)
+                            AND NOT startsWith(m.actor, {cli:String})) AS writer
             FROM loom.memory AS m FINAL
             INNER JOIN loom.namespaces AS n FINAL
                     ON m.org = n.org AND m.namespace = n.namespace
@@ -118,6 +124,8 @@ async def run_pass(
                 "label": cfg.label,
                 "cool": int(max(0, cfg.cooldown_seconds)),
                 "off": sorted(await customer.switched_off_orgs()),
+                "pipeline": sorted(PIPELINE_ACTORS),
+                "cli": CLI_ACTOR_PREFIX,
             },
         )
         result.identities_scanned = len(identities)
@@ -170,7 +178,10 @@ async def _consolidate_identity(
         with (
             llm_stage("profile_fold"),
             customer.for_org(
-                str(row["org"]), namespace=str(row["namespace"]), user_id=str(row["user_id"])
+                str(row["org"]),
+                namespace=str(row["namespace"]),
+                subject=subject_of(str(row.get("writer") or "")),
+                user_id=str(row["user_id"]),
             ),
         ):
             client = (

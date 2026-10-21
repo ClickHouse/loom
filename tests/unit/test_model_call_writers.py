@@ -1,0 +1,372 @@
+"""A background job's model call is for the writer of the row it works on, and for
+the agent whose namespace holds the row only when the row records no writer: a
+member writing into an agent's namespace, an agent writing into another's or into
+a shared namespace is billed as itself. A pipeline's own actor is no writer."""
+
+from __future__ import annotations
+
+import ast
+import asyncio
+import dataclasses
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from server.llm import customer
+from server.memory.domain import provenance, trust
+from server.settings import settings
+from tests.unit.test_model_call_identity import AGENT_NS, _Directory, _stub, directory  # noqa: F401
+
+AGENT_8 = "sa:nerve-t1:agent-8"
+NS_8 = "nerve-t1-agent-8"
+SHARED = "t-1-shared"
+_TEMPLATES = '{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}'
+
+# Whom each writer's calls name, as these headers render them.
+AS_AGENT_7 = {"X-Tenant": "t1", "X-Agent": "agent-7"}
+AS_AGENT_8 = {"X-Tenant": "t1", "X-Agent": "agent-8"}
+AS_ALICE = {"X-Actor": "alice@example.com"}
+
+
+@pytest.fixture
+def writers(directory: _Directory, monkeypatch: pytest.MonkeyPatch) -> _Directory:  # noqa: F811
+    monkeypatch.setattr(settings, "inference_identity_headers_json", _TEMPLATES)
+    directory.owners[("acme", NS_8)] = AGENT_8
+    directory.owners[("acme", SHARED)] = ""  # registered by an admin: no agent's own
+    return directory
+
+
+async def _sent() -> dict[str, str]:
+    return customer.headers(await customer.require())
+
+
+def test_a_pipelines_own_actor_names_no_principal() -> None:
+    assert trust.subject_of(f"process:{AGENT_8}") == AGENT_8
+    assert trust.subject_of("human:sso-alice") == "sso-alice"
+    assert trust.subject_of("process:ci-bot") == "ci-bot"  # a token's own subject
+    for pipeline in (provenance.EXTRACTION_WORKER_ACTOR, provenance.cli_actor("import"), ""):
+        assert trust.subject_of(pipeline) == ""
+    assert trust.subject_of("sa:nerve-t1:agent-8") == ""  # no kind: not an actor string
+
+
+def test_every_process_actor_the_server_writes_is_a_registered_pipeline() -> None:
+    root = Path(__file__).resolve().parents[2] / "server"
+    found = set()
+    for path in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if node.value.startswith("process:") and node.value != trust.PROCESS_PREFIX:
+                    found.add(node.value)
+    assert found, "the scan found no pipeline actor"
+    assert {a for a in found if not provenance.is_pipeline_actor(a)} == set()
+
+
+def test_the_embedding_worker_calls_for_each_stubs_writer(writers: _Directory) -> None:
+    from server.memory.workers import embedding
+
+    sent: dict[str, dict[str, str]] = {}
+
+    class _Embedder:
+        model_name, dim = "fake", 2
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            for t in texts:
+                sent[t] = await _sent()
+            return [[1.0, 0.0] for _ in texts]
+
+    rows = [
+        _stub(AGENT_NS, "by-alice", "a member in agent-7's namespace"),
+        _stub(AGENT_NS, "by-8", "agent-8 in agent-7's namespace"),
+        _stub(SHARED, "shared-by-8", "agent-8 in the shared namespace"),
+        _stub(AGENT_NS, "by-nobody", "no writer recorded"),
+        _stub(AGENT_NS, "by-pipeline", "a pipeline's row"),
+    ]
+    for key, actor in (
+        ("by-alice", "human:sso-alice"),
+        ("by-8", f"process:{AGENT_8}"),
+        ("shared-by-8", f"process:{AGENT_8}"),
+        ("by-pipeline", provenance.EXTRACTION_WORKER_ACTOR),
+    ):
+        row = next(r for r in rows if r["memory_key"] == key)
+        ident = tuple(str(row[c]) for c in embedding.IDENTITY_COLUMNS)
+        writers.writers[ident] = actor  # type: ignore[index]
+    asyncio.run(embedding._embed_rows(_Embedder(), rows))
+    assert sent == {
+        "a member in agent-7's namespace": AS_ALICE,
+        "agent-8 in agent-7's namespace": AS_AGENT_8,
+        "agent-8 in the shared namespace": AS_AGENT_8,
+        "no writer recorded": AS_AGENT_7,  # the namespace's agent: no writer
+        "a pipeline's row": AS_AGENT_7,  # a pipeline is no writer: the namespace's agent
+    }
+
+
+def test_observe_extract_calls_for_the_agent_that_recorded_the_session(
+    writers: _Directory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.memory.workers import observe_extract
+
+    seen: list[dict[str, str]] = []
+    session = {
+        "org": "acme",
+        "namespace": AGENT_NS,
+        "agent": "a",
+        "user_id": "u1",
+        "session_id": "s1",
+    }
+
+    async def sessions(cfg: Any, ch: Any) -> list[dict[str, Any]]:
+        return [session]
+
+    async def observations(session: Any, cfg: Any, ch: Any) -> list[Any]:
+        return [
+            SimpleNamespace(actor=provenance.EXTRACTION_WORKER_ACTOR),
+            SimpleNamespace(actor=f"process:{AGENT_8}"),
+            SimpleNamespace(actor=provenance.cli_actor("observe")),
+        ]
+
+    async def distill(session: Any, observations: Any) -> Any:
+        seen.append(await _sent())
+        return SimpleNamespace(written=1, observations=1, events=0, extra_failures=[])
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: None)
+    monkeypatch.setattr(observe_extract, "find_ready_sessions", sessions)
+    monkeypatch.setattr(observe_extract, "_load_session_observations", observations)
+    monkeypatch.setattr(observe_extract, "_distill_session", distill)
+    asyncio.run(observe_extract.run_pass())
+    assert seen == [AS_AGENT_8]
+
+
+def test_the_conflict_sweep_settles_for_the_writes_writer(monkeypatch: pytest.MonkeyPatch) -> None:
+    import server.memory.store as memory_repo
+    from server.memory.app import conflict_deferred as cd
+    from server.memory.app import conflicts as cf
+    from server.memory.workers import conflict_sweep
+
+    key = ("acme", AGENT_NS, "a", "u1", "-", "k1")
+    mem = SimpleNamespace(
+        status="active",
+        content_sha256="",
+        memory_type="semantic",
+        run_id="-",
+        memory_id="m1",
+        valid_at=None,
+        actor=f"process:{AGENT_8}",
+    )
+    settled: list[str] = []
+
+    async def rows(keys: Any, **_: Any) -> dict[Any, Any]:
+        return {key: mem}
+
+    async def check(**_: Any) -> Any:
+        return SimpleNamespace(verdict=cd.PENDING, pending_judge=object())
+
+    async def settle(*_: Any, subject: str = "", **__: Any) -> str:
+        settled.append(subject)
+        return "clear"
+
+    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", rows)
+    monkeypatch.setattr(memory_repo, "stored_value_text", lambda m: "v")
+    monkeypatch.setattr(cf, "check_on_commit", check)
+    monkeypatch.setattr(cd, "settle", settle)
+    r = dict(
+        zip(("org", "namespace", "agent", "user_id", "session_id", "memory_key"), key, strict=True)
+    )
+    asyncio.run(conflict_sweep.rejudge({**r, "version": 1, "created_at": None}, ch=object()))  # type: ignore[arg-type]
+    assert settled == [AGENT_8]
+
+
+def test_a_settle_calls_for_the_subject_it_is_given(writers: _Directory) -> None:
+    from datetime import UTC, datetime
+
+    from server.memory.app import conflict_deferred as cd
+    from server.memory.app import conflicts as cf
+
+    seen: list[dict[str, str]] = []
+
+    async def judge(pj: Any) -> Any:
+        seen.append(await _sent())
+        return None
+
+    async def moved(*a: Any, **k: Any) -> bool:
+        return False
+
+    ident = SimpleNamespace(org="acme", namespace=AGENT_NS, memory_key="k", user_id="u1")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cf, "settle_deferred_judgement", judge)
+        mp.setattr(cd, "still_current", moved)
+        mp.setattr(cd, "emit_settle_row", lambda *a, **k: None)
+        asyncio.run(
+            cd.settle(
+                ident,
+                None,
+                memory_id="m1",
+                version=1,
+                created_at=datetime.now(UTC),
+                subject=AGENT_8,
+            )
+        )
+    assert seen == [AS_AGENT_8]
+
+
+def test_the_profile_fold_calls_for_its_facts_newest_writer(
+    writers: _Directory, monkeypatch
+) -> None:
+    from server.llm.fake import FakeLLMClient
+    from server.memory.app import profile
+    from server.memory.workers import profile_consolidation as pc
+
+    seen: list[dict[str, str]] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [{"memory_id": "m1", "value": "prefers tea", "since": "2026-01-01"}]
+
+    class _LLM(FakeLLMClient):
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            seen.append(await _sent())
+            return await super().complete(*a, **k)
+
+    async def write_section(**kw: Any) -> None:
+        return None
+
+    monkeypatch.setattr("server.llm.client.get_llm_client", lambda: _LLM())
+    monkeypatch.setattr(pc, "emit_worker_cost_event_for", lambda **kw: None)
+    monkeypatch.setattr(profile, "write_folded_section", write_section)
+    row = {"org": "acme", "namespace": AGENT_NS, "user_id": "u1", "writer": f"process:{AGENT_8}"}
+    assert asyncio.run(
+        pc._consolidate_identity(_CH(), row, pc.ProfileConsolidationConfig(model=""))
+    )
+    assert seen == [AS_AGENT_8]
+
+
+def test_a_reflection_judges_a_session_for_its_writer(writers: _Directory, monkeypatch) -> None:
+    from server.memory.app import session_outcomes as so
+
+    seen: list[dict[str, str]] = []
+    summary = {
+        "org": "acme",
+        "namespace": SHARED,
+        "agent": "a",
+        "user_id": "u1",
+        "session_id": "s1",
+        "summary_text": "did things",
+        "key_facts": [],
+    }
+
+    class _CH:
+        async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
+            return [summary]
+
+    async def session_writers(keys: Any, *, ch: Any = None) -> dict[Any, str]:
+        assert list(keys) == [("acme", SHARED, "a", "u1", "s1")]
+        return {("acme", SHARED, "a", "u1", "s1"): f"process:{AGENT_8}"}
+
+    class _LLM:
+        async def complete(self, *a: Any, **k: Any) -> Any:
+            seen.append(await _sent())
+            return SimpleNamespace(text='{"outcome": "success", "confidence": 0.9, "reason": "r"}')
+
+    async def insert(rows: Any, **_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(so, "session_writers", session_writers)
+    monkeypatch.setattr(so, "insert_outcomes", insert)
+    asyncio.run(so.label_sessions(_CH(), _LLM(), so.DistillConfig(), so.DistillResult()))
+    assert seen == [AS_AGENT_8]
+
+
+def test_a_period_digest_calls_for_its_sessions_newest_writer(
+    writers: _Directory, monkeypatch
+) -> None:
+    from server.memory.app import period_digest as pd
+
+    async def session_writers(keys: Any, *, ch: Any = None) -> dict[Any, str]:
+        return {("acme", SHARED, "a", "u1", "s2"): f"process:{AGENT_8}"}
+
+    monkeypatch.setattr(pd, "session_writers", session_writers)
+    period = pd.Period(
+        org="acme",
+        namespace=SHARED,
+        agent="a",
+        user_id="u1",
+        digests=({"session_id": "s1"}, {"session_id": "s2"}, {"session_id": "s3"}),
+    )
+    assert asyncio.run(pd._period_writer(object(), period)) == AGENT_8
+
+
+def test_the_code_link_judge_calls_for_the_memorys_writer(writers: _Directory, monkeypatch) -> None:
+    from server.code.domain.anchor import Definition
+    from server.memory.app import code_link_judge
+
+    seen: list[dict[str, str]] = []
+
+    async def judge_claim(claim: str, old: str, new: str) -> tuple[str, str]:
+        seen.append(await _sent())
+        return "unsure", ""
+
+    monkeypatch.setattr(code_link_judge, "judge_claim", judge_claim)
+    link: Any = {"org": "acme", "namespace": AGENT_NS, "user_id": "u1"}
+    asyncio.run(
+        code_link_judge.judge(
+            "f adds",
+            link,
+            "old",
+            "new",
+            Definition("a.py", "a.f", "f"),
+            "h",
+            writer="human:sso-alice",
+        )
+    )
+    assert seen == [AS_ALICE]
+
+
+def test_projection_repair_replays_for_the_memories_writer(
+    writers: _Directory, monkeypatch
+) -> None:
+    from server.memory.app import projection_failures as pf
+    from server.memory.workers import projection_repair
+    from tests.unit.test_memory_repair_workers import _failure
+
+    seen: list[dict[str, str]] = []
+    failure = dataclasses.replace(
+        _failure(1, "memory_chunks"), namespace=AGENT_NS, memory_keys=["k1"]
+    )
+    writers.writers[("acme", AGENT_NS, "a", "u1", "-", "k1")] = f"process:{AGENT_8}"
+
+    async def scan(**k: Any) -> list[Any]:
+        return [failure]
+
+    async def retry(f: Any, **k: Any) -> Any:
+        seen.append(await _sent())
+        return pf.ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
+
+    monkeypatch.setattr(pf, "scan_active_projection_failures", scan)
+    monkeypatch.setattr(pf, "retry_projection_failure", retry)
+    asyncio.run(projection_repair.run_pass())
+    assert seen == [AS_AGENT_8]
+
+
+def test_a_deferred_extraction_by_a_member_is_the_members(writers: _Directory, monkeypatch) -> None:
+    import server.memory.app.extract.handler as mx
+    from server.identity.domain.read_scope import ReadFilters
+    from server.memory.api.models_bulk import MemorySetFromMessagesOutput
+    from server.memory.app import extraction_queue as queue
+    from tests.unit.test_extraction_queue import _input
+
+    seen: list[dict[str, str]] = []
+
+    async def handler(inp: Any) -> Any:
+        seen.append(await _sent())
+        return MemorySetFromMessagesOutput()
+
+    monkeypatch.setattr(mx, "handle_memory_set_from_messages", handler)
+    scope = ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    for enqueuer in ("human:sso-alice", provenance.EXTRACTION_WORKER_ACTOR):
+        payload, _, _ = queue.payload_for(
+            _input(org="acme", namespace=AGENT_NS, user_id="u1"), scope=scope, enqueued_by=enqueuer
+        )
+        row = {"org": "acme", "namespace": AGENT_NS, "user_id": "u1", "payload": payload}
+        asyncio.run(queue.replay_row(row))
+    assert seen == [AS_ALICE, AS_AGENT_7]  # a pipeline enqueuer is no writer: the owner

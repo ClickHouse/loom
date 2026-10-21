@@ -22,6 +22,8 @@ from __future__ import annotations
 import re
 from typing import Literal
 
+from server.memory.domain.provenance import is_pipeline_actor
+
 VerificationState = Literal["human", "process", "stale", "none"]
 
 HUMAN_PREFIX = "human:"
@@ -43,7 +45,11 @@ def actor_for(subject: str, *, is_service_account: bool) -> str:
 
 
 def subject_of(actor: str) -> str:
-    """The subject of an actor string (`actor_for`); '' for one of neither kind."""
+    """The principal an actor string (`actor_for`) names: its subject; '' for one of
+    neither kind, and for a pipeline's own actor (`provenance.is_pipeline_actor`),
+    which no principal stands behind."""
+    if is_pipeline_actor(actor):
+        return ""
     for prefix in (HUMAN_PREFIX, PROCESS_PREFIX):
         if actor.startswith(prefix):
             return actor[len(prefix) :]

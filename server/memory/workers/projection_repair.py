@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from server.llm import customer
+from server.llm.identity import reads_writer
+from server.memory.domain.trust import subject_of
 from server.settings import settings
 from server.workers.status import record_pass
 
@@ -34,6 +37,23 @@ class ProjectionRepairResult:
     failed: list[dict[str, str]] = field(default_factory=list)
 
 
+async def _writer(failure: Any) -> str:
+    """Whom a failure's replay is for: the principal that wrote its memories ('' when
+    none recorded one, and the failure's namespace decides)."""
+    if not failure.memory_keys or not reads_writer():
+        return ""  # nothing names it but identity headers
+    import server.memory.store as memory_repo
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    keys = [(str(failure.namespace), str(k)) for k in failure.memory_keys]
+    found = await memory_repo.actors_by_key(str(failure.org), keys, scope=WHOLE_NAMESPACE)
+    for key in keys:
+        for head in found.get(key, []):
+            if subject := subject_of(head["actor"]):
+                return subject
+    return ""
+
+
 async def run_pass(
     cfg: ProjectionRepairConfig | None = None,
 ) -> ProjectionRepairResult:
@@ -51,7 +71,11 @@ async def run_pass(
         )
         result.scanned = len(failures)
         for failure in failures:
-            with customer.for_org(str(failure.org), namespace=str(failure.namespace)):
+            with customer.for_org(
+                str(failure.org),
+                namespace=str(failure.namespace),
+                subject=await _writer(failure),
+            ):
                 retry = await retry_projection_failure(failure)
             if retry.retried:
                 result.retried += 1

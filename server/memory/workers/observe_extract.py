@@ -24,6 +24,7 @@ from server.memory.domain.observation_tags import (
     OBSERVATION_TAG,
 )
 from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.trust import subject_of
 from server.memory.store.rows import next_version
 from server.settings import settings
 from server.workers.status import record_pass
@@ -212,6 +213,15 @@ async def _load_session_observations(
     return [memory_repo._hydrate(r) for r in rows]
 
 
+def _writer(observations: list[Any]) -> str:
+    """Whom a session's distillation is for: the newest principal that recorded
+    its observations ('' when none did, and the session's namespace decides)."""
+    for o in reversed(observations):
+        if subject := subject_of(str(getattr(o, "actor", "") or "")):
+            return subject
+    return ""
+
+
 async def _distill_session(
     session: dict[str, Any],
     observations: list[Any],
@@ -391,6 +401,7 @@ async def run_pass(
                 with customer.for_org(
                     str(session["org"]),
                     namespace=str(session["namespace"]),
+                    subject=_writer(observations),
                     user_id=str(session.get("user_id") or ""),
                 ):
                     distilled = await _distill_session(session, observations)

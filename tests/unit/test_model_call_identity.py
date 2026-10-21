@@ -40,6 +40,8 @@ class _Directory:
         self.owners: dict[tuple[str, str], str] = {("acme", AGENT_NS): AGENT, ("acme", "ns"): ""}
         self.reads: list[tuple[str, str]] = []
         self.failing = False
+        # The writer (`actor`) of each memory, by identity key and memory key.
+        self.writers: dict[tuple[str, str, str, str, str, str], str] = {}
 
     async def machine(self, name: str, *, active_only: bool = True, ch: Any = None) -> Any:
         self.reads.append(("trust", name))
@@ -54,6 +56,17 @@ class _Directory:
             raise ConnectionError("clickhouse is away")
         return self.owners.get((org, namespace))
 
+    async def actors_by_key(
+        self, org: str, keys: Any, *, scope: Any, ch: Any = None
+    ) -> dict[tuple[str, str], list[dict[str, str]]]:
+        wanted = {(org, ns, key) for ns, key in keys}
+        out: dict[tuple[str, str], list[dict[str, str]]] = {}
+        for (o, ns, agent, uid, sid, key), actor in self.writers.items():
+            if (o, ns, key) in wanted:
+                head = {"agent": agent, "user_id": uid, "session_id": sid, "actor": actor}
+                out.setdefault((ns, key), []).append(head)
+        return out
+
     async def aliases(self, org: str, subject: str, *, ch: Any = None) -> list[str]:
         self.reads.append(("aliases", subject))
         return [subject, "alice@example.com"] if subject == "sso-alice" else [subject]
@@ -67,6 +80,7 @@ def directory(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Directory]:
     monkeypatch.setattr("server.auth.machines.get", d.machine)
     monkeypatch.setattr("server.auth.personal_namespace.namespace_owner", d.owner)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", d.aliases)
+    monkeypatch.setattr("server.memory.store.actors_by_key", d.actors_by_key)
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
     identity._reset_for_tests()
     genai._identity.set(None)
@@ -447,14 +461,27 @@ def test_the_embedding_worker_makes_one_call_per_identity(directory, monkeypatch
             return [[float(len(t)), 0.0] for t in texts]
 
     rows = [
-        {"org": "acme", "namespace": AGENT_NS, "user_id": "u1", "content_excerpt": "a"},
-        {"org": "acme", "namespace": "nerve-t1-agent-8", "user_id": "u1", "content_excerpt": "bb"},
-        {"org": "acme", "namespace": AGENT_NS, "user_id": "u2", "content_excerpt": "ccc"},
+        _stub(AGENT_NS, "k1", "a", user_id="u1"),
+        _stub("nerve-t1-agent-8", "k2", "bb", user_id="u1"),
+        _stub(AGENT_NS, "k3", "ccc", user_id="u2"),
     ]
     out = asyncio.run(embedding._embed_rows(_Embedder(), rows))
     # One call per agent: the user_id is no part of these headers, so it splits nothing.
     assert sent == [("agent-7", 2), ("agent-8", 1)]
     assert [v[0] for v, _ in out] == [1.0, 2.0, 3.0]  # in the rows' order
+
+
+def _stub(namespace: str, key: str, text: str, *, user_id: str = "u1") -> dict[str, Any]:
+    """An embedding stub of acme/`namespace`, its memory keyed `key`."""
+    return {
+        "org": "acme",
+        "namespace": namespace,
+        "agent": "a",
+        "user_id": user_id,
+        "session_id": "-",
+        "memory_key": key,
+        "content_excerpt": text,
+    }
 
 
 def _load(headers: str, **extra: str) -> Settings:

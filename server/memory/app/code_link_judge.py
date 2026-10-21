@@ -8,6 +8,7 @@ import json
 
 from server.code.domain.anchor import Definition
 from server.llm import customer
+from server.memory.domain.trust import subject_of
 from server.memory.store.code_links import LinkRow
 
 # A claim or code longer than the judge reads is never judged.
@@ -60,14 +61,25 @@ def readable(claim: str, old: str, new: str) -> bool:
 
 
 async def judge(
-    claim: str, link: LinkRow, old: str, new: str, d: Definition, head: str
+    claim: str,
+    link: LinkRow,
+    old: str,
+    new: str,
+    d: Definition,
+    head: str,
+    *,
+    writer: str = "",
 ) -> LinkRow | None:
     """`link` once its claim is judged against the code it was written for (`old`) and
     the code now (`new`, `d` at `head`): a claim that holds re-anchors it; a
     contradicted one keeps it `changed` with the corrected claim as `suggestion`. None
-    on an unsure verdict; `Malformed` when the reply is no verdict."""
+    on an unsure verdict; `Malformed` when the reply is no verdict. The call is made for
+    the memory's `writer` (its actor), else its namespace's agent."""
     with customer.for_org(
-        link["org"], namespace=link.get("namespace", ""), user_id=link.get("user_id", "")
+        link["org"],
+        namespace=link.get("namespace", ""),
+        subject=subject_of(writer),
+        user_id=link.get("user_id", ""),
     ):
         verdict, revised = await judge_claim(claim, old, new)
     if verdict == "malformed":
