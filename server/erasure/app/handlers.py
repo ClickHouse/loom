@@ -40,6 +40,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.domain.sensitivity import reads_high
 from server.observability import audit
 from server.operations.base import Role
+from server.settings import settings
 
 
 def _org_wide_admin(auth: AuthInfo, org: str) -> bool:
@@ -135,9 +136,10 @@ async def _export_memory(
 _MEMORY_SUBJECT = ("memory_key", "memory_id", "version")
 # Conversation rows carry no label; their text decides, as for raw evidence.
 _CONVERSATION_TEXT = ("content", "reasoning", "metadata")
-_CONVERSATION_SUBJECT = ("thread_id", "msg_id")
+# A turn is one (agent, thread_id, msg_id) of its namespace; a thread, one (agent, thread_id).
+_CONVERSATION_SUBJECT = ("agent", "thread_id", "msg_id")
 _THREAD_TEXT = ("title", "metadata")
-_THREAD_SUBJECT = ("thread_id",)
+_THREAD_SUBJECT = ("agent", "thread_id")
 
 
 async def _audit_high_rows(
@@ -175,49 +177,13 @@ def _label_high(rows: list[dict[str, object]], fields: tuple[str, ...]) -> None:
         r["sensitivity"] = "high" if any(reads_high(str(r[f])) for f in fields) else ""
 
 
-async def _export_conversations(
-    org: str,
-    scope_type: str,
-    scope_value: str,
-    *,
-    include_tombstoned: bool,
-    limit: int,
-    shown: erasure_exports.Shown,
+async def _labelled_page(
+    rows: list[Any], limit: int, fields: tuple[str, ...]
 ) -> tuple[list[dict[str, object]], int, bool]:
-    """Transcript turns and saved messages of one namespace, or those one user owns."""
-    rows = await erasure_exports.export_conversations(
-        org,
-        scope_type,
-        scope_value,
-        include_tombstoned=include_tombstoned,
-        limit=limit + 1,
-        shown=shown,
-    )
+    """`_page` of a conversation read, each served row labelled by its text. A turn
+    can be megabytes long, so the check runs off the event loop."""
     page = _page(rows, limit)
-    # A turn can be megabytes long, so the check runs off the event loop.
-    await asyncio.to_thread(_label_high, page[0], _CONVERSATION_TEXT)
-    return page
-
-
-async def _export_conversation_threads(
-    org: str,
-    scope_type: str,
-    scope_value: str,
-    *,
-    include_tombstoned: bool,
-    limit: int,
-    shown: erasure_exports.Shown,
-) -> tuple[list[dict[str, object]], int, bool]:
-    rows = await erasure_exports.export_conversation_threads(
-        org,
-        scope_type,
-        scope_value,
-        include_tombstoned=include_tombstoned,
-        limit=limit + 1,
-        shown=shown,
-    )
-    page = _page(rows, limit)
-    await asyncio.to_thread(_label_high, page[0], _THREAD_TEXT)
+    await asyncio.to_thread(_label_high, page[0], fields)
     return page
 
 
@@ -305,21 +271,26 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit,
         shown=shown,
     )
-    conv_rows, conv_count, conv_trunc = await _export_conversations(
-        input.org,
-        input.scope_type,
-        input.scope_value,
+    scope = (input.org, input.scope_type, input.scope_value)
+    turns, over_budget = await erasure_exports.export_conversations(
+        *scope,
         include_tombstoned=input.include_tombstoned,
-        limit=input.section_limit,
+        limit=input.section_limit + 1,
+        max_bytes=settings.erasure_export_conversation_max_bytes,
         shown=shown,
     )
-    thread_rows, thread_count, thread_trunc = await _export_conversation_threads(
-        input.org,
-        input.scope_type,
-        input.scope_value,
+    conv_rows, conv_count, conv_trunc = await _labelled_page(
+        turns, input.section_limit, _CONVERSATION_TEXT
+    )
+    conv_trunc = conv_trunc or over_budget
+    threads = await erasure_exports.export_conversation_threads(
+        *scope,
         include_tombstoned=input.include_tombstoned,
-        limit=input.section_limit,
+        limit=input.section_limit + 1,
         shown=shown,
+    )
+    thread_rows, thread_count, thread_trunc = await _labelled_page(
+        threads, input.section_limit, _THREAD_TEXT
     )
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,

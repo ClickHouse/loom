@@ -235,8 +235,9 @@ class ErasureExportOutput(BaseModel):
     scope_value: str
     # Echo of who asked for the export.
     requester: str
-    # Rows per section (`memory`, `knowledge`, `conversations`, `conversation_threads`,
-    # `agent_events`, `audit_log`) before truncation.
+    # Rows returned per section (`memory`, `knowledge`, `conversations`,
+    # `conversation_threads`, `agent_events`, `audit_log`): at most `section_limit`, and
+    # the section's `truncated` says more exist.
     counts: dict[str, int]
     # `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`.
     memory: ErasureExportSection
@@ -244,7 +245,8 @@ class ErasureExportOutput(BaseModel):
     knowledge: ErasureExportSection
     # `loom.conversations` rows in scope: transcript turns and saved messages
     # (`is_saved`), tombstoned ones too when `include_tombstoned`. `sensitivity` is
-    # 'high' on a row whose text reads as a credential.
+    # 'high' on a row whose text reads as a credential. Also `truncated` once its text
+    # passes `erasure_export_conversation_max_bytes`.
     conversations: ErasureExportSection
     # `loom.conversation_threads` rows in scope: each thread's title and metadata.
     conversation_threads: ErasureExportSection

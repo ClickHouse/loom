@@ -215,10 +215,10 @@ asked to delete. `collection.delete` purges what its collection held (a namespac
 that takes the rows off disk) before the collection leaves the tree. A user-scope
 `erasure.export` returns the chunks and the conversation rows (transcript turns, saved
 messages and threads) that user owns in the collections its caller may read, and in the
-user's own personal collection, where their saved-only messages live. An org admin may erase a collection's
-rows without reading them; a platform admin sees every collection. Each section's read
-leaves out what the caller may not see before its limit, so a hidden row never takes a
-visible row's place on the page.
+user's own personal collection. An org admin may erase a collection's rows without
+reading them; a platform admin sees every collection. Each section's read leaves out what
+the caller may not see before its limit, so a hidden row never takes a visible row's place
+on the page.
 
 ## Alternatives not taken
 
