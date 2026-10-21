@@ -1,8 +1,10 @@
 # Runs
 
 A run is one execution of a task, such as "triage issue 1234". `run.begin` opens it and returns a `run_id`; the
-agent passes that id on its memory calls; `run.complete` closes it with a status, the memories the agent relied on,
-and optionally a reflection. A memory that a successful run relied on ranks higher next time; one that a failed run
+agent passes that id on its writes (`memory.set`, `observe.record`); `run.complete` closes it with a status, the
+memories the agent relied on, and optionally a reflection. A body `run_id` on a read (`memory.search`, `memory.ask`)
+filters to the run's own rows, so reads are labelled instead: by the `X-Loom-Run-Id` header over HTTP (`run_scope`
+in the Python SDK), and by the session's own run over MCP. A memory that a successful run relied on ranks higher next time; one that a failed run
 relied on loses the boost it earned.
 
 ## What a run records
@@ -173,13 +175,13 @@ so no run dated before the erasure comes back.
 
 ## Operations
 
-| Operation      | Role   | Does                                                                                                                                                                                                                                                                      |
-| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.begin`    | writer | Open a run: `goal` (required), `user_request`, `expected_outcome`, `run_id` (else minted), `session_id`, `role`, `model`, `metadata`. Re-sending the same `run_id` replaces the row; an id of the MCP transport's shape (`mcp-` and 40 hex digits) gets an id of its own. |
-| `run.complete` | writer | Close it once: `status`, `memories_used`, `recalled_keys`, `outcome`, `reflection`, `retain`. Not idempotent: completing twice appends usage events twice.                                                                                                                |
-| `run.get`      | viewer | One run with its live derivations.                                                                                                                                                                                                                                        |
-| `run.list`     | viewer | One page of runs, filtered by `agent`, `session_id`, `status`, `grade`, `q` and `memory_activity` (`with` keeps runs that relied on or wrote a memory, `without` the hollow ones; filters apply before `limit`).                                                          |
-| `run.grade`    | writer | Grade a closed run or a session's runs `pass` / `fail`.                                                                                                                                                                                                                   |
+| Operation      | Role   | Does                                                                                                                                                                                                                                                                               |
+| -------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.begin`    | writer | Open a run: `goal` (required), `user_request`, `expected_outcome`, `run_id` (empty or `-`: minted), `session_id`, `role`, `model`, `metadata`. Re-sending the same `run_id` replaces the row; an id of the MCP transport's shape (`mcp-` and 40 hex digits) gets an id of its own. |
+| `run.complete` | writer | Close it once: `status`, `memories_used`, `recalled_keys`, `outcome`, `reflection`, `retain`. Not idempotent: completing twice appends usage events twice.                                                                                                                         |
+| `run.get`      | viewer | One run with its live derivations.                                                                                                                                                                                                                                                 |
+| `run.list`     | viewer | One page of runs, filtered by `agent`, `session_id`, `status`, `grade`, `q` and `memory_activity` (`with` keeps runs that relied on or wrote a memory, `without` the hollow ones; filters apply before `limit`).                                                                   |
+| `run.grade`    | writer | Grade a closed run or a session's runs `pass` / `fail`.                                                                                                                                                                                                                            |
 
 `run.list` pages with `order_by` (start time, duration or memories relied on, each
 ascending or descending; `started_desc`, newest first, by default) and `offset` (at most

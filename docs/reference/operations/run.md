@@ -21,7 +21,7 @@ Open a RUN — one execution of a task — BEFORE you start working on it.
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The conversation this run belongs to. |
-| `run_id` | `str` | `''` | Caller-supplied for end-to-end tracing (re-sending the same id is a replace, not a duplicate). |
+| `run_id` | `str` | `''` | The run's id; empty or "-" = the server mints one. |
 | `goal` | `str` | required | What the run sets out to do, in the agent's words; stored on the run row. |
 | `user_request` | `str` | `''` | The original request that started the run, verbatim; empty when not given. |
 | `expected_outcome` | `str` | `''` | What a successful run should produce; stored for later review, empty when not given. |
