@@ -1584,8 +1584,8 @@ def test_an_end_users_at_me_extraction_runs_under_the_policy_of_the_collection_i
 # ── knowledge sharing (docs/architecture/sharing.md) ─────────────────────────
 #
 # A service's end users, signed in with end-user tokens, own collections: a parent shared with a group and one
-# user, a child that inherits it, and a personal collection holding a saved
-# item. A user once granted and then revoked, a member once listed and then
+# user, a child that inherits it, and a personal collection holding a
+# document. A user once granted and then revoked, a member once listed and then
 # removed, a stranger, the owner's id in another tenant, an org admin and a
 # writer of another namespace then drive every read op against each of them.
 
@@ -1659,7 +1659,7 @@ def shared(control_plane_url: str, mint_test_token) -> _Shared:
     )
     assert removed.status_code == 200, removed.text
     acl_change_adopted()
-    for ns, uri in ((s.child, "doc/plan"), (s.parent, "doc/top"), ("@me", "chat/c1/m1")):
+    for ns, uri in ((s.child, "doc/plan"), (s.parent, "doc/top"), ("@me", "doc/mine")):
         nonce = _canary()
         s.seed.nonces.append(nonce)
         content = f"{nonce} quarterly renewal plan"

@@ -66,7 +66,9 @@ up front.
 
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
-`conversation.search_saved_messages` (viewer) is its search.
+`conversation.search_saved_messages` (viewer) is its search. These ops are how Loom
+stores a saved message; a user's files and a chat's attachments are documents in their
+personal collection instead ([why](../architecture/sharing.md#saved-messages)).
 
 Clients save messages only when every replica preserves saved state during
 compaction. See the
@@ -92,7 +94,10 @@ They differ from `conversation.append` and `conversation.search` in six ways:
 - **A token pinned to one user works here.** An integration that serves many users through
   one credential mints it with `--read-scope own_user` (and `--read-user-id` for one
   user). Both saved-message ops then act as that user only: a body naming another
-  `user_id` is refused with 403, and every statement carries the token's user. The
+  `user_id` is refused with 403, and every statement carries the token's user. An
+  end-user token ([sharing](../architecture/sharing.md#saved-messages)) is pinned the same
+  way; a chat that keeps a user's conversations in their personal collection names it
+  `namespace: "@me"`. The
   conversation tables have no `session_id`, so an `own_session` token is refused.
   `conversation.search` and `conversation.get` stay refused under such a token, because
   a thread mixes users and has no user axis to bound.
