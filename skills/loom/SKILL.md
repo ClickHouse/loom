@@ -149,9 +149,10 @@ cover the loop:
 
 - **Every author: send `agent: "*"` on `memory.search`‡, `memory.ask`,
   `memory.list` and `memory.update`.** A raw `agent.call` stamps your own
-  `agent`, which narrows them to rows you wrote. `search.query`† already
-  reads every author: keep your own `agent` there, which picks the bot
-  rules it serves you (`"*"` would serve every bot's). Never on `memory.get` or `memory.delete`:
+  `agent`, which narrows them to rows you wrote. On `memory.ask`, `"*"`
+  also serves every bot's promoted rules, not only yours. `search.query`†
+  already reads every author: keep your own `agent` there, which picks the
+  bot rules it serves you. Never on `memory.get` or `memory.delete`:
   there your stamped `agent` and `user_id` already fall back to the same
   user's row under any agent, and `"*"` ignores `user_id`, returning or
   removing the newest row under the key from any user.

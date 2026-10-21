@@ -17,7 +17,7 @@ stamped `agent` narrows reads that look rows up by author, and
 every author, except on the ops about you and on `memory.get` and
 `memory.delete`, which the skill's Identity section names. Ops
 marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
-`loom_search` searches memory, knowledge and conversations, and the rest are
+`loom_search` searches memory, profile, knowledge and conversations, and the rest are
 SDK and HTTP only.
 
 ## Durable memory — facts by meaning
@@ -34,7 +34,7 @@ on a row.
 | `memory.search`‡ | Ranked hits with scores, `abstain` and provenance. `recipe`: `fast`, `balanced`, `quality`, `verbatim`, `code`, `temporal`, `graph`. |
 | `memory.ask` | A synthesized answer with citations, or an abstain. |
 | `memory.brief` | Orientation on a task: an answer, its grounding, unknowns, what to read next. |
-| `memory.get`, `memory.bulk_get`‡, `memory.list` | Read by exact key, many keys, or a key `prefix` (`memory.list` matches `agent`, `user_id` and `session_id` exactly; `"*"` reads every value). |
+| `memory.get`, `memory.bulk_get`‡, `memory.list` | Read by exact key, many keys, or a key `prefix` (`memory.list` matches `agent`, `user_id` and `session_id` exactly; `"*"` on a field matches every value of it). |
 | `memory.update`, `memory.update_by_id` | Revise an existing row; `if_match_sha256` refuses a stale overwrite. |
 | `memory.delete` | Retire a fact by key: yours, else the same user's row under another agent. |
 | `memory.pin`† | Save a fact and protect it: a write that does not pin never replaces it. |
