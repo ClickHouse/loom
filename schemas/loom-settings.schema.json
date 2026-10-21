@@ -4975,7 +4975,7 @@
           "default": 10,
           "minimum": 1,
           "type": "integer",
-          "description": "Pages of sensitivity_sweep_max_rows_per_pass keys one sensitivity sweep pass reads at most (at least 1)."
+          "description": "Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (at least 1)."
         },
         "sensitivity_sweep_shapes": {
           "default": "credential,email",

@@ -230,16 +230,8 @@ async def scan(
     Reads pages of `page_size` keys in the table's sort key order, then the current version
     of each, until `limit` candidates are found, the rows run out or `pages` pages are read
     (`None`: no page cap), starting after the sort key `start_after` (the first key when
-    None). A scan that started after `start_after` and reaches the last key with pages
-    left goes on from the first key up to `start_after`. Only rows of the shapes in
-    `only_shapes` are selected. A selected row the detector leaves unlabelled stays
-    unlabelled and is selected again on the next run; reading past it, and starting the
-    next pass at `resume_after`, keeps a run of them from hiding a later row that is high.
-
-    With `skip_noisy_agents`, a full page of current unlabelled rows inside one agent that
-    gives no candidate moves the scan past that agent, so one pass crosses up to `pages`
-    agents whose selected rows the detector leaves unlabelled. Once the scan has read every
-    other key with pages left, it reads the rest of each agent it moved past, in order."""
+    None). `skip_noisy_agents` is the scheduled pass's paging; its rules are in
+    docs/architecture/security.md, "Sensitivity"."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
@@ -343,15 +335,17 @@ async def _read_range(
         _add_candidates(report, rows, run.keep)
         if len(keys) < run.params["lim"]:
             return _Range(reached_end=True, last=last)
-        short = len(rows) < len(keys)
-        last = keys[-1]
         # A page moves the scan past its agent only when the FINAL read gave back a current
         # unlabelled row for each of its keys. A key whose only match is an older version
         # (a row `apply` labelled, or one deleted, before the parts merge) gives none, and
-        # skipping on a page of those would leave the agent's later rows unread.
+        # skipping on a page of those would leave the agent's later rows unread. The FINAL
+        # read may also return keys written between the two reads, so compare keys, not
+        # counts.
+        short = not _sort_keys(rows) >= _sort_keys(keys)
+        last = keys[-1]
         if (
             skip
-            and len(rows) >= len(keys)
+            and not short
             and len(report.candidates) == found
             and _agent(keys[0]) == _agent(last)
         ):
@@ -388,6 +382,10 @@ async def _read_page(
 
 def _agent(key: dict[str, Any]) -> tuple[str, str, str]:
     return key["org"], key["namespace"], key["agent"]
+
+
+def _sort_keys(rows: list[dict[str, Any]]) -> set[tuple[str, ...]]:
+    return {tuple(r[col] for col in SORT_KEY) for r in rows}
 
 
 def scan_text(row: dict[str, Any]) -> str:

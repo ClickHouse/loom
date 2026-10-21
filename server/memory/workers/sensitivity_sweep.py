@@ -11,21 +11,7 @@ the `high` rows' embedding rows tombstoned. Bounded per pass and limited to the 
 ids and integer limits); the historical backlog is the operator's
 `loom sensitivity-sweep --apply`, not this worker's.
 
-A pass starts at the agent the previous one stopped in (the worker's cursor in
-`loom.worker_status`), and one that reaches the last row with pages left goes on from the
-first key up to where it started. Inside a pass, a full page of current unlabelled rows in
-one agent that gives nothing to label moves the scan past that agent, so selected rows the
-detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows;
-the rest of that agent is read once every other key is, with the pages left.
-
-A pass that labels nothing leaves the cursor past the agent it stopped in when its
-candidates, all in that agent, fail in `apply`, or when it found none and its last page
-gave fewer rows than keys: versions labelled before the parts merge give no row, so a run
-of them never moves the scan past their agent. A row that fails every time, or such a run
-of versions, is read again when the sweep comes back round to it rather than holding every
-pass there. After an ordinary last page the cursor stays at that agent, and a full page
-inside it moves the next pass past it. The cursor is `(org, namespace, agent)` and no
-more: a user id or a memory key in `loom.worker_status` would outlive that user's erasure.
+The paging and the cursor rules are in docs/architecture/security.md, "Sensitivity".
 """
 
 from __future__ import annotations
@@ -90,13 +76,8 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
 
 
 def _stuck(report: SweepReport, result: ApplyResult) -> bool:
-    """Whether the next pass starts past the agent this one stopped in: no candidate was
-    labelled, and either the scan found none and ran out of pages on a page that gave fewer
-    rows than keys, or every candidate that failed is in that agent. Such a page holds
-    versions `apply` labelled before the parts merge, which give no row and never move the
-    scan past their agent. A pass that labelled rows, or whose last page was an ordinary one,
-    reads the same agent again: a full page inside it moves the next scan past it. Failures
-    in an earlier agent leave the rest of this one to read."""
+    """Whether the next pass starts past the agent this one stopped in (the cursor rules in
+    docs/architecture/security.md, "Sensitivity")."""
     if result.relabelled or not report.resume_after:
         return False
     if not report.candidates:

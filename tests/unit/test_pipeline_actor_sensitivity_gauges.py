@@ -831,6 +831,36 @@ async def test_a_key_written_inside_a_page_between_its_reads_is_read_once_and_no
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_page_short_one_key_never_skips_its_agent_when_a_new_key_fills_the_count() -> None:
+    # The first page's keys are k1 and k3. k1 was labelled and its old unlabelled version
+    # waits for a merge, so the FINAL read gives no row for it; k2, written between the
+    # reads, gives one instead. Two rows for two keys, but not one for each key, so the scan
+    # does not move past the agent and its second page reaches the PIN row k5.
+    spin = {"spin": "4471"}
+    pin = "badge PIN is 4471"
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "k1", pin, 60),
+        _Row("o", "n", "-", _uuid(3), "k3", spin, 60),
+        _Row("o", "n", "-", _uuid(5), "k5", pin, 60),
+    ]
+    labelled = [rows[0]._replace(sensitivity="high", version=1)]
+    written = _Row("o", "n", "-", _uuid(2), "k2", spin, 60)
+    ch = _WriteBetweenReads(
+        _local_memory(rows, labelled), _local_memory([*rows, written], labelled)
+    )
+    report = await sweep.scan(
+        since_days=2,
+        limit=2,
+        page_size=2,
+        pages=2,
+        skip_noisy_agents=True,
+        ch=ch,  # type: ignore[arg-type]
+    )
+    assert [c.memory_key for c in report.candidates] == ["k5"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_a_page_holds_distinct_keys_and_yields_only_current_unlabelled_versions() -> None:
     # The key read has no FINAL, so it sees every version: `gone` is tombstoned and
     # `vault_door` labelled `high` (what `apply` writes) in their current versions, and

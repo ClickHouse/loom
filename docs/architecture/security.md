@@ -833,17 +833,17 @@ A worker pass is bounded:
   sort before its cursor are read in the same pass rather than left to age out of the
   window. A full page of current unlabelled rows inside one agent that gives nothing to
   label moves the pass past that agent, so one pass crosses up to its page cap of agents
-  whose selected rows the detector leaves unlabelled. A page whose keys hold only older
-  versions (rows the sweep labelled, or deleted, before the parts merge) gives no row and
-  does not count. Once the pass has read every other key with pages left, it reads the
+  whose selected rows the detector leaves unlabelled. A page with a key whose only
+  matching version is an older one (a row the sweep labelled, or deleted, before the parts
+  merge) gets no current row for that key and does not count. Once the pass has read every other key with pages left, it reads the
   rest of each agent it moved past, so a row more than a page into such an agent waits
   only for other agents' rows, never for the window.
 - A pass that labelled rows leaves its cursor at the agent it stopped in, so the next pass
   reads that agent again. A pass that labelled nothing leaves its cursor past that agent
   when its candidates, all in that agent, failed to apply, or when it found none and its
-  last page gave fewer rows than keys, the case of older versions waiting for a merge. So
-  a row that fails every time, or a run of such versions, is read again when the sweep
-  comes back round to it. A pass whose last page was an ordinary one, even one that
+  last page had a key with no current row, the case of older versions waiting for a
+  merge. So a row that fails every time, or a run of such versions, is read again when the
+  sweep comes back round to it. A pass whose last page was an ordinary one, even one that
   crossed into the next agent, leaves its cursor at the agent it stopped in, and failures
   in an earlier agent leave the cursor where the pass stopped. A cursor past an agent that
   does not fit in 512 characters is past its namespace or org instead. The cursor, in

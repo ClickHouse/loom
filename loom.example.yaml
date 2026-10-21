@@ -2856,8 +2856,8 @@ settings:
   # 1). [restart]
   # sensitivity_sweep_max_rows_per_pass: 500
 
-  # Pages of sensitivity_sweep_max_rows_per_pass keys one sensitivity sweep pass reads
-  # at most (at least 1). [live]
+  # Pages one sensitivity sweep pass reads at most, each of
+  # `sensitivity_sweep_max_rows_per_pass` keys (at least 1). [live]
   # sensitivity_sweep_pages_per_pass: 10
 
   # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,
