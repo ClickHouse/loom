@@ -317,8 +317,8 @@ Withdraw one message from a user's saved-message search.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `conversation_id` | `str` | required | The chat's conversation id, as given to conversation.save_message. |
-| `message_id` | `str` | required | The chat's message id, as given to conversation.save_message. |
+| `conversation_id` | `str` | required | The client's conversation id, as given to conversation.save_message. |
+| `message_id` | `str` | required | The client's message id, as given to conversation.save_message. |
 | `user_id` | `str` | required | Only this user's saved row is withdrawn. |
 
 | Output field | Type | Meaning |
