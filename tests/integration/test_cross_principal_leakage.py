@@ -379,6 +379,7 @@ def _synth_payload(model: type, *, seed: _Seed, namespace: str) -> dict[str, Any
         "operation": "memory.set",
         "pattern": seed.nonces[0] if seed.nonces else "canary",
         "candidate_id": str(uuid.uuid4()),
+        "queue_ids": [uuid.uuid4().hex],
         "inbox": seed.inbox or "canary-inbox",
         "task_id": seed.task_id or str(uuid.uuid4()),
         "blob_key": seed.blob_key or "canary-blob",

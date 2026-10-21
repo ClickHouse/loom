@@ -1,0 +1,169 @@
+"""memory.extraction_status_mine: the batches a caller queued, and nobody else's.
+
+A deferred memory.set_from_messages returns a `queue_id`. The op answers it to the
+principal that queued it, in the namespace it was queued in, over MCP through `loom_op`
+(the path an agent without the SDK takes) as over HTTP. Another principal in the same
+namespace, a token for another namespace, the queuing principal asking in another
+namespace, and a token of another org get the id back in `unknown` or the namespace
+gate's refusal, never the batch. The namespace-wide memory.extraction_status stays hidden
+from MCP and its refusal names this op.
+
+Each test registers its own namespaces. The CI servers run with
+LOOM_BACKGROUND_WORKERS=off, so a queued batch stays `pending`; no assertion depends on
+its state. Skips without LOOM_BASE_URL (tests/integration/conftest.py).
+"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+import httpx
+import pytest
+
+from tests.integration._resources import unique_org
+
+OP = "memory.extraction_status_mine"
+
+
+def _mint(org: str, namespaces: list[str], subject: str) -> str:
+    from server.auth.jwt import mint_token
+
+    return mint_token(
+        subject=subject,
+        org=org,
+        namespaces=namespaces,
+        roles=["admin", "writer"],
+        ttl_seconds=900,
+        is_service_account=True,
+    )
+
+
+def _v1(base: str, token: str, op: str, body: dict[str, Any]) -> httpx.Response:
+    with httpx.Client(base_url=base, timeout=60.0) as c:
+        return c.post(f"/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"})
+
+
+def _ok(base: str, token: str, op: str, body: dict[str, Any]) -> dict[str, Any]:
+    r = _v1(base, token, op, body)
+    assert r.status_code == 200, f"{op}: {r.status_code} {r.text[:400]}"
+    return r.json()
+
+
+def _loom_op(base: str, token: str, op: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """The MCP `tools/call` result of `loom_op {op, arguments}`."""
+    rpc = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "loom_op", "arguments": {"op": op, "arguments": arguments}},
+    }
+    with httpx.Client(base_url=base, timeout=60.0) as c:
+        r = c.post(
+            "/mcp",
+            json=rpc,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+    assert r.status_code == 200, r.text[:400]
+    return dict(r.json()["result"])
+
+
+@pytest.fixture
+def queued(control_plane_url: str) -> dict[str, str]:
+    """One deferred batch in namespace A, queued by principal `s1`; namespace B exists."""
+    org = unique_org("ext-mine")
+    ns_a, ns_b = f"ext-a-{uuid.uuid4().hex[:8]}", f"ext-b-{uuid.uuid4().hex[:8]}"
+    s1 = f"sa:ext-mine-{uuid.uuid4().hex[:6]}"
+    for ns in (ns_a, ns_b):
+        _ok(
+            control_plane_url,
+            _mint(org, [ns], s1),
+            "namespace.register",
+            {"org": org, "namespace": ns, "owner_email": "ext@example.com"},
+        )
+    out = _ok(
+        control_plane_url,
+        _mint(org, [ns_a], s1),
+        "memory.set_from_messages",
+        {
+            "org": org,
+            "namespace": ns_a,
+            "agent": "chat-agent",
+            "session_id": "sess-1",
+            "messages": [{"role": "user", "content": "Quux keeps the badge number 4242."}],
+            "defer": True,
+        },
+    )
+    assert out["deferred"] is True and out["queue_id"], out
+    return {"org": org, "ns_a": ns_a, "ns_b": ns_b, "s1": s1, "queue_id": out["queue_id"]}
+
+
+def test_the_queuing_principal_reads_its_batch_over_mcp_and_http(
+    control_plane_url: str, queued: dict[str, str]
+) -> None:
+    org, ns, qid = queued["org"], queued["ns_a"], queued["queue_id"]
+    tok = _mint(org, [ns], queued["s1"])
+    res = _loom_op(control_plane_url, tok, OP, {"namespace": ns, "queue_ids": [qid, "q-none"]})
+    assert not res.get("isError"), res
+    sc = res["structuredContent"]
+    assert [b["queue_id"] for b in sc["batches"]] == [qid] and sc["unknown"] == ["q-none"], sc
+    assert sc["batches"][0]["agent"] == "chat-agent" and sc["batches"][0]["message_count"] == 1, sc
+
+    out = _ok(control_plane_url, tok, OP, {"org": org, "namespace": ns, "queue_ids": [qid]})
+    assert [b["queue_id"] for b in out["batches"]] == [qid] and out["unknown"] == [], out
+
+
+def test_another_principal_in_the_namespace_gets_the_id_back_unknown(
+    control_plane_url: str, queued: dict[str, str]
+) -> None:
+    org, ns, qid = queued["org"], queued["ns_a"], queued["queue_id"]
+    other = _mint(org, [ns], f"sa:ext-other-{uuid.uuid4().hex[:6]}")
+    res = _loom_op(control_plane_url, other, OP, {"namespace": ns, "queue_ids": [qid]})
+    assert not res.get("isError"), res
+    assert res["structuredContent"]["batches"] == [], res
+    assert res["structuredContent"]["unknown"] == [qid], res
+
+
+def test_another_namespace_never_answers_the_batch(
+    control_plane_url: str, queued: dict[str, str]
+) -> None:
+    org, ns_a, ns_b, qid = queued["org"], queued["ns_a"], queued["ns_b"], queued["queue_id"]
+    # A token for B only: A is refused at the namespace gate, and B holds no such batch.
+    b_only = _mint(org, [ns_b], f"sa:ext-b-{uuid.uuid4().hex[:6]}")
+    r = _v1(control_plane_url, b_only, OP, {"org": org, "namespace": ns_a, "queue_ids": [qid]})
+    assert r.status_code in (403, 404) and qid not in r.text, r.text[:400]
+    res = _loom_op(control_plane_url, b_only, OP, {"namespace": ns_a, "queue_ids": [qid]})
+    assert res.get("isError") and "batches" not in res.get("structuredContent", {}), res
+    out = _ok(control_plane_url, b_only, OP, {"org": org, "namespace": ns_b, "queue_ids": [qid]})
+    assert out["batches"] == [] and out["unknown"] == [qid], out
+
+    # The queuing principal itself, asking in B: the batch is A's.
+    both = _mint(org, [ns_a, ns_b], queued["s1"])
+    out = _ok(control_plane_url, both, OP, {"org": org, "namespace": ns_b, "queue_ids": [qid]})
+    assert out["batches"] == [] and out["unknown"] == [qid], out
+    out = _ok(control_plane_url, both, OP, {"org": org, "namespace": ns_a, "queue_ids": [qid]})
+    assert [b["queue_id"] for b in out["batches"]] == [qid], out  # the control
+
+    # The same subject in another org reads its own org only.
+    elsewhere = unique_org("ext-mine-other")
+    tok = _mint(elsewhere, [ns_a], queued["s1"])
+    r = _v1(control_plane_url, tok, OP, {"org": elsewhere, "namespace": ns_a, "queue_ids": [qid]})
+    if r.status_code == 200:
+        assert r.json()["batches"] == [] and r.json()["unknown"] == [qid], r.text
+    else:
+        assert r.status_code in (403, 404) and qid not in r.text, r.text[:400]
+
+
+def test_the_namespace_wide_op_stays_hidden_and_names_the_bounded_one(
+    control_plane_url: str, queued: dict[str, str]
+) -> None:
+    tok = _mint(queued["org"], [queued["ns_a"]], queued["s1"])
+    res = _loom_op(
+        control_plane_url,
+        tok,
+        "memory.extraction_status",
+        {"namespace": queued["ns_a"], "queue_id": queued["queue_id"]},
+    )
+    sc = res["structuredContent"]
+    assert res["isError"] and sc["code"] == "OP_NOT_ON_MCP", res
+    assert OP in sc["instead"], sc

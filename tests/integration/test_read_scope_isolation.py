@@ -94,11 +94,12 @@ def _post(base: str, token: str, op: str, payload: dict[str, Any]) -> httpx.Resp
         return c.post(f"/v1/{op}", json=payload, headers={"Authorization": f"Bearer {token}"})
 
 
-def _mint(org: str, ns: str, **claims: Any) -> str:
+def _mint(org: str, ns: str, *, subject: str = "", **claims: Any) -> str:
+    """A writer and admin token for `ns`, as `subject` (a fresh principal when empty)."""
     from server.auth.jwt import mint_token
 
     return mint_token(
-        subject=f"sa:read-scope-{uuid.uuid4().hex[:6]}",
+        subject=subject or f"sa:read-scope-{uuid.uuid4().hex[:6]}",
         org=org,
         namespaces=[ns],
         roles=["admin", "writer"],
@@ -290,6 +291,7 @@ def _payload(model: type, seed: _Seed, user_id: str) -> dict[str, Any] | None:
         "messages": [{"role": "user", "content": "canary"}],
         "entries": [{"memory_key": seed.keys_v[0], "value": "canary"}],
         "failure_ids": [str(uuid.uuid4())],
+        "queue_ids": [uuid.uuid4().hex],
         "conversation_id": seed.conversation_id,
         "message_ids": [_saved_message_id(seed.nonce_v)],
     }
@@ -1109,6 +1111,50 @@ async def test_a_deferred_extraction_replays_inside_the_writers_scope(
     await _drain_queue(seed.org, ns)
     rows = _rows_by_user(ch_client, seed.org, ns)
     assert rows[V][0][1] == "superseded", f"the control superseded nothing: {rows}"
+
+
+def test_a_pinned_token_reads_only_its_users_deferred_batches(
+    control_plane_url: str, seed: _Seed
+) -> None:
+    """memory.extraction_status_mine answers a batch to the principal that queued it, and
+    only inside the asking token's read scope. One principal holds tokens pinned to U
+    and to V: each defers a batch, and U's token gets V's id back in `unknown` though the
+    principal is the same. The principal's namespace-wide token reads both (the control)."""
+    ns = f"rs-mine-{uuid.uuid4().hex[:8]}"
+    subject = f"sa:read-scope-mine-{uuid.uuid4().hex[:6]}"
+    whole = _mint(seed.org, ns, subject=subject)
+    pinned = {
+        user: _mint(seed.org, ns, subject=subject, read_scope="own_user", read_user_id=user)
+        for user in (U, V)
+    }
+    base = {"org": seed.org, "namespace": ns, "agent": "a"}
+    _write(
+        control_plane_url, whole, "namespace.register", {**base, "owner_email": "rs@example.com"}
+    )
+    queued: dict[str, str] = {}
+    for user, tok in pinned.items():
+        out = _write(
+            control_plane_url,
+            tok,
+            "memory.set_from_messages",
+            {
+                **base,
+                "session_id": "sess-1",
+                "messages": [{"role": "user", "content": f"Quux keeps the badge of {user}."}],
+                "defer": True,
+            },
+        )
+        assert out["deferred"] is True and out["queue_id"], out
+        queued[user] = out["queue_id"]
+    ask = {"org": seed.org, "namespace": ns, "queue_ids": [queued[U], queued[V]]}
+
+    out = _write(control_plane_url, pinned[U], "memory.extraction_status_mine", ask)
+    assert [(b["queue_id"], b["user_id"]) for b in out["batches"]] == [(queued[U], U)], out
+    assert out["unknown"] == [queued[V]], out
+
+    out = _write(control_plane_url, whole, "memory.extraction_status_mine", ask)
+    assert sorted(b["queue_id"] for b in out["batches"]) == sorted(queued.values()), out
+    assert out["unknown"] == [], out
 
 
 def _mark_duplicate_of(ch: Any, org: str, ns: str, memory_id: str, canonical_id: str) -> None:
