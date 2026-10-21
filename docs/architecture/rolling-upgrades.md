@@ -110,7 +110,10 @@ schema. These rules keep that safe. The operator procedure is in
     sends none of them, because it skips an event whose key has no history left in
     `loom.memory_versions`, which every build's erasure deletes. The outbox is read for 3
     days and drops a day's part once its last row is 3 days old, so the rows leave the
-    disk within about 4 days.
+    disk within about 4 days. Until then `webhook.deliveries` still lists those events,
+    with their `memory_key` and `memory_id`, so a user or namespace erasure that an N-1
+    replica completed during the rollout is run again once only N serves; N's
+    `memory_webhook_outbox.delete` step removes the rows.
 
 13. **Saved conversation messages:** older builds can compact concurrently saved
     turns and rebuild embeddings without carrying their saved state. Clients use

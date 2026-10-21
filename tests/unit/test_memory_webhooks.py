@@ -424,6 +424,20 @@ async def test_memory_set_of_the_same_value_with_new_fields_is_revised(
 
 
 @pytest.mark.asyncio
+async def test_memory_set_restating_a_rejected_row_is_revised(announced: list[Any]) -> None:
+    from server.memory.app.set_commit import _announce_set
+
+    # The restatement resets the status to active, so Loom serves the row again.
+    live = _memory_row("k", tags=["tea"], status="rejected")
+    row = {"memory_key": "k", "version": 42, "tags": ["tea"], "expires_at": None}
+    row |= {"memory_type": "episodic", "confidence": 0.8, "valid_at": None, "valid_to": None}
+    row |= {"status": "active"}
+    w = SimpleNamespace(had_existing_row=True, restated=True, memory_row=row, existing=live)
+    await _announce_set(w)  # type: ignore[arg-type]
+    assert announced == [[("memory.revised", row)]]
+
+
+@pytest.mark.asyncio
 async def test_memory_set_restatement_compares_at_the_stored_precision(
     announced: list[Any],
 ) -> None:

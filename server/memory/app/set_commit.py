@@ -256,15 +256,17 @@ def _whole_seconds(dt: datetime | None) -> datetime | None:
 
 
 def _only_reinforces(w: _SetWrite) -> bool:
-    """The same value said again with the same type, tags, expiry, confidence, valid_at
-    and valid_to: the new version only reinforces the live row. The live row reads back at its
-    columns' precision (Float32 confidence, whole-second DateTime), so each field is
-    compared at that precision."""
+    """The same value said again with the same status, type, tags, expiry, confidence,
+    valid_at and valid_to: the new version only reinforces the live row. A restated
+    rejected, superseded or conflicted row is served again, so it is a change. The live
+    row reads back at its columns' precision (Float32 confidence, whole-second DateTime),
+    so each field is compared at that precision."""
     if not w.restated:
         return False
     row, existing = w.memory_row, w.existing
     return (
-        row.get("memory_type") == existing.memory_type
+        str(row.get("status") or "active") == str(existing.status or "active")
+        and row.get("memory_type") == existing.memory_type
         and sorted(row.get("tags") or []) == sorted(existing.tags or [])
         and _whole_seconds(row.get("expires_at")) == _whole_seconds(existing.expires_at)
         and math.isclose(float(row.get("confidence") or 0.0), existing.confidence, rel_tol=1e-6)
@@ -275,10 +277,11 @@ def _only_reinforces(w: _SetWrite) -> bool:
 
 async def _announce_set(w: _SetWrite) -> None:
     """The row just inserted, to the namespace's webhooks: a new key is written, a new
-    value, type, tags, expiry, confidence, valid_at or valid_to of one is revised, and the same row
-    said again (a reinforcement) is no change to announce. A proposal is not served, so
-    it is announced when `memory.proposal_decide` accepts it. Called once the row is in,
-    even when the rest of the write fails, so the event is not lost: a retry with the same
+    value, status, type, tags, expiry, confidence, valid_at or valid_to of one is revised,
+    and the same row said again (a reinforcement) is no change to announce. A proposal
+    is not served, so it is announced when `memory.proposal_decide` accepts it. Called
+    once the row is in, even when the rest of the write fails, so the event is not lost:
+    a retry with the same
     fields is a reinforcement and announces nothing; a retry that recomputes a relative
     expiry (`ttl_seconds`, a type's retention, the sensitive-data retention) moves
     `expires_at` and is `memory.revised`."""

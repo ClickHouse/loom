@@ -402,7 +402,9 @@ sweep, the `delete_version` check).
   An event of a working webhook that a receiver has not taken after 2.75 days (a
   receiver that is down, or a backlog that never reached its turn) is marked `dead` with
   "not delivered in time".
-  The events of a removed webhook are marked `dead` at once; registering the same URL
+  The events of a removed webhook are marked `dead` by the next delivery pass that runs
+  within about 30 minutes of the removal; after that they stay listed as `pending` until
+  they expire. Registering the same URL
   again creates a new webhook that does not inherit them. An event whose memory was
   erased before it went out is marked `dead` and not sent: the key's history is read just
   before each POST, so only an erasure that lands during that POST can let one out.

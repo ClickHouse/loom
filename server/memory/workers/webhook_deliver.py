@@ -330,7 +330,7 @@ async def deliver_once(
     the environment the secrets are read from, and `org` / `namespace` narrow
     the pass (tests). Every time comes from
     `naive_utc_now()`, read when it is needed."""
-    # From the start of the pass: the reads below spend the reserve too.
+    # Counted from the start of the pass: the reads below come out of the POST budget.
     deadline = asyncio.get_running_loop().time() + _post_budget_seconds()
     now = naive_utc_now()
     since = now - timedelta(days=store.KEEP_DAYS)
