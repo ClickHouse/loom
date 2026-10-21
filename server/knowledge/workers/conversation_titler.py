@@ -182,7 +182,7 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             return result
 
         # Recent threads with enough turns in opted-in namespaces. Over-fetch
-        # (many already have titles) and stop once we've titled the cap.
+        # (many already have titles) and stop once the cap's model calls are made.
         rows = await conversation_repo.titler_candidates(
             window_hours=int(cfg.window_hours),
             min_turns=int(cfg.min_turns),
@@ -194,7 +194,8 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             [(str(r["org"]), str(r["namespace"]), str(r["thread_id"])) for r in candidates]
         )
         for row in candidates:
-            if result.titled >= cfg.max_threads_per_pass:
+            # A refused title paid for its model call too, so it takes a slot.
+            if result.titled + result.refused >= cfg.max_threads_per_pass:
                 break
             try:
                 # Re-checked on the row itself: the scan's exclusion ran on

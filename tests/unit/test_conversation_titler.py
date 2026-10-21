@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from server.knowledge.workers.conversation_titler import run_pass
+from server.knowledge.workers.conversation_titler import ConversationTitlerConfig, run_pass
 from tests.unit._fake_credentials import OPENAI_KEY
 
 
@@ -246,6 +246,29 @@ async def test_a_title_that_reads_as_a_credential_is_not_stored_or_asked_again(
     monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
     res = await run_pass()
     assert (res.titled, res.skipped_titled, len(prompts), len(writes)) == (0, 1, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_refused_titles_count_toward_the_pass_cap(monkeypatch) -> None:
+    """Each refused title paid for a model call, so a pass stops at the cap."""
+    candidates = [{**_CAND, "thread_id": f"t{i}"} for i in range(10)]
+    _patch(monkeypatch, StubCH(candidates, _TURNS, None))
+    prompts: list[str] = []
+
+    class _KeyTitle:
+        text = f"Deploy key {OPENAI_KEY}"
+
+    class _KeyLLM:
+        async def complete(self, system, user, max_tokens):
+            prompts.append(user)
+            return _KeyTitle()
+
+    import server.llm.client as llmmod
+
+    monkeypatch.setattr(llmmod, "get_llm_client", lambda: _KeyLLM())
+    _capture(monkeypatch)
+    res = await run_pass(ConversationTitlerConfig(max_threads_per_pass=2))
+    assert (res.titled, res.refused, len(prompts)) == (0, 2, 2)
 
 
 @pytest.mark.asyncio
