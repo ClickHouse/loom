@@ -54,10 +54,12 @@ end of this section are the exceptions. The plugin sends:
   against `HEAD`, to `code.impact` (`LOOM_BLAST_RADIUS=off` stops it);
 - at Stop in an indexed checkout, the outline of the diff of the files the session
   changed, or of the whole uncommitted tree when the client gives no transcript, to
-  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). A diff's outline is its file paths,
-  hunk line ranges and, in a code file, the identifier git's hunk header puts before a `(`,
-  taken from an unchanged line and usually the enclosing function's name, up to 200,000
-  characters; its changed lines are never sent;
+  `code.test_gate` (`LOOM_TEST_GATE=off` stops it). A diff's outline, up to 200,000
+  characters, is its file paths, its hunk line ranges and, in a code file, the last
+  identifier before the first `(` of each hunk header's context, usually the enclosing
+  function's name. Git takes that context from a line above the hunk in the old file,
+  which an earlier hunk of the same diff may have changed; no other part of a changed
+  line is sent;
 - with no credential, at the first session, your OS user name and host name, to request a
   self-signup token (refused unless the server allows self-signup; `LOOM_AUTO_SIGNUP=off`
   stops it);

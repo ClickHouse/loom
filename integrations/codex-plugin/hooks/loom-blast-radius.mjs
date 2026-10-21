@@ -83,12 +83,14 @@ async function main() {
 
   // The session's edits to this file, as the index will see them: post-image
   // line numbers, no context lines to subtract. Untracked = nothing depends
-  // on it yet; empty = the edit was a no-op or already committed.
+  // on it yet; empty = the edit was a no-op or already committed, or the outline
+  // sent in its place has nothing the server can read.
   const diff = git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, {
     timeoutMs: 2000,
     raw: true,
   });
-  if (!diff.trim()) {
+  const outline = diffHeaders(diff, 200_000);
+  if (!outline) {
     scheduleExit(0);
     return;
   }
@@ -100,7 +102,7 @@ async function main() {
     {
       org: repo.org,
       namespace: repo.namespace,
-      diff: diffHeaders(diff, 200_000),
+      diff: outline,
       depth: DEPTH,
       per_hop_limit: PER_HOP,
       consumer: "claude-code-blast",
