@@ -191,7 +191,10 @@ async def handle_conversation_append(
     # scaffolding (tool output, system reminders) that pollutes
     # conversation.search ranking and wastes embed spend. A turn that reads as a
     # credential is stored but never embedded, so conversation.search never ranks it.
-    if input.role not in ("user", "assistant") or reads_high(input.content):
+    # A turn can be megabytes long, so the check runs off the event loop.
+    if input.role not in ("user", "assistant") or await asyncio.to_thread(
+        reads_high, input.content
+    ):
         with traced("ch.insert.conversation", role=input.role):
             await conversation_repo.append(msg_row)
         return ConversationAppendOutput(msg_id=msg_id, ts=now)
@@ -363,7 +366,7 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
     embedded: EmbeddedTurn | None = None
     stored = await _stored_turn(key, user_id)
     if stored is None:
-        if reads_high(input.content):
+        if await asyncio.to_thread(reads_high, input.content):
             return _save_refused(input, "reads_as_credential")  # nothing written
         # The vector is needed either way, so embed while the row is written.
         _, embedded = await asyncio.gather(
@@ -386,7 +389,7 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
             raise RuntimeError("conversation turn vanished between its write and its re-read")
         changed = True
 
-    refusal = _save_refusal(stored, user_id)
+    refusal = await asyncio.to_thread(_save_refusal, stored, user_id)
     if refusal is not None:
         return _save_refused(input, refusal)
     if stored.unsaved:
@@ -395,7 +398,7 @@ async def _save_message(input: ConversationSaveMessageInput) -> ConversationSave
         if stored is None:
             raise RuntimeError("conversation turn vanished while it was flagged saved")
         # Another user's save claimed the turn first.
-        refusal = _save_refusal(stored, user_id)
+        refusal = await asyncio.to_thread(_save_refusal, stored, user_id)
         if refusal is not None:
             return _save_refused(input, refusal)
         changed = True
@@ -982,7 +985,9 @@ async def _search_substring_fallback(
         # Spare rows, so the turns held back below do not leave the page short.
         limit=input.top_k + HELD_MARGIN,
     )
-    # A turn that reads as a credential is never a search hit, as the vector path holds it.
+    # A turn that reads as a credential is never a search hit, as the vector path holds
+    # it. A matched turn can be megabytes long, so the check runs off the event loop.
+    rows = await asyncio.to_thread(without_credentials, rows, lambda r: r.content, input.top_k)
     hits = [
         _ConversationHit(
             thread_id=r.thread_id,
@@ -993,8 +998,7 @@ async def _search_substring_fallback(
             namespace=r.namespace,
         )
         for r in rows
-        if not reads_high(r.content)
-    ][: input.top_k]
+    ]
     return ConversationSearchOutput(hits=hits, namespaces_skipped=skipped)
 
 
@@ -1409,8 +1413,9 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
             reason="nothing-to-compact",
         )
 
-    candidates, is_summary = _compaction_candidates(
-        rows[: -input.keep_recent], input.min_to_compact
+    # The credential check reads each candidate turn whole, so it runs off the event loop.
+    candidates, is_summary = await asyncio.to_thread(
+        _compaction_candidates, rows[: -input.keep_recent], input.min_to_compact
     )
     if not candidates:
         return ConversationCompactOutput(

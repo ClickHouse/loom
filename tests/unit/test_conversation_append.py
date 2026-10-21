@@ -142,3 +142,31 @@ async def test_a_turn_holding_a_credential_is_stored_without_an_embedding_row(mo
     assert out.reason in ("", None)
     assert [r.content for r in stored] == [f"my key is {OPENAI_KEY}, keep it safe"]
     assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_large_turn_is_checked_for_a_credential_off_the_event_loop(monkeypatch) -> None:
+    """A turn can be megabytes long; checking it on the event loop would stall every
+    other request on the replica."""
+    import asyncio
+
+    async def ok_append(*a, **k):
+        return None
+
+    async def embed(text):
+        return [0.1, 0.2, 0.3]
+
+    h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
+    checked_in_thread: list[int] = []
+    to_thread = asyncio.to_thread
+
+    async def recording_to_thread(fn, *args, **kwargs):
+        if fn is h.reads_high:
+            checked_in_thread.append(len(args[0]))
+        return await to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(h.asyncio, "to_thread", recording_to_thread)
+    content = "log line\n" * 400_000
+    await h.handle_conversation_append(_turn(content))
+    assert checked_in_thread == [len(content)]
+    assert len(rows) == 1

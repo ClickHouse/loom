@@ -118,6 +118,9 @@ not change it: each run can export to a fresh directory.
 The bundle's `evidence/` and `digests/` are written back through `memory.import_evidence`
 (`--no-evidence` skips them) and re-embedded by the importing server on every import,
 changed or not: a scheduled import passes `--no-evidence`.
+A chunk or digest whose text reads as a credential, or a chunk that holds part of a key
+cut at a chunk boundary, is written without a vector and is not searchable
+([sensitivity](../../architecture/security.md#sensitivity)).
 
 | Flag              | Effect                                                                                                                                                                                  |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
