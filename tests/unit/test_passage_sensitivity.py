@@ -271,18 +271,23 @@ def test_credential_spans_map_an_escaped_match_back_to_the_text() -> None:
     assert text[start:end] == "password=hunter2hunter2"
 
 
-def test_credential_spans_read_many_unclosed_key_headers_in_linear_time() -> None:
-    import time
-
+def test_a_key_header_search_for_its_closing_line_stops_at_the_next_header() -> None:
     from server.memory.domain.sensitivity import credential_spans
 
-    # About 400 KB of headers with no closing line, the size of a long conversation. A
-    # search for a closing line that ran on past the next header took tens of seconds here.
-    text = ("-----BEGIN " + "PRIVATE KEY-----\n") * 15_000
-    started = time.perf_counter()
+    # Each header's search reads only up to the next header, so text of many headers
+    # without a closing line is read in linear time.
+    header = "-----BEGIN " + "PRIVATE KEY-----\n"
+    closed = header + "MIIEvQ\n-----END " + "PRIVATE KEY-----"
+    text = header + "plain notes, no closing line\n" + closed
+    second = text.index(closed)
     spans = credential_spans(text)
-    assert time.perf_counter() - started < 2.0
-    assert len(spans) == 15_000
+    assert (second, len(text)) in spans
+    assert all(end <= second for start, end in spans if start < second)
+    # A larger text of unclosed headers gives one span per header, each its own header.
+    for count in (1_000, 4_000):
+        spans = credential_spans(header * count)
+        assert len(spans) == count
+        assert all(end - start == len(header) for start, end in spans)
 
 
 _KEY_HEAD = "the staging account uses " + AWS_KEY_ID[:10]

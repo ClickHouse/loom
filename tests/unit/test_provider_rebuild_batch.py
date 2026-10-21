@@ -364,3 +364,26 @@ async def test_a_private_key_cut_into_many_chunks_stays_without_a_vector_on_ever
     assert [i for i, r in enumerate(staged) if r["embedding_dim"] == 0] == covers
     sent = [text for call in target.embed_many.await_args_list for text in call.args[0]]
     assert not any(line in text for text in sent for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_a_long_session_of_plain_chunks_without_vectors_is_read_once_per_page(
+    target, monkeypatch
+):
+    # An earlier rebuild left every chunk empty while the org's model calls were off.
+    rows = [
+        {**_without_vector("memory_chunks", f"plain words number {i} " * 30), "chunk_index": i}
+        for i in range(300)
+    ]
+    asked = _stored_chunks(monkeypatch, rows)
+    passes = []
+    split = provider_rebuild_batch.split_credentials
+
+    def counted(chunks):
+        passes.append(len(chunks))
+        return split(chunks)
+
+    monkeypatch.setattr(provider_rebuild_batch, "split_credentials", counted)
+    result = await rebuild_batch("memory_chunks", rows[100:164], target)
+    assert len(asked) == 1 and len(passes) == 1
+    assert [r["embedding_dim"] for r in result] == [2] * 64

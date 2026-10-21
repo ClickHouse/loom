@@ -5,6 +5,7 @@ The coordinator supplies an explicit target provider and writes the returned
 full rows only after the entire batch validates. Source rows stay untouched.
 """
 
+import asyncio
 import math
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -70,30 +71,44 @@ def _reembed_columns(table: str) -> list[str]:
     return [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
 
 
-def _held_run(stored: Sequence[Mapping[str, Any]], at: int) -> list[tuple[int, str]]:
-    """The stored chunks around `at` that a key held at `at` could span: outward from it
-    while a chunk has no vector (`embedding_dim = 0`), plus the first chunk with one on
-    each side. The write path holds every chunk a key covers and those chunks are
-    contiguous, so the key's header is inside this run."""
-    by_index: dict[int, list[Mapping[str, Any]]] = {}
-    for chunk in stored:
-        by_index.setdefault(int(chunk["chunk_index"]), []).append(chunk)
-    run: list[tuple[int, str]] = []
+def _held_run(by_index: Mapping[int, Sequence[Mapping[str, Any]]], at: int) -> set[int]:
+    """The indexes of the stored chunks around `at` that a key held at `at` could span:
+    outward from it while a chunk has no vector (`embedding_dim = 0`), plus the first chunk
+    with one on each side. The write path holds every chunk a key covers and those chunks
+    are contiguous, so the key's header is inside this run."""
+    run = set()
     for step in (-1, 1):
         n = at + step
         while n in by_index:
-            run.extend((n, str(chunk["content"])) for chunk in by_index[n])
+            run.add(n)
             if any(int(chunk["embedding_dim"]) for chunk in by_index[n]):
                 break
             n += step
     return run
 
 
+def _held_in_session(
+    stored: Sequence[Mapping[str, Any]], page: Sequence[tuple[int, str]]
+) -> list[bool]:
+    """For each `(chunk_index, content)` page row of one session, whether it overlaps a
+    credential in the text it makes with the runs of stored chunks around the page's rows
+    (`_held_run`). The runs are joined and read once (`split_credentials`) for the whole
+    session, so a long session is not read again for every row."""
+    by_index: dict[int, list[Mapping[str, Any]]] = {}
+    for chunk in stored:
+        by_index.setdefault(int(chunk["chunk_index"]), []).append(chunk)
+    around: set[int] = set()
+    for at, _ in page:
+        around |= _held_run(by_index, at)
+    chunks = [("s", n, str(chunk["content"])) for n in sorted(around) for chunk in by_index[n]]
+    chunks.extend(("s", at, text) for at, text in page)
+    return split_credentials(chunks)[len(chunks) - len(page) :]
+
+
 async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) -> set[int]:
     """The indexes of the memory chunks stored without a vector that are part of a key the
-    write path held: the chunk joined with the run of its session's stored chunks around it
-    (`_held_run`) overlaps a credential (`split_credentials`). Only a plain chunk without a
-    vector needs its session read, and such chunks are rare."""
+    write path held (`_held_in_session`). Only a plain chunk without a vector needs its
+    session read, once per session on the page."""
     columns = _reembed_columns("memory_chunks")
     by_session: dict[tuple[str, str, str], list[int]] = {}
     for index, row in enumerate(rows):
@@ -114,13 +129,12 @@ async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) 
     )
     held = set()
     for session, indexes in by_session.items():
-        ats = [int(rows[index]["chunk_index"]) for index in indexes]
+        page = [(int(rows[i]["chunk_index"]), str(rows[i]["content"])) for i in indexes]
+        ats = [at for at, _ in page]
         stored = await session_chunks(*session, max(0, min(ats) - cap), max(ats) + cap, ch=ch)
-        for index, at in zip(indexes, ats, strict=True):
-            chunks = [(session, n, text) for n, text in _held_run(stored, at)]
-            chunks.append((session, at, str(rows[index]["content"])))
-            if split_credentials(chunks)[-1]:
-                held.add(index)
+        # Reading a long session's text is CPU work; it runs off the event loop.
+        flags = await asyncio.to_thread(_held_in_session, stored, page)
+        held.update(index for index, hit in zip(indexes, flags, strict=True) if hit)
     return held
 
 

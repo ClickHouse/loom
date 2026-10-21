@@ -1162,17 +1162,18 @@ async def handle_conversation_list_saved_messages(
             limit=input.limit + 1,  # +1 to detect "more"
         )
     page = rows[: input.limit]
+    # Listed without the text when it reads as a credential, as memory.list lists a
+    # 'high' row. Checking every text is CPU work; it runs off the event loop.
+    listed = await asyncio.to_thread(lambda: [listed_text(r["content"]) for r in page])
     hits = [
         _SavedMessageHit(
             conversation_id=r["thread_id"],
             message_id=r["msg_id"],
             role=r["role"],
-            # Listed without the text when it reads as a credential, as memory.list
-            # lists a 'high' row.
-            content_excerpt=_excerpt(listed_text(r["content"]), size),
+            content_excerpt=_excerpt(text, size),
             ts=r["saved_at"],
         )
-        for r in page
+        for r, text in zip(page, listed, strict=True)
         if r["role"] in ("user", "assistant")
     ]
     next_cursor = None
@@ -1239,7 +1240,14 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
     # Listed across the namespace: a last turn or a title that reads as a credential is
     # listed without its text, as memory.list lists a 'high' row. The excerpt and
     # LISTED_MARGIN_CHARS characters past it are checked, so a key that crosses the
-    # excerpt's cut is caught too.
+    # excerpt's cut is caught too. Checking every text is CPU work; it runs off the
+    # event loop.
+    listed = await asyncio.to_thread(
+        lambda: [
+            (listed_text(str(r["last_content"])), listed_text(titles.get(str(r["thread_id"]), "")))
+            for r in rows
+        ]
+    )
     threads = [
         ConversationThreadSummary(
             thread_id=str(r["thread_id"]),
@@ -1248,10 +1256,10 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
             first_seen=r["first_seen"],
             last_seen=r["last_seen"],
             last_role=str(r["last_role"]),
-            last_content_excerpt=listed_text(str(r["last_content"]))[:THREAD_EXCERPT_CHARS],
-            title=listed_text(titles.get(str(r["thread_id"]), "")),
+            last_content_excerpt=last_content[:THREAD_EXCERPT_CHARS],
+            title=title,
         )
-        for r in rows
+        for r, (last_content, title) in zip(rows, listed, strict=True)
     ]
     project_rows(threads, ConversationThreadSummary, input.fields, always=frozenset({"thread_id"}))
     return ConversationThreadsOutput(threads=threads)
