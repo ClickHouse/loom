@@ -101,11 +101,9 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Batched inserts: concurrent inserts into one table share a part and each still
-  # returns once written. False: these inserts are committed, one part each. Each
-  # waiting insert holds a pooled connection for its wait and its flush, so the pool it
-  # needs grows with the write rate (docs/architecture/clickhouse.md#batched-inserts).
-  # [live]
+  # Concurrent inserts into one table share a part and each returns once written; false
+  # commits them, one part each (pool sizing:
+  # docs/architecture/clickhouse.md#batched-inserts). [live]
   # ch_batched_inserts: true
 
   # Longest wait, ms, of a batched or waited async insert a request waits on for others
@@ -712,11 +710,9 @@ settings:
   # ingest continues. [restart]
   # restricted_serve: true
 
-  # Write the `namespace.restricted_access` audit row of each admitted read of a
-  # restricted namespace, and wait for it, before answering. True by default: a row
-  # written beside the request is lost when the process is killed before it lands. False
-  # trades that row for the awaited insert's latency (its round trip, up to
-  # `ch_batched_insert_wait_max_ms` of batching, and the part write). [restart]
+  # Wait for the `namespace.restricted_access` audit row of each admitted restricted
+  # read before answering; false writes it beside the answer, lost if the process dies
+  # first. [restart]
   # restricted_audit_inline: true
 
   # Comma-separated origin list. "*" allows all (acceptable when auth_required=True).

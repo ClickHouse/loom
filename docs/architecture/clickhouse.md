@@ -116,8 +116,9 @@ request or by every process on a short interval are batched inserts, sent with
 `async_insert = 1, wait_for_async_insert = 1` (`server/core/ch_writes.py`,
 `batched_insert_settings` and `async_insert_settings`; `ch_batched_inserts = false`
 sends most of them committed, see below):
-`audit_log`, the `conversations` turns of `conversation.append` and the turn
-`conversation.save_message` rewrites when deduplication dropped its first write, the
+`audit_log`, the `conversations` turns of `conversation.append` and
+`conversation.compact`'s summary turn, the turn `conversation.save_message` rewrites
+when deduplication dropped its first write, the
 `conversation_embeddings` rows (`conversation.append`, `conversation.save_message`,
 `conversation.compact`; under the width rule below), the `agent_events`
 flush, the policy witness's `agent_events` and `memory_exposures` rows,
@@ -172,7 +173,8 @@ that rate either raises `ch_pool_maxsize` or sets `ch_batched_inserts = false`; 
 
 `ch_batched_inserts` (live, on by default) switches batching off for every table in the
 list above except the ledger flushes named next: `audit_log`, the `conversations` turns
-of `conversation.append` and the turn `conversation.save_message` writes again, the
+of `conversation.append` and `conversation.compact`, and the turn
+`conversation.save_message` writes again, the
 `conversation_embeddings` rows of `conversation.append`, `conversation.save_message`
 and `conversation.compact`, the `agent_events` flush, the outbox, webhook attempts,
 evidence, belief sources, the write-mark bump and process-start mark. Off, these

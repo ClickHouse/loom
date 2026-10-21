@@ -459,11 +459,8 @@ class AuthSettings(BaseModel):
     # token names the namespace AND who holds a live direct grant. False: every
     # read is refused while ingest continues.
     restricted_serve: bool = True
-    # Write the `namespace.restricted_access` audit row of each admitted read of a
-    # restricted namespace, and wait for it, before answering. True by default: a row
-    # written beside the request is lost when the process is killed before it lands.
-    # False trades that row for the awaited insert's latency (its round trip, up to
-    # `ch_batched_insert_wait_max_ms` of batching, and the part write).
+    # Wait for the `namespace.restricted_access` audit row of each admitted restricted read
+    # before answering; false writes it beside the answer, lost if the process dies first.
     restricted_audit_inline: bool = True
     # Comma-separated origin list. "*" allows all (acceptable when
     # auth_required=True). Empty disables CORS entirely.
@@ -562,10 +559,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False: these inserts are committed, one part each. Each
-    # waiting insert holds a pooled connection for its wait and its flush, so the pool
-    # it needs grows with the write rate (docs/architecture/clickhouse.md#batched-inserts).
+    # Concurrent inserts into one table share a part and each returns once written; false
+    # commits them, one part each (pool sizing: docs/architecture/clickhouse.md#batched-inserts).
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.

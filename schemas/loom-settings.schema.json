@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False: these inserts are committed, one part each. Each waiting insert holds a pooled connection for its wait and its flush, so the pool it needs grows with the write rate (docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "Concurrent inserts into one table share a part and each returns once written; false commits them, one part each (pool sizing: docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -5108,7 +5108,7 @@
         "restricted_audit_inline": {
           "default": true,
           "type": "boolean",
-          "description": "Write the `namespace.restricted_access` audit row of each admitted read of a restricted namespace, and wait for it, before answering. True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the awaited insert's latency (its round trip, up to `ch_batched_insert_wait_max_ms` of batching, and the part write)."
+          "description": "Wait for the `namespace.restricted_access` audit row of each admitted restricted read before answering; false writes it beside the answer, lost if the process dies first."
         },
         "restricted_serve": {
           "default": true,
