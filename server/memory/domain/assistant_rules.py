@@ -102,7 +102,7 @@ def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
 
 
 # Words of a user turn that ask for a standing behaviour ("always answer me in French").
-_ASKS = {"always", "never", "please", "don't", "dont"}  # not a setting: a word list
+_ASKS = {"always", "never", "don't", "dont"}  # not a setting: a word list
 # Words a rule and a request share without naming the same behaviour.
 _COMMON = set(
     "a an the to in on of for and or with me my i you your user user's assistant always"
@@ -110,8 +110,11 @@ _COMMON = set(
 )  # not a setting: a word list
 
 
-def _stems(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9'$]+", text.lower())
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9'$]+", text.lower())
+
+
+def _stems(words: list[str]) -> set[str]:
     return {word.removesuffix("s") for word in words if word not in _COMMON}
 
 
@@ -119,13 +122,20 @@ def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: 
     """Whether the user turn just before the first of the `cited` assistant turns
     asks for the behaviour the rule states. The assistant agreeing to a user's
     request ("always answer me in French") states that user's preference, not a
-    rule of the bot: the turn holds an ask word and at least two of the rule's
-    words, and at least half of them."""
-    asked = _user_turn_before(messages, cited[0])
-    if not _ASKS & set(re.findall(r"[a-z']+", asked.lower())):
+    rule of the bot. A request is a turn that is not a question and holds always,
+    never or don't; the words after the first of them share at least two of the
+    rule's words, and at least half of them. A question about a policy ("Do you
+    always escalate refunds?") or a plain request on its topic ("Please refund my
+    order") asks for no behaviour."""
+    asked = _user_turn_before(messages, cited[0]).strip()
+    if asked.endswith("?"):
         return False
-    rule = _stems(str(fact.get("value") or ""))
-    shared = rule & _stems(asked)
+    words = _words(asked)
+    ask = next((i for i, word in enumerate(words) if word in _ASKS), None)
+    if ask is None:
+        return False
+    rule = _stems(_words(str(fact.get("value") or "")))
+    shared = rule & _stems(words[ask + 1 :])
     return len(shared) >= 2 and 2 * len(shared) >= len(rule)
 
 

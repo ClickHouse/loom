@@ -84,9 +84,13 @@ Coding captures never use it.
 
 Behaviour the assistant agrees to at the user's request is the user's preference, not
 a rule of the bot: "always answer me in French" answered with "I will always answer you
-in French" is a memory about the user. A rule whose cited assistant turn follows a user
-turn asking for the same behaviour is never filed, and the drop is counted in
-`loom.memory_drops` (stage `learnings.file`, reason `user_requested`).
+in French" is a memory about the user. A rule is not filed when the user turn before its
+first cited assistant turn is not a question, holds "always", "never" or "don't", and
+the words after the first of those share at least two of the rule's content words and
+at least half of them. The drop is counted in `loom.memory_drops` (stage
+`learnings.file`, reason `user_requested`). A question about the policy ("Do you always
+escalate refunds over $500?") or a request on its topic ("Please refund my order")
+asks for no behaviour, so the rule is filed.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule

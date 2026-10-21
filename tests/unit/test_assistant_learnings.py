@@ -597,6 +597,22 @@ async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_f
     assert await _file(_state("bob", "s2")) == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "asked",
+    [
+        # A request on the rule's topic that asks for no standing behaviour.
+        "Please refund my order over $500.",
+        # A question about the policy the bot states.
+        "Do you always escalate refunds over $500?",
+    ],
+)
+async def test_a_rule_after_a_users_turn_on_its_topic_is_filed(queue: _Queue, asked: str) -> None:
+    messages = [{"role": "user", "content": asked}, {"role": "assistant", "content": _RULE}]
+    assert await _file(_state("alice", "s1", messages=messages)) == 1
+    assert list(queue.rows) == [_cid()]
+
+
 # Built at runtime so the secret scanner does not read it as a leaked key.
 _KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
 

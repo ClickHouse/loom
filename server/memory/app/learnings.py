@@ -457,9 +457,10 @@ async def _do_promote_to_knowledge(
     source_kind = candidate_row.get("source_kind", "") or "memory_supporters"
     tags = ["promoted-from-learning", f"source-kind:{source_kind}"]
     # A bot's rule names its agent in a tag: context.pack, memory.stack, loom_search and
-    # memory.ask serve the rule to that agent only (assistant_rules.serves_agent), and a bot finds
-    # its own rules with knowledge.search(tags=["agent:<id>"]). The document's author
-    # is the reviewer's identity, stamped from the review's token.
+    # memory.ask serve it to that agent and to namespace-wide (`*`) reads
+    # (assistant_rules.serves_agent); knowledge.search is not filtered by agent, and a bot
+    # finds its own rules with knowledge.search(tags=["agent:<id>"]). The document's
+    # author is the reviewer's identity, stamped from the review's token.
     agent = (
         str(candidate_row.get("agent") or "") if source_kind == assistant_rules.SOURCE_KIND else ""
     )
