@@ -112,7 +112,7 @@ def test_the_journal_files() -> None:
         "059_conversation_saved_messages.sql",
         "060_conversation_saved_at.sql",
         "061_profile_schemas.sql",
-        "063_extraction_policies.sql",
+        "062_extraction_policies.sql",
     ]
 
 

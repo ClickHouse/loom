@@ -139,7 +139,6 @@ async def _revise_window(
             return prev or sb.BriefSections()
         return sb.merge_sections(prev, sb.deterministic_revision(events))
 
-    failure: Exception | None = None
     try:
         result = await client.complete(
             system=with_policy(sb.SYSTEM_PROMPT, operator_policy),
@@ -149,16 +148,12 @@ async def _revise_window(
             max_tokens=llm_max_tokens("session_brief_revision"),
             response_format={"type": "json_object"},
         )
-    except customer.ModelCallsDisabled as e:
-        if operator_policy:
+    except Exception as e:  # a failed call costs this window only
+        if operator_policy and isinstance(e, customer.ModelCallsDisabled):
             raise
-        failure = e
-    except Exception as e:  # noqa: BLE001 — a failed call costs this window only
-        failure = e
-    if failure is not None:
         log.warning(
             "session.brief_save: model call failed (%s); window revised without the model",
-            failure,
+            e,
         )
         return fallback(), 0, 0, 0, False
     try:

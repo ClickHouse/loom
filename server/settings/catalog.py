@@ -1893,12 +1893,8 @@ class ExtractionSettings(BaseModel):
     # stay serial in session-date order. At least 1: none would hang the pass.
     extraction_queue_namespace_concurrency: Annotated[int, LIVE] = Field(default=4, ge=1)
     # --- operator extraction policy ---
-    # Most namespaces of one org that may hold their own extraction policy
-    # (`extraction_policy.set` with scope `namespace` refuses one more). Every process
-    # holds every org's policies (each at most 4,096 characters) and reads them all
-    # every `model_calls_policy_refresh_seconds`, so this bounds each org's share of
-    # that read (about 4 MiB at the default); the read grows with the number of orgs
-    # that hold a policy.
+    # Most namespaces of one org that may hold their own extraction policy;
+    # `extraction_policy.set` with scope `namespace` refuses one more.
     extraction_policy_max_namespaces: Annotated[int, LIVE] = Field(default=1000, ge=1)
 
 

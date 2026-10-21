@@ -785,7 +785,7 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` | `int` | `1000` | live | Most namespaces of one org that may hold their own extraction policy (`extraction_policy.set` with scope `namespace` refuses one more). Every process holds every org's policies (each at most 4,096 characters) and reads them all every `model_calls_policy_refresh_seconds`, so this bounds each org's share of that read (about 4 MiB at the default); the read grows with the number of orgs that hold a policy. |
+| `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` | `int` | `1000` | live | Most namespaces of one org that may hold their own extraction policy; `extraction_policy.set` with scope `namespace` refuses one more. |
 
 ## Knowledge
 
