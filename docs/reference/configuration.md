@@ -93,7 +93,7 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_END_USER_MAX_TTL_SECONDS` | `int` | `300` |  | The longest an end-user token may live, from its `iat` to its `exp`. |
 | `LOOM_JWT_END_USER_JWKS_REFRESH_SECONDS` | `float` | `300.0` |  | Seconds between fetches of each end-user issuer's `jwks_url`; a key it rotates in is honoured from the next fetch. |
 | `LOOM_RESTRICTED_SERVE` | `bool` | `True` |  | Kill switch for restricted namespaces. True: served to a principal whose token names the namespace AND who holds a live direct grant. False: every read is refused while ingest continues. |
-| `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` |  | Commit the `namespace.restricted_access` audit row every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the seconds the awaited insert adds. |
+| `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` |  | Write the `namespace.restricted_access` audit row (a batched insert) every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the batched insert's wait (up to `ch_batched_insert_wait_max_ms`). |
 | `LOOM_CORS_ORIGINS` | `str` | `''` |  | Comma-separated origin list. "*" allows all (acceptable when auth_required=True). Empty disables CORS entirely. |
 | `LOOM_MAX_REQUEST_BYTES` | `int` | `33554432` |  | Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables. |
 | `LOOM_HSTS_MAX_AGE_SECONDS` | `int` | `31536000` |  | Strict-Transport-Security max-age, seconds; browsers ignore it over plain HTTP. 0 sends no header. |
@@ -131,8 +131,8 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TIMEOUT_READ_S` | `float` | `30.0` |  | Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads. |
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest a batched insert (a waited insert that needs no fence or identity token) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node, insert shape and partition. |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum. |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest an insert sent with `batched_insert_settings()` (the rows written on every request: audit, transcript turns, ledgers) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node, insert shape and partition. The insert holds its pooled connection for the wait. |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of an insert sent with `batched_insert_settings()`: what a lone insert waits when writes are sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` |  | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
 | `LOOM_CH_REPLICA_BOUND_RETRIES` | `int` | `2` |  | Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough. |
 

@@ -187,13 +187,13 @@
           "default": 50,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Longest a batched insert (a waited insert that needs no fence or identity token) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node, insert shape and partition."
+          "description": "Longest an insert sent with `batched_insert_settings()` (the rows written on every request: audit, transcript turns, ledgers) waits, ms, for others to share its part; under load ~1000 / this parts/s per table, node, insert shape and partition. The insert holds its pooled connection for the wait."
         },
         "ch_batched_insert_wait_min_ms": {
           "default": 10,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum."
+          "description": "Shortest wait, ms, of an insert sent with `batched_insert_settings()`: what a lone insert waits when writes are sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -5091,7 +5091,7 @@
         "restricted_audit_inline": {
           "default": true,
           "type": "boolean",
-          "description": "Commit the `namespace.restricted_access` audit row every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the seconds the awaited insert adds."
+          "description": "Write the `namespace.restricted_access` audit row (a batched insert) every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the batched insert's wait (up to `ch_batched_insert_wait_max_ms`)."
         },
         "restricted_serve": {
           "default": true,

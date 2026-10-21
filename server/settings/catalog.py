@@ -459,10 +459,11 @@ class AuthSettings(BaseModel):
     # token names the namespace AND who holds a live direct grant. False: every
     # read is refused while ingest continues.
     restricted_serve: bool = True
-    # Commit the `namespace.restricted_access` audit row every admitted read of a
-    # restricted namespace writes before answering (inline). True by default: a
-    # row written beside the request is lost when the process is killed before it
-    # lands. False trades that row for the seconds the awaited insert adds.
+    # Write the `namespace.restricted_access` audit row (a batched insert) every
+    # admitted read of a restricted namespace writes before answering (inline). True
+    # by default: a row written beside the request is lost when the process is killed
+    # before it lands. False trades that row for the batched insert's wait (up to
+    # `ch_batched_insert_wait_max_ms`).
     restricted_audit_inline: bool = True
     # Comma-separated origin list. "*" allows all (acceptable when
     # auth_required=True). Empty disables CORS entirely.
@@ -560,12 +561,14 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Longest a batched insert (a waited insert that needs no fence or identity token)
-    # waits, ms, for others to share its part; under load ~1000 / this parts/s per
-    # table, node, insert shape and partition.
+    # Longest an insert sent with `batched_insert_settings()` (the rows written on every
+    # request: audit, transcript turns, ledgers) waits, ms, for others to share its
+    # part; under load ~1000 / this parts/s per table, node, insert shape and partition.
+    # The insert holds its pooled connection for the wait.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
-    # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
-    # sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum.
+    # Shortest wait, ms, of an insert sent with `batched_insert_settings()`: what a
+    # lone insert waits when writes are sparse. A value above
+    # `ch_batched_insert_wait_max_ms` is read as the maximum.
     ch_batched_insert_wait_min_ms: Annotated[int, LIVE] = Field(default=10, gt=0)
     # Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED.
     # 0 = no slot gate.
@@ -5225,10 +5228,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search": 200,
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
-    # A set is four committed inserts and one batched audit insert plus the conflict
-    # and dedup reads: p50
-    # 1,062 ms and p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier
-    # = 4 s sits at that p99, so a violation is a signal.
+    # A set's version inserts plus the conflict and dedup reads: p50 1,062 ms and
+    # p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier = 4 s sits at that
+    # p99, so a violation is a signal.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms,
     # and about six batched inserts in sequence each wait up to

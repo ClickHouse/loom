@@ -1,7 +1,7 @@
-"""What `CHClient.insert` applies to a write before it is sent: the
-fire-and-forget dedup rule (`normalize_insert_settings`) and the deduplication
-token that makes a retried batch land once. Also the settings of a batched
-insert (`batched_insert_settings`).
+"""What `CHClient.insert` applies to a write before it is sent: the dedup rule
+for async inserts, fire-and-forget or batched (`normalize_insert_settings`), and
+the deduplication token that makes a retried batch land once. Also the settings
+of a batched insert (`batched_insert_settings`).
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from server.settings import settings
 
 
 def batched_insert_settings() -> dict[str, Any]:
-    """Settings for an insert that a later read waits for but that needs no fence
-    or identity token, most of them made on every request (audit rows, transcript
-    turns, request ledgers). ClickHouse collects concurrent inserts into
-    one table in one part per partition (`async_insert = 1`) and answers each only
-    once those parts are written (`wait_for_async_insert = 1`), so on return the
-    row is as durable and as visible as after a committed insert, and a caller's
-    later insert lands in a later part. Each waits at most
+    """Settings of a batched insert: the rows written on every request (audit
+    rows, transcript turns, request ledgers) are sent with them. ClickHouse
+    collects concurrent inserts into one table in one part per partition
+    (`async_insert = 1`) and answers each only once those parts are written
+    (`wait_for_async_insert = 1`), so on return the row is as durable and as
+    visible as after a committed insert, and a caller's later insert lands in a
+    later part. Each waits at most
     `ch_batched_insert_wait_max_ms` for others to join it. The deduplication token
     still applies (`dedup_settings`)."""
     wait_max = int(settings.ch_batched_insert_wait_max_ms)
@@ -34,10 +34,11 @@ def batched_insert_settings() -> dict[str, Any]:
 
 
 def normalize_insert_settings(extra: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Fire-and-forget inserts (`async_insert = 1`) gain `async_insert_deduplicate
-    = 0` unless the call site set it: the Cloud profile defaults it to 1, which
-    would silently drop a byte-identical event row landing in the same flush
-    window. Committed writes (`async_insert = 0`) pass through unchanged."""
+    """Async inserts (`async_insert = 1`, fire-and-forget or batched) gain
+    `async_insert_deduplicate = 0` unless the call site set it: the Cloud profile
+    defaults it to 1, which would silently drop a byte-identical event row landing
+    in the same flush window. Committed writes (`async_insert = 0`) pass through
+    unchanged."""
     if not extra:
         return extra
     out = dict(extra)

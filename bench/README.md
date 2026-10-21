@@ -286,7 +286,9 @@ Latency, throughput and storage at scale.
   with `--committed` as the baseline) and reports latency and the ClickHouse
   parts each table got from `system.part_log`, with the `async_insert` value
   each conversation insert carried from `system.query_log`. Free with the fake
-  providers.
+  providers. Writes go under a per-run org (`write-rate-<run>`); the in-process
+  run deletes its conversation rows at the end, the server run keeps its rows,
+  so point it at a private ClickHouse.
 - **`ch_cost_by_op.py`** — ClickHouse cost per loom operation from
   `system.query_log`, joined through the `log_comment` tag every loom query
   carries (`"<op> <request_id>"` / `"worker.<name>"`).

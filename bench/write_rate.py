@@ -19,6 +19,12 @@ A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
 `LOOM_AUTH_REQUIRED=false`; spreading over orgs keeps the org-wide rate limit
 from capping the rate.
 
+The rows land in the ClickHouse the settings name, under the org `--org`
+(default `write-rate-<run>`, one per run). `--target client` deletes that org's
+conversation rows when the run ends. `--target server` keeps what it wrote (the
+memories, the transcript turns, conversation logging switched on for each org and
+namespace it wrote to), so point it at a private ClickHouse.
+
     PYTHONPATH=$PWD .venv/bin/python bench/write_rate.py --target client --rate 200 --seconds 60
     PYTHONPATH=$PWD .venv/bin/python bench/write_rate.py --target client --rate 200 --seconds 60 \
         --committed
@@ -62,6 +68,19 @@ def _namespace(i: int, args: argparse.Namespace) -> str:
     # A chat product writes for many users, and each namespace has its own
     # rate-limit bucket.
     return f"{args.namespace}-{i % args.namespaces}"
+
+
+def _orgs(args: argparse.Namespace) -> list[str]:
+    return [_org(i, args) for i in range(args.orgs)]
+
+
+async def _delete_client_rows(args: argparse.Namespace) -> None:
+    ch = get_client()
+    for table in ("conversations", "conversation_embeddings"):
+        await ch.execute(
+            f"DELETE FROM loom.{table} WHERE org IN {{orgs:Array(String)}}",
+            params={"orgs": _orgs(args)},
+        )
 
 
 def _org(i: int, args: argparse.Namespace) -> str:
@@ -162,6 +181,8 @@ async def _inserts_sent(since: float, until: float) -> dict[str, dict[str, int]]
 async def _run(args: argparse.Namespace) -> dict[str, Any]:
     await get_client().connect()
     run = uuid.uuid4().hex[:8]
+    if not args.org:
+        args.org = f"write-rate-{run}"
     kinds = _SERVER_OPS[args.op] if args.target == "server" else ["conversation.append inserts"]
     latencies: dict[str, list[float]] = {k: [] for k in kinds}
     errors: dict[str, int] = {k: 0 for k in kinds}
@@ -212,9 +233,12 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         elapsed = time.monotonic() - start
         parts = await _parts(started, time.time())
         sent = await _inserts_sent(started, time.time())
+        if args.target == "client":
+            await _delete_client_rows(args)
 
     return {
         "target": args.target,
+        "org": args.org if args.orgs == 1 else f"{args.org}-*",
         "op": args.op if args.target == "server" else "conversation.append inserts",
         "inserts": "committed" if args.committed else "as the code sends them",
         "inserts_sent": sent,
@@ -247,7 +271,9 @@ def main() -> None:
     p.add_argument("--seconds", type=float, default=60.0)
     p.add_argument("--max-in-flight", type=int, default=512)
     p.add_argument("--token", default="", help="bearer token for --target server")
-    p.add_argument("--org", default="write-rate", help="org, or org prefix with --orgs")
+    p.add_argument(
+        "--org", default="", help="org, or org prefix with --orgs (default write-rate-<run>)"
+    )
     p.add_argument("--orgs", type=int, default=1, help="orgs the writes spread over")
     p.add_argument("--namespace", default="write-rate", help="namespace prefix")
     p.add_argument("--namespaces", type=int, default=32, help="namespaces the writes spread over")

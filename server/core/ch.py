@@ -678,10 +678,11 @@ class CHClient:
             # does, so the pool never holds a peer-closed TLS transport.
             keepalive_timeout=float(settings.ch_keepalive_timeout),
             # Writes are committed: the INSERT returns after the part is
-            # written. Waited inserts that need no fence or identity token
-            # batch server-side instead (`ch_writes.batched_insert_settings`). Block dedup stays
-            # off: identical event rows (agent_events, audit_log) are legitimate
-            # and must all land.
+            # written. An insert sent with `ch_writes.batched_insert_settings()`
+            # (the rows written on every request: audit, transcript turns,
+            # ledgers) shares a part with concurrent inserts instead. Block
+            # dedup stays off: identical event rows (agent_events, audit_log)
+            # are legitimate and must all land.
             settings={
                 "async_insert": 0,
                 "wait_for_async_insert": 1,
@@ -1096,8 +1097,8 @@ class CHClient:
         settings: dict[str, Any] | None = None,
     ) -> None:
         """Batch insert via the native typed insert path. `settings` forwards
-        CH query settings; fire-and-forget settings are normalised by
-        `normalize_insert_settings`. An `insert_deduplication_token` in
+        CH query settings; async insert settings (fire-and-forget or batched)
+        are normalised by `normalize_insert_settings`. An `insert_deduplication_token` in
         `settings` replaces the per-batch token.
 
         For the ledger tables in `PROJECTED_TABLES`, columns the live table

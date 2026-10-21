@@ -98,24 +98,23 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   because identical telemetry rows in one flush window are legitimate.
 - **Batched inserts.** A committed insert makes one part, so a table written on every
   request makes parts at the request rate, and merges fall behind ("too many parts"). The
-  inserts that a later read waits for but that need no fence or identity token, most of
-  them made on every request or by every process on a short interval (`audit_log`,
+  rows written on every request or by every process on a short interval are sent with
+  `async_insert = 1, wait_for_async_insert = 1` (`batched_insert_settings`): `audit_log`,
   `conversations` and `conversation_embeddings` from `conversation.append`, the
   `agent_events` flush, the policy witness's `agent_events` and `memory_exposures` rows,
   `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
   `memory_belief_sources`, the `memory_chunks` of `memory.set_from_messages`,
   `entity_vectors`, `auth_attempts`, `memory_projection_failures`, the graph Undo
   markers, `namespace_write_marks`, and the usage-event and carry-acknowledgement
-  flushes) are sent with
-  `async_insert = 1, wait_for_async_insert = 1` (`batched_insert_settings`): ClickHouse
-  collects the concurrent inserts into one table in one part per partition and answers each once those
-  parts are written. On return the row is as durable and as visible as a committed
-  insert's, and a caller's next insert lands in a later part, so the order of one caller's
-  writes holds. The buffer is ClickHouse's, so a Loom process that stops loses nothing it
-  acknowledged. A flush that fails as a whole fails every insert waiting on it; a retry of
-  any of them lands once, under its own token. Each insert waits between
-  `ch_batched_insert_wait_min_ms` (writes are sparse) and `ch_batched_insert_wait_max_ms`
-  (under load) for others to join it. Under steady load a table gets about 1000 /
+  flushes. ClickHouse collects the concurrent inserts into one table in one part per
+  partition and answers each once those parts are written. On return the row is as
+  durable and as visible as a committed insert's, and a caller's next insert lands in a
+  later part, so the order of one caller's writes holds. The buffer is ClickHouse's, so a
+  Loom process that stops loses nothing it acknowledged. A flush that fails as a whole
+  fails every insert waiting on it; a retry of any of them lands once, under its own
+  token. Each insert waits between `ch_batched_insert_wait_min_ms` (writes are sparse)
+  and `ch_batched_insert_wait_max_ms` (under load) for others to join it, and holds its
+  pooled connection for the wait. Under steady load a table gets about 1000 /
   `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node, insert shape
   (ClickHouse keeps one buffer per column list and settings) and partition written: more
   when a buffer fills before the wait ends, at most one per insert when writes are sparse.
