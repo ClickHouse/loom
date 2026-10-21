@@ -11,6 +11,10 @@ the `high` rows' embedding rows tombstoned. Bounded per pass and limited to the 
 ids and integer limits); the historical backlog is the operator's
 `loom sensitivity-sweep --apply`, not this worker's.
 
+A row behind more than `sensitivity_sweep_pages_per_pass` x
+`sensitivity_sweep_max_rows_per_pass` selected-but-unlabelled keys of its own agent is not
+reached by this worker until those keys leave the window: the cursor names no key inside an
+agent, so each pass reads the same pages of it. `loom sensitivity-sweep --apply` reaches it.
 The paging and the cursor rules are in docs/architecture/security.md, "Sensitivity".
 """
 

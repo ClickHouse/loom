@@ -554,6 +554,25 @@ async def test_a_pass_reads_at_most_its_page_cap() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_row_behind_more_than_a_pass_of_keys_in_its_agent_waits_for_the_operator(
+    monkeypatch,
+) -> None:
+    # Seven selected-but-unlabelled rows sit ahead of a PIN row in one agent, more than a
+    # pass's three pages of two. Each pass moves past the agent on its first page, finds
+    # no key after it, and spends its last page on the agent's third and fourth keys. Its
+    # cursor is the first key again, so the next pass reads the same pages and no pass
+    # reaches the PIN row. The operator's run does.
+    rows = _spin_rows_then_a_pin(7)
+    labelled, cursors = await _passes(monkeypatch, rows, count=3, pages=3)
+    assert labelled == [[], [], []]
+    assert cursors == [[], [], []]
+    ch = _local_memory(rows)
+    operator = await sweep.scan(since_days=2, limit=2, page_size=2, pages=None, ch=ch)  # type: ignore[arg-type]
+    assert [c.memory_key for c in operator.candidates] == ["vault_door"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_each_pass_starts_where_the_last_one_stopped(monkeypatch) -> None:
     # Agent `a` holds two pages of selected-but-unlabelled rows, agent `b` a PIN row, and a
     # pass reads one page. The first pass finds nothing in its page of `a`, so its cursor is

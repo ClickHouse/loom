@@ -169,8 +169,9 @@ class SweepReport:
     truncated: bool = False
     # The sort key the next pass starts after: the last key read, or the last candidate's
     # when the candidates were cut to the limit, or its first columns alone (`past_key`)
-    # when the scan moved past that agent. None when the scan read from the first key to
-    # the last, so the next pass starts again at the first.
+    # when the scan moved past that agent. None when the next pass should start at the
+    # first key: the scan read from the first key to the last, or it reached the last key
+    # with no page left to read the keys before its start.
     resume_after: dict[str, Any] | None = None
     # Whether the read that set `resume_after` stopped on a page with a stale key: one the
     # FINAL read gave no current row for, because its only match is an older version. Such
@@ -274,9 +275,10 @@ async def scan(
             ranges.append(wrap)
             report.resume_after = start if wrap.reached_end else wrap.last or None
             report.last_page_had_stale_key = wrap.last_page_had_stale_key
-    # The rest of each agent the scan moved past, with the pages left: a row there waits
-    # only for other agents' rows, not until the rows ahead of it leave the window. The
-    # cursor stays where the reads above left it.
+    # The rest of each agent the scan moved past, with the pages left. Every pass starts
+    # these reads after the same page, since the cursor names no key inside an agent: a
+    # row behind more than a pass's pages of such keys in its agent waits until they leave
+    # the window, or for the operator's run. The cursor stays where the reads above left it.
     for key in run.skipped:
         ranges.append(await _read_range(run, after=key, stop=past_key(key, "agent"), skip=False))
     report.truncated = not all(r.reached_end for r in ranges)

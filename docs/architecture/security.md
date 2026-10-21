@@ -841,9 +841,12 @@ A worker pass is bounded:
   whose selected rows the detector leaves unlabelled. A page with a key whose only
   matching version is an older one (a row the sweep labelled, or deleted, before the parts
   merge) gets no current row for that key and does not count. Once the pass has read
-  every other key with pages left, it reads the rest of each agent it moved past, so a
-  row more than a page into such an agent waits only for other agents' rows, never for
-  the window.
+  every other key with pages left, it reads the rest of each agent it moved past. The
+  cursor names no key inside an agent, so each pass reads the same pages of that agent:
+  a row behind more than `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` x
+  `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` selected-but-unlabelled keys of its own agent
+  is not reached by the worker until those keys leave the window. `loom sensitivity-sweep
+--apply` reaches it.
 - A pass that labelled rows leaves its cursor at the agent it stopped in, so the next pass
   reads that agent again. A pass that labelled nothing leaves its cursor past that agent
   when its candidates, all in that agent, failed to apply, or when it found none and its
