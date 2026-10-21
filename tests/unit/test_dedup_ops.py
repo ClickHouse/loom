@@ -94,8 +94,9 @@ async def test_resolve_keep_canonical_tombstones_duplicate(
 
     tombstoned: list[str] = []
 
-    async def fake_tombstone(org, mid, *, version=None, ch=None):
+    async def fake_tombstone(org, mid, *, ch=None):
         tombstoned.append(mid)
+        return []
 
     clear_calls: list[str] = []
 
@@ -145,8 +146,9 @@ async def test_resolve_keep_duplicate_swaps_via_tombstone_and_clear(
 
     tombstoned: list[str] = []
 
-    async def fake_tombstone(org, mid, *, version=None, ch=None):
+    async def fake_tombstone(org, mid, *, ch=None):
         tombstoned.append(mid)
+        return []
 
     cleared: list[str] = []
 
@@ -197,6 +199,7 @@ async def test_resolve_keep_both_clears_duplicate_tag_only(
 
     async def fake_tombstone(*a, **kw):
         tombstoned.append("called")
+        return []
 
     cleared: list[str] = []
 

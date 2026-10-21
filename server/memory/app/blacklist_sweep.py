@@ -26,7 +26,6 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.memory.app import webhooks
 from server.memory.domain.expire_reasons import SWEEP_REASON_PREFIX
-from server.memory.domain.webhook_events import memory_change
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -93,15 +92,12 @@ async def sweep_pattern(
         return SweepResult(pattern_id, 0, 0, False)
     when = naive_utc_now()
     ids = [str(r["memory_id"]) for r in rows]
-    version = memory_repo.next_version()
-    tombstoned: list[dict[str, Any]] = []
-
-    def _reason(existing: memory_repo.MemoryRow) -> dict[str, Any]:
-        tombstoned.append(memory_change(existing, version))
-        return {"expire_reason": f"{SWEEP_REASON_PREFIX}{pattern_id}"[:512]}
-
-    written = await memory_repo.tombstone_cascade_by_ids(
-        org, ids, when=when, update=_reason, version=version, ch=ch
+    tombstoned = await memory_repo.tombstone_cascade_by_ids(
+        org,
+        ids,
+        when=when,
+        update=lambda _existing: {"expire_reason": f"{SWEEP_REASON_PREFIX}{pattern_id}"[:512]},
+        ch=ch,
     )
     await webhooks.announce([("memory.tombstoned", change) for change in tombstoned])
     by_ns: dict[str, int] = {}
@@ -109,4 +105,4 @@ async def sweep_pattern(
         by_ns[str(r["namespace"])] = by_ns.get(str(r["namespace"]), 0) + 1
     for ns, n in by_ns.items():
         record_drop(org, ns, "blacklist.sweep", f"pattern:{pattern_id}", n=n)
-    return SweepResult(pattern_id, len(rows), int(written), truncated)
+    return SweepResult(pattern_id, len(rows), len(tombstoned), truncated)

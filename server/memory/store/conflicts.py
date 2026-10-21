@@ -26,7 +26,6 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and, scope_where
 from server.memory.domain.delete_marks import carried_trace
-from server.memory.domain.webhook_events import memory_change
 
 
 async def list_conflicted(
@@ -242,25 +241,19 @@ async def tombstone_ids(
         return []
     import server.memory.store as memory_repo
 
-    version = memory_repo.next_version()
-    tombstoned: list[dict[str, Any]] = []
-
     def _note(row: memory_repo.MemoryRow) -> dict[str, Any]:
-        tombstoned.append(memory_change(row, version))
         trace = carried_trace(row.source_trace)  # the delete_version marker is not carried
         return {"source_trace": f"{trace} | {audit_note}" if trace else audit_note}
 
     # The tombstone must reach memory_embeddings too, or the losing side of a
     # conflict keeps surfacing in search.
-    await memory_repo.tombstone_cascade_by_ids(
+    return await memory_repo.tombstone_cascade_by_ids(
         org,
         memory_ids,
         when=when,
         update=_note,
-        version=version,
         ch=ch,
     )
-    return tombstoned
 
 
 async def mark_active_by_ids(

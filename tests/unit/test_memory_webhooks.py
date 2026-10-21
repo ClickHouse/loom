@@ -35,6 +35,7 @@ from server.memory.domain.webhook_events import (
     EVENT_TYPES,
     backoff_seconds,
     event_body,
+    memory_change,
 )
 from server.memory.store import MemoryRow
 from server.memory.store import webhooks as store
@@ -748,19 +749,31 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
 ) -> None:
     from server.memory.app import blacklist_sweep
+    from server.memory.store import lifecycle
 
-    rows = {"m-a": _memory_row("user/phone"), "m-b": _memory_row("user/contact")}
+    rows = {
+        "m-a": _memory_row("user/phone", memory_id="m-a"),
+        "m-b": _memory_row("user/contact", memory_id="m-b"),
+    }
+    written: list[dict[str, Any]] = []
 
     class _Matches:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             return [{"memory_id": mid, "namespace": "chat"} for mid in rows]
 
-    async def tombstone(org: str, ids: list[str], *, update: Any, version: int, **k: Any) -> int:
-        for mid in ids:
-            update(rows[mid])
-        return len(ids)
+    async def get(memory_id: str, **k: Any) -> MemoryRow:
+        return rows[memory_id]
 
-    monkeypatch.setattr(memory_repo, "tombstone_cascade_by_ids", tombstone)
+    async def insert(built: list[dict[str, Any]], **k: Any) -> None:
+        written.extend(built)
+
+    async def mirror(*a: Any, **k: Any) -> int:
+        return 0
+
+    # The real cascade, so the events carry the version it wrote.
+    monkeypatch.setattr(lifecycle, "get_by_id", get)
+    monkeypatch.setattr(lifecycle, "insert_memory_versions", insert)
+    monkeypatch.setattr(lifecycle, "mirror_status_to_embeddings", mirror)
     result = await blacklist_sweep.sweep_pattern(
         org="acme",
         namespace="chat",
@@ -772,11 +785,10 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
     )
     assert result.tombstoned == 2
     (call,) = announced  # one insert for the sweep
-    assert {(e, c["memory_key"]) for e, c in call} == {
-        ("memory.tombstoned", "user/phone"),
-        ("memory.tombstoned", "user/contact"),
+    assert {(e, c["memory_key"], c["version"]) for e, c in call} == {
+        ("memory.tombstoned", r["memory_key"], r["version"]) for r in written
     }
-    assert len({c["version"] for _, c in call}) == 1  # the tombstones' one version
+    assert {r["memory_key"] for r in written} == {"user/phone", "user/contact"}
 
 
 @pytest.mark.asyncio
@@ -829,7 +841,6 @@ async def test_dedup_resolve_announces_the_side_it_tombstones(
 
     rows = {"m-canon": _memory_row("canon/key"), "m-dup": _memory_row("dup/key")}
     ids = {"canon/key": "m-canon", "dup/key": "m-dup"}
-    versions: list[int] = []
 
     async def find(org: str, namespace: str, key: str, **k: Any) -> Any:
         return SimpleNamespace(memory_id=ids[key])
@@ -837,8 +848,8 @@ async def test_dedup_resolve_announces_the_side_it_tombstones(
     async def get(memory_id: str, **k: Any) -> MemoryRow:
         return rows[memory_id]
 
-    async def tombstone(org: str, memory_id: str, *, version: int, **k: Any) -> None:
-        versions.append(version)
+    async def tombstone(org: str, memory_id: str, **k: Any) -> list[dict[str, Any]]:
+        return [memory_change(rows[memory_id], 42)]
 
     async def clear(*a: Any, **k: Any) -> bool:
         return True
@@ -860,9 +871,9 @@ async def test_dedup_resolve_announces_the_side_it_tombstones(
     if tombstoned is None:
         assert announced == []
         return
-    # The event carries the tombstone's own version.
+    # The event carries the version the tombstone was written at.
     assert [[(e, c["memory_key"], c["version"]) for e, c in call] for call in announced] == [
-        [("memory.tombstoned", tombstoned, versions[0])]
+        [("memory.tombstoned", tombstoned, 42)]
     ]
 
 

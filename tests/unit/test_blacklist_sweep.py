@@ -44,11 +44,10 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
         memory_id="m1",
     )
 
-    async def fake_cascade(org, ids, *, when, update=None, version=None, ch=None):
+    async def fake_cascade(org, ids, *, when, update=None, ch=None):
         calls["ids"] = list(ids)
-        calls["version"] = version
         calls["override"] = update(row) if update else {}
-        return len(ids)
+        return [{"memory_id": mid, "version": 7} for mid in ids]
 
     announced: list[tuple[str, dict[str, Any]]] = []
 
@@ -81,10 +80,11 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
     assert (res.matched, res.tombstoned, res.truncated) == (3, 3, False)
     assert calls["ids"] == ["m1", "m2", "m3"]
     assert calls["override"] == {"expire_reason": "blacklist.sweep:p1"}
-    # The tombstones and their event carry the one version the sweep took.
-    assert isinstance(calls["version"], int)
-    assert [(event, change["version"]) for event, change in announced] == [
-        ("memory.tombstoned", calls["version"])
+    # One event per row the cascade tombstoned, at the version it wrote.
+    assert [(event, change["memory_id"], change["version"]) for event, change in announced] == [
+        ("memory.tombstoned", "m1", 7),
+        ("memory.tombstoned", "m2", 7),
+        ("memory.tombstoned", "m3", 7),
     ]
     assert sorted(drops) == [
         ("o", "a", "blacklist.sweep", "pattern:p1", 2),
@@ -96,8 +96,8 @@ async def test_sweep_tombstones_matches_through_the_cascade_and_records_drops(mo
 
 
 async def test_sweep_reports_truncation_and_a_failed_regex(monkeypatch) -> None:
-    async def fake_cascade(org, ids, *, when, update=None, version=None, ch=None):
-        return len(ids)
+    async def fake_cascade(org, ids, *, when, update=None, ch=None):
+        return [{"memory_id": mid} for mid in ids]
 
     monkeypatch.setattr("server.memory.store.tombstone_cascade_by_ids", fake_cascade)
     monkeypatch.setattr("server.memory.app.drops.record_drop", lambda *a, **k: None)

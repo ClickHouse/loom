@@ -14,6 +14,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
     reemit_embedding_rows_for_keys,
@@ -395,9 +396,8 @@ async def tombstone_cascade_by_ids(
     *,
     when: datetime,
     update: Callable[[MemoryRow], dict[str, Any]] | None = None,
-    version: int | None = None,
     ch: _CHClient | None = None,
-) -> int:
+) -> list[dict[str, Any]]:
     """Tombstone rows by memory_id AND mirror the tombstone onto every tier
     search reads.
 
@@ -414,10 +414,10 @@ async def tombstone_cascade_by_ids(
          the embeddings table collapses onto a tombstoned version too.
 
     `update(existing)` may add overrides (an audit note on source_trace).
-    `version` is the tombstones' version, a fresh one when None.
     The embeddings mirror is best-effort: the memory tombstone is
     durable and the orphan_vector_reconcile worker heals a missed mirror.
-    Returns the number of memory rows tombstoned."""
+    Returns each tombstoned row's identity tuple, memory_key, memory_id and
+    tombstone version (`memory_change`), for the caller's webhook events."""
     ch = ch or _default_client()
     rows: list[MemoryRow] = []
     seen: set[str] = set()
@@ -430,12 +430,14 @@ async def tombstone_cascade_by_ids(
         if existing is not None:
             rows.append(existing)
     if not rows:
-        return 0
+        return []
 
-    if version is None:
-        version = next_version()  # the tombstones', which the vector retire carries
+    # Drawn after the rows are read, so a write that landed before the read sorts below it.
+    version = next_version()  # the tombstones', which the vector retire carries
+    tombstoned: list[dict[str, Any]] = []
 
     def _tombstone(existing: MemoryRow) -> dict[str, Any]:
+        tombstoned.append(memory_change(existing, version))
         overrides: dict[str, Any] = {
             "status": "tombstoned",
             "tombstoned_at": when,
@@ -447,33 +449,31 @@ async def tombstone_cascade_by_ids(
         return overrides
 
     # `write_versions_by_ids` mirrors the tombstone onto memory_embeddings at its version.
-    return await write_versions_by_ids(
+    await write_versions_by_ids(
         org,
         [r.memory_id for r in rows],
         _tombstone,
         ch=ch,
     )
+    return tombstoned
 
 
 async def tombstone_by_id(
     org: str,
     memory_id: str,
     *,
-    version: int | None = None,
     ch: _CHClient | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     """Tombstone one row by memory_id (UUID), cascading to the embeddings
-    tier (see tombstone_cascade_by_ids). `version` is the tombstone's, a
-    fresh one when None.
+    tier (see tombstone_cascade_by_ids), and return what that returns.
 
     Used by `memory.dedup_resolve` when the decision is to kill one
     side of the duplicate pair, keyed on the surrogate UUID rather
     than the identity tuple."""
-    await tombstone_cascade_by_ids(
+    return await tombstone_cascade_by_ids(
         org,
         [memory_id],
         when=naive_utc_now(),
-        version=version,
         ch=ch,
     )
 
