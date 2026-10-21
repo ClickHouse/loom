@@ -675,7 +675,7 @@ describe("ReviewQueue", () => {
     expect(screen.getAllByText(/Promote publishes this rule to this namespace's knowledge/)).toHaveLength(2);
     expect(
       screen.getByText(
-        /tagged for support-bot: support-bot's context packs, stacks, searches and answers serve it for every user, and other agents' do not; knowledge\.search finds it for anyone/,
+        /tagged for support-bot: support-bot's context packs, stacks, searches and answers serve it for every user, and other agents' reads that name their agent do not; a namespace-wide read \(agent `\*`, memory\.ask's default\) and knowledge\.search find it for anyone/,
       ),
     ).toBeTruthy();
     expect(screen.getByText(/knowledge for every agent: every agent's reads find it/)).toBeTruthy();

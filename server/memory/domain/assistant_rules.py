@@ -38,10 +38,14 @@ def hits_to_ask(top_k: int) -> int:
     return min(top_k * 4, MAX_SEARCH_TOP_K)  # not a setting: headroom for other bots' rules
 
 
+def _folded(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
 def normalized_value(value: str) -> str:
     """The rule as its candidate is keyed: case and spacing folded, a trailing
     period dropped."""
-    return " ".join(value.lower().split()).rstrip(".")
+    return _folded(value).rstrip(".")
 
 
 def candidate_id(org: str, namespace: str, agent: str, memory_key: str, value: str) -> str:
@@ -65,10 +69,6 @@ def cited_assistant_turns(fact: dict[str, Any], messages: list[dict[str, Any]]) 
         for i in fact.get("source_message_indices") or []
         if 0 <= i < len(messages) and messages[i].get("role") == "assistant"
     ]
-
-
-def _folded(text: str) -> str:
-    return " ".join(text.lower().split())
 
 
 def cited_texts(
