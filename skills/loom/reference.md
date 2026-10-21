@@ -27,7 +27,7 @@ on a row.
 | `memory.set` | Store or revise one fact (`memory_key`, `value`, `tags`, `entities`, `confidence`, `valid_at`, `source_resource_id`, `ttl_seconds`). |
 | `memory.set_from_messages` | Hand over a transcript; the server extracts the durable facts under short keys. |
 | `memory.search`‡ | Ranked hits with scores, `abstain` and provenance. `recipe`: `fast`, `balanced`, `quality`, `verbatim`, `temporal`, `graph`. |
-| `memory.ask` | A synthesised answer with citations, or an abstain. |
+| `memory.ask` | A synthesized answer with citations, or an abstain. |
 | `memory.brief` | Orientation on a task: an answer, its grounding, unknowns, what to read next. |
 | `memory.get`, `memory.bulk_get`‡, `memory.list` | Read by exact key, many keys, or a key `prefix`. |
 | `memory.update`, `memory.update_by_id` | Revise an existing row; `if_match_sha256` refuses a stale overwrite. |
@@ -125,8 +125,10 @@ on loses that boost.
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
 Python: `async with agent.run_scope(goal=...) as run:` opens and closes it,
-stamps `run_id` on writes inside, and labels reads with the
-`X-Loom-Run-Id` header (a body `run_id` on a read filters to the run's rows).
+stamps `run_id` on writes inside (working-memory writes included), and
+labels `memory.search` and `memory.ask` with the `X-Loom-Run-Id` header (a
+body `run_id` there filters to the run's rows). `context.pack` and
+working-memory reads take the run's `run_id` from you.
 
 ## Conversations and session briefs
 

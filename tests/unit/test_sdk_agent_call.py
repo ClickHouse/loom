@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from loom import Agent
+from loom import Agent, SyncAgent
 
 
 class _FakeTransport:
@@ -199,6 +199,19 @@ async def test_guide_returns_the_text_of_the_requested_part() -> None:
     path, body = seen[0]
     assert path == "/v1/mentor.guide" and body["part"] == "reference"
     assert text == "# loom"
+
+
+def test_sync_agent_guide_blocks_and_returns_the_text() -> None:
+    import httpx
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"version": "1", "part": "skill", "text": "# loom"})
+
+    with SyncAgent("acme", "support", "assistant", base_url="http://x", api_key="k") as sa:
+        sa.transport._client = httpx.AsyncClient(
+            base_url="http://x", transport=httpx.MockTransport(handler)
+        )
+        assert sa.guide() == "# loom"
 
 
 @pytest.mark.parametrize("via_env", [False, True])

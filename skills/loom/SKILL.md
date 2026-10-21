@@ -16,16 +16,19 @@ and served over HTTP and, nearly all, over MCP; the SDKs wrap HTTP:
 
 | You reach it through | An op is called as |
 |---|---|
-| MCP (`<loom>/mcp`) | the tool `loom_<op, dots as underscores>` (`memory.set` → `loom_memory_set`); an op your tool list does not show runs through `loom_op {op, arguments}`, except the ops marked ‡ (SDK and HTTP only) |
+| MCP (`<loom>/mcp`) | the tool `loom_<op, dots as underscores>` (`memory.set` → `loom_memory_set`); an op your tool list does not show runs through `loom_op {op, arguments}` (read ops only on a read-only connection), except the ops marked ‡ (SDK and HTTP only) |
 | Python SDK (`from loom import Agent`) | a typed helper (`agent.memory.set(...)`) or `await agent.call("memory.set", {...})` |
 | TypeScript SDK (`@clickhouse/loom`) | `agent.call("memory.set", {...})`, or the generated `loom.memory.set({...})` |
 | HTTP | `POST /v1/memory.set` with `Authorization: Bearer <token>` and a JSON body |
 
 The fields are the same everywhere. `loom_op {op: "help", query: "<words>"}`
 (MCP) finds ops by words, with their arguments; `ops.capabilities` lists
-every op this server serves, with the role each one needs. The full catalog of planes is in `reference.md` beside this file;
-over the wire, `mentor.guide` with `part: "reference"` returns it. It marks
-experimental ops with †: their fields may change between releases.
+every op this server serves, with the role each one needs.
+
+The full catalog of planes is the reference: `mentor.guide` with
+`part: "reference"` returns it (installed as a skill, it is `reference.md`
+beside this file). It marks experimental ops with †, whose fields may
+change between releases, and ops MCP does not serve with ‡.
 Experimental ops this file names: `blacklist.add`, `context.fetch`,
 `context.offload`, `decision.record`, `knowledge.upsert`, `memory.history`,
 `memory_schema.propose`, `mentor.guide`, `procedure.record_run`,
@@ -57,9 +60,12 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
    `include_knowledge`, `include_conversations` or `include_runs` when the
    task needs them.
 2. **Open a run** for a task with an outcome: `run.begin(goal=...)`, then
-   pass its `run_id` on your writes. On a read, send it as the
-   `X-Loom-Run-Id` header instead: a body `run_id` on a read filters to the
-   run's own rows. The Python SDK's `agent.run_scope(...)` does both.
+   pass its `run_id` in the body of your writes, your working-memory calls
+   and `context.pack`. On `memory.search`‡ and `memory.ask`, send it as the
+   `X-Loom-Run-Id` header instead: there a body `run_id` filters to the
+   run's own rows. The Python SDK's `agent.run_scope(...)` does this for
+   writes and those two reads; pass `run_id` yourself to `context.pack` and
+   working-memory reads.
 3. **Search once per question.** `search.query` (`loom_search` over MCP)
    covers memory, profile, knowledge and conversations in one call;
    `memory.ask` returns a cited answer. Do not search before writing a fact
@@ -126,10 +132,20 @@ fixes `org` and the namespaces you may read and write. A namespace is the
 read boundary: everyone who reads it reads every row in it. On writes, set
 `agent` to your stable name (authorship, not isolation), `user_id` to the
 end user when you serve many, `session_id` to the conversation or job, and
-`run_id` to the task execution. On a recall read (`memory.search`‡,
-`memory.ask`, `memory.list`), each of `user_id`, `session_id` and `run_id`
-in the body narrows the read to those rows: send only the narrowing you
-mean, such as `user_id` to read one user's memories. A token minted with an
+`run_id` to the task execution. On reads the same fields select rows:
+
+- `memory.search`‡ and `memory.ask` read every author unless the body names
+  an `agent`; a `user_id`, `session_id` or `run_id` there narrows the read
+  to those rows. Send only the narrowing you mean, such as `user_id` to
+  read one user's memories.
+- `memory.list` matches `agent`, `user_id` and `session_id` exactly, an
+  omitted one as `-`; `"*"` on a field reads every value. It ignores
+  `run_id`.
+- `agent.call` in both SDKs stamps your `agent` and `-` for the rest; pass
+  `agent: "*"` (and `"*"` for `user_id` or `session_id` on `memory.list`)
+  to read beyond your own rows.
+
+A token minted with an
 `own_user` read scope refuses a read without `user_id` (400
 `IDENTITY_INCOMPLETE`) rather than widening it, unless it is pinned to one
 user (as an end user's token is), which reads that user's rows.
