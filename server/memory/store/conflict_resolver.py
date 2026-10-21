@@ -24,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
-from server.core.naming import SENTINEL, is_anonymous_user
+from server.core.naming import SENTINEL, is_anonymous_user, same_session
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
 
@@ -166,6 +166,15 @@ async def unjudged_conflicted_rows(
     ch = ch or _default_client()
     params = {"lim": int(limit), "capped": _capped(capped), "seed": int(seed)}
     return await ch.query_all(_in_turns(_UNJUDGED), params)
+
+
+async def erasing_orgs(*, ch: _CHClient | None = None) -> list[str]:
+    """The orgs with an erasure `under_erasure` answers True for."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        f"SELECT DISTINCT org FROM ({_ERASING_ORGS}) SETTINGS select_sequential_consistency = 1"
+    )
+    return [str(r["org"]) for r in rows]
 
 
 async def under_erasure(org: str, *, ch: _CHClient | None = None) -> bool:
@@ -342,11 +351,13 @@ async def cluster_peers(
     limit: int,
     prefer: frozenset[str] = frozenset(),
     shown: frozenset[str] = frozenset(),
+    row_id: str = "",
     ch: _CHClient | None = None,
 ) -> Cluster:
-    """Up to `limit` live peers of the queue row `row`, each with `similarity`: its flags
-    (`prefer`, those not `shown` before first) and its key's other sessions take places
-    ahead of the nearest rows, so the pairs it is owed for are always judged."""
+    """Up to `limit` live peers of the queue row `row` (whose memory id is `row_id`), each
+    with `similarity`: its flags (`prefer`, those not `shown` before first) and its key's
+    other sessions take places ahead of the nearest rows, so the pairs it is owed for are
+    always judged."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -378,6 +389,16 @@ async def cluster_peers(
         for r in rows
         if key_identity(r) in found
     ]
+    if is_anonymous_user(str(row["user_id"])):
+        # Another session of the anonymous user is a separate task: the resolver acts on
+        # such a pair only to clear a flag between the two, so an unflagged one takes no place.
+        peers = [
+            p
+            for p in peers
+            if str(p["memory_id"]) in prefer
+            or row_id in p["conflict_with"]
+            or same_session(str(p["session_id"]), str(row["session_id"]))
+        ]
     peers.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     key = str(row["memory_key"])
     flagged = [p for p in peers if str(p["memory_id"]) in prefer]
@@ -606,6 +627,7 @@ __all__ = [
     "asserted_versions",
     "cluster_peers",
     "dead_flags",
+    "erasing_orgs",
     "key_identity",
     "owed_rows",
     "protected_ids",

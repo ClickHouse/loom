@@ -786,6 +786,41 @@ async def test_a_spelling_twin_of_the_row_is_its_peer(ch, wired, monkeypatch) ->
     assert [(p["memory_key"], p["user_id"]) for p in cluster.peers] == [("office", "")]
 
 
+async def test_other_anonymous_sessions_take_no_place_from_a_same_session_peer(
+    ch, wired, monkeypatch
+) -> None:
+    """Eight other sessions of the anonymous user hold the row's key, nearer than its
+    same-session peer. They have no flag with the row, so they take no place in its
+    cluster, and the same-session pair is judged."""
+    from server.memory.app import after_write, conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, llm = wired
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    with monkeypatch.context() as m:
+        m.setattr(conflicts, "check_on_commit", clear)
+        for i in range(8):
+            await _set(org, f"other{i}", "status", f"build {i} is green", user="-")
+        await _set(org, "s1", "office_city", "The office is in Paris", user="-")
+        await _set(org, "s1", "status", "The office moved to Rome", user="-")
+        await after_write.drain()
+    for i in range(8):
+        vec = _vec((300, 1.0), (301, 0.01 * i))
+        await _place(ch, org, f"other{i}", "status", vec, owed=False, user="-")
+    await _place(ch, org, "s1", "office_city", _vec((300, 0.9), (302, 0.436)), owed=False, user="-")
+    await _place(ch, org, "s1", "status", _vec((300, 1.0)), owed=True, user="-")
+    (row,) = [r for r in await queue.owed_rows(limit=50) if r["org"] == org]
+    cluster = await queue.cluster_peers(row, floor=0.6, limit=8, ch=ch)
+    assert [(p["memory_key"], p["session_id"]) for p in cluster.peers] == [("office_city", "s1")]
+    await run_pass()
+    assert llm.calls == ["status"]
+
+
 async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, monkeypatch) -> None:
     """memory.set and memory.update_by_id from s2 of a key s1 holds live are owed a
     judgement under auto_reinforce, though no peer sits near them."""
@@ -1144,6 +1179,38 @@ async def test_a_retirement_waits_for_a_conditional_revision_of_the_peer(
     after = (await _rows(ch, org))["office_city"]
     assert after["status"] == "active" and after["version"] > peer["version"]
     assert out["retired"] == 0 and out["skipped_changed"] == 1
+
+
+async def test_a_set_on_the_winner_after_the_re_read_retires_nothing(
+    ch, wired, monkeypatch
+) -> None:
+    """memory.set takes no key lock, so a set can land on the winner after the re-read
+    under the pair's locks. The supersede reads the winner again and retires nothing
+    once it holds another value than the one judged."""
+    from server.memory.app import conflicts
+    from server.memory.domain.conflicts import ConflictResult
+    from server.memory.workers.conflict_resolver import run_pass
+
+    org, _ = wired
+    await _pair(ch, org, "office_city", "office_location", 1980)
+    real_refines = conflicts.apply_refines
+
+    async def clear(**kw: Any) -> ConflictResult:
+        return ConflictResult(verdict="clear", peers=[])
+
+    async def set_then_refine(**kw: Any) -> int:
+        # The barrier: the set lands after the re-read, before the supersede.
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(conflicts, "check_on_commit", clear)
+            await _set(org, "s2", "office_location", "The office moved to Milan")
+        return await real_refines(**kw)
+
+    monkeypatch.setattr(conflicts, "apply_refines", set_then_refine)
+    out = await run_pass()
+    after = await _rows(ch, org)
+    assert after["office_city"]["status"] == "active"
+    assert after["office_city"]["superseded_by"] is None
+    assert out["retired"] == 0
 
 
 @pytest.mark.parametrize("clear_fails", [False, True])

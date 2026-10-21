@@ -42,12 +42,38 @@ def _refusal(relation) -> str:
     return caught.value.errors()[0]["msg"]
 
 
-@pytest.mark.parametrize(("verb", "stored"), [("has", "''"), ("is a", "'a'"), ("좋아한다", "''")])
+@pytest.mark.parametrize(("verb", "stored"), [("has", "''"), ("is a", "'a'")])
 def test_a_refused_relation_names_what_it_was_stored_as(verb, stored):
     message = _refusal(("Alice", verb, "cat"))
     assert f"{verb!r} is stored as {stored}" in message
-    assert "copulas" in message and "letters outside a–z" in message
+    assert "copulas" in message and "punctuation" in message
     assert "content verb such as 'owns'" in message
+
+
+@pytest.mark.parametrize(
+    ("verb", "stored"),
+    [
+        ("владеет", "владеет"),
+        ("ВЛАДЕЕТ", "владеет"),
+        ("所有", "所有"),
+        ("좋아한다", "좋아한다"),
+        ("रखता है", "रखता_है"),
+        # The stemmer cuts the final e, as it cuts "owns" to "own"; the è stays.
+        ("possède", "possèd"),
+        ("posse\u0300de", "possèd"),  # the same word typed as e and a combining accent
+    ],
+)
+def test_a_relation_in_any_script_keeps_its_letters(verb, stored):
+    from server.memory.api.models_crud import _relation_verb
+    from server.memory.domain.graph_quality import canonical_relation
+    from server.memory.domain.search_text import canonicalize_verb
+
+    for model in _inputs(("Ana", verb, "car")):
+        assert model.relations == [("Ana", verb, "car")]
+    assert _relation_verb(verb) == stored
+    # An extracted relation is canonicalised once when parsed and again when written:
+    # it lands on the same predicate as a point write's.
+    assert canonical_relation(canonicalize_verb(canonicalize_verb(verb))).verb == stored
 
 
 @pytest.mark.parametrize(
@@ -55,9 +81,9 @@ def test_a_refused_relation_names_what_it_was_stored_as(verb, stored):
     [
         # Only too short: nothing was dropped, so the refusal names no drop.
         ("x", "'x' is too short: a relation needs at least 2 characters"),
-        # Punctuation and a Latin letter outside a-z are dropped, and named as such.
-        ("!!", "'!!' is stored as '' (copulas, auxiliaries, punctuation and letters outside a–z"),
-        ("é", "'é' is stored as '' (copulas, auxiliaries, punctuation and letters outside a–z"),
+        # Punctuation is dropped, and named as such.
+        ("!!", "'!!' is stored as '' (copulas, auxiliaries and punctuation are dropped)"),
+        ("é!", "'é!' is stored as 'é' (copulas, auxiliaries and punctuation are dropped)"),
     ],
 )
 def test_a_refusal_names_a_drop_only_when_there_was_one(verb, says):

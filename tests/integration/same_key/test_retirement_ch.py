@@ -7,7 +7,7 @@ import asyncio
 import contextlib
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -638,6 +638,75 @@ async def test_a_pass_that_repaired_4000_failures_marks_them_all(ch: Any, org: s
     assert not await list_projection_failures(org=org, limit=1, ch=ch)
     resolved = await list_projection_failures(org=org, status="resolved", limit=5000, ch=ch)
     assert len(resolved) == 4000
+
+
+class _OnlyOrgs:
+    """`ch` for the repair scan, limited to this test's orgs (the server holds others')."""
+
+    def __init__(self, ch: Any, orgs: list[str]) -> None:
+        self._ch, self._orgs = ch, orgs
+
+    async def query_all(self, sql: str, params: Any = None) -> Any:
+        sql = sql.replace("WHERE ", "WHERE org IN {only_orgs:Array(String)} AND ", 1)
+        return await self._ch.query_all(sql, params={**(params or {}), "only_orgs": self._orgs})
+
+
+async def test_failures_a_retry_would_leave_pending_hold_no_place_in_the_scan(
+    ch: Any, org: str
+) -> None:
+    """A pass's oldest failures all from an org whose erasure failed (due a retry), or
+    all follow intents within their grace, would come back `pending` on every pass;
+    the scan leaves them out, so another org's failure is reached."""
+    from server.memory.app.projection_failures import (
+        EDGES_DROP_UNDECLARED,
+        FOLLOW_OWED,
+        projection_failure_row,
+        scan_active_projection_failures,
+    )
+
+    erasing, young, other = f"{org}-x", f"{org}-y", f"{org}-z"
+    await ch.insert(
+        "loom.erasure_requests",
+        [
+            {
+                "id": str(uuid.uuid4()),
+                "org": erasing,
+                "scope_type": "user",
+                "scope_value": USER,
+                "requester": "test",
+                "status": "failed",
+                "failure_reason": "boom",
+                "version": 1,
+            }
+        ],
+    )
+    now = naive_utc_now()
+    rows = []
+    for i in range(3):
+        r = projection_failure_row(
+            org=erasing, namespace=NS, projection=EDGES_DROP_UNDECLARED, error="e", payload={}
+        )
+        r["created_at"] = datetime(2001, 1, 1, 0, i)
+        rows.append(r)
+        r = projection_failure_row(
+            org=young, namespace=NS, projection=FOLLOW_OWED, error="e", payload={}
+        )
+        r["created_at"] = now - timedelta(seconds=60 - i)
+        rows.append(r)
+    r = projection_failure_row(
+        org=other, namespace=NS, projection=EDGES_DROP_UNDECLARED, error="e", payload={}
+    )
+    r["created_at"] = now
+    rows.append(r)
+    await ch.insert("loom.memory_projection_failures", rows, settings={"async_insert": 0})
+    try:
+        scan = _OnlyOrgs(ch, [erasing, young, other])
+        scanned = await scan_active_projection_failures(limit=3, ch=scan)
+        assert [f.org for f in scanned] == [other]
+    finally:
+        await ch.execute(
+            "DELETE FROM loom.erasure_requests WHERE org = {o:String}", params={"o": erasing}
+        )
 
 
 @pytest.mark.parametrize("bulk", [False, True])

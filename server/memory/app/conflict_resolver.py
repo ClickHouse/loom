@@ -481,8 +481,9 @@ async def _settle_locked_pair(
     why: Mapping[str, str],
 ) -> tuple[dict[str, Any] | None, Retired | None]:
     """Act on one pair's verdict as both rows stand under their key locks."""
-    # Known gap, by design: an unconditional memory.set takes no lock, so one landing on
-    # the winner between this re-read and the supersede is not seen here.
+    # memory.set takes no key lock, so a set can still land on the winner after this
+    # re-read: the supersede (`apply_refines` with the judged hash) reads the winner again
+    # and retires nothing once it holds another value.
     row, head = await asyncio.gather(
         _head(org, str(judged.memory_id)), _head(org, str(peer["memory_id"]))
     )
@@ -637,6 +638,7 @@ async def resolve_row(
         limit=int(settings.memory_conflict_resolver_max_peers),
         prefer=frozenset(str(x) for x in row.conflict_with),
         shown=shown,
+        row_id=str(row.memory_id),
     )
     peers = cluster.peers
     if peers:
@@ -760,24 +762,24 @@ async def _judge_and_act(
     counts: Counts,
 ) -> set[str]:
     """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
-    found = await _assertion_order(org, namespace, [row, *peers])
-    # A pair a person's Undo settled skips the judge call; for the others the re-read
-    # under the locks decides.
-    settled = {str(p["memory_id"]) for p in peers if _undone(row, p, found.when, found.undos)}
-    counts.skipped_no_action += len(settled)
     # Another session of the anonymous user can only be cleared (`_cross_session`): a
     # pair with no flag between them, on either side, has nothing a call could change.
+    # The cluster leaves such peers out; this keeps the rule where the verdicts act.
     flagged = {str(x) for x in row.conflict_with}
-    peers = [
+    kept = [
         p
         for p in peers
-        if str(p["memory_id"]) not in settled
-        and (
-            str(p["memory_id"]) in flagged
-            or str(row.memory_id) in p["conflict_with"]
-            or not _cross_session(row, p)
-        )
+        if str(p["memory_id"]) in flagged
+        or str(row.memory_id) in p["conflict_with"]
+        or not _cross_session(row, p)
     ]
+    counts.skipped_no_action += len(peers) - len(kept)
+    found = await _assertion_order(org, namespace, [row, *kept])
+    # A pair a person's Undo settled skips the judge call; for the others the re-read
+    # under the locks decides.
+    settled = {str(p["memory_id"]) for p in kept if _undone(row, p, found.when, found.undos)}
+    counts.skipped_no_action += len(settled)
+    peers = [p for p in kept if str(p["memory_id"]) not in settled]
     if not peers:
         return set()
     new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in found.when.items()})

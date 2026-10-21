@@ -17,6 +17,8 @@ from datetime import date, datetime, timedelta
 _SPACE_RE = re.compile(r"\s+")
 _VOWELS = frozenset("aeiouy")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
+_NOT_WORD_RE = re.compile(r"\W+")
+_VERB_GAP_RE = re.compile(r"[\s_]+")
 _ARTICLE_RE = re.compile(r"(?:the|a|an)\s+")
 _SINGLE_VALUED_RELATIONS = {
     "works_at",
@@ -468,9 +470,10 @@ def canonical_relation(
 ) -> CanonicalRelation:
     """Normalize a relation verb and validate against an optional ontology."""
 
-    verb = str(raw or "").strip().lower().replace(" ", "_")
-    verb = re.sub(r"[^a-z0-9_]+", "_", verb)
-    verb = re.sub(r"_+", "_", verb).strip("_")
+    # Letters of every script stay, with the vowel signs of their words, as in entity
+    # names ("владеет", "possède", "所有"); anything else separates words.
+    verb = _NOT_WORD_RE.sub(_marks_kept, fold_case(str(raw or "").strip()))
+    verb = _VERB_GAP_RE.sub("_", verb).strip("_")
     accepted_set = {v.strip().lower() for v in (accepted_verbs or set()) if v.strip()}
     accepted = not accepted_set or verb in accepted_set
     confidence = float(default_confidence if accepted else min(default_confidence, 0.5))

@@ -460,7 +460,10 @@ async def scan_active_projection_failures(
     limit: int = 50,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
-    """Return active failures across orgs for the repair worker, oldest first."""
+    """Return active failures across orgs for the repair worker, oldest first. Failures
+    a retry would only answer `pending` for are left out, so they hold no place ahead of
+    the rest: those of an org under erasure and follow intents within their grace."""
+    from server.memory.store.conflict_resolver import erasing_orgs
 
     ch = ch or get_client()
     rows = await ch.query_all(
@@ -482,10 +485,18 @@ async def scan_active_projection_failures(
             resolved_at
         FROM loom.memory_projection_failures
         WHERE status = 'active'
+          AND org NOT IN {erasing:Array(String)}
+          AND NOT (projection = {follow_owed:String}
+                   AND created_at > now() - INTERVAL {grace:UInt32} SECOND)
         ORDER BY created_at ASC, failure_id ASC
         LIMIT {lim:UInt32}
         """,
-        params={"lim": int(limit)},
+        params={
+            "lim": int(limit),
+            "erasing": await erasing_orgs(ch=ch),
+            "follow_owed": FOLLOW_OWED,
+            "grace": FOLLOW_OWED_GRACE_S,
+        },
     )
     return [_row_from_ch(dict(row)) for row in rows]
 

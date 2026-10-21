@@ -263,7 +263,7 @@ _FactRelation = Annotated[
     _canonical_at_least(
         2,
         _relation_verb,
-        "copulas, auxiliaries, punctuation and letters outside a–z",
+        "copulas, auxiliaries and punctuation",
         "a relation needs at least 2 characters: name it with a content verb such as 'owns'",
     ),
 ]

@@ -1077,7 +1077,7 @@ async def _end_triples_slice(
         where += " AND invalid_at IS NULL"
     later = await ch.query_all(
         f"SELECT 1 FROM loom.entity_triples WHERE {where} LIMIT 1"
-        " SETTINGS select_sequential_consistency = 1",
+        " SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1",
         params=params,
     )
     if not later:
@@ -1391,7 +1391,8 @@ async def reopen_closed_by(
 async def open_triples_among(
     ch: Any, *, org: str, namespace: str, triples: list[tuple[str, str, str]]
 ) -> set[tuple[str, str, str]]:
-    """Which of `triples` are open."""
+    """Which of `triples` are open, read on the fly: a close just made is a mutation
+    that may still be pending."""
     if not triples:
         return set()
     rows = await ch.query_all(
@@ -1402,7 +1403,7 @@ async def open_triples_among(
           AND namespace = {ns:String}
           AND (subject, relation, object) IN {triples:Array(Tuple(String, String, String))}
           AND valid_to IS NULL AND invalid_at IS NULL
-        SETTINGS select_sequential_consistency = 1
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
         params={"org": org, "ns": namespace, "triples": triples},
     )

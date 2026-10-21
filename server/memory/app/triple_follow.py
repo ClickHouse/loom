@@ -66,7 +66,7 @@ async def _rows_along_chains(
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND memory_id IN {{ids:Array(UUID)}}
-            SETTINGS select_sequential_consistency = 1
+            SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
             """,
             params={"org": input.org, "ns": input.namespace, "ids": ids},
         )
@@ -210,6 +210,8 @@ async def _plan_chunk(
             for t in s.loser_triples | s.winner_triples | s.loser_inferred | s.winner_inferred
         }
     )
+    # On the fly, as the chain and row reads: the closes an earlier follow or revision
+    # made are mutations that may still be pending.
     open_triples = await ch.query_all(
         """
         SELECT subject, relation, object, confidence, provenance
@@ -222,7 +224,7 @@ async def _plan_chunk(
                 AND positionCaseInsensitiveUTF8({txt:String}, object) > 0)
                OR (subject, relation, object)
                   IN {linked:Array(Tuple(String, String, String))})
-        SETTINGS select_sequential_consistency = 1
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
         params={"org": input.org, "ns": input.namespace, "txt": text, "linked": linked},
     )
@@ -275,7 +277,7 @@ async def _triples_stated(
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ((NOT inferred AND (memory_id, content_sha256) IN {keys:Array(Tuple(UUID, String))})
                OR (inferred AND memory_id IN {ids:Array(UUID)}))
-        SETTINGS select_sequential_consistency = 1
+        SETTINGS select_sequential_consistency = 1, apply_mutations_on_fly = 1
         """,
         params={
             "org": input.org,

@@ -177,6 +177,26 @@ async def test_open_triples_are_looked_up_by_their_exact_key(ch, org) -> None:
     assert found == {("user", "live_in", "berlin germany")}
 
 
+async def test_a_triple_closed_a_moment_ago_does_not_read_open(ch, org) -> None:
+    # A close is a mutation that may still be pending when the next read runs.
+    from server.memory.app.projections import close_triples, entity_triple_row, open_triples_among
+
+    t = ("office", "located_in", "paris")
+    row = entity_triple_row(
+        org,
+        NS,
+        *t,
+        provenance="extracted",
+        confidence=1.0,
+        adapter_name="itest",
+        last_seen=datetime(2026, 10, 1),
+        seen_at=datetime(2026, 10, 1),
+    )
+    await ch.insert("loom.entity_triples", [row], settings={"wait_for_async_insert": 1})
+    await close_triples(ch, org=org, namespace=NS, closes=[(*t, datetime(2026, 10, 2), None)])
+    assert await open_triples_among(ch, org=org, namespace=NS, triples=[t]) == set()
+
+
 async def test_a_first_person_correction_closes_the_triple_its_row_stated(ch, org) -> None:
     # "My" is stored as `user`, which the row's text never names.
     paris = await _stated(ch, org, "s1", "My favourite city is Paris")
