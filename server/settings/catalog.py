@@ -2232,6 +2232,10 @@ class MemorySettings(BaseModel):
     # Structured profiles one pass builds; the namespaces in each page the pass reads
     # share it equally, and the pass reads on while budget is left. At least 1.
     structured_profile_max_users_per_pass: Annotated[int, LIVE] = Field(default=20, ge=1)
+    # Seconds a structured profile pass may run before the supervisor abandons it. The
+    # pass takes no user in the second half, so the build in flight has that half to
+    # finish, and the users not reached wait for the next pass. Above 0.
+    structured_profile_max_pass_seconds: float = Field(default=600.0, gt=0)
     # Memories read into one structured profile build, highest confidence then newest
     # first. At least 1.
     structured_profile_memory_limit: Annotated[int, LIVE] = Field(default=100, ge=1)

@@ -156,6 +156,7 @@ def test_structured_profile_enabled_switches_the_structured_profile_worker(
 
     row = _row("structured_profile")
     assert row.enabled == "structured_profile_enabled"
+    assert row.max_pass_setting == "structured_profile_max_pass_seconds"
     monkeypatch.setattr(settings, "structured_profile_enabled", True)
     assert registry._is_enabled(row)
     monkeypatch.setattr(settings, "structured_profile_enabled", False)

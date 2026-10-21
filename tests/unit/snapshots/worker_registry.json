@@ -225,13 +225,13 @@
    }
   },
   {
-   "deadline_seconds()": 480.0,
+   "deadline_seconds()": 600.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": 600,
    "interval_seconds": 120,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 600.0,
    "name": "structured_profile",
    "owned_tables": [],
    "pass_callable": {
@@ -886,13 +886,13 @@
    }
   },
   {
-   "deadline_seconds()": 480.0,
+   "deadline_seconds()": 600.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": 600,
    "interval_seconds": 120,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 600.0,
    "name": "structured_profile",
    "owned_tables": [],
    "pass_callable": {
@@ -1391,13 +1391,13 @@
    }
   },
   {
-   "deadline_seconds()": 480.0,
+   "deadline_seconds()": 600.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": 600,
    "interval_seconds": 120,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 600.0,
    "name": "structured_profile",
    "owned_tables": [],
    "pass_callable": {

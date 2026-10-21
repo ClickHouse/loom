@@ -192,7 +192,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   stopped, and each gets an equal share. A namespace with nothing to build spends none,
   so the pass reads on to the next namespaces until its budget is spent or it has
   reached them all; what a namespace leaves goes to the namespaces that used their whole
-  share, from the users their scan already listed. One scan of a
+  share, from the users their scan already listed. A pass may run
+  `LOOM_STRUCTURED_PROFILE_MAX_PASS_SECONDS` (600) before the supervisor abandons it, and
+  takes no user in the second half of that time: the build in flight has the second half
+  to finish, and the users not reached stay listed for the next pass. One scan of a
   namespace lists up to ten times its share, and the next passes take from that list
   until it is drained, the schema changes, or it is
   `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) old; a scan that found every user

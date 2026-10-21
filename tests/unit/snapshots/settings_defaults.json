@@ -913,6 +913,7 @@
  "structured_profile_idle_interval_seconds": 600,
  "structured_profile_interval_seconds": 120,
  "structured_profile_label": "structured_profile",
+ "structured_profile_max_pass_seconds": 600.0,
  "structured_profile_max_users_per_pass": 20,
  "structured_profile_memory_limit": 100,
  "structured_profile_model": "",

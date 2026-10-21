@@ -16,7 +16,9 @@ gets an all-null profile without a model call.
 A pass reaches namespaces in (org, namespace) order from where the last one
 stopped (the pass cursor), and each gets an equal share of the pass's
 budget. A namespace with nothing to build spends none of it, so the pass reads
-on until its budget is spent or it has reached every namespace. A user whose
+on until its budget is spent or it has reached every namespace. Past half of
+`structured_profile_max_pass_seconds` it takes no more users, so its last build
+ends before the supervisor's deadline. A user whose
 build failed is skipped for a while, longer after each failure, and so is a
 namespace whose scan or stored schema failed, until its wait is over or its
 schema changes. A user whose profile row refuses the
@@ -273,13 +275,25 @@ def _cursor() -> tuple[str, str] | None:
     return (str(cursor[0]), str(cursor[1])) if len(cursor) == 2 else None
 
 
+def _out_of_time(stop_at: float) -> bool:
+    return time.monotonic() >= stop_at
+
+
 async def _build_users(
     schema: ActiveSchema,
-    users: list[str],
+    users: list[Behind],
     result: StructuredProfileResult,
+    stop_at: float,
 ) -> None:
-    for user_id in users:
+    for i, b in enumerate(users):
         pass_context.check_stop()
+        if _out_of_time(stop_at):
+            # The users not built go back to the front of the scan list for the next pass.
+            scanned = _scans.get((schema.org, schema.namespace))
+            if scanned is not None:
+                scanned.behind.extendleft(reversed(users[i:]))
+            return
+        user_id = b.user_id
         key = (schema.org, schema.namespace, user_id)
         try:
             dropped = await build_profile(schema, user_id)
@@ -306,7 +320,7 @@ async def _build_users(
             result.values_dropped += dropped
 
 
-def _take(schema: ActiveSchema, limit: int) -> list[str] | None:
+def _take(schema: ActiveSchema, limit: int) -> list[Behind] | None:
     """Up to `limit` users from the namespace's last scan, leaving out those backing
     off and those still at a refusal; None when the caller should scan again: no
     list, one built under another schema or too old, or an incomplete one drained.
@@ -321,11 +335,11 @@ def _take(schema: ActiveSchema, limit: int) -> list[str] | None:
         return None
     waiting = set(backing_off(schema.org, schema.namespace))
     refused = refused_at(schema.org, schema.namespace)
-    out: list[str] = []
+    out: list[Behind] = []
     while scanned.behind and len(out) < limit:
         b = scanned.behind.popleft()
         if b.user_id not in waiting and refused.get(b.user_id) != (b.digest, b.profile_version):
-            out.append(b.user_id)
+            out.append(b)
     return out
 
 
@@ -333,7 +347,7 @@ async def _scan(
     schema: ActiveSchema,
     result: StructuredProfileResult,
     limit: int,
-) -> list[str] | None:
+) -> list[Behind] | None:
     """Up to `limit` users of the namespace to build, from its last scan while that
     holds, else from a new one that keeps SCAN_FACTOR times as many for the passes
     after; None (counted and noted) when the scan fails, so one namespace never
@@ -392,8 +406,11 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
     with record_pass("structured_profile") as rec:
         _prune()
         off = sorted(await customer.switched_off_orgs())
-        page = settings.structured_profile_max_users_per_pass
-        budget = page
+        max_users = settings.structured_profile_max_users_per_pass
+        budget = max_users
+        # The pass takes no user in the second half of its deadline, which leaves the
+        # last build that half to finish in.
+        stop_at = time.monotonic() + settings.structured_profile_max_pass_seconds / 2
         # Namespaces reached this pass. Pages are read from the last one reached until
         # the budget is spent or the rotation comes back round: a namespace with
         # nothing to build spends no budget, so the namespaces after it still get their turn.
@@ -403,7 +420,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
         hungry: list[ActiveSchema] = []
         after = _cursor()
         wrapped = False
-        while budget > 0 and not wrapped:
+        while budget > 0 and not wrapped and not _out_of_time(stop_at):
             # Every namespace reached can build at least once, so a page holds at most
             # `budget`. A namespace backing off (its scan or its schema failed) waits
             # like a user does, left out in SQL so the limit counts only namespaces
@@ -411,13 +428,13 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             rows = await profile_schemas.list_active(
                 exclude_orgs=off,
                 after=after,
-                limit=page,
+                limit=budget,
                 only=cfg.only,
                 waiting=namespaces_waiting(),
             )
             # A short page holds every namespace left; one already reached means the
             # rotation came back round.
-            wrapped = len(rows) < page or any(_key(r) in reached for r in rows)
+            wrapped = len(rows) < budget or any(_key(r) in reached for r in rows)
             rows = [r for r in rows if _key(r) not in reached]
             reached.update(_key(r) for r in rows)
             if rows:
@@ -425,7 +442,7 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
             spaces = [s for s in (_parse(r, result) for r in rows) if s is not None]
             share = math.ceil(budget / len(spaces)) if spaces else 0
             for schema in spaces:
-                if budget <= 0:
+                if budget <= 0 or _out_of_time(stop_at):
                     break
                 pass_context.check_stop()
                 result.namespaces_reached += 1
@@ -441,19 +458,19 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
                 budget -= len(users)
                 if len(users) == limit:
                     hungry.append(schema)
-                await _build_users(schema, users, result)
+                await _build_users(schema, users, result, stop_at)
         for schema in hungry:
-            if budget <= 0:
+            if budget <= 0 or _out_of_time(stop_at):
                 break
             pass_context.check_stop()
             users = _take(schema, budget) or []
             budget -= len(users)
-            await _build_users(schema, users, result)
+            await _build_users(schema, users, result, stop_at)
         # Idle only when the rotation came round and the pass took no user: a user
         # taken but not written (current, sources moved, refused) may leave others
         # behind in the scan list. A pass that took none reached every namespace it read.
-        took_none = budget == page
-        if wrapped and took_none and not result.errors:
+        took_none = budget == max_users
+        if wrapped and took_none and not result.errors and not _out_of_time(stop_at):
             pass_context.mark_idle()
         rec.outcome = dataclasses.asdict(result)
     return result

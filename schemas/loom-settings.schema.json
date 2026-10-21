@@ -5065,6 +5065,12 @@
           "type": "string",
           "description": "`memory_key` of the structured profile row."
         },
+        "structured_profile_max_pass_seconds": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a structured profile pass may run before the supervisor abandons it. The pass takes no user in the second half, so the build in flight has that half to finish, and the users not reached wait for the next pass. Above 0."
+        },
         "structured_profile_max_users_per_pass": {
           "default": 20,
           "minimum": 1,

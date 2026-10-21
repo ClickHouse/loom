@@ -258,6 +258,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "structured_profile_enabled",
         "structured_profile_interval_seconds",
         idle_interval="structured_profile_idle_interval_seconds",
+        max_pass_setting="structured_profile_max_pass_seconds",
     ),
     _Worker(
         "reflection_distill",

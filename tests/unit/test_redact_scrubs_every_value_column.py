@@ -92,7 +92,7 @@ async def test_both_version_tables_scrub_every_text_column() -> None:
         name = _table(sql).removeprefix("loom.")
         assert _stored_text_columns(name) <= cols, sorted(_stored_text_columns(name) - cols)
         assert {"redacted_at", "redaction_reason"} <= cols
-        # One version only: the live head shares the memory_id.
+        # Only the listed (memory_id, version) pairs: the other versions share the memory_id.
         assert "(memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}" in sql
 
 

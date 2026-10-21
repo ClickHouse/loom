@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -192,6 +193,37 @@ async def test_a_pass_stopped_between_users_builds_no_more(
     with pytest.raises(pass_context.PassStopped):
         await w.run_pass(_cfg(("o2", "a")))
     assert world["built"] == [("o2", "a", "u0")]
+
+
+@pytest.mark.asyncio
+async def test_a_slow_pass_stops_taking_users_halfway_to_its_deadline(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
+) -> None:
+    clock = [0.0]
+    monkeypatch.setattr(w, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    real_build = w.build_profile
+
+    async def slow_build(schema: w.ActiveSchema, user_id: str) -> int | None:
+        clock[0] += 30  # each build takes 30 of the pass's 100 seconds
+        return await real_build(schema, user_id)
+
+    monkeypatch.setattr(w, "build_profile", slow_build)
+    settings_override(
+        structured_profile_max_users_per_pass=5, structured_profile_max_pass_seconds=100
+    )
+    ctx = pass_context.begin("structured_profile")
+    await w.run_pass(_cfg(("o2", "a")))
+    # The third build would start at 60 s, past half the deadline.
+    assert world["built"] == [("o2", "a", "u0"), ("o2", "a", "u1")]
+    assert [b.user_id for b in w._scans[("o2", "a")].behind] == ["u2", "u3", "u4"]
+    assert not ctx.idle
+
+    # The next pass starts with the users the last one left, without a new scan.
+    await w.run_pass(_cfg(("o2", "a")))
+    assert world["built"][2:] == [("o2", "a", "u2"), ("o2", "a", "u3")]
+    assert world["scans"] == 1
 
 
 @pytest.mark.asyncio
