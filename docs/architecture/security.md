@@ -648,6 +648,38 @@ Loom does not classify stored text as instruction-like and refuses nothing on th
 basis. The read-side bounds (`read_scope`, `top_k`, the exposure ledger, breadth budgets)
 are in [SECURITY.md](../../SECURITY.md#retrieval-and-memory-leakage).
 
+### Extraction policy
+
+An org admin sets rules for what extraction never stores, once for the org and
+optionally added to for a namespace (`extraction_policy.set`, audited, `org_admin` of
+that org only; an end-user token holds `viewer` and cannot set, clear or read one). The
+rows live in `loom.extraction_policies`; every server keeps a copy, read at most every
+`LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` and trusted for no longer than
+`LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS`. Past that it fails closed: inline
+extraction answers 503, and queued requests and worker passes wait. A replica of a build
+that predates the policy table extracts without it; set a policy once every replica runs
+a build that reads it ([rolling upgrades](rolling-upgrades.md)).
+
+The handler reads the policy for the request's `(org, namespace)` itself; no request
+field carries it. Each model call of the memory, knowledge and observe planes that
+writes stored text from raw text (fact extraction with its retries and coverage sweep,
+the typed-record value stage, the session digest, observation distillation,
+conversation summaries and titles, session briefs and `bulk_set` context lines) ends
+its system prompt with it, after the request's `extraction_instructions` and any retry
+addendum, in a delimited block that states it outranks them and the messages. The
+deterministic passes that would add rows the model left out, or copy from the raw turns
+what the model did not write, do not run under a policy, and the response says so
+(`under_operator_policy`). The rule is given to the model, not checked against what it
+returns; verbatim evidence, chunks and observations are stored as sent. Model passes
+over rows already stored rather than over raw text do not add it, such as period
+digests, profile consolidation, contrast reflections, `memory.consolidate` merges, the
+structured profile worker (`server/memory/workers/structured_profile.py`) and the
+entity extractor (`server/memory/workers/entity_extractor.py`); those rows include
+`memory.set` values, which no policy filtered. A namespace policy covers that namespace
+only, not its child collections. The
+[extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists
+the paths.
+
 ## Sensitivity
 
 `server/memory/domain/sensitivity.py` classifies a value with deterministic regexes. It is
@@ -980,6 +1012,7 @@ pods, and the upload never replaces an object.
 | Rate limiter                | `server/core/ratelimit.py` (`Limiter.check`, `op_class_for`), `server/core/ratelimit_shared.py`                             |
 | Blacklist                   | `server/memory/app/blacklist_guard.py` (`enforce_on_insert`), `server/memory/app/blacklist_sweep.py`                        |
 | Prompt fence                | `server/memory/domain/prompt_fence.py`                                                                                      |
+| Extraction policy           | `server/memory/app/extraction_policy.py` (`effective`), `server/memory/domain/extraction_policy.py`                         |
 | Sensitivity                 | `server/memory/domain/sensitivity.py`, `server/memory/app/sensitivity_sweep.py`                                             |
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |

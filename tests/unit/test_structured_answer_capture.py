@@ -66,6 +66,7 @@ async def test_prompt_block_absent_when_flag_off(monkeypatch: pytest.MonkeyPatch
     await extract_from_messages(
         [{"role": "user", "content": "List the parameters in order please."}],
         judge=False,
+        operator_policy="",
     )
     assert "STRUCTURED / ENUMERATED ASSISTANT ANSWERS" not in client.last_system
     assert "EXAMPLE 8f" not in client.last_system
@@ -84,6 +85,7 @@ async def test_prompt_block_present_when_flag_on(monkeypatch: pytest.MonkeyPatch
         [{"role": "user", "content": "List the parameters in order please."}],
         judge=False,
         compact_prompt=False,
+        operator_policy="",
     )
     assert "STRUCTURED / ENUMERATED ASSISTANT ANSWERS" in client.last_system
     assert "EXAMPLE 8f" in client.last_system
@@ -130,6 +132,7 @@ async def test_structured_answer_yields_one_verbatim_ordered_fact(
             {"role": "user", "content": "got it, thanks"},
         ],
         judge=False,
+        operator_policy="",
     )
     answer_facts = [f for f in result.facts if f.question_topic]
     assert len(answer_facts) == 1
@@ -219,6 +222,7 @@ async def test_noncommittal_option_listing_produces_no_fact(
             {"role": "user", "content": "ok I'll think about it"},
         ],
         judge=False,
+        operator_policy="",
     )
     assert result.facts == []
 
@@ -254,6 +258,7 @@ async def test_chatter_does_not_leak_as_topic_keyed_fact(
             {"role": "user", "content": "thanks, I'll try that on the weekend"},
         ],
         judge=False,
+        operator_policy="",
     )
     answer_facts = [f for f in result.facts if f.question_topic]
     assert len(answer_facts) == 1

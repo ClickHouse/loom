@@ -31,6 +31,15 @@ async def overrides_adopted() -> None:
     await asyncio.sleep(max(1.0, refresh) + 1.0)
 
 
+def policy_change_adopted(changed_at: float) -> None:
+    """An extraction policy (or model-call switch) change binds the server
+    process that took it at once and every other one within one refresh of
+    LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS; wait until that bound has passed
+    since `changed_at` (a `time.monotonic()` taken right after the change)."""
+    refresh = float(os.environ.get("LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS", "10"))
+    time.sleep(max(0.0, changed_at + refresh + 1.0 - time.monotonic()))
+
+
 # The ops that change who may read what: a grant, a SCIM group or the collection tree.
 ACL_OPS = frozenset(
     {

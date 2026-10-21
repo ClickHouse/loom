@@ -95,7 +95,7 @@ def test_facets_capped_per_array() -> None:
 
 def test_apply_code_facets_never_mutates_fact_value() -> None:
     fact = ExtractedFact(memory_key="fix_login_npe", value=_SYNTHETIC)
-    out = _apply_code_facets([fact], [])
+    out = _apply_code_facets([fact], [], from_turns=True)
     assert len(out) == 1
     # The atomic value is byte-identical — facets are an additive side-channel.
     assert out[0].value == _SYNTHETIC
@@ -112,15 +112,19 @@ def test_apply_code_facets_pulls_from_cited_source_messages() -> None:
         source_message_indices=[0],
     )
     messages = [{"role": "user", "content": "the crash was in src/auth/login.py"}]
-    out = _apply_code_facets([fact], messages)
+    out = _apply_code_facets([fact], messages, from_turns=True)
     assert out[0].files == ["src/auth/login.py"]
     # Value still untouched.
     assert out[0].value == "Fixed the login bug by null-checking the session."
+    # Under an operator policy only the value counts: the cited turn's path is
+    # what the model may have left out because of the policy.
+    ruled = _apply_code_facets([fact], messages, from_turns=False)
+    assert ruled[0].files == []
 
 
 def test_apply_code_facets_noop_on_non_code_facts() -> None:
     facts = [ExtractedFact(memory_key="food_pref", value="User loves carbonara.")]
-    out = _apply_code_facets(facts, [])
+    out = _apply_code_facets(facts, [], from_turns=True)
     # No code content → returns the SAME list object (no allocation), and the
     # fact carries empty facet arrays.
     assert out is facts

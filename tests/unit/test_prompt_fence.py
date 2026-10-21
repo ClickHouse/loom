@@ -141,8 +141,12 @@ def test_extraction_system_prompt_carries_the_note_only_with_fenced_memories(mon
     msgs = [{"role": "user", "content": "hello there, nothing to remember"}]
     existing = [{"memory_key": "k0", "value": "User lives in Lyon."}]
 
-    asyncio.run(me.extract_from_messages(msgs, existing_memories=existing, judge=False))
+    asyncio.run(
+        me.extract_from_messages(msgs, existing_memories=existing, judge=False, operator_policy="")
+    )
     assert pf.FENCE_NOTE in captured["system"] and "<<memory 0 " in captured["user"]
     # nothing fenced (no existing memories) → no note, prompt unchanged
-    asyncio.run(me.extract_from_messages(msgs, existing_memories=None, judge=False))
+    asyncio.run(
+        me.extract_from_messages(msgs, existing_memories=None, judge=False, operator_policy="")
+    )
     assert pf.FENCE_NOTE not in captured["system"]
