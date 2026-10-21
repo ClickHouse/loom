@@ -540,7 +540,8 @@ class ClickHouseSettings(BaseModel):
     # never set it in production.
     ch_capture_statements: str = ""
     # HTTP connection pool size; the driver default (~8) exhausts under bulk
-    # writes plus workers. Size to expected request concurrency.
+    # writes plus workers. Size to expected request concurrency plus the connections
+    # batched inserts hold for their wait (docs/architecture/clickhouse.md#batched-inserts).
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled
@@ -562,7 +563,9 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False: these inserts are committed, one part each.
+    # returns once written. False: these inserts are committed, one part each. Each
+    # waiting insert holds a pooled connection for its wait and its flush, so the pool
+    # it needs grows with the write rate (docs/architecture/clickhouse.md#batched-inserts).
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched or waited async insert a request waits on for others
     # to share its part; holds a pooled connection meanwhile.
@@ -5180,7 +5183,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.demonstrate": 400,
     "memory.demote": 100,
     "memory.digests": 120,
-    "memory.evidence": 150,
+    # Its audit row (high-sensitivity rows) is a batched insert that waits up to
+    # ch_batched_insert_wait_max_ms (50) with ch_batched_inserts on (the default).
+    "memory.evidence": 200,
     "memory.export_evidence": 800,
     "memory.exposure_summary": 300,
     "memory.extraction_status": 80,

@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False: these inserts are committed, one part each."
+          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False: these inserts are committed, one part each. Each waiting insert holds a pooled connection for its wait and its flush, so the pool it needs grows with the write rate (docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -256,7 +256,7 @@
         "ch_pool_maxsize": {
           "default": 64,
           "type": "integer",
-          "description": "HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus workers. Size to expected request concurrency."
+          "description": "HTTP connection pool size; the driver default (~8) exhausts under bulk writes plus workers. Size to expected request concurrency plus the connections batched inserts hold for their wait (docs/architecture/clickhouse.md#batched-inserts)."
         },
         "ch_pool_wait_ms": {
           "default": 500,

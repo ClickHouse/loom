@@ -9722,7 +9722,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.demonstrate", group: "memory", method: "demonstrate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.demote", group: "memory", method: "demote", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "memory.digests", group: "memory", method: "digests", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 120, audit: false, readOnly: true },
-  { name: "memory.evidence", group: "memory", method: "evidence", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
+  { name: "memory.evidence", group: "memory", method: "evidence", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "memory.export_evidence", group: "memory", method: "exportEvidence", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "memory.exposure_summary", group: "memory", method: "exposureSummary", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.extraction_status", group: "memory", method: "extractionStatus", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },

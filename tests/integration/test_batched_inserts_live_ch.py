@@ -15,7 +15,7 @@ import pytest
 from server.core.ch import CHClient
 from server.core.ch_errors import WIDTH_MISMATCH_CODE, error_code
 from server.core.ch_writes import batched_insert_settings
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now_seconds
 from server.core.vectors import codes_state
 from server.knowledge.store import conversations
 from server.settings import settings
@@ -111,7 +111,7 @@ def _embedding_row(org: str, msg_id: str, vector: list[float]) -> dict[str, Any]
         "embed_failed_at": None,
         "is_saved": False,
         "saved_at": None,
-        "ts": naive_utc_now(),
+        "ts": naive_utc_now_seconds(),
     }
 
 
@@ -151,22 +151,25 @@ async def test_a_vector_of_another_width_fails_only_its_own_insert_in_a_shared_f
         stale_error = results[0]
         assert stale_error is not None and error_code(stale_error) == WIDTH_MISMATCH_CODE
         assert [r for r in results[1:] if r is not None] == []
+        # No DISTINCT: a row that lands twice (a shared flush and its committed resend)
+        # reads as n == 2. The vector is compared by length and first element.
         got = await c.query_all(
-            "SELECT DISTINCT msg_id, content_excerpt, embedding_dim,"
-            " length(embedding) AS embedding_len, embed_attempts, is_saved, user_id, run_id"
-            f" FROM {table} WHERE org = {{org:String}} ORDER BY msg_id",
+            "SELECT org, namespace, agent, thread_id, msg_id, role, content_excerpt,"
+            " embedding_model, embedding_dim, length(embedding) AS embedding_len,"
+            " toFloat64(embedding[1]) AS embedding_first, user_id, run_id, embed_attempts,"
+            " embed_last_error, embed_failed_at, is_saved, saved_at, toString(ts) AS ts,"
+            " count() AS n"
+            f" FROM {table} WHERE org = {{org:String}}"
+            " GROUP BY ALL ORDER BY msg_id",
             {"org": org},
         )
         expected = [
             {
-                "msg_id": row["msg_id"],
-                "content_excerpt": row["content_excerpt"],
-                "embedding_dim": row["embedding_dim"],
+                **{k: v for k, v in row.items() if k != "embedding"},
                 "embedding_len": len(row["embedding"]),
-                "embed_attempts": row["embed_attempts"],
-                "is_saved": row["is_saved"],
-                "user_id": row["user_id"],
-                "run_id": row["run_id"],
+                "embedding_first": row["embedding"][0],
+                "ts": row["ts"].strftime("%Y-%m-%d %H:%M:%S.000"),
+                "n": 1,
             }
             for row in sorted(rows, key=lambda row: row["msg_id"])
         ]
