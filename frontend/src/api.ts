@@ -1278,6 +1278,7 @@ export async function getTaxonomy(
 export * from "./api/knowledge";
 export * from "./api/conversations";
 export * from "./api/admin";
+export * from "./api/collections";
 export * from "./api/search";
 export * from "./api/profile";
 export * from "./api/code";
