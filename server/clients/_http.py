@@ -44,6 +44,25 @@ class _ProviderClient(httpx.AsyncClient):
     would forward to whatever host the redirect names. This client drops
     those too, on any redirect that changes scheme, host or port."""
 
+    async def send(self, request: httpx.Request, **kwargs: Any) -> httpx.Response:
+        from server.llm import gateway
+
+        try:
+            return await super().send(request, **kwargs)
+        except gateway.RetryIdentityCall as retry:
+            await retry.response.aclose()
+            await gateway._sleep(retry.seconds)
+            request.extensions["loom_identity_retried"] = True
+            return await super().send(request, **kwargs)
+
+    def _build_redirect_request(
+        self, request: httpx.Request, response: httpx.Response
+    ) -> httpx.Request:
+        redirected = super()._build_redirect_request(request, response)
+        if isinstance(redirected.stream, httpx.ByteStream):
+            redirected.read()
+        return redirected
+
     def _redirect_headers(
         self, request: httpx.Request, url: httpx.URL, method: str
     ) -> httpx.Headers:

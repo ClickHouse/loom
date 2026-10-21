@@ -823,7 +823,8 @@ async def test_a_held_replay_is_marked_held_with_its_reason_until_its_hold_ends(
     res = await worker.run_pass(worker.ExtractionQueueConfig(max_attempts=3))
     written = ch.inserts[-1][1][0]
     assert (res.skipped, res.failures) == (1, [])
-    assert (written["status"], written["attempts"]) == (q.STATUS_HELD, 2)  # not `running`
+    assert (written["status"], written["attempts"]) == (q.STATUS_RUNNING, 2)
+    assert q.status_of(written) == q.STATUS_HELD
     assert written["last_error"].startswith(f"held: {type(error).__name__}")
     left = written["lease_until"] - before
     assert timedelta(seconds=hold - 1) < left <= timedelta(seconds=hold + 1)
@@ -845,7 +846,7 @@ class _Queue:
         held = {
             _attribution(r)
             for r in self.rows.values()
-            if r["status"] == q.STATUS_HELD and r["lease_until"] >= now
+            if q.status_of(r) == q.STATUS_HELD and r["lease_until"] >= now
         }
         live = [
             r
@@ -877,7 +878,14 @@ async def test_the_claim_takes_other_work_while_an_enqueuer_is_held() -> None:
     later = datetime.now(UTC) + timedelta(minutes=10)
     table = _Queue(
         [
-            _queued("a-held", "process:sa:t:agent-a", 0, status=q.STATUS_HELD, lease_until=later),
+            _queued(
+                "a-held",
+                "process:sa:t:agent-a",
+                0,
+                status=q.STATUS_RUNNING,
+                last_error="held: refused",
+                lease_until=later,
+            ),
             _queued("a-next", "process:sa:t:agent-a", 1),  # the oldest pending
             _queued("b-1", "process:sa:t:agent-b", 2),
             _queued("b-2", "process:sa:t:agent-b", 3),
@@ -886,7 +894,7 @@ async def test_the_claim_takes_other_work_while_an_enqueuer_is_held() -> None:
     claimed = await q.claim_batch(limit=1, lease_seconds=600, ch=table)
     assert [r["queue_id"] for r in claimed] == ["b-1"]  # not agent-a's, which would be held
     sql = table.sql[0]
-    assert "WHERE status = {held:String} AND lease_until >= now64(3)" in sql
+    assert "startsWith(last_error, 'held: ') AND lease_until >= now64(3)" in sql
     # the enqueuer's own column, never a payload read for every row
     assert "(org, namespace, user_id, enqueued_by) NOT IN" in sql and "JSONExtract" not in sql
     table.rows["a-held"]["lease_until"] = datetime.now(UTC) - timedelta(seconds=1)
@@ -901,7 +909,7 @@ async def test_a_request_still_waiting_on_its_last_day_is_dropped_with_a_record(
     from server.memory.app import drops
 
     ch = StubCH()
-    held = _stored_row(queue_id="h", status=q.STATUS_HELD, last_error="held: refused")
+    held = _stored_row(queue_id="h", status=q.STATUS_RUNNING, last_error="held: refused")
     ch.query_all_returns = [[held, _stored_row(queue_id="p")]]
     recorded: list[tuple[list[Any], str, str]] = []
 
@@ -912,7 +920,7 @@ async def test_a_request_still_waiting_on_its_last_day_is_dropped_with_a_record(
     assert await q.drop_expiring(ch=ch) == 2
     sql, params = ch.query_all_calls[0]
     assert "toIntervalDay({days:UInt32})" in sql and params["days"] == q.TTL_DAYS - 1
-    assert set(params["waiting"]) == {q.STATUS_PENDING, q.STATUS_RUNNING, q.STATUS_HELD}
+    assert set(params["waiting"]) == {q.STATUS_PENDING, q.STATUS_RUNNING}
     assert recorded == [
         ([("o", "n", "h")], "extraction_queue", "held_past_ttl"),
         ([("o", "n", "p")], "extraction_queue", "waited_past_ttl"),
@@ -928,7 +936,21 @@ async def test_held_batches_count_as_not_yet_extracted() -> None:
     ch.query_one_returns = [{"n": 3}]
     assert await q.pending_count(org="o", namespace="n", ch=ch) == 3
     sql, params = ch.query_one_calls[0]
-    assert "status IN {waiting:Array(String)}" in sql and q.STATUS_HELD in params["waiting"]
+    assert "status IN {waiting:Array(String)}" in sql and q.STATUS_RUNNING in params["waiting"]
+
+
+@pytest.mark.asyncio
+async def test_a_hold_uses_the_previous_workers_running_lease() -> None:
+    ch = StubCH()
+    await q.mark_held(_stored_row(), reason="refused", seconds=60, ch=ch)
+    stored = ch.inserts[-1][1][0]
+    assert stored["status"] == q.STATUS_RUNNING
+    assert stored["lease_until"] > datetime.now(UTC)
+    ch.query_all_returns = [[stored]]
+    public = await q.list_status(
+        org="o", namespace="n", status=q.STATUS_HELD, scope=WHOLE_NAMESPACE, ch=ch
+    )
+    assert public[0]["status"] == q.STATUS_HELD
 
 
 def test_the_ttl_drop_follows_the_tables_ttl() -> None:

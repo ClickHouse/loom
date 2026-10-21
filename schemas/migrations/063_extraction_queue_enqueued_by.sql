@@ -5,3 +5,7 @@
 -- on every pass. A row queued before this file reads '' until a hold rewrites it.
 ALTER TABLE loom.memory_extraction_queue
     ADD COLUMN IF NOT EXISTS enqueued_by String DEFAULT '';
+
+-- Held stubs wait before selection so another writer can fill the batch.
+ALTER TABLE loom.memory_embeddings
+    ADD COLUMN IF NOT EXISTS embed_retry_at Nullable(DateTime64(3, 'UTC')) DEFAULT NULL;

@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from server.llm import customer
+from server.memory.app import model_attribution
 from server.memory.domain import provenance, trust
 from server.settings import settings
 from tests.unit.switch_state import switch_off
@@ -91,7 +92,7 @@ def test_the_embedding_worker_calls_for_each_stubs_writer(writers: _Directory) -
         ("by-pipeline", provenance.EXTRACTION_WORKER_ACTOR),
     ):
         row = next(r for r in rows if r["memory_key"] == key)
-        ident = tuple(str(row[c]) for c in embedding.IDENTITY_COLUMNS)
+        ident = tuple(str(row[c]) for c in model_attribution.IDENTITY_COLUMNS)
         writers.writers[ident] = actor  # type: ignore[index]
     asyncio.run(embedding._embed_rows(_Embedder(), rows))
     assert sent == {
@@ -222,7 +223,7 @@ def test_the_profile_fold_calls_for_its_facts_newest_writer(
 
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
-            return [{"memory_id": "m1", "value": "prefers tea", "since": "2026-01-01"}]
+            return [{"value": "prefers tea", "since": "2026-01-01", "memory_id": "fact-1"}]
 
     class _LLM(FakeLLMClient):
         async def complete(self, *a: Any, **k: Any) -> Any:
@@ -334,7 +335,7 @@ def test_projection_repair_replays_for_the_memories_writer(
     failure = dataclasses.replace(
         _failure(1, "memory_chunks"), namespace=AGENT_NS, memory_keys=["k1"]
     )
-    writers.writers[("acme", AGENT_NS, "a", "u1", "-", "k1")] = f"process:{AGENT_8}"
+    writers.writers[("acme", AGENT_NS, failure.agent, "u1", "-", "k1")] = f"process:{AGENT_8}"
 
     async def scan(**k: Any) -> list[Any]:
         return [failure]

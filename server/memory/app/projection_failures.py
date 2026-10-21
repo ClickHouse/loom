@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -290,6 +290,7 @@ async def scan_active_projection_failures(
     *,
     limit: int = 50,
     exclude_orgs: frozenset[str] = frozenset(),
+    exclude_ids: frozenset[str] = frozenset(),
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker; none of
@@ -315,10 +316,11 @@ async def scan_active_projection_failures(
             resolved_at
         FROM loom.memory_projection_failures
         WHERE status = 'active' AND NOT has({off:Array(String)}, org)
+          AND NOT has({held:Array(String)}, toString(failure_id))
         ORDER BY created_at ASC, failure_id ASC
         LIMIT {lim:UInt32}
         """,
-        params={"lim": int(limit), "off": sorted(exclude_orgs)},
+        params={"lim": int(limit), "off": sorted(exclude_orgs), "held": sorted(exclude_ids)},
     )
     return [_row_from_ch(dict(row)) for row in rows]
 
@@ -419,11 +421,12 @@ async def _retry_memory_chunks(
             "session_id": _session_from_source_resource_id(failure.source_resource_id),
         },
     )()
-    await write_memory_chunks(
-        retry_input,
-        msgs,
-        parent_memory_keys=failure.memory_keys,
-    )
+    with customer.attributed(replace(customer.attribution(), user_id=user_id)):
+        await write_memory_chunks(
+            retry_input,
+            msgs,
+            parent_memory_keys=failure.memory_keys,
+        )
 
 
 async def _retry_memory_chunk_sources(

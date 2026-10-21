@@ -81,6 +81,7 @@ def directory(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Directory]:
     monkeypatch.setattr("server.auth.machines.get", d.machine)
     monkeypatch.setattr("server.auth.personal_namespace.namespace_owner", d.owner)
     monkeypatch.setattr("server.auth.aliases.subject_aliases", d.aliases)
+    monkeypatch.setattr("server.auth.aliases.read_aliases", d.aliases)
     monkeypatch.setattr("server.memory.store.actors_by_key", d.actors_by_key)
     monkeypatch.setattr("server.core.ch.get_client", lambda: None)
     identity._reset_for_tests()
@@ -518,8 +519,9 @@ def test_settings_take_identity_headers_and_refuse_ones_a_call_could_not_send() 
 
 
 def test_with_identity_headers_a_call_naming_no_org_is_refused_unless_the_deployments(
-    directory, caplog
+    directory, caplog, monkeypatch
 ) -> None:
+    monkeypatch.setattr(customer, "_logged_at", {})
     # The MCP path whose identity stamping failed names its op and no org.
     genai.set_identity(operation="memory.search", capture_level="off")
     with pytest.raises(customer.Unattributed):

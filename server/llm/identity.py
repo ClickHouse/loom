@@ -210,9 +210,12 @@ async def _email(org: str, subject: str) -> str:
         return ""
     if "@" in subject:
         return subject
-    from server.auth.aliases import subject_aliases
+    from server.auth.aliases import read_aliases
 
-    return next((s for s in await subject_aliases(org, subject) if "@" in s), "")
+    async def read() -> str:
+        return next((s for s in await read_aliases(org, subject, ch=None) if "@" in s), "")
+
+    return await _kept_read(("email", org, subject), read, f"subject {subject!r}")
 
 
 async def _kept_read(

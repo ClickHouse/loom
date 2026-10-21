@@ -128,7 +128,7 @@ async def user_facts(
     keys = "AND startsWith(memory_key, 'user_')" if user_keys_only else ""
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
-        SELECT toString(memory_id) AS memory_id, value,
+        SELECT toString(memory_id) AS memory_id, value, actor, version,
                toString(coalesce(valid_at, updated_at)) AS since
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}

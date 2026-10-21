@@ -531,6 +531,7 @@ EMBEDDING_PERSISTED_COLS: dict[str, Any] = {
     "embed_attempts": 0,
     "embed_last_error": "",
     "embed_failed_at": None,
+    "embed_retry_at": None,
     "run_id": "-",
     "entities": [],
     "conflict_checked_at": None,

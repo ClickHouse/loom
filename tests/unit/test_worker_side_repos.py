@@ -255,7 +255,7 @@ class _KeyedCH(StubCH):
 async def test_a_large_stub_selection_binds_every_list_in_parameters_that_fit() -> None:
     """Sixteen hundred cell-shaped candidate keys (a batch of 400) go to the server in
     parameters that each fit one form field, all of them read, and the batch is the
-    oldest stubs, a held group's after the rest."""
+    oldest stubs."""
     import uuid
 
     from clickhouse_connect.driver.binding import format_bind_value
@@ -281,22 +281,17 @@ async def test_a_large_stub_selection_binds_every_list_in_parameters_that_fit() 
         )
 
     ch = _KeyedCH([cell(i) for i in range(1600)])
-    held = (str(uuid.UUID(int=7)), cell(0)["namespace"], "agent-0", str(uuid.UUID(int=99)))
-    rows = await memory_repo.find_embedding_stubs(
-        batch_size=400, max_attempts=3, held_last=[held], ch=ch
-    )
+    rows = await memory_repo.find_embedding_stubs(batch_size=400, max_attempts=3, ch=ch)
     for _, params in ch.query_all_calls:
         for value in params.values():
             if isinstance(value, list):
                 assert len(format_bind_value(value)) <= FIELD_BYTES
-    assert sum(len(p["keys"]) for s, p in ch.query_all_calls if "HAVING" in s) == 1600
+    assert (
+        sum(len(p["keys"]) for s, p in ch.query_all_calls if "keys" in p and "HAVING" in s) == 1600
+    )
     assert len(ch.query_all_calls) > 3  # the keys went in several reads
     assert len(rows) == 400
-    groups = [(r["org"], r["namespace"], r["agent"], r["user_id"]) for r in rows]
-    assert held not in groups  # 1422 other stubs come first
     numbers = [r["created_at"] for r in rows]
-    assert numbers == sorted(numbers) and numbers[0] == 1  # the oldest first
+    assert numbers == sorted(numbers) and numbers[0] == 0  # the oldest first
     phase1 = ch.query_all_calls[0][0]
-    assert "IN {held:Array(Tuple(String, String, String, String))}) ASC, max(version) DESC" in (
-        phase1
-    )
+    assert "argMax(embed_retry_at IS NULL OR embed_retry_at <= now64(3), version)" in phase1

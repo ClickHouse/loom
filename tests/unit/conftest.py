@@ -679,7 +679,7 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _model_call_holds_left_empty() -> Iterator[None]:
-    """Leave no job's held work, no gateway hold and no refusal log limit to the next test.
+    """Leave no job's held work, and no gateway hold, to the next test.
 
     A job that met a held identity (`server.workers.holds`) leaves that work out of
     its next selections, and the gateway holds an identity's job calls
@@ -687,14 +687,13 @@ def _model_call_holds_left_empty() -> Iterator[None]:
     depend on what an earlier test refused.
     """
     yield
-    from server.llm import customer, gateway
+    from server.llm import gateway
     from server.workers import holds
 
     holds._reset_for_tests()
     gateway._held.clear()
-    gateway._waited.clear()
-    # The MODEL_CALL_UNATTRIBUTED line is logged once a minute per feature: a test that
-    # checks it must not depend on whether an earlier test logged it.
+    from server.llm import customer
+
     customer._logged_at.clear()
 
 

@@ -428,11 +428,10 @@ _STUB_ROWS = rows_by_substring(
 
 
 async def _embedding_stubs(ch: RecordingCH, c: dict[str, Any]) -> None:
-    """The embedding worker's three reads, with a held writer's group ordered last."""
+    """The embedding worker's reads exclude held rows before their limits."""
     from server.memory import store as M
 
-    held = [(ORG, NS, AGENT, "-")] if c["held"] else None
-    await M.find_embedding_stubs(batch_size=10, max_attempts=3, held_last=held, ch=ch)
+    await M.find_embedding_stubs(batch_size=10, max_attempts=3, ch=ch)
 
 
 async def _keys_and_fence(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -631,7 +630,7 @@ def cases() -> list[Case]:
             "memory_repo.embedding_stubs",
             MR,
             _embedding_stubs,
-            {"held": (False, True)},
+            {},
             rows=_STUB_ROWS,
         ),
         Case("memory_repo.keys_and_fence", MR, _keys_and_fence, {}),

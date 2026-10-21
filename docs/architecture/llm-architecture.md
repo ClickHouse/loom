@@ -357,7 +357,7 @@ gateway.
   principal. A deferred `memory.set_from_messages` stores its enqueuer on the queue row; the
   entity extractor, the embedding worker, projection repair and the code-link judge read the
   writer of the memory they work on; observe-extract takes the newest writer of the session's
-  observations, a profile fold the newest writer of its facts, reflection and the period digest
+  observations, both profile builders the newest principal writer of their facts, reflection and the period digest
   the newest writer of the session's memories (`memory_repo.session_writers`), and the conflict
   sweep the write's writer. Only a row that records no principal (a conversation turn, a
   shared-scope vector) takes the agent whose own namespace it is in (owned by
@@ -366,7 +366,7 @@ gateway.
 - **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
   model rebuild) groups them by the identity they render (`customer.groups`), so one call never
   carries two agents' texts, and one agent's rows in several namespaces share a call.
-- **Reads.** A trust's claims (`loom.machine_identities`) and a namespace's owner are read at
+- **Reads.** A trust's claims (`loom.machine_identities`), a namespace's owner and an account's email are read at
   most once a minute per process. A failed read serves the copy in hand; with none the call is
   held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as
   someone else's, and a job leaves that work for 30 seconds, no attempt spent.
@@ -389,30 +389,30 @@ gateway.
   `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`, and
   `ModelCallDeferred` for one under `wait`, answered 503 `MODEL_CALL_DEFERRED` with the
   gateway's `Retry-After`. A request's call asked to wait two seconds or less waits it out once
-  and its sender asks again before it is deferred, as a busy provider was retried before.
+  and the shared model client sends it again before it is deferred, including after a redirect.
   Neither answer is retried further or handed to the fallback model, `/v1/health` reads
   nothing from either, and the org's switch is untouched. Both are `customer.HOLDS`, so a job
-  leaves the row as it is.
+  preserves the work without spending an attempt.
 - **A job's hold.** After that answer, a job's calls (`customer.for_org`) for the identity to
-  the same path and model are held: refused by the request hook (`gateway.sending`) with
+  the same origin, path and model are held: refused by the request hook (`gateway.sending`) with
   nothing sent, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` after a refusal and the answer's
   `Retry-After` (at most 5 minutes) after a wait. Its calls to another model or to the
-  embeddings go on, and so do other identities'. A success at that path and model, from a
+  embeddings go on, and so do other identities'. The customer header is part of the identity. A success at that path and model, from a
   request or a job, ends the hold. A request always asks the gateway, which may take the
   identity back at any time. Any other answer is the provider's, as before: another 403 is a
   provider failure, never retried, and another 429 a rate limit, retried.
 - **Skip, not stall.** A job leaves held work out of its next selections while the hold
   lasts (`server/workers/holds.py`), so its batch goes to other identities' work instead of
   filling again with work that would only be held. The extraction queue marks the request
-  `held` with the reason until the hold ends, and claims none of that enqueuer's other
+  as `held` with the reason until the hold ends, storing a `running` lease that older
+  workers can reclaim after rollback. It claims none of that enqueuer's other
   requests in the namespace meanwhile (by its `enqueued_by` column). The profile fold reads
   four times its slots, gives a held identity's slot to the next one read, and leaves it out
-  of its scan. The embedding worker reads the stubs of a held writer's (org, namespace,
-  agent, user_id) groups after every other stub and leaves the held writer's rows among them
-  uncalled, so a neighbour under the same label is embedded when the batch has room; the
-  groups are a handful of parameters, and every list it binds is cut to what one ClickHouse
-  form field carries. The batch embedders (the embedding workers, `loom reembed`, a model
-  rebuild) hold one group at a time (`customer.GROUP_HOLDS`: an org switched off, an
+  of its scan. The embedding worker records each held stub's `embed_retry_at` without
+  spending an attempt. Projection repair excludes held failure IDs before its limit.
+  Embedding selection excludes held rows before either limit, including
+  when a healthy writer uses the same namespace and agent label. The batch embedders (the
+  embedding workers, `loom reembed`, a model rebuild) hold one group at a time (`customer.GROUP_HOLDS`: an org switched off, an
   identity refused, asked to wait or unread), and write the vectors the other groups' calls
   bought.
 

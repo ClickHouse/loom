@@ -18,8 +18,8 @@ every transition is a full mirrored row):
 has passed is reclaimable, so a worker that died mid-extraction does not strand
 the batch; a failed attempt waits 15 s, 1, 5, then 30 minutes; a `held` row (its
 org switched off, or its identity refused, asked to wait or unread) waits for its
-hold, and while it does the enqueuer's other requests in that namespace and for
-that user are not claimed either. A request still waiting a day before the
+hold, stored as a running lease for older workers. The enqueuer's other requests
+in that namespace and for that user are not claimed either. A request still waiting a day before the
 table's 30-day TTL is dropped with a memory_drops record, never removed unseen.
 Extraction is idempotent under the memory plane's hash dedup, so a rare double
 replay writes no second copy.
@@ -43,11 +43,11 @@ TABLE = "loom.memory_extraction_queue"
 
 STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
-STATUS_HELD = "held"
+STATUS_HELD = "held"  # reported state; stored as a running lease with a held reason
 STATUS_DONE = "done"
 STATUS_FAILED = "failed"
 # Not yet extracted: what `pending_count` counts and the TTL drop looks at.
-WAITING = (STATUS_PENDING, STATUS_RUNNING, STATUS_HELD)
+WAITING = (STATUS_PENDING, STATUS_RUNNING)
 
 # The wait before the next claim after a failed attempt, by attempts so far (the last
 # repeats); after the model provider or gateway could not be reached, the wait the
@@ -211,7 +211,11 @@ async def claim_batch(
 
     ch = ch or get_client()
     scope = ""
-    params: dict[str, Any] = {"waiting": list(WAITING), "held": STATUS_HELD, "lim": int(limit)}
+    params: dict[str, Any] = {
+        "waiting": list(WAITING),
+        "running": STATUS_RUNNING,
+        "lim": int(limit),
+    }
     if org_filter is not None:
         scope += " AND org = {org_f:String}"
         params["org_f"] = org_filter
@@ -232,7 +236,8 @@ async def claim_batch(
           AND (org, namespace, user_id, enqueued_by) NOT IN (
               SELECT org, namespace, user_id, enqueued_by
               FROM {TABLE} FINAL
-              WHERE status = {{held:String}} AND lease_until >= now64(3)
+              WHERE status = {{running:String}}
+                AND startsWith(last_error, 'held: ') AND lease_until >= now64(3)
           )
           {scope}
         ORDER BY enqueued_at ASC
@@ -328,7 +333,7 @@ async def mark_held(
         [
             _mirror(
                 row,
-                status=STATUS_HELD,
+                status=STATUS_RUNNING,
                 last_error=f"held: {reason}"[:2000],
                 lease_until=_now() + timedelta(seconds=max(0.0, float(seconds))),
                 # a row queued before the column existed carries it in its payload
@@ -447,7 +452,7 @@ async def drop_expiring(
         items = [
             (str(r["org"]), str(r["namespace"]), str(r.get("queue_id") or ""))
             for r in rows
-            if (r.get("status") == STATUS_HELD) is held
+            if (status_of(r) == STATUS_HELD) is held
         ]
         if items:
             await write_drops(items, "extraction_queue", reason, ch=ch)
@@ -537,7 +542,10 @@ async def list_status(
         params["qid"] = queue_id
     if status:
         where += " AND status = {st:String}"
-        params["st"] = status
+        params["st"] = STATUS_RUNNING if status == STATUS_HELD else status
+        if status in (STATUS_HELD, STATUS_RUNNING):
+            where += " AND startsWith(last_error, 'held: ') = {held:Bool}"
+            params["held"] = status == STATUS_HELD
     where += scope_and(scope, params)
     rows = await ch.query_all(
         f"""
@@ -552,7 +560,14 @@ async def list_status(
         """,
         params=params,
     )
-    return [dict(r) for r in rows]
+    return [{**r, "status": status_of(r)} for r in rows]
+
+
+def status_of(row: dict[str, Any]) -> str:
+    """Expose held work while storing a running lease that older workers understand."""
+    if row["status"] == STATUS_RUNNING and str(row.get("last_error") or "").startswith("held: "):
+        return STATUS_HELD
+    return str(row["status"])
 
 
 __all__ = [

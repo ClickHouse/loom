@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.llm import customer
+from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.settings import settings
 
 # (text-source column, vector column) per table, plus an optional secondary
@@ -333,14 +334,8 @@ async def _rewrite_page(
     # identity, since a model call names a single customer and identity.
     left: set[int] = set()
     left_by_org: dict[str, int] = {}
-    groups = await customer.groups(
-        customer.Attribution(
-            str(r.get("org") or ""),
-            namespace=str(r.get("namespace") or ""),
-            user_id=str(r.get("user_id") or ""),
-        )
-        for r in chunk
-    )
+    writers = await memory_writers(chunk)
+    groups = await customer.groups(attribution_for(r, writers) for r in chunk)
     for who, positions in groups.items():
         try:
             with customer.attributed(who):

@@ -17,14 +17,14 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import server.memory.store as memory_repo
-from server.core.ch_params import chunks
+from server.core.datetimes import utc_now
 from server.embedding import get_embedder
 from server.llm import customer, identity
-from server.memory.domain.trust import subject_of
+from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.workers import pass_context
 from server.workers.holds import Held, hold_seconds
 from server.workers.status import record_pass
@@ -176,59 +176,27 @@ def _carry_signals(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _writers(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], str]:
-    """The writer (`actor`) of each stub's memory, by identity key: a stub's model
-    call is its writer's. A shared-scope stub, whose row records no writer, is absent."""
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
-
-    by_org: dict[str, set[tuple[str, str]]] = {}
-    for r in rows:
-        by_org.setdefault(str(r["org"]), set()).add((str(r["namespace"]), str(r["memory_key"])))
-    out: dict[tuple[str, ...], str] = {}
-    for org, keys in by_org.items():
-        for part in chunks(sorted(keys)):  # each read binds what one form field carries
-            found = await memory_repo.actors_by_key(org, part, scope=WHOLE_NAMESPACE)
-            for (ns, key), heads in found.items():
-                for h in heads:
-                    out[(org, ns, h["agent"], h["user_id"], h["session_id"], key)] = h["actor"]
-    return out
-
-
-def _attribution(r: dict[str, Any], writers: dict[tuple[str, ...], str]) -> Any:
-    """Whom a stub's call is for: its writer, else its namespace's agent."""
-    key = tuple(str(r.get(c) or "") for c in IDENTITY_COLUMNS)
-    return customer.Attribution(
-        str(r.get("org") or ""),
-        namespace=str(r.get("namespace") or ""),
-        subject=subject_of(writers.get(key, "")),
-        user_id=str(r.get("user_id") or ""),
-    )
-
-
-# The identity tuple and key of a memory row, in `_writers`' key order.
-IDENTITY_COLUMNS = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
-
-
 async def _embed_rows(
     embedder: Any,
     rows: list[dict[str, Any]],
     writers: dict[tuple[str, ...], str] | None = None,
 ) -> list[tuple[list[float] | None, str]]:
-    """`_embed_batch` per org and identity, in the rows' order: a pass picks
-    stubs of every org, and one model call names a single customer and identity
-    (each stub's writer's, else its namespace's agent's; `writers` when the pass
-    read them). A group whose call is held (`customer.GROUP_HOLDS`: its org
-    switched off since the stubs were picked, its identity refused, asked to wait
-    or unread) gets `(None, HELD)`: its rows are left as they are, attempts
-    untouched, read after other stubs and left uncalled while the hold lasts
-    (`_hold`); the other groups go on. A switch gone stale mid-pass
-    (`SwitchUnread`) stops the pass before its write."""
+    """Embed each writer's rows together; held identities retry without spending attempts."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
     if writers is None:
-        writers = await _writers(rows) if identity.reads_writer() else {}
-    groups = await customer.groups(_attribution(r, writers) for r in rows)
+        writers = await memory_writers(rows) if identity.reads_writer() else {}
+    groups = await customer.groups(attribution_for(r, writers) for r in rows)
     for who, positions in groups.items():
         embedded: list[tuple[list[float] | None, str]]
+        group = [rows[i] for i in positions]
+        remaining = max(
+            _HELD_WHO.left(identity.split_by(attribution_for(r, writers))) for r in group
+        )
+        if remaining > 0:
+            _hold(group, writers, remaining)
+            for i in positions:
+                out[i] = (None, HELD)
+            continue
         try:
             with customer.attributed(who):
                 if not customer.names_one():
@@ -236,6 +204,8 @@ async def _embed_rows(
                 else:
                     texts = [rows[i]["content_excerpt"] for i in positions]
                     embedded = await _embed_batch(embedder, texts)
+        except customer.ModelCallsDisabled:
+            embedded = [(None, HELD)] * len(positions)
         except customer.GROUP_HOLDS as e:
             _hold([rows[i] for i in positions], writers, hold_seconds(e))
             embedded = [(None, HELD)] * len(positions)
@@ -244,46 +214,18 @@ async def _embed_rows(
     return out
 
 
-# The error `_embed_rows` gives a row whose call was held: it is left unwritten.
+# Held rows retain their embedding attempts.
 HELD = "model call held"
 
-# The identities a pass found held (`identity.split_by` of each stub's attribution:
-# the writer's), and the (org, namespace, agent, user_id) groups their stubs are in,
-# each until its hold ends. The selection reads the held groups' stubs after every
-# other (`find_embedding_stubs(held_last=...)`, a handful of tuples), and the held
-# identities' rows among them are left uncalled (`_without_held`): other writers'
-# stubs, a held writer's neighbours in its group included, are embedded meanwhile.
 _HELD_WHO: Held[Any] = Held()
-_HELD_GROUPS: Held[tuple[str, str, str, str]] = Held()
-
-
-def _group(r: dict[str, Any]) -> tuple[str, str, str, str]:
-    """The stub columns a held writer's stubs share, to read them last."""
-    org, namespace, agent, user_id = (
-        str(r.get(c) or "") for c in ("org", "namespace", "agent", "user_id")
-    )
-    return org, namespace, agent, user_id
 
 
 def _hold(rows: list[dict[str, Any]], writers: dict[tuple[str, ...], str], seconds: float) -> None:
-    """Leave `rows`' identities uncalled, and their groups read last, for `seconds`."""
-    _HELD_WHO.hold((identity.split_by(_attribution(r, writers)) for r in rows), seconds)
-    _HELD_GROUPS.hold((_group(r) for r in rows), seconds)
-
-
-def _without_held(
-    rows: list[dict[str, Any]], writers: dict[tuple[str, ...], str], held: frozenset[Any]
-) -> list[dict[str, Any]]:
-    """`rows` but a held identity's, which are left with no call made; their groups
-    stay read last for what is left of the hold."""
-    kept: list[dict[str, Any]] = []
-    for r in rows:
-        who = identity.split_by(_attribution(r, writers))
-        if who in held:
-            _HELD_GROUPS.hold([_group(r)], _HELD_WHO.left(who))
-        else:
-            kept.append(r)
-    return kept
+    """Persist a retry time without spending an embedding attempt."""
+    _HELD_WHO.hold((identity.split_by(attribution_for(r, writers)) for r in rows), seconds)
+    until = utc_now() + timedelta(seconds=seconds)
+    for row in rows:
+        row["embed_retry_at"] = until
 
 
 async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float] | None, str]]:
@@ -535,17 +477,12 @@ async def run_pass(
             log.warning("embedding worker: reconciliation pass failed: %s", e)
             pass_context.note_failure(e, "reconciliation")
 
-        # An org whose model calls are switched off keeps its stubs, attempts
-        # untouched, until it is switched back on; the groups of a held writer's stubs
-        # are read after every other stub, so the batch is other writers' work.
-        held_who = _HELD_WHO.current()
         rows = await memory_repo.find_embedding_stubs(
             batch_size=cfg.batch_size,
             max_attempts=cfg.max_attempts,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
             exclude_orgs=await customer.switched_off_orgs(),
-            held_last=sorted(_HELD_GROUPS.current()) or None,
         )
 
         replacements: list[dict[str, Any]] = []
@@ -557,15 +494,27 @@ async def run_pass(
         rows, dropped = await _stubs_still_served(rows, stub_embedding, now)
         if dropped:
             await memory_repo.insert_embedding_rows(dropped)
-        writers = await _writers(rows) if rows and identity.reads_writer() else {}
-        if held_who:
-            rows = _without_held(rows, writers, held_who)
+        writers = await memory_writers(rows) if rows and identity.reads_writer() else {}
         if rows:
             embedded = await _embed_rows(embedder, rows, writers)
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):
                 content = r["content_excerpt"]
                 if vec is None and embed_err == HELD:
-                    continue  # left unwritten: it waits for its org or identity
+                    if r.get("embed_retry_at") is None:
+                        continue  # switched-off orgs are excluded by the next selection
+                    retries.append(
+                        memory_repo.build_embedding_row(
+                            **_carry_signals(r),
+                            content_excerpt=content,
+                            embedding_model=r["embedding_model"],
+                            embedding_dim=0,
+                            embedding=stub_embedding,
+                            embed_attempts=int(r.get("embed_attempts") or 0),
+                            embed_last_error=HELD,
+                            embed_retry_at=r["embed_retry_at"],
+                        )
+                    )
+                    continue
                 if vec is None:
                     new_attempts = int(r.get("embed_attempts") or 0) + 1
                     err = embed_err

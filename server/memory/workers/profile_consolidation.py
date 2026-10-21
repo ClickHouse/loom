@@ -227,6 +227,7 @@ async def _consolidate_identity(
                 if cfg.model
                 else llm_client.get_llm_client()
             )
+
             out = await client.complete(
                 system=_FOLD_SYSTEM,
                 user=facts,

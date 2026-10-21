@@ -2218,6 +2218,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_embeddings
     `content_excerpt_lemma` String DEFAULT '' CODEC(ZSTD(3)),
     `expires_at` Nullable(DateTime) DEFAULT NULL,
     `content_sha256` String DEFAULT '',
+    `embed_retry_at` Nullable(DateTime64(3, 'UTC')) DEFAULT NULL,
     INDEX entities_skip entities TYPE bloom_filter(0.01) GRANULARITY 4,
     INDEX conflict_checked_at_skip conflict_checked_at TYPE minmax GRANULARITY 4,
     INDEX tags_skip tags TYPE bloom_filter(0.01) GRANULARITY 4,

@@ -79,7 +79,7 @@ _file_refused = False
 # A call's identity, as the gateway judges it: each identity header's value.
 Identity = tuple[tuple[str, str], ...]
 # Where a call goes: its path and the model its body names.
-Route = tuple[str, str]
+Route = tuple[str, str, str]
 
 
 @dataclass(frozen=True)
@@ -105,8 +105,16 @@ _logged_at: dict[tuple[int, str], float] = {}
 # second such answer for the same call defers it. Calls that waited, by identity,
 # route and body, when (time.monotonic).
 _WAIT_IN_PROCESS_S = 2.0  # not a setting: a wait a person's request can absorb
-_WAITED_KEEP_S = 30.0  # not a setting: longer than any sender's retries of one call
-_waited: dict[tuple[Identity, Route, int], float] = {}
+
+
+class RetryIdentityCall(Exception):
+    """A replayable model request may retry one short identity wait."""
+
+    def __init__(self, response: httpx.Response, seconds: float) -> None:
+        self.response = response
+        self.seconds = seconds
+
+
 _sleep = asyncio.sleep
 
 
@@ -266,7 +274,7 @@ async def answered(response: httpx.Response) -> None:
     to the same path and model for LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS, one
     under "wait" `ModelCallDeferred`, held for its Retry-After; a request's call asked
     to wait two seconds or less waits once here and its sender asks again
-    (`_waited_in_process`). A success ends the hold there. Runs on every response
+    in the model client. A success ends the hold there. Runs on every response
     of the model client."""
     global _file_refused
     status = response.status_code
@@ -289,34 +297,22 @@ async def answered(response: httpx.Response) -> None:
             if entry["status"] == status and all(
                 fields.get(f) == entry[f] for f in IDENTITY_REFUSAL_FIELDS if f in entry
             ):
-                if kind == "wait" and await _waited_in_process(response):
-                    return  # the sender's own retry asks again (the status is retryable)
+                if kind == "wait":
+                    from server.llm import customer
+
+                    seconds = _retry_after(response)
+                    if (
+                        not customer.job_call()
+                        and seconds <= _WAIT_IN_PROCESS_S
+                        and not response.request.extensions.get("loom_identity_retried")
+                    ):
+                        try:
+                            _ = response.request.content
+                        except httpx.RequestNotRead:
+                            pass
+                        else:
+                            raise RetryIdentityCall(response, seconds)
                 raise _hold(response, entry, wait=kind == "wait")
-
-
-async def _waited_in_process(response: httpx.Response) -> bool:
-    """Whether a "wait" answer to a request's call was waited out here: a Retry-After of
-    `_WAIT_IN_PROCESS_S` or less, the first for this call (the same identity, route and
-    body) in `_WAITED_KEEP_S`. A job's call is held instead, and a second answer, or a
-    longer wait, defers the request (`ModelCallDeferred`)."""
-    from server.llm import customer
-
-    seconds = _retry_after(response)
-    if customer.job_call() or seconds > _WAIT_IN_PROCESS_S:
-        return False
-    request = response.request
-    try:
-        body = hash(request.content)
-    except httpx.RequestNotRead:  # streamed: no body to tell the call by
-        body = 0
-    key, now = (identity_of(request.headers), _route(request), body), time.monotonic()
-    if len(_waited) >= _HELD_MAX:
-        _waited.clear()
-    if now - _waited.get(key, -_WAITED_KEEP_S) < _WAITED_KEEP_S:
-        return False
-    _waited[key] = now
-    await _sleep(seconds)
-    return True
 
 
 def _judges_identities(request: httpx.Request) -> bool:
@@ -356,7 +352,8 @@ def _route(request: httpx.Request) -> Route:
     except (ValueError, httpx.RequestNotRead):  # not JSON, or streamed: no model to read
         body = None
     model = body.get("model") if isinstance(body, dict) else None
-    return request.url.path, model if isinstance(model, str) else ""
+    origin = str(request.url.copy_with(path="", query=None, fragment=None))
+    return origin, request.url.path, model if isinstance(model, str) else ""
 
 
 def _hold(response: httpx.Response, entry: Mapping[str, Any], *, wait: bool) -> ModelCallRefused:
@@ -427,7 +424,10 @@ def _release(identity: Identity, route: Route) -> None:
 
 def identity_of(headers: Mapping[str, str]) -> Identity:
     """The identity a call names, as the gateway judges it: each identity header's value."""
-    return tuple((name, headers.get(name) or "") for name, _ in settings.identity_headers())
+    names = [name for name, _ in settings.identity_headers()]
+    if settings.inference_customer_header:
+        names.append(settings.inference_customer_header)
+    return tuple((name, headers.get(name) or "") for name in names)
 
 
 async def _identity_token() -> str:
@@ -489,4 +489,3 @@ def _reset_for_tests() -> None:
     _file_token, _file_read_at, _file_refused = "", 0.0, False
     _held.clear()
     _logged_at.clear()
-    _waited.clear()

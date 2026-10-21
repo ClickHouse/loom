@@ -293,6 +293,96 @@ def test_a_short_wait_on_a_request_is_waited_out_once_and_asked_again(wire) -> N
     assert not provider_health.status()["degraded"]  # the call ended answered
 
 
+def test_a_customers_hold_does_not_block_another_customer(wire, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
+    monkeypatch.setattr(
+        settings, "inference_identity_headers_json", '{"X-Namespace": "{namespace}"}'
+    )
+    sent: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers["X-Customer"])
+        return _BUDGET if sent[-1] == "first" else httpx.Response(200, json=_chat("ok"))
+
+    monkeypatch.setattr(_http.get_model_client(), "_transport", httpx.MockTransport(answer))
+    with customer.for_org("first", namespace="shared"), pytest.raises(ModelCallRefused):
+        _complete()
+    with customer.for_org("second", namespace="shared"):
+        assert _complete().text == "ok"
+    assert sent == ["first", "second"]
+
+
+@pytest.mark.parametrize("preceding_errors", [0, 3])
+def test_a_short_wait_is_deferred_even_after_chat_retries_are_spent(
+    wire, monkeypatch, preceding_errors: int
+) -> None:
+    monkeypatch.setattr(settings, "llm_retry_attempts", preceding_errors + 1)
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if len(sent) <= preceding_errors:
+            return httpx.Response(503)
+        return _error(429, "rate_limit_error", "agent_request_limit", _BUSY, **{"Retry-After": "0"})
+
+    monkeypatch.setattr(_http.get_model_client(), "_transport", httpx.MockTransport(answer))
+    _as("agent-l")
+    with pytest.raises(ModelCallDeferred):
+        _complete()
+    assert len(sent) == preceding_errors + 2
+    assert not provider_health.status()["degraded"]
+
+
+@pytest.mark.parametrize("sender", ["classify", "rerank"])
+def test_operator_endpoints_defer_a_short_identity_wait(wire, monkeypatch, sender: str) -> None:
+    from server.memory.app import classify, rerank
+
+    monkeypatch.setattr(
+        settings, "rerank_endpoints_json", '{"gw": "https://gateway.example/rerank"}'
+    )
+    _as("agent-l")
+    with pytest.raises(ModelCallDeferred):
+        if sender == "classify":
+            asyncio.run(
+                classify.classify(
+                    endpoint="https://gateway.example/classify",
+                    prompt_template="",
+                    value="v",
+                    valid_types=[],
+                )
+            )
+        else:
+            asyncio.run(
+                rerank.rerank(
+                    endpoint="gw",
+                    prompt_template="",
+                    query="q",
+                    candidates=[rerank.RerankCandidate("k", "ns", "v", "fact", 1.0)],
+                )
+            )
+    assert wire.agents == ["agent-l", "agent-l"]
+
+
+def test_a_failed_email_lookup_prevents_the_model_call(wire, monkeypatch) -> None:
+    from server.auth import aliases
+    from server.llm.identity import IdentityUnread
+
+    async def unavailable(*args: Any, **kwargs: Any) -> list[str]:
+        raise ConnectionError("directory unavailable")
+
+    monkeypatch.setattr(aliases, "read_aliases", unavailable)
+    monkeypatch.setattr(settings, "inference_identity_headers_json", '{"X-Actor": "{email}"}')
+    current_auth_var.set(
+        AuthInfo(
+            subject="person-id", org="acme", namespaces=("ns",), roles=(), is_service_account=False
+        )
+    )
+    genai.set_identity(org="acme", namespace="ns", operation="memory.ask")
+    with pytest.raises(IdentityUnread):
+        _complete()
+    assert wire.sent == []
+
+
 def test_a_rate_limit_is_still_retried_and_still_the_providers(wire) -> None:
     _as("agent-r")
     with pytest.raises(httpx.HTTPStatusError):
@@ -671,3 +761,43 @@ def test_the_default_table_matches_by_code_and_the_codeless_budget_envelope() ->
 def test_identity_headers_need_the_gateways_hosts() -> None:
     with pytest.raises(ValidationError, match="LOOM_INFERENCE_GATEWAY_HOSTS"):
         Settings(_env_file=None, inference_identity_headers_json='{"X-Agent": "{agent}"}')  # type: ignore[call-arg]
+
+
+@pytest.mark.parametrize("wait", [False, True])
+def test_redirects_preserve_the_model_and_permit_one_short_retry(wire, monkeypatch, wait):
+    import json
+
+    sent = []
+
+    class Transport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request):
+            body = b"".join([part async for part in request.stream])
+            model = json.loads(body)["model"]
+            sent.append((request.url.path, model))
+            if not request.url.path.endswith("/"):
+                return httpx.Response(307, headers={"Location": request.url.path + "/"})
+            if model == "model-a":
+                if wait and sum(path.endswith("/") for path, _ in sent) > 1:
+                    return httpx.Response(200, json=_chat("ok"))
+                if wait:
+                    return _error(
+                        429,
+                        "rate_limit_error",
+                        "agent_request_limit",
+                        _BUSY,
+                        **{"Retry-After": "0"},
+                    )
+                return _BUDGET
+            return httpx.Response(200, json=_chat("ok"))
+
+    monkeypatch.setattr(_http.get_model_client(), "_transport", Transport())
+    _as("agent-a")
+    if wait:
+        assert _complete("model-a").text == "ok"
+        assert wire.slept == [0.0]
+        assert len(sent) == 4
+    else:
+        with pytest.raises(ModelCallRefused):
+            _complete("model-a")
+        assert _complete("model-b").text == "ok"
+        assert sent[-1] == ("/v1/chat/completions/", "model-b")

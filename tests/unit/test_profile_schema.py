@@ -205,7 +205,7 @@ def test_the_prompt_fences_the_facts_and_names_each_property() -> None:
 
     prompt = w.system_prompt(ps.parse(_schema(diet=_DIET, languages=_LANGS)))
     assert '- "diet" (string, one of "vegan", "omnivore"): diet' in prompt
-    assert '- "languages" (array of string): languages spoken' in prompt
+    assert '- "languages" (array of string, at most 20 characters): languages spoken' in prompt
     assert "<<memory" in prompt  # the fence note
 
 

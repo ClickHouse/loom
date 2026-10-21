@@ -12,6 +12,7 @@ from typing import Any
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
 from server.llm import customer
+from server.memory.app.model_attribution import attribution_for, memory_writers
 from server.memory.domain.embed_text import key_axis_text
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
@@ -159,14 +160,8 @@ async def rebuild_batch(
     texts, slots = _inputs(table, rows, source_texts or {})
     # One call carries one org's texts, of one identity: a model call names a single
     # customer and identity.
-    groups = await customer.groups(
-        customer.Attribution(
-            str(rows[index].get("org", "")),
-            namespace=str(rows[index].get("namespace") or ""),
-            user_id=str(rows[index].get("user_id") or ""),
-        )
-        for index, _ in slots
-    )
+    writers = await memory_writers(rows)
+    groups = await customer.groups(attribution_for(rows[index], writers) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]
     left: set[int] = set()
     for who, positions in groups.items():

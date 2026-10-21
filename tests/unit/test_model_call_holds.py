@@ -29,6 +29,10 @@ _REFUSED = {"gateway_status": 429, "gateway_code": "budget_exceeded"}
 def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
     c = ManualClock(t=1000.0)
     monkeypatch.setattr(holds.time, "monotonic", c.monotonic)
+    monkeypatch.setattr(
+        "server.memory.workers.embedding.utc_now",
+        lambda: datetime(2026, 10, 1, tzinfo=UTC) + timedelta(seconds=c.t),
+    )
     return c
 
 
@@ -60,29 +64,30 @@ def _stub(key: str, *, created: int, version: int, agent: str = "") -> dict[str,
 
 
 class _Stubs:
-    """`find_embedding_stubs` over `rows` as ClickHouse answers it: the newest four
-    times the batch by version, the held groups' after every other, then the oldest
-    first (held groups' still after), at most the batch."""
+    """Candidate selection excludes held stubs before applying the batch limit."""
 
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
         self.embedded: set[str] = set()
-        self.held: list[Any] = []
 
-    async def find(self, *, batch_size: int, held_last: Any = None, **_: Any) -> Any:
-        self.held.append(held_last)
-        held = set(held_last or [])
+    async def find(self, *, batch_size: int, **_: Any) -> Any:
+        from server.memory.workers.embedding import utc_now
 
-        def last(r: dict[str, Any]) -> bool:
-            return (r["org"], r["namespace"], r["agent"], r["user_id"]) in held
-
-        live = [r for r in self.rows if r["memory_key"] not in self.embedded]
-        candidates = sorted(live, key=lambda r: (last(r), -r["version"]))[: batch_size * 4]
-        picked = sorted(candidates, key=lambda r: (last(r), r["created_at"]))[:batch_size]
-        return [dict(r) for r in picked]
+        live = [
+            r
+            for r in self.rows
+            if r["memory_key"] not in self.embedded
+            and (r.get("embed_retry_at") is None or r["embed_retry_at"] <= utc_now())
+        ]
+        candidates = sorted(live, key=lambda r: -r["version"])[: batch_size * 4]
+        return [dict(r) for r in sorted(candidates, key=lambda r: r["created_at"])[:batch_size]]
 
     async def insert(self, rows: list[dict[str, Any]], **_: Any) -> None:
         self.embedded.update(r["memory_key"] for r in rows if r["embedding_dim"] > 0)
+        for row in rows:
+            self.rows = [
+                dict(row) if old["memory_key"] == row["memory_key"] else old for old in self.rows
+            ]
 
     async def writers(self, org: str, keys: Any, **_: Any) -> dict[Any, Any]:
         # a* were written by agent-a, b* by agent-b, into the shared namespace
@@ -162,14 +167,15 @@ def test_the_embedding_worker_takes_other_identities_stubs_while_one_is_held(
     run = _worker(monkeypatch, store, embedder)
     first = run(2)
     assert embedder.calls == [("agent-a", 2)] and first.embedded_count == 0
-    second = run(2)  # agent-a's group is read last: agent-b's stubs fill the batch
-    assert embedder.calls[1:] == [("agent-b", 2)]
+    second = run(2)
+    assert embedder.calls[1:] == [("agent-b", 1)]
+    run(2)
+    assert embedder.calls[1:] == [("agent-b", 1), ("agent-b", 1)]
     assert sorted(store.embedded) == ["b1", "b2"] and second.failed_count == 0
-    assert store.held[1] == [("acme", "shared", "agent-a", "-")]  # a group, never stub keys
-    assert run(2).embedded_count == 0 and embedder.calls[2:] == []  # all held: no call
+    assert run(2).embedded_count == 0 and len(embedder.calls) == 3
     clock.advance(600)
     run(2)  # the hold is over: agent-a's oldest are asked for again
-    assert embedder.calls[2:] == [("agent-a", 2)] and store.held[-1] is None
+    assert embedder.calls[3:] == [("agent-a", 2)]
 
 
 def test_a_held_writers_neighbour_in_its_group_is_embedded_when_the_batch_has_room(
@@ -281,7 +287,8 @@ async def test_the_embedding_worker_holds_only_the_group_it_cannot_name(by_org) 
     rows = [{**r, "agent": "a", "user_id": "-"} for r in rows]
     out = await w._embed_rows(_ByOrg(), rows)
     assert out == [(None, w.HELD), ([0.5, 0.5], "")]  # beta's vector is kept
-    assert w._HELD_GROUPS.current() == {("acme", "n", "a", "-")}
+    assert rows[0]["embed_retry_at"] > w.utc_now()
+    assert "embed_retry_at" not in rows[1]
 
 
 def test_code_recovery_holds_only_the_group_it_cannot_name(by_org) -> None:
