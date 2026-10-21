@@ -55,7 +55,7 @@ up front.
   reads as high as empty); it checks the 240 characters its excerpt shows and
   1,024 past them. The titler never sends such a turn to its model. A thread whose
   first eight user and assistant turns all read as high, or whose generated
-  title reads as one, stays untitled, marked `title_refused` in its metadata so the
+  title reads as high, stays untitled, marked `title_refused` in its metadata so the
   titler does not ask again; one with fewer such turns waits, unmarked, for a plain
   turn. New `metadata` from `conversation.update` or `conversation.create` replaces
   the mark, and the titler then asks once more and marks the thread again.

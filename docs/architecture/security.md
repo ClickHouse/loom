@@ -823,8 +823,8 @@ no search leg returns it. The other reads that could serve its value follow thre
 Raw evidence has no caller to label it, so the text decides (`reads_high`, whatever
 `LOOM_MEMORY_SENSITIVITY_AUTODETECT` says). A passage whose text reads as high (any
 high shape: a credential, card number, SSN or stated PIN) is stored as written with no
-vector, and its text is never sent to the embedder. Every read that ranks passages reads only those with a vector (`embedding_dim > 0`), so no search leg
-returns it.
+vector, and its text is never sent to the embedder. Every read that ranks passages reads
+only those with a vector (`embedding_dim > 0`), so no search leg returns it.
 
 - Chunk writers: a verbatim chunk in `loom.memory_chunks` (a conversation chunk
   `memory.set_from_messages` writes, a chunk of a long `memory.set` value, a chunk
@@ -858,7 +858,7 @@ returns it.
   leaves out a neighbour with no vector, as it leaves out one that reads as high, and
   audits a key read of either.
 - Digests and turns: a session digest whose text reads as high is written without
-  a vector. A `conversation.append` turn that reads as one is stored as written in
+  a vector. A `conversation.append` turn that reads as high is stored as written in
   `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
   out of vector search. `conversation.save_message` answers
   `reason: "high_sensitivity"` for such a turn, so the saved search never indexes it.
@@ -907,14 +907,14 @@ rewritten:
   `content_excerpt` for a saved message that reads as high (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread
   whose last turn reads as high, and an empty `title` for a title that reads as
-  one. Both listings check the excerpt they show and 1,024 characters past it, so a key
+  high. Both listings check the excerpt they show and 1,024 characters past it, so a key
   that crosses the cut is caught. `memory.digests` shows an empty `summary_text`, and
   `memory.outline` an empty `headline`, for a session digest whose text reads as high
   (one an earlier build wrote), and `memory.digests` leaves out key facts that read as
-  one. The conversation titler never sends a turn that reads as high to its model and
-  never stores a title that reads as one: it marks the thread
-  `title_refused` in its metadata instead, as it does a thread whose first eight user
-  and assistant turns all read as high, and later passes skip it. A thread with
+  high. The conversation titler never sends a turn that reads as high to its model and
+  never stores a title that reads as high: it marks the thread `title_refused` in its
+  metadata instead, as it does a thread whose first eight user and assistant turns all
+  read as high, and later passes skip it. A thread with
   fewer such turns stays unmarked, so a plain turn that arrives later gets it titled.
   New `metadata` from `conversation.update` or `conversation.create` replaces the mark,
   and the titler then asks its model once more and marks the thread again.

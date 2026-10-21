@@ -564,9 +564,9 @@ def high_spans(text: str) -> list[tuple[int, int]]:
 
 def overlaps_high(source: str, ranges: list[tuple[int, int]]) -> list[bool]:
     """For each [start, end) range of `source` (a chunk's place in the text it was cut from),
-    whether it overlaps a high shape in `source` or its own text reads as one. A chunk cut
+    whether it overlaps a high shape in `source` or its own text reads as high. A chunk cut
     through a key holds only its head or its tail, which does not read as high on its
-    own; a chunk that starts inside a word can read as one where `source` does not."""
+    own; a chunk that starts inside a word can read as high where `source` does not."""
     spans = high_spans(source)
     return [
         reads_high(source[start:end])
@@ -610,7 +610,7 @@ def _joined_runs(texts: dict[int, str]) -> Iterator[tuple[str, list[int], list[t
 def joined_overlaps_high(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a high shape in
     the text its session's chunks make joined in `chunk_index` order, each chunk's overlap with
-    the one before dropped, or its own text reads as one: the rule the other chunk writers
+    the one before dropped, or its own text reads as high: the rule the other chunk writers
     apply to the text they cut (`overlaps_high`). Chunks with a gap in `chunk_index`
     are not joined. A session that holds two texts at one index (written by two calls) has
     no single text to rebuild, so its chunks are read in pairs instead
@@ -637,7 +637,7 @@ def joined_overlaps_high(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bo
 
 def _held_in_pairs(texts: dict[int, set[str]]) -> set[tuple[int, str]]:
     """The `(chunk_index, text)` chunks of a session with several texts at one index that
-    read as high on their own, or that overlap one in the text a chunk and a chunk
+    read as high on their own, or that overlap a high shape in the text a chunk and a chunk
     at the next index make joined. Only a pair whose texts overlap (`_overlap`) was cut
     from one text, so only such a pair is joined."""
     held = {

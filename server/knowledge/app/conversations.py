@@ -1385,7 +1385,7 @@ async def handle_conversation_compact(input: ConversationCompactInput) -> Conver
     later run folds it into its window, and a window of nothing but summaries is
     already compacted. A summary that cannot be embedded compacts nothing
     (`reason="embed-failed"`). A turn that reads as high is left out of the
-    window and stays live; a summary that reads as one anyway compacts nothing
+    window and stays live; a summary that reads as high anyway compacts nothing
     (`reason="summary-high-sensitivity"`).
     """
     import uuid as _uuid
