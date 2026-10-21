@@ -363,7 +363,7 @@ gateway.
 - **Reads.** A trust's claims (`loom.machine_identities`) and a namespace's owner are read at
   most once a minute per process. A failed read serves the copy in hand; with none the call is
   held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as
-  someone else's.
+  someone else's, and a job leaves that work for 30 seconds, no attempt spent.
 - **Only to the gateway.** The identity headers go only to a host
   `LOOM_INFERENCE_GATEWAY_HOSTS` lists, so setting them requires it. The model client's request
   hook (`server/clients/_http.py`) drops them from any other request, a redirect hop included:
@@ -388,6 +388,14 @@ gateway.
   request or a job, ends the hold. A request always asks the gateway, which may take the
   identity back at any time. Any other answer is the provider's, as before: another 403 is a
   provider failure, never retried, and another 429 a rate limit, retried.
+- **Skip, not stall.** A job leaves held work out of its next selections while the hold
+  lasts (`server/workers/holds.py`), so its batch goes to other identities' work instead of
+  filling again with work that would only be held. The profile fold leaves the identity out of
+  its scan; the embedding worker leaves the held stubs out and, while any identity is held,
+  reads four times its batch and drops the held identities' stubs before calling. The batch
+  embedders (the embedding workers, `loom reembed`, a model rebuild) hold one group at a time
+  (`customer.GROUP_HOLDS`: an org switched off, an identity refused, asked to wait or unread),
+  and write the vectors the other groups' calls bought.
 
 **Why the namespace's owner.** Some rows a job works on record no principal (a conversation
 turn, a shared-scope vector), and an agent's token has its own namespace as its home, so the

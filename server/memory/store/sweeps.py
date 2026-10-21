@@ -98,11 +98,15 @@ async def find_embedding_stubs(
     org_filter: str | None = None,
     namespace_filter: str | None = None,
     exclude_orgs: frozenset[str] = frozenset(),
+    exclude_keys: list[tuple[str, ...]] | None = None,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """memory_embeddings rows with embedding_dim=0 (stubs) that haven't
     been poisoned. Used by the embedding_worker. `exclude_orgs` (orgs whose
-    model calls are switched off) leaves their stubs where they are.
+    model calls are switched off) leaves their stubs where they are, and
+    `exclude_keys` the stubs of those keys (org, namespace, agent, user_id,
+    session_id, scope, embedding_model, memory_key), whose identity the worker
+    found held.
 
     `version` rides along so the worker can write its replacement at
     stub_version + 1: newer than the stub it read, older than any row a
@@ -119,6 +123,13 @@ async def find_embedding_stubs(
     if exclude_orgs:
         extra_where += " AND org NOT IN {exclude_orgs:Array(String)}"
         params["exclude_orgs"] = sorted(exclude_orgs)
+    if exclude_keys:
+        extra_where += (
+            " AND (org, namespace, agent, user_id, session_id, scope, embedding_model,"
+            " memory_key) NOT IN {exclude_keys:Array(Tuple(String, String, String, String,"
+            " String, String, String, String))}"
+        )
+        params["exclude_keys"] = list(exclude_keys)
 
     # Two phases. Under FINAL the WHERE is applied after the merge, so a
     # single query would read every selected column of every row (3.1 GB and

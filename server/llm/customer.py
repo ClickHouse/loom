@@ -97,6 +97,16 @@ HOLDS: tuple[type[LoomServerError], ...] = (
     IdentityUnread,
     ModelCallRefused,
 )
+# What holds one group of a job's batch and not the others: its org switched off since
+# the job picked it, its identity refused or asked to wait by the gateway, or what names
+# that identity unread. The group's rows wait, no attempt spent, and the other groups'
+# calls, and the vectors they bought, go on (`server.workers.holds`). An unread switch
+# holds every call alike: the pass stops.
+GROUP_HOLDS: tuple[type[LoomServerError], ...] = (
+    ModelCallsDisabled,
+    ModelCallRefused,
+    IdentityUnread,
+)
 
 
 @dataclass(frozen=True)

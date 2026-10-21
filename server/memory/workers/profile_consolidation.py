@@ -35,9 +35,15 @@ from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
+from server.workers.holds import Held, hold_seconds
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
+
+# Identities (org, namespace, user_id) whose fold was held (`customer.GROUP_HOLDS`), each
+# until its hold ends: the selection leaves them out meanwhile, so the pass's slots go to
+# identities whose fold can run.
+_HELD: Held[tuple[str, str, str]] = Held()
 
 _FOLD_SYSTEM = (
     "You maintain a concise standing profile for an AI assistant. Given a list "
@@ -89,6 +95,12 @@ async def run_pass(
         # `updated_at`, not `created_at`: a rewrite keeps the section's
         # creation time. The fold's model call is for the newest principal that
         # wrote the identity's facts (`writer`; a pipeline is none).
+        held = sorted(_HELD.current())
+        held_sql = (
+            "AND (m.org, m.namespace, m.user_id) NOT IN {held:Array(Tuple(String, String, String))}"
+            if held
+            else ""
+        )
         identities = await ch.query_all(
             """
             SELECT m.org AS org, m.namespace AS namespace, m.user_id AS user_id,
@@ -103,8 +115,9 @@ async def run_pass(
               AND m.tombstoned_at IS NULL
               AND m.user_id != '-'
               AND m.memory_type IN {types:Array(String)}
-              -- an org whose model calls are switched off waits, and takes no slot
-              AND NOT has({off:Array(String)}, m.org)
+              -- an org whose model calls are switched off waits, and takes no slot;
+              -- so does an identity whose fold is held (`held`)
+              AND NOT has({off:Array(String)}, m.org) /*held*/
               AND (m.org, m.namespace, m.user_id) NOT IN (
                   SELECT org, namespace, user_id
                   FROM loom.memory FINAL
@@ -116,7 +129,7 @@ async def run_pass(
             HAVING n >= {minm:UInt32}
             ORDER BY n DESC
             LIMIT {lim:UInt32}
-            """,
+            """.replace("/*held*/", held_sql),
             params={
                 "minm": int(cfg.min_memories),
                 "lim": int(max(1, cfg.max_identities_per_pass)),
@@ -124,6 +137,7 @@ async def run_pass(
                 "label": cfg.label,
                 "cool": int(max(0, cfg.cooldown_seconds)),
                 "off": sorted(await customer.switched_off_orgs()),
+                **({"held": held} if held else {}),
                 "pipeline": sorted(PIPELINE_ACTORS),
                 "cli": CLI_ACTOR_PREFIX,
             },
@@ -133,8 +147,14 @@ async def run_pass(
             try:
                 if await _consolidate_identity(ch, row, cfg):
                     result.profiles_written += 1
+            except customer.GROUP_HOLDS as e:
+                # A held call is no failure: the identity is folded once its org or
+                # identity is back, and takes no slot until its hold ends.
+                _HELD.hold(
+                    [(str(row["org"]), str(row["namespace"]), str(row["user_id"]))], hold_seconds(e)
+                )
             except customer.HOLDS:
-                continue  # a held call is no failure: the identity is folded once the org is back
+                continue  # a switch gone unread holds every identity: the next pass tries
             except Exception as e:
                 result.errors += 1
                 log.exception("profile consolidation failed for %s", dict(row))

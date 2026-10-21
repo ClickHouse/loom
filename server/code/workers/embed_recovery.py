@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.core.errors import ModelCallRefused
 from server.llm import customer
 from server.settings import settings
 from server.workers import pass_context
@@ -319,9 +318,10 @@ async def _embed_rows(
                         failures = dict.fromkeys(range(len(group)), customer.NO_CUSTOMER)
                     else:
                         vectors, failures = await _vectors_for(embedder, texts)
-            except (customer.ModelCallsDisabled, ModelCallRefused):
-                # Switched off since the pass began, or the identity refused: its
-                # stubs stay as they are, no attempt spent, and are embedded later.
+            except customer.GROUP_HOLDS:
+                # Switched off since the pass began, or the identity refused, asked to
+                # wait or unread: its stubs stay as they are, no attempt spent, and
+                # are embedded later; the other groups' vectors are written.
                 result.switched_off += len(group)
                 continue
             embedded += _stage_replacements(

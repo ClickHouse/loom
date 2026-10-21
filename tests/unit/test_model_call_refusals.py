@@ -452,7 +452,7 @@ def test_the_embedding_worker_leaves_a_refused_identitys_rows(wire, monkeypatch)
         {"org": "acme", "namespace": "ns-b", "content_excerpt": "b"},
     ]
     out = asyncio.run(embedding._embed_rows(_Embedder(), rows))
-    assert out == [(None, embedding.SWITCHED_OFF), ([1.0, 0.0], "")]  # left, no attempt
+    assert out == [(None, embedding.HELD), ([1.0, 0.0], "")]  # left, no attempt
 
 
 def test_a_waiter_on_a_refused_owner_embeds_for_itself(monkeypatch) -> None:
