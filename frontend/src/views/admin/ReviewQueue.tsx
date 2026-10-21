@@ -559,8 +559,7 @@ const agentLabel = (r: LearningEntry) =>
 // agent does not. knowledge.search is not filtered by agent.
 const promoteNote = (r: LearningEntry) =>
   r.agent && r.agent !== "-"
-    ? `Promote publishes this rule to this namespace's knowledge, tagged for ${r.agent}: ${r.agent}'s context packs, stacks, searches and answers serve it for every user, and other agents' reads that name their agent do not; a namespace-wide read (agent ` *
-      `, memory.ask's default) and knowledge.search find it for anyone who can read the namespace.`
+    ? `Promote publishes this rule to this namespace's knowledge, tagged for ${r.agent}: ${r.agent}'s context packs, stacks, searches and answers serve it for every user, and other agents' reads that name their agent do not; a namespace-wide read (agent \`*\`, memory.ask's default) and knowledge.search find it for anyone who can read the namespace.`
     : "Promote publishes this rule to this namespace's knowledge for every agent: every agent's reads find it for every user.";
 
 // A bot's rule is backed by distinct users, its sessions beside them; every other
