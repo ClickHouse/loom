@@ -181,7 +181,6 @@ async def export_conversations(
         )
         WHERE bytes_before_previous < {{max_bytes:UInt64}}
         ORDER BY {_CONVERSATION_ORDER}
-        LIMIT {{lim:UInt64}}
         """,
         params={**params, "lim": int(limit), "max_bytes": int(max_bytes)},
     )
