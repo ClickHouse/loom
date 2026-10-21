@@ -184,7 +184,9 @@ def test_context_pack_section_order_is_independent_of_completion_order(
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
         _stub(
             "knowledge",
-            NS(results=[NS(namespace="ns", source_uri="doc://1", content="kn", score=0.5)]),
+            NS(
+                results=[NS(namespace="ns", source_uri="doc://1", content="kn", score=0.5, tags=[])]
+            ),
         ),
     )
     monkeypatch.setattr(
@@ -248,6 +250,7 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
                     content="deploy on tuesdays",
                     score=0.9,
                     section="Ops > Deploys",
+                    tags=[],
                 ),
                 NS(
                     namespace="ns",
@@ -255,6 +258,7 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
                     content="no headings here",
                     score=0.5,
                     section="",
+                    tags=[],
                 ),
             ]
         )
