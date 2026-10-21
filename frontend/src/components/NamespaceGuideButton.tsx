@@ -10,7 +10,8 @@ import { Tip } from "./ui";
 
 /**
  * The namespace's guide, one button in the page header beside the page's primary action.
- * The button is always there, whatever the read answers, so nothing on the page moves when
+ * The button is there whatever the read answers (on any namespace but a personal
+ * collection, which takes no guide), so nothing on the page moves when
  * it lands and focus has a place to come back to. Its description says what the guide is
  * (its summary, or that there is none); a writer of a namespace without one lands straight
  * in the editor.
@@ -23,6 +24,9 @@ export function NamespaceGuideButton({
   /** An icon alone, named "Guide", where the title row has no room for a label (a phone). */
   compact?: boolean;
 }) {
+  // An end user's personal collection takes no guide, and its name says so at render: no
+  // button, no read, and nothing moves for it.
+  const personal = isPersonalCollection(identity.namespace);
   const role = useNamespaceRole(identity.namespace);
   const writer = canEditGuide(role, identity.namespace);
   const describedBy = useId();
@@ -39,6 +43,7 @@ export function NamespaceGuideButton({
   }
   useAbortableEffect(
     async (signal, live) => {
+      if (personal) return;
       try {
         const g = await getNamespaceGuide(identity.org, identity.namespace, { signal });
         if (live()) setGuide(g);
@@ -46,10 +51,11 @@ export function NamespaceGuideButton({
         // The button still opens the guide, which says why it cannot be read.
       }
     },
-    [identity.org, identity.namespace, reads],
+    [identity.org, identity.namespace, personal, reads],
   );
 
-  const about = describeGuide(guide, writer, identity.namespace);
+  if (personal) return null;
+  const about = describeGuide(guide, writer);
 
   return (
     <>
@@ -95,8 +101,7 @@ export function NamespaceGuideButton({
 
 /** What the button says the guide is: before the read answers, then its revision and
  *  summary, or that there is none (with what to do about it, to a writer). */
-function describeGuide(guide: NamespaceGuide | null, writer: boolean, namespace: string): string {
-  if (isPersonalCollection(namespace)) return "A personal collection takes no guide";
+function describeGuide(guide: NamespaceGuide | null, writer: boolean): string {
   if (guide === null) return "How this namespace is laid out, for agents and people";
   if (guide.found) return `Revision ${guide.revision}${guide.summary ? `: ${guide.summary}` : ""}`;
   if (writer) return "No guide yet: write how this namespace is laid out, for agents and people";

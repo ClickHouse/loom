@@ -119,13 +119,12 @@ describe("NamespaceGuideButton", () => {
     expect(screen.queryByLabelText("Guide (Markdown)")).toBeNull();
   });
 
-  it("offers no editor on an end user's personal collection, which takes no guide", async () => {
+  it("is not there on an end user's personal collection, which takes no guide", async () => {
     vi.mocked(api.getNamespaceGuide).mockResolvedValue(NONE);
-    render(<NamespaceGuideButton identity={{ org: "o", namespace: "col-me-alice" }} />);
-    expect(guideButton()).toHaveAccessibleDescription("A personal collection takes no guide");
-    fireEvent.click(guideButton());
-    expect(await screen.findByText(/A personal collection takes no guide/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+    const { container } = render(<NamespaceGuideButton identity={{ org: "o", namespace: "col-me-alice" }} />);
+    expect(container).toBeEmptyDOMElement();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.getNamespaceGuide).not.toHaveBeenCalled();
   });
 
   it("offers no editor while the caller's role is unknown", async () => {
