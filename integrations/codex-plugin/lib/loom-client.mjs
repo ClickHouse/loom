@@ -754,6 +754,34 @@ export function redactHead(text, max, token = resolveToken()) {
   return redactSecrets(s, token);
 }
 
+/** `redactSecrets` over a unified diff's hunk bodies, cut to `max` chars. The
+ *  file header lines (`diff --git` up to the first `@@`) and every `@@` line are
+ *  copied as they are: they hold the paths and ranges the server parses, and a
+ *  pattern that runs past a line end (a value after `KEY=`, an unterminated
+ *  private key) would otherwise swallow them. Each body is redacted on its own,
+ *  so a match never reaches past its hunk. */
+export function redactDiff(diff, max, token = resolveToken()) {
+  const out = [];
+  let body = [];
+  let inHunk = false;
+  const flush = () => {
+    if (body.length) out.push(redactSecrets(body.join("\n"), token));
+    body = [];
+  };
+  for (const line of String(diff ?? "").split("\n")) {
+    if (line.startsWith("diff --git ")) inHunk = false;
+    if (!inHunk || line.startsWith("@@")) {
+      flush();
+      out.push(line);
+      if (line.startsWith("@@")) inHunk = true;
+    } else {
+      body.push(line);
+    }
+  }
+  flush();
+  return out.join("\n").slice(0, max);
+}
+
 /**
  * Run a hook's `main`. Whatever it throws, the hook exits 0: a hook never
  * fails the host session. With LOOM_HOOK_DEBUG=on the error's first line,

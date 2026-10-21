@@ -23,7 +23,7 @@ import {
   git,
   postBounded,
   readStdinJson,
-  redactHead,
+  redactDiff,
   resolveServerUrl,
   resolveToken,
   scheduleExit,
@@ -96,7 +96,7 @@ async function main() {
     {
       org: repo.org,
       namespace: repo.namespace,
-      diff: redactHead(diff, 200_000, token),
+      diff: redactDiff(diff, 200_000, token),
       depth: DEPTH,
       per_hop_limit: PER_HOP,
       consumer: "claude-code-blast",
