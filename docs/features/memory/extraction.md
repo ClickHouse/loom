@@ -89,10 +89,12 @@ request's `(org, namespace, agent)`:
   is a separate candidate, so a first wording never collects the support of a later
   one. The same rule worded differently in another session is a separate candidate too,
   so wording drift splits its support. The extractor's key rewrites leave a rule's key
-  alone. Once a reviewer decides a bot's rule, no new candidate is filed for that bot
+  alone. Once a reviewer promotes a bot's rule, no new candidate is filed for that bot
   under that key: a promoted rule is served back to the bot, which restates it in its
   own words, and each restatement would otherwise wait for review again. The skip is
-  counted in `loom.memory_drops` (stage `learnings.file`, reason `already_decided`).
+  counted in `loom.memory_drops` (stage `learnings.file`, reason `already_promoted`).
+  A rejected rule is never served back, so it stops only its own wording: a different
+  rule under its key is still filed.
 - The candidate row holds the rule and no user's words. Each session that states it adds
   a row to `loom.learnings_supporters` with the end user, the session and that user's
   own quotes: the user turn before the cited assistant turn (up to 200 characters) and
@@ -135,8 +137,9 @@ request's `(org, namespace, agent)`:
   An end-user token names the agent its issuer signed (its `agent` claim). A token Loom
   mints names no agent, so one pinned with `--read-user-id` files no bot's rule. Its
   reads are served that agent's rules the same way, and no rule promoted for a named
-  bot when it names none (a rule for every agent is still served): a bot that needs its own promoted rules for a user reads with an end-user token
-  signed for it, or with an unpinned token.
+  bot when it names none (a rule for every agent is still served): a bot that needs
+  its own promoted rules for a user reads with an end-user token signed for it, or
+  with an unpinned token.
 
 `learning_candidates` in the response counts the rules that wrote a new candidate or this
 session's support of one. A failed queue

@@ -85,7 +85,7 @@ async def find_candidate(
     )
 
 
-async def rule_decided(
+async def rule_promoted(
     org: str,
     namespace: str,
     agent: str,
@@ -93,7 +93,7 @@ async def rule_decided(
     *,
     ch: _CHClient | None = None,
 ) -> bool:
-    """Whether a reviewer already decided an `assistant_turn` rule of this bot under
+    """Whether a reviewer already promoted an `assistant_turn` rule of this bot under
     this key."""
     ch = ch or _default_client()
     row = await ch.query_one(
@@ -101,7 +101,7 @@ async def rule_decided(
         SELECT count() AS n FROM loom.learnings_queue FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND agent = {agent:String} AND memory_key = {k:String}
-          AND source_kind = 'assistant_turn' AND status != 'pending'
+          AND source_kind = 'assistant_turn' AND status = 'promoted'
         """,
         params={"org": org, "ns": namespace, "agent": agent, "k": memory_key},
     )
