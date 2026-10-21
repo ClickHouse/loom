@@ -29,6 +29,11 @@ vi.mock("../../api", async (importOriginal) => {
 });
 const confirmAction = vi.fn();
 vi.mock("../../components/ConfirmDialog", () => ({ confirmAction: (...a: unknown[]) => confirmAction(...a) }));
+const toast = vi.fn();
+vi.mock("../../components/Toast", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../components/Toast")>();
+  return { ...actual, toast: (...a: unknown[]) => toast(...a) };
+});
 
 const HANDBOOK = { namespace: "col-handbook", parent: "", personal: false, role: "admin" };
 const ONCALL = { namespace: "col-oncall", parent: "col-handbook", personal: false, role: "viewer" };
@@ -38,6 +43,7 @@ beforeEach(() => {
   for (const f of [listCollections, createCollection, deleteCollection, getNamespace, listGrants, listKnowledge])
     f.mockReset();
   confirmAction.mockReset();
+  toast.mockReset();
   getNamespace.mockResolvedValue({
     namespace: "col-handbook",
     description: "Team runbooks",
@@ -119,6 +125,16 @@ describe("Collections: the list", () => {
     expect(listCollections).toHaveBeenLastCalledWith("acme", { cursor: "col-handbook" });
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     expect(table()).toBeInTheDocument();
+    // The last page took away the button that held the focus: the first row it added has it.
+    await waitFor(() => expect(screen.getByRole("button", { name: "col-oncall" })).toHaveFocus());
+  });
+
+  it("says a search that matches none covers only the pages loaded", async () => {
+    listCollections.mockResolvedValueOnce({ collections: [HANDBOOK], next_cursor: "col-handbook" });
+    render(<Collections />);
+    await screen.findByRole("button", { name: "col-handbook" });
+    await userEvent.type(screen.getByRole("textbox", { name: "Search collections" }), "zzz");
+    expect(await screen.findByText(/in the first 1 loaded/)).toBeInTheDocument();
   });
 });
 
@@ -183,6 +199,28 @@ describe("Collections: delete", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() => expect(deleteCollection).toHaveBeenCalledWith("acme", "col-handbook"));
     await waitFor(() => expect(listCollections).toHaveBeenCalledTimes(2));
+    expect(toast).toHaveBeenCalledWith("Deleted col-handbook", "ok");
+    // The read that drops the row hands focus to the search.
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Search collections" })).toHaveFocus());
+  });
+
+  it("says when erasing what it held failed and is being retried, with the erasure id", async () => {
+    listCollections.mockResolvedValue(page(HANDBOOK));
+    deleteCollection.mockResolvedValue({
+      namespace: "col-handbook",
+      deleted: true,
+      erasure_id: "e9",
+      erasure_status: "failed",
+    });
+    confirmAction.mockResolvedValueOnce(true);
+    render(<Collections />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for col-handbook" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith("Deleted col-handbook; erasing what it held is being retried", "info", {
+        detail: "erasure e9",
+      }),
+    );
   });
 
   it("offers no Delete in the menu of a collection the caller does not administer", async () => {
@@ -192,6 +230,19 @@ describe("Collections: delete", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for col-oncall" }));
     await screen.findByRole("menuitem", { name: "Open" });
     expect(screen.queryByRole("menuitem", { name: "Delete" })).toBeNull();
+  });
+});
+
+describe("Collections: members", () => {
+  it("lets an admin whose role comes from a parent or a group manage the members", async () => {
+    // No grant row names the caller: the role collection.list reports is what counts.
+    listCollections.mockResolvedValueOnce(page({ ...ONCALL, role: "admin" }));
+    render(<Collections />);
+    await userEvent.click(await screen.findByRole("button", { name: "Actions for col-oncall" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Members" }));
+    const dialog = await screen.findByRole("dialog", { name: "Members of col-oncall" });
+    expect(await within(dialog).findByRole("button", { name: "Add member" })).toBeInTheDocument();
+    expect(listGrants).toHaveBeenCalledWith({ org: "acme", namespace: "col-oncall" });
   });
 });
 
@@ -223,7 +274,7 @@ describe("Collections: create", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "New collection" })).toBeNull());
-    expect(listCollections).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(listCollections).toHaveBeenCalledTimes(2));
   });
 
   it("shows the server's refusal in the dialog", async () => {

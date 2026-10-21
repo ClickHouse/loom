@@ -32,7 +32,7 @@ interface Props {
   org: string;
   /** The collections a new one may sit in: those the caller writes, never a personal one. */
   parents: CollectionEntry[];
-  onCreated: (namespace: string) => void;
+  onCreated: () => void;
 }
 
 /**
@@ -74,7 +74,7 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, onCre
         description: description.trim(),
       });
       toast(r.created ? `Created ${r.namespace}` : `${r.namespace} already exists`, "ok");
-      onCreated(r.namespace);
+      onCreated();
       reset();
       onOpenChange(false);
     } catch (e) {

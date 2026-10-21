@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
@@ -25,7 +25,7 @@ import { BusyButton } from "../../components/ui/BusyButton";
 import { ListState } from "../../components/ui/ListState";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { Modal, ModalFooter } from "../../components/ui/Modal";
-import { RowMenu } from "../../components/ui/RowMenu";
+import { RowMenu, type RowMenuItem } from "../../components/ui/RowMenu";
 import {
   Alert,
   ListTime,
@@ -56,6 +56,8 @@ const HEADERS = [
 
 /** How many of a collection's documents its details list. */
 const DOCUMENTS_SHOWN = 25;
+/** The grants `listGrants` reads: one page, newest first. */
+const GRANTS_READ = 100;
 
 const ROLE_LABEL: Record<string, string> = { viewer: "Viewer", writer: "Writer", admin: "Admin" };
 
@@ -111,11 +113,13 @@ export function Collections() {
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<CollectionEntry | null>(null);
   const [members, setMembers] = useState<CollectionEntry | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const listBox = useRef<HTMLDivElement | null>(null);
 
   // Refresh, Retry, a create and a delete read again through the effect, so a newer read
   // drops an older one.
   const [reads, setReads] = useState(0);
-  const reload = () => setReads((n) => n + 1);
+  const reload = useCallback(() => setReads((n) => n + 1), []);
   useAbortableEffect(
     (signal, live) => {
       setError(null);
@@ -134,9 +138,13 @@ export function Collections() {
     [org, reads],
   );
 
+  // The names shown before a Load more: the last page removes the button, which held the
+  // focus, so it goes to the first row that page added.
+  const focusAdded = useRef<Set<string> | null>(null);
   const loadMore = () => {
     if (!current?.next) return;
     const from = current;
+    focusAdded.current = new Set(from.rows.map((c) => c.namespace));
     setLoadingMore(true);
     listCollections(org, { cursor: from.next })
       .then((r) =>
@@ -146,22 +154,53 @@ export function Collections() {
       .catch((e) => toastError("Couldn't load more collections", e))
       .finally(() => setLoadingMore(false));
   };
+  useEffect(() => {
+    const before = focusAdded.current;
+    if (before === null || loadingMore) return;
+    focusAdded.current = null;
+    if (current?.next || document.activeElement !== document.body) return;
+    const opens = [...(listBox.current?.querySelectorAll<HTMLElement>("[data-collection]") ?? [])];
+    (opens.find((el) => !before.has(el.dataset.collection ?? "")) ?? opens[opens.length - 1])?.focus();
+  });
+
+  // A deleted row leaves with the next read, and with it the menu or the dialog that held
+  // the focus: once that read lands, focus goes to the search.
+  const focusSearchOnRead = useRef(false);
+  useEffect(() => {
+    if (!focusSearchOnRead.current || refreshing) return;
+    focusSearchOnRead.current = false;
+    searchRef.current?.focus();
+  }, [refreshing]);
+
+  const onDelete = useCallback(
+    async (c: CollectionEntry) => {
+      if (await confirmDelete(org, c)) {
+        focusSearchOnRead.current = true;
+        setOpen(null);
+        reload();
+      }
+    },
+    [org, reload],
+  );
 
   const listQuery = useDeferredValue(query).trim().toLowerCase();
   const shown = useMemo(
     () => (rows ?? []).filter((c) => !listQuery || c.namespace.toLowerCase().includes(listQuery)),
     [rows, listQuery],
   );
+  // Built once per list or settled search, not on every render a keystroke makes.
+  const tableRows = useMemo(() => shown.map((c) => collectionRow(c, setOpen, setMembers, onDelete)), [shown, onDelete]);
   // A new collection may sit in one the caller writes; a personal one holds none.
   const parents = useMemo(() => (rows ?? []).filter((c) => !c.personal && c.role !== "viewer"), [rows]);
   const nav = useRowNav({ enabled: open === null && shown.length > 0 });
-
-  const onDelete = async (c: CollectionEntry) => {
-    if (await confirmDelete(org, c)) {
-      setOpen(null);
-      reload();
-    }
-  };
+  // One stable ref for the list's box, so a render does not hand useRowNav a new element.
+  const listRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      listBox.current = el;
+      nav(el);
+    },
+    [nav],
+  );
 
   const more = !!current?.next;
   const count =
@@ -191,7 +230,13 @@ export function Collections() {
 
       <ListToolbar label="Collections" count={count}>
         <div className="min-w-0 flex-1">
-          <SearchField aria-label="Search collections" value={query} onChange={setQuery} placeholder="Search by name" />
+          <SearchField
+            ref={searchRef}
+            aria-label="Search collections"
+            value={query}
+            onChange={setQuery}
+            placeholder="Search by name"
+          />
         </div>
       </ListToolbar>
 
@@ -215,69 +260,17 @@ export function Collections() {
         />
       )}
       {!error && rows !== null && rows.length > 0 && shown.length === 0 && (
-        <ListState kind="filtered" things="collections" filter={query.trim()} onClear={() => setQuery("")} />
+        <ListState
+          kind="filtered"
+          things="collections"
+          filter={query.trim()}
+          among={more ? `the first ${rows.length} loaded` : undefined}
+          onClear={() => setQuery("")}
+        />
       )}
       {!error && shown.length > 0 && (
-        <div ref={nav} data-testid="collections-table" aria-busy={refreshing || undefined}>
-          <Table
-            aria-label="Collections"
-            size="sm"
-            headers={HEADERS}
-            rows={shown.map((c) => {
-              const blocked = deleteBlocked(c);
-              return {
-                id: c.namespace,
-                items: [
-                  {
-                    label: (
-                      <span className="inline-flex min-w-0 items-center gap-2">
-                        <button
-                          type="button"
-                          data-row-open=""
-                          onClick={() => setOpen(c)}
-                          className="min-w-0 truncate rounded text-left font-mono text-xs"
-                        >
-                          {c.namespace}
-                        </button>
-                        {c.personal && <Badge text="Personal" state="neutral" size="sm" />}
-                      </span>
-                    ),
-                  },
-                  {
-                    label: c.parent ? (
-                      <span className="font-mono text-xs">{c.parent}</span>
-                    ) : (
-                      <span className="text-text-muted">Top level</span>
-                    ),
-                  },
-                  { label: ROLE_LABEL[c.role] ?? c.role },
-                  {
-                    label: (
-                      <RowMenu
-                        name={c.namespace}
-                        items={[
-                          { label: "Open", icon: "eye", onSelect: () => setOpen(c) },
-                          ...(c.personal
-                            ? []
-                            : [{ label: "Members", icon: "users" as const, onSelect: () => setMembers(c) }]),
-                          ...(blocked
-                            ? []
-                            : [
-                                {
-                                  label: "Delete",
-                                  icon: "trash" as const,
-                                  danger: true,
-                                  onSelect: () => void onDelete(c),
-                                },
-                              ]),
-                        ]}
-                      />
-                    ),
-                  },
-                ],
-              };
-            })}
-          />
+        <div ref={listRef} data-testid="collections-table" aria-busy={refreshing || undefined}>
+          <Table aria-label="Collections" size="sm" headers={HEADERS} rows={tableRows} />
         </div>
       )}
       {!error && more && (
@@ -311,10 +304,53 @@ export function Collections() {
           }}
           org={org}
           namespace={members.namespace}
+          admin={members.role === "admin"}
         />
       )}
     </PageContainer>
   );
+}
+
+/** One table row: the name opens the details, the menu holds the rest. */
+function collectionRow(
+  c: CollectionEntry,
+  onOpen: (c: CollectionEntry) => void,
+  onMembers: (c: CollectionEntry) => void,
+  onDelete: (c: CollectionEntry) => Promise<void>,
+) {
+  const items: RowMenuItem[] = [{ label: "Open", icon: "eye", onSelect: () => onOpen(c) }];
+  if (!c.personal) items.push({ label: "Members", icon: "users", onSelect: () => onMembers(c) });
+  if (!deleteBlocked(c)) items.push({ label: "Delete", icon: "trash", danger: true, onSelect: () => void onDelete(c) });
+  return {
+    id: c.namespace,
+    items: [
+      {
+        label: (
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              data-row-open=""
+              data-collection={c.namespace}
+              onClick={() => onOpen(c)}
+              className="min-w-0 truncate rounded text-left font-mono text-xs"
+            >
+              {c.namespace}
+            </button>
+            {c.personal && <Badge text="Personal" state="neutral" size="sm" />}
+          </span>
+        ),
+      },
+      {
+        label: c.parent ? (
+          <span className="font-mono text-xs">{c.parent}</span>
+        ) : (
+          <span className="text-text-muted">Top level</span>
+        ),
+      },
+      { label: ROLE_LABEL[c.role] ?? c.role },
+      { label: <RowMenu name={c.namespace} items={items} /> },
+    ],
+  };
 }
 
 interface Details {
@@ -382,6 +418,8 @@ function CollectionDetails({
       title={ns}
       description={shown?.info?.description || undefined}
       className="w-full max-w-[640px]"
+      // A read-only view: it opens on itself, not on the footer's Delete.
+      initialFocus="dialog"
     >
       <MetaList className="mb-4">
         <MetaRow label="Inside" mono={!!collection.parent}>
@@ -411,6 +449,8 @@ function CollectionDetails({
               id="collection-members-heading"
               label="Members"
               count={shown.grants.length}
+              // `listGrants` reads at most this many, with no next page.
+              caption={shown.grants.length >= GRANTS_READ ? `the newest ${GRANTS_READ}` : undefined}
               hint={
                 collection.parent
                   ? `These are the grants on this collection. Everyone who holds a grant on ${collection.parent} reaches it too.`
@@ -458,14 +498,14 @@ function CollectionDetails({
       )}
 
       <ModalFooter>
+        <Button type="secondary" htmlType="button" onClick={onClose}>
+          Close
+        </Button>
         <Unavailable reason={blocked}>
           <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
             Delete
           </Button>
         </Unavailable>
-        <Button type="secondary" htmlType="button" onClick={onClose}>
-          Close
-        </Button>
       </ModalFooter>
     </Modal>
   );
