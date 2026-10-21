@@ -17,9 +17,9 @@ Codex build runs the same scripts; see [codex.md](codex.md).
 ## Data handling
 
 This section covers the Claude Code plugin and the Codex plugin, which run the same
-scripts; Codex wires all but the token-usage hook. The hooks and the plugin's scripts send data only to the Loom server the plugin
-is configured with; the two skills named at the end of this section are the exceptions.
-The plugin sends:
+scripts; Codex wires all but the token-usage hook. The hooks and the plugin's scripts send
+data only to the Loom server the plugin is configured with; the two skills named at the
+end of this section are the exceptions. The plugin sends:
 
 - whatever the agent passes to a Loom MCP tool: memories it saves, search and code
   queries;
@@ -33,7 +33,8 @@ The plugin sends:
 - each tool call's input, output or error (`observe.record`), and the paths of files read
   or edited, for the code shunt, file rules and blast radius; a symbol name taken from a
   redirected grep pattern (`code.symbol`); and the search query of a `gh` issue search the
-  tracker shunt answers (`tracker.duplicate_check`);
+  tracker shunt answers (`tracker.duplicate_check`), with the owner and name of a repository
+  the command names (`code.repos`);
 - chat turns (`conversation.append`), which the server stores only when the namespace has
   conversation logging on;
 - the session's last turns (up to 200), to `memory.set_from_messages`, which keeps them as

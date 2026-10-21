@@ -242,3 +242,9 @@ def test_listing_fields_name_files_the_plugins_ship() -> None:
     )
     assert all(len(p) <= 128 for p in interface["defaultPrompt"])
     assert claude["privacyPolicyUrl"] == interface["privacyPolicyURL"]
+    page, _, anchor = (
+        claude["privacyPolicyUrl"]
+        .removeprefix("https://github.com/ClickHouse/loom/blob/main/")
+        .partition("#")
+    )
+    assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
