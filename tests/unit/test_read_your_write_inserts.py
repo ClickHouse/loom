@@ -32,8 +32,9 @@ from server.core.ch_writes import batched_insert_settings  # noqa: E402
 
 
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
-    """Every `settings=` dict literal passed to a `ch.insert` for `table`, in
-    one module or in every module of a package directory."""
+    """Every `settings=` passed to a `ch.insert` for `table` (a dict literal, or
+    `batched_insert_settings()` resolved to its value), in one module or in
+    every module of a package directory."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
     nodes = [n for f in files for n in ast.walk(ast.parse(f.read_text()))]
     found: list[dict[str, int]] = []

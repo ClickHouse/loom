@@ -187,17 +187,18 @@ async def append(
     }
     if msg.ts is not None:
         row["ts"] = msg.ts
-    settings = batched_insert_settings()
     if once_per_identity:
         # Committed: a replicated table keeps the tokens of committed and of
         # buffered inserts apart, so every writer of an identity sends it alike.
         identity = "\x1f".join((msg.org, msg.namespace, msg.agent, msg.thread_id, msg.msg_id))
-        settings = {
+        settings: dict[str, Any] = {
             "async_insert": 0,
             "wait_for_async_insert": 1,
             "insert_deduplication_token": "conversation-turn:"
             + hashlib.sha256(identity.encode()).hexdigest(),
         }
+    else:
+        settings = batched_insert_settings()
     await ch.insert("loom.conversations", [row], settings=settings)
 
 

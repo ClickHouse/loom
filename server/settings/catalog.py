@@ -562,8 +562,8 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_ddl_s: float = 300.0
     # Longest a batched insert (audit, transcript and ledger rows written on every
     # request) waits, ms, for concurrent inserts into the same table to share its part.
-    # Under load each such insert waits about this long; parts per table per second are
-    # at most 1000 / this.
+    # Under load each such insert waits about this long, and a table gets about
+    # 1000 / this parts a second per ClickHouse node.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
     # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
     # sparse. At most `ch_batched_insert_wait_max_ms`.

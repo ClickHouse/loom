@@ -91,7 +91,8 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 - **Append, then collapse.** Mutable state is a `ReplacingMergeTree`; writers insert a new
   row with a higher version and reads use `FINAL`. Mutations stay off the request path.
 - **Committed inserts.** A write that a later read depends on is sent with
-  `async_insert = 0, wait_for_async_insert = 1`, the client's session default. Fire-and-forget
+  `wait_for_async_insert = 1`, so it is written when the insert returns: committed
+  (`async_insert = 0`, the client's session default) or batched (below). Fire-and-forget
   telemetry (`async_insert = 1, wait_for_async_insert = 0`) adds `async_insert_deduplicate = 0`
   (`server/core/ch_writes.py`, `normalize_insert_settings`),
   because identical telemetry rows in one flush window are legitimate.
@@ -108,8 +109,10 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   of one caller's writes holds. The buffer is ClickHouse's, so a Loom process that
   stops loses nothing it acknowledged. Each insert waits between
   `ch_batched_insert_wait_min_ms` (writes are sparse) and `ch_batched_insert_wait_max_ms`
-  (under load) for others to join it, which bounds a table at about
-  1000 / `ch_batched_insert_wait_max_ms` parts a second. The version rows of `memory`,
+  (under load) for others to join it. Under steady load a table gets about
+  1000 / `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node and insert
+  shape (ClickHouse keeps one buffer per column list and settings), fewer when a buffer
+  fills first. The version rows of `memory`,
   `memory_embeddings`, `shared`, `session_summaries` and `entity_summaries` stay
   committed: their fenced `INSERT … SELECT FROM input()`
   ([rolling upgrades](rolling-upgrades.md)) cannot be buffered. A write whose token
@@ -364,9 +367,9 @@ on), so BM25 scores are exact.
 `server/observability/events_stream.py` queues them and writes one committed insert per
 flush. Every other telemetry writer (audit rows, exposures, search traces, query nodes,
 code-search outcomes) inserts into its own table directly; no view fans `events` out. The
-op ledger (`agent_events`) is batched the same way as the stream
-(`server/observability/events.py`). A failed flush never fails a request; a crash loses the
-queue.
+op ledger (`agent_events`) is queued the same way, and each flush is a batched insert
+(`server/observability/events.py`), so the flushes of every process share parts. A failed
+flush never fails a request; a crash loses the queue.
 
 ## Vector storage
 

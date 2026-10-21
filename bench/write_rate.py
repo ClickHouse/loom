@@ -13,11 +13,16 @@ server (`--op`). `--target client` runs, in this process, the two inserts a
 insert path alone, at rates one server process cannot serve. Both read the
 ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
 
+A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
+`LOOM_AUTH_REQUIRED=false`; spreading over orgs keeps the org-wide rate limit
+from capping the rate.
+
     PYTHONPATH=$PWD .venv/bin/python bench/write_rate.py --target client --rate 200 --seconds 60
     PYTHONPATH=$PWD .venv/bin/python bench/write_rate.py --target client --rate 200 --seconds 60 \
         --committed
     PYTHONPATH=$PWD .venv/bin/python bench/write_rate.py --target server \
-        --base-url http://localhost:7790 --op mix --rate 10 --seconds 60
+        --base-url http://localhost:7790 --op append --rate 100 --seconds 60 \
+        --namespaces 128 --orgs 128
 """
 
 from __future__ import annotations
@@ -58,8 +63,7 @@ def _namespace(i: int, args: argparse.Namespace) -> str:
 
 
 def _org(i: int, args: argparse.Namespace) -> str:
-    # One org per namespace, so no org-wide bucket caps the rate either.
-    return f"{args.org}-{i % args.namespaces}"
+    return args.org if args.orgs == 1 else f"{args.org}-{i % args.orgs}"
 
 
 def _server_body(op: str, i: int, run: str, args: argparse.Namespace) -> dict[str, Any]:
@@ -80,6 +84,7 @@ def _server_body(op: str, i: int, run: str, args: argparse.Namespace) -> dict[st
 
 
 async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
+    ts = datetime.now(UTC).replace(tzinfo=None)
     msg = conversation_repo.MessageInsert(
         org=_org(i, args),
         namespace=_namespace(i, args),
@@ -88,7 +93,7 @@ async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
         msg_id=f"{run}-{i}",
         role="user",
         content=f"Turn {i} of run {run}: the delivery for order {i} moved to day {i % 28}.",
-        ts=datetime.now(UTC).replace(tzinfo=None),
+        ts=ts,
     )
     await conversation_repo.append(msg)
     await conversation_repo.insert_embedding(
@@ -109,10 +114,10 @@ async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
             "run_id": msg.run_id,
             "embed_attempts": 0,
             "embed_last_error": "write-rate: not embedded",
-            "embed_failed_at": msg.ts,
+            "embed_failed_at": ts,
             "is_saved": False,
             "saved_at": None,
-            "ts": msg.ts or datetime.now(UTC).replace(tzinfo=None),
+            "ts": ts,
         }
     )
 
@@ -138,11 +143,14 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     errors: dict[str, int] = {k: 0 for k in kinds}
     first_error: dict[str, str] = {}
     if args.committed:
-        # What these two sites sent before they were batched.
+        # The committed form, as the baseline.
         conversation_repo.batched_insert_settings = lambda: dict(_COMMITTED)  # type: ignore[attr-defined]
 
     limits = httpx.Limits(max_connections=args.max_in_flight)
-    async with httpx.AsyncClient(base_url=args.base_url, timeout=120, limits=limits) as http:
+    headers = {"Authorization": f"Bearer {args.token}"} if args.token else {}
+    async with httpx.AsyncClient(
+        base_url=args.base_url, timeout=120, limits=limits, headers=headers
+    ) as http:
         if args.target == "server" and "conversation.append" in kinds:
             for n in range(args.namespaces):
                 r = await http.post(
@@ -211,11 +219,15 @@ def main() -> None:
     p.add_argument("--rate", type=float, default=200.0, help="writes per second")
     p.add_argument("--seconds", type=float, default=60.0)
     p.add_argument("--max-in-flight", type=int, default=512)
-    p.add_argument("--org", default="write-rate", help="org prefix")
+    p.add_argument("--token", default="", help="bearer token for --target server")
+    p.add_argument("--org", default="write-rate", help="org, or org prefix with --orgs")
+    p.add_argument("--orgs", type=int, default=1, help="orgs the writes spread over")
     p.add_argument("--namespace", default="write-rate", help="namespace prefix")
     p.add_argument("--namespaces", type=int, default=32, help="namespaces the writes spread over")
     p.add_argument("--out", default="", help="also write the JSON result here")
     args = p.parse_args()
+    if args.committed and args.target == "server":
+        p.error("--committed applies to --target client: a server sends what its code sends")
     text = json.dumps(asyncio.run(_run(args)), indent=2)
     print(text)
     if args.out:

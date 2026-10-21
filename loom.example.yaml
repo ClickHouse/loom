@@ -102,8 +102,8 @@ settings:
 
   # Longest a batched insert (audit, transcript and ledger rows written on every
   # request) waits, ms, for concurrent inserts into the same table to share its part.
-  # Under load each such insert waits about this long; parts per table per second are at
-  # most 1000 / this. [live]
+  # Under load each such insert waits about this long, and a table gets about 1000 /
+  # this parts a second per ClickHouse node. [live]
   # ch_batched_insert_wait_max_ms: 50
 
   # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are

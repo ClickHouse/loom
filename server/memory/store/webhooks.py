@@ -164,7 +164,7 @@ async def webhook_removed_since(
 
 
 async def insert_outbox(rows: list[dict[str, Any]], *, ch: _CHClient | None = None) -> None:
-    """Outbox rows, committed before the call returns."""
+    """Outbox rows, written before the call returns."""
     if not rows:
         return
     ch = ch or _default_client()
