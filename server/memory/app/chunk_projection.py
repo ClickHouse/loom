@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
+from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.app.projection_errors import record_input_projection_failure
@@ -399,7 +400,7 @@ async def write_memory_chunks(
     await ch.insert(
         "loom.memory_chunks",
         rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=committed_insert_settings(),
     )
     if provenance_rows:
         try:

@@ -48,9 +48,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bo
     """Drain the usage-event buffer in one CH insert. No-op when empty.
     `background=False` for the flush a request waits on (the buffer is full)."""
     global _USAGE_BUFFER
-    if _USAGE_BUFFER_LOCK is None:
-        return
-    async with _USAGE_BUFFER_LOCK:
+    async with _buffer_lock():
         if not _USAGE_BUFFER:
             return
         batch = _USAGE_BUFFER
@@ -70,7 +68,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bo
             len(batch),
             e,
         )
-        async with _USAGE_BUFFER_LOCK:
+        async with _buffer_lock():
             if len(_USAGE_BUFFER) + len(batch) <= _USAGE_BUFFER_MAX * 10:
                 _USAGE_BUFFER = batch + _USAGE_BUFFER
 

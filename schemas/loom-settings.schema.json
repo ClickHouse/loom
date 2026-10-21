@@ -256,7 +256,7 @@
         "ch_pool_maxsize": {
           "default": 64,
           "type": "integer",
-          "description": "HTTP connection pool size; include the connections batched inserts hold while they wait."
+          "description": "Connections and concurrent statements per process: size to request concurrency plus workers, plus the connections batched inserts hold while they wait (docs/operations/upgrades.md)."
         },
         "ch_pool_wait_ms": {
           "default": 500,

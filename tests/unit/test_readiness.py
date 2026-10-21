@@ -401,7 +401,6 @@ async def test_usage_labels_drain_with_a_waited_insert(monkeypatch) -> None:
             seen.append(settings)
 
     usage._reset_for_tests()
-    usage._USAGE_BUFFER_LOCK = asyncio.Lock()
     usage._USAGE_BUFFER.append({"memory_id": "m"})
     monkeypatch.setattr(usage, "_default_client", lambda: _CH())
     await usage.drain()

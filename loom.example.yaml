@@ -71,8 +71,9 @@ settings:
   # never set it in production. [restart]
   # ch_capture_statements: ""
 
-  # HTTP connection pool size; include the connections batched inserts hold while they
-  # wait. [restart]
+  # Connections and concurrent statements per process: size to request concurrency plus
+  # workers, plus the connections batched inserts hold while they wait
+  # (docs/operations/upgrades.md). [restart]
   # ch_pool_maxsize: 64
 
   # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's

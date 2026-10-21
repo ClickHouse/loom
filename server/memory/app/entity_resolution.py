@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, cast
 
+from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.memory.domain.graph_quality import canonical_entity_text
 
@@ -475,7 +476,7 @@ async def resolve_entities_for_write(
             await ch.insert(
                 "loom.entity_canonical_map",
                 insert_rows,
-                settings={"async_insert": 0, "wait_for_async_insert": 1},
+                settings=committed_insert_settings(),
             )
         except Exception:  # noqa: BLE001 — a failed map write must not fail the ingest
             pass

@@ -231,14 +231,11 @@ async def test_usage_flush_a_request_waits_on_takes_the_short_window(
 ) -> None:
     """The event that fills the buffer flushes it inside the request, whose op
     budget assumes the short window."""
-    import asyncio
-
     from server.memory.store import usage
 
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     monkeypatch.setattr(usage, "_ensure_usage_flusher_started", lambda: None)
     usage._reset_for_tests()
-    usage._USAGE_BUFFER_LOCK = asyncio.Lock()
     usage._USAGE_BUFFER.extend({"memory_id": "m"} for _ in range(usage._USAGE_BUFFER_MAX - 1))
     ch = _RecordingCH()
     try:
@@ -269,7 +266,6 @@ async def test_usage_flush_of_the_timer_takes_the_background_window(
     monkeypatch.setattr(usage, "_default_client", lambda: ch)
     monkeypatch.setattr(asyncio, "sleep", _one_tick)
     usage._reset_for_tests()
-    usage._USAGE_BUFFER_LOCK = asyncio.Lock()
     usage._USAGE_BUFFER.append({"memory_id": "m"})
     try:
         with pytest.raises(asyncio.CancelledError):

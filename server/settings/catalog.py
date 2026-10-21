@@ -536,7 +536,9 @@ class ClickHouseSettings(BaseModel):
     # collect the shapes an acceptance run executes for the analyzer corpus. '' = off;
     # never set it in production.
     ch_capture_statements: str = ""
-    # HTTP connection pool size; include the connections batched inserts hold while they wait.
+    # Connections and concurrent statements per process: size to request concurrency
+    # plus workers, plus the connections batched inserts hold while they wait
+    # (docs/operations/upgrades.md).
     ch_pool_maxsize: int = 64
     # Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load
     # balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled

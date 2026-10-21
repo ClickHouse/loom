@@ -19,7 +19,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from server.core.ch_writes import async_insert_settings
+from server.core.ch_writes import async_insert_settings, committed_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
 from server.core.repo_base import param_slices
@@ -1905,5 +1905,5 @@ async def write_entity_vectors(
     await ch.insert(
         "loom.entity_vectors",
         rows,
-        settings={"async_insert": 0, "wait_for_async_insert": 1},
+        settings=committed_insert_settings(),
     )
