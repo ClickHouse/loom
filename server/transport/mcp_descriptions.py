@@ -837,9 +837,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "run.begin": (
         "Open a RUN — one execution of a task — BEFORE you start working on "
         "it. Pass the goal and the user's original request; you get back a "
-        "run_id. Thread that run_id through memory.set, memory.ask, "
-        "loom_search and observe.record so everything this run recalls, "
-        "relies on and writes joins one ledger row. Close it with "
+        "run_id. Pass that run_id on memory.set and observe.record so what "
+        "this run writes joins one ledger row (your reads carry the session's "
+        "run already; a run_id on a search filters to the run's rows). Close it with "
         "run.complete. This is how loom learns which memories were USED, "
         "not only returned, and how a later agent can replay what you did. "
         "Optionally set budget_seconds; run.get then says when the run has "

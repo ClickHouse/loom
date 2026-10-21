@@ -460,11 +460,12 @@ async def _open_run(
         row["version"] = version
     await runs_store.insert_runs(ch, [row])
     next_step = (
-        f"run_id={run_id}. Pass it as run_id on memory.set, observe.record, "
-        "working_memory.* and context.pack so the run's writes join this ledger. "
-        "Label reads (memory.search, memory.ask) with the X-Loom-Run-Id header: a "
-        "body run_id on a read filters to the run's own rows. When done, call "
-        "run.complete with the memory_keys you actually relied on in memories_used."
+        f"run_id={run_id}. Pass it as run_id on memory.set and observe.record so "
+        "the run's writes and observations join this ledger. A body run_id on "
+        "memory.search or memory.ask filters to the run's own rows; over HTTP, label "
+        "reads with the X-Loom-Run-Id header instead (over MCP they carry the "
+        "session's run). When done, call run.complete with the memory_keys you "
+        "actually relied on in memories_used."
     )
     if dropped_usd:
         next_step += (

@@ -144,7 +144,7 @@ def test_the_begin_hint_names_the_run_on_writes_and_the_header_on_reads(env) -> 
     )
     # A body run_id on a read filters to the run's rows, so the hint names writes for it.
     as_body = next(s for s in out.next.split(". ") if "Pass it as run_id" in s)
-    assert "memory.set" in as_body and "context.pack" in as_body
+    assert "memory.set" in as_body and "observe.record" in as_body
     assert "memory.search" not in as_body and "memory.ask" not in as_body
     assert "X-Loom-Run-Id" in out.next
 
