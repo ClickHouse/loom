@@ -16,7 +16,8 @@ interface Props {
   namespace: string;
   /** A writer or admin edits; everyone else reads. */
   canEdit: boolean;
-  /** Open on the editor once the guide is read (the Memories header, for a namespace with no guide). */
+  /** Open on the editor when the guide's read finds none and the caller can edit (the
+   *  Memories header); otherwise on the read view. */
   startEditing?: boolean;
   onSaved: () => void;
 }

@@ -7,10 +7,12 @@ import { axeViolations } from "../test/axe";
 import { Browse } from "./Browse";
 
 // A space is one list row: the namespace in mono and its visibility badge
-// on line 1, its description on line 2; at the right its member count, the one inline
-// action (Invite where you manage it, else Join, Pending or Request upgrade) and a More
-// menu (Settings for a manager, Copy name, Leave for a member). The rows are one tab stop
-// (`useRowNav`); Create namespace is the page header's primary.
+// on line 1, its description on line 2, its guide's summary on line 3 when it has one (a
+// link to the guide for a member); at the right its member count, the one inline action
+// (Invite where you manage it, else Join, Pending or Request upgrade) and a More menu
+// (Settings for a manager, Guide for a member where no summary is shown, Copy name, Leave
+// for a member). The rows are one tab stop (`useRowNav`); Create namespace is the page
+// header's primary.
 
 const browse: BrowseEntry[] = [
   {
@@ -200,6 +202,52 @@ describe("Spaces: the rows", () => {
       const menu = await screen.findByRole("menu", { name: "Actions for personal-alice" });
       expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
     } finally {
+      mine.pop();
+    }
+  });
+
+  it("a namespace you manage offers its writer the guide's editor", async () => {
+    const user = userEvent.setup();
+    render(<Browse />);
+    await screen.findAllByText("alpha");
+    await user.click(within(row("team")).getByRole("button", { name: "Actions for team" }));
+    const menu = await screen.findByRole("menu", { name: "Actions for team" });
+    await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
+    expect(await screen.findByRole("button", { name: "Write the guide" })).toBeInTheDocument();
+  });
+
+  it("a namespace a viewer token names without a grant offers its guide to read only", async () => {
+    // `jwt`: the namespace is the token's, and its claim (viewer) is the role.
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["viewer"] } });
+    browse.push({
+      namespace: "tokenonly",
+      description: "",
+      kind: "memory",
+      owner_email: "",
+      member_count: 1,
+      created_at: "",
+    });
+    mine.push({
+      namespace: "tokenonly",
+      role: "jwt",
+      status: "active",
+      visibility: "public",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "memory",
+    });
+    try {
+      const user = userEvent.setup();
+      render(<Browse />);
+      await screen.findAllByText("tokenonly");
+      await user.click(within(row("tokenonly")).getByRole("button", { name: "Actions for tokenonly" }));
+      const menu = await screen.findByRole("menu", { name: "Actions for tokenonly" });
+      await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
+      expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+    } finally {
+      browse.pop();
       mine.pop();
     }
   });

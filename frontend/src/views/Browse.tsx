@@ -118,19 +118,19 @@ export function Browse() {
       }),
       // The shared membership read, not a second list_mine
       sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
-    ]).then(([browseRows, mineRows]) => {
+    ]).then(([browseRows, mineRead]) => {
       if (!live()) return;
       setRefreshing(false);
       setError(failed);
       // Code namespaces are surfaced in the Code section, not as joinable memory.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
       setRepoCount(browseRows.filter((r) => r.kind === "code").length);
-      setMineRows(mineRows);
-      setMine(new Set(mineRows.map((r) => r.namespace)));
-      setMyRole(Object.fromEntries(mineRows.map((r) => [r.namespace, r.role])));
-      setPending(new Set(mineRows.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
+      setMineRows(mineRead);
+      setMine(new Set(mineRead.map((r) => r.namespace)));
+      setMyRole(Object.fromEntries(mineRead.map((r) => [r.namespace, r.role])));
+      setPending(new Set(mineRead.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
       // Excludes pending-admin requests — until approved I can't act.
-      setAdminNs(mineRows.filter((r) => r.role === "admin" && r.status === "active"));
+      setAdminNs(mineRead.filter((r) => r.role === "admin" && r.status === "active"));
       const map: Record<string, boolean> = {};
       for (const b of browseRows) map[b.namespace] = !!b.requires_approval;
       setRequireMap(map);

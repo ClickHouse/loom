@@ -84,7 +84,7 @@ export function NamespaceGuideButton({
           org={identity.org}
           namespace={identity.namespace}
           canEdit={writer}
-          startEditing={guide?.found === false}
+          startEditing
           onSaved={() => setReads((n) => n + 1)}
         />
       )}
