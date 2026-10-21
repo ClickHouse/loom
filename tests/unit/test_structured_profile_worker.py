@@ -4,6 +4,7 @@ which orgs and users it passes over, and what it never writes."""
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -639,23 +640,43 @@ async def test_a_new_schema_ends_a_namespace_wait(
 
 
 @pytest.mark.asyncio
-async def test_a_pass_with_nothing_to_build_is_idle_only_once_the_rotation_wraps(
+async def test_a_pass_with_nothing_to_build_reaches_every_namespace_and_is_idle(
     world: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     settings_override: Callable[..., None],
 ) -> None:
     async def nobody_behind(**kw: Any) -> list[Behind]:
+        world["scans"] += 1
         return []
 
     monkeypatch.setattr(profile_sources, "users_behind", nobody_behind)
-    # Three namespaces and a budget of two: the first pass sees only part of them.
+    # Three namespaces and a budget of two: the pass reads on past its first page.
     settings_override(structured_profile_max_users_per_pass=2)
     ctx = pass_context.begin("structured_profile")
-    await w.run_pass(_cfg())
-    assert not ctx.idle and json.loads(ctx.cursor) == ["o1", "b"]
-    ctx = pass_context.begin("structured_profile", resume_cursor=ctx.cursor)
-    await w.run_pass(_cfg())
+    result = await w.run_pass(_cfg())
+    assert result.namespaces_reached == 3 and world["scans"] == 3
     assert ctx.idle
+
+
+@pytest.mark.asyncio
+async def test_a_pass_reads_past_namespaces_with_nothing_to_build(
+    world: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    settings_override: Callable[..., None],
+) -> None:
+    spaces = [("o", f"n{i:02d}") for i in range(30)]
+    monkeypatch.setattr(sys.modules[__name__], "_SPACES", spaces)
+
+    async def only_the_25th_behind(**kw: Any) -> list[Behind]:
+        behind = ["u0"] if (kw["org"], kw["namespace"]) == spaces[24] else []
+        return [Behind(u, "d1", 0) for u in behind]
+
+    monkeypatch.setattr(profile_sources, "users_behind", only_the_25th_behind)
+    settings_override(structured_profile_max_users_per_pass=5)
+    ctx = pass_context.begin("structured_profile")
+    result = await w.run_pass(_cfg())
+    assert world["built"] == [("o", "n24", "u0")]
+    assert result.namespaces_reached == 30 and not ctx.idle
 
 
 @pytest.mark.asyncio

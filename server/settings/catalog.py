@@ -2229,14 +2229,14 @@ class MemorySettings(BaseModel):
     structured_profile_scan_max_memory_bytes: Annotated[int, LIVE] = Field(
         default=4 * 1024**3, ge=1024**2
     )
-    # Structured profiles one pass builds; each namespace the pass reaches gets an
-    # equal share. At least 1.
+    # Structured profiles one pass builds; the namespaces in each page the pass reads
+    # share it equally, and the pass reads on while budget is left. At least 1.
     structured_profile_max_users_per_pass: Annotated[int, LIVE] = Field(default=20, ge=1)
     # Memories read into one structured profile build, highest confidence then newest
     # first. At least 1.
     structured_profile_memory_limit: Annotated[int, LIVE] = Field(default=100, ge=1)
     # Seconds after a structured profile is built before new memories rebuild it; a
-    # schema change rebuilds it at once. 0 rebuilds on the next pass.
+    # schema change skips this wait. 0 rebuilds on the next pass.
     structured_profile_cooldown_seconds: Annotated[int, LIVE] = Field(default=600, ge=0)
     # Seconds a user whose structured profile build failed waits before the first
     # retry; each further failure doubles the wait. Also the first wait of a namespace

@@ -2,15 +2,6 @@
 
 from __future__ import annotations
 
-from server.memory.workers import profile_consolidation as pc
-
-
-def test_profile_fold_leaves_out_facts_about_others() -> None:
-    from server.memory.store import profile_sources
-
-    assert pc.user_facts is profile_sources.user_facts  # the fold reads the shared predicate
-    assert "NOT has(tags, 'about:other')" in profile_sources.CURRENT_FACTS
-
 
 def test_wire_hit_and_service_hit_carry_about_other() -> None:
     from server.memory.api.models_search import _MemorySearchHit

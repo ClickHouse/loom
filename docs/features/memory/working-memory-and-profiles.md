@@ -145,12 +145,12 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
     #  "languages": ["en", "de"]}, "built_at": "...", ...}
 ```
 
-| `status`    | Means                                                                                   |
-| ----------- | --------------------------------------------------------------------------------------- |
-| `ready`     | Built from the user's current memories under the current schema.                        |
-| `stale`     | A memory or the schema changed since it was built; served as built until the next pass. |
-| `pending`   | Not built yet, or the user has no facts to build from; every property reads `null`.     |
-| `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.     |
+| `status`    | Means                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| `ready`     | Built from the user's current memories under the current schema.                             |
+| `stale`     | A memory or the schema changed since it was built; served as built until a pass rebuilds it. |
+| `pending`   | Not built yet, or the user has no facts to build from; every property reads `null`.          |
+| `no_schema` | The namespace has no schema, or its stored one no longer parses; `profile` is `{}`.          |
 
 - **Storage.** The profile is the user's `profile` row with key `structured_profile`
   (`agent` `-`), so `profile.render` and `context.pack` carry it too, and
@@ -175,11 +175,12 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   row's last change, does not. The digest covers every source,
   while a build reads only the `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` (100) most confident
   and newest: for a user with more facts than that, a change to one outside that set still
-  costs a model call that cannot change the answer. A schema change is rebuilt on the
-  next pass. A deletion (fewer sources than the profile was built from) skips the
-  cooldown and is rebuilt once the namespace is next scanned, at most
-  `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) later; `profile.structured`
-  reports it `stale` at once. Other changes are rebuilt after
+  costs a model call that cannot change the answer. A schema change is rebuilt from the
+  next pass on, at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` profiles a pass. A
+  deletion (fewer sources than the profile was built from) skips the cooldown and is
+  rebuilt once the namespace is next scanned, at most
+  `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) later while passes have budget
+  left; `profile.structured` reports it `stale` at once. Other changes are rebuilt after
   `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
   whose facts are all gone gets an all-`null` profile without a model call. An expired,
   redacted or `high` profile row reads as no profile (`pending`) and is rebuilt.
@@ -188,8 +189,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   integer past 2^53), or a property the schema does not declare is dropped (`null`).
 - **Passes.** A pass builds at most `LOOM_STRUCTURED_PROFILE_MAX_USERS_PER_PASS` (20)
   profiles. It reaches the namespaces with a schema in order from where the last pass
-  stopped, and each gets an equal share; what a namespace leaves goes to the namespaces
-  that used their whole share, from the users their scan already listed. One scan of a
+  stopped, and each gets an equal share. A namespace with nothing to build spends none,
+  so the pass reads on to the next namespaces until its budget is spent or it has
+  reached them all; what a namespace leaves goes to the namespaces that used their whole
+  share, from the users their scan already listed. One scan of a
   namespace lists up to ten times its share, and the next passes take from that list
   until it is drained, the schema changes, or it is
   `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) old; a scan that found every user

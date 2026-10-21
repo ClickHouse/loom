@@ -97,7 +97,8 @@ async def test_fold_reads_only_current_rows_about_the_user(
 ) -> None:
     """The fold reads the user's own current facts, each dated by when it became
     true, else when it last changed; nothing superseded, expired, past its
-    `valid_to`, about someone else, keyed off the user or asking to be forgotten."""
+    `valid_to`, about someone else, labelled with a protected attribute, keyed off
+    the user or asking to be forgotten."""
     ch = _LocalCH(
         ddl("memory"),
         _fact("user_editor", "Uses vim.", valid_at="'2026-01-15 00:00:00'"),
@@ -107,6 +108,7 @@ async def test_fold_reads_only_current_rows_about_the_user(
         _fact("user_job", "Works at night.", valid_to="'2020-01-01 00:00:00'"),
         _fact("user_gone", "Lives in Paris.", tags="['forget']"),
         _fact("user_friend", "Likes tea.", tags="['about:other']"),
+        _fact("user_faith", "Prays daily.", tags="['attribute:religion']"),
         _fact("team_style", "Reviews on Fridays."),
     )
     read: list[dict[str, Any]] = []
