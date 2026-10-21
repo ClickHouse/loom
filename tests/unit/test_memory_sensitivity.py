@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -671,25 +672,40 @@ def test_a_json_value_reads_by_its_scalars(value: object, level: str) -> None:
     assert detect_sensitivity(detector_text(value)) == level
 
 
-def test_long_runs_are_read_in_linear_time() -> None:
-    started = time.perf_counter()
-    assert detect_sensitivity("7" * 200_000) == ""
-    assert not reads_high("1 " * 100_000)
-    assert reads_high("x " * 100_000 + "CVV 123")
+def _read_long_runs(n: int) -> None:
+    assert detect_sensitivity("7" * n) == ""
+    assert not reads_high("1 " * (n // 2))
+    assert reads_high("x " * (n // 2) + "CVV 123")
     # whitespace after a label is read once, not once per split between two runs
-    assert detect_sensitivity("pin" + " " * 200_000) == ""
-    assert detect_sensitivity("PIN is" + "\n" * 200_000) == ""
-    assert detect_sensitivity("cvv" + " " * 200_000 + "x") == ""
-    assert not reads_high('"pin":' + " " * 200_000 + "x")
-    assert not reads_high('"pin": "' + " " * 200_000 + "x")
-    assert detect_sensitivity("PIN for" + " " * 200_000 + "x") == ""
-    assert detect_sensitivity("PIN for the" + " " * 200_000 + "door") == ""
-    assert detect_sensitivity("GB82WEST12345698765432 " * 20_000) == "medium"
-    assert time.perf_counter() - started < 2.0
-    # escaped quotes, each a possible key start: a key reads at most 200 characters
-    started = time.perf_counter()
-    assert not reads_high('\\"' * 20_000)
-    assert time.perf_counter() - started < 2.0
+    assert detect_sensitivity("pin" + " " * n) == ""
+    assert detect_sensitivity("PIN is" + "\n" * n) == ""
+    assert detect_sensitivity("cvv" + " " * n + "x") == ""
+    assert not reads_high('"pin":' + " " * n + "x")
+    assert not reads_high('"pin": "' + " " * n + "x")
+    assert detect_sensitivity("PIN for" + " " * n + "x") == ""
+    assert detect_sensitivity("PIN for the" + " " * n + "door") == ""
+    assert detect_sensitivity("GB82WEST12345698765432 " * (n // 10)) == "medium"
+
+
+def _read_escaped_quotes(n: int) -> None:
+    # each escaped quote is a possible key start: a key reads at most 200 characters
+    assert not reads_high('\\"' * n)
+
+
+def _fastest_seconds(read: Callable[[int], None], n: int) -> float:
+    """The fastest of three reads, so one stall on a busy runner does not count."""
+    times = []
+    for _ in range(3):
+        started = time.perf_counter()
+        read(n)
+        times.append(time.perf_counter() - started)
+    return min(times)
+
+
+@pytest.mark.parametrize(("read", "n"), [(_read_long_runs, 50_000), (_read_escaped_quotes, 5_000)])
+def test_long_runs_are_read_in_linear_time(read: Callable[[int], None], n: int) -> None:
+    # From n to 4n, a linear read takes about 4 times as long and a quadratic one 16 times.
+    assert _fastest_seconds(read, 4 * n) < 8 * _fastest_seconds(read, n)
 
 
 @pytest.mark.parametrize(

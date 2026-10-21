@@ -183,29 +183,56 @@ def test_payment_and_identity_numbers_are_labelled_on_write(
     r = _post(control_plane_url, token, "memory.get", {**ident, "memory_key": key})
     assert r.status_code == 200 and r.json().get("found") is True, r.text
     got = r.json()
-    # every field the write decides, beside the label; the retention window a label can
-    # stamp is off by default (`memory_sensitive_retention_days` 0)
-    fields = (
-        "value", "sensitivity", "tags", "memory_type", "agent", "actor", "source_class",
-        "expires_at", "on_expire", "expire_reason", "pinned", "status", "lock_mode",
-    )  # fmt: skip
+    # every field but the values the server assigns; the retention window a label can stamp
+    # is off by default (`memory_sensitive_retention_days` 0)
+    assigned = (
+        "memory_id",
+        "created_at",
+        "updated_at",
+        "version",
+        "version_text",
+        "content_sha256",
+    )
+    assert all(got.get(f) for f in assigned), r.text[:500]
+    assert got["version_text"] == str(got["version"])
     got["tags"] = sorted(got.get("tags", []))
-    assert {f: got.get(f) for f in fields} == {
+    assert {f: v for f, v in got.items() if f not in assigned} == {
+        "found": True,
+        "unchanged": False,
         "value": value,
-        "sensitivity": level,
-        "tags": sorted([*other_tags, f"sensitivity:{level}"]),
         "memory_type": "semantic",
-        "agent": "canary",
-        "actor": "process:canary",
-        "source_class": "asserted",
+        "confidence": 1.0,
         "expires_at": None,
         "on_expire": "",
         "expire_reason": "",
+        "valid_at": None,
+        "valid_to": None,
+        "temporal_anchor": None,
+        "temporal_confidence": 0.0,
         "pinned": False,
+        "actor": "process:canary",
+        "source_class": "asserted",
+        "agent": "canary",
         "status": "active",
+        "code": [],
+        "superseded_by": "",
+        "duplicate_of": "",
+        "conflict_verdict": "clear",
+        "tags": sorted([*other_tags, f"sensitivity:{level}"]),
+        "entities": [],
+        "char_limit": None,
+        "recall_count": 0,
+        "last_recalled_at": None,
+        "verified_by": "",
+        "verified_at": None,
+        "verification": "none",
         "lock_mode": "",
+        "lock_reason": "",
+        "lock_until": None,
+        "locked_by": "",
+        "recall_by_agent": [],
+        "sensitivity": level,
     }, r.text[:500]
-    assert got.get("memory_id") and got.get("created_at") and got.get("version"), r.text[:500]
     stored = ch_client.query(
         "SELECT memory_id, org, namespace, agent, user_id, session_id, sensitivity "
         "FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} "

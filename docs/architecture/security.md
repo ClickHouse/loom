@@ -815,12 +815,14 @@ facts when written, listed by `memory.digests` or read by the outcome judge. The
 a new version per row and, for `high`, tombstoned embedding rows and entity vectors. Until
 the sweep labels it, an unlabelled row that holds a credential is embedded like any other,
 so search serves it, and `memory.ask` and the conflict judge can send it to their models.
-The worker reads only the trailing window and the default shapes; the historical backlog,
-IBAN-only rows (shape `other`) and phone-shaped rows are cleared by the operator's
-`loom sensitivity-sweep --apply`, which pages through its whole scope until `--limit`
-candidates are found, in pages of at least `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys. The sweep reads unlabelled rows only: a row already labelled `medium`
-that also holds a `high` shape stays `medium` until it is set again with `sensitivity:
-"high"`.
+The worker reads only the trailing window and the shapes in
+`LOOM_SENSITIVITY_SWEEP_SHAPES` (`credential` and `email` by default); the historical
+backlog and the shapes the worker leaves out (by default IBAN-only rows, shape `other`,
+and phone-shaped rows) are cleared by the operator's `loom sensitivity-sweep --apply`,
+which pages through its whole scope until `--limit` candidates are found, in pages of at
+least `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys. The sweep reads unlabelled rows
+only: a row already labelled `medium` that also holds a `high` shape stays `medium` until
+it is set again with `sensitivity: "high"`.
 
 A worker pass is bounded:
 
@@ -843,13 +845,14 @@ A worker pass is bounded:
   cursor past an agent that does not fit in 512 characters is past its namespace or org
   instead. The cursor, in `loom.worker_status`, holds the org, namespace and agent only, so
   it names no user or memory key that would outlive an erasure.
-- Its ClickHouse filter selects only the shapes the default filter applies (`credential`
-  and `email`; every high shape, a card number, SSN or stated PIN included, counts as
-  `credential`), and within them only what the detector can label: a card is a lone 15- or
-  16-digit group or a printed grouping with a network's leading digit, a credential word is
-  an assignment (`password=` and eight characters of a value), and `PIN` or `PIN code` takes
-  a 3-5 digit value. So epoch timestamps, 19-digit ids, prose that names a credential word
-  (`I forgot my password`) and postal codes (`PIN: 560001`) are not selected.
+- Its ClickHouse filter selects only the shapes in `LOOM_SENSITIVITY_SWEEP_SHAPES`
+  (`credential` and `email` by default; every high shape, a card number, SSN or stated PIN
+  included, counts as `credential`), and within them only what the detector can label: a
+  card is a lone 15- or 16-digit group or a printed grouping with a network's leading
+  digit, a credential word is an assignment (`password=` and eight characters of a value),
+  and `PIN` or `PIN code` takes a 3-5 digit value. So epoch timestamps, 19-digit ids,
+  prose that names a credential word (`I forgot my password`) and postal codes (`PIN:
+  560001`) are not selected.
 
 ## Audit log
 

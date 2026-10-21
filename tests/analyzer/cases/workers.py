@@ -110,6 +110,7 @@ async def _worker_passes(ch: RecordingCH, c: dict[str, Any]) -> None:
         org=org,
         namespace=NS if c["scoped"] else None,
         since_days=7 if c["scoped"] else None,
+        page_size=10,
         pages=1,
         ch=ch,
     )

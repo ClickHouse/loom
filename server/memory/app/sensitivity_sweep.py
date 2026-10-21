@@ -153,7 +153,7 @@ class SweepCandidate:
     shapes: tuple[str, ...]  # 'credential' | 'email' | 'phone' | 'other'
     # The scanned row's sort key as stored: the fields above write an empty agent, user or
     # session as '-', which sorts after ''.
-    sort_key: dict[str, Any] = field(default_factory=dict)
+    sort_key: dict[str, Any]
 
 
 @dataclass
@@ -250,7 +250,6 @@ async def scan(
         scope={"org": org, "namespace": namespace, "since_days": since_days},
         keep=keep,
         limit=limit,
-        page_size=page_size,
         pages=pages,
         report=report,
     )
@@ -285,7 +284,6 @@ class _Run:
     scope: dict[str, Any]
     keep: set[str]
     limit: int
-    page_size: int
     pages: int | None
     report: SweepReport
     pages_read: int = 0
@@ -315,7 +313,7 @@ async def _read_range(
         run.pages_read += 1
         keys, rows = await _read_page(run.ch, run.params, run.scope, after=last, stop=stop)
         report.scanned += len(rows)
-        report.truncated = bool(keys) and len(keys) >= run.page_size
+        report.truncated = bool(keys) and len(keys) >= run.params["lim"]
         found = len(report.candidates)
         _add_candidates(report, rows, run.keep)
         if not report.truncated:

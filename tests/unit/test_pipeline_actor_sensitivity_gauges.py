@@ -20,6 +20,7 @@ from server.memory.app import sensitivity_sweep as sweep
 from server.memory.app.extraction_queue import ENQUEUED_BY_KEY, enqueued_actor, payload_for
 from server.memory.app.provenance import writer_actor
 from server.memory.domain import provenance as prov
+from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 # ------------------------------------------------------------- (a) principal
@@ -39,6 +40,14 @@ def test_writer_actor_falls_back_to_the_pipeline_actor_only_without_a_token() ->
     assert writer_actor() == ""
     assert prov.cli_actor("import-clickgap") == "process:cli:import-clickgap"
     assert prov.cli_actor("") == "process:cli:unknown"
+
+
+def _candidate(memory_id: str, org: str, key: str, level: str, shape: str) -> sweep.SweepCandidate:
+    """A sweep candidate in namespace `n`, agent `a`, with its sort key as `scan` reads it."""
+    ident = (org, "n", "a", "-", "-", key)
+    return sweep.SweepCandidate(
+        memory_id, *ident, level, (shape,), dict(zip(SORT_KEY, ident, strict=True))
+    )
 
 
 def _input(**kw: Any):
@@ -261,10 +270,8 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
         }
     ]
     cands = [
-        sweep.SweepCandidate(
-            "1", "clickhouse", "n", "a", "-", "-", "khigh", "high", ("credential",)
-        ),
-        sweep.SweepCandidate("2", "clickhouse", "n", "a", "-", "-", "kmed", "medium", ("email",)),
+        _candidate("1", "clickhouse", "khigh", "high", "credential"),
+        _candidate("2", "clickhouse", "kmed", "medium", "email"),
     ]
     res = await sweep.apply(cands, ch=ch)
     assert res.as_dict() == {
@@ -1047,9 +1054,7 @@ async def test_sensitivity_sweep_cli_gates_on_the_high_sensitivity_invariant(mon
     async def _scan(**kw):
         return sweep.SweepReport(
             scanned=1,
-            candidates=[
-                sweep.SweepCandidate("1", "o", "n", "a", "-", "-", "k", "high", ("credential",))
-            ],
+            candidates=[_candidate("1", "o", "k", "high", "credential")],
         )
 
     async def _apply(cands, *, ch=None):
@@ -1091,7 +1096,7 @@ async def test_a_failed_high_retire_leaves_the_row_unlabelled_for_the_next_pass(
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
-    cand = sweep.SweepCandidate("1", "o", "n", "a", "-", "-", "k", "high", ("credential",))
+    cand = _candidate("1", "o", "k", "high", "credential")
     res = await sweep.apply([cand], ch=_CH())
     assert written == [] and res.relabelled == 0
     assert len(res.errors) == 1 and "insert timed out" in res.errors[0]
@@ -1144,7 +1149,7 @@ async def test_a_high_relabel_retires_the_keys_chunks_again_after_the_label(
 
     monkeypatch.setattr(memory_repo, "next_version", _next)
     monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", _heads)
-    cand = sweep.SweepCandidate("1", "o", "n", "a", "-", "-", "k", "high", ("credential",))
+    cand = _candidate("1", "o", "k", "high", "credential")
     res = await sweep.apply([cand], ch=_CH())
     assert not res.errors
     assert order == ["retire", "fence", "chunks", "relabel", "chunks", "retire"]
@@ -1171,6 +1176,6 @@ async def test_the_medium_tag_copy_rechecks_its_head(monkeypatch) -> None:
     monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
     monkeypatch.setattr(memory_repo, "retire_copies_under_unembedded_heads", _check)
-    cand = sweep.SweepCandidate("2", "o", "n", "a", "-", "-", "k", "medium", ("email",))
+    cand = _candidate("2", "o", "k", "medium", "email")
     assert await sweep._tag_embeddings(cand, ch=_CH()) == 1
     assert len(checked) == 1 and checked[0][0]["memory_key"] == "k"
