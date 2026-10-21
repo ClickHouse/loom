@@ -13,6 +13,7 @@ import {
   type BrowseEntry,
   type MyNamespaceEntry,
 } from "../api";
+import { isPersonalNamespace } from "../lib/namespace";
 import { sharedMine } from "../lib/sharedReads";
 import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
@@ -539,8 +540,9 @@ const SpaceRow = memo(function SpaceRow({
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
     // Reading a guide takes a role on the namespace (a public row's visibility widens no
-    // read); a viewer waiting on an upgrade still holds one.
-    ...(member || role
+    // read); a viewer waiting on an upgrade still holds one. A personal namespace takes
+    // no guide.
+    ...((member || role) && !isPersonalNamespace(namespace)
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
       : []),
     {
