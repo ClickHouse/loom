@@ -3545,7 +3545,7 @@
         "memory_extract_agent_learnings": {
           "default": false,
           "type": "boolean",
-          "description": "On: rules the assistant states about itself are filed as assistant_turn learnings candidates, never memories; a request can only turn it off. Experimental."
+          "description": "Whether extraction files the rules an assistant states about itself as assistant_turn learnings candidates for review (never memories); a request can only turn it off. Experimental."
         },
         "memory_extract_coding_sweep_min_user_turns": {
           "default": 4,

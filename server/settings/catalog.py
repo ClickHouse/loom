@@ -1770,8 +1770,9 @@ class ExtractionSettings(BaseModel):
     # a structured-answer block and assistant-answer facts get a higher content_excerpt
     # ceiling. The value column is untouched; takes effect only on (re-)ingest.
     memory_capture_structured_answers: Annotated[bool, LIVE] = True
-    # On: rules the assistant states about itself are filed as assistant_turn learnings
-    # candidates, never memories; a request can only turn it off. Experimental.
+    # Whether extraction files the rules an assistant states about itself as assistant_turn
+    # learnings candidates for review (never memories); a request can only turn it off.
+    # Experimental.
     memory_extract_agent_learnings: Annotated[bool, LIVE] = False
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short
