@@ -277,13 +277,8 @@ def overlaps_credential(source: str, ranges: list[tuple[int, int]]) -> list[bool
 
 
 def _overlap(previous: str, chunk: str) -> int:
-    """The length of the longest start of `chunk` that ends `previous`: the characters a
-    chunk repeats from the one before it (`chunk_shape.CHUNK_OVERLAP`, less the whitespace a chunk
-    is trimmed of). The chunker repeats at most that many characters; the search
-    stops at twice that, a margin that still keeps the scan short and leaves a longer
-    repeated run as new text. A match shorter than half the overlap is a coincidence,
-    not a repeat (an imported chunk need not overlap at all), so it counts as none and
-    the boundary keeps every character."""
+    """Length of the longest start of `chunk` that ends `previous`, between CHUNK_OVERLAP // 2
+    and 2 * CHUNK_OVERLAP characters; 0 when none (a shorter match is a coincidence)."""
     longest = min(len(previous), len(chunk), 2 * chunk_shape.CHUNK_OVERLAP)
     shortest = chunk_shape.CHUNK_OVERLAP // 2
     for size in range(longest, shortest - 1, -1):
@@ -294,13 +289,9 @@ def _overlap(previous: str, chunk: str) -> int:
 
 def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
-    its own text or in the text it makes with a neighbour: each chunk at `chunk_index` k
-    joined with each chunk of its session at k + 1, the overlap the second repeats from the
-    first dropped. A key cut at a chunk boundary reads as one only when joined. A session
-    can hold more than one chunk at an index (two writes each number theirs from 0), so
-    every pair is read. A key shorter than a chunk is cut at most once, so pairs are
-    enough, and the answer does not depend on the order of `chunks`. Chunks that were
-    never neighbours (a gap in `chunk_index`) are not joined."""
+    its own text or in the text it makes joined with a chunk of its session at the next index.
+    Chunks with a gap in `chunk_index` are not joined. Why pairs suffice:
+    docs/architecture/security.md, Sensitivity."""
     held = [bool(credential_spans(content)) for _, _, content in chunks]
     by_index: dict[tuple[Hashable, int], list[int]] = {}
     for i, (session, index, _) in enumerate(chunks):

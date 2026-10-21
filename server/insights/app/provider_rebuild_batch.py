@@ -30,13 +30,7 @@ TEXT_COLUMNS = {
     "session_summaries": "summary_text",
 }
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
-# Raw passages the write path leaves without a vector when they read as a credential,
-# or, for a memory chunk, when it holds part of a key cut at a chunk boundary. A rebuild
-# stages a passage without a vector when its text reads as a credential (`reads_high`),
-# which covers a row an earlier build embedded. Only a memory chunk can hold a key its own
-# text does not show, so only a memory chunk whose source has no vector stays without one,
-# whichever page its neighbours fall on. In the other tables an empty source means a failed
-# embed, and the rebuild embeds it.
+# Raw-passage tables: a credential-like row is staged without a vector (see rebuild_batch).
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
