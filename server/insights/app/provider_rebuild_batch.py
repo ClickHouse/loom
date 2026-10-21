@@ -12,10 +12,12 @@ from typing import Any
 from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
-from server.insights.store.provider_staging import chunk_texts
+from server.insights.store.provider_staging import session_chunks
 from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
+from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
 from server.memory.domain.sensitivity import reads_high, split_credentials
+from server.settings import settings
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -68,44 +70,53 @@ def _reembed_columns(table: str) -> list[str]:
     return [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
 
 
+def _held_run(stored: Sequence[Mapping[str, Any]], at: int) -> list[tuple[int, str]]:
+    """The stored chunks around `at` that a key held at `at` could span: outward from it
+    while a chunk has no vector (`embedding_dim = 0`), plus the first chunk with one on
+    each side. The write path holds every chunk a key covers and those chunks are
+    contiguous, so the key's header is inside this run."""
+    by_index: dict[int, list[Mapping[str, Any]]] = {}
+    for chunk in stored:
+        by_index.setdefault(int(chunk["chunk_index"]), []).append(chunk)
+    run = []
+    for step in (-1, 1):
+        n = at + step
+        while n in by_index:
+            run.extend((n, str(chunk["content"])) for chunk in by_index[n])
+            if any(int(chunk["embedding_dim"]) for chunk in by_index[n]):
+                break
+            n += step
+    return run
+
+
 async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) -> set[int]:
-    """The indexes of the memory chunks stored without a vector that touch a key cut at a
-    chunk boundary: the chunk joined with its stored neighbours at chunk_index ±1 in its
-    session overlaps a credential (`split_credentials`). Only a plain chunk without a
-    vector needs its neighbours read, and such chunks are rare."""
+    """The indexes of the memory chunks stored without a vector that are part of a key the
+    write path held: the chunk joined with the run of its session's stored chunks around it
+    (`_held_run`) overlaps a credential (`split_credentials`). Only a plain chunk without a
+    vector needs its session read, and such chunks are rare."""
     columns = _reembed_columns("memory_chunks")
-    empty = [
-        index
-        for index, row in enumerate(rows)
-        if row.get("tombstoned_at") is None
-        and all(column in row for column in columns)
-        and not _has_vector(row, columns)
-        and str(row.get("content") or "").strip()
-        and not reads_high(str(row["content"]))
-    ]
-    if not empty:
-        return set()
-    keys = set()
-    for index in empty:
-        row = rows[index]
-        session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
-        at = int(row["chunk_index"])
-        keys.update((*session, n) for n in (at - 1, at + 1) if n >= 0)
-    stored = await chunk_texts(sorted(keys), ch=ch)
+    by_session: dict[tuple[str, str, str], list[int]] = {}
+    for index, row in enumerate(rows):
+        if (
+            row.get("tombstoned_at") is None
+            and all(column in row for column in columns)
+            and not _has_vector(row, columns)
+            and str(row.get("content") or "").strip()
+            and not reads_high(str(row["content"]))
+        ):
+            session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
+            by_session.setdefault(session, []).append(index)
+    # One write call stores at most this many chunks, so a key spans no more.
+    cap = max(settings.memory_chunks_max_per_call, IMPORT_MAX_ITEMS)
     held = set()
-    for index in empty:
-        row = rows[index]
-        session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
-        at = int(row["chunk_index"])
-        chunks = [
-            (session, int(n["chunk_index"]), str(n["content"]))
-            for n in stored
-            if (str(n["org"]), str(n["namespace"]), str(n["session_id"])) == session
-            and int(n["chunk_index"]) in (at - 1, at + 1)
-        ]
-        chunks.append((session, at, str(row["content"])))
-        if split_credentials(chunks)[-1]:
-            held.add(index)
+    for session, indexes in by_session.items():
+        ats = [int(rows[index]["chunk_index"]) for index in indexes]
+        stored = await session_chunks(*session, max(0, min(ats) - cap), max(ats) + cap, ch=ch)
+        for index, at in zip(indexes, ats, strict=True):
+            chunks = [(session, n, text) for n, text in _held_run(stored, at)]
+            chunks.append((session, at, str(rows[index]["content"])))
+            if split_credentials(chunks)[-1]:
+                held.add(index)
     return held
 
 
@@ -213,9 +224,9 @@ async def rebuild_batch(
     A raw passage (`PASSAGE_TABLES`) whose text reads as a credential is staged
     without a vector and never sent to the provider; verification reads its text
     and accepts it. A memory chunk stored without a vector is staged without one
-    too when it and its stored neighbours at chunk_index ±1 make a text where a
-    key touches it: the write path held it as part of a key cut at a chunk
-    boundary. Any other row stored without a vector (a failed embed, or a row a
+    too when a key touches it in the text it makes with the run of its session's
+    chunks without a vector around it: the write path held it as part of a key
+    cut across chunks. Any other row stored without a vector (a failed embed, or a row a
     rebuild staged while its org's model calls were off) is embedded.
 
     The caller must hydrate tracker text from its source and supply every stored

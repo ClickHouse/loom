@@ -16,6 +16,7 @@ from server.insights.store.provider_staging import (
     create_snapshot,
     discard_snapshot,
     ensure_snapshot,
+    session_chunks,
     snapshot_identity,
     snapshot_page,
     snapshot_query_running,
@@ -599,6 +600,58 @@ async def test_a_credential_passage_is_staged_empty_and_verifies(table):
                 await _drop_owned(client, name, uuid)
         await client.execute(
             f"DELETE FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
+            {"org": org, "ns": namespace},
+        )
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_a_plain_chunk_stored_without_a_vector_reads_its_session_and_is_embedded():
+    """A plain memory chunk stored without a vector between two embedded ones makes the
+    rebuild read its session's chunks (`session_chunks`) on a migrated ClickHouse; they
+    touch no key, so it is embedded."""
+    if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
+        pytest.skip(_OPT_IN)
+    client = _default_client()
+    await client.connect()
+    await _require_empty(client, "memory_chunks")
+    org, namespace = "rebuild-held", f"held-{uuid4().hex[:8]}"
+    names = StagingNames(uuid4(), "memory_chunks")
+    embedder = _EightDimEmbedder()
+    identity = target_uuid = None
+    try:
+        rows = _passage_rows(
+            "memory_chunks", org, namespace, ["plain words before", "plain middle", "after"]
+        )
+        rows[1].update(embedding=[0.0] * _width(), embedding_dim=0)
+        await client.insert("loom.memory_chunks", rows, settings={"async_insert": 0})
+        stored = await session_chunks(org, namespace, "s", 0, 2, ch=client)
+        assert sorted((r["chunk_index"], r["embedding_dim"]) for r in stored) == [
+            (0, _width()),
+            (1, 0),
+            (2, _width()),
+        ]
+        schema = await source_schema(names, ch=client)
+        identity = await ensure_snapshot(names, schema, ch=client)
+        target_uuid = await ensure_target(names, schema, identity, "a" * 64, ch=client)
+        checkpoint = await rebuild_snapshot_page(
+            names, schema, identity, target_uuid, "a" * 64, embedder, after=0, ch=client
+        )
+        assert checkpoint.done and checkpoint.rows_written == 3
+        staged = await client.query_all(
+            f"SELECT chunk_index, embedding_dim FROM loom.{names.target} FINAL ORDER BY chunk_index"
+        )
+        assert [(r["chunk_index"], r["embedding_dim"]) for r in staged] == [
+            (0, 8),
+            (1, 8),
+            (2, 8),
+        ]
+    finally:
+        for name, uuid in ((names.target, target_uuid), (names.snapshot, identity)):
+            if uuid is not None:
+                await _drop_owned(client, name, uuid)
+        await client.execute(
+            "DELETE FROM loom.memory_chunks WHERE org = {org:String} AND namespace = {ns:String}",
             {"org": org, "ns": namespace},
         )
         await client.disconnect()

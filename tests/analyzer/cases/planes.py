@@ -791,6 +791,14 @@ async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
     await cost.recorded_turn_times(ORG, NS, "s1", ["m1"], ch=ch)
 
 
+async def _rebuild_session_chunks(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The provider rebuild's read of a session's chunks around one stored without a
+    vector."""
+    from server.insights.store import provider_staging
+
+    await provider_staging.session_chunks(ORG, NS, "s1", 0, 64, ch=ch)
+
+
 async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The profile schema reads and the structured profile's source reads: a
     user's facts (with and without the fold's key rule), their digest, the
@@ -867,6 +875,14 @@ def cases() -> list[Case]:
         )
     )
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
+    out.append(
+        Case(
+            "provider_rebuild.session_chunks",
+            "server.insights.store.provider_staging",
+            _rebuild_session_chunks,
+            {},
+        )
+    )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(
         Case(

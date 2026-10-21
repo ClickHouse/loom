@@ -825,11 +825,13 @@ returns it.
   a key, and a chunk that holds only a key's head or tail does not read as one on its own.
   The conversation and long-value writers check the chunked text once, plus one chunk past
   its end for a key that crosses it, in a worker thread, and also hold every chunk whose
-  character range overlaps a credential, and every chunk whose own text reads
-  as one (a chunk can start inside a word, where a pattern's word boundary falls). A private-key block reads as a
-  credential from its header to its closing line (to the end of the text without one), so
-  every chunk its body covers is held, though a body line does not read as a key alone. `memory.import_evidence` applies the
-  same rule to each session's text rebuilt from its imported chunks: the chunks in
+  character range overlaps a credential, and every chunk whose own text reads as one (a
+  chunk can start inside a word, where a pattern's word boundary falls). A private-key
+  block reads as a credential from its header to its closing line (to the end of the text
+  without one), so every chunk its body covers is held, though a body line does not read as
+  a key alone. A chunk of a long `memory.set` value is held by its own text whatever its
+  row's label; a `low` row stays findable through its own embedding.
+  `memory.import_evidence` applies the same rule to each session's text rebuilt from its imported chunks: the chunks in
   `chunk_index` order, each one's overlap with the chunk before it dropped (a repeat of at
   least 50 characters; chunks with no overlap are joined whole), and a gap in `chunk_index`
   starts a new text. Imported chunks have no minimum length, so a key can run through a
@@ -844,9 +846,7 @@ returns it.
   chunks are embedded. `loom okf import` sends each session's chunks whole in one call, so
   only a session of more than 256 chunks can still hit this gap.
   `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it leaves out
-  one that reads as a credential, and audits a key read of either. This holds for a chunk
-  of a long `memory.set` value whatever its row's label; a `low` row stays findable
-  through its own embedding.
+  one that reads as a credential, and audits a key read of either.
 - Digests and turns: a session digest whose text reads as a credential is written without
   a vector. A `conversation.append` turn that reads as one is stored as written in
   `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
@@ -857,14 +857,17 @@ returns it.
   refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window
   stays the same while its turns are live, so a retry most likely gets the same refusal.
 - Provider rebuild: a chunk, digest or turn embedding whose text reads as a credential is
-  staged without a vector, which covers one an earlier build embedded. A memory chunk
-  stored without a vector whose own text is plain is read with its stored neighbours at
-  `chunk_index` ±1 in its session (a primary-key read), and stays without a vector when a
-  key in that joined text touches it, so a chunk its writer held as part of a cut key stays
-  held whichever page its neighbours land on. Any other row stored without a vector (a
-  failed embed, or a row an earlier rebuild staged while its org's model calls were off) is
-  embedded. Verification reads the text of every row left empty whose source held a
-  vector and accepts those that read as a credential.
+  staged without a vector, which covers one an earlier build embedded. A memory chunk stored
+  without a vector whose own text is plain is read with the run of its session's live chunks
+  around it: outward while a chunk has no vector, plus the first chunk with one on each
+  side, within the most chunks one write call stores. It stays without a vector when a key
+  in that joined text touches it. A writer holds every chunk a key covers, so the held
+  chunks are contiguous and the key's header is inside the run: a chunk its writer held as
+  part of a cut key stays held whichever page its neighbours land on, however many chunks
+  the key spans. Any other row stored without a vector (a failed embed, or a row an earlier
+  rebuild staged while its org's model calls were off) is embedded. Verification reads the
+  text of every row left empty whose source held a vector and accepts those that read as a
+  credential.
 - `loom reembed` re-embeds only rows that have a vector, and keeps a conversation turn
   that reads as a credential on its old model, which search does not read, until
   `--delete-old` removes it (a memory row's vector follows its sensitivity label).

@@ -17,6 +17,8 @@ from server.insights.app.provider_rebuild_batch import (
     rebuild_batch,
 )
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
+from server.memory.domain.okf_evidence import IMPORT_MAX_ITEMS
+from server.settings import settings
 from tests.unit._fake_credentials import AWS_KEY_ID, OPENAI_KEY
 
 
@@ -249,18 +251,21 @@ def _without_vector(table: str, text: str, stored: list[float] | None = None) ->
     return row
 
 
-def _stored_chunks(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> list[list]:
-    """Answer the neighbour read from `rows`, as loom.memory_chunks would; returns the
-    keys each read asked for."""
-    asked: list[list] = []
+def _stored_chunks(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> list[tuple]:
+    """Answer the session read from `rows`, as loom.memory_chunks would; returns the
+    `(org, namespace, session_id, first, last)` window each read asked for."""
+    asked: list[tuple] = []
 
-    async def read(keys, *, ch=None):
-        asked.append(keys)
+    async def read(org, namespace, session_id, first, last, *, ch=None):
+        asked.append((org, namespace, session_id, first, last))
         return [
-            r for r in rows if (r["org"], r["namespace"], r["session_id"], r["chunk_index"]) in keys
+            r
+            for r in rows
+            if (r["org"], r["namespace"], r["session_id"]) == (org, namespace, session_id)
+            and first <= r["chunk_index"] <= last
         ]
 
-    monkeypatch.setattr(provider_rebuild_batch, "chunk_texts", read)
+    monkeypatch.setattr(provider_rebuild_batch, "session_chunks", read)
     return asked
 
 
@@ -278,7 +283,8 @@ async def test_a_plain_memory_chunk_without_a_vector_between_plain_chunks_is_emb
     ]
     asked = _stored_chunks(monkeypatch, rows)
     result = (await rebuild_batch("memory_chunks", rows[1:2], target))[0]
-    assert asked == [[("private-org", "private-ns", "s", 0), ("private-org", "private-ns", "s", 2)]]
+    cap = max(settings.memory_chunks_max_per_call, IMPORT_MAX_ITEMS)
+    assert asked == [("private-org", "private-ns", "s", 0, 1 + cap)]
     target.embed_many.assert_awaited_once_with(["source text"])
     assert result["embedding_dim"] == 2
 
@@ -324,3 +330,37 @@ async def test_memory_chunks_cut_through_a_key_stay_without_a_vector_on_separate
     second_page = await rebuild_batch("memory_chunks", rows[1:], target)
     assert [r["embedding_dim"] for r in first_page + second_page] == [0, 0, 2]
     target.embed_many.assert_awaited_once_with([contents[2]])
+
+
+@pytest.mark.asyncio
+async def test_a_private_key_cut_into_many_chunks_stays_without_a_vector_on_every_page(
+    target, monkeypatch
+):
+    from server.memory.app.chunk_projection import chunk_text_with_ranges
+    from server.memory.domain.sensitivity import split_credentials
+
+    # A 4096-bit RSA key's size in PEM form: 51 lines of 64 base64 characters.
+    lines = [(f"Rt{n:02d}" + "Mq5Lp8Cd") * 5 + f"Rt{n:02d}" for n in range(51)]
+    block = "\n".join(
+        ["-----BEGIN RSA " + "PRIVATE KEY-----", *lines, "-----END RSA " + "PRIVATE KEY-----"]
+    )
+    text = "plain words here " * 50 + block + " more plain words" * 50
+    chunks, _, _ = chunk_text_with_ranges(text, max_chunks=64)
+    contents = [c for c, _, _ in chunks]
+    held = split_credentials([("s", i, c) for i, c in enumerate(contents)])
+    covers = [i for i, hit in enumerate(held) if hit]
+    assert len([i for i in covers if not any(m in contents[i] for m in ("BEGIN", "END"))]) >= 2
+    # Stored as the write path leaves them: every chunk the key covers without a vector.
+    rows = [
+        {**_without_vector("memory_chunks", c), "chunk_index": i}
+        if i in covers
+        else {**row_for("memory_chunks"), "chunk_index": i, "content": c}
+        for i, c in enumerate(contents)
+    ]
+    _stored_chunks(monkeypatch, rows)
+    staged = []
+    for i in range(len(rows)):
+        staged += await rebuild_batch("memory_chunks", rows[i : i + 1], target)
+    assert [i for i, r in enumerate(staged) if r["embedding_dim"] == 0] == covers
+    sent = [text for call in target.embed_many.await_args_list for text in call.args[0]]
+    assert not any(line in text for text in sent for line in lines)

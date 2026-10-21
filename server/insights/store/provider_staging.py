@@ -332,17 +332,29 @@ async def snapshot_page(
     )
 
 
-async def chunk_texts(
-    keys: list[tuple[str, str, str, int]], *, ch: _CHClient | None = None
+async def session_chunks(
+    org: str,
+    namespace: str,
+    session_id: str,
+    first: int,
+    last: int,
+    *,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
-    """The live memory chunks at the given `(org, namespace, session_id, chunk_index)`
-    keys, by primary key: each one's key and `content`, every stored text at a key."""
-    if not keys:
-        return []
+    """The live memory chunks of one session with `first <= chunk_index <= last`, by
+    primary key: each one's `chunk_index`, `content` and `embedding_dim`, every live text
+    at an index."""
     client = ch or _default_client()
     return await client.query_all(
-        "SELECT org, namespace, session_id, chunk_index, content FROM loom.memory_chunks FINAL "
-        "WHERE (org, namespace, session_id, chunk_index) IN "
-        "{keys:Array(Tuple(String, String, String, UInt32))}",
-        {"keys": keys},
+        "SELECT chunk_index, content, embedding_dim FROM loom.memory_chunks FINAL "
+        "WHERE org = {org:String} AND namespace = {namespace:String} "
+        "AND session_id = {session_id:String} "
+        "AND chunk_index BETWEEN {first:UInt32} AND {last:UInt32} AND tombstoned_at IS NULL",
+        {
+            "org": org,
+            "namespace": namespace,
+            "session_id": session_id,
+            "first": first,
+            "last": last,
+        },
     )
