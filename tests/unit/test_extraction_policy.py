@@ -789,8 +789,12 @@ async def test_session_brief_revises_under_the_policy(monkeypatch) -> None:
 async def test_the_conversation_titler_titles_under_the_policy(monkeypatch) -> None:
     from server.knowledge.workers import conversation_titler as titler
 
-    async def opening_turns(org: str, namespace: str, thread_id: str) -> list[dict[str, Any]]:
-        return [{"role": "user", "content": "My card number is 4111 1111 1111 1111."}]
+    turns = [{"role": "user", "content": "Fix the login bug."}]
+
+    async def opening_turns(
+        org: str, namespace: str, thread_id: str, *, limit: int
+    ) -> list[dict[str, Any]]:
+        return turns
 
     async def nothing(*args: Any, **kw: Any) -> None:
         return None
@@ -801,8 +805,13 @@ async def test_the_conversation_titler_titles_under_the_policy(monkeypatch) -> N
     policies_read_now({("acme", "chat"): _POLICY})
     llm = _System("A title")
     row = {"org": "acme", "namespace": "chat", "thread_id": "t", "agent": "a", "n": 4}
-    assert await titler._make_title(row, None, llm) is True  # type: ignore[arg-type]
+    assert await titler._make_title(row, None, llm) == "titled"  # type: ignore[arg-type]
     assert llm.systems == [with_policy(titler._TITLE_SYSTEM, _POLICY)]
+    # An opening turn that reads as a card number makes no model call.
+    turns[:] = [{"role": "user", "content": "My card number is 4111 1111 1111 1111."}]
+    llm.systems.clear()
+    assert await titler._make_title(row, None, llm) is None  # type: ignore[arg-type]
+    assert llm.systems == []
 
 
 # ----------------------------------------------------------------- a policy this process cannot read
@@ -897,7 +906,9 @@ async def test_unreadable_titler_holds_the_thread_and_titles_it_once_read(
     async def thread_rows(keys: Any) -> dict[Any, Any]:
         return {}
 
-    async def opening_turns(org: str, namespace: str, thread_id: str) -> list[dict[str, Any]]:
+    async def opening_turns(
+        org: str, namespace: str, thread_id: str, *, limit: int
+    ) -> list[dict[str, Any]]:
         return [{"role": "user", "content": "Fix the login bug."}]
 
     async def insert_thread(new_row: dict[str, Any]) -> None:

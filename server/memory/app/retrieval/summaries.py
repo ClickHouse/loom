@@ -11,6 +11,7 @@ from typing import Any
 from server.core.vectors.search_settings import vector_search_settings
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
+from server.memory.domain.sensitivity import without_credentials
 from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
@@ -19,6 +20,8 @@ log = logging.getLogger("server.memory.app.retrieval")
 # Top-N session summaries by cosine. Module constant, not a wire knob — the
 # assembler re-balances planes via RRF so a larger N never floods the block.
 _SESSION_SUMMARY_TOP_N = 5
+# Characters of a digest a hit shows; the whole text is read, so it can be checked first.
+_SUMMARY_EXCERPT_CHARS = 1200  # not a setting: wire bound on a hit's excerpt
 
 # Under agent='*' the digest leg fetches this many times its N and dedups per
 # session in Python: a session can carry one row per agent,
@@ -159,7 +162,7 @@ async def fetch_session_summaries(
     where_sql = " AND ".join(where)
     sql = f"""
         SELECT session_id,
-               substring(summary_text, 1, 1200) AS content_excerpt,
+               summary_text,
                cosineDistance(summary_embedding, {{q:Array(Float32)}}) AS distance,
                -- NB: alias must NOT be `valid_at` — under the analyzer a
                -- SELECT alias shadows the base column, so the as_of WHERE clause
@@ -198,6 +201,10 @@ async def fetch_session_summaries(
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
+    # A digest that reads as a credential is written without a vector; this holds back
+    # one an earlier build embedded. No spare row backfills it: such a digest is rare,
+    # and a spare row costs a granule of vectors on every search.
+    rows = without_credentials(rows, lambda r: str(r.get("summary_text") or ""))
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []
     for r in rows:
@@ -208,7 +215,7 @@ async def fetch_session_summaries(
             SearchHit(
                 memory_key=f"summary:{session_id}",
                 memory_type="semantic",
-                content_excerpt=str(r.get("content_excerpt") or ""),
+                content_excerpt=str(r.get("summary_text") or "")[:_SUMMARY_EXCERPT_CHARS],
                 distance=distance,
                 rank_score=sim,
                 temporal_anchor="",

@@ -84,6 +84,15 @@ async def test_runner_connects_storage_actions_and_journals_before_publication(s
     assert current["state"] == "active"
     assert effects["rebuild_snapshot_page"].await_count == len(REBUILD_TABLES)
     assert effects["verify_reembedded_target"].await_count == len(REBUILD_TABLES) - 2
+    # A raw-passage table is verified with its text column, so a credential row it staged
+    # empty is accepted; every other table without one.
+    text_column = {
+        call.args[0].table: call.kwargs["text_column"]
+        for call in effects["verify_reembedded_target"].await_args_list
+    }
+    assert text_column["memory_chunks"] == "content"
+    assert text_column["conversation_embeddings"] == "content_excerpt"
+    assert text_column["memory_embeddings"] is None
     effects["verify_staged_cache"].assert_awaited_once()
     effects["verify_staged_prefixes"].assert_awaited_once()
     assert effects["prepare_live_table"].await_count == len(REBUILD_TABLES)

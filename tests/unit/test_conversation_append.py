@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.unit._fake_credentials import OPENAI_KEY
+
 
 @pytest.fixture(autouse=True)
 def _saved_write_leases(monkeypatch):
@@ -121,3 +123,50 @@ async def test_a_failed_embed_stores_the_row_with_its_error(monkeypatch) -> None
     assert row["embed_last_error"] == "RuntimeError: embedder down"
     assert row["embed_failed_at"] is not None
     assert (row["content_excerpt"], row["embedding_model"]) == ("hi", "fake")
+
+
+@pytest.mark.asyncio
+async def test_a_turn_holding_a_credential_is_stored_without_an_embedding_row(monkeypatch) -> None:
+    """The message is stored as written; it gets no embedding row and its text never
+    reaches the embedder, so conversation.search never ranks it."""
+    stored: list = []
+
+    async def ok_append(row, *a, **k):
+        stored.append(row)
+
+    async def embed(text):
+        raise AssertionError("a credential turn must not reach the embedder")
+
+    h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
+    out = await h.handle_conversation_append(_turn(f"my key is {OPENAI_KEY}, keep it safe"))
+    assert out.reason in ("", None)
+    assert [r.content for r in stored] == [f"my key is {OPENAI_KEY}, keep it safe"]
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_a_large_turn_is_checked_for_a_credential_off_the_event_loop(monkeypatch) -> None:
+    """A turn can be megabytes long; checking it on the event loop would stall every
+    other request on the replica."""
+    import asyncio
+
+    async def ok_append(*a, **k):
+        return None
+
+    async def embed(text):
+        return [0.1, 0.2, 0.3]
+
+    h, rows = _patch_append(monkeypatch, append=ok_append, embed=embed)
+    checked_in_thread: list[int] = []
+    to_thread = asyncio.to_thread
+
+    async def recording_to_thread(fn, *args, **kwargs):
+        if fn is h.reads_high:
+            checked_in_thread.append(len(args[0]))
+        return await to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(h.asyncio, "to_thread", recording_to_thread)
+    content = "log line\n" * 400_000
+    await h.handle_conversation_append(_turn(content))
+    assert checked_in_thread == [len(content)]
+    assert len(rows) == 1
