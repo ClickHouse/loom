@@ -769,6 +769,8 @@ def test_ask_shape_hashes_the_identity_the_token_pins() -> None:
     try:
         set_current_auth(_token("alice"))
         alice = ask_shape_sha256(_input(), settings)
+        # Under alice's token: an unpinned body naming alice is served every bot's rules
+        # and the pinned token none, so the two no longer share a shape.
         named_alice = ask_shape_sha256(_input(read_scope="own_user", user_id="alice"), settings)
         set_current_auth(_token("bob"))
         bob = ask_shape_sha256(_input(), settings)
