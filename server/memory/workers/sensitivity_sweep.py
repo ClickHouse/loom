@@ -16,7 +16,8 @@ A pass starts at the agent the previous one stopped in (the worker's cursor in
 `loom.worker_status`), and one that reaches the last row with pages left goes on from the
 first key up to where it started. Inside a pass, a full page of current unlabelled rows in
 one agent that gives nothing to label moves the scan past that agent, so selected rows the
-detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows. A
+detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows; the
+rest of that agent is read once every other key is, with the pages left. A
 pass that labels nothing because its candidates, all in the agent it stopped in, fail in
 `apply` leaves the cursor past that agent, so a row that fails every time is retried when
 the sweep comes back round to it rather than holding every pass there. The cursor is
@@ -40,6 +41,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# The sort key columns the cursor keeps. The rest name a user and a memory, which erasure
+# does not clear from `loom.worker_status`.
+CURSOR_KEY = SORT_KEY[:3]
+
 
 async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     from server.core.repo_base import _default_client
@@ -55,6 +60,7 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
         report = await sweep.scan(
             since_days=window,
             limit=limit,
+            page_size=limit,
             pages=int(settings.sensitivity_sweep_pages_per_pass),
             only_shapes=shapes or None,
             start_after=start,
@@ -88,11 +94,6 @@ def _stuck(report: SweepReport, result: ApplyResult) -> bool:
         return False
     stopped_in = [report.resume_after[col] for col in CURSOR_KEY]
     return all([c.sort_key[col] for col in CURSOR_KEY] == stopped_in for c in result.failed)
-
-
-# The sort key columns the cursor keeps. The rest name a user and a memory, which erasure
-# does not clear from `loom.worker_status`.
-CURSOR_KEY = SORT_KEY[:3]
 
 
 def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:

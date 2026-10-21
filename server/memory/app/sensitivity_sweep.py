@@ -205,6 +205,7 @@ async def scan(
     namespace: str | None = None,
     since_days: int | None = None,
     limit: int = 20000,
+    page_size: int,
     pages: int | None,
     only_shapes: Iterable[str] | None = None,
     start_after: dict[str, Any] | None = None,
@@ -217,75 +218,122 @@ async def scan(
     `other`) — the phone shape is a ten-digit run and the noisiest, so an
     operator can apply the others first.
 
-    Reads pages of `limit` keys in the table's sort key order, then the current version of
-    each, until `limit` candidates are found, the rows run out or `pages` pages are read
+    Reads pages of `page_size` keys in the table's sort key order, then the current version
+    of each, until `limit` candidates are found, the rows run out or `pages` pages are read
     (`None`: no page cap), starting after the sort key `start_after` (the first key when
     None). A scan that started after `start_after` and reaches the last key with pages
     left goes on from the first key up to `start_after`. Only rows of the shapes in
-    `only_shapes` are selected. A selected row the
-    detector leaves unlabelled stays unlabelled and is selected again on the next run;
-    reading past it, and starting the next pass at `resume_after`, keeps a run of them from
-    hiding a later row that is high.
+    `only_shapes` are selected. A selected row the detector leaves unlabelled stays
+    unlabelled and is selected again on the next run; reading past it, and starting the
+    next pass at `resume_after`, keeps a run of them from hiding a later row that is high.
 
     With `skip_noisy_agents`, a full page of current unlabelled rows inside one agent that
     gives no candidate moves the scan past that agent, so one pass crosses up to `pages`
-    agents whose selected rows the detector leaves unlabelled. A row more than a page into
-    such an agent is read once the rows ahead of it leave the window, or by the operator's
-    run, which reads every row and leaves this off."""
+    agents whose selected rows the detector leaves unlabelled. Once the scan has read every
+    other key with pages left, it reads the rest of each agent it moved past, in order."""
     ch = ch or _default_client()
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
     shape_re = coarse_shape_re(keep)
-    if not shape_re:  # no shape the detector gives
+    if not shape_re or limit < 1:  # no shape the detector gives, or no candidate wanted
         return report
-    params: dict[str, Any] = {"shape": shape_re, "lim": limit}
+    params: dict[str, Any] = {"shape": shape_re, "lim": page_size}
     if org:
         params["org"] = org
     if namespace:
         params["ns"] = namespace
     if since_days:
         params["days"] = int(since_days)
-    scope = {"org": org, "namespace": namespace, "since_days": since_days}
-    last: dict[str, Any] = dict(start_after or {})  # the last key of the page before
-    stop: dict[str, Any] | None = None  # set once the scan goes back to the first key
-    pages_read = 0
-    while pages is None or pages_read < pages:
-        pages_read += 1
-        keys, rows = await _read_page(ch, params, scope, after=last, stop=stop)
+    run = _Run(
+        ch=ch,
+        params=params,
+        scope={"org": org, "namespace": namespace, "since_days": since_days},
+        keep=keep,
+        limit=limit,
+        page_size=page_size,
+        pages=pages,
+        report=report,
+    )
+    start = dict(start_after or {})
+    reached_end, report.resume_after = await _read_range(run, after=start, skip=skip_noisy_agents)
+    if reached_end:
+        # The scan reached the last key, so the next pass starts at the first. With
+        # `start_after`, read the keys before it too, or they wait for a later pass and can
+        # leave the window; once they are all read, the next pass starts where this one did.
+        report.resume_after = None
+        if start_after and run.more_wanted():
+            reached_end, last = await _read_range(run, after={}, stop=start, skip=skip_noisy_agents)
+            report.resume_after = start if reached_end else last
+    # The rest of each agent the scan moved past, with the pages left: a row there waits
+    # only for other agents' rows, not until the rows ahead of it leave the window. The
+    # cursor stays where the reads above left it.
+    for key in run.skipped:
+        await _read_range(run, after=key, stop=past_key(key, "agent"), skip=False)
+    if len(report.candidates) > limit:
+        report.candidates = report.candidates[:limit]
+        report.truncated = True
+        report.resume_after = report.candidates[-1].sort_key
+    return report
+
+
+@dataclass
+class _Run:
+    """One scan's reads, its caps, and the agents it moved past."""
+
+    ch: _CHClient
+    params: dict[str, Any]
+    scope: dict[str, Any]
+    keep: set[str]
+    limit: int
+    page_size: int
+    pages: int | None
+    report: SweepReport
+    pages_read: int = 0
+    # The last key read in each agent the scan moved past, kept for this scan only: the
+    # stored cursor names no user or memory key.
+    skipped: list[dict[str, Any]] = field(default_factory=list)
+
+    def more_wanted(self) -> bool:
+        """Pages are left and fewer than `limit` candidates were found."""
+        pages_left = self.pages is None or self.pages_read < self.pages
+        return pages_left and len(self.report.candidates) < self.limit
+
+
+async def _read_range(
+    run: _Run,
+    *,
+    after: dict[str, Any],
+    stop: dict[str, Any] | None = None,
+    skip: bool,
+) -> tuple[bool, dict[str, Any]]:
+    """Pages after `after` (from the first key when empty) and up to `stop`, while the scan
+    wants more. Returns whether the range's last key was read, and the key the next page
+    would start after."""
+    report = run.report
+    last = dict(after)
+    while run.more_wanted():
+        run.pages_read += 1
+        keys, rows = await _read_page(run.ch, run.params, run.scope, after=last, stop=stop)
         report.scanned += len(rows)
-        report.truncated = bool(keys) and len(keys) >= limit
+        report.truncated = bool(keys) and len(keys) >= run.page_size
         found = len(report.candidates)
-        _add_candidates(report, rows, keep)
+        _add_candidates(report, rows, run.keep)
         if not report.truncated:
-            pages_left = pages is None or pages_read < pages
-            if start_after and not stop and pages_left and len(report.candidates) < limit:
-                # The scan reached the last key with pages left: read the keys before
-                # `start_after` too, or they wait for a later pass and can leave the window.
-                stop, last = dict(start_after), {}
-                continue
-            # With `stop`, every key was read: the next pass starts where this one did.
-            report.resume_after = stop
-            break
+            return True, last
         last = keys[-1]
         # A page moves the scan past its agent only when the FINAL read gave back a current
         # unlabelled row for each of its keys. A key whose only match is an older version
         # (a row `apply` labelled, or one deleted, before the parts merge) gives none, and
         # skipping on a page of those would leave the agent's later rows unread.
         if (
-            skip_noisy_agents
+            skip
             and len(rows) >= len(keys)
             and len(report.candidates) == found
             and _agent(keys[0]) == _agent(last)
         ):
+            run.skipped.append(last)
             last = past_key(last, "agent")
-        report.resume_after = last
-        if len(report.candidates) >= limit:
-            break
-    if len(report.candidates) > limit:
-        report.candidates = report.candidates[:limit]
-        report.truncated = True
-        report.resume_after = report.candidates[-1].sort_key
-    return report
+    return False, last
 
 
 async def _read_page(

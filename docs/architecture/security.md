@@ -818,7 +818,7 @@ so search serves it, and `memory.ask` and the conflict judge can send it to thei
 The worker reads only the trailing window and the default shapes; the historical backlog,
 IBAN-only rows (shape `other`) and phone-shaped rows are cleared by the operator's
 `loom sensitivity-sweep --apply`, which pages through its whole scope until `--limit`
-candidates are found. The sweep reads unlabelled rows only: a row already labelled `medium`
+candidates are found, in pages of at least `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys. The sweep reads unlabelled rows only: a row already labelled `medium`
 that also holds a `high` shape stays `medium` until it is set again with `sensitivity:
 "high"`.
 
@@ -832,8 +832,9 @@ A worker pass is bounded:
   sort before its cursor are read in the same pass rather than left to age out of the
   window. A full page inside one agent that gives
   nothing to label moves the pass past that agent, so one pass crosses up to its page cap of
-  agents whose selected rows the detector leaves unlabelled, and a row more than a page into
-  such an agent waits until the rows ahead of it leave the window, or for the operator's run.
+  agents whose selected rows the detector leaves unlabelled. Once the pass has read every
+  other key with pages left, it reads the rest of each agent it moved past, so a row more
+  than a page into such an agent waits only for other agents' rows, never for the window.
   A pass that labelled rows leaves its cursor at the agent it stopped in, so the next reads
   that agent again. A pass that labelled nothing because its candidates, all in the agent it stopped in,
   failed to apply leaves its cursor past that agent, so a row that fails every time is

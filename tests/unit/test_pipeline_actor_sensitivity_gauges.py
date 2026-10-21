@@ -169,12 +169,14 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
             _mem("4", "the secret of a good stew is time"),  # coarse hit, detector says ''
         ]
     )
-    report = await sweep.scan(org="clickhouse", namespace="demo-full", since_days=2, pages=1, ch=ch)
+    report = await sweep.scan(
+        org="clickhouse", namespace="demo-full", since_days=2, page_size=100, pages=1, ch=ch
+    )
     assert report.scanned == 4 and len(report.candidates) == 3 and not report.truncated
     assert report.by_level == {"high": 1, "medium": 2}
     assert report.by_shape == {"credential": 1, "email": 1, "phone": 1}
     assert report.by_namespace()[("clickhouse", "demo-full")] == {"high": 1, "medium": 2}
-    narrowed = await sweep.scan(only_shapes=["credential", "email"], pages=1, ch=ch)
+    narrowed = await sweep.scan(only_shapes=["credential", "email"], page_size=100, pages=1, ch=ch)
     assert narrowed.by_shape == {"credential": 1, "email": 1}  # the phone-only row is skipped
     for sql, params in ch.calls[:2]:  # a page's keys, then their current versions
         assert "sensitivity = ''" in sql and "{shape:String}" in sql
@@ -189,7 +191,7 @@ async def test_a_pages_current_versions_are_read_by_key_subquery_not_by_key_list
     # FINAL read takes the page's key range as a subquery, the same parameters for any page
     # size.
     ch = _CH([_mem(str(i), "secret") for i in range(2000)])
-    await sweep.scan(limit=2000, pages=2, ch=ch)
+    await sweep.scan(limit=2000, page_size=2000, pages=2, ch=ch)
     finals = [(sql, params) for sql, params in ch.calls if "FINAL" in sql]
     assert len(finals) == 2
     for sql, params in finals:
@@ -418,16 +420,25 @@ def _uuid(i: int) -> str:
 async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch) -> None:
     # More selected-but-unlabelled rows than one page sit ahead of a PIN row in the same
     # agent. A scan pages on past them and labels the PIN row. The scheduled pass reads
-    # one page of that agent, finds nothing and moves past it, so the PIN row behind them
-    # waits for the operator's run.
+    # one page of that agent, finds nothing and moves past it; with pages left after the
+    # last key it comes back to the rest of the agent and labels the PIN row. With one
+    # page, the cursor is past the agent.
+    from server.workers import pass_context
+
     ch = _local_memory(_spin_rows_then_a_pin(5))
-    one_page = await sweep.scan(since_days=2, limit=2, pages=1, ch=ch)  # type: ignore[arg-type]
+    one_page = await sweep.scan(since_days=2, limit=2, page_size=2, pages=1, ch=ch)  # type: ignore[arg-type]
     assert one_page.truncated and one_page.candidates == []
-    every_page = await sweep.scan(since_days=2, limit=2, pages=10, ch=ch)  # type: ignore[arg-type]
+    every_page = await sweep.scan(since_days=2, limit=2, page_size=2, pages=10, ch=ch)  # type: ignore[arg-type]
     assert [c.memory_key for c in every_page.candidates] == ["vault_door"]
     assert every_page.candidates[0].level == "high" and every_page.scanned == 6
-    applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=10)
-    assert applied == [] and out["scanned"] == 2 and not out["truncated"]
+    for pages, expected, cursor in ((10, ["vault_door"], []), (1, [], ["o", "n", "a\x01"])):
+        ctx = pass_context.begin("sensitivity_sweep", resume_cursor="")
+        try:
+            applied, _out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=pages)
+        finally:
+            pass_context.clear()
+        assert [c.memory_key for c in applied] == expected
+        assert json.loads(ctx.cursor) == cursor
 
 
 @pytest.mark.asyncio
@@ -449,7 +460,7 @@ async def test_one_pass_crosses_several_agents_it_finds_nothing_to_label_in(monk
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_a_limit_of_zero_reads_nothing() -> None:
     ch = _local_memory(_spin_rows_then_a_pin(2))
-    report = await sweep.scan(since_days=2, limit=0, pages=None, ch=ch)  # type: ignore[arg-type]
+    report = await sweep.scan(since_days=2, limit=0, page_size=2, pages=None, ch=ch)  # type: ignore[arg-type]
     assert report.candidates == [] and not report.truncated and report.resume_after is None
 
 
@@ -459,7 +470,7 @@ async def test_a_pass_reads_at_most_its_page_cap() -> None:
     # A row behind more than the cap's worth of selected rows waits for the next pass's
     # window or the operator's run: the scan stops at the cap and says it was truncated.
     ch = _local_memory(_spin_rows_then_a_pin(5))
-    capped = await sweep.scan(since_days=2, limit=2, pages=2, ch=ch)  # type: ignore[arg-type]
+    capped = await sweep.scan(since_days=2, limit=2, page_size=2, pages=2, ch=ch)  # type: ignore[arg-type]
     assert capped.scanned == 4 and capped.truncated and capped.candidates == []
 
 
@@ -656,7 +667,7 @@ async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> N
         _Row("o", "n", "", _uuid(4), "k3_pin", pin, 60),
     ]
     ch = _local_memory(rows)
-    first = await sweep.scan(since_days=2, limit=2, pages=3, ch=ch)  # type: ignore[arg-type]
+    first = await sweep.scan(since_days=2, limit=2, page_size=2, pages=3, ch=ch)  # type: ignore[arg-type]
     assert [c.memory_key for c in first.candidates] == ["k1_pin", "k2_pin"] and first.truncated
     assert first.resume_after == {
         "org": "o",
@@ -669,6 +680,7 @@ async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> N
     rest = await sweep.scan(
         since_days=2,
         limit=2,
+        page_size=2,
         pages=1,
         start_after=first.resume_after,
         ch=ch,  # type: ignore[arg-type]
@@ -712,7 +724,7 @@ async def test_pages_cross_namespace_and_user_boundaries_without_a_gap() -> None
         _Row("o", "n2", "u2", _uuid(8), "vault_door", "badge PIN is 4471", 60),
     ]
     ch = _local_memory(rows)
-    report = await sweep.scan(since_days=2, limit=2, pages=None, ch=ch)  # type: ignore[arg-type]
+    report = await sweep.scan(since_days=2, limit=2, page_size=2, pages=None, ch=ch)  # type: ignore[arg-type]
     returned = sorted(r["memory_id"] for r in ch.returned if "memory_id" in r)  # FINAL reads
     assert returned == sorted(row.memory_id for row in rows)
     assert [c.memory_key for c in report.candidates] == ["vault_door"]
@@ -749,7 +761,7 @@ async def test_a_key_written_inside_a_page_between_its_reads_is_read_once_and_no
     ]
     written = _Row("o", "n", "-", _uuid(2), "k2", "badge PIN is 4471", 60)
     ch = _WriteBetweenReads(_local_memory(rows), _local_memory([*rows, written]))
-    report = await sweep.scan(since_days=2, limit=2, pages=None, ch=ch)  # type: ignore[arg-type]
+    report = await sweep.scan(since_days=2, limit=2, page_size=2, pages=None, ch=ch)  # type: ignore[arg-type]
     returned = [r["memory_id"] for r in ch.after.returned if "memory_id" in r]  # FINAL reads
     assert sorted(returned) == [_uuid(i) for i in (1, 2, 3, 5)]
     assert [c.memory_key for c in report.candidates] == ["k2"]
@@ -772,7 +784,7 @@ async def test_a_page_holds_distinct_keys_and_yields_only_current_unlabelled_ver
         _Row("o", "n", "-", _uuid(3), "vault_door", pin, 60, sensitivity="high", version=2),
     ]
     ch = _local_memory(rows)
-    report = await sweep.scan(since_days=2, limit=3, pages=1, ch=ch)  # type: ignore[arg-type]
+    report = await sweep.scan(since_days=2, limit=3, page_size=3, pages=1, ch=ch)  # type: ignore[arg-type]
     keys = [r["memory_key"] for r in ch.returned if "memory_id" not in r]
     assert keys == ["gone", "twice", "vault_door"]
     assert [c.memory_key for c in report.candidates] == ["twice"] and report.scanned == 1
@@ -866,7 +878,8 @@ async def test_the_worker_sweeps_the_trailing_window_only(monkeypatch) -> None:
     monkeypatch.setattr(settings, "sensitivity_sweep_pages_per_pass", 3)
     monkeypatch.setattr(settings, "sensitivity_sweep_shapes", "credential, email")
     out = await w.run_pass(ch=_CH())  # type: ignore[arg-type]
-    assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["pages"] == 3
+    assert seen["since_days"] == 2 and seen["limit"] == 500 and seen["page_size"] == 500
+    assert seen["pages"] == 3
     assert seen["only_shapes"] == ["credential", "email"]  # the phone shape is the operator's
     assert seen["skip_noisy_agents"]
     assert out["scanned"] == 3 and out["relabelled"] == 0

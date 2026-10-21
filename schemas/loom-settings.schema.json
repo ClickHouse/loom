@@ -4969,7 +4969,7 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Rows one sensitivity sweep pass re-labels, and the page size it scans in (at least 1)."
+          "description": "Rows one sensitivity sweep pass re-labels, and the page size it scans in; the operator's `loom sensitivity-sweep` reads pages of at least this many keys (at least 1)."
         },
         "sensitivity_sweep_pages_per_pass": {
           "default": 10,

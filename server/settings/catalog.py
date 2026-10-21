@@ -2369,7 +2369,8 @@ class MemorySettings(BaseModel):
     sensitivity_sweep_interval_seconds: int = 86400
     # Days back the sensitivity sweep re-labels rows created in.
     sensitivity_sweep_window_days: int = 2
-    # Rows one sensitivity sweep pass re-labels, and the page size it scans in
+    # Rows one sensitivity sweep pass re-labels, and the page size it scans in; the
+    # operator's `loom sensitivity-sweep` reads pages of at least this many keys
     # (at least 1).
     sensitivity_sweep_max_rows_per_pass: int = Field(default=500, ge=1)
     # Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep

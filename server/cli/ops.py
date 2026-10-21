@@ -202,14 +202,18 @@ def _cmd_sensitivity_sweep(args: argparse.Namespace) -> int:
 
 async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
     from server.memory.app import sensitivity_sweep as sweep
+    from server.settings import settings
 
     org = args.org or None
     ns = args.namespace or None
+    limit = int(args.limit)
     report = await sweep.scan(
         org=org,
         namespace=ns,
         since_days=int(args.since_days or 0) or None,
-        limit=int(args.limit),
+        limit=limit,
+        # A small `--limit` still reads the scope in pages as large as the worker's.
+        page_size=max(limit, int(settings.sensitivity_sweep_max_rows_per_pass)),
         pages=None,  # page through the whole scope, up to `--limit` candidates
         only_shapes=getattr(args, "only_shape", None) or None,
         ch=ch,
@@ -319,7 +323,7 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
         "--limit",
         type=_positive_int,
         default=20000,
-        help="Rows labelled per run, and the page size the scan reads in (default 20000)",
+        help="Candidates found per run (labelled with --apply)",
     )
     p_ssw.add_argument("--show", type=int, default=20, help="Namespaces to print")
     p_ssw.add_argument(

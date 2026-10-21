@@ -2852,7 +2852,8 @@ settings:
   # Days back the sensitivity sweep re-labels rows created in. [restart]
   # sensitivity_sweep_window_days: 2
 
-  # Rows one sensitivity sweep pass re-labels, and the page size it scans in (at least
+  # Rows one sensitivity sweep pass re-labels, and the page size it scans in; the
+  # operator's `loom sensitivity-sweep` reads pages of at least this many keys (at least
   # 1). [restart]
   # sensitivity_sweep_max_rows_per_pass: 500
 
