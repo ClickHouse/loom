@@ -54,14 +54,14 @@ change between releases, and ops MCP does not serve with ‡.
    memories and procedures, rendered for your prompt. Add
    `include_knowledge`, `include_conversations` or `include_runs` when the
    task needs them.
-2. **Open a run** for a task with an outcome: `run.begin(goal=...)`, then
-   pass its `run_id` in the body of your writes, your working-memory calls
-   and `context.pack` (TypeScript: `runId` in `agent.call`'s scope
-   argument). On `memory.search`‡ and `memory.ask`, send it as the
-   `X-Loom-Run-Id` header instead: there a body `run_id` filters to the
-   run's own rows. The Python SDK's `agent.run_scope(...)` does this for
-   writes and those two reads; pass `run_id` yourself to `context.pack` and
-   working-memory reads.
+2. **Open a run** for a task with an outcome: `run.begin(goal=...)`. Put
+   its `run_id` on your writes, your working-memory calls and
+   `context.pack`, and keep it off `memory.search`‡ and `memory.ask`, where
+   a `run_id` filters to the run's own rows (over HTTP, the `X-Loom-Run-Id`
+   header labels a read without filtering it). In Python,
+   `agent.run_scope(...)` does this for every typed helper; in TypeScript,
+   pass `runId` in the scope argument of writes only; over MCP, the
+   connection's own run labels reads.
 3. **Search once per question.** `search.query`† (`loom_search` over MCP)
    covers memory, profile, knowledge and conversations in one call;
    `memory.ask` returns a cited answer. Do not search before writing a fact
@@ -134,14 +134,17 @@ On reads the same fields select rows, and each read op treats them its own
 way; its field list (operations reference, `loom_op` help) says how. The
 reads the loop uses:
 
-- `search.query`† reads every author and user in every namespace your token
-  reads; it has no `user_id` or `session_id`. To read one user's rows, use
+- `search.query`† reads every author and user in the namespaces it fans out
+  to (`namespaces_skipped` names any it cut); it has no `user_id` or
+  `session_id`. To read one user's rows, use
   `memory.ask` or `memory.search`‡ with `user_id`.
-- `memory.search`‡, `memory.ask` and the memories in `context.pack` read
-  every author unless you name an `agent`; a `user_id` or `session_id`
-  narrows them to those rows. A `context.pack` that names this session's
-  `session_id` recalls only this session's memories, so leave it off when
-  the task needs what earlier sessions learned.
+- `memory.search`‡ and `memory.ask` read every author unless you name an
+  `agent`; a `user_id` or `session_id` narrows them to those rows.
+- `context.pack` recalls memories of every author, narrowed by `user_id`
+  and `session_id` (with no `query`, it reads only rows under the identity
+  it names). A pack that names this session's `session_id` recalls only
+  this session's memories, so leave it off when the task needs what
+  earlier sessions learned.
 - `memory.get` and `memory.delete` take your row under the key, else the
   same user's row under another agent.
 - `memory.list` needs `agent` and matches `agent`, `user_id` and

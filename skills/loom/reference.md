@@ -81,8 +81,8 @@ default, up to 16,384) keyed by `(agent, user_id, session_id, run_id)`:
 `working_memory.get`† and `render` read back under exactly that identity, so
 another agent does not see them. `context.pack` loads three layers: the
 run's blocks, the session's (`run_id` `-`) and the agent's (`session_id` and
-`run_id` `-`), so a block written with `session_id` `-` reaches every
-later session of that agent and user. Never embedded, ranked or
+`run_id` `-`), so a block written with `session_id` and `run_id` `-`
+reaches every later session of that agent and user. Never embedded, ranked or
 conflict-checked. Use for the plan, a checklist, a cursor, a resume point; for another agent, a
 session brief or the task inbox.
 
@@ -127,11 +127,12 @@ on loses that boost.
 | `run.get`, `run.list`‡ | A run's record, with `over_budget`; recent runs. |
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
-Python: `async with agent.run_scope(goal=...) as run:` opens and closes it,
-stamps `run_id` on writes inside (of working memory, `set` and `append`), and
-labels `memory.search`‡ and `memory.ask` with the `X-Loom-Run-Id` header (a
-body `run_id` there filters to the run's rows). `context.pack` and
-working-memory reads take the run's `run_id` from you.
+Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
+Its typed helpers carry the run's `run_id` on every call, and on
+`memory.search`‡ and `memory.ask` send it as the `X-Loom-Run-Id` header (a
+body `run_id` there filters to the run's rows). A raw `agent.call` inside
+the scope gets it only on memory writes and working-memory `set` and
+`append`.
 
 ## Conversations and session briefs
 
