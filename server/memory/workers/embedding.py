@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import server.memory.store as memory_repo
+from server.core.ch_params import chunks
 from server.embedding import get_embedder
 from server.llm import customer, identity
 from server.memory.domain.trust import subject_of
@@ -185,10 +186,11 @@ async def _writers(rows: list[dict[str, Any]]) -> dict[tuple[str, ...], str]:
         by_org.setdefault(str(r["org"]), set()).add((str(r["namespace"]), str(r["memory_key"])))
     out: dict[tuple[str, ...], str] = {}
     for org, keys in by_org.items():
-        found = await memory_repo.actors_by_key(org, sorted(keys), scope=WHOLE_NAMESPACE)
-        for (ns, key), heads in found.items():
-            for h in heads:
-                out[(org, ns, h["agent"], h["user_id"], h["session_id"], key)] = h["actor"]
+        for part in chunks(sorted(keys)):  # each read binds what one form field carries
+            found = await memory_repo.actors_by_key(org, part, scope=WHOLE_NAMESPACE)
+            for (ns, key), heads in found.items():
+                for h in heads:
+                    out[(org, ns, h["agent"], h["user_id"], h["session_id"], key)] = h["actor"]
     return out
 
 
@@ -218,7 +220,7 @@ async def _embed_rows(
     read them). A group whose call is held (`customer.GROUP_HOLDS`: its org
     switched off since the stubs were picked, its identity refused, asked to wait
     or unread) gets `(None, HELD)`: its rows are left as they are, attempts
-    untouched, and kept out of the next selections while the hold lasts
+    untouched, read after other stubs and left uncalled while the hold lasts
     (`_hold`); the other groups go on. A switch gone stale mid-pass
     (`SwitchUnread`) stops the pass before its write."""
     out: list[tuple[list[float] | None, str]] = [(None, "")] * len(rows)
@@ -245,56 +247,43 @@ async def _embed_rows(
 # The error `_embed_rows` gives a row whose call was held: it is left unwritten.
 HELD = "model call held"
 
-# Stubs a pass left because their call was held, by `_stub_key`, and the identities
-# held (`identity.split_by` of each stub's attribution), each until its hold ends.
-# While any identity is held a pass reads `_OVERFETCH` times its batch, the selection
-# leaves the held stubs out, and the held identities' rows are dropped before calling
-# (`_without_held`): other identities' stubs are embedded meanwhile, never stuck
-# behind rows that would only be held again.
-_HELD_STUBS: Held[tuple[str, ...]] = Held()
+# The identities a pass found held (`identity.split_by` of each stub's attribution:
+# the writer's), and the (org, namespace, agent, user_id) groups their stubs are in,
+# each until its hold ends. The selection reads the held groups' stubs after every
+# other (`find_embedding_stubs(held_last=...)`, a handful of tuples), and the held
+# identities' rows among them are left uncalled (`_without_held`): other writers'
+# stubs, a held writer's neighbours in its group included, are embedded meanwhile.
 _HELD_WHO: Held[Any] = Held()
-_OVERFETCH = 4  # not a setting: room in one read for the stubs a held identity fills
-_HELD_KEYS_MAX = 2_000  # not a setting: the most held stub keys one selection names
-# A stub's key, as `memory_repo.find_embedding_stubs` names candidates.
-_STUB_KEY = (
-    "org",
-    "namespace",
-    "agent",
-    "user_id",
-    "session_id",
-    "scope",
-    "embedding_model",
-    "memory_key",
-)
+_HELD_GROUPS: Held[tuple[str, str, str, str]] = Held()
 
 
-def _stub_key(r: dict[str, Any]) -> tuple[str, ...]:
-    return tuple(str(r.get(c) or "") for c in _STUB_KEY)
+def _group(r: dict[str, Any]) -> tuple[str, str, str, str]:
+    """The stub columns a held writer's stubs share, to read them last."""
+    org, namespace, agent, user_id = (
+        str(r.get(c) or "") for c in ("org", "namespace", "agent", "user_id")
+    )
+    return org, namespace, agent, user_id
 
 
 def _hold(rows: list[dict[str, Any]], writers: dict[tuple[str, ...], str], seconds: float) -> None:
-    """Keep `rows`, and their identities, out of the next passes for `seconds`."""
-    _HELD_STUBS.hold((_stub_key(r) for r in rows), seconds)
+    """Leave `rows`' identities uncalled, and their groups read last, for `seconds`."""
     _HELD_WHO.hold((identity.split_by(_attribution(r, writers)) for r in rows), seconds)
+    _HELD_GROUPS.hold((_group(r) for r in rows), seconds)
 
 
 def _without_held(
-    rows: list[dict[str, Any]],
-    writers: dict[tuple[str, ...], str],
-    held: frozenset[Any],
-    limit: int,
+    rows: list[dict[str, Any]], writers: dict[tuple[str, ...], str], held: frozenset[Any]
 ) -> list[dict[str, Any]]:
-    """The first `limit` of `rows` whose identity is not held. A held identity's
-    rows are left, no call made, and their keys kept out of the next selections
-    for what is left of its hold."""
+    """`rows` but a held identity's, which are left with no call made; their groups
+    stay read last for what is left of the hold."""
     kept: list[dict[str, Any]] = []
     for r in rows:
         who = identity.split_by(_attribution(r, writers))
         if who in held:
-            _HELD_STUBS.hold([_stub_key(r)], _HELD_WHO.left(who))
+            _HELD_GROUPS.hold([_group(r)], _HELD_WHO.left(who))
         else:
             kept.append(r)
-    return kept[:limit]
+    return kept
 
 
 async def _embed_batch(embedder: Any, texts: list[str]) -> list[tuple[list[float] | None, str]]:
@@ -547,17 +536,16 @@ async def run_pass(
             pass_context.note_failure(e, "reconciliation")
 
         # An org whose model calls are switched off keeps its stubs, attempts
-        # untouched, until it is switched back on; stubs whose identity is held stay
-        # out while the hold lasts, and a held identity's other stubs are dropped
-        # from a larger read, so the batch is other identities' work.
-        held_keys, held_who = _HELD_STUBS.current(), _HELD_WHO.current()
+        # untouched, until it is switched back on; the groups of a held writer's stubs
+        # are read after every other stub, so the batch is other writers' work.
+        held_who = _HELD_WHO.current()
         rows = await memory_repo.find_embedding_stubs(
-            batch_size=cfg.batch_size * (_OVERFETCH if held_who else 1),
+            batch_size=cfg.batch_size,
             max_attempts=cfg.max_attempts,
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
             exclude_orgs=await customer.switched_off_orgs(),
-            exclude_keys=sorted(held_keys)[:_HELD_KEYS_MAX] or None,
+            held_last=sorted(_HELD_GROUPS.current()) or None,
         )
 
         replacements: list[dict[str, Any]] = []
@@ -571,7 +559,7 @@ async def run_pass(
             await memory_repo.insert_embedding_rows(dropped)
         writers = await _writers(rows) if rows and identity.reads_writer() else {}
         if held_who:
-            rows = _without_held(rows, writers, held_who, cfg.batch_size)
+            rows = _without_held(rows, writers, held_who)
         if rows:
             embedded = await _embed_rows(embedder, rows, writers)
             for r, (vec, embed_err) in zip(rows, embedded, strict=True):

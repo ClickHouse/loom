@@ -44,10 +44,11 @@ def agents(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     identity._reset_for_tests()
 
 
-def _stub(key: str, *, created: int, version: int) -> dict[str, Any]:
+def _stub(key: str, *, created: int, version: int, agent: str = "") -> dict[str, Any]:
     row = memory_repo.build_embedding_row(
         org="acme",
         namespace="shared",
+        agent=agent if agent else f"agent-{key[0]}",  # each writer under its own label
         memory_key=key,
         content_excerpt=f"text of {key}",
         embedding_model="m",
@@ -60,32 +61,36 @@ def _stub(key: str, *, created: int, version: int) -> dict[str, Any]:
 
 class _Stubs:
     """`find_embedding_stubs` over `rows` as ClickHouse answers it: the newest four
-    times the batch by version, minus the keys left out, then the oldest first, at
-    most the batch."""
+    times the batch by version, the held groups' after every other, then the oldest
+    first (held groups' still after), at most the batch."""
 
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
         self.embedded: set[str] = set()
-        self.limits: list[int] = []
+        self.held: list[Any] = []
 
-    async def find(self, *, batch_size: int, exclude_keys: Any = None, **_: Any) -> Any:
-        self.limits.append(batch_size)
-        left_out = set(exclude_keys or [])
-        live = [
-            r for r in self.rows if r["memory_key"] not in self.embedded and _key(r) not in left_out
-        ]
-        candidates = sorted(live, key=lambda r: -r["version"])[: batch_size * 4]
-        return [dict(r) for r in sorted(candidates, key=lambda r: r["created_at"])[:batch_size]]
+    async def find(self, *, batch_size: int, held_last: Any = None, **_: Any) -> Any:
+        self.held.append(held_last)
+        held = set(held_last or [])
+
+        def last(r: dict[str, Any]) -> bool:
+            return (r["org"], r["namespace"], r["agent"], r["user_id"]) in held
+
+        live = [r for r in self.rows if r["memory_key"] not in self.embedded]
+        candidates = sorted(live, key=lambda r: (last(r), -r["version"]))[: batch_size * 4]
+        picked = sorted(candidates, key=lambda r: (last(r), r["created_at"]))[:batch_size]
+        return [dict(r) for r in picked]
 
     async def insert(self, rows: list[dict[str, Any]], **_: Any) -> None:
         self.embedded.update(r["memory_key"] for r in rows if r["embedding_dim"] > 0)
 
     async def writers(self, org: str, keys: Any, **_: Any) -> dict[Any, Any]:
         # a* were written by agent-a, b* by agent-b, into the shared namespace
+        by_key = {(r["namespace"], r["memory_key"]): r for r in self.rows}
         return {
             (ns, key): [
                 {
-                    "agent": "",
+                    "agent": by_key[(ns, key)]["agent"],
                     "user_id": "-",
                     "session_id": "-",
                     "actor": f"process:sa:t:agent-{key[0]}",
@@ -93,20 +98,6 @@ class _Stubs:
             ]
             for ns, key in keys
         }
-
-
-def _key(r: dict[str, Any]) -> tuple[str, ...]:
-    cols = (
-        "org",
-        "namespace",
-        "agent",
-        "user_id",
-        "session_id",
-        "scope",
-        "embedding_model",
-        "memory_key",
-    )
-    return tuple(str(r.get(c) or "") for c in cols)
 
 
 class _Embedder:
@@ -125,22 +116,8 @@ class _Embedder:
         return [[1.0, 0.0] for _ in texts]
 
 
-def test_the_embedding_worker_takes_other_identities_stubs_while_one_is_held(
-    agents, clock, monkeypatch
-) -> None:
+def _worker(monkeypatch: pytest.MonkeyPatch, store: _Stubs, embedder: _Embedder) -> Any:
     from server.memory.workers import embedding as w
-
-    # agent-a's three stubs are the oldest; the batch holds two.
-    store = _Stubs(
-        [
-            _stub("a1", created=1, version=10),
-            _stub("a2", created=2, version=11),
-            _stub("a3", created=3, version=12),
-            _stub("b1", created=4, version=13),
-            _stub("b2", created=5, version=14),
-        ]
-    )
-    embedder = _Embedder()
 
     async def nothing(*a: Any, **k: Any) -> Any:
         return None
@@ -161,20 +138,57 @@ def test_the_embedding_worker_takes_other_identities_stubs_while_one_is_held(
     monkeypatch.setattr(w, "_stubs_still_served", served)
     monkeypatch.setattr(w, "_refresh_entities", nothing)
 
-    def run() -> Any:
+    def run(batch: int) -> Any:
         switch_off()
-        return asyncio.run(w.run_pass(w.EmbeddingWorkerConfig(batch_size=2)))
+        return asyncio.run(w.run_pass(w.EmbeddingWorkerConfig(batch_size=batch)))
 
-    first = run()
+    return run
+
+
+def test_the_embedding_worker_takes_other_identities_stubs_while_one_is_held(
+    agents, clock, monkeypatch
+) -> None:
+    # agent-a's three stubs are the oldest; the batch holds two.
+    store = _Stubs(
+        [
+            _stub("a1", created=1, version=10),
+            _stub("a2", created=2, version=11),
+            _stub("a3", created=3, version=12),
+            _stub("b1", created=4, version=13),
+            _stub("b2", created=5, version=14),
+        ]
+    )
+    embedder = _Embedder()
+    run = _worker(monkeypatch, store, embedder)
+    first = run(2)
     assert embedder.calls == [("agent-a", 2)] and first.embedded_count == 0
-    second = run()  # a1, a2 left out; a3 read and dropped, never sent
+    second = run(2)  # agent-a's group is read last: agent-b's stubs fill the batch
     assert embedder.calls[1:] == [("agent-b", 2)]
     assert sorted(store.embedded) == ["b1", "b2"] and second.failed_count == 0
-    assert store.limits == [2, 8]  # while an identity is held, a larger read
-    assert run().embedded_count == 0 and embedder.calls[2:] == []  # all left: no call
+    assert store.held[1] == [("acme", "shared", "agent-a", "-")]  # a group, never stub keys
+    assert run(2).embedded_count == 0 and embedder.calls[2:] == []  # all held: no call
     clock.advance(600)
-    run()  # the hold is over: agent-a's oldest are asked for again
-    assert embedder.calls[2:] == [("agent-a", 2)] and store.limits[-1] == 2
+    run(2)  # the hold is over: agent-a's oldest are asked for again
+    assert embedder.calls[2:] == [("agent-a", 2)] and store.held[-1] is None
+
+
+def test_a_held_writers_neighbour_in_its_group_is_embedded_when_the_batch_has_room(
+    agents, clock, monkeypatch
+) -> None:
+    # agent-b writes under agent-a's label: one group, read last with agent-a's stubs
+    store = _Stubs(
+        [
+            _stub("a1", created=1, version=10),
+            _stub("a2", created=2, version=11),
+            _stub("b1", created=3, version=12, agent="agent-a"),
+        ]
+    )
+    embedder = _Embedder()
+    run = _worker(monkeypatch, store, embedder)
+    run(2)
+    assert embedder.calls == [("agent-a", 2)]
+    run(3)  # agent-a's rows are left uncalled, its neighbour's embedded
+    assert embedder.calls[1:] == [("agent-b", 1)] and store.embedded == {"b1"}
 
 
 class _Identities:
@@ -262,9 +276,10 @@ async def test_the_embedding_worker_holds_only_the_group_it_cannot_name(by_org) 
         {"org": "acme", "namespace": "n", "memory_key": "k1", "content_excerpt": "a"},
         {"org": "beta", "namespace": "n", "memory_key": "k2", "content_excerpt": "b"},
     ]
+    rows = [{**r, "agent": "a", "user_id": "-"} for r in rows]
     out = await w._embed_rows(_ByOrg(), rows)
     assert out == [(None, w.HELD), ([0.5, 0.5], "")]  # beta's vector is kept
-    assert [k[-1] for k in w._HELD_STUBS.current()] == ["k1"]
+    assert w._HELD_GROUPS.current() == {("acme", "n", "a", "-")}
 
 
 def test_code_recovery_holds_only_the_group_it_cannot_name(by_org) -> None:

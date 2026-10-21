@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from server.core import ch as core_ch
+from server.core.ch_params import fitting
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.llm import client as llm_client
 from server.llm import customer
@@ -95,7 +96,7 @@ async def run_pass(
         # `updated_at`, not `created_at`: a rewrite keeps the section's
         # creation time. The fold's model call is for the newest principal that
         # wrote the identity's facts (`writer`; a pipeline is none).
-        held = sorted(_HELD.current())
+        held = fitting(sorted(_HELD.current()))  # one parameter, one form field
         held_sql = (
             "AND (m.org, m.namespace, m.user_id) NOT IN {held:Array(Tuple(String, String, String))}"
             if held

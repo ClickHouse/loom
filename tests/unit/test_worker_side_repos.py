@@ -207,3 +207,96 @@ async def test_find_embedding_stubs_stops_when_no_candidate_is_a_live_stub() -> 
     rows = await memory_repo.find_embedding_stubs(batch_size=50, max_attempts=3, ch=ch)
     assert rows == []
     assert len(ch.query_all_calls) == 2
+
+
+_STUB_COLS = (
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "scope",
+    "embedding_model",
+    "memory_key",
+)
+
+
+class _KeyedCH(StubCH):
+    """Answers each read of the stub selection from the keys it binds, ordered and
+    cut as ClickHouse would: the candidates, all confirmed, and the FINAL read's
+    rows, held groups last, then the oldest first."""
+
+    def __init__(self, candidates: list[dict[str, Any]]) -> None:
+        super().__init__()
+        self.candidates = candidates
+
+    async def query_all(self, sql, params=None):
+        params = params or {}
+        self.query_all_calls.append((sql, params))
+        if "PREWHERE embedding_dim = 0" in sql:
+            return self.candidates[: params["cand_lim"]]
+        rows = [dict(zip(_STUB_COLS, key, strict=True)) for key in params["keys"]]
+        if "HAVING" in sql:
+            return rows
+        held = set(params.get("held") or [])
+        for r in rows:
+            r["created_at"] = int(r["memory_key"].split("_")[2])  # the key's number
+            r["version"] = 1
+        rows.sort(
+            key=lambda r: (
+                (r["org"], r["namespace"], r["agent"], r["user_id"]) in held,
+                r["created_at"],
+            )
+        )
+        return rows[: params["lim"]]
+
+
+@pytest.mark.asyncio
+async def test_a_large_stub_selection_binds_every_list_in_parameters_that_fit() -> None:
+    """Sixteen hundred cell-shaped candidate keys (a batch of 400) go to the server in
+    parameters that each fit one form field, all of them read, and the batch is the
+    oldest stubs, a held group's after the rest."""
+    import uuid
+
+    from clickhouse_connect.driver.binding import format_bind_value
+
+    from server.core.ch_params import FIELD_BYTES
+
+    def cell(i: int) -> dict[str, Any]:
+        return dict(
+            zip(
+                _STUB_COLS,
+                (
+                    str(uuid.UUID(int=7)),
+                    f"cell-{uuid.UUID(int=i % 9)}-{uuid.UUID(int=i % 9 + 1)}",
+                    f"agent-{i % 9}",
+                    str(uuid.UUID(int=99)),
+                    str(uuid.UUID(int=i + 4)),
+                    "private",
+                    "text-embedding-3-small",
+                    f"user_preference_{i:06d}_" + "x" * 24,
+                ),
+                strict=True,
+            )
+        )
+
+    ch = _KeyedCH([cell(i) for i in range(1600)])
+    held = (str(uuid.UUID(int=7)), cell(0)["namespace"], "agent-0", str(uuid.UUID(int=99)))
+    rows = await memory_repo.find_embedding_stubs(
+        batch_size=400, max_attempts=3, held_last=[held], ch=ch
+    )
+    for _, params in ch.query_all_calls:
+        for value in params.values():
+            if isinstance(value, list):
+                assert len(format_bind_value(value)) <= FIELD_BYTES
+    assert sum(len(p["keys"]) for s, p in ch.query_all_calls if "HAVING" in s) == 1600
+    assert len(ch.query_all_calls) > 3  # the keys went in several reads
+    assert len(rows) == 400
+    groups = [(r["org"], r["namespace"], r["agent"], r["user_id"]) for r in rows]
+    assert held not in groups  # 1422 other stubs come first
+    numbers = [r["created_at"] for r in rows]
+    assert numbers == sorted(numbers) and numbers[0] == 1  # the oldest first
+    phase1 = ch.query_all_calls[0][0]
+    assert "IN {held:Array(Tuple(String, String, String, String))}) ASC, max(version) DESC" in (
+        phase1
+    )

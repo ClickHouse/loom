@@ -450,3 +450,22 @@ def test_reembed_in_database_is_refused_when_calls_must_name_whom_they_are_for(
     with pytest.raises(ValueError, match=named) as refused:
         asyncio.run(reembed.reembed_all(None, _Embedder(), in_database="ai_creds"))
     assert "re-embed without --in-database" in str(refused.value)
+
+
+def test_a_sessions_writer_is_its_newest_live_versions() -> None:
+    """Read through FINAL and by `version`: a deleted memory or a replaced version
+    names no one, and an update (which keeps `created_at`) names its own writer."""
+    from server.memory.store import reads
+
+    class _CH:
+        sent: list[tuple[str, dict[str, Any]]] = []
+
+        async def query_all(self, sql: str, params: Any = None) -> list[Any]:
+            self.sent.append((sql, params or {}))
+            return []
+
+    ch = _CH()
+    asyncio.run(reads.session_writers([("acme", "ns", "a", "-", "s1")], ch=ch))  # type: ignore[arg-type]
+    sql, params = ch.sent[0]
+    assert "FROM loom.memory FINAL" in sql and "argMaxIf(actor, version," in sql
+    assert "tombstoned_at IS NULL" in sql and params["keys"] == [("acme", "ns", "a", "-", "s1")]
