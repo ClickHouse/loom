@@ -377,11 +377,11 @@ async def test_a_long_session_of_plain_chunks_without_vectors_is_read_once_per_p
     ]
     asked = _stored_chunks(monkeypatch, rows)
     passes = []
-    split = provider_rebuild_batch.joined_overlaps_high
+    original = provider_rebuild_batch.joined_overlaps_high
 
     def counted(chunks):
         passes.append(len(chunks))
-        return split(chunks)
+        return original(chunks)
 
     monkeypatch.setattr(provider_rebuild_batch, "joined_overlaps_high", counted)
     result = await rebuild_batch("memory_chunks", rows[100:164], target)
