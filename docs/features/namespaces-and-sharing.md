@@ -123,6 +123,10 @@ at session start, and a successful response carries at most one (`hint` on MCP, 
 `LOOM_MENTOR_MAX_HINTS_PER_SESSION`. `loom mentor --org … --namespace … --agent …` prints the whole brief. See the
 [mentor ops](../reference/operations/mentor.md).
 
+[`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns how to use Loom, written for a model: the
+`loom` skill in `skills/loom/`, as `part` `skill` (the loop and the rules), `reference` (every plane with its ops) or
+`all`. It is the same for every caller, so any token may read it, including one narrowed to a user and an end user's.
+
 ## Throwaway namespaces
 
 Benchmarks and harnesses write into namespaces under the prefixes in

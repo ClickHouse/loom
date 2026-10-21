@@ -69,9 +69,10 @@ def test_ops_in_the_reference_carry_the_experimental_and_not_on_mcp_markers() ->
                 assert bool(hidden) == (name in _MCP_HIDDEN_OPS), name
 
 
-def test_the_skill_names_no_op_mcp_refuses() -> None:
-    # SKILL.md carries no ‡ marker: every op it sends an agent to runs over MCP too.
-    assert not _named_ops(_guide("skill").text) & _MCP_HIDDEN_OPS
+def test_every_op_the_skill_names_that_mcp_refuses_carries_the_marker() -> None:
+    text = _guide("skill").text
+    for name in _named_ops(text) & _MCP_HIDDEN_OPS:
+        assert f"`{name}`‡" in text, name
 
 
 # Every kind of token that may read the guide, with the roles the server gives it

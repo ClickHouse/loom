@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import httpx
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+from tests.integration._resources import unique_org
 
-from tests.integration._resources import unique_org  # noqa: E402
+ROOT = Path(__file__).resolve().parents[2]
 
 ORG = unique_org("mentor-guide")
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("part", ["skill", "reference", "all"])
 async def test_a_viewer_reads_each_part_of_the_guide(
     control_plane_url: str, mint_test_token, part: str

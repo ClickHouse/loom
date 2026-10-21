@@ -12,11 +12,11 @@ Loom is a server that remembers for you. What you store outlives your
 context window and your process, is shared with every agent and person in
 the same namespace, and comes back ranked, versioned and with its source.
 Every capability is an operation (op) such as `memory.set`, declared once
-and served over MCP and HTTP; the SDKs wrap HTTP:
+and served over HTTP and, nearly all, over MCP; the SDKs wrap HTTP:
 
 | You reach it through | An op is called as |
 |---|---|
-| MCP (`<loom>/mcp`) | the tool `loom_<op, dots as underscores>` (`memory.set` → `loom_memory_set`); an op your tool list does not show runs through `loom_op {op, arguments}` |
+| MCP (`<loom>/mcp`) | the tool `loom_<op, dots as underscores>` (`memory.set` → `loom_memory_set`); an op your tool list does not show runs through `loom_op {op, arguments}`, except the ops marked ‡ (SDK and HTTP only) |
 | Python SDK (`from loom import Agent`) | a typed helper (`agent.memory.set(...)`) or `await agent.call("memory.set", {...})` |
 | TypeScript SDK (`@clickhouse/loom`) | `agent.call("memory.set", {...})`, or the generated `loom.memory.set({...})` |
 | HTTP | `POST /v1/memory.set` with `Authorization: Bearer <token>` and a JSON body |
@@ -56,9 +56,10 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
    memories and procedures, rendered for your prompt. Add
    `include_knowledge`, `include_conversations` or `include_runs` when the
    task needs them.
-2. **Open a run** for a task with an outcome: `run.begin(goal=...)`, pass
-   its `run_id` on later calls (the Python SDK's `agent.run_scope(...)` does
-   this for you).
+2. **Open a run** for a task with an outcome: `run.begin(goal=...)`, then
+   pass its `run_id` on your writes. On a read, send it as the
+   `X-Loom-Run-Id` header instead: a body `run_id` on a read filters to the
+   run's own rows. The Python SDK's `agent.run_scope(...)` does both.
 3. **Search once per question.** `search.query` (`loom_search` over MCP)
    covers memory, profile, knowledge and conversations in one call;
    `memory.ask` returns a cited answer. Do not search before writing a fact
@@ -122,11 +123,16 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 
 Every row carries `(org, namespace, agent, user_id, session_id)`. The token
 fixes `org` and the namespaces you may read and write. A namespace is the
-read boundary: everyone who reads it reads every row in it. Set `agent` to
-your stable name (authorship, not isolation), `user_id` to the end user when
-you serve many, `session_id` to the conversation or job, and `run_id` to the
-task execution. A token minted with an `own_user` read scope refuses a read
-without `user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it.
+read boundary: everyone who reads it reads every row in it. On writes, set
+`agent` to your stable name (authorship, not isolation), `user_id` to the
+end user when you serve many, `session_id` to the conversation or job, and
+`run_id` to the task execution. On a recall read (`memory.search`‡,
+`memory.ask`, `memory.list`), each of `user_id`, `session_id` and `run_id`
+in the body narrows the read to those rows: send only the narrowing you
+mean, such as `user_id` to read one user's memories. A token minted with an
+`own_user` read scope refuses a read without `user_id` (400
+`IDENTITY_INCOMPLETE`) rather than widening it, unless it is pinned to one
+user (as an end user's token is), which reads that user's rows.
 Such a token, and an end user's, reaches only ops that keep their answer
 inside that user: any other op answers 403 `AUTH_INSUFFICIENT` naming it.
 That covers namespace-wide reads (`namespace.validate`, `mentor.brief`),

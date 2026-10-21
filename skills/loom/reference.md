@@ -124,8 +124,9 @@ on loses that boost.
 | `run.get`, `run.list`‡ | A run's record, with `over_budget`; recent runs. |
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
-Python: `async with agent.run_scope(goal=...) as run:` opens and closes it
-and stamps `run_id` on every call inside.
+Python: `async with agent.run_scope(goal=...) as run:` opens and closes it,
+stamps `run_id` on writes inside, and labels reads with the
+`X-Loom-Run-Id` header (a body `run_id` on a read filters to the run's rows).
 
 ## Conversations and session briefs
 

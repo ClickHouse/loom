@@ -8,7 +8,8 @@ shipped plugin ([Claude Code](../features/integrations/claude-code.md),
 [Codex](../features/integrations/codex.md)) gets most of this from the plugin.
 
 The same rules, written for the agent rather than for you, are the `loom` Agent Skill
-(`skills/loom/`). An agent with no plugin reads it from the server: `mentor.guide` returns
+(`skills/loom/`). An agent with no plugin reads it from the server:
+[`mentor.guide`](../reference/operations/mentor.md#mentorguide) returns
 the loop, where each kind of state goes and how to read answers (`part: "skill"`), or every
 plane with its ops (`part: "reference"`). Put it in the agent's system prompt:
 
