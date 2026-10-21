@@ -8,7 +8,6 @@ Boundaries we stub:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any
 
@@ -120,123 +119,6 @@ async def test_update_metadata_replaces_json(
     # Metadata replaced; title preserved.
     assert '"priority"' in captured["metadata"]
     assert captured["title"] == "Existing title"
-
-
-@pytest.mark.asyncio
-async def test_update_metadata_keeps_the_titlers_refused_mark(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Dropped, the mark made the thread a titler candidate again and cost one more
-    model call for the same refused title."""
-    from server.knowledge.api.models_conversations import ConversationUpdateInput
-    from server.knowledge.app.conversations import handle_conversation_update
-    from server.knowledge.store import conversations as conversation_repo
-
-    existing = {
-        "thread_id": "t-1",
-        "title": "",
-        "metadata": '{"title_refused": true}',
-        "run_id": "-",
-        "user_id": "-",
-        "agent": "reviewer",
-        "created_at": datetime(2026, 5, 18, 10, 0, 0),
-        "updated_at": datetime(2026, 5, 18, 10, 0, 0),
-    }
-    captured: dict[str, Any] = {}
-
-    async def fake_fetch(*a, **kw):
-        return existing
-
-    async def fake_insert(row, *, ch=None):
-        captured.update(row)
-
-    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch)
-    monkeypatch.setattr(conversation_repo, "insert_thread", fake_insert)
-
-    await handle_conversation_update(
-        ConversationUpdateInput(
-            org="clickhouse",
-            namespace="finance",
-            agent="reviewer",
-            thread_id="t-1",
-            metadata={"priority": "high"},
-        )
-    )
-    assert json.loads(captured["metadata"]) == {"priority": "high", "title_refused": True}
-
-
-@pytest.mark.asyncio
-async def test_create_on_an_existing_thread_keeps_the_titlers_refused_mark(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Re-creating a refused thread must not make it a titler candidate again."""
-    from server.knowledge.api.models_conversations import ConversationCreateInput
-    from server.knowledge.app.conversations import handle_conversation_create
-    from server.knowledge.store import conversations as conversation_repo
-
-    stored = {"t-1": {"metadata": '{"title_refused": true}'}, "t-2": None}
-    written: list[dict[str, Any]] = []
-
-    async def fake_fetch(org, namespace, agent, thread_id, **kw):
-        return stored[thread_id]
-
-    async def fake_insert(row, *, ch=None):
-        written.append(row)
-
-    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch)
-    monkeypatch.setattr(conversation_repo, "insert_thread", fake_insert)
-
-    for thread_id in ("t-1", "t-2"):
-        await handle_conversation_create(
-            ConversationCreateInput(
-                org="clickhouse",
-                namespace="finance",
-                agent="reviewer",
-                thread_id=thread_id,
-                metadata={"tag": "x"},
-            )
-        )
-    assert [json.loads(r["metadata"]) for r in written] == [
-        {"tag": "x", "title_refused": True},
-        {"tag": "x"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_create_from_another_agent_keeps_the_titlers_refused_mark(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The thread row is keyed without agent, so a create from a second agent replaces the
-    first agent's row and must carry its mark over."""
-    from server.knowledge.api.models_conversations import ConversationCreateInput
-    from server.knowledge.app.conversations import handle_conversation_create
-    from server.knowledge.store import conversations as conversation_repo
-
-    stored = {"agent": "writer-a", "metadata": '{"title_refused": true}'}
-    written: list[dict[str, Any]] = []
-
-    async def fake_fetch(org, namespace, agent, thread_id, **kw):
-        if agent is None or agent == stored["agent"]:
-            return stored
-        return None
-
-    async def fake_insert(row, *, ch=None):
-        written.append(row)
-
-    monkeypatch.setattr(conversation_repo, "fetch_thread", fake_fetch)
-    monkeypatch.setattr(conversation_repo, "insert_thread", fake_insert)
-
-    await handle_conversation_create(
-        ConversationCreateInput(
-            org="clickhouse",
-            namespace="finance",
-            agent="writer-b",
-            thread_id="t-1",
-            title="",
-        )
-    )
-    assert json.loads(written[0]["metadata"]) == {"title_refused": True}
-    assert written[0]["agent"] == "writer-b"
 
 
 @pytest.mark.asyncio

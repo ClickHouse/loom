@@ -27,8 +27,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.core.datetimes import naive_utc_now
-from server.memory.app.chunk_projection import chunk_text_with_truncation
-from server.memory.app.credential_passages import embed_plain
+from server.memory.app.chunk_projection import chunk_text_with_ranges, chunk_text_with_truncation
+from server.memory.app.credential_passages import embed_plain, overlaps_credential
 
 log = logging.getLogger(__name__)
 
@@ -345,6 +345,14 @@ def plan_set_chunks(
     write for a value, and the trailing characters the chunk cap leaves out;
     `([], 0)` when the value is short or the type is not searchable. Pure: no
     embedding, no read, no write."""
+    return chunk_text_with_truncation(
+        _chunked_text(value, memory_type, limit), max_chunks=_max_chunks()
+    )
+
+
+def _chunked_text(value: Any, memory_type: str, limit: int | None) -> str:
+    """The human text of a value that is chunked, or "" when the value is short or the type
+    is not searchable."""
     from server.memory.domain.memory_types import is_searchable_type
 
     if limit is None:
@@ -353,11 +361,9 @@ def plan_set_chunks(
 
         limit = EXCERPT_LIMIT
     if not is_searchable_type(memory_type):
-        return [], 0
+        return ""
     text = human_text(value, memory_type)
-    if len(text) <= limit:
-        return [], 0
-    return chunk_text_with_truncation(text, max_chunks=_max_chunks())
+    return text if len(text) > limit else ""
 
 
 def _chunk_sha(chunk: str) -> str:
@@ -384,7 +390,8 @@ async def write_set_chunks(
     if memory_type is None:
         memory_type = str(getattr(input, "memory_type", "") or "")
     cap = _max_chunks()
-    chunks, truncated_chars = plan_set_chunks(input.value, memory_type, limit=limit)
+    text = _chunked_text(input.value, memory_type, limit)
+    chunks, ranges, truncated_chars = chunk_text_with_ranges(text, max_chunks=cap)
     if truncated_chars:
         from server.memory.app.drops import record_drop
 
@@ -416,10 +423,13 @@ async def write_set_chunks(
 
         embedder = get_embedder()
 
-    # A chunk that reads as a credential is written without a vector, whatever its row's label:
-    # the chunk read path and the provider rebuild decide by the text too.
+    # A chunk that holds a credential, or a part of one cut at a chunk boundary, is written
+    # without a vector, whatever its row's label: the chunk read path and the provider rebuild
+    # decide by the text too.
     embedded = await embed_plain(
-        [c for c, _, _ in chunks], lambda texts: _embed_chunks(embedder, texts)
+        [c for c, _, _ in chunks],
+        lambda texts: _embed_chunks(embedder, texts),
+        held=overlaps_credential(text, ranges),
     )
     session_id = set_chunk_session_id(input.memory_key)
     run_id = str(getattr(input, "run_id", "") or "-")

@@ -13,7 +13,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
-from server.memory.app.credential_passages import embed_plain
+from server.memory.app.credential_passages import embed_plain, overlaps_credential
 from server.memory.app.projection_errors import record_input_projection_failure
 
 log = logging.getLogger(__name__)
@@ -130,14 +130,26 @@ def chunk_text_with_truncation(
     cap (`max_chunks`, default the setting) that were NOT chunked (0 = nothing lost).
     Callers with an identity record that tail in the drop ledger, so the cap
     never truncates silently."""
+    chunks, _ranges, truncated = chunk_text_with_ranges(text, max_chunks=max_chunks)
+    return chunks, truncated
+
+
+def chunk_text_with_ranges(
+    text: str, *, max_chunks: int | None = None
+) -> tuple[list[tuple[str, int, int]], list[tuple[int, int]], int]:
+    """`chunk_text_with_truncation` plus each chunk's [start, end) character range in
+    `text`, so a caller can tell which chunks a span of the text falls in."""
     if not text:
-        return [], 0
+        return [], [], 0
     cap = int(max_chunks) if max_chunks else _max_chunks_per_call()
+    offset = len(text) - len(text.lstrip())
     text = text.strip()
     if len(text) < _MIN_CHUNK_SIZE:
-        line_end = text.count("\n") + 1
-        return ([(text, 1, line_end)] if text else []), 0
+        if not text:
+            return [], [], 0
+        return [(text, 1, text.count("\n") + 1)], [(offset, offset + len(text))], 0
     chunks: list[tuple[str, int, int]] = []
+    ranges: list[tuple[int, int]] = []
     n = len(text)
     start = 0
     last_end = 0
@@ -165,13 +177,14 @@ def chunk_text_with_truncation(
             line_start = text.count("\n", 0, start) + 1
             line_end = line_start + chunk.count("\n")
             chunks.append((chunk, line_start, line_end))
+            ranges.append((offset + start, offset + end))
         last_end = end
         if end >= n:
             break
         start = max(start + 1, end - _CHUNK_OVERLAP)
     # The loop only stops short of the end when the chunk cap is hit; the
     # tail past the last chunk's end is what nobody will ever be able to find.
-    return chunks, max(0, n - last_end)
+    return chunks, ranges, max(0, n - last_end)
 
 
 def message_index_to_evidence_id(
@@ -303,7 +316,8 @@ async def write_memory_chunks(
     run_id = str(getattr(input, "run_id", "") or "-")
     user_id = str(getattr(input, "user_id", "") or "-")
 
-    chunks, truncated_chars = chunk_text_with_truncation(_conversation_text(msgs))
+    text = _conversation_text(msgs)
+    chunks, ranges, truncated_chars = chunk_text_with_ranges(text)
     if truncated_chars:
         _note_truncation(input, truncated_chars)
     if not chunks:
@@ -326,10 +340,12 @@ async def write_memory_chunks(
     chunk_payloads = [
         (i, chunk, line_start, line_end) for i, (chunk, line_start, line_end) in enumerate(chunks)
     ]
-    # A chunk that reads as a credential is written without a vector: no search leg
-    # reads a chunk without one.
+    # A chunk that holds a credential, or a part of one cut at a chunk boundary, is written
+    # without a vector: no search leg reads a chunk without one.
     embedded = await embed_plain(
-        [chunk for _, chunk, _, _ in chunk_payloads], lambda texts: _embed_chunks(embedder, texts)
+        [chunk for _, chunk, _, _ in chunk_payloads],
+        lambda texts: _embed_chunks(embedder, texts),
+        held=overlaps_credential(text, ranges),
     )
 
     rows: list[dict[str, Any]] = []

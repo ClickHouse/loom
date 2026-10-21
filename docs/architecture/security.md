@@ -715,8 +715,13 @@ conversation chunk `memory.set_from_messages` writes, a chunk of a long `memory.
 value, a chunk `memory.import_evidence` writes) whose text reads as a credential is stored
 as written with no vector, and its text is never sent to the embedder; every chunk read
 that ranks reads only chunks with a vector (`embedding_dim > 0`), so no search leg returns
-it. This holds for a chunk of a long `memory.set` value whatever its row's label; a `low`
-row stays findable through its own embedding. A session digest whose text reads as a
+it. Chunks overlap and can be cut through a key, so the conversation and long-value
+writers check the whole text once and also hold every chunk whose character range
+overlaps a credential: a chunk that holds only a key's head or tail does not read as one
+on its own. `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it
+leaves out one that reads as a credential, and audits a key read of either. This holds for
+a chunk of a long `memory.set` value whatever its row's label; a `low` row stays findable
+through its own embedding. A session digest whose text reads as a
 credential is likewise written without a vector, and so is a `conversation.append` turn:
 the message is stored as written in `loom.conversations` and gets no row in
 `loom.conversation_embeddings`. A missing embedding row keeps the turn out of vector
@@ -760,8 +765,8 @@ the reads that serve passages check their text too:
   `title_refused` in its metadata instead, as it does a thread whose first eight user
   and assistant turns all read as a credential, and later passes skip it. A thread with
   fewer such turns stays unmarked, so a plain turn that arrives later gets it titled.
-  `conversation.update` with new `metadata` and `conversation.create` on the same thread
-  keep the mark.
+  New `metadata` from `conversation.update` or `conversation.create` replaces the mark,
+  and the titler then asks its model once more and marks the thread again.
 - Read by key and audited: `memory.get` on the `chunk:` key of a chunk that reads as a
   credential serves it and writes a `memory.sensitive_read` row.
 - `memory.export_evidence` leaves out the chunks and digests linked to a key with any `high`

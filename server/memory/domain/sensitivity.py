@@ -236,6 +236,34 @@ def reads_high(text: str) -> bool:
     return unescaped != text and _holds_credential(unescaped)
 
 
+def credential_spans(text: str) -> list[tuple[int, int]]:
+    """The [start, end) character ranges of `text` that read as a credential, by the rule
+    `reads_high` applies: as written, and with JSON string escapes undone."""
+    spans = [m.span() for pat in _HIGH_PATTERNS for m in pat.finditer(text)]
+    escapes = list(_JSON_ESCAPE.finditer(text))
+    if not escapes:
+        return spans
+    # Build the unescaped text with, for each of its characters, where it starts in `text`.
+    parts: list[str] = []
+    starts: list[int] = []
+    pos = 0
+    for m in escapes:
+        parts.append(text[pos : m.start()])
+        starts.extend(range(pos, m.start()))
+        parts.append(_JSON_ESCAPES.get(m.group(1), m.group(1)))
+        starts.append(m.start())
+        pos = m.end()
+    parts.append(text[pos:])
+    starts.extend(range(pos, len(text) + 1))
+    unescaped = "".join(parts)
+    spans += [
+        (starts[m.start()], starts[m.end()])
+        for pat in _HIGH_PATTERNS
+        for m in pat.finditer(unescaped)
+    ]
+    return spans
+
+
 # Spare rows a read asks for, so a passage it holds back for reading as a credential does
 # not leave the page short.
 HELD_MARGIN = 2  # not a setting: algorithm shape, sized to how rarely a row is held

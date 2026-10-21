@@ -73,7 +73,7 @@ Open a thread container.
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `thread_id` | `str` | required | The caller's id for the thread; re-creating the same id replaces its title, metadata and `run_id`. |
 | `title` | `str` | `''` | Display title shown in thread lists; empty = untitled. |
-| `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored on the thread row, keeping the titler's `title_refused` mark; `conversation.get` returns it. |
+| `metadata` | `dict[str, Any]` | *(computed)* | Free-form JSON stored on the thread row; `conversation.get` returns it. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 
@@ -125,7 +125,7 @@ Fetch one thread by id: thread metadata + optional messages.
 | `found` | `bool` | False when the thread has neither a thread row nor any live message. |
 | `thread_id` | `str` | Echo of the input `thread_id`. |
 | `title` | `str` | Title from `conversation.create` or `update`; empty when none was set. |
-| `metadata` | `dict[str, Any]` | Thread metadata JSON; `{}` when none was set, apart from the titler's `title_refused` mark, which the server sets and keeps. |
+| `metadata` | `dict[str, Any]` | Thread metadata JSON; `{}` when none was set, apart from the titler's `title_refused` mark. |
 | `run_id` | `str` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `user_id` | `str` | The end user the row belongs to; `'-'` for none. |
 | `agent` | `str` | The thread's owner (the agent of its thread row); for a thread built by appends only, the latest writer among the messages read, so empty without `include_messages`. |
@@ -342,7 +342,7 @@ Update one thread's title/metadata/run_id.
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `thread_id` | `str` | required | The thread to update; an unknown thread returns `updated=False`. |
 | `title` | `str \| None` | `None` | Handler raises 400 if all three are absent (no-op signals a caller bug). |
-| `metadata` | `dict[str, Any] \| None` | `None` | New metadata JSON, replacing the old object whole except the titler's `title_refused` mark, which is kept; None leaves it unchanged. |
+| `metadata` | `dict[str, Any] \| None` | `None` | New metadata JSON, replacing the old object whole; None leaves it unchanged. |
 | `run_id` | `str \| None` | `None` | The agent run (task scope) the call belongs to; `'-'` for none. |
 
 | Output field | Type | Meaning |

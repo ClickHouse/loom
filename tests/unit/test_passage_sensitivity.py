@@ -155,6 +155,87 @@ async def test_a_long_value_chunk_holding_a_key_is_stored_without_a_vector(
 
 
 @pytest.mark.asyncio
+async def test_a_chunk_holding_only_part_of_a_key_is_stored_without_a_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import set_chunks
+
+    async def head_still_embedded(*_: Any, **__: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(set_chunks, "_head_still_embedded", head_still_embedded)
+    key = OPENAI_KEY + "Zq9" * 44
+
+    def filler(n: int) -> str:
+        return ("plan notes " * 200)[: n - 1] + " "
+
+    # No line or sentence break, so chunks are cut at 800 characters and overlap by 100:
+    # [0, 800), [700, 1500), [1400, 2200). The first key crosses the first chunk's end, so
+    # that chunk ends with its head; the second crosses the third chunk's start, so that
+    # chunk opens with its tail. Neither fragment reads as a credential on its own.
+    value = filler(780) + key + " " + filler(1300 - 781 - len(key)) + key + " " + filler(1000)
+    assert (value.find(key), value.rfind(key)) == (780, 1300)
+    ch, emb = _CH(), _Embedder()
+    write = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="u", memory_key="notes/export", value=value
+    )
+    await set_chunks.write_set_chunks(write, memory_type="semantic", limit=100, ch=ch, embedder=emb)
+    rows = ch.inserts["loom.memory_chunks"]
+    assert [r["embedding_dim"] for r in rows] == [0, 0, 0, 2]
+    fragments = {key[i : i + 8] for i in range(len(key) - 7)}
+    assert emb.seen and not any(f in t for t in emb.seen for f in fragments)
+
+
+@pytest.mark.asyncio
+async def test_memory_get_leaves_a_vectorless_neighbour_out_and_audits_its_own_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A chunk held for part of a key does not read as a credential: its missing vector
+    is what marks it."""
+    from server.memory.api.models_crud import MemoryGetInput
+    from server.memory.app import handlers
+    from server.observability import audit
+
+    tail = "Zq9" * 30 + " for the export job"
+    rows = [
+        {"chunk_index": 0, "content": _PLAIN, "parent_memory_key": "", "embedding_dim": 2},
+        {"chunk_index": 1, "content": tail, "parent_memory_key": "", "embedding_dim": 0},
+    ]
+
+    class _Chunks:
+        async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+            return rows
+
+    audits: list[str] = []
+
+    async def emit(event: str, **_: Any) -> None:
+        audits.append(event)
+
+    monkeypatch.setattr(handlers, "get_client", lambda: _Chunks())
+    monkeypatch.setattr(audit, "emit", emit)
+
+    def read(key: str) -> Any:
+        return handlers._get_chunk_with_neighbors(
+            MemoryGetInput(org="o", namespace="n", agent="a", memory_key=key)
+        )
+
+    plain = await read("chunk:s:0")
+    assert plain.value["content"] == _PLAIN and plain.value["neighbor_count"] == 0
+    assert audits == []
+    held = await read("chunk:s:1")
+    assert tail in held.value["content"]
+    assert audits == ["memory.sensitive_read"]
+
+
+def test_credential_spans_map_an_escaped_match_back_to_the_text() -> None:
+    from server.memory.domain.sensitivity import credential_spans
+
+    text = '{"note": "rotate it\\npassword=hunter2hunter2"}'
+    [(start, end)] = credential_spans(text)
+    assert text[start:end] == "password=hunter2hunter2"
+
+
+@pytest.mark.asyncio
 async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

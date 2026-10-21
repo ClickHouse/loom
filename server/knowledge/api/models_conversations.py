@@ -28,8 +28,7 @@ class ConversationCreateInput(BaseModel):
     thread_id: str
     # Display title shown in thread lists; empty = untitled.
     title: str = ""
-    # Free-form JSON stored on the thread row, keeping the titler's `title_refused`
-    # mark; `conversation.get` returns it.
+    # Free-form JSON stored on the thread row; `conversation.get` returns it.
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"
@@ -200,8 +199,7 @@ class ConversationUpdateInput(BaseModel):
     thread_id: str
     # Handler raises 400 if all three are absent (no-op signals a caller bug).
     title: str | None = None
-    # New metadata JSON, replacing the old object whole except the titler's
-    # `title_refused` mark, which is kept; None leaves it unchanged.
+    # New metadata JSON, replacing the old object whole; None leaves it unchanged.
     metadata: dict[str, Any] | None = None
     run_id: str | None = None
 
@@ -281,7 +279,7 @@ class ConversationGetOutput(BaseModel):
     # Title from `conversation.create` or `update`; empty when none was set.
     title: str = ""
     # Thread metadata JSON; `{}` when none was set, apart from the titler's
-    # `title_refused` mark, which the server sets and keeps.
+    # `title_refused` mark.
     metadata: dict[str, Any] = Field(default_factory=dict)
     run_id: str = "-"
     user_id: str = "-"

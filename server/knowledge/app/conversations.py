@@ -66,8 +66,6 @@ from server.knowledge.domain.conversations import (
     LISTED_MARGIN_CHARS,
     THREAD_EXCERPT_CHARS,
     metadata_object,
-    title_refused,
-    with_title_refused,
 )
 from server.memory.domain.sensitivity import HELD_MARGIN, reads_high, without_credentials
 from server.observability.genai import staged
@@ -98,29 +96,14 @@ async def namespace_recording_enabled(org: str, namespace: str) -> bool:
     return await conversation_repo.namespace_logging_enabled(org, namespace)
 
 
-def _metadata_keeping_mark(metadata: dict[str, Any], stored: object) -> str:
-    """The caller's new thread metadata as JSON, with the titler's `title_refused` mark
-    copied from the stored metadata. The mark is server state: keeping it stops the titler
-    from asking the model again for a refused title."""
-    if title_refused(stored):
-        return with_title_refused(metadata)
-    return json.dumps(metadata, sort_keys=True)
-
-
 async def handle_conversation_create(
     input: ConversationCreateInput,
 ) -> ConversationCreateOutput:
     """Open a thread container. Idempotent: re-creating an existing
     (org, namespace, thread_id) tuple replaces title/metadata/run_id
-    (ReplacingMergeTree(updated_at)), keeping the titler's `title_refused` mark."""
+    (ReplacingMergeTree(updated_at))."""
     from server.knowledge.store import conversations as conversation_repo
 
-    # The thread row is keyed without agent and the titler marks it under its own agent,
-    # so the mark is read whoever owns the stored row.
-    existing = await conversation_repo.fetch_thread(
-        input.org, input.namespace, None, input.thread_id
-    )
-    stored_metadata = existing.get("metadata") if existing else None
     now = naive_utc_now()
     await conversation_repo.insert_thread(
         {
@@ -129,7 +112,7 @@ async def handle_conversation_create(
             "agent": input.agent,
             "thread_id": input.thread_id,
             "title": input.title,
-            "metadata": _metadata_keeping_mark(input.metadata, stored_metadata),
+            "metadata": json.dumps(input.metadata, sort_keys=True),
             "run_id": input.run_id,
             "user_id": input.user_id,
             "created_at": now,
@@ -649,9 +632,9 @@ async def handle_conversation_update(
 
     now = naive_utc_now()
     merged_title = input.title if input.title is not None else existing.get("title", "")
-    merged_metadata = existing.get("metadata", "{}")
-    if input.metadata is not None:
-        merged_metadata = _metadata_keeping_mark(input.metadata, merged_metadata)
+    merged_metadata = (
+        json.dumps(input.metadata) if input.metadata is not None else existing.get("metadata", "{}")
+    )
     merged_run_id = input.run_id if input.run_id is not None else existing.get("run_id", "-") or "-"
 
     await conversation_repo.insert_thread(

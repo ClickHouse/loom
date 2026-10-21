@@ -57,8 +57,8 @@ up front.
   first eight user and assistant turns all read as a credential, or whose generated
   title reads as one, stays untitled, marked `title_refused` in its metadata so the
   titler does not ask again; one with fewer such turns waits, unmarked, for a plain
-  turn. `conversation.update` with new `metadata` and `conversation.create` on the
-  same thread keep the mark.
+  turn. New `metadata` from `conversation.update` or `conversation.create` replaces
+  the mark, and the titler then asks once more and marks the thread again.
   `conversation.get` and `conversation.list` still serve the turn in its thread
   ([sensitivity](../architecture/security.md#sensitivity)).
 
