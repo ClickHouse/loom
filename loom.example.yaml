@@ -2852,14 +2852,12 @@ settings:
   # Days back the sensitivity sweep re-labels rows created in. [restart]
   # sensitivity_sweep_window_days: 2
 
-  # Rows one sensitivity sweep pass re-labels, and the page size it scans in; the
-  # operator's `loom sensitivity-sweep` reads pages of at least this many keys (at least
+  # Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least
   # 1). [restart]
   # sensitivity_sweep_max_rows_per_pass: 500
 
-  # Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep pass scans
-  # at most (at least 1); the next pass starts at the agent this one stopped in, and one
-  # that reaches the last key with pages left goes back to the first. [live]
+  # Pages of sensitivity_sweep_max_rows_per_pass keys one sensitivity sweep pass reads
+  # at most (at least 1). [live]
   # sensitivity_sweep_pages_per_pass: 10
 
   # Shapes the sensitivity sweep applies (comma-separated: credential, email, phone,

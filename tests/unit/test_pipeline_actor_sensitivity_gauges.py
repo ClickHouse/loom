@@ -627,6 +627,25 @@ async def test_a_page_of_rows_labelled_before_the_parts_merge_never_skips_their_
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_spent_on_versions_waiting_for_a_merge_moves_past_their_agent(
+    monkeypatch,
+) -> None:
+    # Agent `a` holds five PIN rows already labelled `high` whose old unlabelled versions
+    # stay until a merge, more keys than two pages of two, and agent `b` a PIN row. The
+    # first pass reads both pages inside `a`, finds nothing and leaves the cursor past `a`,
+    # so the second labels the PIN row in `b`.
+    pin = "badge PIN is 4471"
+    unlabelled = [_Row("o", "n", "-", _uuid(i), f"pin_{i}", pin, 600 - i) for i in range(5)]
+    labelled_since = [r._replace(sensitivity="high", version=1) for r in unlabelled]
+    pin_row = _Row("o", "n", "-", _uuid(99), "vault_door", pin, 60, agent="b")
+    rows = [*unlabelled, *labelled_since, pin_row]
+    labelled, cursors = await _passes(monkeypatch, rows, count=2, pages=2)
+    assert labelled == [[], ["vault_door"]]
+    assert cursors[0] == ["o", "n", "a\x01"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_rows_that_fail_in_apply_on_every_pass_never_hold_the_sweep_in_their_agent(
     monkeypatch,
 ) -> None:
@@ -847,14 +866,24 @@ async def test_prose_naming_a_credential_word_never_hides_a_credential_in_anothe
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-async def test_the_cli_sweep_pages_through_its_whole_scope(capsys) -> None:
+async def test_the_cli_sweep_pages_through_its_whole_scope(capsys, monkeypatch) -> None:
     # The operator's run reads past more than a page of selected-but-unlabelled rows and
-    # reaches the PIN row behind them.
+    # reaches the PIN row behind them, in pages of two keys.
     import argparse
 
     from server.cli.ops import _sensitivity_sweep_run
+    from server.settings import settings
 
+    monkeypatch.setattr(settings, "sensitivity_sweep_max_rows_per_pass", 1)
     ch = _local_memory(_spin_rows_then_a_pin(5))
+    page_params: list[dict[str, Any]] = []
+    read = ch.query_all
+
+    async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        page_params.append(params or {})
+        return await read(sql, params)
+
+    monkeypatch.setattr(ch, "query_all", _recording)
     args = argparse.Namespace(
         org="", namespace="", since_days=0, limit=2, only_shape=None, show=5, dry_run=True
     )
@@ -862,6 +891,22 @@ async def test_the_cli_sweep_pages_through_its_whole_scope(capsys) -> None:
     out = capsys.readouterr().out
     assert "6 unlabelled row(s) matched" in out and "detector would label 1: high=1" in out
     assert rc == 1  # a dry run with candidates
+    # the key reads, two keys to a page; a FINAL read also names the page's last key
+    key_reads = [p for p in page_params if p.get("lim") == 2 and "upto_org" not in p]
+    assert len(key_reads) > 1
+
+
+def test_the_cli_sweep_limit_takes_a_positive_integer_only() -> None:
+    import argparse
+
+    from server.cli.ops import _add_sensitivity_sweep_parser
+
+    parser = argparse.ArgumentParser()
+    _add_sensitivity_sweep_parser(parser.add_subparsers())
+    assert parser.parse_args(["sensitivity-sweep", "--limit", "1"]).limit == 1
+    for bad in ("0", "-1"):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["sensitivity-sweep", "--limit", bad])
 
 
 @pytest.mark.asyncio

@@ -19,8 +19,9 @@ one agent that gives nothing to label moves the scan past that agent, so selecte
 detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows; the
 rest of that agent is read once every other key is, with the pages left. A
 pass that labels nothing because its candidates, all in the agent it stopped in, fail in
-`apply` leaves the cursor past that agent, so a row that fails every time is retried when
-the sweep comes back round to it rather than holding every pass there. The cursor is
+`apply`, or because it found none and ran out of pages, leaves the cursor past that agent,
+so a row that fails every time, or a run of versions labelled before the parts merge, is
+read again when the sweep comes back round to it rather than holding every pass there. The cursor is
 `(org, namespace, agent)` and no more: a user id or a memory key in `loom.worker_status`
 would outlive that user's erasure.
 """
@@ -88,9 +89,16 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
 
 def _stuck(report: SweepReport, result: ApplyResult) -> bool:
     """Whether the next pass starts past the agent this one stopped in: no candidate was
-    labelled and every one that failed is in that agent. A pass that labelled rows reads the
+    labelled, and either the scan found none and ran out of pages (pages of versions
+    `apply` labelled before the parts merge give no row and never move the scan past their
+    agent) or every one that failed is in that agent. A pass that labelled rows reads the
     same agent again, and failures in an earlier agent leave the rest of this one to read."""
-    if not result.failed or result.relabelled or not report.resume_after:
+    if result.relabelled or not report.resume_after:
+        return False
+    if not report.candidates:
+        # A cursor already past an agent, or the key the pass started after, has no memory key.
+        return report.truncated and bool(report.resume_after["memory_key"])
+    if not result.failed:
         return False
     stopped_in = [report.resume_after[col] for col in CURSOR_KEY]
     return all([c.sort_key[col] for col in CURSOR_KEY] == stopped_in for c in result.failed)

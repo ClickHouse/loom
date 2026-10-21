@@ -4969,13 +4969,13 @@
           "default": 500,
           "minimum": 1,
           "type": "integer",
-          "description": "Rows one sensitivity sweep pass re-labels, and the page size it scans in; the operator's `loom sensitivity-sweep` reads pages of at least this many keys (at least 1)."
+          "description": "Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least 1)."
         },
         "sensitivity_sweep_pages_per_pass": {
           "default": 10,
           "minimum": 1,
           "type": "integer",
-          "description": "Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep pass scans at most (at least 1); the next pass starts at the agent this one stopped in, and one that reaches the last key with pages left goes back to the first."
+          "description": "Pages of sensitivity_sweep_max_rows_per_pass keys one sensitivity sweep pass reads at most (at least 1)."
         },
         "sensitivity_sweep_shapes": {
           "default": "credential,email",

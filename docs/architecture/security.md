@@ -832,16 +832,19 @@ A worker pass is bounded:
 - It starts at the agent the pass before stopped in. When it reaches the window's last row
   with pages left, it goes on from the first key up to where it started, so the rows that
   sort before its cursor are read in the same pass rather than left to age out of the
-  window. A full page inside one agent that gives
-  nothing to label moves the pass past that agent, so one pass crosses up to its page cap of
-  agents whose selected rows the detector leaves unlabelled. Once the pass has read every
+  window. A full page of current unlabelled rows inside one agent that gives nothing to
+  label moves the pass past that agent, so one pass crosses up to its page cap of agents
+  whose selected rows the detector leaves unlabelled. A page whose keys hold only older
+  versions (rows the sweep labelled, or deleted, before the parts merge) gives no row and
+  does not count. Once the pass has read every
   other key with pages left, it reads the rest of each agent it moved past, so a row more
   than a page into such an agent waits only for other agents' rows, never for the window.
   A pass that labelled rows leaves its cursor at the agent it stopped in, so the next reads
-  that agent again. A pass that labelled nothing because its candidates, all in the agent it stopped in,
-  failed to apply leaves its cursor past that agent, so a row that fails every time is
-  retried when the sweep comes back round to it; failures in an earlier agent leave the
-  cursor where the pass stopped. A
+  that agent again. A pass that labelled nothing because its candidates, all in the agent
+  it stopped in, failed to apply, or because it found none and ran out of pages, leaves its
+  cursor past that agent, so a row that fails every time, or a run of older versions
+  waiting for a merge, is read again when the sweep comes back round to it; failures in an
+  earlier agent leave the cursor where the pass stopped. A
   cursor past an agent that does not fit in 512 characters is past its namespace or org
   instead. The cursor, in `loom.worker_status`, holds the org, namespace and agent only, so
   it names no user or memory key that would outlive an erasure.
@@ -852,7 +855,7 @@ A worker pass is bounded:
   digit, a credential word is an assignment (`password=` and eight characters of a value),
   and `PIN` or `PIN code` takes a 3-5 digit value. So epoch timestamps, 19-digit ids,
   prose that names a credential word (`I forgot my password`) and postal codes (`PIN:
-  560001`) are not selected.
+560001`) are not selected.
 
 ## Audit log
 
