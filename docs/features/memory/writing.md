@@ -313,10 +313,9 @@ These writes send no event:
 - the supersessions a write makes of other rows: the older same-key rows the `newest_wins`
   conflict policy retires, and the peers a `refines` verdict supersedes. The new row's own
   event is sent.
-- what the conflict resolver lands after the write, minutes later: the rows it retires
-  (`superseded`, under another key too), and the `conflicted` flags it sets or clears. The
-  write's own event was sent before, so a receiver that mirrors what Loom serves reads
-  `memory.auto_retirements` for the rows retired since.
+- what the conflict resolver lands later: the rows it retires (`superseded`, under another
+  key too), and the `conflicted` flags it sets or clears. The write's own event was sent
+  before.
 - the `conflicted` and `duplicate` status the write's own check lands. The write's own event
   is sent.
 - the undo of an automatic supersession through `memory.restore`
@@ -325,6 +324,9 @@ These writes send no event:
 - entity backfills
 - typed records (`memory.record.*`) and saved chat messages (`conversation.*`). Neither is
   a memory row.
+
+A receiver that mirrors what Loom serves reads `memory.auto_retirements` for the rows the
+supersessions above retired: a write's own and the conflict resolver's.
 
 Accepting a proposal, by `memory.proposal_decide` or the namespace's `auto` proposal
 policy, sends `memory.written`.

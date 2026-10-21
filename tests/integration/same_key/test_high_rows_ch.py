@@ -1453,7 +1453,7 @@ async def test_a_plain_re_set_inside_a_drop_keeps_its_links_when_the_restore_fai
     real = projections.end_edges
 
     async def plain_before_the_delete(*a: Any, **kw: Any) -> list[str]:
-        monkeypatch.setattr(projections, "end_edges", real)
+        m.setattr(projections, "end_edges", real)
         close_ids = await real(*a, **kw)
         await _high_set(org, "s1", "contact", value, sensitivity="low")
         return close_ids
