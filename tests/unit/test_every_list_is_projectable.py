@@ -48,6 +48,7 @@ UNPROJECTED: dict[str, str] = {
     "MemoryDedupListInput": "an admin list read whole",
     "MemoryRecordHistoryInput": "a history read whole",
     "MemorySchemaListInput": "a short schema list",
+    "NamespaceGuideHistoryInput": "six short fields per revision, never the guide's text",
     "NamespaceListInput": "the directory; every column is shown",
     "ProcedureListInput": "SDK-only",
     "ProjectionFailureListInput": "an ops list read whole",
