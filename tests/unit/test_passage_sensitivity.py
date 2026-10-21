@@ -375,6 +375,15 @@ def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> N
     assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
 
 
+def test_split_credentials_finds_a_key_spread_over_three_short_chunks() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # Imported chunks have no minimum length, so a key can run through a whole chunk.
+    parts = ["note " + AWS_KEY_ID[:4], AWS_KEY_ID[4:12], AWS_KEY_ID[12:] + " end"]
+    chunks = [("s", i, part) for i, part in enumerate(parts)]
+    assert split_credentials([*chunks, ("s", 3, "The build passed.")]) == [True] * 3 + [False]
+
+
 @pytest.mark.asyncio
 async def test_every_chunk_a_private_key_block_covers_is_held_on_write() -> None:
     from server.memory.app.chunk_projection import chunk_text_with_ranges

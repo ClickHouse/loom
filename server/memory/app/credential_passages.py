@@ -3,10 +3,12 @@ a passage that reads as a credential is stored as written and never sent to the 
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import NamedTuple
 
-from server.memory.domain.sensitivity import reads_high
+from server.memory.domain import chunk_shape
+from server.memory.domain.sensitivity import overlaps_credential, reads_high
 
 
 class Embedded(NamedTuple):
@@ -39,3 +41,19 @@ async def embed_plain(
         Embedded(vector=[], held=True) if h else Embedded(vector=list(next(vectors)), held=False)
         for h in holds
     ]
+
+
+async def embed_chunks_of(
+    text: str,
+    ranges: list[tuple[int, int]],
+    chunks: list[str],
+    embed: Callable[[list[str]], Awaitable[list[list[float]]]],
+) -> list[Embedded]:
+    """`embed_plain` for the `chunks` cut from `text` at `ranges`. A chunk that holds a
+    credential, or a part of one cut at a chunk boundary, is held: no search leg reads a
+    chunk without a vector. Only the chunked text is read, plus one chunk past its end for a
+    key that crosses the last chunk's end, and the check runs in a thread, off the event
+    loop."""
+    bound = ranges[-1][1] + chunk_shape.CHUNK_SIZE
+    held = await asyncio.to_thread(overlaps_credential, text[:bound], ranges)
+    return await embed_plain(chunks, embed, held=held)

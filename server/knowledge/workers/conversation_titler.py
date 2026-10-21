@@ -194,7 +194,8 @@ async def run_pass(cfg: ConversationTitlerConfig | None = None) -> ConversationT
             [(str(r["org"]), str(r["namespace"]), str(r["thread_id"])) for r in candidates]
         )
         for row in candidates:
-            # A refused title paid for its model call too, so it takes a slot.
+            # A refused thread is written like a titled one (a model call or a mark), so it
+            # takes a slot.
             if result.titled + result.refused >= cfg.max_threads_per_pass:
                 break
             try:

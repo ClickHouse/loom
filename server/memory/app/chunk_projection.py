@@ -4,7 +4,6 @@ from."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 from collections.abc import Iterator, Mapping
@@ -14,10 +13,9 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
-from server.memory.app.credential_passages import embed_plain
+from server.memory.app.credential_passages import embed_chunks_of
 from server.memory.app.projection_errors import record_input_projection_failure
 from server.memory.domain import chunk_shape
-from server.memory.domain.sensitivity import overlaps_credential
 
 log = logging.getLogger(__name__)
 
@@ -338,15 +336,11 @@ async def write_memory_chunks(
     chunk_payloads = [
         (i, chunk, line_start, line_end) for i, (chunk, line_start, line_end) in enumerate(chunks)
     ]
-    # A chunk that holds a credential, or a part of one cut at a chunk boundary, is written
-    # without a vector: no search leg reads a chunk without one.
-    # Only the chunked text is read, plus one chunk past its end for a key that crosses the
-    # last chunk's end; the check runs in a thread, off the event loop.
-    bound = ranges[-1][1] + chunk_shape.CHUNK_SIZE
-    embedded = await embed_plain(
+    embedded = await embed_chunks_of(
+        text,
+        ranges,
         [chunk for _, chunk, _, _ in chunk_payloads],
         lambda texts: _embed_chunks(embedder, texts),
-        held=await asyncio.to_thread(overlaps_credential, text[:bound], ranges),
     )
 
     rows: list[dict[str, Any]] = []
