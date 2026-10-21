@@ -25,6 +25,11 @@ The fields are the same everywhere. `loom_op {op: "help", query: "<words>"}`
 (MCP) finds ops by words, with their arguments; `ops.capabilities` lists
 every op this server serves, with the role each one needs.
 
+Two guides, not to confuse: this one (`mentor.guide`†) says how to use Loom
+anywhere; a namespace's guide (`namespace.guide_get`†) is the README its agents and people keep
+for that namespace, and `context.pack` loads it. Read the namespace's guide
+before your first write there.
+
 The full catalog of planes is the reference: `mentor.guide`† with
 `part: "reference"` returns it (installed as a skill, it is `reference.md`
 beside this file). Both mark experimental ops with †, whose fields may
@@ -51,8 +56,8 @@ change between releases, and ops MCP does not serve with ‡.
 ## The loop for every task
 
 1. **Load context once.** `context.pack` with a `query` describing the task
-   (default 2,000 tokens) returns profile, working memory, relevant
-   memories and procedures, rendered for your prompt. Its memories narrow
+   (default 2,000 tokens) returns the namespace's guide, profile, working
+   memory, relevant memories and procedures, rendered for your prompt. Its memories narrow
    to the `session_id` you send, if any (see Identity). Add
    `include_knowledge`, `include_conversations` or `include_runs` when the
    task needs them.
@@ -78,6 +83,7 @@ change between releases, and ops MCP does not serve with ‡.
 
 | You have | Write with | Not with |
 |---|---|---|
+| A convention of this namespace (what it holds, its key layout, what a tag means) | `namespace.guide_set`† with the `expected_revision` you read (on `conflict: true`, merge into the returned text and save again) | a memory about the namespace |
 | A fact still true next week (a decision, constraint, owner, preference) | `memory.set`: one fact per call, one key per fact | working memory |
 | A transcript, email or thread with facts in it | `memory.set_from_messages`: the server extracts them | one giant `memory.set` |
 | A document over about 2 KB (spec, runbook, report) | `knowledge.upsert`† as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |

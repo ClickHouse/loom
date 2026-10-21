@@ -223,6 +223,18 @@ the repository.
 | `tracker.similar`†, `tracker.item`† | Items like this one; one item. |
 | `tracker.flaky`†, `tracker.test_signal`† | Is this test known flaky; its recent history. |
 
+## Namespace guides — the README of one namespace
+
+Markdown the namespace's agents and people keep current: what it holds, its
+key layout, what each tag means, which ops to call. Conventions only; the
+facts stay in memory. `context.pack` loads it at session start.
+
+| Op | Use it to |
+|---|---|
+| `namespace.guide_get`† | The current guide, or a past `revision`. |
+| `namespace.guide_set`† | Save the next revision; pass the `expected_revision` you read, and on `conflict: true` merge into the returned text and save again. |
+| `namespace.guide_history`† | Past revisions with their summary, note and writer. |
+
 ## Sharing and erasure
 
 | Op | Use it to |

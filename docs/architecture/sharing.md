@@ -220,6 +220,56 @@ rows without reading them; a platform admin sees every collection. Each section'
 leaves out what the caller may not see before its limit, so a hidden row never takes a
 visible row's place on the page.
 
+## Namespace guides
+
+A shared namespace is usable only when a newcomer knows its conventions: which key
+prefixes mean what, what a tag marks, which rows to ignore. The rows do not say. Each
+namespace therefore has a guide (`namespace.guide_*`, [namespaces and
+sharing](../features/namespaces-and-sharing.md#a-namespaces-guide)): Markdown text and a
+one-line summary that its writers keep current and every reader is shown.
+
+`loom.namespace_guides` holds one row per revision, ordered by `(org, namespace,
+revision)`; the highest revision is the guide, and the older ones are its history. A
+save is optimistic: it names the revision it was read at, and under a deployment-wide
+lease on the namespace's guide (`server.core.leases.holding`) the server compares that
+with the current revision and inserts the next one only on a match. Without the lease,
+two replicas inside ClickHouse's visibility lag could both find revision N current and
+both write N+1. A mismatch writes nothing and returns the current guide: the agent that
+lost merges its edit into that text, which it does better than a text merge on the
+server would.
+
+A save's audit row records the revision it was made from and the text's length and
+SHA-256, never the text, summary or note (`Operation.audit_subject`): `loom.audit_log`
+outlives an erasure. The directory's search matches a guide's summary, the one part the
+org sees; matching the text would let someone who may not read the guide rebuild it a
+character at a time. An end user's personal collection (`col-me-…`) takes no guide,
+since only their erasure removes it and that scope does not reach the table.
+
+A guide is the namespace's, not its writer's: it describes how the namespace's data is
+laid out, as a category description or a profile schema does, and carries no `user_id`.
+So a namespace erasure deletes it, and a user erasure, which follows the `user_id` of
+memory rows, leaves it, with the writer's actor on the revisions they wrote. The guide
+is not a place for facts about anyone: the docs and the skill send those to memory,
+where the user's erasure reaches them.
+
+The guide is shown where an agent already looks: the session-start pack, the
+`namespace.browse` directory (a public row's guide summary to everyone, a private code
+row's, which is listed to people who may not read it, to its members only, and a
+restricted row's to no one) and `namespace.get`.
+One text serves agents and people, so there is no second copy to drift.
+
+### Alternatives not taken for guides
+
+- **A memory row at a reserved key.** The conflict resolver, extraction, dedup and
+  search would all treat a README as a fact, and a memory write has no compare-and-set.
+- **Separate guides for agents and people.** Both need the same facts, and two texts
+  drift apart.
+- **Sections with a revision each.** Two agents editing different sections at once
+  would both land, at the cost of a section API; a whole-text revision keeps the API to
+  one text, and a conflict costs one merge and one retry.
+- **Merging concurrent edits on the server.** A three-way merge of prose either
+  conflicts on most real edits or silently produces text neither writer wrote.
+
 ## Alternatives not taken
 
 - **An owner column on documents.** Every read path would add a row predicate, one miss

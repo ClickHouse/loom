@@ -2096,7 +2096,7 @@ export interface ContextPackInput {
   section_token_budgets?: Record<string, number>;
   block_order?: string[];
   session_block?: string;
-  only_sections?: Array<"working_memory" | "memory_stack" | "profile" | "memories" | "procedures" | "decisions" | "knowledge" | "conversations" | "runs" | "namespace_health" | "mentor">;
+  only_sections?: Array<"working_memory" | "memory_stack" | "profile" | "memories" | "procedures" | "decisions" | "knowledge" | "conversations" | "runs" | "namespace_health" | "namespace_guide" | "mentor">;
   include_decisions?: boolean;
 }
 
@@ -6366,6 +6366,8 @@ export interface BrowseEntry {
   my_role?: string;
   repo?: string;
   branch?: string;
+  guide_revision?: number;
+  guide_summary?: string;
 }
 
 export interface NamespaceBrowseOutput {
@@ -6429,8 +6431,61 @@ export interface NamespaceGetOutput {
   code_change_policy?: "retire_removed" | "flag" | "revise" | null;
   tag_registry?: Array<Record<string, unknown>> | null;
   classification?: "standard" | "restricted" | null;
+  guide_revision?: number | null;
+  guide_summary?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+}
+
+export interface NamespaceGuideGetInput {
+  org: string;
+  namespace: string;
+  revision?: number;
+}
+
+export interface NamespaceGuideGetOutput {
+  found: boolean;
+  revision?: number;
+  content?: string;
+  summary?: string;
+  note?: string;
+  updated_by?: string;
+  updated_at?: string | null;
+}
+
+export interface NamespaceGuideHistoryInput {
+  org: string;
+  namespace: string;
+  limit?: number;
+}
+
+export interface GuideRevision {
+  revision: number;
+  summary: string;
+  note: string;
+  updated_by: string;
+  updated_at: string; // date-time
+  chars: number;
+}
+
+export interface NamespaceGuideHistoryOutput {
+  revisions: GuideRevision[];
+}
+
+export interface NamespaceGuideSetInput {
+  org: string;
+  namespace: string;
+  content: string;
+  summary?: string | null;
+  expected_revision: number;
+  note?: string;
+}
+
+export interface NamespaceGuideSetOutput {
+  written: boolean;
+  conflict?: boolean;
+  revision: number;
+  current?: NamespaceGuideGetOutput | null;
 }
 
 export interface NamespaceJoinInput {
@@ -9054,6 +9109,9 @@ export type OpName =
   | "namespace.cancel_request"
   | "namespace.delete"
   | "namespace.get"
+  | "namespace.guide_get"
+  | "namespace.guide_history"
+  | "namespace.guide_set"
   | "namespace.join"
   | "namespace.leave"
   | "namespace.list"
@@ -9388,6 +9446,9 @@ export interface OpMap {
   "namespace.cancel_request": { input: NamespaceCancelRequestInput; output: NamespaceCancelRequestOutput };
   "namespace.delete": { input: NamespaceDeleteInput; output: NamespaceDeleteOutput };
   "namespace.get": { input: NamespaceGetInput; output: NamespaceGetOutput };
+  "namespace.guide_get": { input: NamespaceGuideGetInput; output: NamespaceGuideGetOutput };
+  "namespace.guide_history": { input: NamespaceGuideHistoryInput; output: NamespaceGuideHistoryOutput };
+  "namespace.guide_set": { input: NamespaceGuideSetInput; output: NamespaceGuideSetOutput };
   "namespace.join": { input: NamespaceJoinInput; output: NamespaceJoinOutput };
   "namespace.leave": { input: NamespaceLeaveInput; output: NamespaceLeaveOutput };
   "namespace.list": { input: NamespaceListInput; output: NamespaceListOutput };
@@ -9722,6 +9783,9 @@ export const OPS: readonly OpSpec[] = [
   { name: "namespace.cancel_request", group: "namespace", method: "cancelRequest", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.delete", group: "namespace", method: "delete", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
   { name: "namespace.get", group: "namespace", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 30, audit: false, readOnly: true },
+  { name: "namespace.guide_get", group: "namespace", method: "guideGet", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
+  { name: "namespace.guide_history", group: "namespace", method: "guideHistory", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: true },
+  { name: "namespace.guide_set", group: "namespace", method: "guideSet", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 250, audit: true, readOnly: false },
   { name: "namespace.join", group: "namespace", method: "join", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.leave", group: "namespace", method: "leave", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "namespace.list", group: "namespace", method: "list", idempotent: true, role: "org_admin", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: false },
@@ -9837,4 +9901,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 331;
+export const GENERATED_OP_COUNT = 334;

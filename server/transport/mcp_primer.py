@@ -312,7 +312,7 @@ async def _loom_primer_text(
             if tool["memory.set"]
             else ""
         )
-        + f"\n\n**7. Guide.** {tool['mentor.guide']} returns how to use Loom: "
+        + f"\n\n**7. Using Loom.** {tool['mentor.guide']} returns how to use Loom: "
         "where each kind of state goes and how to read what comes back "
         '(`part: "reference"` lists every plane).'
     )

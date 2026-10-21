@@ -17,6 +17,7 @@ import { sharedMine } from "../lib/sharedReads";
 import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
+import { GuideDialog } from "../flows/GuideDialog";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
@@ -99,6 +100,7 @@ export function Browse() {
   const [joinDialog, setJoinDialog] = useState<{ ns: string; row: BrowseEntry } | null>(null);
   const [manageNs, setManageNs] = useState<string | null>(null);
   const [settingsNs, setSettingsNs] = useState<string | null>(null);
+  const [guideNs, setGuideNs] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [repoCount, setRepoCount] = useState(0);
   const setView = useStore((s) => s.setView);
@@ -260,6 +262,7 @@ export function Browse() {
     () => ({
       withdraw: (ns) => void handlers.current.withdraw(ns),
       settings: setSettingsNs,
+      guide: setGuideNs,
       join: (row) => setJoinDialog({ ns: row.namespace, row }),
       invite: setManageNs,
       leave: (ns) => void handlers.current.leave(ns),
@@ -395,6 +398,7 @@ export function Browse() {
                   visibility={r.visibility ?? "public"}
                   kind={isSystemKind(r.kind) ? r.kind : undefined}
                   description={r.description}
+                  guideSummary={r.guide_summary}
                   members={r.member_count}
                   standing={standingOf(r.namespace)}
                   role={myRole[r.namespace]}
@@ -456,6 +460,19 @@ export function Browse() {
           namespace={settingsNs}
         />
       )}
+      {guideNs && (
+        <GuideDialog
+          open={true}
+          onOpenChange={(v) => {
+            if (!v) setGuideNs(null);
+          }}
+          org={identity.org}
+          namespace={guideNs}
+          // `jwt`: the token names the namespace without a grant row; the server decides.
+          canEdit={["writer", "admin", "jwt"].includes(myRole[guideNs] ?? "")}
+          onSaved={load}
+        />
+      )}
     </PageContainer>
   );
 }
@@ -469,6 +486,8 @@ type SpaceStanding = "none" | "pending" | "member" | "admin";
 interface SpaceActions {
   withdraw: (ns: string) => void;
   settings: (ns: string) => void;
+  /** The namespace's guide: read it, or edit it as a writer. */
+  guide: (ns: string) => void;
   /** The join dialog: Join, or Request upgrade for a member. */
   join: (row: BrowseEntry) => void;
   invite: (ns: string) => void;
@@ -487,6 +506,7 @@ const SpaceRow = memo(function SpaceRow({
   visibility,
   kind,
   description,
+  guideSummary,
   members,
   standing,
   role,
@@ -498,6 +518,8 @@ const SpaceRow = memo(function SpaceRow({
   visibility: string;
   kind?: string;
   description?: string;
+  /** The one-line summary of the namespace's guide, when it has one. */
+  guideSummary?: string;
   members?: number;
   standing: SpaceStanding;
   role?: string;
@@ -513,9 +535,14 @@ const SpaceRow = memo(function SpaceRow({
   const settings = () => actions.settings(namespace);
   const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;
   const member = standing === "member" || standing === "admin";
-  /** The More menu: Settings where you manage it, Copy name, Leave where you belong. */
+  /** The More menu: Settings where you manage it, Guide, Copy name, Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
+    // Reading a guide takes a role on the namespace (a public row's visibility widens no
+    // read); a viewer waiting on an upgrade still holds one.
+    ...(member || role
+      ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
+      : []),
     {
       label: "Copy name",
       icon: "copy",
@@ -578,6 +605,7 @@ const SpaceRow = memo(function SpaceRow({
             {kind && <Badge text={sentenceCase(kind)} state="neutral" size="sm" />}
           </div>
           {description && <p className="mt-0.5 truncate text-xs text-text-muted">{description}</p>}
+          {guideSummary && <p className="mt-0.5 truncate text-xs text-text-muted">Guide: {guideSummary}</p>}
         </div>
         <div className="list-row-control ml-auto flex shrink-0 items-center gap-2">
           {members !== undefined && (

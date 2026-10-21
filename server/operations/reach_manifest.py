@@ -410,6 +410,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
+    "namespace.guide_get": ("plugin_hook",),
+    "namespace.guide_set": ("plugin_hook",),
     "namespace.join": ("plugin_hook",),
     "namespace.leave": ("plugin_hook",),
     "namespace.list": ("sdk_method",),
