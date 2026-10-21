@@ -164,7 +164,8 @@ def attributed(a: Attribution) -> Iterator[None]:
 def cli_command() -> Iterator[None]:
     """Model calls made inside this block are a `loom` command's: one that names its
     org but no namespace, where the identity headers name the agent, is refused
-    (`require`) rather than going out as the gateway's default agent."""
+    (`require`) rather than going out as the gateway's default agent, unless it is
+    the deployment's own (`system`)."""
     token = _cli.set(True)
     try:
         yield
@@ -230,9 +231,10 @@ async def require() -> Customer:
         # An identity header names whom a call is for: one that names no org would go
         # out as the gateway's default identity, billed to no one it names.
         _unattributed("names no org for its identity headers")
-    if _cli.get() and not (who.namespace or who.subject) and names_agent():
+    if _cli.get() and not _system.get() and not (who.namespace or who.subject) and names_agent():
         # A command run with --org and no --namespace knows no agent to bill: its call
-        # would go out as the gateway's default agent.
+        # would go out as the gateway's default agent. The deployment's own calls inside a
+        # command (`loom recalibrate`, a model change's calibration) name no one on purpose.
         _unattributed("is a loom command naming no namespace: run it with --namespace")
     return Customer(name=_customer_named(org), identity=await render_identity(who))
 

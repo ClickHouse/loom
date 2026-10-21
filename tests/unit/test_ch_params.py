@@ -25,20 +25,34 @@ def _cell_key(i: int) -> tuple[str, ...]:
     )
 
 
+def _bytes(value: object) -> int:
+    """The parameter's size as the server measures its field: bytes of UTF-8."""
+    return len(format_bind_value(value).encode())
+
+
 def test_cell_shaped_keys_are_cut_into_parameters_that_fit() -> None:
     keys = [_cell_key(i) for i in range(1600)]
-    assert len(format_bind_value(keys)) > 2 * 128 * 1024  # whole, far over the server's field
+    assert _bytes(keys) > 2 * 128 * 1024  # whole, far over the server's field
     parts = list(chunks(keys))
     assert [k for part in parts for k in part] == keys  # every key, in order
     assert len(parts) > 1
-    assert all(len(format_bind_value(part)) <= FIELD_BYTES for part in parts)
+    assert all(_bytes(part) <= FIELD_BYTES for part in parts)
+
+
+def test_a_multi_byte_key_is_measured_in_bytes_not_characters() -> None:
+    # 300 CJK characters a key: three bytes each, so characters would undercount 3x
+    keys = [(f"ns-{i}", "記憶" * 150) for i in range(400)]
+    parts = list(chunks(keys))
+    assert [k for part in parts for k in part] == keys
+    assert all(_bytes(part) <= FIELD_BYTES for part in parts)
+    assert len(format_bind_value(parts[0])) < FIELD_BYTES // 2  # characters: far under
 
 
 def test_fitting_takes_the_leading_values_one_parameter_carries() -> None:
     keys = [_cell_key(i) for i in range(1600)]
     head = fitting(keys)
     assert head == keys[: len(head)] and 0 < len(head) < len(keys)
-    assert len(format_bind_value(head)) <= FIELD_BYTES
+    assert _bytes(head) <= FIELD_BYTES
     assert fitting(keys[:3]) == keys[:3]
     assert fitting([]) == []
 

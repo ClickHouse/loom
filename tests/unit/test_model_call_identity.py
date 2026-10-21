@@ -591,7 +591,7 @@ def test_a_jobs_batch_groups_rows_by_the_identity_they_render(directory, monkeyp
 
 
 def test_a_loom_command_bills_its_namespaces_agent_and_one_naming_none_is_refused(
-    directory, caplog
+    directory,
 ) -> None:
     import argparse
 
@@ -608,4 +608,23 @@ def test_a_loom_command_bills_its_namespaces_agent_and_one_naming_none_is_refuse
     with pytest.raises(customer.Unattributed, match="--namespace"):
         # --org alone: no agent to name, and never the gateway's default agent
         app._dispatch(argparse.Namespace(cmd="import", org="acme", func=command))
-    assert any("MODEL_CALL_UNATTRIBUTED" in r.getMessage() for r in caplog.records)
+    assert len(seen) == 1  # the refused call returned nothing
+
+
+def test_a_deployment_call_inside_a_loom_command_is_never_refused(directory) -> None:
+    """`loom recalibrate`, or a model change's calibration a command runs, makes the
+    deployment's own calls (`customer.system()`): no namespace is needed for them."""
+    import argparse
+
+    from server.cli import app
+
+    seen: list[dict[str, str]] = []
+
+    def command(args: argparse.Namespace) -> int:
+        with customer.system():
+            seen.append(_sent())
+        return 0
+
+    for org in ("", "acme"):
+        app._dispatch(argparse.Namespace(cmd="recalibrate", org=org, func=command))
+    assert len(seen) == 2 and not any("X-Agent" in h for h in seen)

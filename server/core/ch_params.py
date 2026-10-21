@@ -20,11 +20,13 @@ FIELD_BYTES = 64 * 1024  # not a setting: follows ClickHouse's default field lim
 
 def chunks[T](values: Sequence[T], *, limit: int = FIELD_BYTES) -> Iterator[list[T]]:
     """`values` in order, in lists whose rendered parameter (`[v1, v2, ...]`) is at
-    most `limit` bytes; a value longer than `limit` on its own is a chunk alone."""
+    most `limit` bytes of UTF-8; a value longer than `limit` on its own is a chunk
+    alone."""
     chunk: list[T] = []
     size = 2  # the brackets
     for value in values:
-        width = len(format_bind_value(value, top_level=False)) + 2  # and its ", "
+        # Bytes, as the field is measured: a CJK character is three of them.
+        width = len(format_bind_value(value, top_level=False).encode()) + 2  # and its ", "
         if chunk and size + width > limit:
             yield chunk
             chunk, size = [], 2
