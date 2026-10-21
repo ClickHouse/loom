@@ -1,29 +1,31 @@
 """Daily sensitivity sweep.
 
-`resolve_sensitivity` runs on `memory.set`, `memory.bulk_set`, `memory.update`
-and the extractor's entries only. `observe.record`, `copy_to`, `namespace.restore`
-and the imports write `sensitivity = ''` whatever the value holds, so a credential or a contact
-detail that entered by one of those paths is embedded and searchable. This
-pass runs the detector late over rows created in the trailing window
-(`sensitivity_sweep_window_days`, 2) and labels what it finds the way the
-write path would have — a new version per row, the `high` rows' embedding
-rows tombstoned. Bounded per pass and limited to the shapes in
-`sensitivity_sweep_shapes` (credential and email by default — the phone
-shape matches run ids and integer limits); the historical
-backlog is the operator's `loom sensitivity-sweep --apply`, not this worker's.
+`resolve_sensitivity` runs on `memory.set`, `memory.bulk_set`, `memory.update` and the
+extractor's entries only. `observe.record`, `copy_to`, `namespace.restore` and the
+imports write `sensitivity = ''` whatever the value holds, so a credential or a contact
+detail that entered by one of those paths is embedded and searchable. This pass runs the
+detector late over rows created in the trailing window (`sensitivity_sweep_window_days`,
+2) and labels what it finds the way the write path would have — a new version per row,
+the `high` rows' embedding rows tombstoned. Bounded per pass and limited to the shapes in
+`sensitivity_sweep_shapes` (credential and email by default — the phone shape matches run
+ids and integer limits); the historical backlog is the operator's
+`loom sensitivity-sweep --apply`, not this worker's.
 
 A pass starts at the agent the previous one stopped in (the worker's cursor in
 `loom.worker_status`), and one that reaches the last row with pages left goes on from the
 first key up to where it started. Inside a pass, a full page of current unlabelled rows in
 one agent that gives nothing to label moves the scan past that agent, so selected rows the
-detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows; the
-rest of that agent is read once every other key is, with the pages left. A
-pass that labels nothing because its candidates, all in the agent it stopped in, fail in
-`apply`, or because it found none and ran out of pages, leaves the cursor past that agent,
-so a row that fails every time, or a run of versions labelled before the parts merge, is
-read again when the sweep comes back round to it rather than holding every pass there. The cursor is
-`(org, namespace, agent)` and no more: a user id or a memory key in `loom.worker_status`
-would outlive that user's erasure.
+detector leaves unlabelled cannot fill every pass's pages ahead of another agent's rows;
+the rest of that agent is read once every other key is, with the pages left.
+
+A pass that labels nothing leaves the cursor past the agent it stopped in when its
+candidates, all in that agent, fail in `apply`, or when it found none and its last page
+gave fewer rows than keys: versions labelled before the parts merge give no row, so a run
+of them never moves the scan past their agent. A row that fails every time, or such a run
+of versions, is read again when the sweep comes back round to it rather than holding every
+pass there. After an ordinary last page the cursor stays at that agent, and a full page
+inside it moves the next pass past it. The cursor is `(org, namespace, agent)` and no
+more: a user id or a memory key in `loom.worker_status` would outlive that user's erasure.
 """
 
 from __future__ import annotations
@@ -89,19 +91,23 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
 
 def _stuck(report: SweepReport, result: ApplyResult) -> bool:
     """Whether the next pass starts past the agent this one stopped in: no candidate was
-    labelled, and either the scan found none and ran out of pages (pages of versions
-    `apply` labelled before the parts merge give no row and never move the scan past their
-    agent) or every one that failed is in that agent. A pass that labelled rows reads the
-    same agent again, and failures in an earlier agent leave the rest of this one to read."""
+    labelled, and either the scan found none and ran out of pages on a page that gave fewer
+    rows than keys, or every candidate that failed is in that agent. Such a page holds
+    versions `apply` labelled before the parts merge, which give no row and never move the
+    scan past their agent. A pass that labelled rows, or whose last page was an ordinary one,
+    reads the same agent again: a full page inside it moves the next scan past it. Failures
+    in an earlier agent leave the rest of this one to read."""
     if result.relabelled or not report.resume_after:
         return False
     if not report.candidates:
         # A cursor already past an agent, or the key the pass started after, has no memory key.
-        return report.truncated and bool(report.resume_after["memory_key"])
+        return (
+            report.truncated and report.last_page_short and bool(report.resume_after["memory_key"])
+        )
     if not result.failed:
         return False
     stopped_in = [report.resume_after[col] for col in CURSOR_KEY]
-    return all([c.sort_key[col] for col in CURSOR_KEY] == stopped_in for c in result.failed)
+    return all([c.sort_key[col] for col in CURSOR_KEY] == stopped_in for c, _ in result.failed)
 
 
 def cursor_text(key: dict[str, Any] | None, *, past: bool = False) -> str:

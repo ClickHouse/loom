@@ -125,7 +125,6 @@ _COARSE_BY_SHAPE = {
     "phone": r"[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}",
     "other": rf"{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}",  # IBAN
 }
-COARSE_SHAPE_RE = "|".join(_COARSE_BY_SHAPE.values())
 
 
 def coarse_shape_re(shapes: set[str]) -> str:
@@ -165,6 +164,10 @@ class SweepReport:
     # when the candidates were cut to the limit. None when the scan read from the first key
     # to the last, so the next pass starts again at the first.
     resume_after: dict[str, Any] | None = None
+    # Whether the last page's FINAL read gave fewer rows than the page had keys: a key whose
+    # only match is an older version gives no row, and such a page never moves the scan past
+    # its agent.
+    last_page_short: bool = False
 
     @property
     def by_level(self) -> Counter[str]:
@@ -314,6 +317,7 @@ async def _read_range(
         keys, rows = await _read_page(run.ch, run.params, run.scope, after=last, stop=stop)
         report.scanned += len(rows)
         report.truncated = bool(keys) and len(keys) >= run.params["lim"]
+        report.last_page_short = len(rows) < len(keys)
         found = len(report.candidates)
         _add_candidates(report, rows, run.keep)
         if not report.truncated:
@@ -414,8 +418,11 @@ class ApplyResult:
     medium: int = 0
     embeddings_tombstoned: int = 0  # high rows' embedding rows
     embeddings_tagged: int = 0  # medium rows' embedding rows re-emitted with the tag
-    errors: list[str] = field(default_factory=list)
-    failed: list[SweepCandidate] = field(default_factory=list)  # the candidates in `errors`
+    failed: list[tuple[SweepCandidate, str]] = field(default_factory=list)  # with the error
+
+    @property
+    def errors(self) -> list[str]:
+        return [error for _, error in self.failed]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -524,8 +531,7 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
                 result.medium += 1
                 result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
         except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
-            result.errors.append(f"{c.namespace}/{c.memory_key}: {e}")
-            result.failed.append(c)
+            result.failed.append((c, f"{c.namespace}/{c.memory_key}: {e}"))
     return result
 
 
@@ -553,7 +559,6 @@ async def high_with_embedding_count(
 
 
 __all__ = [
-    "COARSE_SHAPE_RE",
     "HIGH_WITH_EMBEDDING_SQL",
     "ApplyResult",
     "SweepCandidate",

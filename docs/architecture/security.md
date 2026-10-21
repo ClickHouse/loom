@@ -697,16 +697,15 @@ The `high` shapes:
 An IBAN counts when its country code is in the ISO 13616 registry, its length is that
 country's and it passes the mod-97 check. The card check skips an IBAN's digits, whose
 printed groups can read as a card number that passes Luhn (`DE24 4005 0150 0000 0005 00`),
-so an IBAN is `medium`. A question naming an IBAN
-or a bank account (number) counts as contact intent, so ranking does not demote the row
-that answers it.
+so an IBAN is `medium`. A question naming an IBAN or a bank account (number) counts as
+contact intent, so ranking does not demote the row that answers it.
 
 A JSON value is read scalar by scalar (`detector_text`). A key whose last one or two words
 name a PIN-like secret (three for `social_security_number`) states its digits under that
 label, so the free-text rules above decide the length. A label's words may also be written
-as one word (`pincode`, `cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as `pin is
-<value>` (3-5 digits), `pin_number` as `pin number is <value>`, and `passcode`, `cvv`, `cvc`
-and `security_code` (with, for example, `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and
+as one word (`pincode`, `cvv2`, `PINcode`). `pin`, `pin_code` and `pincode` read as
+`pin is <value>` (3-5 digits), `pin_number` as `pin number is <value>`, and `passcode`,
+`cvv`, `cvc` and `security_code` (with, for example, `pass_code`, `cvv_2`, `cvc2`, `cvv_code` and
 `cvc_number`) as `<label> is <value>` (3-8 digits). An `ssn`, `ssn_number`, `ssn_no` or
 `social_security_number` key states an SSN with its dashes optional. A card number is found
 under any key. So `{"pin": "4471"}`, `{"pin_code": "4471"}`, `{"badge_pin": "4471"}` and
@@ -836,26 +835,28 @@ A worker pass is bounded:
   label moves the pass past that agent, so one pass crosses up to its page cap of agents
   whose selected rows the detector leaves unlabelled. A page whose keys hold only older
   versions (rows the sweep labelled, or deleted, before the parts merge) gives no row and
-  does not count. Once the pass has read every
-  other key with pages left, it reads the rest of each agent it moved past, so a row more
-  than a page into such an agent waits only for other agents' rows, never for the window.
-  A pass that labelled rows leaves its cursor at the agent it stopped in, so the next reads
-  that agent again. A pass that labelled nothing because its candidates, all in the agent
-  it stopped in, failed to apply, or because it found none and ran out of pages, leaves its
-  cursor past that agent, so a row that fails every time, or a run of older versions
-  waiting for a merge, is read again when the sweep comes back round to it; failures in an
-  earlier agent leave the cursor where the pass stopped. A
-  cursor past an agent that does not fit in 512 characters is past its namespace or org
-  instead. The cursor, in `loom.worker_status`, holds the org, namespace and agent only, so
-  it names no user or memory key that would outlive an erasure.
+  does not count. Once the pass has read every other key with pages left, it reads the
+  rest of each agent it moved past, so a row more than a page into such an agent waits
+  only for other agents' rows, never for the window.
+- A pass that labelled rows leaves its cursor at the agent it stopped in, so the next pass
+  reads that agent again. A pass that labelled nothing leaves its cursor past that agent
+  when its candidates, all in that agent, failed to apply, or when it found none and its
+  last page gave fewer rows than keys, the case of older versions waiting for a merge. So
+  a row that fails every time, or a run of such versions, is read again when the sweep
+  comes back round to it. A pass whose last page was an ordinary one, even one that
+  crossed into the next agent, leaves its cursor at the agent it stopped in, and failures
+  in an earlier agent leave the cursor where the pass stopped. A cursor past an agent that
+  does not fit in 512 characters is past its namespace or org instead. The cursor, in
+  `loom.worker_status`, holds the org, namespace and agent only, so it names no user or
+  memory key that would outlive an erasure.
 - Its ClickHouse filter selects only the shapes in `LOOM_SENSITIVITY_SWEEP_SHAPES`
   (`credential` and `email` by default; every high shape, a card number, SSN or stated PIN
   included, counts as `credential`), and within them only what the detector can label: a
   card is a lone 15- or 16-digit group or a printed grouping with a network's leading
   digit, a credential word is an assignment (`password=` and eight characters of a value),
   and `PIN` or `PIN code` takes a 3-5 digit value. So epoch timestamps, 19-digit ids,
-  prose that names a credential word (`I forgot my password`) and postal codes (`PIN:
-560001`) are not selected.
+  prose that names a credential word (`I forgot my password`) and postal codes
+  (`PIN: 560001`) are not selected.
 
 ## Audit log
 

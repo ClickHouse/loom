@@ -13,7 +13,6 @@ import pytest
 from pydantic import ValidationError
 
 from server.memory.app.sensitivity_sweep import (
-    COARSE_SHAPE_RE,
     _shapes,
     coarse_shape_re,
     scan_text,
@@ -726,29 +725,29 @@ def test_the_sweeps_coarse_filter_selects_every_new_shape(text: str) -> None:
     # The sweep narrows rows with RE2 `match()` before the detector runs, so the filter must
     # select whatever the detector labels, and the scheduled pass's filter every high row.
     level = detect_sensitivity(text)
-    assert re.search(_HIGH_SHAPE_RE if level == "high" else COARSE_SHAPE_RE, text)
+    assert re.search(_HIGH_SHAPE_RE if level == "high" else coarse_shape_re(set()), text)
     assert _shapes(text, level) == (("credential",) if level == "high" else ("other",))
 
 
 def test_the_sweeps_coarse_filter_needs_a_value_after_a_pin_label() -> None:
     # A selected row the detector rejects stays unlabelled and is selected again on every
     # pass, so a bare word must not take a place under the pass's row limit.
-    assert not re.search(COARSE_SHAPE_RE, "pin numpy to 1.26 in the lockfile")
-    assert not re.search(COARSE_SHAPE_RE, "the passcode screen and the CVV field")
-    assert not re.search(COARSE_SHAPE_RE, "verify SHA256SUMS before the upload")
-    assert not re.search(COARSE_SHAPE_RE, "pin the base image before the 2025 release")
-    assert not re.search(COARSE_SHAPE_RE, "pin 128 rows before the import")
-    assert not re.search(COARSE_SHAPE_RE, "GPIO pin 115")
+    assert not re.search(coarse_shape_re(set()), "pin numpy to 1.26 in the lockfile")
+    assert not re.search(coarse_shape_re(set()), "the passcode screen and the CVV field")
+    assert not re.search(coarse_shape_re(set()), "verify SHA256SUMS before the upload")
+    assert not re.search(coarse_shape_re(set()), "pin the base image before the 2025 release")
+    assert not re.search(coarse_shape_re(set()), "pin 128 rows before the import")
+    assert not re.search(coarse_shape_re(set()), "GPIO pin 115")
     # `pin` and `pin code` take 3-5 digits, so a postal code is not selected
-    assert not re.search(COARSE_SHAPE_RE, "Bengaluru, Karnataka, PIN: 560001")
-    assert not re.search(COARSE_SHAPE_RE, "ship to MG Road, Bengaluru, PIN code 560001")
-    assert not re.search(COARSE_SHAPE_RE, "PIN is 560001")
+    assert not re.search(coarse_shape_re(set()), "Bengaluru, Karnataka, PIN: 560001")
+    assert not re.search(coarse_shape_re(set()), "ship to MG Road, Bengaluru, PIN code 560001")
+    assert not re.search(coarse_shape_re(set()), "PIN is 560001")
     # while every other label takes up to 8, so a 6-digit `PIN number` is
-    assert re.search(COARSE_SHAPE_RE, "PIN number 560001")
+    assert re.search(coarse_shape_re(set()), "PIN number 560001")
     # a backspace is not whitespace to the detector, so the filter does not take it as one
     stored = json.dumps({"note": "PIN:\b4471"})
     assert detect_sensitivity(detector_text(stored)) == ""
-    assert not re.search(COARSE_SHAPE_RE, stored)
+    assert not re.search(coarse_shape_re(set()), stored)
 
 
 @pytest.mark.parametrize(
@@ -772,7 +771,7 @@ def test_the_sweeps_coarse_filter_reads_stored_json_text(value: object) -> None:
     stored = json.dumps(value)
     level = detect_sensitivity(detector_text(stored))
     assert level in ("high", "medium")
-    assert re.search(_HIGH_SHAPE_RE if level == "high" else COARSE_SHAPE_RE, stored)
+    assert re.search(_HIGH_SHAPE_RE if level == "high" else coarse_shape_re(set()), stored)
 
 
 def test_a_question_for_a_bank_account_is_contact_intent() -> None:
@@ -878,7 +877,7 @@ def test_a_dotted_security_code_key_is_selected_and_labelled_by_the_sweep() -> N
         [],
         "SELECT v AS value, toString(CAST(v AS JSON)) AS object_text, match(v, {r:String}) AS hit"
         " FROM (SELECT {v:String} AS v)",
-        {"r": COARSE_SHAPE_RE, "v": json.dumps({"security.code": "5512"})},
+        {"r": coarse_shape_re(set()), "v": json.dumps({"security.code": "5512"})},
     )
     assert rows[0]["object_text"] == '{"security":{"code":"5512"}}' and rows[0]["hit"] == 1
     assert detect_sensitivity(scan_text(rows[0])) == "high"
@@ -902,7 +901,7 @@ def test_the_sweeps_prefilter_selects_on_clickhouse_what_the_detector_labels() -
         " FROM (SELECT arrayJoin({ts:Array(String)}) AS j)"
     )
     params = {
-        "r": COARSE_SHAPE_RE,
+        "r": coarse_shape_re(set()),
         "h": _HIGH_SHAPE_RE,
         "js": [json.dumps(v) for v in _PREFILTER_OBJECTS],
         "ts": [json.dumps(t) for t in _PREFILTER_TEXTS],

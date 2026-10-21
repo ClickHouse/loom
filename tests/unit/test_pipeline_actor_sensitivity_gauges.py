@@ -189,7 +189,7 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
     assert narrowed.by_shape == {"credential": 1, "email": 1}  # the phone-only row is skipped
     for sql, params in ch.calls[:2]:  # a page's keys, then their current versions
         assert "sensitivity = ''" in sql and "{shape:String}" in sql
-        assert params["shape"] == sweep.COARSE_SHAPE_RE and params["days"] == 2
+        assert params["shape"] == sweep.coarse_shape_re(set()) and params["days"] == 2
         assert "PREWHERE" not in sql
     assert "FINAL" not in ch.calls[0][0] and "FINAL" in ch.calls[1][0]
 
@@ -390,8 +390,7 @@ async def _run_pass_recording(
 
     async def _apply(cands, *, ch=None):
         if failing:
-            errors = [f"{c.memory_key}: write failed" for c in cands]
-            return sweep.ApplyResult(errors=errors, failed=list(cands))
+            return sweep.ApplyResult(failed=[(c, f"{c.memory_key}: write failed") for c in cands])
         applied.extend(cands)
         return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
 
@@ -642,6 +641,26 @@ async def test_a_pass_spent_on_versions_waiting_for_a_merge_moves_past_their_age
     labelled, cursors = await _passes(monkeypatch, rows, count=2, pages=2)
     assert labelled == [[], ["vault_door"]]
     assert cursors[0] == ["o", "n", "a\x01"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_whose_last_page_crosses_an_agent_keeps_its_cursor_at_that_agent(
+    monkeypatch,
+) -> None:
+    # Agent `a` holds one selected row the detector leaves unlabelled, and agent `b` another
+    # followed by a PIN row. The first pass's one page of two keys spans `a` and `b`, gives
+    # a row for each key and nothing to label, so the cursor stays at `b` and the second
+    # pass labels the PIN row.
+    spin = {"spin": "4471"}
+    rows = [
+        _Row("o", "n", "-", _uuid(1), "spin_a", spin, 600),
+        _Row("o", "n", "-", _uuid(2), "spin_b", spin, 500, agent="b"),
+        _Row("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60, agent="b"),
+    ]
+    labelled, cursors = await _passes(monkeypatch, rows, count=2, pages=1)
+    assert labelled == [[], ["vault_door"]]
+    assert cursors[0] == ["o", "n", "b"]
 
 
 @pytest.mark.asyncio
