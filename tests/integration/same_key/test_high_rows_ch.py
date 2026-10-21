@@ -1452,18 +1452,19 @@ async def test_a_plain_re_set_inside_a_drop_keeps_its_links_when_the_restore_fai
     )
     real = projections.end_edges
 
-    async def plain_before_the_delete(*a: Any, **kw: Any) -> list[str]:
-        m.setattr(projections, "end_edges", real)
-        close_ids = await real(*a, **kw)
-        await _high_set(org, "s1", "contact", value, sensitivity="low")
-        return close_ids
-
     async def restore_lost(*a: Any, **kw: Any) -> None:
         raise RuntimeError("restore lost")
 
-    with monkeypatch.context() as m:
-        m.setattr(projections, "end_edges", plain_before_the_delete)
-        m.setattr(edge_links, "_restore_kept_links", restore_lost)
+    with monkeypatch.context() as patched:
+
+        async def plain_before_the_delete(*a: Any, **kw: Any) -> list[str]:
+            patched.setattr(projections, "end_edges", real)
+            close_ids = await real(*a, **kw)
+            await _high_set(org, "s1", "contact", value, sensitivity="low")
+            return close_ids
+
+        patched.setattr(projections, "end_edges", plain_before_the_delete)
+        patched.setattr(edge_links, "_restore_kept_links", restore_lost)
         scope = ProjectionScope(org=org, namespace=NS, agent="bot", user_id=USER)
         versions = {str(out.memory_id): int(head["version"])}
         await edge_links.drop_undeclared_edges(scope, versions, ch=ch, op="memory.set")
