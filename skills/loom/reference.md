@@ -73,9 +73,12 @@ here and one short claim pointing at it in memory.
 ## Working memory — state you are told, not state you search for
 
 Small named blocks (`block_key`, default `scratchpad`, 4,096 characters by
-default, up to 16,384) scoped to your identity and run. Never embedded,
-ranked or conflict-checked; loaded into every `context.pack`. Use for the
-plan, a checklist, a lease, a cursor, a resume point.
+default, up to 16,384) scoped to one `(agent, user_id, session_id, run_id)`:
+another agent, a new session or a different run does not see them. Never
+embedded, ranked or conflict-checked; loaded into a `context.pack` under the
+same identity. Use for the plan, a checklist, a cursor, a resume point
+within the session; for another session or agent, a session brief or the
+task inbox.
 
 | Op | Use it to |
 |---|---|

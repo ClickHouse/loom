@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any
-
 import pytest
 
 import server
+from server.auth.authz import Role
 from server.auth.jwt import AuthInfo
-from server.code.app import member_writes
 from server.core.paths import AGENT_GUIDE_DIR, REPO_ROOT
 from server.insights.api.models_mentor import MentorGuideInput
 from server.insights.app.mentor_guide import handle_mentor_guide
@@ -67,36 +65,41 @@ def test_experimental_ops_in_the_reference_carry_the_marker() -> None:
                 assert bool(mark) == experimental, name
 
 
-@pytest.mark.parametrize(
-    "auth",
-    [
-        AuthInfo(
-            subject="sa:bot",
-            org="acme",
-            namespaces=("n",),
-            roles=("viewer",),
-            is_service_account=True,
-        ),
-        AuthInfo(
-            subject="sa:bot",
-            org="acme",
-            namespaces=("n",),
-            roles=(),
-            is_service_account=True,
-            read_user_id="u1",
-        ),
-        AuthInfo(subject="user:u1", org="acme", namespaces=(), roles=(), is_service_account=False),
-    ],
-    ids=["viewer", "narrowed-to-one-user", "end-user"],
-)
-def test_every_caller_the_primer_names_the_guide_to_is_admitted(
-    auth: AuthInfo, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The guide holds no memory, and the primer names it on every connection.
-    async def _role_gate(*_a: Any, **_k: Any) -> None:
-        return None
+# The tokens the primer names the guide to, with the roles the server gives them
+# (an end user's: server/auth/jwt.py).
+_CALLERS = {
+    "viewer": AuthInfo(
+        subject="sa:bot",
+        org="acme",
+        namespaces=("n",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+    ),
+    "narrowed-to-one-user": AuthInfo(
+        subject="sa:bot",
+        org="acme",
+        namespaces=("n",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+        read_scope="own_user",
+        read_user_id="u1",
+    ),
+    "end-user": AuthInfo(
+        subject="user:u1",
+        org="acme",
+        namespaces=(),
+        roles=(Role.VIEWER,),
+        is_service_account=False,
+        read_scope="own_user",
+        read_user_id="u1",
+    ),
+}
 
-    monkeypatch.setattr(member_writes, "authorize_op", _role_gate)
+
+@pytest.mark.parametrize("caller", sorted(_CALLERS))
+def test_every_caller_the_primer_names_the_guide_to_is_admitted(caller: str) -> None:
+    # The guide holds no memory, and the primer names it on every connection.
+    auth = _CALLERS[caller]
     op = OPERATIONS_BY_NAME["mentor.guide"]
     target = gates.authz_target(op, org="acme", namespace=None, auth=auth)
     asyncio.run(gates.authorize(op, auth, target, transport="http"))

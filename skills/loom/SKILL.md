@@ -29,7 +29,8 @@ experimental ops with †: their fields may change between releases.
 Experimental ops this file names: `blacklist.add`, `context.fetch`,
 `context.offload`, `decision.record`, `knowledge.upsert`, `memory.history`,
 `memory_schema.propose`, `mentor.guide`, `procedure.record_run`,
-`search.query`, `task.create`, `working_memory.append`.
+`search.query`, `session.brief_get`, `session.brief_save`, `task.create`,
+`task.heartbeat`, `task.pull`, `working_memory.append`.
 
 ## Why use it
 
@@ -42,8 +43,8 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 - **Your context stays small.** One `context.pack` call loads what matters
   for the task inside a token budget; large logs go to `context.offload`
   and come back by pattern.
-- **You coordinate without a side channel.** Working-memory blocks, the
-  task inbox and decisions are shared state other agents read.
+- **You coordinate without a side channel.** The task inbox, decisions and
+  session briefs are shared state other agents and later sessions read.
 - **You get better with use.** Runs record what you relied on; memories
   that helped successful runs rank higher, and the mentor names the planes
   you are not using.
@@ -74,7 +75,9 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 | A transcript, email or thread with facts in it | `memory.set_from_messages`: the server extracts them | one giant `memory.set` |
 | A document over about 2 KB (spec, runbook, report) | `knowledge.upsert` as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |
 | Rows with identity (PRs by number, services by id) | `memory.record.write` against a schema an admin registered (`memory_schema.register`; a writer proposes one with `memory_schema.propose`) | one memory per batch |
-| Your plan, a checklist, a lease, a cursor, "where was I" | `working_memory.set` or `working_memory.append` by `block_key` | `memory.set` read in a loop |
+| Your plan, a checklist or a cursor for the task in hand | `working_memory.set` or `working_memory.append` by `block_key`; a block belongs to one `(agent, user_id, session_id, run_id)` | `memory.set` read in a loop |
+| Where you are, for a later session or another agent to resume | `session.brief_save`, read back with `session.brief_get` | working memory, which a new session does not see |
+| Work several agents may pick up | the task inbox: `task.pull` claims a task, `task.heartbeat` keeps the claim | a lock row in memory or working memory |
 | A log, diff or tool output too big for context | `context.offload`, then `context.fetch` | memory or working memory |
 | Work for another agent | `task.create` into its inbox | a memory it might search for |
 | A choice made, with its reasons | `decision.record` | a free-text memory |
@@ -124,6 +127,9 @@ your stable name (authorship, not isolation), `user_id` to the end user when
 you serve many, `session_id` to the conversation or job, and `run_id` to the
 task execution. A token minted with an `own_user` read scope refuses a read
 without `user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it.
+Such a token, and an end user's, reaches fewer ops: namespace-wide ones
+(`namespace.validate`, `blacklist.add`, `mentor.brief`) answer 403
+`AUTH_INSUFFICIENT` naming the op; skip that step.
 
 ## End-of-task review
 
@@ -147,8 +153,8 @@ Then `namespace.validate` and fix findings on the keys you wrote. Say
 - Five facts in one value: five `memory.set` calls.
 - A document, a JSON dump or a run log as a memory: it is embedded from its
   prefix and buries real facts. Knowledge, records or offload instead.
-- Locks, leases and cursors as memories read by key in a loop: working
-  memory.
+- Cursors and checkpoints as memories rewritten every step: working
+  memory. Claims on shared work as lock rows: the task inbox.
 - Retiring keys another agent still reads: `memory.move` leaves a redirect;
   delete nothing until every reader has moved.
 - Calling `conversation.append` when a plugin already captures the session:
