@@ -179,7 +179,7 @@ never written through a symlink or into another user's file, and the turn journa
 stashes are removed at SessionEnd. Captured tool input, output and errors pass through a
 client-side secret redaction before they are sent; it catches common credential shapes and
 is best effort, not a guarantee. The blast-radius and test-gate hooks send a diff's file
-paths and hunk headers only, never its changed lines.
+paths, hunk ranges and function names only, never its changed lines.
 
 ### Tuning knobs
 

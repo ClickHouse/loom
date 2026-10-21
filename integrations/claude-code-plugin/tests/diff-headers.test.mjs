@@ -51,8 +51,11 @@ test("only the function name the server reads is kept from a hunk's context", ()
     ["template <class T> void Foo<T>::bar(int x)", "Foo::bar"],
     ["pub fn parse<'a>(input: &'a str)", "parse"],
     ['extern "C" int init(void)', "init"],
-    ['TOKEN="ghp_abcdefghijklmnopqrstuvwx" + f(x)', ""],
+    ['TOKEN="ghp_abcdefghijklmnopqrstuvwx" + f(x)', "f"],
     ["Password: S3cretValue (staging)", ""],
+    ["Deploy with token ghp_0123456789abcdefghijABCDEFGHIJ0123 (rotate monthly)", ""],
+    ["key AKIA" + "IOSFODNN7EXAMPLE (prod)", ""],
+    ["const handler = function handler(req)", "handler"],
     ["password = getpass(prompt)", ""],
     ["    if (ready) {", ""],
     ["DB_PASSWORD=hunter2", ""],
@@ -66,6 +69,29 @@ test("only the function name the server reads is kept from a hunk's context", ()
         .includes(name ? `@@ -1 +1 @@ ${name}(` : "@@ -1 +1 @@"),
       ctx,
     );
+  }
+});
+
+test("only diff --git, --- and +++ lines are kept from a file's header", () => {
+  const diff = [
+    "diff --git a/x b/x",
+    "index 1111111..2222222 100644",
+    "--- a/x",
+    "+++ b/x",
+    "Submodule sub 1111111..2222222:",
+    "  > a commit subject naming a password",
+    "@@ -1 +1 @@",
+    "",
+  ].join("\n");
+  assert.deepEqual(diffHeaders(diff, 200_000).split("\n"), ["diff --git a/x b/x", "--- a/x", "+++ b/x", "@@ -1 +1 @@"]);
+});
+
+test("a cut never splits a line", () => {
+  const diff = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n";
+  for (let max = 0; max < diff.length + 2; max++) {
+    const out = diffHeaders(diff, max);
+    assert.ok(out.length <= max, `${max}: ${out.length}`);
+    for (const line of out.split("\n").filter(Boolean)) assert.ok(diff.split("\n").includes(line), `${max}: ${line}`);
   }
 });
 

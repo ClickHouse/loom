@@ -25,6 +25,11 @@ HEADS = [
     'extern "C" int init(void)',
     "def café(x):",
     "Foo::~Foo()",
+    "template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>> void f(T x)",
+    "const handler = function handler(req)",
+    "public: void g(int)",
+    # the server's splitlines ends the line at \x85, so neither side names `h`
+    "void\x85h(int)",
     "    if (ready) {",
     "public:",
     "DB_PASSWORD=hunter2",
@@ -71,12 +76,16 @@ def test_the_server_reads_the_same_ranges_and_names() -> None:
         "parse",
         "useState",
         "init",
+        "f",
+        "handler",
+        "g",
     } <= names["src/a.cpp"]
 
 
 def test_no_changed_line_is_sent() -> None:
     sent = _headers(_diff())
     assert "password" not in sent.lower() and "hunter2" not in sent
+    assert not [line for line in sent.splitlines() if line.startswith("index ")]
     assert not [
         line
         for line in sent.splitlines()

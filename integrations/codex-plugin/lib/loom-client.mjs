@@ -769,40 +769,51 @@ export const DIFF_ARGS = [
 // A hunk header: its ranges, then the function context git appends to it.
 const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/s;
 const NOT_FUNCTION_NAMES = new Set(["if", "for", "while", "switch", "return", "catch", "sizeof", "decltype"]);
+// Python's whitespace (`str.split()`, `str.strip()`) and line ends (`str.splitlines()`),
+// so the client reads a header the way the server does.
+const PY_SPACE = String.raw`\t\n\v\f\r \x1c-\x1f\x85\xa0  - \u2028\u2029  　`;
+const PY_SPACE_RE = new RegExp(`[${PY_SPACE}]+`);
+const PY_TRIM_RE = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "g");
+const PY_LINE_END_RE = /\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]/;
 
 /** The function name in a hunk header's context, as the server reads it
  *  (`_hunk_context_name` in server/code/app/symbol/diff.py): the last word before
  *  the first `(`, template arguments dropped, when it is a (scope-qualified)
- *  identifier. Empty when there is none, or when the text before it holds a single
- *  `:` or `=` (`Password: value (`), which is a value rather than a signature. */
+ *  identifier. Empty when there is none; when the word before it ends in a single
+ *  `:` or in `=` (`Password: value (`, `x = getpass(`), which makes it a value; and
+ *  when it has a credential's shape or holds the resolved token (`token ghp_… (`). */
 export function hunkFunctionName(context) {
-  const ctx = String(context ?? "").trim();
+  const ctx = String(context ?? "").replace(PY_TRIM_RE, "");
   if (!ctx.includes("(")) return "";
   // two passes drop one level of nested template arguments, as the server does
   const head = ctx
     .slice(0, ctx.indexOf("("))
     .replace(/<[^<>]*>/g, "")
     .replace(/<[^<>]*>/g, "");
-  if (/(^|[^:]):(?!:)|=/.test(head)) return "";
-  const tokens = head.split(/\s+/).filter(Boolean);
+  const tokens = head.split(PY_SPACE_RE).filter(Boolean);
   if (!tokens.length) return "";
   const name = tokens[tokens.length - 1].replace(/^[&*]+|[&*]+$/g, "");
+  const before = tokens[tokens.length - 2] ?? "";
+  if (/(^|[^:]):$|=$/.test(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
-  return /^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name) ? name : "";
+  if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
+  const token = resolveToken();
+  // only these shapes can be a bare identifier; an assignment cannot (no `=` or `:`)
+  const credential = new RegExp(TOKEN_SHAPES_RE.source).test(name) || (token.length >= 8 && name.includes(token));
+  return credential ? "" : name;
 }
 
-/** The part of a unified diff that code.impact and code.test_gate read, cut to
- *  `max` chars: each file's header lines (`diff --git` up to its first hunk) and
+/** The part of a unified diff that code.impact and code.test_gate read, at most
+ *  `max` chars of whole lines: each file's `diff --git`, `---` and `+++` lines, and
  *  each hunk header's ranges with only the function name the server would take
- *  from its context (`@@ -1 +1 @@ name(`). The changed lines and the rest of the
- *  context are left out, so nothing in them is sent: a key, a password, or a value
- *  whose name is on an unchanged line. */
+ *  from its context (`@@ -1 +1 @@ name(`). The changed lines, the rest of the
+ *  context and the other header lines (an `index` line's blob hashes) are left
+ *  out, so nothing in them is sent. */
 export function diffHeaders(diff, max) {
   const out = [];
   let built = 0;
   let inFileHeader = false;
-  for (const line of String(diff ?? "").split("\n")) {
-    if (built >= max) break;
+  for (const line of String(diff ?? "").split(PY_LINE_END_RE)) {
     let kept = null;
     if (line.startsWith("diff --git ")) inFileHeader = true;
     const hunk = HUNK_HEADER_RE.exec(line);
@@ -810,15 +821,16 @@ export function diffHeaders(diff, max) {
       inFileHeader = false;
       const name = hunkFunctionName(hunk[2]);
       kept = hunk[1] + (name ? ` ${name}(` : "");
-    } else if (inFileHeader) {
+    } else if (inFileHeader && /^(diff --git |--- |\+\+\+ )/.test(line)) {
       kept = line;
     }
-    if (kept !== null) {
-      out.push(kept);
-      built += kept.length + 1;
-    }
+    if (kept === null) continue;
+    const cost = (out.length ? 1 : 0) + kept.length;
+    if (built + cost > max) break;
+    out.push(kept);
+    built += cost;
   }
-  return out.join("\n").slice(0, max);
+  return out.join("\n");
 }
 
 /**
