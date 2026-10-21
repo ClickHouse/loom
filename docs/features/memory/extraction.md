@@ -125,14 +125,14 @@ request's `(org, namespace, agent)`:
   A rule that reads as a credential is never filed either, and the drop is counted
   under reason `sensitive`; nor is one that matches a blacklist pattern. A quote that
   does either is stored blank. The supporter row is written first, then the candidate
-  row again, at version 1, with every new supporter. A restatement after the first
-  filing never changes the candidate's text; two sessions that first file the same rule
-  at once, differing only in case or a trailing period, leave either wording.
-  So an erasure that deletes a pending candidate mid-filing never leaves that supporter
-  without it. A review always writes a newer version, so the rewrite never undoes a
-  decision, and a decided candidate takes no new supporters: its restatement is
-  counted in `loom.memory_drops` under reason `decided`, so a rejected rule that keeps
-  coming back shows there.
+  row again, at version 1, with every new supporter. So an erasure that deletes a
+  pending candidate mid-filing never leaves that supporter without it. A review always
+  writes a newer version, so the rewrite never undoes a decision, and a decided
+  candidate takes no new supporters: its restatement is counted in `loom.memory_drops`
+  under reason `decided`, so a rejected rule that keeps coming back shows there.
+  A restatement after the first filing never changes the candidate's text; two
+  sessions that first file the same rule at once, differing only in case or a
+  trailing period, leave either wording.
 - `learnings.list` shows the earliest remaining supporter's quotes as the `rationale`.
   A user erasure deletes that user's supporter rows, so the next supporter's quotes
   show. A candidate left with none is deleted when pending; when decided, it keeps its
