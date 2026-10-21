@@ -353,6 +353,8 @@ _TURNS = (
     " '2026-03-01 00:00:00', false, NULL, NULL)"
 )
 _AS_OF = datetime(2026, 2, 1)
+# What an org admin with no grant on PRIV and no readable collection is shown.
+_HIDING = Shown(hidden=(PRIV,), collections=())
 
 
 class _LocalTurns:
@@ -424,18 +426,27 @@ def test_the_turns_stop_at_the_byte_budget_and_say_so(max_bytes, expected, over_
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.parametrize(
-    ("scope_type", "scope_value", "include_tombstoned", "expected"),
+    ("scope_type", "scope_value", "include_tombstoned", "shown", "expected"),
     [
-        ("user_id", "u1", True, [("t1", "Renewal"), ("t4", "gone")]),
-        ("user_id", "u1", False, [("t1", "Renewal")]),
-        ("namespace", STD, False, [("t1", "Renewal"), ("t2", "theirs"), ("t3", "moved")]),
+        ("user_id", "u1", True, _HIDING, [("t1", "Renewal"), ("t4", "gone")]),
+        ("user_id", "u1", False, _HIDING, [("t1", "Renewal")]),
+        (
+            "namespace",
+            STD,
+            False,
+            _HIDING,
+            [("t1", "Renewal"), ("t2", "theirs"), ("t3", "moved")],
+        ),
+        # Shown everything (a platform admin): the restricted and collection threads too.
+        ("user_id", "u1", False, Shown(), [("col-hidden", "t6"), (STD, "t1"), (PRIV, "t5")]),
     ],
 )
 def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
-    scope_type, scope_value, include_tombstoned, expected
+    scope_type, scope_value, include_tombstoned, shown, expected
 ) -> None:
     """Run on clickhouse-local: one row per thread, its latest version, filtered after the
-    latest is chosen (t3 moved from u1 to u2, so u1's export leaves it out)."""
+    latest is chosen (t3 moved from u1 to u2, so u1's export leaves it out), without the
+    threads of a restricted namespace or a collection the caller may not read."""
     import asyncio
 
     from server.erasure.store import exports
@@ -453,7 +464,11 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
                 f" ('{ORG}', '{STD}', 'bot', 't3', 'mine', 'u1', '2026-01-01', '2026-01-01', NULL),"
                 f" ('{ORG}', '{STD}', 'bot', 't3', 'moved', 'u2', '2026-01-01', '2026-01-02', NULL),"
                 f" ('{ORG}', '{STD}', 'bot', 't4', 'gone', 'u1', '2026-01-01', '2026-01-01',"
-                " '2026-01-03')"
+                " '2026-01-03'),"
+                f" ('{ORG}', '{PRIV}', 'bot', 't5', 'restricted', 'u1', '2026-01-01',"
+                " '2026-01-01', NULL),"
+                f" ('{ORG}', 'col-hidden', 'bot', 't6', 'collection', 'u1', '2026-01-01',"
+                " '2026-01-01', NULL)"
             )
             return run([ddl("conversation_threads"), insert], sql, params)
 
@@ -464,10 +479,14 @@ def test_an_export_reads_the_latest_version_of_the_threads_in_scope(
             scope_value,
             include_tombstoned=include_tombstoned,
             limit=10,
+            shown=shown,
             ch=_Local(),
         )
     )
-    assert [(r["thread_id"], r["title"]) for r in got] == expected
+    if shown == _HIDING:
+        assert [(r["thread_id"], r["title"]) for r in got] == expected
+    else:
+        assert [(r["namespace"], r["thread_id"]) for r in got] == expected
 
 
 def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() -> None:
