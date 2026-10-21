@@ -139,6 +139,48 @@ async def test_startup_pack_with_the_identity_sentinels_reads_every_users_rows(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pack_session", ["s0", "-"])
+async def test_startup_pack_skips_transcripts_before_its_limit(
+    control_plane_url: str, mint_test_token, pack_session: str
+) -> None:
+    """A session's tool-call transcripts (and, across sessions, a reflection) are newer than
+    its durable fact; the startup pack still serves the fact, whether it names the session
+    or stamps "-" for every session."""
+    from loom import Agent
+
+    ns = f"sw-{uuid.uuid4().hex[:6]}"
+    tok = mint_test_token(org=ORG)
+    async with Agent(
+        org=ORG, namespace=ns, agent="w", base_url=control_plane_url, api_key=tok
+    ) as a:
+        await a.memory.set(
+            "deploy:day", "Deploys go out on Tuesday.", memory_type="semantic", session_id="s0"
+        )
+        for i in range(12):
+            await a.call(
+                "observe.record",
+                {"tool_name": "Bash", "tool_input": {"command": f"ls {i}"}, "tool_output": "ok"},
+                session_id="s0",
+            )
+        await a.memory.set(
+            "reflection:r1", "Retries hid the drift.", memory_type="reflection", session_id="s1"
+        )
+
+        async def memories() -> str:
+            pack = await a.call(
+                "context.pack",
+                {"mode": "startup", "query": "", "top_k": 3},
+                session_id=pack_session,
+            )
+            text = pack["sections"].get("memories", "")
+            return text if "Deploys go out on Tuesday." in text else ""
+
+        text = await eventually(memories, description="the fact outlives newer transcripts")
+
+    assert "ls " not in text and "Retries hid the drift." not in text
+
+
+@pytest.mark.asyncio
 async def test_run_begin_with_the_run_sentinel_opens_a_run_of_its_own(
     control_plane_url: str, mint_test_token
 ) -> None:

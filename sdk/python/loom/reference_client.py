@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from loom.errors import LoomError
-from loom.run import RECALL_READ_PATHS
+from loom.run import AMBIENT_RUN_HEADER, RECALL_READ_PATHS
 from loom.transport import Transport, consumer_label
 
 # Traffic classes `namespace.register` accepts as `traffic_class`.
@@ -236,6 +236,10 @@ class ReferenceClient:
             ratelimit_max_wait_s=self.max_retry_wait_s,
             consumer=self.consumer,
         )
+        # Reads under an open run are labelled with it (a header the ledger reads), not
+        # filtered by it; a transport that already has a hook keeps its own.
+        if getattr(self._transport, "before_post", ...) is None:
+            self._transport.before_post = self._label_read
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -252,6 +256,11 @@ class ReferenceClient:
     @property
     def transport(self) -> Any:
         return self._transport
+
+    async def _label_read(self, op_path: str, payload: dict[str, Any]) -> dict[str, str]:
+        if self.run_id and op_path in RECALL_READ_PATHS:
+            return {AMBIENT_RUN_HEADER: self.run_id}
+        return {}
 
     # -- the one call path ---------------------------------------------------
 
@@ -573,8 +582,9 @@ class ReferenceClient:
 
     async def run_begin(self, goal: str, **fields: Any) -> CallResult:
         """Open a run: every memory write until `run_complete` carries its
-        `run_id`, so the ledger joins what the run wrote to what it did. Reads
-        carry no run_id: on a read it filters to the run's own rows."""
+        `run_id`, and every read is labelled with it (`X-Loom-Run-Id`), so the
+        ledger joins what the run read and wrote to what it did. A read carries
+        no body run_id: there it filters to the run's own rows."""
         r = await self.call("run.begin", {"goal": goal, **fields}, required=("run_id",))
         if r.ok:
             self.run_id = str(r.data["run_id"])

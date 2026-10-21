@@ -46,18 +46,6 @@ from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 log = logging.getLogger(__name__)
 
 
-def _recall_rows(pinned: list[Any], recent: list[Any]) -> list[Any]:
-    """Startup recall's candidates, pins first, without trajectory transcript rows: in a
-    coding namespace the most recent rows are the agent's own step echoes."""
-    from server.memory.domain.transcript_rows import is_transcript_row
-
-    return [
-        r
-        for r in [*pinned, *recent]
-        if not is_transcript_row(getattr(r, "tags", None), getattr(r, "source_trace", ""))
-    ]
-
-
 def _without_transcript_rows(hits: list[Any]) -> list[Any]:
     """The pack is ambient recall (the prompt hook and every session start read it), so the
     agent's own trajectory transcript (rows like "Step 213/278 · After Bash `command=…`")
@@ -389,7 +377,7 @@ async def _pack_startup_recall(st: _PackState) -> None:
 
     seen: set[str] = set()
     rows: list[Any] = []
-    for r in _recall_rows(pinned, recent):  # pins first, then recency; dedup by key
+    for r in [*pinned, *recent]:  # pins first, then recency; dedup by key
         if r.memory_key in seen or r.status not in ("active", "conflicted"):
             continue
         seen.add(r.memory_key)

@@ -34,6 +34,8 @@ class FakeTransport:
         self.closed = False
         self.consumer = consumer
         self.attempts = 1
+        self.before_post: Any = None
+        self.headers: list[dict[str, str]] = []
 
     async def post_with_meta(
         self,
@@ -45,6 +47,7 @@ class FakeTransport:
     ) -> WireResult:
         if self.consumer and "consumer" not in payload:
             payload = {**payload, "consumer": self.consumer}
+        self.headers.append(await self.before_post(op_path, payload) if self.before_post else {})
         self.calls.append((op_path, dict(payload), idempotency_key, timeout_s))
         op = op_path.removeprefix("/v1/")
         scripted = self.responses.get(op)
@@ -340,6 +343,11 @@ async def test_an_open_run_stamps_writes_and_leaves_reads_unfiltered() -> None:
     assert t.payloads("memory.set")[0]["run_id"] == "r1"
     assert "run_id" not in t.payloads("memory.search")[0]
     assert "run_id" not in t.payloads("memory.ask")[0]
+    # The reads are labelled with the run instead, so the ledger counts them.
+    by_op = {call[0]: h for call, h in zip(t.calls, t.headers, strict=True)}
+    assert by_op["/v1/memory.search"] == {"X-Loom-Run-Id": "r1"}
+    assert by_op["/v1/memory.ask"] == {"X-Loom-Run-Id": "r1"}
+    assert by_op["/v1/memory.set"] == {}
     r = await c.run_complete(memories_used=["k1"], outcome="positive")
     assert r.ok and c.run_id is None
     p = t.payloads("run.complete")[0]
