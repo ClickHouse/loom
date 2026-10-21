@@ -2034,7 +2034,8 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "memory.ask": (
         "WHAT: READ with synthesis — ask a question, get an answer grounded in and "
-        "citing stored memories; carries your run_id so your run notes frame it.\n"
+        "citing stored memories. A run_id narrows it to that run's rows (and frames "
+        "it with the run's notes).\n"
         "WHEN: You need the current state of something the store may know. Read "
         "once per question; the answer's memory_keys are the handles for update.\n"
         "WHEN NOT: You already hold the key — loom_memory_get is cheaper.\n"
@@ -2056,7 +2057,9 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
     "run.begin": (
         "WHAT: Open the run ledger entry for this task (goal, request, optional budget_seconds; "
         "run.get via loom_op reports `over_budget`). "
-        "Returns run_id; pass it on every memory call so notes and credit attach to this run.\n"
+        "Returns run_id; pass it on writes (memory.set) so they join this run. Your reads "
+        "are labelled with the session's own run, so credit what you relied on in "
+        "run.complete memories_used.\n"
         "WHEN: Once, at the start of a task."
     ),
     "run.complete": (

@@ -159,8 +159,9 @@ What an agent framework holds between turns:
   `await execute(name, arguments)` that returns the string the model reads:
   `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`,
   `loom_note`. The schemas match the TypeScript SDK's.
-- `bot.run_scope(goal=...)` is an `async with` block that begins a run, threads
-  its `run_id` through every memory call inside, and on exit credits the keys a
+- `bot.run_scope(goal=...)` is an `async with` block that begins a run, stamps
+  its `run_id` on the writes inside and labels the reads with it (the
+  `X-Loom-Run-Id` header, not a filter), and on exit credits the keys a
   non-abstained `memory.ask` cited as the run's `memories_used`. See
   [Runs](../features/runs.md).
 
