@@ -443,7 +443,6 @@ def _settle_facts(
     return facts
 
 
-@staged("extract")
 def _split_agent_rules(
     facts: list[ExtractedFact], agent_learnings: bool
 ) -> tuple[list[ExtractedFact], list[ExtractedFact]]:
@@ -455,6 +454,7 @@ def _split_agent_rules(
     return [f for f in facts if f.about != "agent"], [f for f in facts if f.about == "agent"]
 
 
+@staged("extract")
 async def extract_from_messages(
     messages: list[dict[str, object]],
     *,
