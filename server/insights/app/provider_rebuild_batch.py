@@ -64,6 +64,10 @@ def _source_text(
     return value
 
 
+def _has_vector(row: Mapping[str, Any], columns: Sequence[str]) -> bool:
+    return any(any(row[column]) for column in columns)
+
+
 def _inputs(
     table: str, rows: Sequence[Mapping[str, Any]], source_texts: Mapping[int, str]
 ) -> tuple[list[str], list[tuple[int, str]]]:
@@ -79,8 +83,7 @@ def _inputs(
             continue
         text = _source_text(table, row, index, source_texts)
         if table in PASSAGE_TABLES:
-            has_vector = any(any(row[column]) for column in columns)
-            if reads_high(text) or (table == "memory_chunks" and not has_vector):
+            if reads_high(text) or (table == "memory_chunks" and not _has_vector(row, columns)):
                 continue
         for column in columns:
             value = text

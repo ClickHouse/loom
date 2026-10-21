@@ -330,8 +330,9 @@ class ConversationSearchInput(BaseModel):
     `thread_id`, `run_id` and `role` each narrow the hits, and they combine. User and
     assistant turns and compaction summaries are embedded, unless their text reads as a
     credential; when the embedder is unavailable a substring match stands in, newest
-    first, and it also matches the other system turns and tool turns. No path, the
-    substring fallback included, returns a turn whose text reads as a credential."""
+    first, and it also matches the other system turns and tool turns. No path returns a
+    turn whose text this build reads as a credential: the vector path checks the text its
+    embedding was built from, and the substring fallback checks the whole turn."""
 
     org: str
     namespace: str
