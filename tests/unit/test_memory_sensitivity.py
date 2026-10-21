@@ -380,7 +380,7 @@ async def test_memory_set_labels_and_tags_the_decoded_value(
         existing=None,
         expires_at=None,
     )
-    await write._set_prepare_value(w, False)
+    await write._set_prepare_value(w)
     assert "sensitivity:high" in w.input.tags
     assert any(t.startswith("attribute:") for t in w.input.tags)
 
