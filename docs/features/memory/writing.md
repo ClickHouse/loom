@@ -408,7 +408,7 @@ sweep, the `delete_version` check).
   A pass checks before each POST that the webhook was not removed since it began, so
   after `webhook.remove` only a POST already in flight goes out.
   The events of a removed webhook are marked `dead` by the next delivery pass that runs
-  within about 30 minutes of the removal (`memory_webhook_removal_window_leases` widens
+  within about 30 minutes of the removal (`LOOM_MEMORY_WEBHOOK_REMOVAL_WINDOW_LEASES` widens
   it); after that they stay listed as `pending` until they expire. Registering the same
   URL again creates a new webhook that does not inherit them. An event whose memory was
   erased before it went out is marked `dead` and not sent: the key's history is read just
@@ -440,6 +440,9 @@ sweep, the `delete_version` check).
 | `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | true    | Detect credential and contact shapes when `sensitivity` is unset. |
 | `LOOM_MAX_REQUEST_BYTES`             | 32 MiB  | Request-body cap.                                                 |
 
+Change webhook settings (`LOOM_MEMORY_WEBHOOK_*`, including
+`LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED`, which stops delivery) are in
+[configuration: MemoryWebhook](../../reference/configuration.md#memorywebhook).
 Conflict and duplicate settings are in
 [conflicts and refusal](./conflicts-and-refusal.md#settings). Per namespace,
 `namespace.register` sets `conflict_threshold`, `default_conflict_policy` and
