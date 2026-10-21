@@ -5,6 +5,7 @@ learnings queue and its supporters."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -20,8 +21,11 @@ from server.erasure.store.predicates import (
     SUPPORTED_LEARNINGS,
     UID,
 )
+from server.observability import events_stream
 
 log = logging.getLogger(__name__)
+
+_EVENT_DRAIN_S = 5.0  # bound the wait for this replica's buffered telemetry
 
 # ---------------------------------------------------------------------------
 # Steps for the ledger, trace and queue tables. Every `loom.*` table is a census row,
@@ -204,18 +208,24 @@ async def delete_code_search_trace_by_user(
     )
 
 
+async def _delete_events(
+    org: str, scope_where: str, params: dict[str, Any], ch: _CHClient | None
+) -> int:
+    # A timer may have popped a batch already: wait for its insert before counting.
+    await asyncio.wait_for(events_stream.flush_now(), timeout=_EVENT_DRAIN_S)
+    return await delete_scoped(
+        "loom.events", org=org, scope_where=scope_where, params=params, ch=ch
+    )
+
+
 async def delete_events_by_namespace(
     org: str, namespace: str | Sequence[str], *, ch: _CHClient | None = None
 ) -> int:
-    return await delete_scoped(
-        "loom.events", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
-    )
+    return await _delete_events(org, NS_EQ, {"ns": namespace}, ch)
 
 
 async def delete_events_by_user(org: str, user_id: str, *, ch: _CHClient | None = None) -> int:
-    return await delete_scoped(
-        "loom.events", org=org, scope_where=UID, params={"uid": user_id}, ch=ch
-    )
+    return await _delete_events(org, UID, {"uid": user_id}, ch)
 
 
 async def delete_memory_drops_by_namespace(

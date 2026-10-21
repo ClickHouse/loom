@@ -406,3 +406,45 @@ async def test_drain_is_bounded_and_counts_what_it_could_not_write(
     await asyncio.wait_for(es.drain(timeout_s=0.05), timeout=2.0)
     assert es.queued() == 0 and es.stats()["dropped"] == {"shutdown": {"budget_violation": 1}}
     _reset()
+
+
+@pytest.mark.asyncio
+async def test_slow_full_batches_share_one_threshold_flush(monkeypatch: pytest.MonkeyPatch) -> None:
+    started: asyncio.Queue[asyncio.Event] = asyncio.Queue()
+    inserted = 0
+
+    class _Slow:
+        async def insert(self, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
+            nonlocal inserted
+            gate = asyncio.Event()
+            started.put_nowait(gate)
+            await gate.wait()
+            inserted += len(rows)
+
+    monkeypatch.setattr("server.core.ch.get_client", _Slow)
+    monkeypatch.setattr(es, "QUEUE_MAX", 10)
+    monkeypatch.setattr(es, "_batch", lambda: 1)
+    monkeypatch.setattr(es, "_ensure_drain", lambda: None)
+    _reset()
+    es.record(es.BUDGET_VIOLATION_KIND, {"org": "o", "namespace": "n"})
+    gate = await started.get()
+    try:
+        for _ in range(5):
+            for _ in range(10):
+                es.record(es.BUDGET_VIOLATION_KIND, {"org": "o", "namespace": "n"})
+            await asyncio.sleep(0)
+            assert es.queued() == 10
+            assert len(es._inflight) == 1
+            gate.set()
+            gate = await asyncio.wait_for(started.get(), timeout=1)
+        gate.set()
+        await asyncio.gather(*es._inflight)
+        assert es.queued() == 0
+        assert inserted == 51
+        assert not es._inflight
+    finally:
+        gate.set()
+        for task in list(es._inflight):
+            task.cancel()
+        await asyncio.gather(*es._inflight, return_exceptions=True)
+        _reset()

@@ -48,6 +48,7 @@ KINDS = frozenset({BUDGET_VIOLATION_KIND})
 COMMITTED = {"async_insert": 0, "wait_for_async_insert": 1}
 
 _queue: list[dict[str, Any]] = []
+_FLUSH: tuple[asyncio.AbstractEventLoop, asyncio.Lock] | None = None
 _drain_task: asyncio.Task[None] | None = None
 _stopping = False
 _inflight = TaskSet()
@@ -162,39 +163,53 @@ async def _tagged_flush() -> int:
     from server.core.ch import set_query_tag
 
     set_query_tag(FLUSH_QUERY_TAG)
-    return await flush_now()
+    written = await flush_now()
+    while len(_queue) >= _batch():
+        written += await flush_now()
+    return written
 
 
 def _flush_soon() -> asyncio.Task[int] | None:
     """A flush now, because the queue reached a batch. Detached like the drain
     loop: the batch holds every queued request's rows, so the request whose
     row filled it must not lend the insert its tag and request id."""
+    if _inflight:
+        return None
     try:
         return _inflight.spawn(_tagged_flush(), name="loom-events-stream-flush", detached=True)
     except RuntimeError:
         return None
 
 
-async def flush_now() -> int:
-    """Write everything queued as one committed insert. Returns rows written."""
-    if not _queue:
-        return 0
-    rows = _queue[:]
-    del _queue[: len(rows)]
-    try:
-        from server.core.ch import get_client
+def _flush_lock() -> asyncio.Lock:
+    global _FLUSH
+    loop = asyncio.get_running_loop()
+    if _FLUSH is None or _FLUSH[0] is not loop:
+        _FLUSH = (loop, asyncio.Lock())
+    return _FLUSH[1]
 
-        await get_client().insert(TABLE, rows, settings=dict(COMMITTED))
-        return len(rows)
-    except asyncio.CancelledError:
-        # A flush cut short (shutdown cancelling the drain loop mid-insert)
-        # must not lose its rows: put them back for the final drain.
-        _queue[:0] = rows
-        raise
-    except Exception as e:  # noqa: BLE001 — telemetry never fails a request
-        log.warning("events stream flush failed (non-fatal, %d rows): %s", len(rows), e)
-        _drop("flush_failed", [str(r.get("kind") or "") for r in rows], warn=False)
-        return 0
+
+async def flush_now() -> int:
+    """Write queued rows, waiting for any batch already inserting on this replica."""
+    async with _flush_lock():
+        if not _queue:
+            return 0
+        rows = _queue[:]
+        del _queue[: len(rows)]
+        try:
+            from server.core.ch import get_client
+
+            await get_client().insert(TABLE, rows, settings=dict(COMMITTED))
+            return len(rows)
+        except asyncio.CancelledError:
+            # A flush cut short (shutdown cancelling the drain loop mid-insert)
+            # must not lose its rows: put them back for the final drain.
+            _queue[:0] = rows
+            raise
+        except Exception as e:  # noqa: BLE001 — telemetry never fails a request
+            log.warning("events stream flush failed (non-fatal, %d rows): %s", len(rows), e)
+            _drop("flush_failed", [str(r.get("kind") or "") for r in rows], warn=False)
+            return 0
 
 
 def queued() -> int:
