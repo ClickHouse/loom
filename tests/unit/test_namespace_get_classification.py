@@ -67,6 +67,11 @@ async def _get(monkeypatch: pytest.MonkeyPatch, row: dict[str, Any] | None) -> A
         return []
 
     monkeypatch.setattr("server.memory.app.namespace_types.list_type_configs", _no_types)
+
+    async def _no_guide(org: str, namespaces: list[str]) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(ns_handler.namespace_guides, "summaries", _no_guide)
     out = await ns_handler.handle_namespace_get(NamespaceGetInput(org="o", namespace="n"))
     assert "toString(classification) AS classification" in ch.sql
     return out

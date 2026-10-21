@@ -5257,6 +5257,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "namespace.cancel_request": 80,
     "namespace.delete": 60,
     "namespace.get": 30,
+    "namespace.guide_get": 40,
+    "namespace.guide_history": 60,
+    # A claim on the guide (two KeeperMap writes), one point read, one insert.
+    "namespace.guide_set": 250,
     "namespace.join": 80,
     "namespace.leave": 80,
     "namespace.list": 80,

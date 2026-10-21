@@ -18,7 +18,10 @@ from server.transport import post_rows
 
 
 def _op(**kw: Any) -> SimpleNamespace:
-    return SimpleNamespace(name="memory.set", budget_p99_ms=10, audit=True, idempotent=True, **kw)
+    fields = {"audit_subject": None, **kw}
+    return SimpleNamespace(
+        name="memory.set", budget_p99_ms=10, audit=True, idempotent=True, **fields
+    )
 
 
 def _call(**kw: Any) -> None:
@@ -102,3 +105,66 @@ def test_the_shared_gather_never_raises_for_either_transport(caplog) -> None:
         )
     )
     assert "http audit emit failed for memory.set" in caplog.text
+
+
+def test_an_op_s_audit_subject_replaces_the_input_in_its_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subjects: list[Any] = []
+
+    async def _audit(**kw: Any) -> None:
+        subjects.append(kw["subject"])
+
+    monkeypatch.setattr(budgets, "effective_budget_ms", lambda op, b: b)
+    monkeypatch.setattr(common, "emit_op_audit", _audit)
+    op = _op(audit_subject=lambda body, response: {"chars": 3, "ok": response["ok"]})
+    body = SimpleNamespace(model_dump=lambda mode: {"content": "secret"})
+    asyncio.run(
+        post_rows.post_handler_rows(
+            op,
+            transport="mcp",
+            request_id="r",
+            org="o",
+            namespace="n",
+            agent="a",
+            actor="human:x",
+            input_obj=body,
+            elapsed_ms=1,
+            response_body={"ok": True},
+            idem=(None, None),
+            replay_headers={},
+        )
+    )
+    assert subjects == [{"chars": 3, "ok": True}]
+
+
+def test_an_audit_subject_that_raises_never_fails_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subjects: list[Any] = []
+
+    async def _audit(**kw: Any) -> None:
+        subjects.append(kw["subject"])
+
+    def _broken(body: Any, response: Any) -> dict[str, Any]:
+        raise KeyError("written")
+
+    monkeypatch.setattr(budgets, "effective_budget_ms", lambda op, b: b)
+    monkeypatch.setattr(common, "emit_op_audit", _audit)
+    asyncio.run(
+        post_rows.post_handler_rows(
+            _op(audit_subject=_broken),
+            transport="mcp",
+            request_id="r",
+            org="o",
+            namespace="n",
+            agent="a",
+            actor="human:x",
+            input_obj=SimpleNamespace(model_dump=lambda mode: {}),
+            elapsed_ms=1,
+            response_body={},
+            idem=(None, None),
+            replay_headers={},
+        )
+    )
+    assert subjects == [{}]

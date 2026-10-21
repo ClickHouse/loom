@@ -1217,6 +1217,18 @@
               "body",
               "options"
             ],
+            "guide_get": [
+              "body",
+              "options"
+            ],
+            "guide_history": [
+              "body",
+              "options"
+            ],
+            "guide_set": [
+              "body",
+              "options"
+            ],
             "join": [
               "body",
               "options"
