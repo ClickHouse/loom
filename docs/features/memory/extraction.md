@@ -154,7 +154,9 @@ request's `(org, namespace, agent)`:
   row again, at version 1, with every new supporter.
   So an erasure that deletes a pending candidate mid-filing never leaves that supporter
   without it. A review always writes a newer version, so the rewrite never undoes a
-  decision, and a decided candidate takes no new supporters.
+  decision, and a decided candidate takes no new supporters: its restatement is
+  counted in `loom.memory_drops` under reason `decided`, so a rejected rule that keeps
+  coming back shows there.
 - `learnings.list` shows the earliest remaining supporter's quotes as the `rationale`.
   A user erasure deletes that user's supporter rows, so the next supporter's quotes
   show. A candidate left with none is deleted when pending; when decided, it keeps its

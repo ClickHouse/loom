@@ -69,10 +69,10 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     # The user turn before a cited assistant turn may be one of the session's
     # earlier turns, so the request and the quotes are read over both.
     context = [*state.last_messages, *state.messages]
-    cited = [i + len(state.last_messages) for i in cited]  # indices into context
+    context_cited = [i + len(state.last_messages) for i in cited]
     # Behaviour the assistant agrees to at the user's request is that user's
     # preference: filed, it would reach every user of the bot.
-    if assistant_rules.user_requested(fact, context, cited):
+    if assistant_rules.user_requested(fact, context, context_cited):
         record_drop(state.org, state.namespace, "learnings.file", "user_requested", item=key)
         return False
     # Refuse (blacklist), as memory.bulk_set does for every other extracted fact.
@@ -81,7 +81,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     cid = assistant_rules.candidate_id(state.org, state.namespace, agent, key, value)
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
     if row is not None and row["status"] != "pending":
-        return False  # decided: support no longer changes anything
+        # Decided: support no longer changes anything.
+        record_drop(state.org, state.namespace, "learnings.file", "decided", item=key)
+        return False
     # A promoted rule comes back restated in new words; do not file it again.
     if row is None and await learnings_repo.rule_promoted(state.org, state.namespace, agent, key):
         record_drop(state.org, state.namespace, "learnings.file", "already_promoted", item=key)
@@ -90,7 +92,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
         state.org, state.namespace, cid, state.user_id, state.session_id
     )
     if new_supporter:
-        asked, said = assistant_rules.cited_texts(fact, context, cited)
+        asked, said = assistant_rules.cited_texts(fact, context, context_cited)
         # A quote that matches a blacklist pattern is left blank, as one that reads
         # as a credential is. Checked whole: the cut and the folded spacing could
         # split a pattern or change its spacing.

@@ -372,13 +372,16 @@ def _settle_facts(
     existing_memories: list[dict[str, str]] | None,
     speaker_attribution: bool,
     from_turns: bool,
+    rules: list[ExtractedFact],
 ) -> list[ExtractedFact]:
     """The deterministic passes between the model's answer and the judge:
     stable and relation keys, citation repair, temporal anchors and
     timestamps, suffix and attribute normalisation, relative-date grounding,
     speakers, code facets, index links, the grounding grade and speaker
     attribution. Without `from_turns` (an operator policy) nothing is taken
-    from the turns past what the model wrote. Pure."""
+    from the turns past what the model wrote. The assistant's `rules` get only
+    citation repair, since a key rewrite would rekey a rule each session, and are
+    returned after the facts. Pure."""
     # Entity-stable key rewrite: turn a concept-level key
     # (`user_task_status`) into an entity-prefixed one (`pr107585_status`)
     # when the fact carries a salient identifier. Applied here so every
@@ -399,6 +402,7 @@ def _settle_facts(
     # (the backstop, timestamps, speakers, grounding grade, code facets),
     # with or without an observation date.
     facts = _repair(facts, messages)
+    rules = _repair(rules, messages)
     # Deterministic temporal-anchor backstop: prompt-level resolution is
     # the primary path; this catches facts where the model kept a
     # closed-class relative qualifier verbatim and emitted no anchor.
@@ -407,7 +411,10 @@ def _settle_facts(
     # The rows the model left out are recovered from the turns, unless an
     # operator policy is in force: the model may have left them out for it.
     if from_turns:
-        facts = _recover_rows(facts, messages)
+        # With no user fact, the rules stand in, so a rules-only answer still
+        # recovers what the model left out of the user's turns.
+        seen = facts or rules
+        facts = facts + _recover_rows(seen, messages)[len(seen) :]
     facts = apply_message_timestamps(facts, messages)
     facts = strip_variant_suffixes(facts)
     if facts:
@@ -440,7 +447,7 @@ def _settle_facts(
     # the evidence itself — the item's name occurs in assistant turns and in
     # no user turn — so "what have you recommended to me?" finds it. Pure.
     facts = attribute_assistant_introduced(facts, messages) if speaker_attribution else facts
-    return facts
+    return facts + rules
 
 
 def _split_agent_rules(
@@ -618,7 +625,6 @@ async def extract_from_messages(
             accumulated = _merge_llm_results(accumulated, _bf_result)
         if relations_backfilled:
             log.info("relation backfill gave %d fact(s) a typed relation", relations_backfilled)
-    # A rule's citations are repaired, never its key: a rewrite would rekey it each session.
     facts = _settle_facts(
         facts,
         messages,
@@ -626,7 +632,8 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
         from_turns=not operator_policy,
-    ) + _repair(rules, messages)
+        rules=rules,
+    )
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date
     # lets the judge verify temporal resolutions instead of flagging them

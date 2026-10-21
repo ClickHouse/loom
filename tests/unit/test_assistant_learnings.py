@@ -109,6 +109,24 @@ async def test_an_agent_fact_stays_one_only_when_asked_for(
 
 
 @pytest.mark.asyncio
+async def test_a_rules_only_answer_still_recovers_the_users_left_out_preference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": "I prefer window seats on long flights. Please refund my $800 order.",
+        },
+        _MESSAGES[1],
+    ]
+    facts = await _extract(monkeypatch, _rule_fact(), messages, True)
+    assert [f.memory_key for f in facts if f.about == "agent"] == [
+        "assistant_rule_refund_escalation"
+    ]
+    assert any(f.memory_key.startswith("user_preference_") for f in facts)
+
+
+@pytest.mark.asyncio
 async def test_a_rule_without_a_relation_asks_for_no_relation_backfill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
