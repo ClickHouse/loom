@@ -26,12 +26,10 @@ _ENTITY_RANK_BOOSTS = [0.40, 0.25, 0.15, 0.08, 0.04]
 
 
 def _chunk_candidates_sql(agent_pred: str) -> str:
-    """Stage 1 of the chunk leg: the one query shape the
-    `vector_similarity` index serves — a bare `ORDER BY cosineDistance LIMIT`
-    over the table with no FINAL and no JOIN — returning only the chunk
-    identity, its parent key and its distance. The fact leg's index knobs
-    ride along so a selective tenant predicate does not starve the
-    post-filter.
+    """Stage 1 of the chunk leg: the one query shape the codes-first read
+    serves — a bare `ORDER BY cosineDistance LIMIT` over the table with no
+    FINAL and no JOIN — returning only the chunk identity, its parent key and
+    its distance.
 
     The codec's shortlist over-fetch inherits the vector multiplier (3): 1
     changed the 180-candidate set on the largest tenant (Jaccard 0.636
@@ -681,14 +679,14 @@ async def _search_memory_chunks(
         chunk_agent_pred = f"{chunk_agent_pred}\n          {parent_pred}"
     overlap_join, overlap_count_select = _chunk_overlap_join(q, chunk_params)
 
-    # Two stages. Stage 1 is the shape the vector index accepts
+    # Two stages. Stage 1 is the shape the codes-first read accepts
     # (bare ORDER BY cosineDistance LIMIT, no FINAL, no JOIN) and returns only
     # chunk identities; stage 2 is the full query below restricted to those
     # identities — a primary-key lookup under FINAL with skip indexes off, so
     # every version of a candidate is seen and collapses properly. A single
     # query that joined the parent dates between the vector read and the LIMIT
-    # could not be served by any index: a brute-force scan of every chunk in
-    # the namespace on every search.
+    # could not take the codes-first read: a full-precision scan of every
+    # chunk in the namespace on every search.
 
     q_tokens = _chunk_query_tokens(q.query_text or "")
     stage1_params = {

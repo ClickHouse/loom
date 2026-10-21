@@ -52,17 +52,17 @@ async def _fact_leg_sql(
     internal_limit = max(int(q.top_k) * 4, 60)
     params["internal_limit"] = internal_limit
 
-    # HNSW fires only when ORDER BY is a BARE cosineDistance(col, ref). The
-    # `least(value_dist, key_dist)` composite that `distance` aliases does NOT
-    # activate it (full sort). So ANN-eligible modes ORDER BY a bare
-    # value_distance alias and keep `distance` in the SELECT for scoring. ANN
-    # selection then sees only the value-embedding axis; the 4× over-fetch
-    # partially covers the key-embedding gap. Lexical keeps composite ordering
-    # (token WHERE filter, no ANN benefit).
+    # The codes-first read applies only when ORDER BY is a BARE
+    # cosineDistance(col, ref). The `least(value_dist, key_dist)` composite
+    # that `distance` aliases does NOT qualify (full sort). So vector modes
+    # ORDER BY a bare value_distance alias and keep `distance` in the SELECT
+    # for scoring. The shortlist then sees only the value-embedding axis; the
+    # 4× over-fetch partially covers the key-embedding gap. Lexical keeps
+    # composite ordering (token WHERE filter).
     if q.search_mode in ("semantic", "hybrid", "bm25_hybrid", "rrf"):
         value_distance_select = "cosineDistance(e.embedding, {q:Array(Float32)}) AS value_distance,"
         order_clause = "ORDER BY value_distance ASC"
-    else:  # lexical — token-match WHERE filter, no ANN benefit
+    else:  # lexical — token-match WHERE filter
         value_distance_select = ""
         order_clause = "ORDER BY rank_score DESC, distance ASC, e.memory_key ASC"
 
@@ -88,11 +88,7 @@ async def _fact_leg_sql(
     prewhere_sql = " PREWHERE " + " AND ".join(prewhere_clauses) if prewhere_clauses else ""
     where_sql = " WHERE " + " AND ".join(rest_clauses) if rest_clauses else ""
 
-    # HNSW candidate list scaled with top_k (floor = the CH default 256, cap
-    # 512): a fixed size is either overkill latency at small top_k or tight
-    # recall at large top_k.
     # use_query_cache is deliberately NOT set — it breaks write-then-read.
-    hnsw_candidates = max(_vs_settings.vector_search_ef_search, min(512, int(q.top_k) * 4))
     distance_expr = await _fact_distance_expr(q, ch, _vs_settings)
     select_from = f"""
         SELECT
@@ -144,32 +140,22 @@ async def _fact_leg_sql(
     # carries a patch part, so with patch parts present the
     # flag reads MORE than the plain scan (304 vs 177 ms on a large tenant).
     # `fact_codes_first` says yes only under `on`, or under `auto` when the
-    # 60 s probe of system.parts read zero patch parts; the multiplier then
-    # drops to `memory_search_fact_codes_fetch_multiplier` (1.0: the LIMIT
-    # already over-fetches 4x and the shortlist is re-ranked exactly, so the
-    # codec's x3 only touched more granules, as on the chunk leg's stage 1).
-    # Off, the fragment carries no codes settings.
+    # 60 s probe of system.parts read zero patch parts; the shortlist is then
+    # LIMIT x `memory_search_fact_codes_fetch_multiplier`.
+    # Off, the statement carries no vector settings: an exact scan. No table
+    # has a vector index; the identity PREWHERE keeps the read to the tenant's
+    # granules, and ClickHouse sorts their distances exactly.
     codes_first = await fact_codes_first(ch, settings_obj=_vs_settings)
-    vector_settings_fragment = vector_search_settings(
-        ef_search=hnsw_candidates,
-        fetch_multiplier=(
-            float(_vs_settings.memory_search_fact_codes_fetch_multiplier)
-            if codes_first
-            else float(_vs_settings.vector_search_index_fetch_multiplier)
-        ),
+    codes_sql = vector_search_settings(
+        fetch_multiplier=float(_vs_settings.memory_search_fact_codes_fetch_multiplier),
         quantized=codes_first,
     )
+    settings_head = f"{codes_sql}," if codes_sql else "SETTINGS"
     main_threads_sql = _main_leg_threads_sql(_vs_settings)
     sql = f"""{select_from}
         {order_clause}
         LIMIT {{internal_limit:UInt32}}
-        {vector_settings_fragment},
-            -- hnsw_candidate_list_size_for_search above scales with top_k;
-            -- vector_search_index_fetch_multiplier over-fetches INSIDE the
-            -- index, not just at the SQL LIMIT. The identity tuple in PREWHERE
-            -- makes CH post-filter, so without it a selective tenant can get
-            -- fewer rows back than it asked for — the `internal_limit` 4x
-            -- over-fetch below does not cover it.
+        {settings_head}
             {main_threads_sql}-- A text index on content_excerpt_lc, if one is declared, fires on
             -- hasAnyTokens with no per-query setting. Its DIRECT-READ
             -- shortcut (the __text_index_*_hasAnyTokens virtual columns) hands

@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 # After extraction, compress a session into one dense dated digest, embed it
 # with the fact-plane embedder, and store it in loom.session_summaries. The
-# read leg ANN-retrieves these as source="summary" hits — a compact,
+# read leg retrieves these by vector as source="summary" hits — a compact,
 # high-recall stand-in for a whole session.
 
 # Bumped when the prompt text changes, so an operator can tell which prompt

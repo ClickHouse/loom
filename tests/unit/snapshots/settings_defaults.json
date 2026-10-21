@@ -1083,8 +1083,6 @@
  "usage_fold_enabled": true,
  "usage_fold_interval_seconds": 300,
  "vector_codes_state_probe_seconds": 60,
- "vector_search_ef_search": 256,
- "vector_search_index_fetch_multiplier": 10.0,
  "vector_search_quantized_codes": true,
  "vector_search_quantized_fetch_multiplier": 3.0,
  "web_workers": 1,

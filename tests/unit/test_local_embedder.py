@@ -125,7 +125,7 @@ def test_gemini_model_without_key_falls_back_to_fake(monkeypatch: pytest.MonkeyP
 
 def test_keyless_fallback_uses_the_configured_dim(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fallback is as wide as LOOM_EMBEDDING_DIM, like an explicit fake:
-    the schema and HNSW index are sized from that setting, not from 1024."""
+    the schema's vector columns are sized from that setting, not from 1024."""
     monkeypatch.setattr(settings, "embedding_model", "text-embedding-3-small")
     monkeypatch.setattr(settings, "embedding_dim", 1536)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
