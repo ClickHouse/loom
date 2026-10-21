@@ -56,7 +56,7 @@ python scripts/codegen/wire_changelog.py v<previous> HEAD
 
 3. The tag push runs `.github/workflows/release.yml` (below), publishes the server image,
    and only then creates the GitHub Release. Check the image and release files.
-4. To publish to the package registries, run the same workflow manually on the tag:
+4. To publish the SDKs and the MCP Registry listing, run the same workflow manually on the tag:
 
    ```bash
    gh workflow run release.yml --ref vX.Y.Z

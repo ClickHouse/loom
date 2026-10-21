@@ -1,14 +1,16 @@
-# Loom ambient-capture plugin (Claude Code)
+# Loom for Claude Code
 
-Capture an AI coding agent's work into Loom **ambiently** — no trigger phrases,
-no "remember this", no agent cooperation. Lifecycle hooks POST each tool action
-to Loom's episodic plane as it happens; errors land typed for bug-triage; the
-session crystallizes into durable memory on compaction/exit.
+Shared long-term memory and code intelligence for Claude Code, self-hosted on
+ClickHouse. The MCP tools save and recall decisions, preferences and corrections
+across sessions and teammates. Lifecycle hooks capture each session with no model
+call and no trigger phrase: each tool action is recorded as it happens, errors
+are typed for triage, and the session becomes durable memory at compaction and
+exit. In a Loom-indexed repository, the code tools answer where-is, who-calls and
+blast-radius questions with line-accurate units instead of whole-file reads.
 
-This is the write-side complement to Loom's MCP transport: MCP _surfaces_ memory
-(the agent reads it); this plugin _captures_ memory (the agent doesn't have to
-ask). Both share Loom's governed ClickHouse substrate — org/namespace/agent
-identity, conflict detection, blacklist, erasure cascade.
+The tools and the hooks share one identity (org, namespace, agent) and the same
+conflict detection, blacklist and erasure. What the plugin sends, and where, is
+in [data handling](../../docs/features/integrations/claude-code.md#data-handling).
 
 The plugin also mounts the MCP tools: `.mcp.json` points at
 `${user_config.server_url}/mcp?toolset=${user_config.toolset}` (the

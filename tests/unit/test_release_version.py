@@ -1,4 +1,4 @@
-"""The server's version is single-sourced, and every surface reports it."""
+"""The server's version is set in server/__init__.py; every surface and the registry listing carry it."""
 
 from __future__ import annotations
 
