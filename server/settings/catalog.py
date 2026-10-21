@@ -3453,6 +3453,9 @@ class ObservabilitySettings(BaseModel):
     # shares no state with retrieval). 0.0 = off: it costs money per search;
     # a few percent (e.g. 0.05) suits production.
     retrieval_judge_sample_rate: float = 0.0
+    # Secret that `loom export-analytics` hashes org, namespace and agent names
+    # under: a random string of 32 or more characters; a new key changes every hash.
+    analytics_export_name_key: str = ""
 
     # ---- timeouts, budgets and caches ----
     # Seconds one agents.connected answer per (org, namespace, window, caller) is

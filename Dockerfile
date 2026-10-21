@@ -17,6 +17,7 @@ COPY sdk ./sdk
 # lemmatizer and needs build-essential to compile, which is why it is an
 # extra rather than a core dep (a host that only runs the `loom` CLI must
 # `pip install -e .` without a compiler).
+# [aws] (boto3) ships in the image for `loom export-analytics`.
 # [code] extras (tree-sitter, numpy) ship in the image: the code-plane
 # workers and the async code.refresh path lazy-import them at runtime,
 # so a plain "." install boots green and then crashes on first ingest.
@@ -32,8 +33,8 @@ ARG LOOM_EMBEDDING_MODEL=""
 # runtime stage copies at the same path.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 RUN case "$LOOM_EMBEDDING_MODEL" in \
-         local*) EXTRAS="--extra code --extra lemma --extra local-embedder" ;; \
-         *) EXTRAS="--extra code --extra lemma" ;; \
+         local*) EXTRAS="--extra aws --extra code --extra lemma --extra local-embedder" ;; \
+         *) EXTRAS="--extra aws --extra code --extra lemma" ;; \
        esac \
     && uv sync --locked --no-editable --no-cache $EXTRAS
 

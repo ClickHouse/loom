@@ -220,6 +220,9 @@ the worker `server/erasure/workers/recovery.py`.
   end of life should be reversible.
 - **Backups are outside the saga**; see
   [backup and recovery](../../operations/backup-and-recovery.md).
+- **The analytics export bucket is outside the saga.** Its files hold hashed org, namespace
+  and agent names and usage counts, never memory content; see
+  [hashed names](../../operations/analytics-export.md#hashed-names).
 
 ## Related
 

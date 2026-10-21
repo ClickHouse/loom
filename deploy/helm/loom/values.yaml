@@ -269,6 +269,37 @@ workers:
   # build tree) per compiler tier, the Go module cache.
   cache: {}
 
+# A daily CronJob that runs `loom export-analytics`: the previous UTC day's
+# usage and a namespace snapshot as Parquet in an S3 bucket, for a data
+# warehouse to load (docs/operations/analytics-export.md). It runs under its own
+# service account, so the bucket's write access is never on the web pods.
+analyticsExport:
+  enabled: false
+  # After midnight UTC, so the day it exports has ended.
+  schedule: "30 0 * * *"
+  bucket: ""
+  prefix: ""
+  # Org, namespace and agent leave as a keyed hash. The Secret holding the key
+  # (a random string of 32 or more characters), read by the export pod only,
+  # never by the web or workers pods. Required.
+  nameKeySecret:
+    name: ""
+    key: LOOM_ANALYTICS_EXPORT_NAME_KEY
+  # A writer role to assume (in the bucket's account) with the pod's credentials.
+  # Empty: the pod's own role writes, and needs s3:PutObject itself.
+  roleArn: ""
+  region: ""
+  # The account id that must own the bucket, quoted; a write to any other is refused.
+  expectedBucketOwner: ""
+  serviceAccount:
+    # IRSA (eks.amazonaws.com/role-arn): a role that may only assume roleArn, or,
+    # with roleArn empty, may only put objects into the bucket.
+    annotations: {}
+  # The pod's two emptyDirs are 1Gi each.
+  resources:
+    requests: { cpu: 100m, memory: 512Mi, ephemeral-storage: 2Gi }
+    limits: { cpu: "1", memory: 2Gi, ephemeral-storage: 3Gi }
+
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, and TCP 443 and the ClickHouse port anywhere except
 # `egressExcept` (providers, the IdP and git remotes have no fixed range).
