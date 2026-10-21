@@ -1560,8 +1560,8 @@ async def titler_candidates(
           AND NOT has({off:Array(String)}, c.org)
           -- Titled and deleted threads are not candidates: skipped after
           -- the LIMIT, they filled it every pass and older untitled
-          -- threads were never reached. Nor is a thread whose generated
-          -- title was refused as reading high.
+          -- threads were never reached. Nor is a thread marked
+          -- title_refused: its title, or every opening turn, read as high.
           AND (c.org, c.namespace, c.thread_id) NOT IN (
               SELECT org, namespace, thread_id FROM loom.conversation_threads FINAL
               WHERE tombstoned_at IS NOT NULL OR title != ''
