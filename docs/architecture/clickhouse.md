@@ -98,7 +98,8 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   because identical telemetry rows in one flush window are legitimate.
 - **Batched inserts.** A committed insert makes one part, so a table written on every
   request makes parts at the request rate, and merges fall behind ("too many parts"). The
-  writes made on every request or by every process on a short interval (`audit_log`,
+  inserts that a later read waits for but that need no fence or identity token, most of
+  them made on every request or by every process on a short interval (`audit_log`,
   `conversations` and `conversation_embeddings` from `conversation.append`, the
   `agent_events` flush, the policy witness's `agent_events` and `memory_exposures` rows,
   `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,

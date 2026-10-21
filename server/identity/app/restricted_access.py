@@ -75,9 +75,9 @@ async def note_restricted_access(
     namespace. Returns True when the row was written (or, with
     `restricted_audit_inline` off, scheduled). Never raises.
 
-    By default the row is committed before the handler runs, so a process
-    killed after answering never loses it. The one-row INSERT into
-    loom.audit_log takes 0.5-3.2 s at the median (p90 5 s) on Cloud;
+    By default the row is waited for (a batched insert) before the handler
+    runs, so a process killed after answering never loses it. That wait
+    includes up to `ch_batched_insert_wait_max_ms`;
     `restricted_audit_inline=false` writes it beside the request instead
     (same row, same hash, drained at shutdown) and accepts losing it to a
     SIGKILL."""

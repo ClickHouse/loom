@@ -100,9 +100,9 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Longest a batched insert (rows written on every request) waits, ms, for others to
-  # share its part; under load ~1000 / this parts/s per table, node, insert shape and
-  # partition. [live]
+  # Longest a batched insert (a waited insert that needs no fence or identity token)
+  # waits, ms, for others to share its part; under load ~1000 / this parts/s per table,
+  # node, insert shape and partition. [live]
   # ch_batched_insert_wait_max_ms: 50
 
   # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are

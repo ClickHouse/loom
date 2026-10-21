@@ -294,7 +294,7 @@ def test_effective_budget_ms_applies_the_deployment_multiplier_after_the_consume
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
             return {"v": time.time_ns()}
 
-        async def insert(self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]):
+        async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None):
             assert table == ro.TABLE
             written.extend(rows)
 
@@ -507,7 +507,7 @@ def test_admin_budget_set_takes_a_consumer(
         async def query_one(self, sql: str, params: Any = None) -> dict[str, Any]:
             return {"v": time.time_ns()}
 
-        async def insert(self, table: str, rows: list[dict[str, Any]], settings: dict[str, Any]):
+        async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None):
             assert table == ro.TABLE
             written.extend(rows)
 

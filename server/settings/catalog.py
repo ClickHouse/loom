@@ -560,9 +560,9 @@ class ClickHouseSettings(BaseModel):
     ch_timeout_write_s: float = 60.0
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
-    # Longest a batched insert (rows written on every request) waits, ms, for others to
-    # share its part; under load ~1000 / this parts/s per table, node, insert shape and
-    # partition.
+    # Longest a batched insert (a waited insert that needs no fence or identity token)
+    # waits, ms, for others to share its part; under load ~1000 / this parts/s per
+    # table, node, insert shape and partition.
     ch_batched_insert_wait_max_ms: Annotated[int, LIVE] = Field(default=50, gt=0)
     # Shortest wait, ms, of a batched insert: what a lone insert waits when writes are
     # sparse. A value above `ch_batched_insert_wait_max_ms` is read as the maximum.
@@ -5054,7 +5054,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "context.fetch": 150,
     "context.offload": 300,
     "context.pack": 600,
-    "conversation.append": 30,
+    # Two batched inserts in sequence (the message, then its embedding), each waits up
+    # to ch_batched_insert_wait_max_ms (50) on top of the ~30 ms of writes.
+    "conversation.append": 130,
     # Dominated by the LLM round-trip.
     "conversation.compact": 3500,
     "conversation.create": 30,
@@ -5223,12 +5225,15 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.search": 200,
     "memory.search_trace": 200,
     "memory.search_trace_log": 200,
-    # A set is five committed inserts plus the conflict and dedup reads: p50
+    # A set is four committed inserts and one batched audit insert plus the conflict
+    # and dedup reads: p50
     # 1,062 ms and p99 3.7 s on ClickHouse Cloud. 200 ms at the x20 multiplier
     # = 4 s sits at that p99, so a violation is a signal.
     "memory.set": 200,
-    # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms.
-    "memory.set_from_messages": 2500,
+    # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms,
+    # and about six batched inserts in sequence each wait up to
+    # ch_batched_insert_wait_max_ms (50).
+    "memory.set_from_messages": 2800,
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.
     "memory.stack": 200,
