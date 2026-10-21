@@ -285,13 +285,15 @@ _CENSUS: tuple[Substrate, ...] = (
         "delete_version_checks.delete",
     ),
     # Memory webhook events: a row's identity, key and id, never its text; read for 3
-    # days, a day's part dropped within about 4 (the TTL drops whole parts).
+    # days, a day's part dropped within about 4 (the TTL drops whole parts). The
+    # saga's own memory.erased announcements (no key, user '-') are not residue.
     Substrate(
         "loom.memory_webhook_outbox",
-        "1",
+        "event_type != 'memory.erased'",
         UID,
         "memory_webhook_outbox.delete",
         "memory_webhook_outbox.delete",
+        final=False,
     ),
     Substrate("loom.entity_degree", "1", None, "entity_graph.delete", None),
     Substrate("loom.learnings_queue", "1", None, "learnings_queue.delete", None),

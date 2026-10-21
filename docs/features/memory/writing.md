@@ -279,15 +279,16 @@ the table.
 
 Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
 events. A `memory.set` of the same value with the same type, tags, expiry, confidence,
-`valid_at`, `valid_to` and sensitivity (a restatement, which only reinforces the row) sends none; the same value
-with any of those changed is `memory.revised`. A retry with the same fields is a restatement and
-sends nothing; a retry that recomputes a relative expiry (`ttl_seconds`, a type's retention, the
-sensitive-data retention) moves `expires_at` and is `memory.revised`. `memory.bulk_set` skips any entry whose
-value equals the live row's: it writes no version and sends no event, even when the
-entry's tags, expiry or confidence differ. In one `memory.bulk_set`, a key that an
-earlier entry of the batch wrote is `memory.revised`; if the batch's lookup of live keys
-fails, its revisions are announced as `memory.written`. A merge (`merged_into_key`) writes
-no version at your key and sends no event; neither does a dry run or a refused write.
+`valid_at`, `valid_to` and sensitivity (a restatement, which only reinforces the row)
+sends none; the same value with any of those changed is `memory.revised`. A retry with the
+same fields is a restatement and sends nothing; a retry that recomputes a relative expiry
+(`ttl_seconds`, a type's retention, the sensitive-data retention) moves `expires_at` and
+is `memory.revised`. `memory.bulk_set` skips any entry whose value equals the live row's:
+it writes no version and sends no event, even when the entry's tags, expiry or confidence
+differ. In one `memory.bulk_set`, a key that an earlier entry of the batch wrote is
+`memory.revised`; if the batch's lookup of live keys fails, its revisions are announced as
+`memory.written`. A merge (`merged_into_key`) writes no version at your key and sends no
+event; neither does a dry run or a refused write.
 
 These writes send no event:
 

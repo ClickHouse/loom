@@ -45,6 +45,7 @@ import httpx
 
 from server.core import webhooks as signed
 from server.core.datetimes import naive_utc_now
+from server.core.webhook_secrets import webhook_secret_org_prefix
 from server.memory.app.webhooks import url_schemes
 from server.memory.domain.webhook_events import backoff_seconds, event_body
 from server.memory.store import webhooks as store
@@ -106,6 +107,21 @@ class _Health:
 # Per webhook, in this process only (best effort: a restart or another leader
 # starts afresh, which costs a few more failed POSTs).
 _health: dict[str, _Health] = {}
+
+# Secret refs already reported as not usable: said once each, not on every pass.
+_warned_missing_secret: set[str] = set()
+
+
+def _warn_missing_secret(org: str, ref: str) -> None:
+    if ref in _warned_missing_secret:
+        return
+    _warned_missing_secret.add(ref)
+    log.warning(
+        "memory webhook: no usable secret in env %r (unset, or a whsec_ value that is empty "
+        "or not base64; the name must start %s); its events wait",
+        ref,
+        webhook_secret_org_prefix(org),
+    )
 
 
 def _cooling_until(webhook_id: str) -> datetime | None:
@@ -353,10 +369,16 @@ async def deliver_once(
         return (not org or hook[0] == org) and (not namespace or hook[1] == namespace)
 
     live = [h for h in await store.live_webhooks() if mine(_hook(h))]
-    secrets = {_hook(h): signed.read_secret(str(h["org"]), str(h["secret_ref"]), env) for h in live}
+    secrets = {
+        _hook(h): signed.read_secret(str(h["org"]), str(h["secret_ref"]), env, warn=False)
+        for h in live
+    }
     urls = {_hook(h): str(h["url"]) for h in live}
     usable = {k: s for k, s in secrets.items() if s is not None}
     unsecured = [k for k in secrets if k not in usable]
+    for h in live:
+        if secrets[_hook(h)] is None:
+            _warn_missing_secret(str(h["org"]), str(h["secret_ref"]))
     sendable = [k for k in usable if _cooling_until(k[2]) is None]
 
     removed = [h for h in await store.removed_webhooks(now - _removal_window()) if mine(h)]

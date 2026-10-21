@@ -7,9 +7,9 @@ listed with its default and meaning in the generated
 variables read directly with `os.environ` (or a shell `${VAR}`) by the server,
 the CLI, the SDKs, the plugins, the container image, the compose files and the operator
 scripts. The `LOOM_*` ones are listed in `NON_SETTINGS_ENV` (`server/settings/_env.py`),
-which the server's unknown-variable warning skips, except the webhook signing secrets, a
-family the warning skips by its `LOOM_WEBHOOK_SECRET_` prefix;
-`tests/unit/test_environment_reference.py` keeps that list and this page the same.
+or, for a family such as the webhook signing secrets, in `NON_SETTINGS_ENV_PREFIXES`, and
+the server's unknown-variable warning skips them;
+`tests/unit/test_environment_reference.py` keeps those lists and this page the same.
 
 ## Server
 

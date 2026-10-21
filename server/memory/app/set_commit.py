@@ -277,15 +277,9 @@ def _only_reinforces(w: _SetWrite) -> bool:
 
 
 async def _announce_set(w: _SetWrite) -> None:
-    """The row just inserted, to the namespace's webhooks: a new key is written, a new
-    value, status, type, tags, expiry, confidence, valid_at, valid_to or sensitivity of one
-    is revised,
-    and the same row said again (a reinforcement) is no change to announce. A proposal
-    is not served, so it is announced when `memory.proposal_decide` accepts it. Called
-    once the row is in, even when the rest of the write fails, so the event is not lost:
-    a retry with the same fields is a reinforcement and announces nothing; a retry that
-    recomputes a relative expiry (`ttl_seconds`, a type's retention, the sensitive-data
-    retention) moves `expires_at` and is `memory.revised`."""
+    """Announce the inserted row: `memory.written` for a new key, `memory.revised` for
+    any change to a live key, nothing for a pure reinforcement or a proposal. Called
+    once the row is in, whatever fails after it."""
     if _only_reinforces(w) or w.memory_row.get("status") == "proposed":
         return
     event: EventType = "memory.revised" if w.had_existing_row else "memory.written"

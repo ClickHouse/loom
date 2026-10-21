@@ -1137,6 +1137,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeStore:
     fs = FakeStore([_outbox_row(event_id="ev-1")], [_registration("wh1")])
     monkeypatch.setattr(worker, "store", fs)
     monkeypatch.setattr(worker, "_health", {})
+    monkeypatch.setattr(worker, "_warned_missing_secret", set())
     monkeypatch.setattr(signed, "vet_host", _public)
     CLOCK.t = _at(NOW)
     monkeypatch.setattr(worker, "naive_utc_now", _clock_now)
@@ -1212,6 +1213,18 @@ async def test_an_event_waits_while_its_secret_is_not_set_and_dies_before_the_tt
     await _pass(lambda r: httpx.Response(204), now=NOW + timedelta(days=2, hours=13), env={})
     assert fake.last("ev-2")["status"] == "dead"
     assert fake.last("ev-2")["last_error"] == "no usable secret"
+
+
+@pytest.mark.asyncio
+async def test_an_unset_secret_is_warned_about_once(
+    fake: FakeStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.WARNING)
+    await _pass(lambda r: httpx.Response(204), env={})
+    await _pass(lambda r: httpx.Response(204), env={})
+    warnings = [r.getMessage() for r in caplog.records if "no usable secret" in r.getMessage()]
+    assert len(warnings) == 1
+    assert REF in warnings[0] and "LOOM_WEBHOOK_SECRET_ACME__" in warnings[0]
 
 
 @pytest.mark.asyncio

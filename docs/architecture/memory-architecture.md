@@ -507,7 +507,7 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
 After a write path's rows are in, it calls `announce` (`server/memory/app/webhooks.py`)
 with the event (`memory.written`, `memory.revised`, `memory.tombstoned`,
 `memory.restored`, `memory.redacted`; the erasure saga sends `memory.erased` after its
-census). For each webhook of the namespace that takes the event it inserts one
+census, which does not count those rows as residue). For each webhook of the namespace that takes the event it inserts one
 `loom.memory_webhook_outbox` row holding ids and the identity tuple, never content, and
 nothing rewrites it. Which namespaces have webhooks is a per-process copy of
 `loom.memory_webhooks`, read again every `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`: a
