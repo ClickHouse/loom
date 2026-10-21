@@ -512,7 +512,7 @@ def test_a_turn_written_between_the_size_pass_and_the_text_read_is_not_served() 
 
     def key(thread: str, second: int, msg: str) -> dict:
         ts = datetime(2026, 1, 1, 0, 0, second)
-        return {"namespace": STD, "thread_id": thread, "ts": ts, "msg_id": msg}
+        return {"namespace": STD, "thread_id": thread, "ts": ts, "msg_id": msg, "row_bytes": 6}
 
     class _Racing:
         async def query_all(self, sql, params=None, **_k):
@@ -550,7 +550,13 @@ def test_two_measured_copies_of_one_turn_are_both_served() -> None:
 
     from server.erasure.store import exports
 
-    turn = {"namespace": STD, "thread_id": "t1", "ts": datetime(2026, 1, 1), "msg_id": "m1"}
+    turn = {
+        "namespace": STD,
+        "thread_id": "t1",
+        "ts": datetime(2026, 1, 1),
+        "msg_id": "m1",
+        "row_bytes": 6,
+    }
 
     class _Twice:
         async def query_all(self, sql, params=None, **_k):
@@ -582,7 +588,13 @@ def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() ->
     from server.erasure.store import exports
 
     def turn(msg: str) -> dict:
-        return {"namespace": STD, "thread_id": "t1", "ts": datetime(2026, 1, 1), "msg_id": msg}
+        return {
+            "namespace": STD,
+            "thread_id": "t1",
+            "ts": datetime(2026, 1, 1),
+            "msg_id": msg,
+            "row_bytes": 6,
+        }
 
     class _Full:
         async def query_all(self, sql, params=None, **_k):
@@ -605,3 +617,36 @@ def test_the_turns_stop_at_the_row_limit_without_reading_the_next_ones_text() ->
         )
     )
     assert [r["msg_id"] for r in got] == ["m1", "m2"] and left_out
+
+
+def test_an_uncounted_copy_that_ties_on_the_last_key_is_not_served() -> None:
+    """Two copies of one turn share its sort key; when the text read returns the copy the
+    size pass left out, it is dropped by its size and the section says rows are missing."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    key = {"namespace": STD, "thread_id": "t1", "ts": datetime(2026, 1, 1), "msg_id": "m1"}
+
+    class _Tie:
+        async def query_all(self, sql, params=None, **_k):
+            if "bytes_before_previous" in sql:
+                return [
+                    {**key, "row_bytes": 6, "bytes_before": 0},
+                    {**key, "row_bytes": 999, "bytes_before": 6},
+                ]
+            return [{**key, "row_bytes": 999, "content": "huge"}]
+
+    got, left_out = asyncio.run(
+        exports.export_conversations(
+            ORG,
+            "namespace",
+            STD,
+            include_tombstoned=True,
+            limit=10,
+            max_bytes=6,
+            as_of=_AS_OF,
+            ch=_Tie(),
+        )
+    )
+    assert got == [] and left_out

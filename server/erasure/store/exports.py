@@ -161,12 +161,12 @@ async def export_conversations(
         **shown_params,
     }
     # A row's sums depend only on the rows before it, so the windows need only the
-    # first `limit` rows in order.
+    # rows the page can hold, plus one.
     sizes = await ch.query_all(
         f"""
-        SELECT namespace, thread_id, ts, msg_id, bytes_before
+        SELECT namespace, thread_id, ts, msg_id, row_bytes, bytes_before
         FROM (
-            SELECT namespace, thread_id, ts, msg_id,
+            SELECT namespace, thread_id, ts, msg_id, row_bytes,
                    sum(row_bytes) OVER (ORDER BY {_CONVERSATION_ORDER}
                        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS bytes_before,
                    sum(row_bytes) OVER (ORDER BY {_CONVERSATION_ORDER}
@@ -191,7 +191,7 @@ async def export_conversations(
     last = kept[-1]
     rows = await ch.query_all(
         f"""
-        SELECT {_CONVERSATION_COLUMNS}
+        SELECT {_CONVERSATION_COLUMNS}, {_CONVERSATION_BYTES} AS row_bytes
         FROM loom.conversations
         WHERE {where}
           AND ({_CONVERSATION_ORDER}) <= ({{last_ns:String}}, {{last_tid:String}},
@@ -208,10 +208,13 @@ async def export_conversations(
             "kept": len(kept),
         },
     )
+    # Keyed by size too: two copies of one turn tie on the sort key, and the read may
+    # return a copy the size pass did not count.
     measured = Counter(_turn_key(s) for s in kept)
     served: list[dict[str, Any]] = []
     for r in rows:
         key = _turn_key(r)
+        del r["row_bytes"]
         if measured[key] > 0:
             measured[key] -= 1
             served.append(r)
@@ -220,7 +223,7 @@ async def export_conversations(
 
 
 def _turn_key(row: dict[str, Any]) -> tuple[Any, ...]:
-    return (row["namespace"], row["thread_id"], row["ts"], row["msg_id"])
+    return (row["namespace"], row["thread_id"], row["ts"], row["msg_id"], int(row["row_bytes"]))
 
 
 async def export_conversation_threads(

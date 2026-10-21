@@ -38,6 +38,7 @@ _ROWS = rows_by_substring(
                 "thread_id": "t",
                 "ts": datetime(2026, 1, 1),
                 "msg_id": "m",
+                "row_bytes": 1,
                 "bytes_before": 0,
             }
         ],
