@@ -226,7 +226,9 @@ class _LocalCH:
 
 # Fixed times: each check replays its setup, so a `now()` there would move between runs.
 _T0 = "toDateTime('2026-01-01 00:00:00')"
-_DAY1, _DAY2, _DAY3 = (f"toDateTime('2026-01-0{d} 00:00:00')" for d in (2, 3, 4))
+_JAN2 = "toDateTime('2026-01-02 00:00:00')"
+_JAN3 = "toDateTime('2026-01-03 00:00:00')"
+_JAN4 = "toDateTime('2026-01-04 00:00:00')"
 
 
 def _fact(mid: str, user: str, key: str, sha: str, version: int = 1, **cols: str) -> str:
@@ -738,9 +740,9 @@ async def test_a_fact_edited_last_is_read_last() -> None:
 
     ch = _LocalCH(
         ddl("memory"),
-        _dated(_A, "My timezone is Berlin.", _DAY1, _DAY1),
-        _dated(_B, "My timezone is Tokyo.", _DAY2, _DAY2),
-        _dated(_A, "My timezone is Paris.", _DAY1, _DAY3, version=2),
+        _dated(_A, "My timezone is Berlin.", _JAN2, _JAN2),
+        _dated(_B, "My timezone is Tokyo.", _JAN3, _JAN3),
+        _dated(_A, "My timezone is Paris.", _JAN2, _JAN4, version=2),
     )
     rows = await src.user_facts(
         org="o",
@@ -815,8 +817,8 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
 
     local_store(
         ddl("memory"),
-        _dated(_A, "My timezone is Berlin.", _DAY1, _DAY1),
-        _dated(_B, "My timezone is Tokyo.", _DAY2, _DAY2),
+        _dated(_A, "My timezone is Berlin.", _JAN2, _JAN2),
+        _dated(_B, "My timezone is Tokyo.", _JAN3, _JAN3),
     )
     monkeypatch.setattr(settings, "structured_profile_memory_limit", 1)
     read: list[str] = []
@@ -832,7 +834,7 @@ async def test_a_build_reads_at_most_the_configured_number_of_facts(
     monkeypatch.setattr(schema_app, "write_structured_profile", write)
     schema = w.ActiveSchema("o", "n", ps.parse(_schema(tz=_TZ)), _SHA)
     assert await w.build_profile(schema, "u1") == 0
-    assert read == ["- [2026-01-03] My timezone is Tokyo."]  # _DAY2
+    assert read == ["- [2026-01-03] My timezone is Tokyo."]  # _JAN3
 
 
 @_needs_ch
@@ -842,11 +844,11 @@ async def test_restating_an_older_fact_makes_it_the_latest_the_build_reads() -> 
     from server.memory.store import profile_sources as src
     from server.memory.workers.structured_profile import render_facts
 
-    berlin = _dated(_A, "My timezone is Berlin.", _DAY1, _DAY1)
-    tokyo = _dated(_B, "My timezone is Tokyo.", _DAY2, _DAY2)
+    berlin = _dated(_A, "My timezone is Berlin.", _JAN2, _JAN2)
+    tokyo = _dated(_B, "My timezone is Tokyo.", _JAN3, _JAN3)
     built = [*await _built(berlin, tokyo)]
     assert await _behind(_LocalCH(*built)) == []
-    restated = _dated(_A, "My timezone is Berlin.", _DAY1, "now()", version=2)
+    restated = _dated(_A, "My timezone is Berlin.", _JAN2, "now()", version=2)
     ch = _LocalCH(*built, restated)
     assert await _behind(ch) == ["u1"]
     rows = await src.user_facts(

@@ -244,21 +244,35 @@ async def find_history_target(
 
 async def version_exists(
     org: str,
+    target: HistoryTarget,
     memory_id: str,
     version: int,
     *,
     ch: _CHClient | None = None,
 ) -> bool:
     """Whether the mirror holds (memory_id, version): memory.redact checks the
-    named version before it scrubs anything built from the memory."""
+    named version before it scrubs anything built from the memory. `target`
+    carries the sort-key columns, so this is a point read."""
     ch = ch or _default_client()
     r = await ch.query_one(
         """
         SELECT 1 AS found FROM loom.memory_versions
-        WHERE org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}
+        WHERE org = {org:String} AND namespace = {ns:String} AND agent = {a:String}
+          AND user_id = {u:String} AND session_id = {s:String}
+          AND memory_key = {k:String} AND version = {v:UInt64}
+          AND memory_id = {mid:UUID}
         LIMIT 1
         """,
-        params={"org": org, "mid": memory_id, "v": version},
+        params={
+            "org": org,
+            "ns": target.namespace,
+            "a": target.agent,
+            "u": target.user_id,
+            "s": target.session_id,
+            "k": target.memory_key,
+            "v": version,
+            "mid": memory_id,
+        },
     )
     return r is not None
 

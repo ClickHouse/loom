@@ -287,7 +287,7 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
     async def _redact_versions(org, namespace, user_id, mid, version, *, when, reason_blob):
         redacted.append((org, mid, version))
 
-    async def _exists(org, mid, version):
+    async def _exists(org, target, mid, version):
         return True
 
     deleted: list[tuple[str, str, str]] = []

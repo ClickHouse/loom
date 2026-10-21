@@ -604,7 +604,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         _lock.assert_unlocked(head, "delete", op="memory.redact")
     # A version that does not exist scrubs nothing, so nothing built from the memory
     # is scrubbed either.
-    if not await memory_repo.version_exists(input.org, input.memory_id, input.version):
+    if not await memory_repo.version_exists(input.org, target, input.memory_id, input.version):
         return MemoryRedactOutput(redacted=False)
     # A lock on a profile key built from this memory refuses the redact before
     # anything is scrubbed, as a lock on the memory's own key does.
