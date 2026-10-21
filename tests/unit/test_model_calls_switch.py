@@ -6,7 +6,6 @@ the deployment's own calls go on."""
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any
 
 import httpx
@@ -17,6 +16,7 @@ from server.llm import customer
 from server.observability import genai, provider_health
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.switch_state import switch_off, switch_stale, switch_unread
 
 
 @pytest.fixture(autouse=True)
@@ -24,10 +24,6 @@ def _identity_left_clean() -> Any:
     genai._identity.set(None)
     yield
     genai._identity.set(None)
-
-
-def _off(*orgs: str) -> None:
-    customer._reset_for_tests(frozenset(orgs))
 
 
 def _request(org: str) -> None:
@@ -58,7 +54,7 @@ def _chat(monkeypatch: pytest.MonkeyPatch) -> _Recorder:
 
 def test_a_switched_off_orgs_request_call_is_refused_before_anything_is_sent(monkeypatch) -> None:
     provider_health.reset()
-    _off("acme")
+    switch_off("acme")
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
         _chat(monkeypatch)
@@ -66,7 +62,7 @@ def test_a_switched_off_orgs_request_call_is_refused_before_anything_is_sent(mon
 
 
 def test_other_orgs_and_the_deployments_own_calls_go_on(monkeypatch) -> None:
-    _off("acme")
+    switch_off("acme")
     _request("beta")
     assert len(_chat(monkeypatch).calls) == 1
     genai._identity.set(None)
@@ -77,14 +73,14 @@ def test_other_orgs_and_the_deployments_own_calls_go_on(monkeypatch) -> None:
 def test_a_deployment_call_naming_a_switched_off_org_is_refused(monkeypatch) -> None:
     # The kill switch holds whatever path names the org: system() only covers
     # calls that name none.
-    _off("acme")
+    switch_off("acme")
     with customer.system(), customer.for_org("acme"), pytest.raises(customer.ModelCallsDisabled):
         _chat(monkeypatch)
 
 
 def test_it_holds_with_no_customer_header_and_lets_an_unknown_org_through(monkeypatch) -> None:
     monkeypatch.setattr(settings, "inference_customer_header", "")
-    _off("acme")
+    switch_off("acme")
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(customer.require())
@@ -103,7 +99,7 @@ def test_a_cli_command_for_a_switched_off_org_sends_nothing(monkeypatch, cmd: st
 
     monkeypatch.setattr(settings, "inference_customer_header", "")
     monkeypatch.setattr(settings, "code_org", "acme")
-    _off("acme")
+    switch_off("acme")
     sent: list[list[float]] = []
 
     def command(args: argparse.Namespace) -> int:
@@ -131,7 +127,7 @@ def test_a_switched_off_org_is_served_no_cached_vector(monkeypatch) -> None:
 
     monkeypatch.setattr(OpenAIEmbedder, "_embed_one_raw", fetch)
     embedder = OpenAIEmbedder(model="text-embedding-3-small", dim=8, api_key="k")
-    _off("acme")
+    switch_off("acme")
     _request("beta")
     asyncio.run(embedder.embed("the same text"))
     _request("acme")
@@ -160,7 +156,7 @@ def test_a_switched_off_org_is_served_no_cached_answer(monkeypatch) -> None:
 
     monkeypatch.setattr(cache_mod.CachedLLMClient, "_get", hit, raising=False)
     client = cache_mod.CachedLLMClient(_Inner())
-    _off("acme")
+    switch_off("acme")
     _request("acme")
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(client.complete("s", "u"))
@@ -189,7 +185,7 @@ class _Switch:
 def switch(monkeypatch: pytest.MonkeyPatch) -> _Switch:
     table = _Switch(set())
     monkeypatch.setattr("server.core.ch.get_client", lambda: table)
-    customer._reset_for_tests(read=False)
+    switch_unread()
     return table
 
 
@@ -201,17 +197,16 @@ def test_switching_back_on_takes_effect_and_the_switch_is_read_at_most_every_int
     assert asyncio.run(customer.switched_off("beta")) is False
     assert switch.reads == 1  # one read serves the interval
     switch.off = set()
-    customer.forget_switch()  # a change written on this server
+    customer.note_switch_change()  # a change written on this server
     assert asyncio.run(customer.switched_off("acme")) is False and switch.reads == 2
     assert switch.sequential == [True, True]  # the read after a write sees it on any replica
 
 
-def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch, monkeypatch) -> None:
-    assert asyncio.run(customer.switched_off("acme")) is False
-    switch.down = True
-    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_refresh_seconds - 1
+def test_a_copy_too_old_to_trust_refuses_every_call(switch: _Switch) -> None:
+    refresh = settings.model_calls_policy_refresh_seconds
+    customer._switch._reset_for_tests(frozenset(), read_age_s=refresh + 1, due_in_s=refresh)
     assert asyncio.run(customer.switched_off("acme")) is False  # still young enough
-    customer._switch._read_at = time.monotonic() - settings.model_calls_policy_max_stale_seconds - 1
+    switch_stale()
     with pytest.raises(BackendUnavailableError):
         asyncio.run(customer.switched_off("beta"))
 
@@ -223,7 +218,7 @@ def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> N
     plain = switch.query_all
 
     async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)  # the other calls arrive while this read runs
         return await plain(sql, **kw)
 
     monkeypatch.setattr(switch, "query_all", slow)
@@ -235,7 +230,7 @@ def test_calls_made_during_a_read_wait_for_it(switch: _Switch, monkeypatch) -> N
         assert await together() == [False] * 3
         assert switch.reads == 1
         stale = settings.model_calls_policy_max_stale_seconds + 1
-        customer._switch._read_at, customer._switch._next_read = time.monotonic() - stale, 0.0
+        customer._switch._reset_for_tests(frozenset(), read_age_s=stale, due_in_s=0.0)
         assert await together() == [False] * 3
         assert switch.reads == 2
 
@@ -253,7 +248,7 @@ def test_a_cancelled_read_leaves_the_next_call_to_read(switch: _Switch, monkeypa
 
     async def cancelled_then_read() -> bool:
         monkeypatch.setattr(switch, "query_all", hang)
-        first = asyncio.ensure_future(customer.switched_off("acme"))
+        first = asyncio.create_task(customer.switched_off("acme"))
         await reading.wait()
         first.cancel()  # the request that made the read went away
         with pytest.raises(asyncio.CancelledError):
@@ -276,10 +271,10 @@ def test_a_call_made_during_a_read_is_served_the_copy_in_hand(switch: _Switch, m
         return await plain(sql, **kw)
 
     async def second_call_during_the_read() -> bool:
-        customer._reset_for_tests(frozenset({"acme"}))
-        customer._switch._next_read = time.monotonic() - 1  # due, not asked for by a change
+        # Read just now, due again, not asked for by a change made here.
+        customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due_in_s=0.0)
         monkeypatch.setattr(switch, "query_all", slow)
-        first = asyncio.ensure_future(customer.switched_off("acme"))
+        first = asyncio.create_task(customer.switched_off("acme"))
         await reading.wait()
         second = await asyncio.wait_for(customer.switched_off("acme"), timeout=1.0)
         release.set()
@@ -295,7 +290,7 @@ def test_a_change_made_during_a_read_is_read_again(switch: _Switch, monkeypatch)
     async def write_meanwhile(sql: str, **kw: Any) -> list[dict[str, Any]]:
         rows = await plain(sql, **kw)
         switch.off = {"acme"}
-        customer.forget_switch()  # the write lands after this read took its rows
+        customer.note_switch_change()  # the write lands after this read took its rows
         return rows
 
     monkeypatch.setattr(switch, "query_all", write_meanwhile)
@@ -335,8 +330,8 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
 
     monkeypatch.setattr(model_calls.repo, "insert_row", insert_row)
     monkeypatch.setattr(model_calls.repo, "get", get)
-    forgot: list[bool] = []
-    monkeypatch.setattr(customer, "forget_switch", lambda: forgot.append(True))
+    noted: list[bool] = []
+    monkeypatch.setattr(customer, "note_switch_change", lambda: noted.append(True))
     admin = AuthInfo(
         subject="ops@acme.com",
         org="acme",
@@ -350,7 +345,7 @@ def test_an_org_admin_switches_its_org_and_reads_it_back(monkeypatch) -> None:
         assert before.enabled is True and before.updated_at is None  # never set: on
         body = OrgSetModelCallsInput(org="acme", enabled=False, reason="AI off")
         out = asyncio.run(model_calls.handle_org_set_model_calls(body))
-        assert out.enabled is False and out.updated_by == "ops@acme.com" and forgot == [True]
+        assert out.enabled is False and out.updated_by == "ops@acme.com" and noted == [True]
         [row] = rows
         assert (row["org"], row["enabled"], row["reason"], row["updated_by"]) == (
             "acme",
@@ -461,11 +456,11 @@ async def test_the_embedding_worker_leaves_a_switched_off_orgs_stubs_until_it_is
     monkeypatch.setattr(w, "_refresh_entities", no_refresh)
     monkeypatch.setattr(w, "get_embedder", lambda: _E())
 
-    _off("acme")
+    switch_off("acme")
     first = await w.run_pass(w.EmbeddingWorkerConfig(batch_size=10))
     assert first.embedded_count == 1
     assert {r["org"] for r in inserted} == {"beta"}  # acme's stub untouched: no retry, no attempt
-    _off()
+    switch_off()
     second = await w.run_pass(w.EmbeddingWorkerConfig(batch_size=10))
     assert second.embedded_count == 1
     assert [r["org"] for r in inserted if r.get("embedding_dim")] == ["beta", "acme"]
@@ -508,10 +503,10 @@ async def test_the_extraction_queue_leaves_a_switched_off_orgs_requests_pending(
     monkeypatch.setattr(q, "drop_waiting", nothing_waited_long)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
 
-    _off("acme")
+    switch_off("acme")
     await w.run_pass(w.ExtractionQueueConfig())
     assert done == ["q2"] and errors == []
-    _off()
+    switch_off()
     await w.run_pass(w.ExtractionQueueConfig())
     assert done == ["q2", "q1"] and errors == []
 
@@ -567,7 +562,7 @@ async def test_the_entity_extractor_selects_no_row_of_a_switched_off_org(
 
     monkeypatch.setattr(memory_repo, "find_unentitied_memories", find)
     monkeypatch.setattr(memory_repo, "find_unentitied_keys", find)
-    _off("acme")
+    switch_off("acme")
     await w._next_candidates(w.EntityExtractorConfig(batch_size=5))
     assert seen and all(s == frozenset({"acme"}) for s in seen)
 
@@ -605,7 +600,8 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
     with pytest.raises(customer.ModelCallsDisabled):
         asyncio.run(client.complete("s", "u"))
     switch.down = True
-    customer._reset_for_tests(read=False)  # never read, and the read fails: fail closed
+    # Never read, and the read fails: fail closed.
+    switch_unread()
     with pytest.raises(BackendUnavailableError):
         asyncio.run(client.complete("s", "u"))
     monkeypatch.setattr(settings, "inference_customer_header", "X-Customer")
@@ -616,13 +612,12 @@ def test_no_refusal_and_no_unreadable_switch_is_a_provider_failure(
 
 
 def test_a_failed_read_waits_its_turn_and_the_copy_serves_until_too_old(switch: _Switch) -> None:
-    switch.off = {"acme"}
-    assert asyncio.run(customer.switched_off("acme")) is True and switch.reads == 1
+    # A copy with acme switched off, read just now and due again; the read fails.
+    customer._switch._reset_for_tests(frozenset({"acme"}), read_age_s=0.0, due_in_s=0.0)
     switch.down = True
-    customer._switch._next_read = 0.0  # the next read is due
     assert asyncio.run(customer.switched_off("acme")) is True  # the last copy serves
     assert asyncio.run(customer.switched_off("acme")) is True
-    assert switch.reads == 2  # the failed read is not tried again before its turn
+    assert switch.reads == 1  # the failed read is not tried again before its turn
 
 
 def test_the_refresh_must_be_shorter_than_the_stale_bound(monkeypatch) -> None:
@@ -746,7 +741,7 @@ async def test_the_extraction_queue_drops_with_the_configured_wait(monkeypatch) 
     monkeypatch.setattr(q, "claim_batch", claim_batch)
     monkeypatch.setattr(settings, "model_calls_off_max_wait_days", 3)
     monkeypatch.setattr("server.core.ch.get_client", lambda: object())
-    _off("acme")
+    switch_off("acme")
     result = await w.run_pass(w.ExtractionQueueConfig())
     assert asked == [(frozenset({"acme"}), 3)] and result.dropped == 2
 
@@ -959,7 +954,7 @@ def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) 
     monkeypatch.setattr(reembed, "reembed_table", table)
     monkeypatch.setattr(reembed, "_waiting", waiting)
     monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
-    _off("acme")
+    switch_off("acme")
     lines: list[str] = []
     embedder = type("E", (), {"model_name": "m", "dim": 8})()
     out = asyncio.run(reembed.reembed_all(object(), embedder, log=lines.append))
@@ -970,9 +965,9 @@ def test_a_reembed_leaves_a_switched_off_orgs_rows_and_counts_them(monkeypatch) 
 
 def test_without_a_header_a_batch_splits_by_org_only_when_one_is_switched_off() -> None:
     assert settings.inference_customer_header == ""
-    _off()
+    switch_off()
     assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"": [0, 1, 2]}
-    _off("acme")
+    switch_off("acme")
     assert asyncio.run(customer.by_org(["acme", "beta", "acme"])) == {"acme": [0, 2], "beta": [1]}
 
 
@@ -1005,7 +1000,7 @@ def test_a_reembed_page_without_a_header_leaves_the_rows_of_an_org_switched_off_
     )
     chunk = [{"org": "acme", text: "a"}, {"org": "beta", text: "b"}]
     ch = _CH()
-    _off("acme")
+    switch_off("acme")
     left = asyncio.run(reembed._rewrite_page(ch, _Emb(), table, chunk, key_only=False))
     assert left == {"acme": 1} and sent == ["beta"]
     assert [r["org"] for r in ch.rows] == ["beta"]
@@ -1036,7 +1031,7 @@ def test_reembed_delete_old_keeps_the_vectors_of_every_org_it_left(monkeypatch) 
     monkeypatch.setattr(reembed, "reembed_table", table)
     monkeypatch.setattr(reembed, "_waiting", waiting)
     monkeypatch.setattr("server.core.vectors.codes_state.refuse_width", width)
-    _off("acme")
+    switch_off("acme")
     embedder = type("E", (), {"model_name": "new", "dim": 2})()
     asyncio.run(reembed.reembed_all(_CH(), embedder, delete_old=True, log=lambda *_: None))
     sql, params = next((s, p) for s, p in deletes if "loom.entity_vectors" in s)
@@ -1077,7 +1072,7 @@ def test_a_switch_gone_unread_mid_rebuild_batch_is_no_provider_failure(monkeypat
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
             raise customer.SwitchUnread("stale")
 
-    _off()
+    switch_off()
     with pytest.raises(customer.SwitchUnread):  # the step waits; the job does not fail
         asyncio.run(batch.rebuild_batch("memory_embeddings", [{"org": "acme", "text": "a"}], _E()))
 
@@ -1105,7 +1100,7 @@ def test_a_rebuild_stages_a_switched_off_orgs_rows_without_a_vector(monkeypatch)
             return [[0.5, 0.5] for _ in texts]
 
     rows = [{"org": "acme", "text": "a"}, {"org": "beta", "text": "b"}]
-    _off("acme")
+    switch_off("acme")
     waiting: list[int] = []
     out = asyncio.run(batch.rebuild_batch("memory_embeddings", rows, _E(), waiting=waiting))
     assert waiting == [0]  # the rebuild goes on: acme's row waits for its vector
@@ -1129,7 +1124,7 @@ def test_the_dupcheck_refit_command_sends_nothing_for_a_switched_off_org(monkeyp
     monkeypatch.setattr("server.tracker.app.source.tracker_source", lambda org, ns: object())
     monkeypatch.setattr(df, "state_repo", lambda: object())
     monkeypatch.setattr(df, "refit_namespace", refit)
-    _off("acme")
+    switch_off("acme")
     args = argparse.Namespace(org="acme", namespace="t-a", dry_run=False, negatives=None, out=None)
     with pytest.raises(customer.ModelCallsDisabled):
         cli._cmd_tracker_dupcheck_fit(args)
