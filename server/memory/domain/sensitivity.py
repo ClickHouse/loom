@@ -294,34 +294,27 @@ def _overlap(previous: str, chunk: str) -> int:
 
 def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
-    its session's text, rebuilt by joining the session's chunks in `chunk_index` order with
-    each one's overlap with the one before it dropped: a key cut at a chunk boundary reads
-    as one only when joined. A gap in `chunk_index` starts a new text, so chunks that were
-    never neighbours are not joined."""
-    held = [False] * len(chunks)
-    sessions: dict[Hashable, list[int]] = {}
-    for i, (session, _, _) in enumerate(chunks):
-        sessions.setdefault(session, []).append(i)
-    for positions in sessions.values():
-        positions.sort(key=lambda i: chunks[i][1])
-        runs: list[list[int]] = []
-        for i in positions:
-            if runs and chunks[i][1] == chunks[runs[-1][-1]][1] + 1:
-                runs[-1].append(i)
-            else:
-                runs.append([i])
-        for run in runs:
-            source = ""
-            ranges: list[tuple[int, int]] = []
-            previous = ""
-            for i in run:
-                content = chunks[i][2]
-                start = len(source) - _overlap(previous, content)
-                source += content[len(source) - start :]
-                ranges.append((start, len(source)))
-                previous = content
-            for i, overlaps in zip(run, overlaps_credential(source, ranges), strict=True):
-                held[i] = overlaps
+    its own text or in the text it makes with a neighbour: each chunk at `chunk_index` k
+    joined with each chunk of its session at k + 1, the overlap the second repeats from the
+    first dropped. A key cut at a chunk boundary reads as one only when joined. A session
+    can hold more than one chunk at an index (two writes each number theirs from 0), so
+    every pair is read. A key shorter than a chunk is cut at most once, so pairs are
+    enough, and the answer does not depend on the order of `chunks`. Chunks that were
+    never neighbours (a gap in `chunk_index`) are not joined."""
+    held = [bool(credential_spans(content)) for _, _, content in chunks]
+    by_index: dict[tuple[Hashable, int], list[int]] = {}
+    for i, (session, index, _) in enumerate(chunks):
+        by_index.setdefault((session, index), []).append(i)
+    for (session, index), firsts in by_index.items():
+        for a in firsts:
+            for b in by_index.get((session, index + 1), []):
+                first, second = chunks[a][2], chunks[b][2]
+                repeat = _overlap(first, second)
+                source = first + second[repeat:]
+                ranges = [(0, len(first)), (len(first) - repeat, len(source))]
+                in_first, in_second = overlaps_credential(source, ranges)
+                held[a] = held[a] or in_first
+                held[b] = held[b] or in_second
     return held
 
 

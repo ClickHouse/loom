@@ -254,6 +254,25 @@ def test_split_credentials_joins_only_neighbouring_chunks_of_one_session() -> No
     ]
 
 
+def test_split_credentials_joins_every_version_of_a_neighbouring_index() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    # Two writes of one session each number their chunks from 0, so index 0 holds two
+    # chunks: the head of the key and a plain one. The head is joined with the tail all
+    # the same, in either order.
+    plain = "the build passed on the second try"
+    assert split_credentials([("s", 0, _KEY_HEAD), ("s", 0, plain), ("s", 1, _KEY_TAIL)]) == [
+        True,
+        False,
+        True,
+    ]
+    assert split_credentials([("s", 0, plain), ("s", 0, _KEY_HEAD), ("s", 1, _KEY_TAIL)]) == [
+        False,
+        True,
+        True,
+    ]
+
+
 def test_split_credentials_keeps_a_boundary_character_that_only_happens_to_repeat() -> None:
     from server.memory.domain.sensitivity import split_credentials
 
