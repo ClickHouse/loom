@@ -178,3 +178,17 @@ describe("Agent.mentor", () => {
     ]);
   });
 });
+
+describe("Agent.guide", () => {
+  it("posts mentor.guide with the part and returns the text", async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const fetch = async (url: string, init: RequestInit) => {
+      calls.push([url, JSON.parse(init.body as string)]);
+      return new Response(JSON.stringify({ version: "1", part: "reference", text: "# loom" }), { status: 200 });
+    };
+    const bot = new Agent("o", "n", "bot", { baseUrl: "http://x", fetch });
+    expect(await bot.guide("reference")).toBe("# loom");
+    expect(calls[0]?.[0]).toBe("http://x/v1/mentor.guide");
+    expect(calls[0]?.[1]).toMatchObject({ part: "reference" });
+  });
+});
