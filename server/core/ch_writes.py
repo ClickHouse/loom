@@ -11,6 +11,10 @@ from typing import Any
 
 from server.settings import settings
 
+# not a setting: a ClickHouse buffer bound (its default is 450 statements) that the
+# time window caps; set high so the window decides the flush. A change needs a measurement.
+_ASYNC_INSERT_MAX_QUERY_NUMBER = 10_000
+
 
 def committed_insert_settings() -> dict[str, Any]:
     """Settings of an insert that commits its rows before it returns."""
@@ -46,6 +50,7 @@ def batched_insert_settings(
             int(settings.ch_batched_insert_wait_min_ms), wait_max
         ),
         "async_insert_busy_timeout_max_ms": wait_max,
+        "async_insert_max_query_number": _ASYNC_INSERT_MAX_QUERY_NUMBER,
     }
 
 

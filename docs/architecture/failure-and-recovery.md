@@ -256,7 +256,7 @@ inserts, committed or batched, sequential re-reads), not process affinity.
 | `LOOM_CH_TIMEOUT_READ_S`                        | 30      | Read deadline.                                                                                      |
 | `LOOM_CH_TIMEOUT_WRITE_S`                       | 60      | `INSERT` / `UPDATE` deadline.                                                                       |
 | `LOOM_CH_TIMEOUT_DDL_S`                         | 300     | DDL, `OPTIMIZE`, `SYSTEM` deadline.                                                                 |
-| `LOOM_CH_BATCHED_INSERTS`                       | true    | Batch the inserts written on every request; false commits the request-path inserts, one part each.  |
+| `LOOM_CH_BATCHED_INSERTS`                       | true    | Batch the inserts written on every request; false sends each insert as it was sent before batching. |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS`            | 50      | Longest wait of a batched insert for others to share its part; the connection is held for the wait. |
 | `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | 200     | The same, for a batched insert no request waits on.                                                 |
 | `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS`            | 10      | Shortest wait of a batched insert, what a lone insert waits; the connection is held for the wait.   |

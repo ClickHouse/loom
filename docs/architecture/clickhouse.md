@@ -136,6 +136,8 @@ the full maximum. Under steady load a table gets about 1000 /
 `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node, insert shape
 (ClickHouse keeps one buffer per column list and settings) and partition written: more
 when a buffer fills before the wait ends, at most one per insert when writes are sparse.
+The insert also sends `async_insert_max_query_number = 10000`, so at high rates the
+window, not ClickHouse's default of 450 statements, decides the flush.
 
 Two windows: an insert a request waits on (the `conversation.append` turn and embedding
 row, an audit row, the outbox row of a write, a ledger flush the history-policy gate
@@ -153,17 +155,25 @@ insert adds up to its window, and holds its pooled connection meanwhile. A susta
 R_request request-path and R_background background batched inserts a second therefore
 hold about R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
 `ch_batched_insert_background_wait_max_ms` / 1000 connections: a delivery worker writing
-20 attempt batches a second holds about 4. The ClickHouse connection pool
-(`ch_pool_maxsize`) is sized for that on top of the other statements. `ch_batched_inserts` (live, on by default) switches
-batching off. Off, the request-path inserts (`audit_log`, the `conversation.append`
-rows, the `agent_events` flush, the outbox, webhook attempts, evidence, belief sources,
-the write-mark bump and process-start mark) are sent committed, one part each; the
-ledger flushes (`auth_attempts`, the carry-acknowledgement, write-mark and usage-event
-flushes, the policy witness's rows, `memory_projection_failures`, the graph Undo markers
-and the waited entity-graph inserts) are waited async inserts on the server profile's
-own timeouts; fire-and-forget inserts are unchanged. Turn it off on a deployment with
-little traffic where latency matters more than parts: with writes too sparse to share a
-part, each insert still waits `ch_batched_insert_wait_min_ms`.
+20 attempt batches a second holds about 4. Size the ClickHouse connection pool
+(`ch_pool_maxsize`) for that on top of the other statements.
+
+`ch_batched_inserts` (live, on by default) switches batching off. Off, the inserts that
+were committed before batching (`audit_log`, the `conversation.append` rows, the
+`agent_events` flush, the outbox, webhook attempts, evidence, belief sources, the
+write-mark bump and process-start mark) are sent committed, one part each; the ledger
+flushes (`auth_attempts`, the carry-acknowledgement, write-mark and usage-event flushes,
+the policy witness's rows, `memory_projection_failures`, the graph Undo markers and the
+waited entity-graph inserts) are waited async inserts on the server profile's own
+timeouts; fire-and-forget inserts are unchanged. Turn it off on a deployment with little
+traffic where latency matters more than parts: with writes too sparse to share a part,
+each insert still waits `ch_batched_insert_wait_min_ms`.
+
+ClickHouse keys the async buffer by table, statement shape, settings and user, so one
+flush can hold rows from several orgs, and one row that fails (a vector of the wrong
+width, code 190) fails the flush for every caller in it. A batched table therefore never
+takes a row that can fail its flush: an embedding row is batched only when its coded
+width equals `embedding_dim`, and a failed shared flush is retried committed.
 
 These tables stay committed:
 

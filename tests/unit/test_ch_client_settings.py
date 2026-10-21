@@ -108,6 +108,7 @@ def test_batched_inserts_wait_for_their_part_and_read_the_wait_bounds_per_call(
         "async_insert_use_adaptive_busy_timeout": 1,
         "async_insert_busy_timeout_min_ms": 10,
         "async_insert_busy_timeout_max_ms": 50,
+        "async_insert_max_query_number": 10_000,
     }
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 80)
     s = ch_writes.batched_insert_settings()
@@ -128,6 +129,7 @@ def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_commi
     s = ch_writes.batched_insert_settings(background=True)
     assert s["async_insert"] == 1 and s["async_insert_busy_timeout_max_ms"] == 200
     assert s["async_insert_busy_timeout_min_ms"] == 10
+    assert ch_writes.batched_insert_settings() != s
     monkeypatch.setattr(settings, "ch_batched_inserts", False)
     committed = {"async_insert": 0, "wait_for_async_insert": 1}
     assert ch_writes.batched_insert_settings() == committed

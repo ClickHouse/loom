@@ -230,7 +230,6 @@ async def test_usage_flush_a_request_waits_on_takes_the_short_window(
     finally:
         usage._reset_for_tests()
     assert ch.settings == [batched_insert_settings(async_when_off=True)]
-    assert ch.settings != [batched_insert_settings(background=True, async_when_off=True)]
 
 
 @pytest.mark.asyncio
