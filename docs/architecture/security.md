@@ -735,8 +735,8 @@ returns it.
   every chunk of such a session is held. The check reads one
   call's chunks only (at most 256), so a key cut at the boundary between the last chunk of
   one call and the first chunk of the next reads as a credential in neither, and both
-  chunks are embedded; an importer that sends a session's chunks in one call, or splits
-  them where no key is cut, avoids it.
+  chunks are embedded. `loom okf import` sends each session's chunks whole in one call, so
+  only a session of more than 256 chunks can still hit this gap.
   `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it leaves out
   one that reads as a credential, and audits a key read of either. This holds for a chunk
   of a long `memory.set` value whatever its row's label; a `low` row stays findable

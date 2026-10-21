@@ -680,14 +680,39 @@ def _walk_evidence(root: Path) -> tuple[list[okf_ev.ChunkRecord], list[okf_ev.Di
     return okf_ev.parse_files(files)
 
 
+# Items per memory.import_evidence call: the op's own cap.
+_IMPORT_BATCH = 256  # not a setting: wire bound (MemoryImportEvidenceInput max_length)
+
+
+def _session_batches(chunks: list[okf_ev.ChunkRecord]) -> list[list[okf_ev.ChunkRecord]]:
+    """The chunks in calls of at most `_IMPORT_BATCH`, each session's chunks whole and in
+    `chunk_index` order. The server finds a key cut at a chunk boundary only when both
+    chunks arrive in one call, so only a session longer than the cap is split."""
+    sessions: dict[str, list[okf_ev.ChunkRecord]] = {}
+    for c in chunks:
+        sessions.setdefault(c.session_id, []).append(c)
+    batches: list[list[okf_ev.ChunkRecord]] = []
+    current: list[okf_ev.ChunkRecord] = []
+    for session in sessions.values():
+        session.sort(key=lambda c: c.chunk_index)
+        if current and len(current) + len(session) > _IMPORT_BATCH:
+            batches.append(current)
+            current = []
+        while len(session) > _IMPORT_BATCH:
+            batches.append(session[:_IMPORT_BATCH])
+            session = session[_IMPORT_BATCH:]
+        current += session
+    if current:
+        batches.append(current)
+    return batches
+
+
 async def _import_evidence(
     client: _Client,
     org: str,
     args: argparse.Namespace,
     chunks: list[okf_ev.ChunkRecord],
     digests: list[okf_ev.DigestRecord],
-    *,
-    batch: int = 64,
 ) -> dict[str, int]:
     """memory.import_evidence in batches; the server re-embeds."""
     totals = {
@@ -734,10 +759,11 @@ async def _import_evidence(
         "source_trace": "okf-import",
     }
     batches: list[dict[str, Any]] = []
-    for i in range(0, len(chunks), batch):
-        batches.append({**payload_base, "chunks": [_chunk(c) for c in chunks[i : i + batch]]})
-    for i in range(0, len(digests), batch):
-        batches.append({**payload_base, "digests": [_digest(d) for d in digests[i : i + batch]]})
+    for group in _session_batches(chunks):
+        batches.append({**payload_base, "chunks": [_chunk(c) for c in group]})
+    for i in range(0, len(digests), _IMPORT_BATCH):
+        digest_group = digests[i : i + _IMPORT_BATCH]
+        batches.append({**payload_base, "digests": [_digest(d) for d in digest_group]})
     for body in batches:
         try:
             res = await client.post("memory.import_evidence", body)

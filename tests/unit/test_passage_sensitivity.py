@@ -350,6 +350,34 @@ def test_split_credentials_finds_a_key_spread_over_three_short_chunks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_okf_import_sends_a_session_whole_so_a_key_cut_between_its_chunks_is_held() -> None:
+    import argparse
+
+    from server.cli.okf import _import_evidence
+    from server.memory.domain.okf_evidence import ChunkRecord
+    from server.memory.domain.sensitivity import split_credentials
+
+    # Session "b" starts at the bundle's 41st chunk, so its chunks 23 and 24 are the bundle's
+    # 64th and 65th: a cut every 64 chunks would send the two halves of the key apart.
+    chunks = [ChunkRecord("a", n, f"a {n} notes on the plan. ") for n in range(40)]
+    parts = {23: _KEY_HEAD, 24: _KEY_TAIL}
+    chunks += [ChunkRecord("b", n, parts.get(n, f"b {n} notes on the plan. ")) for n in range(40)]
+    held: dict[tuple[str, int], bool] = {}
+
+    class Loom:
+        async def post(self, op: str, body: dict[str, Any]) -> dict[str, Any]:
+            sent = [(c["session_id"], c["chunk_index"], c["content"]) for c in body["chunks"]]
+            for (session, index, _), hit in zip(sent, split_credentials(sent), strict=True):
+                held[(session, index)] = hit
+            return {"chunks_written": len(sent)}
+
+    args = argparse.Namespace(namespace="ns", agent="importer", user_id="-")
+    totals = await _import_evidence(Loom(), "org", args, chunks, [])  # type: ignore[arg-type]
+    assert totals["chunks_written"] == 80
+    assert [key for key, hit in held.items() if hit] == [("b", 23), ("b", 24)]
+
+
+@pytest.mark.asyncio
 async def test_every_chunk_a_private_key_block_covers_is_held_on_write() -> None:
     from server.memory.app.chunk_projection import chunk_text_with_ranges
     from server.memory.app.credential_passages import embed_plain
