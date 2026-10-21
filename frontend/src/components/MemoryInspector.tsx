@@ -38,7 +38,7 @@ import {
   restoreMemory,
   relatedFacts,
 } from "../api";
-import { useStore } from "../lib/state";
+import { navigationHref, useStore } from "../lib/state";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
@@ -1191,7 +1191,7 @@ export function MemoryInspector({
             actions={
               sourceThread && (
                 <Link
-                  href={`/conversations?thread=${encodeURIComponent(sourceThread.thread_id)}`}
+                  href={navigationHref("sessions", { thread: sourceThread.thread_id })}
                   size="sm"
                   onClick={(e: React.MouseEvent) => {
                     if (isModifiedClick(e)) return;

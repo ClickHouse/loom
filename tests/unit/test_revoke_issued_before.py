@@ -135,6 +135,9 @@ class _FakeCH:
 
 @pytest.fixture
 def fake_ch(monkeypatch: pytest.MonkeyPatch) -> _FakeCH:
+    from tests.unit.claims_fake import memory_claims
+
+    memory_claims(monkeypatch)
     ch = _FakeCH()
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     return ch
@@ -355,16 +358,25 @@ def test_a_local_revoke_does_not_pretend_the_list_is_loaded(
     assert revocation.is_revoked("sa:bot") and not revocation.loaded()
 
 
-def test_cli_warns_when_a_cutoff_replaces_an_outright_revocation(
+def test_cli_refuses_to_restore_tokens_revoked_by_another_process(
     fake_ch: _FakeCH, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Written by another process: this one's snapshot does not hold it.
-    never = datetime(2105, 12, 31)
-    fake_ch.rows.append({"jti": "alice", "issued_before": None, "expires_at": never, "version": 1})
+    fake_ch.rows.append(
+        {
+            "jti": "alice",
+            "issued_before": None,
+            "expires_at": revocation.revocation_expiry(None),
+            "revoked_at": datetime.now(UTC).replace(tzinfo=None),
+            "version": 1,
+        }
+    )
     rc = cli.main(["revoke-token", "--subject", "alice", "--issued-before", "2026-09-17T16:30:00Z"])
-    assert rc == 0 and "revoked outright" in capsys.readouterr().err
-    cli.main(["revoke-token", "--subject", "bob", "--issued-before", "2026-09-17T16:30:00Z"])
-    assert "revoked outright" not in capsys.readouterr().err
+    assert rc == 2 and "cannot expire or restore" in capsys.readouterr().err
+    assert len(fake_ch.rows) == 1 and fake_ch.rows[0]["issued_before"] is None
+    assert (
+        cli.main(["revoke-token", "--subject", "bob", "--issued-before", "2026-09-17T16:30:00Z"])
+        == 0
+    )
 
 
 @asynccontextmanager

@@ -33,6 +33,11 @@ export function setSavedNamespace(ns: string): void {
   });
 }
 
+/** Forget the saved pick in this browser. The server-side default stays: no call clears it. */
+export function forgetSavedNamespace(): void {
+  localStorage.removeItem(KEY_NAMESPACE);
+}
+
 // Auth-disabled mode: when LOOM_AUTH_REQUIRED=false, the server accepts
 // all calls without auth. The SPA skips the TokenGate and synthesises an
 // identity for the server-configured default namespace.

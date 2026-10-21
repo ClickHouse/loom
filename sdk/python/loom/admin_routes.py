@@ -49,6 +49,12 @@ class AdminRoutes:
             "POST", "/v1/admin/bots.list", json=body or {}
         )
 
+    async def bots_provision_agent(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/bots.provision_agent` (platform_admin). Make the namespace of a trust's agent before its first exchange, as that exchange would, so grants can name the agent first."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/bots.provision_agent", json=body or {}
+        )
+
     async def budget_set(self, body: dict[str, Any] | None = None) -> Any:
         """`POST /v1/admin/budget.set` (platform_admin). Install or clear a per-operation latency-budget override."""
         return await self._agent.transport.request_json(
@@ -85,9 +91,9 @@ class AdminRoutes:
             "POST", "/v1/admin/fleet.cost", json=body or {}
         )
 
-    async def model_configuration_status(self) -> Any:
-        """`GET /v1/admin/models` (platform_admin). The LLM and embedding settings in force and any change pending, without the saved credentials."""
-        return await self._agent.transport.request_json("GET", "/v1/admin/models")
+    async def model_configuration_status(self, params: dict[str, Any] | None = None) -> Any:
+        """`GET /v1/admin/models` (platform_admin). The LLM and embedding settings in force and any change pending, without the saved credentials. `params` are its query parameters."""
+        return await self._agent.transport.request_json("GET", "/v1/admin/models", params=params)
 
     async def save_model_configuration(self, body: dict[str, Any] | None = None) -> Any:
         """`POST /v1/admin/models` (platform_admin). Save the LLM and embedding setup as the next configuration; an embedding change queues a rebuild of the vector tables."""
@@ -129,9 +135,23 @@ class AdminRoutes:
             "POST", "/v1/admin/ratelimit.set", json=body or {}
         )
 
-    async def schema_status(self) -> Any:
-        """`GET /v1/admin/schema.status` (platform_admin). Report the gap between what migrations expect and what's in CH."""
-        return await self._agent.transport.request_json("GET", "/v1/admin/schema.status")
+    async def revocations(self, params: dict[str, Any] | None = None) -> Any:
+        """`GET /v1/admin/revocations` (platform_admin). The unexpired revocations, newest first, at most `limit` (1000 by default); `?subject=` narrows them to one subject's own row, an operator cutoff's and SCIM's, `?since=` to those written since (see `loom revoke-token --list`). `params` are its query parameters."""
+        return await self._agent.transport.request_json(
+            "GET", "/v1/admin/revocations", params=params
+        )
+
+    async def revoke_subject(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/revoke_subject` (platform_admin). Revoke every token and sign-in session of a subject, in every org and for good, and list the tokens it made revoked (see `loom revoke-token --subject`)."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/revoke_subject", json=body or {}
+        )
+
+    async def schema_status(self, params: dict[str, Any] | None = None) -> Any:
+        """`GET /v1/admin/schema.status` (platform_admin). Report the gap between what migrations expect and what's in CH. `params` are its query parameters."""
+        return await self._agent.transport.request_json(
+            "GET", "/v1/admin/schema.status", params=params
+        )
 
     async def settings_history(self, body: dict[str, Any] | None = None) -> Any:
         """`POST /v1/admin/settings.history` (platform_admin). The recorded changes of one setting, or of every setting, newest first: who made each, the value before and after."""
@@ -181,6 +201,8 @@ class AdminRoutes:
             "POST", "/v1/admin/token.mint", json=body or {}
         )
 
-    async def workers_status(self) -> Any:
-        """`GET /v1/admin/workers.status` (platform_admin). Snapshot of each background worker's config + most recent run summary."""
-        return await self._agent.transport.request_json("GET", "/v1/admin/workers.status")
+    async def workers_status(self, params: dict[str, Any] | None = None) -> Any:
+        """`GET /v1/admin/workers.status` (platform_admin). Snapshot of each background worker's config + most recent run summary. `params` are its query parameters."""
+        return await self._agent.transport.request_json(
+            "GET", "/v1/admin/workers.status", params=params
+        )

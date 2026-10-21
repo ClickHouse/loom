@@ -121,18 +121,21 @@ describe("view registry", () => {
   });
 });
 
+// A login link's token is taken from the #token= fragment, and a ?token= query never is;
+// either leaves the address at once, before anything can fail.
 describe("login link token", () => {
   afterEach(() => history.replaceState(null, "", "/"));
+  const address = () => window.location.pathname + window.location.search + window.location.hash;
 
   it("takes a #token= fragment and scrubs it from the address bar", () => {
     history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");
-    expect(takeLinkToken()).toBe("abc.def.ghi");
-    expect(window.location.pathname + window.location.search + window.location.hash).toBe("/setup?tab=a");
+    expect(takeLinkToken()).toEqual({ token: "abc.def.ghi", atRoot: false });
+    expect(address()).toBe("/setup?tab=a");
   });
 
   it("never takes a ?token= query, and removes it anyway", () => {
     history.replaceState(null, "", "/?token=leaked.jwt.value&tab=a#memories");
-    expect(takeLinkToken()).toBeNull();
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: false });
     expect(window.location.search).toBe("?tab=a");
     expect(window.location.hash).toBe("#memories");
     expect(window.location.href).not.toContain("leaked");
@@ -142,5 +145,27 @@ describe("login link token", () => {
     history.replaceState(null, "", "/library?q=x#y");
     expect(takeLinkToken()).toBeNull();
     expect(window.location.search + window.location.hash).toBe("?q=x#y");
+  });
+
+  it("says when the token came back to the bare root, where a sign-in returns to its page", () => {
+    for (const root of ["/", "/me"]) {
+      history.replaceState(null, "", `${root}#token=abc`);
+      expect(takeLinkToken(), root).toEqual({ token: "abc", atRoot: true });
+      expect(address(), root).toBe(root);
+    }
+    history.replaceState(null, "", "/?tab=a#token=abc");
+    expect(takeLinkToken()?.atRoot).toBe(false);
+  });
+
+  it("keeps the entry's state as the token leaves the address", () => {
+    history.replaceState({ loomPlace: { scrollTop: 40 } }, "", "/memories#token=abc");
+    takeLinkToken();
+    expect(history.state).toEqual({ loomPlace: { scrollTop: 40 } });
+  });
+
+  it("scrubs a fragment that does not decode, and takes no token from it", () => {
+    history.replaceState(null, "", "/#token=%E0%A4%A");
+    expect(takeLinkToken()).toEqual({ token: null, atRoot: true });
+    expect(address()).toBe("/");
   });
 });
