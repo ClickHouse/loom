@@ -11,7 +11,7 @@ from typing import Any
 from server.core.vectors.search_settings import vector_search_settings
 from server.memory.domain.search_parsing import _iso_date
 from server.memory.domain.search_types import SearchHit
-from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
+from server.memory.domain.sensitivity import without_credentials
 from server.settings import settings
 
 log = logging.getLogger("server.memory.app.retrieval")
@@ -189,21 +189,23 @@ async def fetch_session_summaries(
     """
     # With an explicit agent the table key (org, namespace, agent, user_id,
     # session_id, embedding_model) is one row per session under FINAL, so
-    # there is nothing to dedup and the shortlist is n rows plus HELD_MARGIN
-    # spare ones for a digest held back below. Only the
+    # there is nothing to dedup and the shortlist is exactly n rows. Only the
     # wildcard can fold several agents' digests of one session — over-fetch
     # there. The shortlist's exact re-read is per granule, so a larger LIMIT
     # costs whole granules of vectors: measured 7.2 MiB at 5 rows, 13.3 MiB at
-    # 20 on a 1,564-row namespace.
+    # 20 on a 1,564-row namespace, and 10.6 MiB at 5 rows against 13.0 MiB at 7
+    # with 3,072-dim vectors. Reading the whole summary_text instead of its first
+    # 1,200 characters read no more bytes there.
     wildcard = not agent or agent in ("*", "-")
-    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1) + HELD_MARGIN
+    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1)
     try:
         rows = await ch.query_all(sql, params=params)
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
     # A digest that reads as a credential is written without a vector; this holds back
-    # one an earlier build embedded (the shortlist carries `HELD_MARGIN` spare rows).
+    # one an earlier build embedded. No spare row backfills it: such a digest is rare,
+    # and a spare row costs a granule of vectors on every search.
     rows = without_credentials(rows, lambda r: str(r.get("summary_text") or ""))
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []

@@ -16,7 +16,6 @@ from server.memory.app.retrieval.summaries import (
     _SESSION_SUMMARY_TOP_N,
     dedup_summary_rows,
 )
-from server.memory.domain.sensitivity import HELD_MARGIN as _HELD_MARGIN
 
 
 class StubCH:
@@ -123,9 +122,8 @@ async def test_default_n_overfetches_and_dedups_in_python() -> None:
         ch, org="o", namespace="ns", agent="bot", user_id="u", query_vec=[0.1], embedding_model="m"
     )
     sql, params = ch.calls[0]
-    # An explicit agent is one row per session under FINAL: N rows, plus the spare rows
-    # for a digest held back for reading as a credential.
-    assert params["lim"] == _SESSION_SUMMARY_TOP_N + _HELD_MARGIN
+    # An explicit agent is one row per session under FINAL: exactly N rows.
+    assert params["lim"] == _SESSION_SUMMARY_TOP_N
     assert "n" not in params
     # The wildcard can fold several agents' digests of one session: over-fetch.
     ch_star = StubCH(returns=[])
@@ -138,10 +136,7 @@ async def test_default_n_overfetches_and_dedups_in_python() -> None:
         query_vec=[0.1],
         embedding_model="m",
     )
-    assert (
-        ch_star.calls[0][1]["lim"]
-        == _SESSION_SUMMARY_TOP_N * _SESSION_SUMMARY_OVERFETCH + _HELD_MARGIN
-    )
+    assert ch_star.calls[0][1]["lim"] == _SESSION_SUMMARY_TOP_N * _SESSION_SUMMARY_OVERFETCH
     code = "\n".join(ln for ln in sql.splitlines() if not ln.strip().startswith("--"))
     assert "LIMIT 1 BY" not in code
     assert "ORDER BY distance ASC\n" in code and "session_id ASC" not in code

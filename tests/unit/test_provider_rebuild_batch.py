@@ -249,14 +249,24 @@ def _without_vector(table: str, text: str, stored: list[float] | None = None) ->
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("table", sorted(PASSAGE_TABLES))
 @pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
-async def test_a_plain_passage_stored_without_a_vector_stays_without_one(table, stored, target):
-    # The write path may have held it, or its embed failed: a rebuild never sends it.
-    row = _without_vector(table, "source text", stored)
-    result = (await rebuild_batch(table, [row], target))[0]
+async def test_a_plain_memory_chunk_stored_without_a_vector_stays_without_one(stored, target):
+    # The write path may have held it as part of a key cut at a chunk boundary.
+    row = _without_vector("memory_chunks", "source text", stored)
+    result = (await rebuild_batch("memory_chunks", [row], target))[0]
     target.embed_many.assert_not_awaited()
     assert result["embedding_dim"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("table", ["conversation_embeddings", "session_summaries"])
+@pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
+async def test_a_plain_turn_or_digest_stored_without_a_vector_is_embedded(table, stored, target):
+    # Only a failed embed leaves a plain turn or digest without a vector.
+    row = {**_without_vector(table, "source text", stored), "embed_last_error": "timeout"}
+    result = (await rebuild_batch(table, [row], target))[0]
+    target.embed_many.assert_awaited_once_with(["source text"])
+    assert result["embedding_dim"] == 2
 
 
 @pytest.mark.asyncio

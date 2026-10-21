@@ -741,12 +741,13 @@ returns it.
   and is never sent to the summarizer. A summary that reads as a credential anyway is
   refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window
   stays the same while its turns are live, so a retry most likely gets the same refusal.
-- Provider rebuild: a chunk, digest or turn embedding stored without a vector is staged
-  without one, so a chunk its writer held as part of a cut key stays held whichever page
-  its neighbours land on; a failed embed stays empty too, until a write replaces the row.
-  One that an earlier build embedded and whose text reads as a credential is staged
-  without a vector. Verification reads the text of every row left empty whose source held
-  a vector and accepts those that read as a credential.
+- Provider rebuild: a chunk, digest or turn embedding whose text reads as a credential is
+  staged without a vector, which covers one an earlier build embedded. Only a memory chunk
+  stored without a vector stays without one, so a chunk its writer held as part of a cut
+  key stays held whichever page its neighbours land on. A digest or turn stored without a
+  vector had a failed embed, since its write path checks the whole text, and the rebuild
+  embeds it. Verification reads the text of every row left empty whose source held a
+  vector and accepts those that read as a credential.
 - `loom reembed` re-embeds only rows that have a vector, and keeps a conversation turn
   that reads as a credential on its old model, which search does not read, until
   `--delete-old` removes it (a memory row's vector follows its sensitivity label).
@@ -767,9 +768,11 @@ rewritten:
   key, `conversation.search`'s hits (the vector ranking, checked on the text the vector
   was built from, and the substring fallback the search takes when the embedder is down),
   and `conversation.search_saved_messages`'s hits (its vector leg and its BM25 keyword leg
-  over the whole text). The summary leg, the `memory.ask` lookups, `conversation.search`
-  and the saved keyword leg ask for two spare rows, so up to two held-back passages do not
-  leave a page short; the chunk leg already over-fetches.
+  over the whole text). The `memory.ask` lookups, `conversation.search` and the saved
+  keyword leg ask for two spare rows, so up to two held-back passages do not leave a page
+  short; the chunk leg already over-fetches. The summary leg asks for none, since a spare
+  row costs a granule of vectors on every search: a held-back digest leaves it one hit
+  short.
 - Listed without the text: `conversation.list_saved_messages` shows an empty
   `content_excerpt` for a saved message that reads as a credential (one an earlier build
   saved), and `conversation.threads` shows an empty `last_content_excerpt` for a thread

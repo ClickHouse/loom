@@ -32,9 +32,11 @@ TEXT_COLUMNS = {
 SPECIAL_TEXT_TABLES = frozenset({"categories", "code_chunks", "qa_item_embeddings"})
 # Raw passages the write path leaves without a vector when they read as a credential,
 # or, for a memory chunk, when it holds part of a key cut at a chunk boundary. A rebuild
-# stages a passage without a vector when its source has none, so a held chunk stays held
-# whichever page its neighbours fall on, and when its text reads as a credential
-# (`reads_high`), which covers a row an earlier build embedded.
+# stages a passage without a vector when its text reads as a credential (`reads_high`),
+# which covers a row an earlier build embedded. Only a memory chunk can hold a key its own
+# text does not show, so only a memory chunk whose source has no vector stays without one,
+# whichever page its neighbours fall on. In the other tables an empty source means a failed
+# embed, and the rebuild embeds it.
 PASSAGE_TABLES = frozenset({"conversation_embeddings", "memory_chunks", "session_summaries"})
 _CALL_BATCH = 64
 
@@ -78,7 +80,7 @@ def _inputs(
         text = _source_text(table, row, index, source_texts)
         if table in PASSAGE_TABLES:
             has_vector = any(any(row[column]) for column in columns)
-            if not has_vector or reads_high(text):
+            if reads_high(text) or (table == "memory_chunks" and not has_vector):
                 continue
         for column in columns:
             value = text
@@ -157,15 +159,16 @@ async def rebuild_batch(
     (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
     the rebuild completes and counts it in its progress (`rows_waiting`). Once the
     org is back on, memory_embeddings and code_chunks / code_summaries stubs are
-    embedded again by their recovery workers. A raw passage stays without a vector
+    embedded again by their recovery workers. A memory chunk stays without a vector
     until a write replaces it, and a row of any other table until a write replaces
     it or a later rebuild covers it.
 
-    A raw passage (`PASSAGE_TABLES`) stored without a vector is staged without one:
-    the write path may have held it as a credential, or as part of a key cut at a
-    chunk boundary, and the rebuild never sends it to the provider. One whose text
-    reads as a credential is staged without a vector too; verification reads its
-    text and accepts it.
+    A raw passage (`PASSAGE_TABLES`) whose text reads as a credential is staged
+    without a vector and never sent to the provider; verification reads its text
+    and accepts it. A memory chunk stored without a vector is staged without one
+    too: the write path may have held it as part of a key cut at a chunk boundary.
+    A conversation turn or digest stored without a vector had a failed embed, and
+    the rebuild embeds it.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
