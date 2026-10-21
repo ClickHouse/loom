@@ -345,9 +345,9 @@ async def bulk_tombstone_scope(
     """`memory.clear`: bulk-tombstone every live memory row matching
     (org, namespace, user_id?, agent?), plus the loom.memory_embeddings rows.
 
-    The handler enforces that at least one of `user_id` / `agent` is set; the
-    repo runs the query as-given (a scope-less call would clear the whole
-    namespace — that's `erasure.request_namespace`'s job).
+    The handler requires a concrete `user_id` or `agent` other than `'-'`
+    (`"*"` arrives as unset); the repo runs the query as given (a scope-less
+    call would clear the whole namespace — that's `erasure.request_namespace`'s job).
 
     `on_tombstoned`, when given, is called after the memory mutation and before
     the embeddings one, with each page of the memory rows it tombstoned
@@ -368,11 +368,9 @@ async def bulk_tombstone_scope(
         scope.append("agent = {agent:String}")
         params["agent"] = agent
     scope_sql = " AND ".join([*scope, "tombstoned_at IS NULL"])
-    # Locked rows survive a clear: the memory table filters
-    # on the lock in force; memory_embeddings has no lock columns, so it
-    # excludes the locked keys by subquery. What was left behind is reported
-    # under the `locked_skipped` key (the handler lifts it out of the
-    # per-table counts).
+    # Locked rows survive a clear. memory_embeddings has no lock columns, so it excludes
+    # them by full identity: a lock under one identity must not keep another's vectors live.
+    # The skipped rows are counted under `locked_skipped`.
     from server.memory.domain.lock import locked_predicate, unlocked_predicate
 
     locked_row = await ch.query_one(
@@ -386,7 +384,8 @@ async def bulk_tombstone_scope(
     }
     if locked_n:
         where_by_table["loom.memory_embeddings"] = (
-            f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
+            f"{scope_sql} AND (agent, user_id, session_id, memory_key) NOT IN "
+            "(SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL "
             f"WHERE {scope_sql} AND {locked_predicate()})"
         )
     # One timestamp for the whole clear, so the rows it tombstoned can be read back.
