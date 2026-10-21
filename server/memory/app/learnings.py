@@ -470,6 +470,9 @@ async def _do_promote_to_knowledge(
     # The agent '-' is every agent in the namespace, so it names no bot to tag.
     if agent and agent != "-":
         tags.append(f"agent:{agent}")
+    # A model extracted a bot's rule from users' conversations, so it is not the reviewer's
+    # own content: `derived` is the nearest class a knowledge write may declare.
+    source_class = "derived" if source_kind == assistant_rules.SOURCE_KIND else None
     rationale = f"reviewed-and-promoted-to-knowledge by {approver}" + (
         f": {reason}" if reason else ""
     )
@@ -482,6 +485,7 @@ async def _do_promote_to_knowledge(
             source_uri=source_uri,
             title=title,
             tags=tags,
+            source_class=source_class,
             metadata={
                 "promoted_from_candidate_id": str(candidate_row["candidate_id"]),
                 "rationale": rationale,

@@ -920,6 +920,8 @@ async def test_promoting_a_rule_publishes_it_where_every_users_reads_find_it(
         # Only the tag names the bot; the author is the reviewer's identity.
         assert written.agent != "support-bot"
         assert "agent:support-bot" in written.tags and "source-kind:assistant_turn" in written.tags
+        # A model extracted the rule, so it is not filed as the reviewer's own content.
+        assert written.source_class == "derived"
     else:
         assert (out.promoted_to_knowledge, out.promoted_to_shared) == (False, True)
         assert (written.agent, written.user_id, written.session_id) == ("support-bot", "-", "-")

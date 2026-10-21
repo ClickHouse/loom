@@ -2,6 +2,9 @@
 -- `assistant_turn` candidates (server/memory/app/assistant_learnings.py). `agent` is
 -- the agent the rule is for: a promotion tags the knowledge document `agent:<agent>`,
 -- or, with destination="memory", writes the memory row under it.
+-- Existing candidates read agent = ''. A build without this change ignores the column
+-- and the table, and its user erasure does not delete loom.learnings_supporters, so
+-- memory_extract_agent_learnings stays off until every replica runs this build.
 ALTER TABLE loom.learnings_queue
     ADD COLUMN IF NOT EXISTS `agent` LowCardinality(String) DEFAULT '';
 
