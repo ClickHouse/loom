@@ -293,6 +293,32 @@ async def test_a_secret_with_a_trailing_newline_signs_with_the_secret(fake: Fake
 
 
 @pytest.mark.asyncio
+async def test_a_secret_wrapped_across_two_lines_signs_with_the_secret(fake: FakeRepo) -> None:
+    """A base64 tool wraps a long value at 64 characters: the line break is
+    not part of the key."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    key = bytes(range(64))
+    encoded = base64.b64encode(key).decode()
+    wrapped = "whsec_" + encoded[:64] + "\n" + encoded[64:]
+    env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": wrapped}
+    async with _client(handler) as client:
+        r = await wd.deliver_once(transport=client, now=NOW, env=env)
+    assert r.delivered == 1
+    req = seen[0]
+    assert req.headers["webhook-signature"] == webhooks.sign(
+        key,
+        msg_id=req.headers["webhook-id"],
+        timestamp=int(req.headers["webhook-timestamp"]),
+        body=req.content,
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_malformed_secret_is_warned_about_once(fake: FakeRepo, caplog) -> None:
     from server.core import webhooks as shared
 

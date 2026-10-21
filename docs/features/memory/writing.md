@@ -345,7 +345,8 @@ refuse one more than a few minutes old to bound replay) and
 `webhook-signature: v1,<base64 HMAC-SHA256>` over `"{id}.{timestamp}.{body}"`. The secret
 lives only in the server's environment: `secret_ref` names the variable, one of the
 org's own, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, encoded as for
-[task inbox webhooks](../tasks-and-decisions.md); a `whsec_` prefix marks a base64 key.
+[task inbox webhooks](../tasks-and-decisions.md); a `whsec_` prefix marks a base64 key,
+whose line breaks and other whitespace are dropped.
 A secret belongs to the org, not to one webhook: every webhook that names the same
 `secret_ref` signs with it, so a receiver checks the signed body's `org` and `namespace`
 before acting on an event.

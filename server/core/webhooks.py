@@ -69,9 +69,11 @@ def read_secret(
 
 def secret_bytes(raw: str) -> bytes:
     """The HMAC key: a ``whsec_``-prefixed value is base64 (the spec's
-    generated form); anything else is the literal UTF-8 string."""
+    generated form), whitespace inside it, such as the line breaks of a wrapped
+    value, dropped; anything else is the literal UTF-8 string."""
     if raw.startswith("whsec_"):
-        return base64.b64decode(raw[len("whsec_") :], validate=True)
+        encoded = "".join(raw[len("whsec_") :].split())
+        return base64.b64decode(encoded, validate=True)
     return raw.encode("utf-8")
 
 
