@@ -895,15 +895,16 @@ def test_every_read_op_against_namespace_a_leaks_nothing(
             answers[f"{op.name}/{_SAVED_USER}"] = _post(
                 control_plane_url, tokens[who], op.name, body
             )
-        for label, r in answers.items():
-            if r.status_code in (400, 422):  # the named user is unbuildable for this op
+        for label, answer in answers.items():
+            # The named-user body may be unbuildable for this op; the base body may not.
+            if label != op.name and answer.status_code in (400, 422):
                 continue
-            if r.status_code not in _OK_STATUSES:
-                bad_status[label] = r.status_code
-            found = seed.leaked(r.text)
+            if answer.status_code not in _OK_STATUSES:
+                bad_status[label] = answer.status_code
+            found = seed.leaked(answer.text)
             # saved_status answers ids, not text: any saved id is tenant A's.
-            if op.name == "conversation.saved_status" and r.status_code == 200:
-                found = found or r.json()["saved"]
+            if op.name == "conversation.saved_status" and answer.status_code == 200:
+                found = found or answer.json()["saved"]
             if found:
                 leaks[label] = found
     assert not leaks, f"{who}: canary nonces in responses: {leaks}"
@@ -1767,13 +1768,17 @@ def test_positive_control_the_owner_reads_the_saved_canary_with_the_walks_body(
     op = next(o for o in ALL_OPERATIONS if o.name == op_name)
     payload = _synth_payload(op.input_model, seed=shared.seed, namespace="@me")
     assert payload is not None
-    r = _post_as(control_plane_url, shared.org, "owner", op_name, payload)
-    assert r.status_code == 200, r.text
-    if op_name == "conversation.saved_status":
-        # The answer is the saved ids, which carry no nonce.
-        assert r.json()["saved"] == [shared.seed.saved_message_id], r.text
-        return
-    assert shared.seed.leaked(r.text), f"{op_name} misses the saved canary: the walk is vacuous"
+    # Both bodies the walk sends: its own, and the one naming the owner.
+    for body in (payload, {**payload, "user_id": "owner"}):
+        r = _post_as(control_plane_url, shared.org, "owner", op_name, body)
+        assert r.status_code == 200, r.text
+        if op_name == "conversation.saved_status":
+            # The answer is the saved ids, which carry no nonce.
+            assert r.json()["saved"] == [shared.seed.saved_message_id], r.text
+        else:
+            assert shared.seed.leaked(r.text), (
+                f"{op_name} with user_id={body['user_id']} misses the saved canary: the walk is vacuous"
+            )
 
 
 @pytest.mark.parametrize(
