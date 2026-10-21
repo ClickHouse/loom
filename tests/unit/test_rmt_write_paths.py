@@ -39,6 +39,7 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "machine_identities": ("builder", "test_machines.py"),
     "org_model_calls": ("builder", "test_model_calls_switch.py"),
     "extraction_policies": ("builder", "test_extraction_policy.py"),
+    "profile_schemas": ("builder", "test_profile_schema.py"),
     "deployment_config": ("builder", "test_deployment_config.py"),
     "document_blobs": (
         "insert_once",

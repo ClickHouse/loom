@@ -145,7 +145,10 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   `session.brief_save` rewrite, the context lines `memory.bulk_set` writes with
   `contextualize=true`, and the conversation titler. The block stays last, after any
   retry addendum. The code plane's model-written file cards and chunk descriptions
-  describe indexed source, not a conversation, and do not follow it.
+  describe indexed source, not a conversation, and do not follow it. Neither do the
+  passes that derive from memories already written under the policy rather than from
+  raw text: period digests, profile consolidation, contrast reflections and the
+  structured profile worker (`server/memory/workers/structured_profile.py`).
 - **The trade-off.** While a policy is in force, the deterministic passes that add rows
   the model left out, or copy from the raw turns what the model did not write, do not
   run: recovered preferences, costs and ages; facts an assistant turn states as the

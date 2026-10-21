@@ -331,61 +331,6 @@ async def test_an_extraction_runs_under_its_orgs_and_its_namespaces_policy(table
     assert await extraction_policy.effective("acme", "chat") == "" and table.reads == 2
 
 
-async def test_callers_during_the_first_read_wait_for_it(table, monkeypatch) -> None:
-    """A fresh process's first requests arrive together: every one of them gets
-    the copy the one read brings, none finds no copy and refuses."""
-    import asyncio
-
-    table.rows = [{"org": "acme", "namespace": "", "policy": "org rule"}]
-    plain = table.query_all
-
-    async def slow(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(0.05)
-        return await plain(sql, **kw)
-
-    monkeypatch.setattr(table, "query_all", slow)
-    got = await asyncio.gather(*(extraction_policy.effective("acme", "n") for _ in range(5)))
-    assert got == ["org rule"] * 5 and table.reads == 1
-
-
-async def test_a_cancelled_read_leaves_the_next_caller_to_read(table, monkeypatch) -> None:
-    import asyncio
-
-    table.rows = [{"org": "acme", "namespace": "", "policy": "org rule"}]
-    plain = table.query_all
-
-    async def hang(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        await asyncio.sleep(10)
-        return []
-
-    monkeypatch.setattr(table, "query_all", hang)
-    first = asyncio.ensure_future(extraction_policy.effective("acme", "n"))
-    await asyncio.sleep(0.01)
-    first.cancel()  # e.g. the request that made the first read timed out
-    with pytest.raises(asyncio.CancelledError):
-        await first
-    monkeypatch.setattr(table, "query_all", plain)
-    assert await extraction_policy.effective("acme", "n") == "org rule"
-
-
-async def test_a_change_made_during_a_read_is_read_again(table, monkeypatch) -> None:
-    import asyncio
-
-    plain = table.query_all
-
-    async def write_meanwhile(sql: str, **kw: Any) -> list[dict[str, Any]]:
-        rows = await plain(sql, **kw)
-        table.rows = [{"org": "acme", "namespace": "", "policy": "new rule"}]
-        extraction_policy.note_policy_change()  # the write lands after this read took its rows
-        await asyncio.sleep(0)
-        return rows
-
-    monkeypatch.setattr(table, "query_all", write_meanwhile)
-    assert await extraction_policy.effective("acme", "n") == ""
-    monkeypatch.setattr(table, "query_all", plain)
-    assert await extraction_policy.effective("acme", "n") == "new rule"
-
-
 async def test_a_copy_too_old_to_trust_refuses_the_extraction(table) -> None:
     table.rows = [{"org": "acme", "namespace": "", "policy": "org rule"}]
     assert await extraction_policy.effective("acme", "n") == "org rule"

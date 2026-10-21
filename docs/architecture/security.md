@@ -670,7 +670,10 @@ addendum, in a delimited block that states it outranks them and the messages. Th
 deterministic passes that would add rows the model left out, or copy from the raw turns
 what the model did not write, do not run under a policy, and the response says so
 (`under_operator_policy`). The rule is given to the model, not checked against what it
-returns; verbatim evidence, chunks and observations are stored as sent. The
+returns; verbatim evidence, chunks and observations are stored as sent. Passes that
+derive from memories already written under the policy, not from raw text (period
+digests, profile consolidation, contrast reflections and the structured profile worker
+in `server/memory/workers/structured_profile.py`), do not add it. The
 [extraction guide](../features/memory/extraction.md#operator-extraction-policy) lists
 the paths.
 
@@ -693,9 +696,9 @@ leg returns it. The other reads that could serve its value follow three rules:
   the `memory.stack`, context pack and MCP primer built from it, `memory.ask`'s bridge hop
   and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
-  duplicate's place), the profile fold, the entity graph (a row written as `high` projects
-  only the entities its writer declared, and the entity extractor never sends it to its
-  model, nor an unlabelled value that reads as a credential; for a fact
+  duplicate's place), the profile fold and the structured profile, the entity graph (a row
+  written as `high` projects only the entities its writer declared, and the entity
+  extractor never sends it to its model, nor an unlabelled value that reads as a credential; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, the candidates `procedure.match` reads, the bodies
@@ -762,13 +765,40 @@ also reads text holding JSON, such as a chunk of an object value, with its strin
 undone): `memory.export_evidence` (chunks, and digests with their key facts decoded),
 `bodies: "source"`, the observations `observe_extract` sends its model, the entity
 extractor's input, the existing memories an extraction prompt shows, the rows
-`memory.consolidate` and the profile fold send their models, and a session digest's key
-facts when written, listed by `memory.digests` or read by the outcome judge. The
+`memory.consolidate`, the profile fold and the structured profile send their models, and a
+session digest's key facts when written, listed by `memory.digests` or read by the outcome judge. The
 `sensitivity_sweep` worker (on, daily) labels rows from paths that skip it, every high shape
 counting as `credential` for its default shape filter: a new version per row and, for
 `high`, tombstoned embedding rows and entity vectors. Until the sweep labels it, an
 unlabelled row that holds a credential is embedded like any other, so search serves it, and
 `memory.ask` and the conflict judge can send it to their models.
+
+A redaction (`memory.redact`) scrubs the version it names, that key's derived rows, and
+every version of the user's profiles whose trace names the memory: the structured profile
+and the free-text fold's `consolidated_profile` name the memories they read in their trace
+(`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
+memory is scrubbed with its key's derived rows, the live one included. The trace names
+the memory and not its version, so a profile built from another version of it is scrubbed
+too. The named version and every profile version reached are scrubbed in one statement
+per version table, so the redaction issues two mutations however many profile versions
+name the memory. The cached
+answers and ask precedents whose window held a scrubbed profile key are deleted with those
+of the memory's own key. A window records bare keys, and every user's profile has the same
+key, so this reach is org-wide: one redaction clears every cached answer and precedent in
+the org that rendered any user's profile, in every namespace, and each profile key reached
+adds one deletion per table. A profile version whose trace names no memory ids
+(`profile.fold:<label>` alone, as a build that does not record its sources writes it,
+including an older build during a rolling upgrade) is not reached and keeps the text until
+the user is erased. A lock on a profile key reached refuses the redaction
+before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
+profile is left out of `profile.render`, `profile.structured` and profile search, and so
+of every pack and primer, until the worker rebuilds it from the user's current facts; the
+fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
+its minimum memory count or in a namespace that has turned the fold off.
+
+A structured profile is served only from a row written as `worker:structured-profile`, an
+actor kind no token maps to, so a caller cannot forge one
+([memory invariants](memory-architecture.md#invariants)).
 
 ## Audit log
 
