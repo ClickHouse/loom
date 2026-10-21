@@ -173,21 +173,8 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             # The same answer for every row: stop before paying for more calls.
             p.unavailable = p.unavailable or e
         except (resolver.Unjudgeable, resolver.Unanswered) as e:
-            # Asking again gets the same answer: stamped at the pass's end, so it holds no
-            # place, unless the same refusal for row after row stops its namespace.
             counts.errored += 1
-            p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
-            p.refused.append(r)
-            if _refusal_streak(p, (org, namespace), e):
-                p.stopped.add((org, namespace))
-                _state.paused_namespaces[(org, namespace)] = (
-                    time.monotonic() + settings.memory_conflict_resolver_pause_after_stop_seconds
-                )
-            # An answer with nothing usable was paid for: it counts an attempt, so a row
-            # that never gets one ends; a refused request (a 4xx) was not, and does not.
-            # The pass's end may stamp it too (`_stamp_refused`): a second stamp is a no-op.
-            if isinstance(e, resolver.Unanswered) and await _out_of_attempts(r):
-                p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after its attempts")
+            await _refused(p, r, e)
         except (httpx.HTTPError, TimeoutError) as e:
             # A provider outage (5xx, 429, a timeout, no connection): the row stays owed,
             # no attempt; the same outage row after row stops the pass.
@@ -211,6 +198,25 @@ async def _resolve_one(p: _Pass, r: dict[str, Any], policy: str) -> None:
             emit_worker_cost_event_for(
                 org=org, namespace=namespace, operation=f"worker.{NAME}", started=started
             )
+
+
+async def _refused(p: _Pass, r: dict[str, Any], e: Exception) -> None:
+    """A row the model refused or answered with nothing usable. Asking again gets the same
+    answer: it is stamped at the pass's end, so it holds no place, unless the same refusal
+    for row after row stops its namespace."""
+    org, namespace = str(r["org"]), str(r["namespace"])
+    p.errors.append(f"{namespace}/{r.get('memory_key')}: {e}")
+    p.refused.append(r)
+    if _refusal_streak(p, (org, namespace), e):
+        p.stopped.add((org, namespace))
+        _state.paused_namespaces[(org, namespace)] = (
+            time.monotonic() + settings.memory_conflict_resolver_pause_after_stop_seconds
+        )
+    # An answer with nothing usable was paid for: it counts an attempt, so a row that never
+    # gets one ends; a refused request (a 4xx) was not, and does not. The pass's end may
+    # stamp it too (`_stamp_refused`): a second stamp is a no-op.
+    if isinstance(e, resolver.Unanswered) and await _out_of_attempts(r):
+        p.errors.append(f"{namespace}/{r.get('memory_key')}: stamped after its attempts")
 
 
 def _after_row(
