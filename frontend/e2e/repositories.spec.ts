@@ -7,6 +7,7 @@ import {
   CODE_REPO,
   codeReposFixture,
   installApi,
+  NAMESPACE,
   trackerSourcesFixture,
   TRACKER_PRIVATE_NS,
   TRACKER_PUBLIC_NS,
@@ -61,7 +62,7 @@ test.describe("desktop 1360", () => {
     const errors = collectErrors(page);
     await page.goto("/repositories");
     await expect(page.getByRole("heading", { name: "Repositories" })).toBeVisible();
-    await expect(page).toHaveURL(/\/repositories$/);
+    await expect(page).toHaveURL(new RegExp(`/repositories\\?namespace=${NAMESPACE}$`));
     // No "tracker sources" heading; the plane is named by its contents.
     await expect(page.getByRole("heading", { name: "tracker sources" })).toHaveCount(0);
     await expect(page.getByRole("region", { name: /^tracker source/ })).toHaveCount(0);
@@ -171,7 +172,7 @@ test.describe("desktop 1360", () => {
 
     // Open the record: the picker on the tracker namespace, the Graph view in Patterns mode.
     await rec.getByRole("button", { name: "Public: reading" }).click();
-    await expect(page).toHaveURL(/\/graph\?mode=patterns$/);
+    await expect(page).toHaveURL(new RegExp(`/graph\\?namespace=${TRACKER_PUBLIC_NS}&mode=patterns$`));
     await expect(page.getByRole("button", { name: `Namespace: ${TRACKER_PUBLIC_NS}` })).toBeVisible();
     await expect(page.getByRole("button", { name: "Patterns" })).toHaveAttribute("aria-pressed", "true");
     expect(errors).toEqual([]);

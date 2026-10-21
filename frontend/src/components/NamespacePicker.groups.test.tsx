@@ -1,3 +1,4 @@
+import { createRef, type RefObject } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,6 +6,7 @@ import type { MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { invalidateShared } from "../lib/sharedReads";
 import { NamespacePicker } from "./NamespacePicker";
+import { NamespacePickerList } from "./NamespacePickerList";
 
 // The picker lists memory namespaces by role, then code indexes and tracker records in
 // their own folded groups. A row is a code index only when the server says kind=code —
@@ -34,6 +36,17 @@ const ROWS: MyNamespaceEntry[] = [
 ];
 
 let mine = ROWS;
+// The grouping, counted: the names decide the groups, so a keystroke reworks none.
+const { grouped } = vi.hoisted(() => ({ grouped: { calls: 0 } }));
+vi.mock("../lib/nameFamilies", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/nameFamilies")>();
+  return {
+    nameFamilies: (...args: Parameters<typeof actual.nameFamilies>) => {
+      grouped.calls += 1;
+      return actual.nameFamilies(...args);
+    },
+  };
+});
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return { ...actual, isAuthDisabled: () => false, listMine: vi.fn(async () => mine), setSavedNamespace: vi.fn() };
@@ -53,7 +66,10 @@ function seed(current: string, rows: MyNamespaceEntry[] = ROWS) {
 
 async function openPicker() {
   fireEvent.click(screen.getByRole("button", { name: /^Namespace: / }));
-  return screen.findByRole("dialog", { name: "Namespaces" });
+  const dialog = await screen.findByRole("dialog", { name: "Namespaces" });
+  // The open panel loads with its first open.
+  await within(dialog).findByRole("textbox", { name: "Search namespaces" });
+  return dialog;
 }
 
 const group = (dialog: HTMLElement, name: RegExp) => within(dialog).getByRole("button", { name });
@@ -177,6 +193,162 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getAllByRole("button", { name: /acme\/repo/ })).toHaveLength(11);
     // The button it replaced took the focus with it: the first row it showed has it now.
     expect(within(dialog).getByRole("button", { name: /acme\/repo8 @ main/ })).toHaveFocus();
+  });
+
+  it("folds memory namespaces sharing a name prefix, three or more, into a group per prefix", async () => {
+    seed("team", [
+      row("team", { role: "admin" }),
+      row("group-a-shared", { description: "Workspace A" }),
+      row("group-b-shared", { description: "Workspace B" }),
+      row("group-c-shared"),
+      row("agent-1-a", { description: "Support agent" }),
+      row("agent-1-b", { description: "Sales agent" }),
+      row("agent-2-c"),
+      row("col-one"),
+      row("col-two"),
+      row("idx-ch", { kind: "code", role: "jwt" }),
+    ]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    // Titled by the prefix the group shares.
+    const shared = group(dialog, /^group-…/);
+    const agents = group(dialog, /^agent-…/);
+    expect(shared).toHaveAttribute("aria-expanded", "false");
+    expect(shared).toHaveTextContent("3");
+    expect(agents).toHaveTextContent("3");
+    expect(within(dialog).queryByRole("button", { name: /group-a-shared/ })).toBeNull();
+    // Two of a prefix stay with the rest, by role.
+    expect(within(dialog).getByRole("button", { name: /col-one/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^col-…/ })).toBeNull();
+    // The name families come first, by prefix, then the code indexes.
+    const order = [...dialog.querySelectorAll("[data-nav^='group:']")].map((b) => b.getAttribute("data-nav"));
+    expect(order).toEqual(["group:agent-", "group:group-", "group:code"]);
+    fireEvent.click(agents);
+    const body = document.getElementById(agents.getAttribute("aria-controls") ?? "");
+    // A member reads like a code index: its description, then its name as code.
+    const support = within(body as HTMLElement).getByRole("button", { name: /agent-1-a/ });
+    expect(support.textContent).toMatch(/^Support agent.*agent-1-a/);
+    expect(within(support).getByText("agent-1-a").tagName).toBe("CODE");
+  });
+
+  it("folds names that carry an owner's uuid per owner, the uuid one part of the prefix", async () => {
+    const OWNER_1 = "1b4e28ba-2fa1-41d2-883f-0016d3cca427";
+    const OWNER_2 = "6f1c2b7e-0d4a-4c1b-9e8f-1a2b3c4d5e6f";
+    const agent = (owner: string, n: number) => row(`agent-${owner}-00000000-0000-4000-8000-00000000000${n}`);
+    seed("team", [
+      row("team", { role: "admin" }),
+      ...[1, 2, 3].map((n) => agent(OWNER_1, n)),
+      ...[4, 5, 6].map((n) => agent(OWNER_2, n)),
+    ]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    expect(group(dialog, new RegExp(`^agent-${OWNER_1}-…`))).toHaveTextContent("3");
+    expect(group(dialog, new RegExp(`^agent-${OWNER_2}-…`))).toHaveTextContent("3");
+    expect(within(dialog).queryByRole("button", { name: /^agent-… / })).toBeNull();
+  });
+
+  it("opens the name family the current namespace is in, and the one a search matches", async () => {
+    const rows = [
+      row("team", { role: "admin" }),
+      row("agent-1-a", { description: "Support agent" }),
+      row("agent-1-b"),
+      row("agent-2-c"),
+    ];
+    seed("agent-1-b", rows);
+    const user = userEvent.setup();
+    const { unmount } = render(<NamespacePicker />);
+    let dialog = await openPicker();
+    expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true");
+    expect(within(dialog).getByRole("button", { name: /agent-1-b/ })).toHaveAttribute("aria-current", "true");
+    unmount();
+    seed("team", rows);
+    render(<NamespacePicker />);
+    dialog = await openPicker();
+    expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "false");
+    await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "support");
+    expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true");
+    expect(group(dialog, /^agent-…/)).toHaveTextContent("1 of 3");
+    expect(within(dialog).getByRole("button", { name: /Support agent/ })).toBeInTheDocument();
+  });
+
+  it("keeps the footer's Spaces link for someone whose joined namespaces all sit in a family", async () => {
+    seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    expect(within(dialog).getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join in Spaces" })).toBeNull();
+  });
+
+  it("groups the names once per list, not again for each keystroke of a search", async () => {
+    seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
+    const user = userEvent.setup();
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await waitFor(() => expect(group(dialog, /^agent-…/)).toBeInTheDocument());
+    const before = grouped.calls;
+    await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "agent-1");
+    expect(group(dialog, /^agent-…/)).toHaveTextContent("2 of 3");
+    expect(grouped.calls).toBe(before);
+  });
+
+  it("opens the current namespace's group once the panel's own read places it, when boot's rows did not", async () => {
+    seed("agent-1-b", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
+    // Boot's rows predate the namespace: only the panel's own read lists it.
+    useStore.setState({ myNamespaces: [row("team", { role: "admin" })] });
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await waitFor(() => expect(group(dialog, /^agent-…/)).toHaveAttribute("aria-expanded", "true"));
+  });
+
+  it("opens the group the panel's own read puts the current namespace in, over boot's", async () => {
+    const before = [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")];
+    seed("agent-1-b", [...before, row("agent-1-c")]);
+    // Boot's rows predate agent-1-c, so they fold the current namespace under agent-.
+    useStore.setState({ myNamespaces: before });
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    await waitFor(() => expect(group(dialog, /^agent-1-…/)).toHaveAttribute("aria-expanded", "true"));
+  });
+
+  it("takes the focus as it loads only from where the open left it", async () => {
+    seed("team");
+    function Harness(props: {
+      list: boolean;
+      trigger: RefObject<HTMLButtonElement>;
+      input: RefObject<HTMLInputElement>;
+    }) {
+      return (
+        <>
+          <button type="button">elsewhere</button>
+          <button type="button" ref={props.trigger}>
+            trigger
+          </button>
+          {props.list && (
+            <NamespacePickerList
+              inputRef={props.input}
+              triggerRef={props.trigger}
+              onPick={() => {}}
+              onClose={() => {}}
+              onCreate={() => {}}
+            />
+          )}
+        </>
+      );
+    }
+    for (const [from, takes] of [
+      ["elsewhere", false],
+      ["trigger", true],
+    ] as const) {
+      const trigger = createRef<HTMLButtonElement>();
+      const input = createRef<HTMLInputElement>();
+      const { rerender, unmount } = render(<Harness list={false} trigger={trigger} input={input} />);
+      screen.getByRole("button", { name: from }).focus();
+      rerender(<Harness list trigger={trigger} input={input} />);
+      const search = await screen.findByRole("textbox", { name: "Search namespaces" });
+      if (takes) expect(search).toHaveFocus();
+      else expect(screen.getByRole("button", { name: from })).toHaveFocus();
+      unmount();
+    }
   });
 
   it("folds a group a search opened when its button is pressed, and opens it again", async () => {

@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import { violations } from "./axe";
-import { codeReposFixture, installApi, LOADED_ROW, trackerSourcesFixture } from "./fixtures";
+import { codeReposFixture, installApi, LOADED_ROW, NAMESPACE, trackerSourcesFixture } from "./fixtures";
 
 // The list pages against the list rules in `dashboard-design.md`, in the browser.
 
@@ -394,7 +394,7 @@ test("Insights holds the usage audit and the mentor, and the list is a tab away"
   await expect(page.locator("main .list-row")).toHaveCount(0);
   expect(await violations(page)).toEqual([]);
   await page.getByRole("tab", { name: "Memories" }).click();
-  await expect(page).toHaveURL(/\/memories$/);
+  await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));
   await expect(page.locator("main .list-row").first()).toBeVisible();
   await page.goBack();
   await expect(page.getByRole("button", { name: "Usage audit", exact: true })).toBeVisible();

@@ -32,7 +32,7 @@ describe("MemoryScopeMissing", () => {
     const before = history.length;
     await userEvent.click(screen.getByRole("button", { name: "Open in Patterns" }));
     expect(history.length).toBe(before + 1);
-    expect(location.pathname + location.search).toBe("/graph?mode=patterns");
+    expect(location.pathname + location.search).toBe("/graph?namespace=tracker-x&mode=patterns");
     expect(useStore.getState().view).toBe("graph");
   });
 });

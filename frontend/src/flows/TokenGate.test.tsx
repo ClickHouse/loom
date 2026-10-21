@@ -1,6 +1,7 @@
-import { render, screen } from "../test/rtl";
+import { fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SIGN_IN_FROM } from "../lib/boot";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate } from "./TokenGate";
@@ -51,6 +52,9 @@ describe("TokenGate", () => {
     render(<TokenGate onLogin={() => undefined} />);
     expect(screen.getByText(/Running this yourself\?/)).toBeInTheDocument();
     expect(screen.getByText("loom mint-token …")).toBeInTheDocument();
+    // `/me`, where the server serves the dashboard: the root may redirect elsewhere, and a
+    // redirect carries the fragment, token and all.
+    expect(screen.getByText("<server>/me#token=<jwt>")).toBeInTheDocument();
     expect(screen.getByText("LOOM_AUTH_REQUIRED=false")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Tokens and grants (opens in a new tab)" })).toHaveAttribute(
       "href",
@@ -160,6 +164,23 @@ describe("TokenGate", () => {
       window.__LOOM_SSO = true;
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
       expect(screen.getByRole("status")).toHaveTextContent("Your session expired — sign in again.");
+    });
+
+    it("remembers the page the sign-in starts on, so the way back opens it", () => {
+      window.__LOOM_SSO = true;
+      history.replaceState(null, "", "/memories?namespace=group-a-shared");
+      render(<TokenGate onLogin={() => undefined} reason="expired" />);
+      const link = screen.getByRole("link", { name: "Sign in with SSO" });
+      // jsdom does not navigate; the return from the provider is lib/linkToken.test.ts.
+      link.addEventListener("click", (e) => e.preventDefault());
+      fireEvent.click(link);
+      expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
+        path: "/memories?namespace=group-a-shared",
+      });
+      // From the bare root there is nothing to come back to.
+      history.replaceState(null, "", "/");
+      fireEvent.click(link);
+      expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
     });
 
     it("shows the password gate when it is off", () => {
