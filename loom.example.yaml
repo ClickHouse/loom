@@ -3734,15 +3734,13 @@ settings:
   # Seconds between memory webhook delivery passes that found nothing due. [restart]
   # memory_webhook_deliver_idle_interval_seconds: 30
 
-  # Seconds a memory webhook delivery pass may run before the supervisor abandons it;
-  # memory_webhook_deliver_reserve_seconds before it, the pass cancels its POSTs still
-  # in flight. At least 30. [restart]
+  # Seconds a memory webhook delivery pass may run before the supervisor abandons it (at
+  # least 30). [restart]
   # memory_webhook_deliver_max_pass_seconds: 120.0
 
-  # Seconds before the pass deadline a memory webhook delivery pass cancels its POSTs
-  # still in flight, kept for the one insert after them; their events keep the lease and
-  # are sent again under the same webhook-id once it ends. Less than
-  # memory_webhook_deliver_max_pass_seconds. [restart]
+  # Seconds before the pass deadline a memory webhook delivery pass stops its POSTs,
+  # kept for the insert after them; less than memory_webhook_deliver_max_pass_seconds.
+  # [restart]
   # memory_webhook_deliver_reserve_seconds: 20.0
 
   # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass

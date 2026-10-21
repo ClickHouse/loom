@@ -7,6 +7,7 @@ takes the update_by_id write path, none answers not_found, several answer
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -345,3 +346,48 @@ async def test_update_announces_its_row_when_the_high_fence_fails(
     assert [t for t, _ in ch.inserts].count("loom.memory") == 1
     [(event, row)] = announced
     assert event == "memory.revised" and row["sensitivity"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_update_fences_a_high_key_when_cancelled_during_the_write(
+    wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deadline or a disconnect that cancels the write while its inserts run still
+    writes the high fence: the version row may already be in."""
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", True)
+    wired([_cand(_ID_A)], _row())
+    inserting = asyncio.Event()
+    fenced: list[Any] = []
+
+    async def _insert(*_: Any, **__: Any) -> None:
+        inserting.set()
+        await asyncio.Event().wait()
+
+    async def _fence(keys: Any, **_: Any) -> None:
+        fenced.extend(keys)
+
+    async def _retire(*_: Any, **__: Any) -> int:
+        return 1
+
+    from server.memory.store import embeddings as embeddings_store
+
+    monkeypatch.setattr(embeddings_store, "retire_vectors_for_keys", _retire)
+    monkeypatch.setattr(update_mod, "insert_memory_versions", _insert)
+    monkeypatch.setattr(update_mod, "fence_high", _fence)
+    task = asyncio.create_task(
+        update_mod.handle_memory_update(
+            MemoryUpdateInput(
+                org="test",
+                namespace="personal",
+                memory_key="deploy_day",
+                value="deploy key sk-proj-test-ABCDEFGHIJKLMNOPQRSTUVWX0123",
+            )
+        )
+    )
+    await inserting.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(fenced) == 1

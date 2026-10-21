@@ -103,17 +103,15 @@ schema. These rules keep that safe. The operator procedure is in
     registered (`LOOM_JWT_END_USER_ISSUERS_JSON`) only once no N-1 replica serves.
 12. **A new side effect of a write** (such as memory webhook events): N-1 does not
     perform it. A memory write served by an N-1 replica leaves no
-    `loom.memory_webhook_outbox` row, so it sends no event; N's worker delivers what N's
-    replicas wrote. A receiver that must see every change reads back what it holds once
-    the rollout ends. An erasure saga run by N-1 has no step for the outbox and its census
-    does not count it, so N's events for an erased user stay in the outbox; N's worker
-    sends none of them, because it skips an event whose key has no history left in
-    `loom.memory_versions`, which every build's erasure deletes. The outbox is read for 3
-    days and drops a day's part once its last row is 3 days old, so the rows leave the
-    disk within about 4 days. Until then `webhook.deliveries` still lists those events,
-    with their `memory_key` and `memory_id`, so a user or namespace erasure that an N-1
-    replica completed during the rollout is run again once only N serves; N's
-    `memory_webhook_outbox.delete` step removes the rows.
+    `loom.memory_webhook_outbox` row, so it sends no event, and an erasure saga run by
+    N-1 has no step for the outbox and its census does not count it. Webhooks are
+    registered (`webhook.register`) only once no N-1 replica serves, so no outbox row
+    exists while an N-1 replica can complete an erasure. A rollback to N-1 after webhooks
+    exist leaves the outbox rows written before it: N-1 never reads or erases them, and
+    they leave the disk within about 4 days (the outbox is read for 3 days and drops a
+    day's part once its last row is 3 days old). Rolling forward again, N's worker sends
+    none of an erased user's events, because it skips an event whose key has no history
+    left in `loom.memory_versions`, which every build's erasure deletes.
 
 13. **Saved conversation messages:** older builds can compact concurrently saved
     turns and rebuild embeddings without carrying their saved state. Clients use

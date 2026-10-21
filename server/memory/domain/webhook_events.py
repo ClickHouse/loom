@@ -1,9 +1,10 @@
-"""Memory webhook events: the fixed event types, the change `announce` takes and the body a receiver gets.
+"""Memory webhook events: their types, the change `announce` takes and the body sent.
 
-A body names what changed — the event, the memory's key, id and version, its
-identity tuple, who changed it, when and in which request — and never what it
-says: no value, tags text or evidence. The receiver fetches the row with its
-own token, so what it may read is decided at read time, as for any other read.
+The event types are fixed. A body names what changed — the event, the memory's
+key, id and version, its identity tuple, who changed it, when and in which
+request — and never what it says: no value, tags text or evidence. The receiver
+fetches the row with its own token, so what it may read is decided at read
+time, as for any other read.
 """
 
 from __future__ import annotations
@@ -22,24 +23,6 @@ EventType = Literal[
     "memory.erased",
 ]
 EVENT_TYPES: tuple[EventType, ...] = get_args(EventType)
-
-# Every key a body carries, in this order; a test holds the body to it.
-BODY_FIELDS: tuple[str, ...] = (
-    "type",
-    "event_id",
-    "org",
-    "namespace",
-    "agent",
-    "user_id",
-    "session_id",
-    "memory_key",
-    "memory_id",
-    "version",
-    "actor",
-    "request_id",
-    "erasure_id",
-    "occurred_at",
-)
 
 # The wait before the next try after the n-th failed attempt: 5 s, 30 s, 2 min,
 # 10 min, 30 min, then the ceiling (memory_webhook_max_backoff_seconds) for every

@@ -4322,13 +4322,13 @@
           "default": 120.0,
           "minimum": 30,
           "type": "number",
-          "description": "Seconds a memory webhook delivery pass may run before the supervisor abandons it; memory_webhook_deliver_reserve_seconds before it, the pass cancels its POSTs still in flight. At least 30."
+          "description": "Seconds a memory webhook delivery pass may run before the supervisor abandons it (at least 30)."
         },
         "memory_webhook_deliver_reserve_seconds": {
           "default": 20.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds before the pass deadline a memory webhook delivery pass cancels its POSTs still in flight, kept for the one insert after them; their events keep the lease and are sent again under the same webhook-id once it ends. Less than memory_webhook_deliver_max_pass_seconds."
+          "description": "Seconds before the pass deadline a memory webhook delivery pass stops its POSTs, kept for the insert after them; less than memory_webhook_deliver_max_pass_seconds."
         },
         "memory_webhook_failures_before_cooldown": {
           "default": 5,

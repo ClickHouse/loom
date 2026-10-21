@@ -32,7 +32,6 @@ from server.core.errors import ValidationError
 from server.memory.api.models_webhook import WebhookRegisterInput
 from server.memory.app import webhooks as app
 from server.memory.domain.webhook_events import (
-    BODY_FIELDS,
     EVENT_TYPES,
     backoff_seconds,
     event_body,
@@ -51,6 +50,23 @@ REF = "LOOM_WEBHOOK_SECRET_ACME__CHAT"
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
 PUBLIC = "93.184.215.14"
 KEY = ("acme", "chat", "bot", "u1", "-", "user/pref/tea")
+# The wire contract: every key a body carries, in this order.
+BODY_KEYS = [
+    "type",
+    "event_id",
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_key",
+    "memory_id",
+    "version",
+    "actor",
+    "request_id",
+    "erasure_id",
+    "occurred_at",
+]
 
 
 def test_the_writers_carry_every_column_of_the_three_tables() -> None:
@@ -85,7 +101,7 @@ def test_the_body_names_the_change_and_never_its_content() -> None:
     change = _change(value="prefers green tea", tags=["diet"], source_trace="said so in chat")
     row = app._outbox_row("memory.written", "wh1", change, actor="user:alice", now=NOW)
     body = json.loads(event_body(row))
-    assert list(body) == list(BODY_FIELDS)
+    assert list(body) == BODY_KEYS
     assert body["type"] == "memory.written"
     assert body["memory_key"] == "user/pref/tea" and body["user_id"] == "u1"
     assert body["version"] == 1_758_369_600 * 10**9

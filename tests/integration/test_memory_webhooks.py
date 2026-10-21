@@ -26,7 +26,6 @@ import httpx
 import pytest
 
 from server.core.webhook_secrets import webhook_secret_org_prefix
-from server.memory.domain.webhook_events import BODY_FIELDS
 from server.memory.workers import webhook_deliver
 from server.settings import settings
 from tests.integration._resources import unique_org
@@ -36,6 +35,23 @@ pytestmark = pytest.mark.asyncio
 ORG = unique_org("memhook")
 SECRET = "whsec_" + base64.b64encode(b"memory-webhook-test-secret-32by!").decode()
 REF = webhook_secret_org_prefix(ORG) + "CHAT"
+# The wire contract: every key a body carries, in this order.
+BODY_KEYS = [
+    "type",
+    "event_id",
+    "org",
+    "namespace",
+    "agent",
+    "user_id",
+    "session_id",
+    "memory_key",
+    "memory_id",
+    "version",
+    "actor",
+    "request_id",
+    "erasure_id",
+    "occurred_at",
+]
 # Read before the receiver fixture patches these settings: what this process was started with.
 STARTED_WITH_ALLOWLIST = bool(
     settings.memory_webhook_allow_http and settings.memory_webhook_private_hosts
@@ -210,7 +226,7 @@ async def test_set_and_delete_reach_the_receiver_signed_and_without_content(
     first, second = receiver.events()
     assert first["type"] == "memory.written" and second["type"] == "memory.tombstoned"
     for event in (first, second):
-        assert list(event) == list(BODY_FIELDS)
+        assert list(event) == BODY_KEYS
         assert (event["org"], event["namespace"], event["agent"], event["user_id"]) == (
             ORG,
             ops.ns,
@@ -250,6 +266,34 @@ async def test_a_500_is_retried_and_the_retry_is_delivered(
     (first_h, _b1), (second_h, _b2) = receiver.requests
     assert first_h["webhook-id"] == second_h["webhook-id"]  # the same event, retried
     assert [(d["attempts"], d["last_status"]) for d in done["deliveries"]] == [(2, 200)]
+
+
+async def test_the_admin_ops_reach_only_their_own_namespace(
+    ops: Ops, receiver: Receiver, mint_test_token: Any
+) -> None:
+    hook = await ops.register(receiver.url)
+    other_ns = f"{ops.ns}-other"
+    other = Ops(
+        ops.client,
+        mint_test_token(org=ORG, namespaces=[other_ns], roles=["admin", "writer"]),
+        other_ns,
+    )
+    # Another namespace's admin can neither remove nor see the webhook.
+    removed = await other("webhook.remove", webhook_id=hook["webhook_id"])
+    assert removed["removed"] is False
+    assert (await other("webhook.list"))["webhooks"] == []
+    listed = await ops("webhook.list")
+    assert [h["webhook_id"] for h in listed["webhooks"]] == [hook["webhook_id"]]
+
+    # A writer is refused all four ops.
+    writer = Ops(
+        ops.client, mint_test_token(org=ORG, namespaces=[ops.ns], roles=["writer"]), ops.ns
+    )
+    await writer("webhook.register", expect=403, url=receiver.url, secret_ref=REF)
+    await writer("webhook.list", expect=403)
+    await writer("webhook.deliveries", expect=403)
+    await writer("webhook.remove", expect=403, webhook_id=hook["webhook_id"])
+    assert (await ops("webhook.remove", webhook_id=hook["webhook_id"]))["removed"] is True
 
 
 async def test_each_write_path_leaves_its_event_and_version(
