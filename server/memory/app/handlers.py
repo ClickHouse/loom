@@ -1126,7 +1126,10 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     """
     import server.memory.store as memory_repo
 
-    if input.user_id is None and input.agent is None:
+    # "*" opens an axis as it does on reads; matched literally it would clear nothing.
+    user_id = None if input.user_id == "*" else input.user_id
+    agent = None if input.agent == "*" else input.agent
+    if user_id is None and agent is None:
         raise HTTPException(
             status_code=400,
             detail={
@@ -1139,7 +1142,7 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
                 ),
             },
         )
-    candidates = [v for v in (input.user_id, input.agent) if v is not None]
+    candidates = [v for v in (user_id, agent) if v is not None]
     if input.confirm_subject not in candidates:
         raise HTTPException(
             status_code=400,
@@ -1161,8 +1164,8 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     counts = await memory_repo.bulk_tombstone_scope(
         org=input.org,
         namespace=input.namespace,
-        user_id=input.user_id,
-        agent=input.agent,
+        user_id=user_id,
+        agent=agent,
         on_tombstoned=announce_page if subscribed else None,
     )
     locked_skipped = int(counts.pop("locked_skipped", 0) or 0)

@@ -506,7 +506,9 @@ class MemoryClearInput(BaseModel):
 
     org: str
     namespace: str
+    # The user whose rows are cleared; "*" or unset clears every user's.
     user_id: str | None = None
+    # The agent whose rows are cleared; "*" or unset clears every agent's.
     agent: str | None = None
     # Must equal the `user_id` or `agent` being cleared; anything else is a 400.
     confirm_subject: str = Field(..., min_length=1, max_length=256)

@@ -180,6 +180,56 @@ async def test_clear_zero_rows_is_well_formed(
     assert all(v == 0 for v in out.rows_affected.values())
 
 
+@pytest.mark.asyncio
+async def test_clear_reads_star_agent_as_every_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """agent="*" clears the user's rows under every agent, as reads treat it."""
+    from server.memory import store as memory_repo
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    captured: dict[str, object] = {}
+
+    async def fake_bulk(*, org, namespace, user_id=None, agent=None, on_tombstoned=None, ch=None):
+        captured.update(user_id=user_id, agent=agent)
+        return {"loom.memory": 2, "loom.memory_embeddings": 2}
+
+    monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
+
+    out = await handle_memory_clear(
+        MemoryClearInput(
+            org="clickhouse",
+            namespace="finance",
+            user_id="alice",
+            agent="*",
+            confirm_subject="alice",
+        )
+    )
+    assert out.total == 4
+    assert captured == {"user_id": "alice", "agent": None}
+
+
+@pytest.mark.asyncio
+async def test_clear_refuses_star_on_every_axis() -> None:
+    """ "*" on both axes is a namespace-wide clear, which is erasure's job."""
+    from server.memory.api.models_crud import MemoryClearInput
+    from server.memory.app.handlers import handle_memory_clear
+
+    with pytest.raises(HTTPException) as exc:
+        await handle_memory_clear(
+            MemoryClearInput(
+                org="clickhouse",
+                namespace="finance",
+                user_id="*",
+                agent="*",
+                confirm_subject="*",
+            )
+        )
+    assert exc.value.status_code == 400
+    assert exc.value.detail["code"] == "MISSING_SCOPE"
+
+
 def _clear_ch(monkeypatch: pytest.MonkeyPatch, tombstoned: list[dict]):
     from tests.unit.ch_fake import RecordingCH
 

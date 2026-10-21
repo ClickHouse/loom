@@ -361,8 +361,8 @@ Bulk-tombstone memories in one scope.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
-| `user_id` | `str \| None` | `None` | The end user the row belongs to; `'-'` for none. |
-| `agent` | `str \| None` | `None` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str \| None` | `None` | The user whose rows are cleared; "*" or unset clears every user's. |
+| `agent` | `str \| None` | `None` | The agent whose rows are cleared; "*" or unset clears every agent's. |
 | `confirm_subject` | `str` | required | Must equal the `user_id` or `agent` being cleared; anything else is a 400. |
 
 | Output field | Type | Meaning |
