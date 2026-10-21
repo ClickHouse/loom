@@ -52,6 +52,13 @@ provider's discovery document lists it (Okta's does). It needs:
 
 Group claims are not mapped. Namespace access comes from Loom's own grants.
 
+Loom checks an ID token's signature with the algorithms the discovery document
+lists in `id_token_signing_alg_values_supported`, among RS256, RS384, RS512,
+PS256, ES256, ES384 and ES512, and with RS256 alone when it lists none. A token
+signed with an algorithm the document does not list is refused, as is any token
+with `none` or an HMAC algorithm (`HS256` and the like), whatever the document
+lists; a provider that lists only those signs no one in.
+
 ## Accounts
 
 The verified email matches an SSO account (one with no password) by its
@@ -658,6 +665,20 @@ The sign-in limits per 15 minutes (10 wrong device codes, 30 new device
 sign-ins, 300 identity-provider sign-in starts and 30 failed callbacks) count
 per client address, an IPv6 /64 as one. Set `LOOM_TRUSTED_PROXIES` to your proxy's
 addresses so that address is the user's own, not the proxy's for everyone.
+
+When Loom cannot reach the identity provider at the issuer's own host (its
+public name resolves to an address only browsers reach, for example), set
+`LOOM_OIDC_BACKCHANNEL_BASE_URL` to an address it can reach the provider at, such
+as `http://idp.internal:8080`: a scheme, a host and an optional port, nothing
+else. Loom's own calls to the issuer's host then go there, with the path kept and
+the issuer's host in the `Host` header: the discovery document
+(`<base>/<issuer path>/.well-known/openid-configuration`), the token and
+revocation endpoints, and the signing keys. The browser still goes to the
+issuer's `authorization_endpoint`, an endpoint the document names on another
+host is called as it is, and the document and every ID token must still name
+`LOOM_OIDC_ISSUER` as their issuer. None of these calls follows a redirect. A
+plain `http` base sends the client secret unencrypted: use one only on a network
+you trust.
 
 ## ClickHouse Keeper
 

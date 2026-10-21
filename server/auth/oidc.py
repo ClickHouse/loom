@@ -11,6 +11,10 @@ email is mapped to a loom account by `server.auth.login.resolve_identity_for_ema
 When the IdP advertises `offline_access`, loom asks for it and keeps the IdP's
 refresh token (sealed). Every Loom refresh spends it at the IdP first, so a
 user the IdP has deactivated loses Loom at their next refresh.
+
+Loom's own calls to the IdP (discovery, token, revocation, signing keys) follow
+no redirect, and with `LOOM_OIDC_BACKCHANNEL_BASE_URL` those to the issuer's
+host go to that base instead, the issuer's host in `Host` (`_route`).
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import logging
 import secrets
 import time
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 import jwt
@@ -33,6 +37,34 @@ log = logging.getLogger(__name__)
 # issuer -> (expiry_epoch, openid-configuration document)
 _discovery_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _jwk_clients: dict[str, PyJWKClient] = {}
+
+# What an id_token may be signed with, whichever the IdP lists: asymmetric
+# algorithms only, never `none`, nor an HMAC, whose key is the client secret.
+ID_TOKEN_ALGORITHMS = ("RS256", "RS384", "RS512", "PS256", "ES256", "ES384", "ES512")
+
+
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    return scheme, (parts.hostname or ""), parts.port or {"http": 80, "https": 443}.get(scheme)
+
+
+def _route(url: str) -> tuple[str, dict[str, str]]:
+    """Where a call of Loom's own to the IdP goes, and the headers it adds. With
+    `LOOM_OIDC_BACKCHANNEL_BASE_URL`, a URL on the issuer's origin goes to that
+    base instead, path and query kept, with the issuer's host in `Host`, so the
+    IdP answers as its public self; any other URL goes as it is."""
+    base = settings.oidc_backchannel_base_url
+    if not base or _origin(url) != _origin(settings.oidc_issuer):
+        return url, {}
+    to, target = urlsplit(base), urlsplit(url)
+    host = urlsplit(settings.oidc_issuer).netloc.rpartition("@")[2]
+    return urlunsplit((to.scheme, to.netloc, target.path, target.query, "")), {"Host": host}
+
+
+def _client() -> httpx.AsyncClient:
+    # A redirect is never followed: a reply naming another place is the IdP's error.
+    return httpx.AsyncClient(timeout=settings.identity_provider_timeout_s, follow_redirects=False)
 
 
 async def _discover() -> dict[str, Any]:
@@ -47,8 +79,9 @@ async def _discover() -> dict[str, Any]:
     now = time.time()
     if cached and cached[0] > now:
         return cached[1]
-    async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as c:
-        r = await c.get(f"{issuer}/.well-known/openid-configuration")
+    url, headers = _route(f"{issuer}/.well-known/openid-configuration")
+    async with _client() as c:
+        r = await c.get(url, headers=headers)
         r.raise_for_status()
         doc: dict[str, Any] = r.json()
     if str(doc.get("issuer") or "").rstrip("/") != issuer:
@@ -99,9 +132,11 @@ async def build_authorize_url(
 
 async def _token_request(form: dict[str, str]) -> dict[str, Any]:
     doc = await _discover()
-    async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as c:
+    url, headers = _route(doc["token_endpoint"])
+    async with _client() as c:
         r = await c.post(
-            doc["token_endpoint"],
+            url,
+            headers=headers,
             data={
                 **form,
                 "client_id": settings.oidc_client_id,
@@ -167,9 +202,11 @@ async def revoke(refresh_token: str) -> None:
         endpoint = (await _discover()).get("revocation_endpoint")
         if not endpoint:
             return
-        async with httpx.AsyncClient(timeout=settings.identity_provider_timeout_s) as c:
+        url, headers = _route(str(endpoint))
+        async with _client() as c:
             await c.post(
-                endpoint,
+                url,
+                headers=headers,
                 data={
                     "token": refresh_token,
                     "token_type_hint": "refresh_token",
@@ -191,26 +228,46 @@ async def check_callback_issuer(iss: str) -> bool:
 
 
 def signing_key(jwks_uri: str, id_token: str) -> Any:
-    """Resolve the IdP signing key for this token. Sync (PyJWKClient's fetch);
-    callers run it off the event loop. One client per jwks_uri keeps its key
-    cache, and an unknown `kid` refetches once, which follows IdP rotation."""
+    """Resolve the IdP signing key for this token. Sync (PyJWKClient's fetch,
+    which follows no redirect); callers run it off the event loop. One client
+    per jwks_uri keeps its key cache, and an unknown `kid` refetches once, which
+    follows IdP rotation."""
     client = _jwk_clients.get(jwks_uri)
     if client is None:
+        url, headers = _route(jwks_uri)
         client = _jwk_clients[jwks_uri] = PyJWKClient(
-            jwks_uri, timeout=settings.identity_provider_timeout_s
+            url, headers=headers, timeout=settings.identity_provider_timeout_s
         )
     return client.get_signing_key_from_jwt(id_token).key
 
 
+def id_token_algorithms(doc: dict[str, Any]) -> list[str]:
+    """What an id_token from this IdP may be signed with: the algorithms its
+    discovery document lists (`id_token_signing_alg_values_supported`) among
+    ID_TOKEN_ALGORITHMS, or RS256, OIDC's default, when it lists none. Raises
+    ValueError when it lists only others."""
+    listed = doc.get("id_token_signing_alg_values_supported")
+    if not isinstance(listed, list) or not listed:
+        return ["RS256"]
+    accepted = [a for a in ID_TOKEN_ALGORITHMS if a in listed]
+    if not accepted:
+        raise ValueError(
+            "the identity provider signs id_tokens with none of " + ", ".join(ID_TOKEN_ALGORITHMS)
+        )
+    return accepted
+
+
 async def verify_id_token(id_token: str, *, nonce: str) -> dict[str, Any]:
-    """Verify the IdP id_token (signature against JWKS, iss, aud, exp) and the
-    nonce, returning the claims. Raises on any failure."""
+    """Verify the IdP id_token (signature against JWKS with an algorithm the IdP
+    lists, iss, aud, exp) and the nonce, returning the claims. Raises on any
+    failure."""
     doc = await _discover()
+    algorithms = id_token_algorithms(doc)
     key = await asyncio.to_thread(signing_key, doc["jwks_uri"], id_token)
     claims: dict[str, Any] = jwt.decode(
         id_token,
         key,
-        algorithms=["RS256"],
+        algorithms=algorithms,
         audience=settings.oidc_client_id,
         issuer=doc["issuer"],
         options={"require": ["exp", "iat", "aud", "iss"]},

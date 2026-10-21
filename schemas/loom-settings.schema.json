@@ -4689,6 +4689,11 @@
           "type": "string",
           "description": "Tool names (case-insensitive globs, comma-separated) whose observations are stored content-less and already distilled: loom's own MCP tools (observing one copies a memory outside the key the user can delete) and the harness's meta tools, which say nothing about the task. \"\" disables the skip."
         },
+        "oidc_backchannel_base_url": {
+          "default": "",
+          "type": "string",
+          "description": "Base URL (http(s), host, optional port) Loom reaches the IdP at for its own calls to the issuer's host (discovery, token, revocation, signing keys) when that host is not reachable from Loom; each call keeps the issuer's host in `Host`, and the browser still goes to the issuer. Empty = the issuer's own URLs."
+        },
         "oidc_client_id": {
           "default": "",
           "type": "string",

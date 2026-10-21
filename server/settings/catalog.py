@@ -219,6 +219,11 @@ class AuthSettings(BaseModel):
     oidc_client_id: str = ""
     # Client secret sent to the IdP token endpoint when exchanging the sign-in code.
     oidc_client_secret: str = ""
+    # Base URL (http(s), host, optional port) Loom reaches the IdP at for its own calls to
+    # the issuer's host (discovery, token, revocation, signing keys) when that host is not
+    # reachable from Loom; each call keeps the issuer's host in `Host`, and the browser still
+    # goes to the issuer. Empty = the issuer's own URLs.
+    oidc_backchannel_base_url: str = ""
     # JIT provisioning: a first OIDC sign-in with no account creates a personal
     # namespace in oidc_jit_org instead of being rejected. Off = fail closed.
     # oidc_jit_email_domains (comma-separated) restricts it; empty admits any
@@ -241,6 +246,33 @@ class AuthSettings(BaseModel):
         return {
             s.strip().lower() for s in (self.oidc_jit_email_domains or "").split(",") if s.strip()
         }
+
+    @model_validator(mode="after")
+    def _check_oidc_backchannel(self) -> AuthSettings:
+        """A mistyped back-channel base fails at load, not at the first sign-in. The
+        error never echoes the value: a refused one may carry a credential."""
+        value = self.oidc_backchannel_base_url
+        if not value:
+            return self
+        parts = urlsplit(value)
+        try:
+            numeric_port = parts.port is None or parts.port >= 0
+        except ValueError:  # a port that is not a number, or out of range
+            numeric_port = False
+        if (
+            not numeric_port
+            or parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or "@" in parts.netloc
+            or parts.path not in ("", "/")
+            or parts.query
+            or parts.fragment
+        ):
+            raise ValueError(
+                "LOOM_OIDC_BACKCHANNEL_BASE_URL must be an http(s) URL of a host and an "
+                "optional port, with no user, path, query or fragment"
+            )
+        return self
 
     # The root secret, and the one secret a deployment carries: it signs tokens
     # as kid `default` and seals every stored credential and every signing key
