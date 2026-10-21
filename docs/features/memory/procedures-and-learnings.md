@@ -203,8 +203,10 @@ row holds the rule and no user's words. Each session that states the rule adds a
 `supporter_count` is the distinct end users, `supporter_sessions` the distinct
 sessions, and the `rationale` the earliest remaining supporter's quotes. Support never
 promotes it; promoting it publishes the rule to the namespace's knowledge, tagged
-`agent:<agent>`, where every user's reads of that agent find it and other agents' reads
-do not.
+`agent:<agent>`. `context.pack` with `include_knowledge`, `memory.stack` and
+`loom_search` serve it to that agent's reads for every user and leave it out of other
+agents' reads. `knowledge.search` is not filtered by agent: any agent that can read the
+namespace finds it there.
 
 A user erasure deletes that user's supporter rows, and their quotes with them. A
 candidate left with no supporter is deleted when pending. When decided, it keeps its

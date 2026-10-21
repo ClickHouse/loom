@@ -38,6 +38,7 @@ from server.memory.api.models_graph import (
     _LineageSupporter,
     _MemoryRelatedHit,
 )
+from server.memory.domain import assistant_rules
 
 
 def _parse_supporter(tuple_str: str) -> dict[str, str] | None:
@@ -95,7 +96,6 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
     # A bot's rule is written at user_id '-'; its approver is the row's actor.
     promoted_by = str(row.get("user_id") or "")
     if cand_id:
-        from server.memory.domain.assistant_rules import SOURCE_KIND as ASSISTANT_TURN
         from server.memory.store import learnings as learnings_repo
 
         cand_row = await learnings_repo.find_candidate(
@@ -105,7 +105,7 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
         )
         if cand_row is not None:
             supporter_count = len(cand_row.get("supporters") or [])
-            if cand_row.get("source_kind") == ASSISTANT_TURN:
+            if cand_row.get("source_kind") == assistant_rules.SOURCE_KIND:
                 # Its support lives in loom.learnings_supporters: distinct users.
                 stats = await learnings_repo.supporter_stats(input.org, input.namespace, [cand_id])
                 supporter_count = int(stats[0]["users"]) if stats else 0

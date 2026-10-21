@@ -495,7 +495,7 @@ async def handle_memory_set_from_messages(
     replay reads it again. `rule_agent` is the agent a filed rule is for: None
     resolves it from the request's token, a deferred replay passes the one stored
     when it was queued ('' files nothing)."""
-    from server.memory.app.assistant_learnings import request_rule_agent
+    from server.memory.app.provenance import request_rule_agent
     from server.settings import settings as _settings
 
     setting_on = _settings.memory_extract_agent_learnings

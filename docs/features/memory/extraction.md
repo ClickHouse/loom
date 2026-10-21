@@ -119,7 +119,8 @@ request's `(org, namespace, agent)`:
   bounded to one user does not.
 - A token bound to one end user (an end-user token, or one with a `read_user_id` pin)
   files for the agent its issuer signed, never the body's `agent`, and files nothing
-  when it names no agent.
+  when it names no agent. Its reads are served that agent's rules the same way, and no
+  bot's rules when it names no agent.
 
 `learning_candidates` in the response counts the rules that wrote a new candidate or this
 session's support of one. A failed queue

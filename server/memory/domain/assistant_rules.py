@@ -29,8 +29,9 @@ def serves_agent(tags: list[str], agent: str) -> bool:
 
 
 def hits_to_ask(top_k: int) -> int:
-    """How many knowledge hits a read asks for so that `top_k` remain after
-    serves_agent drops other bots' rules, within knowledge.search's cap of 100."""
+    """How many knowledge hits a read asks for again when serves_agent dropped
+    another bot's rule from its first `top_k`, so that `top_k` remain, within
+    knowledge.search's cap of 100."""
     return min(top_k * 4, 100)  # not a setting: headroom for other bots' rules
 
 

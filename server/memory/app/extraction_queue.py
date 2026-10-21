@@ -74,7 +74,7 @@ ENQUEUED_BY_KEY = "enqueued_by"
 # the inline call's would. Stamped by the server like `enqueued_by`.
 READ_SCOPE_KEY = "read_filters"
 # The agent a filed assistant rule is for, resolved from the enqueuing token
-# (`assistant_learnings.request_rule_agent`), so the replay files as the inline
+# (`provenance.request_rule_agent`), so the replay files as the inline
 # call would; '' (or a payload without it) files nothing.
 RULE_AGENT_KEY = "rule_agent"
 

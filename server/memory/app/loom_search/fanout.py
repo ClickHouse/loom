@@ -22,6 +22,7 @@ from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.loom_search.answer_first import answer_first
 from server.memory.app.loom_search.tracker_leg import tracker_leg
 from server.memory.app.profile_search import search_profile
+from server.memory.app.provenance import request_rule_agent
 from server.memory.domain import assistant_rules
 
 # Query words that name nothing in a profile section — otherwise "where does
@@ -204,8 +205,8 @@ async def search_sections(
     """The assembled loom_search payload for `query` addressed to
     (`org`, `namespace`); every leg reads the namespaces `namespaces_to_search`
     gives for `namespace_scope`, and the knowledge leg leaves out the rules
-    promoted for a bot other than `agent`. The caller has already authorized
-    `namespace`."""
+    promoted for a bot other than the one `request_rule_agent(agent)` names. The
+    caller has already authorized `namespace`."""
     from server.auth.fanout import namespaces_to_search
     from server.knowledge.api.models_conversations import ConversationSearchInput
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput
@@ -239,7 +240,7 @@ async def search_sections(
         org=org,
         namespace=namespace,
         query=query,
-        top_k=assistant_rules.hits_to_ask(top_k),
+        top_k=top_k,
         tags=tags,
         namespace_scope=namespace_scope,
     )
@@ -272,10 +273,25 @@ async def search_sections(
     if isinstance(know_result, Exception):
         payload["knowledge"] = {"error": _leg_error(know_result), "results": []}
     else:
+        rule_agent = request_rule_agent(agent)
+
+        def served(section: dict[str, Any]) -> list[dict[str, Any]]:
+            # Another bot's promoted rule is not a rule about this agent.
+            return [
+                h for h in section["results"] if assistant_rules.serves_agent(h["tags"], rule_agent)
+            ]
+
         know = know_result.model_dump()
-        know["results"] = [
-            h for h in know["results"] if assistant_rules.serves_agent(h["tags"], agent)
-        ][:top_k]
+        kept = served(know)
+        if len(kept) < len(know["results"]):
+            # Other bots' rules took places: ask again with room for them.
+            wider = know_input.model_copy(update={"top_k": assistant_rules.hits_to_ask(top_k)})
+            try:
+                know = (await knowledge_with_repo_docs(wider)).model_dump()
+                kept = served(know)
+            except Exception:  # noqa: BLE001 — the first pass's hits still answer
+                pass
+        know["results"] = kept[:top_k]
         payload["knowledge"] = knowledge_above_floor(know)
     payload["profile"] = {
         "results": [] if isinstance(profile_rows, Exception) else list(profile_rows)

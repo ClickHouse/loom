@@ -56,7 +56,7 @@ class WorkflowState:
     # Whether assistant-turn learnings are on for this call: the deployment setting,
     # read once by the op, unless the request turned them off.
     agent_learnings: bool = False
-    # The agent a filed rule is for (`assistant_learnings.request_rule_agent`):
+    # The agent a filed rule is for (`provenance.request_rule_agent`):
     # a pinned token's signed agent, else the body's; '' files nothing.
     rule_agent: str = ""
     # Rules that wrote a new candidate or this session's support of one.

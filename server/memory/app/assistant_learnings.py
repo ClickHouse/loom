@@ -30,19 +30,6 @@ log = logging.getLogger(__name__)
 _FILED_VERSION = 1
 
 
-def request_rule_agent(body_agent: str) -> str:
-    """The agent a rule filed by the request in flight is for. A token bound to one
-    end user files for the agent its issuer signed, and for none ('': nothing is
-    filed) when it names none, never for the body's. Any other caller files for the
-    body's agent."""
-    from server.auth.context import current_auth
-
-    auth = current_auth()
-    if auth is not None and auth.read_user_id:
-        return auth.agent_principal.removeprefix("agent:")
-    return body_agent or "-"
-
-
 async def file_assistant_rules(state: WorkflowState, facts: list[dict[str, Any]]) -> int:
     """File each rule as a pending candidate for (org, namespace, agent) and record
     this session as its supporter. Returns how many rules wrote a row (a new

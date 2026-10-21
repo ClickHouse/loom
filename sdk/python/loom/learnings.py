@@ -69,7 +69,8 @@ class LearningsClient:
           - None        → 'knowledge' for a bot's rule (assistant_turn), else 'memory'
 
         On 'reject' the queue row's status flips and nothing else runs.
-        Idempotent: re-reviewing a decided candidate returns its state.
+        Idempotent: re-reviewing a decided candidate returns its state, except
+        a bot's rule whose last supporter was erased, which answers 404.
         """
         return await self._agent.transport.post(
             "/v1/learnings.review",

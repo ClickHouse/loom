@@ -4,13 +4,14 @@ of the memory write, and filed as learnings queue candidates an admin promotes."
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 
 import pytest
 
 from server.llm import client as llm_client_module
-from server.memory.app import assistant_learnings, blacklist_guard, pipeline
+from server.memory.app import assistant_learnings, blacklist_guard, pipeline, provenance
 from server.memory.app.extract import extract_from_messages
 from server.memory.app.extract.parse import _parse_fact_list
 from server.memory.app.extract.prompts import _extraction_base_prompt
@@ -468,7 +469,7 @@ def test_the_rule_agent_comes_from_the_token(auth: dict[str, Any], agent: str) -
 
     token = current_auth_var.set(_auth(**auth))
     try:
-        assert assistant_learnings.request_rule_agent("body-bot") == agent
+        assert provenance.request_rule_agent("body-bot") == agent
     finally:
         current_auth_var.reset(token)
 
@@ -958,6 +959,168 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
 
     assert "Refunds take five days." in st.sections["knowledge"]
     assert "rule 0" not in st.sections["knowledge"]
+
+
+# Three sales-bot rules outrank support-bot's own rule and a plain document.
+_RANKED = [
+    (f"sales-rule-{i}", f"sales rule {i}", ["source-kind:assistant_turn", "agent:sales-bot"])
+    for i in range(3)
+] + [
+    ("support-rule", "support rule", ["source-kind:assistant_turn", "agent:support-bot"]),
+    ("refunds.md", "Refunds take five days.", ["runbook"]),
+]
+
+
+@pytest.fixture
+def support_bot_token() -> Iterator[None]:
+    """An end-user token signed for support-bot; the reads below name sales-bot in
+    the body, which the token's signed agent overrides."""
+    from server.auth.context import current_auth_var
+
+    token = current_auth_var.set(_auth(read_user_id="alice", agent_principal="agent:support-bot"))
+    yield
+    current_auth_var.reset(token)
+
+
+def _knowledge_hits(top_k: int) -> Any:
+    from server.knowledge.api.models_knowledge import KnowledgeSearchOutput, _SearchHit
+
+    hits = [
+        _SearchHit(
+            source_uri=uri, chunk_idx=0, content=text, tags=tags, distance=0.1, similarity=0.9
+        )
+        for uri, text, tags in _RANKED[:top_k]
+    ]
+    return KnowledgeSearchOutput(results=hits, embedding_model="fake")
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("support_bot_token")
+async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import knowledge_search
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app import context_pack
+
+    asked: list[int] = []
+
+    async def search(input: Any) -> Any:
+        asked.append(input.top_k)
+        return _knowledge_hits(input.top_k)
+
+    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    st = context_pack._PackState(
+        input=ContextPackInput(
+            org="o",
+            namespace="ns",
+            agent="sales-bot",
+            query="refund",
+            include_knowledge=True,
+            top_k=2,
+        ),
+        default_section_tokens={},
+    )
+    await context_pack._pack_knowledge(st)
+
+    section = st.sections["knowledge"]
+    assert "support rule" in section and "Refunds take five days." in section
+    assert "sales rule" not in section
+    # The first pass asks for top_k; only the dropped rules ask for more.
+    assert asked == [2, assistant_rules.hits_to_ask(2)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("support_bot_token")
+async def test_a_pinned_tokens_stack_serves_its_signed_bots_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import search as knowledge_store
+    from server.knowledge.app.search import ChunkHit
+    from server.memory.api.models_lifecycle import MemoryStackInput
+    from server.memory.app import stack
+
+    class _Embedder:
+        model_name = "fake"
+
+        async def embed(self, _text: str) -> list[float]:
+            return [0.0]
+
+    asked: list[int] = []
+
+    async def search(q: Any) -> list[ChunkHit]:
+        asked.append(q.top_k)
+        return [
+            ChunkHit(
+                namespace="ns", source_uri=uri, chunk_idx=0, content=text, tags=tags, distance=0.1
+            )
+            for uri, text, tags in _RANKED[: q.top_k]
+        ]
+
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: _Embedder())
+    monkeypatch.setattr(knowledge_store, "hybrid_search", search)
+    fill = stack._StackFill(budget=10_000)
+    await stack._stack_knowledge(
+        MemoryStackInput(
+            org="o",
+            namespace="ns",
+            agent="sales-bot",
+            include_knowledge=True,
+            knowledge_top_k=2,
+        ),
+        fill,
+        "refund",
+    )
+
+    assert [e.memory_key for e in fill.entries] == ["support-rule", "refunds.md"]
+    assert asked == [2, assistant_rules.hits_to_ask(2)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("support_bot_token")
+async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.app import search as memory_search
+    from server.memory.app.loom_search import fanout
+
+    asked: list[int] = []
+
+    async def knowledge(input: Any) -> Any:
+        asked.append(input.top_k)
+        return _knowledge_hits(input.top_k)
+
+    async def leg_down(*_a: Any, **_kw: Any) -> Any:
+        raise RuntimeError("not under test")
+
+    async def namespaces(_org: str, namespace: str, _scope: Any) -> tuple[list[str], list[str]]:
+        return [namespace], []
+
+    monkeypatch.setattr(fanout, "knowledge_with_repo_docs", knowledge)
+    monkeypatch.setattr(memory_search, "handle_memory_search", leg_down)
+    monkeypatch.setattr(fanout, "search_profile", leg_down)
+    monkeypatch.setattr(fanout, "_conversation_leg", leg_down)
+    monkeypatch.setattr(fanout, "tracker_leg", leg_down)
+    monkeypatch.setattr(fanout, "request_scope", lambda: None)
+    monkeypatch.setattr("server.auth.fanout.namespaces_to_search", namespaces)
+    monkeypatch.setattr(fanout, "answer_first", lambda payload, _ns, explain: payload)
+    payload = await fanout.search_sections(
+        org="o",
+        namespace="ns",
+        agent="sales-bot",
+        query="refund",
+        top_k=2,
+        tags=[],
+        namespace_scope="this",
+        recipe="",
+        bodies="excerpt",
+        page="",
+        explain=False,
+    )
+
+    uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
+    assert uris == ["support-rule", "refunds.md"]
+    assert asked == [2, assistant_rules.hits_to_ask(2)]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

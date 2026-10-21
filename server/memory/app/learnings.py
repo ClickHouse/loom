@@ -177,7 +177,8 @@ async def handle_learnings_review(
     explicit promotion flow gives it.
 
     Idempotent: re-reviewing an already-decided candidate is a no-op
-    (returns the existing status).
+    (returns the existing status), except a bot's rule whose last supporter
+    was erased, which answers 404.
     """
     from fastapi import HTTPException
 
