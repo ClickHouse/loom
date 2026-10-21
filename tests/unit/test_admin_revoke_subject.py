@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -29,7 +29,13 @@ from tests.unit.revocation_fakes import revocation_read
 pytestmark = pytest.mark.usefixtures("stub_model_command")
 
 
-def _token(name: str, created_by: str, *, lineage: list[str] | None = None) -> dict[str, Any]:
+def _token(
+    name: str,
+    created_by: str,
+    *,
+    lineage: list[str] | None = None,
+    created_at: datetime = datetime(2026, 1, 1),
+) -> dict[str, Any]:
     """A loom.service_accounts row: a token `created_by` made, never expiring."""
     return {
         "org": "acme",
@@ -39,7 +45,7 @@ def _token(name: str, created_by: str, *, lineage: list[str] | None = None) -> d
         "roles": ["writer"],
         "ttl_days": 0,
         "created_by": created_by,
-        "created_at": datetime(2026, 1, 1),
+        "created_at": created_at,
         "expires_at": None,
         "revoked_at": None,
         "revoked_by": "",
@@ -100,6 +106,8 @@ class _Store:
         if "loom.service_accounts" in sql:  # one name, read again under its claim
             live = [r for r in self._made_by(p["subs"]) if r["revoked_at"] is None]
             return next((r for r in live if r["name"] == p["name"]), None)
+        if "reason, revoked_by, issued_before" in sql:  # a subject's own row
+            return self.revoked().get(p["j"])
         return revocation_read(self.revocations, sql, params)
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
@@ -109,11 +117,13 @@ class _Store:
             return [r for k, r in self.revoked().items() if keys is None or k in keys]
         if "loom.service_accounts" in sql:
             return [{**r, "live": r["revoked_at"] is None} for r in self._made_by(p["subs"])]
-        if "loom.oauth_state" in sql:
+        if "loom.oauth_state" in sql:  # each live session, by when its newest token was written
             assert p["t"] == "session_refresh"
-            now = int(time.time())
-            live = {s["family"] for s in self.sessions if s["subject"] == p["s"] and s["exp"] > now}
-            return [{"family": f} for f in sorted(live)]
+            now, newest = int(time.time()), {}
+            for s in self.sessions:
+                if s["subject"] == p["s"] and s["exp"] > now:
+                    newest[s["family"]] = max(newest.get(s["family"], 0), s.get("at", now - 3600))
+            return [{"family": f, "at": at} for f, at in sorted(newest.items())]
         if "loom.namespaces" in sql:  # the spellings tied to a subject
             if self.directory_down:
                 raise ConnectionError("ClickHouse is away")
@@ -141,11 +151,13 @@ class _Store:
 @pytest.fixture
 def store(monkeypatch: pytest.MonkeyPatch) -> _Store:
     from server.insights.app import admin_routes
+    from tests.unit.claims_fake import memory_claims
 
     s = _Store()
     monkeypatch.setattr("server.core.ch.get_client", lambda: s)
     monkeypatch.setattr("server.observability.audit.get_client", lambda: s)
     monkeypatch.setattr(type(admin_routes.settings), "auth_actually_required", lambda self: False)
+    memory_claims(monkeypatch)  # the subject's lease, without a lease table
     return s
 
 
@@ -194,6 +206,7 @@ def test_a_subject_revoked_for_good_takes_its_sessions_and_the_tokens_it_made(
         "sessions": 1,  # the live one; the ended and the lapsed are not ended by it
         "tokens": 2,  # laptop, and child below it
     }
+    assert out["issued_before"] is None and out["outright"] == ["lee"]
     row = store.revoked()["lee"]
     assert row["issued_before"] is None and row["revoked_by"] == "admin:local"
     assert row["expires_at"] == datetime(2105, 12, 31)  # for good: as long as the table holds it
@@ -221,12 +234,13 @@ def test_a_repeat_answers_the_same_and_marks_nothing_more(store: _Store) -> None
     _lee_with_tokens_and_sessions(store)
     c, body = _client(), {"org": "acme", "subject": "lee"}
     first = c.post("/v1/admin/revoke_subject", json=body).json()
-    marked = len(store.tokens)
+    marked, written = len(store.tokens), len(store.revocations)
     again = c.post("/v1/admin/revoke_subject", json=body).json()
-    assert (again["sessions"], again["tokens"]) == (first["sessions"], first["tokens"]) == (1, 2)
-    assert len(store.tokens) == marked
+    assert again == first and (again["sessions"], again["tokens"]) == (1, 2)
+    assert (len(store.tokens), len(store.revocations)) == (marked, written)
     assert store.revoked()["lee"]["issued_before"] is None
     assert [a["event_type"] for a in store.audits] == ["token.revoked"] * 2
+    assert [a["subject"]["kept"] for a in store.audits] == [False, True]
 
 
 def test_only_a_platform_admin_revokes_or_lists(store: _Store, monkeypatch) -> None:
@@ -264,6 +278,9 @@ def test_only_a_platform_admin_revokes_or_lists(store: _Store, monkeypatch) -> N
         {"org": "", "subject": "lee"},
         {"org": "acme", "subjects": "lee"},  # a misspelled field
         {"org": "acme", "subject": "lee", "expires_at": "2027-01-01T00:00:00Z"},
+        {"org": "acme", "subject": "lee", "issued_before": "2026-01-31T12:00:00"},  # no offset
+        {"org": "acme", "subject": "lee", "issued_before": "2999-01-01T00:00:00Z"},  # ahead
+        {"org": "acme", "subject": "lee", "issued_before": "yesterday"},
     ],
 )
 def test_a_revocation_that_would_cut_off_no_one_writes_nothing(
@@ -308,6 +325,104 @@ def test_an_email_reaches_the_login_handle_its_account_signs_in_with(store: _Sto
     # Only the org named resolves spellings: elsewhere the email stands alone.
     other = _client().post("/v1/admin/revoke_subject", json={**body, "org": "other"}).json()
     assert other["subjects"] == ["lee@acme.io"]
+
+
+def _at(seconds: int) -> datetime:
+    return datetime.fromtimestamp(seconds, UTC)
+
+
+def test_a_cutoff_ends_what_came_before_it_and_lets_a_later_sign_in_live(store: _Store) -> None:
+    """A platform's deprovisioning passes `issued_before`: everything the person
+    held before it is refused for good, a sign-in after it (a re-invitation)
+    works, and the login handle the email signs in with is covered as the email is."""
+    store.accounts.append(
+        {"org": "acme", "owner_email": "u-lee-1a2b", "contact_email": "lee@acme.io"}
+    )
+    now = int(time.time())
+    t = now - 600  # for ten minutes ago, so tokens made after it exist already
+    cut = t + 1 + revocation.CLOCK_SKEW_S  # its second, and a replica clock running ahead
+    store.tokens += [
+        _token("old", "u-lee-1a2b", created_at=_at(t - 60).replace(tzinfo=None)),
+        _token("new", "u-lee-1a2b", created_at=_at(cut + 60).replace(tzinfo=None)),
+    ]
+    store.sessions += [
+        {"subject": "u-lee-1a2b", "family": "s-old", "exp": now + 86400, "at": t - 60},
+        {"subject": "u-lee-1a2b", "family": "s-new", "exp": now + 86400, "at": cut + 60},
+    ]
+    spellings = ("u-lee-1a2b", "lee@acme.io")
+    before = [mint_token(s, "acme", ["ns"], ["writer"], issued_at=t - 60) for s in spellings]
+    after = [mint_token(s, "acme", ["ns"], ["writer"], issued_at=cut + 60) for s in spellings]
+
+    body = {"org": "acme", "subject": "lee@acme.io", "issued_before": _at(t).isoformat()}
+    out = _client().post("/v1/admin/revoke_subject", json=body).json()
+
+    assert out["subjects"] == ["lee@acme.io", "u-lee-1a2b"] and out["outright"] == []
+    assert datetime.fromisoformat(out["issued_before"]) == _at(cut)
+    assert (out["sessions"], out["tokens"]) == (1, 1)  # the session refreshed since lives on
+    for token in before:
+        with pytest.raises(TokenError, match="revoked"):
+            verify_token(token)
+    assert [verify_token(token).subject for token in after] == list(spellings)
+    # A sign-in mints only once ClickHouse says the subject is not revoked for it.
+    signs_in = revocation.subjects_revoked(list(spellings), issued_at=cut)
+    assert not asyncio.run(signs_in)
+    assert asyncio.run(revocation.subjects_revoked(["u-lee-1a2b"], issued_at=cut - 1))
+    heads = store.heads()
+    assert heads["old"]["revoked_at"] is not None and heads["new"]["revoked_at"] is None
+    recorded = [datetime.fromisoformat(a["subject"]["issued_before"]) for a in store.audits]
+    assert recorded == [_at(cut).replace(tzinfo=None)] * 2  # naive UTC, as the row keeps it
+
+
+def test_a_cutoff_never_lifts_an_outright_revocation(store: _Store) -> None:
+    c = _client()
+    c.post("/v1/admin/revoke_subject", json={"org": "acme", "subject": "lee"})  # a ban
+    written = len(store.revocations)
+    body = {"org": "acme", "subject": "lee", "issued_before": _at(int(time.time())).isoformat()}
+    out = c.post("/v1/admin/revoke_subject", json=body).json()
+    assert out["outright"] == ["lee"] and len(store.revocations) == written
+    with pytest.raises(TokenError, match="revoked"):  # minted after the cutoff: still refused
+        verify_token(mint_token("lee", "acme", ["ns"], ["writer"]))
+    assert store.audits[-1]["subject"]["kept"] is True
+
+
+def test_a_later_cutoff_stays_and_a_repeat_writes_nothing_more(store: _Store) -> None:
+    c, now = _client(), int(time.time())
+    late = {"org": "acme", "subject": "lee", "issued_before": _at(now - 60).isoformat()}
+    first = c.post("/v1/admin/revoke_subject", json=late).json()
+    written = len(store.revocations)
+    assert c.post("/v1/admin/revoke_subject", json=late).json() == first
+    early = {**late, "issued_before": _at(now - 3600).isoformat()}  # a retry sent long ago
+    c.post("/v1/admin/revoke_subject", json=early)
+    assert len(store.revocations) == written
+    cut = now - 60 + 1 + revocation.CLOCK_SKEW_S
+    assert revocation.is_revoked("lee", issued_at=cut - 1)  # still refused up to the later one
+    assert not revocation.is_revoked("lee", issued_at=cut)
+
+
+def test_a_revocation_that_lapses_gives_way_to_one_for_good(store: _Store) -> None:
+    """A time-boxed revocation (`loom revoke-token --expires-at`) would let the
+    person's old tokens back when it lapses: the request's revocation replaces it."""
+    lapses = datetime.now(UTC) + timedelta(days=1)
+    asyncio.run(revocation.revoke("lee", expires_at=lapses, reason="paused", revoked_by="cli:op"))
+    t = int(time.time()) - 600
+    body = {"org": "acme", "subject": "lee", "issued_before": _at(t).isoformat()}
+    out = _client().post("/v1/admin/revoke_subject", json=body).json()
+    row = store.revoked()["lee"]
+    assert out["outright"] == [] and row["expires_at"] == datetime(2105, 12, 31)
+    assert row["issued_before"] == _at(t + 1 + revocation.CLOCK_SKEW_S).replace(tzinfo=None)
+    assert store.audits[-1]["subject"]["kept"] is False
+
+
+def test_a_revocation_of_a_subject_another_is_changing_is_refused(store, monkeypatch) -> None:
+    from server.core import leases
+
+    async def taken(name: str, **_: Any) -> None:
+        return None  # another holder keeps the subject's lease
+
+    monkeypatch.setattr(leases, "take", taken)
+    with pytest.raises(GrantBusyError, match="retry"):
+        _client().post("/v1/admin/revoke_subject", json={"org": "acme", "subject": "lee"})
+    assert store.revocations == []
 
 
 def test_a_directory_that_cannot_be_read_revokes_nothing(store: _Store) -> None:

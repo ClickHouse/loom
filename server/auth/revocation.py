@@ -397,6 +397,32 @@ async def has_outright_row(jti: str) -> bool:
     return row is not None
 
 
+def never_lapses(row: dict[str, Any]) -> bool:
+    """Whether a revocation row is kept as long as the table can hold it (one
+    written with no expiry), so it outlasts every token it refuses."""
+    from server.core.datetimes import as_aware_utc
+
+    expires = as_aware_utc(row["expires_at"])
+    return expires is not None and expires >= as_aware_utc(_LATEST_EXPIRY)
+
+
+async def own_row(subject: str) -> dict[str, Any] | None:
+    """The unexpired revocation row of `subject`'s own key (not an operator
+    cutoff's nor SCIM's), read as of every write that landed; None when it has none."""
+    from server.core.ch import get_client, own_write_reads
+
+    with own_write_reads():
+        row = await get_client().query_one(
+            """
+            SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before
+            FROM loom.revoked_tokens FINAL
+            WHERE jti = {j:String} AND expires_at > now()
+            """,
+            params={"j": subject},
+        )
+    return None if row is None else dict(row)
+
+
 def revoked_here(jti: str) -> None:
     """Refuse `jti` in this process now, for a revocation written elsewhere
     (an owed one) that the next snapshot will carry."""

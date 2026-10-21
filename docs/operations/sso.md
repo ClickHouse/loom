@@ -576,50 +576,68 @@ issues their sign-in, revokes them over the admin API instead. A platform admin
 sends:
 
 ```bash
-loom call /v1/admin/revoke_subject \
-  --data '{"org":"acme","subject":"lee@acme.io","reason":"left the company"}'
+loom call /v1/admin/revoke_subject --data \
+  '{"org":"acme","subject":"lee@acme.io","reason":"left","issued_before":"2026-01-31T12:00:00Z"}'
 ```
 
 Loom revokes the subject and every spelling the org's directory ties to it, the
 same pairing grants are read under: an email reaches the login handle of the
 account it signs in to (an SSO account's subject is its namespace, `u-…`), and a
-handle reaches its email. Each is revoked outright and for good, as
-`loom revoke-token --subject` revokes it: every token whose subject it is, every
-token it made or that descends from one of its tokens, and every refresh of its
-sign-in sessions are refused at once by the process that took the request, and
-by every other process at its next revocation refresh. Every mint reads
-revocations from ClickHouse, so a sign-in, a device approval or an MCP connect
-for it gets no token either. The service accounts and MCP tokens it made show
-as revoked in the Tokens list, by `admin:<you>`, and their names are free again,
-as after a SCIM deactivation. The accounts, their grants and their data stay;
-this is not erasure.
+handle reaches its email. For each, every token whose subject it is, every token
+it made or that descends from one of its tokens, and every refresh of its sign-in
+sessions are refused at once by the process that took the request, and by every
+other process at its next revocation refresh. Every mint reads revocations from
+ClickHouse, so a sign-in, a device approval or an MCP connect for it gets no token
+either. The service accounts and MCP tokens it ends show as revoked in the Tokens
+list, by `admin:<you>`, and their names are free again, as after a SCIM
+deactivation. The accounts, their grants and their data stay; this is not
+erasure.
+
+`issued_before` (RFC 3339, with its offset) limits the revocation to what was
+issued before that instant, for good: a platform deprovisioning someone sends the
+current time, so that if the person is invited back later, their next sign-in, a
+new device approval or a new MCP connect works. Loom takes the instant to its next
+second, plus the 5 s replica clocks may differ by, so nothing issued before it on
+any replica survives; a token issued in those few seconds after it is refused too.
+An instant more than five minutes ahead of the server's clock is refused (422).
+Without `issued_before` the revocation is outright, as
+`loom revoke-token --subject` writes it: every token of the subject, issued
+before or after, is refused for good, which is the form for a permanent ban. A
+request never weakens a revocation the subject already has: an outright one, or a
+later cutoff, stays as it is, while one that lapses (`loom revoke-token
+--expires-at`) gives way to the request's, which never does.
 
 ```json
 {
   "subjects": ["lee@acme.io", "u-lee-1a2b3c4d"],
   "org": "acme",
   "revoked_at": "2026-01-31T12:00:00",
-  "reason": "left the company",
+  "reason": "left",
+  "issued_before": "2026-01-31T12:00:06Z",
+  "outright": [],
   "sessions": 2,
   "tokens": 3
 }
 ```
 
-`sessions` counts the sign-in sessions of those subjects that could still
-refresh, and `tokens` the tokens they made, directly or through their tokens,
-that the revocation ends. A subject is a name, not an org's, so the revocation
-holds in every org; `org` picks the directory the spellings come from and the
-audit log each `token.revoked` row lands in, and an end user's subject,
-`<org>/user:<id>`, must name its own org. When the directory cannot be read,
-nothing is revoked and the request fails. A repeat writes the same revocations
-and answers the same counts, so a caller retries until it gets a 200; a failure
+`issued_before` in the answer is the cutoff applied, `null` for an outright
+request, and `outright` names the subjects revoked outright: all of them for an
+outright request, and for a cutoff those an earlier outright revocation still
+holds. `sessions` counts the sign-in sessions of those subjects the revocation
+ends (each refreshed before the cutoff), and `tokens` the tokens they made,
+directly or through their tokens, that it ends. A subject is a name, not an
+org's, so the revocation holds in every org; `org` picks the directory the
+spellings come from and the audit log each `token.revoked` row lands in, and an
+end user's subject, `<org>/user:<id>`, must name its own org. When the directory
+cannot be read, nothing is revoked and the request fails. A repeat answers the
+same and writes nothing more, so a caller retries until it gets a 200; a failure
 after the revocations landed (marking the tokens did not finish) is finished by
 the retry.
 
 `GET /v1/admin/revocations?subject=<subject>` lists a subject's revocations:
 its own, an operator cutoff's and SCIM's (`kind`). Without `subject` it lists
-every unexpired one, as `loom revoke-token --list` does. To let a revoked person
-back in, narrow the revocation rather than remove it: with
+every unexpired one, as `loom revoke-token --list` does. To let a person
+revoked outright back in, narrow the revocation rather than remove it: with
 `loom revoke-token --subject <it> --issued-before <now>`, tokens made from then
 on work and everything from before stays dead.
 

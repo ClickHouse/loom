@@ -4,6 +4,7 @@ do on the host, for an admin signed in from anywhere (`loom call`, the SDK)."""
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -233,6 +234,23 @@ class RevokeSubjectInput(_Input):
     org: str
     subject: str
     reason: str = ""
+    # Only the tokens issued before this instant (RFC 3339, with its offset); omitted: all.
+    issued_before: datetime | None = None
+
+
+# How far ahead of this server's clock `issued_before` may be: a caller's clock
+# running a little ahead, never a cutoff that refuses the subject's next sign-in.
+_AHEAD_S = 300  # not a setting: it bounds a caller's clock error, nothing an operator tunes
+
+
+def _refused_cutoff(issued_before: datetime | None) -> str | None:
+    if issued_before is None:
+        return None
+    if issued_before.tzinfo is None:
+        return "issued_before needs its UTC offset (RFC 3339), e.g. 2026-01-31T12:00:00Z"
+    if issued_before > datetime.now(UTC) + timedelta(seconds=_AHEAD_S):
+        return "issued_before is in the future: send the time the revocation is for"
+    return None
 
 
 @router.post("/v1/admin/revoke_subject")
@@ -240,28 +258,43 @@ async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, An
     """Revoke every token and sign-in session of a subject, in every org and for
     good, and list the tokens it made revoked (see `loom revoke-token --subject`).
 
-    The spellings `org`'s directory ties to the subject are revoked with it, as
-    grants read them: a person's email and the login handle of the account it
-    signs in to. `org` is also where the audit rows land; an end user's subject,
-    `<org>/user:<id>`, must name it. `sessions` and `tokens` count the sign-in
-    sessions and the tokens made by those subjects that the revocation ends, so
-    a repeat answers the same.
+    Outright by default; with `issued_before`, only those issued before it on any
+    replica (to its next second, plus the clock skew replicas may have), so a
+    later sign-in works. A revocation already there is never weakened: an
+    outright one, or a later cutoff, stays. The spellings `org`'s directory ties
+    to the subject are revoked with it, as grants read them: a person's email and
+    the login handle of the account it signs in to. `org` is also where the audit
+    rows land; an end user's subject, `<org>/user:<id>`, must name it. `sessions`
+    and `tokens` count the sign-in sessions and the tokens made by those subjects
+    that the revocation ends, so a repeat answers the same.
     """
     org, subject = input.org, input.subject.strip()
     if not org.strip() or "*" in org or org != org.strip():
         raise _invalid(ValueError(f"org must name one org, got {org!r}"))
-    problem = subject_revocation.refusal(subject)
+    problem = subject_revocation.refusal(subject) or _refused_cutoff(input.issued_before)
     end_user_org = org_of_end_user_revocation(subject)
     if problem is None and end_user_org and end_user_org != org:
         problem = f"an end user's revocation is their org's: send org {end_user_org!r}"
     if problem:
         raise _invalid(ValueError(problem))
-    done = await subject_revocation.revoke_in_org(org, subject, by=_by(info), reason=input.reason)
+    done = await subject_revocation.revoke_in_org(
+        org, subject, by=_by(info), reason=input.reason, issued_before=input.issued_before
+    )
+    applied = (
+        None if input.issued_before is None else subject_revocation.cutoff(input.issued_before)
+    )
     return {
         "subjects": [s for s, _ in done],
         "org": org,
         "revoked_at": max(d.row["revoked_at"] for _, d in done),
         "reason": input.reason,
+        # The cutoff asked for, as applied (to its next second, plus the replicas'
+        # clock skew); None for an outright request. A later cutoff a subject
+        # already had stays in force.
+        "issued_before": applied,
+        # The subjects revoked outright now: all of them for an outright request,
+        # those an earlier outright revocation still holds for a cutoff.
+        "outright": [s for s, d in done if d.row["issued_before"] is None],
         "sessions": sum(d.sessions for _, d in done),
         "tokens": sum(d.tokens for _, d in done),
     }

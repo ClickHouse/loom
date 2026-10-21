@@ -202,18 +202,19 @@ def _refresh_row(rid: str, g: Grant, version: int) -> dict[str, Any]:
     }
 
 
-async def session_families(subject: str) -> list[str]:
+async def session_families(subject: str) -> dict[str, int]:
     """The sign-in sessions of `subject`, in any org, that hold a refresh token
-    not yet expired, by family; ended ones included."""
+    not yet expired, ended ones included: each family, and when its newest
+    refresh token was written (unix seconds), which a refresh is judged by."""
     from server.core.ch import get_client
 
     rows = await get_client().query_all(
-        f"SELECT DISTINCT family FROM {_T} FINAL "
+        f"SELECT family, toUnixTimestamp(max(created_at)) AS at FROM {_T} FINAL "
         "WHERE record_type = {t:String} AND subject = {s:String} AND family != '' "
-        "AND expires_at > toUInt32(now())",
+        "AND expires_at > toUInt32(now()) GROUP BY family",
         params={"t": _REFRESH_TYPE, "s": subject},
     )
-    return sorted(str(r["family"]) for r in rows)
+    return {str(r["family"]): int(r["at"]) for r in rows}
 
 
 def _current(generation: int, rid: str) -> str:
