@@ -42,18 +42,12 @@ def _tls() -> ssl.SSLContext:
     return httpx.create_ssl_context()
 
 
-# Secret refs already reported as not usable: said once each, not on every pass.
-_warned_unusable: set[str] = set()
-
-
-def read_secret(
-    org: str, ref: str, env: Mapping[str, str] | None = None, *, warn: bool = True
-) -> bytes | None:
+def read_secret(org: str, ref: str, env: Mapping[str, str] | None = None) -> bytes | None:
     """The signing key `ref` names in `env`, the process environment when None
     (surrounding whitespace, such as a trailing newline, dropped), or None when
     the name is not one of `org`'s own, the variable is unset, or its `whsec_`
     value is empty or not base64: an empty key signs what anyone can sign.
-    `warn=False` for a caller that says so itself."""
+    Each delivery worker says once which secret it cannot use."""
     if env is None:
         env = os.environ  # each secret is a variable a registration names, not a setting
     raw = env.get(ref, "").strip() if webhook_secret_ref_ok(org, ref) else ""
@@ -63,14 +57,7 @@ def read_secret(
         key = secret_bytes(raw)
     except binascii.Error:
         key = b""
-    if not key:
-        if warn and ref not in _warned_unusable:
-            _warned_unusable.add(ref)
-            log.warning(
-                "webhook: the secret in %s is not usable: whsec_ must be non-empty base64", ref
-            )
-        return None
-    return key
+    return key or None
 
 
 def secret_bytes(raw: str) -> bytes:

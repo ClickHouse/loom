@@ -369,10 +369,7 @@ async def deliver_once(
         return (not org or hook[0] == org) and (not namespace or hook[1] == namespace)
 
     live = [h for h in await store.live_webhooks() if mine(_hook(h))]
-    secrets = {
-        _hook(h): signed.read_secret(str(h["org"]), str(h["secret_ref"]), env, warn=False)
-        for h in live
-    }
+    secrets = {_hook(h): signed.read_secret(str(h["org"]), str(h["secret_ref"]), env) for h in live}
     urls = {_hook(h): str(h["url"]) for h in live}
     usable = {k: s for k, s in secrets.items() if s is not None}
     unsecured = [k for k in secrets if k not in usable]

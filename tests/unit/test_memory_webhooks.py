@@ -1232,24 +1232,21 @@ async def test_a_malformed_secret_is_not_usable_and_is_not_logged(
     fake: FakeStore, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.WARNING)
-    signed._warned_unusable.discard(REF)
     bad = "whsec_not*base64!"
     assert signed.read_secret("acme", REF, {REF: bad}) is None
-    assert signed.read_secret("acme", REF, {REF: bad}) is None
-    assert REF in caplog.text and bad not in caplog.text
-    assert sum("not usable" in r.message for r in caplog.records) == 1
     # A trailing newline (a secret file read into the variable) is not part of the key.
     assert signed.read_secret("acme", REF, {REF: SECRET + "\n"}) == base64.b64decode(
         SECRET.removeprefix("whsec_")
     )
     result = await _pass(lambda r: httpx.Response(204), env={REF: bad})
     assert result.waiting == 1 and result.total == 0
+    assert REF in caplog.text and bad not in caplog.text
 
 
 @pytest.mark.parametrize("value", ["whsec_", "whsec_\n", "whsec_ \n "])
 def test_an_empty_whsec_secret_is_not_usable(value: str) -> None:
     # An empty HMAC key signs what anyone can sign: the events wait instead.
-    assert signed.read_secret("acme", REF, {REF: value}, warn=False) is None
+    assert signed.read_secret("acme", REF, {REF: value}) is None
 
 
 @pytest.mark.asyncio

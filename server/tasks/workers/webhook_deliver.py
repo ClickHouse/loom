@@ -132,7 +132,7 @@ def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str] | None) -> by
     ref = str(inbox_row.get("webhook_secret_ref") or "")
     key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
     # A row written before the org rule may name any variable: never read it.
-    secret = webhooks.read_secret(key[0], ref, env, warn=False)  # warned below, once
+    secret = webhooks.read_secret(key[0], ref, env)
     if secret is None:
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)

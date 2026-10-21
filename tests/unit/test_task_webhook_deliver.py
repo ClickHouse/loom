@@ -320,9 +320,6 @@ async def test_a_secret_wrapped_across_two_lines_signs_with_the_secret(fake: Fak
 
 @pytest.mark.asyncio
 async def test_a_malformed_secret_is_warned_about_once(fake: FakeRepo, caplog) -> None:
-    from server.core import webhooks as shared
-
-    shared._warned_unusable.clear()
     caplog.set_level(logging.WARNING)
     env = {"LOOM_WEBHOOK_SECRET_ACME__PRIVATEBOT": "whsec_not*base64!"}
     async with _client(lambda r: httpx.Response(204)) as client:

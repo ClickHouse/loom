@@ -4292,7 +4292,7 @@
         "memory_webhook_backoff_steps_seconds": {
           "default": "5,30,120,600,1800",
           "type": "string",
-          "description": "Comma-separated seconds a failed memory webhook event waits before its next try, one step per failed attempt in order; past the last step it waits memory_webhook_max_backoff_seconds. Every step is over 0."
+          "description": "Comma-separated seconds a failed memory webhook event waits before each retry, one step per failed attempt; every step over 0."
         },
         "memory_webhook_cooldown_seconds": {
           "default": 60,
@@ -4357,7 +4357,7 @@
           "default": 3600.0,
           "exclusiveMinimum": 0,
           "type": "number",
-          "description": "Seconds a failed memory webhook event waits at most before its next try: every step of memory_webhook_backoff_steps_seconds is capped at it, and the retries after the last step wait this long."
+          "description": "Seconds a failed memory webhook event waits at most: caps each backoff step and is the wait after the last."
         },
         "memory_webhook_max_cooldown_seconds": {
           "default": 3600,
@@ -4398,7 +4398,7 @@
           "default": 10,
           "minimum": 1,
           "type": "integer",
-          "description": "Event leases (memory_webhook_deliver_max_pass_seconds plus memory_webhook_lease_margin_seconds each) after a webhook.remove during which delivery passes still mark the removed memory webhook's events dead."
+          "description": "Leases (max pass plus lease margin each) after a webhook.remove in which delivery passes still mark the removed memory webhook's events dead."
         },
         "memory_write_candidate_batch": {
           "default": 6,

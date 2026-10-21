@@ -3808,9 +3808,8 @@ settings:
   # it. [live]
   # memory_webhook_lease_margin_seconds: 60.0
 
-  # Event leases (memory_webhook_deliver_max_pass_seconds plus
-  # memory_webhook_lease_margin_seconds each) after a webhook.remove during which
-  # delivery passes still mark the removed memory webhook's events dead. [live]
+  # Leases (max pass plus lease margin each) after a webhook.remove in which delivery
+  # passes still mark the removed memory webhook's events dead. [live]
   # memory_webhook_removal_window_leases: 10
 
   # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
@@ -3830,14 +3829,12 @@ settings:
   # lookup limit. [live]
   # memory_webhook_ack_timeout_seconds: 10.0
 
-  # Comma-separated seconds a failed memory webhook event waits before its next try, one
-  # step per failed attempt in order; past the last step it waits
-  # memory_webhook_max_backoff_seconds. Every step is over 0. [live]
+  # Comma-separated seconds a failed memory webhook event waits before each retry, one
+  # step per failed attempt; every step over 0. [live]
   # memory_webhook_backoff_steps_seconds: "5,30,120,600,1800"
 
-  # Seconds a failed memory webhook event waits at most before its next try: every step
-  # of memory_webhook_backoff_steps_seconds is capped at it, and the retries after the
-  # last step wait this long. [live]
+  # Seconds a failed memory webhook event waits at most: caps each backoff step and is
+  # the wait after the last. [live]
   # memory_webhook_max_backoff_seconds: 3600.0
 
   # POSTs per memory webhook event before it is marked dead; the 2.75-day delivery

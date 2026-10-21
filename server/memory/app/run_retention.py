@@ -158,10 +158,12 @@ async def apply(
             return counts
         expires_at = now + timedelta(days=int(expire_days))
         reason = f"run {run_id} completed (retain={mode})"
-        version = memory_repo.next_version()
         revised: list[dict[str, Any]] = []
 
         def _update(existing: Any) -> dict[str, Any]:
+            # Drawn after the row is read, so a write that landed before the
+            # read sorts below this version.
+            version = memory_repo.next_version()
             revised.append(memory_change(existing, version))
             if mode == "demote":
                 return {

@@ -3183,9 +3183,8 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
     # leased stays passed over by other passes, so a crashed pass's events come back after it.
     memory_webhook_lease_margin_seconds: Annotated[float, LIVE] = Field(default=60.0, gt=0)
-    # Event leases (memory_webhook_deliver_max_pass_seconds plus
-    # memory_webhook_lease_margin_seconds each) after a webhook.remove during which
-    # delivery passes still mark the removed memory webhook's events dead.
+    # Leases (max pass plus lease margin each) after a webhook.remove in which delivery
+    # passes still mark the removed memory webhook's events dead.
     memory_webhook_removal_window_leases: Annotated[int, LIVE] = Field(default=10, ge=1)
     # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
     memory_webhook_max_posts_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
@@ -3197,13 +3196,11 @@ class MemoryWebhookSettings(BaseModel):
     # Seconds a memory webhook receiver has to answer a POST (the name lookup, the connection
     # and the status line) before it counts as failed; also the registration's lookup limit.
     memory_webhook_ack_timeout_seconds: Annotated[float, LIVE] = Field(default=10.0, gt=0)
-    # Comma-separated seconds a failed memory webhook event waits before its next try, one
-    # step per failed attempt in order; past the last step it waits
-    # memory_webhook_max_backoff_seconds. Every step is over 0.
+    # Comma-separated seconds a failed memory webhook event waits before each retry, one
+    # step per failed attempt; every step over 0.
     memory_webhook_backoff_steps_seconds: Annotated[str, LIVE, BackoffSteps] = "5,30,120,600,1800"
-    # Seconds a failed memory webhook event waits at most before its next try: every
-    # step of memory_webhook_backoff_steps_seconds is capped at it, and the retries
-    # after the last step wait this long.
+    # Seconds a failed memory webhook event waits at most: caps each backoff step and is
+    # the wait after the last.
     memory_webhook_max_backoff_seconds: Annotated[float, LIVE] = Field(default=3600.0, gt=0)
     # POSTs per memory webhook event before it is marked dead; the 2.75-day delivery
     # deadline marks it dead sooner whatever this is.
