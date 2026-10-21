@@ -16,7 +16,7 @@ class NamespaceGuideGetInput(BaseModel):
 
 
 class NamespaceGuideGetOutput(BaseModel):
-    # False when the namespace has no guide, or its current revision cleared it.
+    # False when the revision read does not exist or cleared the guide.
     found: bool
     # The revision read, the current one being what `namespace.guide_set` takes as
     # `expected_revision`; 0 when that revision (or any guide) does not exist.

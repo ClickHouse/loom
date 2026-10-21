@@ -246,7 +246,9 @@ schema. These rules keep that safe. The operator procedure is in
     written while an N-1 replica could erase its namespace. A rollback to N-1 after
     guides exist leaves them in place, and a namespace erasure N-1 runs then leaves
     them too; run that erasure again once N serves. `tests/unit/test_namespace_guide.py`
-    checks the refusal; the mixed-version gate does not.
+    checks the refusal; the mixed-version gate does not. The gate counts the
+    deployment's processes (`loom.instances` of its kind): an older process outside it
+    on the same ClickHouse, such as a branch server, is not counted.
 
 ## What checks them
 

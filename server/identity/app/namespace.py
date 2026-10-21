@@ -34,7 +34,6 @@ from server.identity.api.models import (
     _BrowseEntry,
     _NamespaceEntry,
 )
-from server.identity.app.namespace_guide import current_guide
 from server.identity.domain import join_policy as _jp
 from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
@@ -532,9 +531,11 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
     # round-trip.
     from server.memory.app.namespace_types import list_type_configs
 
-    tag_registry, guide = await asyncio.gather(
-        list_type_configs(input.org, input.namespace), current_guide(input.org, input.namespace)
+    tag_registry, guides = await asyncio.gather(
+        list_type_configs(input.org, input.namespace),
+        namespace_guides.summaries(input.org, [input.namespace]),
     )
+    guide = guides.get(input.namespace) or {"revision": 0, "summary": ""}
     return NamespaceGetOutput(
         found=True,
         namespace=row["namespace"],
@@ -580,8 +581,8 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         # Only on the found branch: the transport's restricted gate has already admitted the
         # caller to this row, so the word says nothing the caller could not read.
         classification=("restricted" if row.get("classification") == "restricted" else "standard"),
-        guide_revision=guide.revision,
-        guide_summary=guide.summary,
+        guide_revision=int(guide["revision"]),
+        guide_summary=str(guide["summary"]),
         created_at=row["created_at"],
         updated_at=max(row["updated_at"], row["created_at"]),
     )

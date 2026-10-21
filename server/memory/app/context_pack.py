@@ -126,6 +126,7 @@ async def _pack_namespace_guide(st: _PackState) -> None:
     how to use it, cut to the section budget, under a line naming its revision,
     writer and summary. Nothing when the namespace has none."""
     from server.identity.app.namespace_guide import current_guide
+    from server.identity.app.request_scope import request_narrowed
 
     input = st.input
     if not st.wanted("namespace_guide"):
@@ -135,7 +136,9 @@ async def _pack_namespace_guide(st: _PackState) -> None:
         return
     # One item: every line of the guide indented under its head, so a line of the
     # stored text cannot pass as an item with its own by=.
-    head = f"- [guide/{guide.revision}{author_label([guide.updated_by])}] {guide.summary}"
+    # A token narrowed to one user is not told the writer; say so rather than `unknown`.
+    writer = " by=hidden" if request_narrowed() else author_label([guide.updated_by])
+    head = f"- [guide/{guide.revision}{writer}] {guide.summary}"
     body = one_item(f"{head}\n{guide.content}")
     budget = _section_budget(input, "namespace_guide", st.default_section_tokens["namespace_guide"])
     # Measured as `put` stores it (escaped), which is what its trim cuts.

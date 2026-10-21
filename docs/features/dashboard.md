@@ -65,8 +65,8 @@ The left rail groups pages into Memory, Activity and Sources. Every page has its
 
 Two views are reached from elsewhere rather than the rail: **Spaces** (`/spaces`,
 public namespaces to browse and join, with each one's
-[guide](namespaces-and-sharing.md#a-namespaces-guide), opened from the namespace
-picker) and **Graph**
+[guide](namespaces-and-sharing.md#a-namespaces-guide) summary, and the guide itself for
+a namespace you belong to, opened from the namespace picker) and **Graph**
 (`/graph`, the entity graph explorer, opened from an entity; see
 [entity graph](entity-graph.md)).
 

@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from server.identity.api.models import NamespaceGetInput
-from server.identity.api.models_namespace_guide import NamespaceGuideGetOutput
 from server.identity.app import namespace as ns_handler
 
 _NOW = datetime(2026, 9, 28, 8, 0, 0)
@@ -69,10 +68,10 @@ async def _get(monkeypatch: pytest.MonkeyPatch, row: dict[str, Any] | None) -> A
 
     monkeypatch.setattr("server.memory.app.namespace_types.list_type_configs", _no_types)
 
-    async def _no_guide(org: str, namespace: str) -> NamespaceGuideGetOutput:
-        return NamespaceGuideGetOutput(found=False)
+    async def _no_guide(org: str, namespaces: list[str]) -> dict[str, Any]:
+        return {}
 
-    monkeypatch.setattr(ns_handler, "current_guide", _no_guide)
+    monkeypatch.setattr(ns_handler.namespace_guides, "summaries", _no_guide)
     out = await ns_handler.handle_namespace_get(NamespaceGetInput(org="o", namespace="n"))
     assert "toString(classification) AS classification" in ch.sql
     return out

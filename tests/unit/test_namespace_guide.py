@@ -158,7 +158,7 @@ def test_clearing_a_namespace_that_never_had_a_guide_writes_nothing(guides: _Gui
     assert guides.rows == []
 
 
-def test_a_save_is_audited_by_its_hash_never_its_text() -> None:
+def test_a_save_is_audited_by_its_hash_and_outcome_never_its_text() -> None:
     from server.operations.registry import OPERATIONS_BY_NAME
 
     op = OPERATIONS_BY_NAME["namespace.guide_set"]
@@ -171,11 +171,21 @@ def test_a_save_is_audited_by_its_hash_never_its_text() -> None:
         expected_revision=0,
     )
     assert op.audit and op.audit_subject is not None
-    subject = op.audit_subject(body)
-    assert subject["chars"] == 20 and len(subject["content_sha256"]) == 64
-    assert subject["expected_revision"] == 0
-    assert "acct" not in repr(subject) and "plans" not in repr(subject)
-    assert "first" not in repr(subject)
+    landed = op.audit_subject(body, {"written": True, "conflict": False, "revision": 1})
+    refused = op.audit_subject(body, {"written": False, "conflict": True, "revision": 4})
+    assert landed["chars"] == 20 and len(landed["content_sha256"]) == 64
+    assert (landed["written"], landed["revision"]) == (True, 1)
+    assert (refused["written"], refused["conflict"], refused["revision"]) == (False, True, 4)
+    for subject in (landed, refused):
+        assert "acct" not in repr(subject) and "plans" not in repr(subject)
+        assert "first" not in repr(subject)
+
+
+def test_the_rollout_gate_names_the_migration_that_made_the_table() -> None:
+    """A renumbered migration fails here, not silently in the rollout gate."""
+    from server.core.paths import MIGRATIONS_DIR
+
+    assert (MIGRATIONS_DIR / f"{guide_app._GUIDES_MIGRATION:03d}_namespace_guides.sql").exists()
 
 
 @pytest.mark.parametrize("live", [[], [{"schema_version": 72}, {"schema_version": 71}]])
@@ -242,7 +252,7 @@ def test_a_token_narrowed_to_one_user_reads_the_guide_but_not_its_writer(
         read = _get()
         section = asyncio.run(handle_context_pack(pack)).sections["namespace_guide"]
     assert (read.found, read.content, read.updated_by) == (True, "Keys: acct/<id>/plan", "")
-    assert section.startswith("- [guide/1 by=unknown]")
+    assert section.startswith("- [guide/1 by=hidden]")
     assert _get().updated_by.endswith("bot")
 
 

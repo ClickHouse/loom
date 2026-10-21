@@ -37,7 +37,7 @@ from server.identity.store import namespace_guides as repo
 from server.memory.app.provenance import writer_actor
 
 # 072_namespace_guides.sql made the table: a build below it cannot erase a guide.
-_GUIDES_MIGRATION = 72
+_GUIDES_MIGRATION = 72  # tests/unit/test_namespace_guide.py ties it to the file
 
 
 async def handle_namespace_guide_get(input: NamespaceGuideGetInput) -> NamespaceGuideGetOutput:
@@ -122,14 +122,19 @@ async def current_guide(org: str, namespace: str) -> NamespaceGuideGetOutput:
     return _output(await repo.latest(org, namespace))
 
 
-def guide_audit_subject(input: NamespaceGuideSetInput) -> dict[str, Any]:
-    """What a save's audit row records: never the text, summary or note."""
+def guide_audit_subject(input: NamespaceGuideSetInput, response: Any) -> dict[str, Any]:
+    """What a save's audit row records, never the text, summary or note: what it
+    was made from, the text's length and hash, and whether it wrote a revision."""
+    out = response if isinstance(response, dict) else {}
     return {
         "org": input.org,
         "namespace": input.namespace,
         "expected_revision": input.expected_revision,
         "chars": len(input.content),
         "content_sha256": hashlib.sha256(input.content.encode()).hexdigest(),
+        "written": bool(out.get("written")),
+        "conflict": bool(out.get("conflict")),
+        "revision": int(out.get("revision") or 0),
     }
 
 

@@ -117,7 +117,7 @@ def test_an_op_s_audit_subject_replaces_the_input_in_its_audit_row(
 
     monkeypatch.setattr(budgets, "effective_budget_ms", lambda op, b: b)
     monkeypatch.setattr(common, "emit_op_audit", _audit)
-    op = _op(audit_subject=lambda body: {"chars": 3})
+    op = _op(audit_subject=lambda body, response: {"chars": 3, "ok": response["ok"]})
     body = SimpleNamespace(model_dump=lambda mode: {"content": "secret"})
     asyncio.run(
         post_rows.post_handler_rows(
@@ -135,4 +135,4 @@ def test_an_op_s_audit_subject_replaces_the_input_in_its_audit_row(
             replay_headers={},
         )
     )
-    assert subjects == [{"chars": 3}]
+    assert subjects == [{"chars": 3, "ok": True}]
