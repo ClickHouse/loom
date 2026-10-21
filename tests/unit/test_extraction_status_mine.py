@@ -147,6 +147,7 @@ def _queued(
     queue_id: str,
     *,
     by: str | None,
+    org: str = "o",
     namespace: str = "n",
     user_id: str = "u1",
     status: str = "pending",
@@ -156,7 +157,7 @@ def _queued(
     return (
         "INSERT INTO loom.memory_extraction_queue (org, namespace, agent, user_id, session_id, "
         "queue_id, payload, message_count, content_chars, status, version) VALUES "
-        f"('o', '{namespace}', 'a', '{user_id}', 's1', '{queue_id}', '{payload}', 2, 40, "
+        f"('{org}', '{namespace}', 'a', '{user_id}', 's1', '{queue_id}', '{payload}', 2, 40, "
         f"'{status}', {version})"
     )
 
@@ -164,7 +165,8 @@ def _queued(
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 def test_only_the_enqueuers_batches_in_the_namespace_and_scope_answer() -> None:
     """On the production table: the newest version of each batch the principal queued
-    in the namespace and scope, and nothing another principal, namespace or user holds."""
+    in the org, namespace and scope, and nothing another principal, org, namespace or
+    user holds."""
     ch = _LocalCH(
         ddl("memory_extraction_queue"),
         _queued("q1", by="process:sa:a"),
@@ -173,13 +175,16 @@ def test_only_the_enqueuers_batches_in_the_namespace_and_scope_answer() -> None:
         _queued("q3", by="process:sa:a", namespace="n2"),
         _queued("q4", by="process:sa:a", user_id="u2", status="failed"),
         _queued("q5", by=None),  # queued by a dev-mode server: no principal stored
+        _queued("q6", by="process:sa:a", org="o2"),  # the same subject in another org
     )
-    asked = ["q1", "q2", "q3", "q4", "q5"]
+    asked = ["q1", "q2", "q3", "q4", "q5", "q6"]
 
-    def ids(namespace: str, by: str, scope: ReadFilters = WHOLE_NAMESPACE) -> list[tuple[str, str]]:
+    def ids(
+        namespace: str, by: str, scope: ReadFilters = WHOLE_NAMESPACE, org: str = "o"
+    ) -> list[tuple[str, str]]:
         rows = asyncio.run(
             q.list_own_status(
-                org="o", namespace=namespace, queue_ids=asked, enqueued_by=by, scope=scope, ch=ch
+                org=org, namespace=namespace, queue_ids=asked, enqueued_by=by, scope=scope, ch=ch
             )
         )
         return sorted((r["queue_id"], r["status"]) for r in rows)
@@ -191,6 +196,32 @@ def test_only_the_enqueuers_batches_in_the_namespace_and_scope_answer() -> None:
     assert ids("n2", "process:sa:a") == [("q3", "pending")]
     assert ids("n", "") == [("q5", "pending")]
     assert ids("n", "process:sa:c") == []
+    assert ids("n", "process:sa:a", org="o2") == [("q6", "pending")]
+
+
+def test_the_read_sees_writes_another_replica_just_made() -> None:
+    """Sequentially consistent: a deferral or a requeue may have landed a moment ago on
+    another replica, and the retry must not put back a stale `failed`."""
+    from server.core.ch import sequential_reads_active
+
+    seen: list[bool] = []
+
+    class _CH:
+        async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+            seen.append(sequential_reads_active())
+            return []
+
+    asyncio.run(
+        q.list_own_status(
+            org="o",
+            namespace="n",
+            queue_ids=["q1"],
+            enqueued_by="process:sa:a",
+            scope=WHOLE_NAMESPACE,
+            ch=_CH(),
+        )
+    )
+    assert seen == [True] and not sequential_reads_active()
 
 
 # ------------------------------------------------------------------ the handler
@@ -226,6 +257,43 @@ def test_the_handler_asks_for_the_callers_principal_and_scope(
     assert out.unknown == ["q9"]
     # Not extracted yet: any state before an outcome; failed: the batches that ended so.
     assert (out.pending, out.failed) == (1, 1)
+
+
+def test_a_token_naming_no_principal_matches_no_batch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not the batches queued without one: those are a dev-mode server's, read with no
+    auth at all."""
+    from server.memory.app.extract.handler import handle_memory_extraction_status_mine
+
+    async def _never(**kw: Any) -> list[dict[str, Any]]:
+        raise AssertionError("no read for a token that names no principal")
+
+    monkeypatch.setattr(q, "list_own_status", _never)
+    inp = MemoryExtractionStatusMineInput(org="o", namespace="n", queue_ids=["q1", "q2"])
+    out = _in_context(
+        _auth(subject=""), lambda: asyncio.run(handle_memory_extraction_status_mine(inp))
+    )
+    assert (out.batches, out.unknown) == ([], ["q1", "q2"])
+
+
+@pytest.mark.parametrize(
+    "claims",
+    [{"read_scope": "own_session", "read_user_id": "u1"}, {"read_scope": "own_user"}],
+    ids=["own_session", "own_user_unpinned"],
+)
+def test_a_scope_the_body_cannot_complete_is_refused_in_words_that_fit(
+    claims: dict[str, str],
+) -> None:
+    """The op takes no user_id or session_id, so the refusal does not ask for one in the
+    body."""
+    from server.core.errors import IdentityIncompleteError
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport import gates
+
+    op = OPERATIONS_BY_NAME[OP]
+    inp = MemoryExtractionStatusMineInput(org="o", namespace="n", queue_ids=["q1"])
+    with pytest.raises(IdentityIncompleteError, match="takes no user_id or session_id") as e:
+        contextvars.Context().run(gates.read_scope, op, _auth(**claims), inp)
+    assert "request body" not in str(e.value)
 
 
 @pytest.mark.parametrize(

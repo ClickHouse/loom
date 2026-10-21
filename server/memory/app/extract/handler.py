@@ -150,23 +150,39 @@ async def handle_memory_extraction_status(
     )
 
 
+def _own_enqueuer() -> str | None:
+    """The principal the caller-bound batch ops match against a batch's stored enqueuer:
+    the token's `writer_actor` (`kind:subject`, as `enqueue` stored it). '' only with no
+    auth at all, whose deferrals store none either; None for a token that names no
+    principal, which then matches no batch rather than those queued without one."""
+    from server.auth.context import current_auth
+    from server.memory.app.provenance import writer_actor
+
+    actor = writer_actor()
+    if not actor and current_auth() is not None:
+        return None
+    return actor
+
+
 async def handle_memory_extraction_status_mine(
     input: MemoryExtractionStatusMineInput,
 ) -> MemoryExtractionStatusMineOutput:
     """memory.extraction_status_mine — the caller's own deferred batches, by id: those
-    its principal queued (`writer_actor`, as `enqueue` stored it) in this namespace and
-    inside its read scope. Every other id is `unknown`, so the answer never says whether
-    another principal's batch exists."""
+    its principal queued (`_own_enqueuer`) in this namespace and inside its read scope.
+    Every other id is `unknown`, so the answer never says whether another principal's
+    batch exists."""
     from server.identity.app.request_scope import request_scope
     from server.memory.app import extraction_queue
-    from server.memory.app.provenance import writer_actor
 
     asked = list(dict.fromkeys(input.queue_ids))
+    enqueuer = _own_enqueuer()
+    if enqueuer is None:
+        return MemoryExtractionStatusMineOutput(unknown=asked)
     rows = await extraction_queue.list_own_status(
         org=input.org,
         namespace=input.namespace,
         queue_ids=asked,
-        enqueued_by=writer_actor(),
+        enqueued_by=enqueuer,
         scope=request_scope(),
     )
     found = {str(r.get("queue_id") or "") for r in rows}
@@ -185,25 +201,29 @@ async def handle_memory_extraction_retry_mine(
     """memory.extraction_retry_mine — one more replay of the caller's own failed batches,
     by id, under the bounds memory.extraction_status_mine reads with: each `failed` batch
     its principal queued in this namespace, inside its read scope, goes back to `pending`
-    with one attempt left (`extraction_queue_max_attempts`)."""
+    with one attempt left (`extraction_queue_max_attempts`), unless the org's model calls
+    are switched off."""
     from server.identity.app.request_scope import request_scope
     from server.memory.app import extraction_queue
-    from server.memory.app.provenance import writer_actor
     from server.settings import settings
 
     asked = list(dict.fromkeys(input.queue_ids))
-    requeued, not_failed = await extraction_queue.requeue_own_failed(
+    enqueuer = _own_enqueuer()
+    if enqueuer is None:
+        return MemoryExtractionRetryMineOutput(unknown=asked)
+    done = await extraction_queue.requeue_own_failed(
         org=input.org,
         namespace=input.namespace,
         queue_ids=asked,
-        enqueued_by=writer_actor(),
+        enqueued_by=enqueuer,
         scope=request_scope(),
         max_attempts=settings.extraction_queue_max_attempts,
     )
-    known = set(requeued) | set(not_failed)
+    known = {*done.requeued, *done.not_failed, *done.model_calls_off}
     return MemoryExtractionRetryMineOutput(
-        requeued=requeued,
-        not_failed=not_failed,
+        requeued=done.requeued,
+        not_failed=done.not_failed,
+        model_calls_off=done.model_calls_off,
         unknown=[qid for qid in asked if qid not in known],
     )
 

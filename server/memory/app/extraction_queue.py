@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NamedTuple
 
 from server.core.datetimes import utc_now as _now
 from server.identity.domain.read_scope import (
@@ -116,8 +116,9 @@ async def enqueue(
     input: Any, *, scope: ReadFilters, rule_agent: str = "", ch: Any | None = None
 ) -> str:
     """Persist one deferred set_from_messages request, with the agent a rule it
-    files is for ('' files nothing). Returns the queue_id the caller can poll with
-    `memory.extraction_status`."""
+    files is for ('' files nothing). Returns the queue_id the enqueuing principal
+    polls with `memory.extraction_status_mine` and replays, once failed, with
+    `memory.extraction_retry_mine`; `memory.extraction_status` reports it too."""
     from server.core.ch import get_client
 
     ch = ch or get_client()
@@ -446,10 +447,15 @@ async def _own_rows(
     """`columns` of the batches among `queue_ids` that `enqueued_by` queued in (org,
     namespace), inside `scope`, newest first.
 
-    The id and the read scope's user and session are sort-key columns, which every
-    version of a batch shares, so they filter in PREWHERE under FINAL, and only the
-    asked batches' payloads are read for the enqueuer they store (`ENQUEUED_BY_KEY`,
-    '' for a row a dev-mode server queued)."""
+    The primary index narrows the read to (org, namespace); the id and the read scope's
+    user and session are sort-key columns, which every version of a batch shares, so
+    they filter in PREWHERE under FINAL, and only the asked batches' payloads are read
+    for the enqueuer they store (`ENQUEUED_BY_KEY`, '' for a row a dev-mode server
+    queued). The read is sequentially consistent (`own_write_reads`): the deferral, or a
+    retry's requeue, may have landed a moment ago on another replica, and a stale
+    `failed` must never be put back over a batch already running again."""
+    from server.core.ch import own_write_reads
+
     params: dict[str, Any] = {
         "org": org,
         "ns": namespace,
@@ -458,18 +464,19 @@ async def _own_rows(
         "lim": len(queue_ids),
     }
     in_scope = scope_and(scope, params)
-    rows = await ch.query_all(
-        f"""
-        SELECT {columns}
-        FROM {TABLE} FINAL
-        PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
-          AND queue_id IN {{qids:Array(String)}}{in_scope}
-        WHERE JSONExtractString(payload, '{ENQUEUED_BY_KEY}') = {{by:String}}
-        ORDER BY enqueued_at DESC
-        LIMIT {{lim:UInt32}}
-        """,
-        params=params,
-    )
+    with own_write_reads():
+        rows = await ch.query_all(
+            f"""
+            SELECT {columns}
+            FROM {TABLE} FINAL
+            PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND queue_id IN {{qids:Array(String)}}{in_scope}
+            WHERE JSONExtractString(payload, '{ENQUEUED_BY_KEY}') = {{by:String}}
+            ORDER BY enqueued_at DESC
+            LIMIT {{lim:UInt32}}
+            """,
+            params=params,
+        )
     return [dict(r) for r in rows]
 
 
@@ -497,6 +504,18 @@ async def list_own_status(
     )
 
 
+class Requeued(NamedTuple):
+    """What `requeue_own_failed` did with each asked id the principal queued, in the
+    order asked."""
+
+    # Put back to `pending` for one more replay.
+    requeued: list[str]
+    # Not `failed` (waiting or done): left alone.
+    not_failed: list[str]
+    # `failed`, but the org's model calls are switched off: left `failed`.
+    model_calls_off: list[str]
+
+
 async def requeue_own_failed(
     *,
     org: str,
@@ -506,34 +525,52 @@ async def requeue_own_failed(
     scope: ReadFilters,
     max_attempts: int,
     ch: Any | None = None,
-) -> tuple[list[str], list[str]]:
+) -> Requeued:
     """Put the `failed` batches among `queue_ids` that `enqueued_by` queued in (org,
     namespace), inside `scope`, back to `pending` with one attempt left under
     `max_attempts`, so the next pass replays each once more and a failure marks it
-    `failed` again: `memory.extraction_retry_mine`. Returns (the ids requeued, the
-    ids of the principal's other asked batches, which had not failed)."""
+    `failed` again: `memory.extraction_retry_mine`.
+
+    It reads the batches' states first and the full rows of the failed ones only. While
+    the org's model calls are switched off nothing is put back: the batch could only
+    wait, and the switched-off drop would record it dropped again (`drop_waiting`).
+    Raises SwitchUnread when the switch cannot be read."""
     from server.core.ch import get_client
+    from server.llm import customer
 
     ch = ch or get_client()
-    rows = await _own_rows(
-        ch,
-        ", ".join(COLUMNS),
-        org=org,
-        namespace=namespace,
-        queue_ids=queue_ids,
-        enqueued_by=enqueued_by,
-        scope=scope,
-    )
-    failed = [r for r in rows if r.get("status") == STATUS_FAILED]
-    if failed:
+    own: dict[str, Any] = {
+        "org": org,
+        "namespace": namespace,
+        "enqueued_by": enqueued_by,
+        "scope": scope,
+    }
+    states = {
+        str(r["queue_id"]): str(r.get("status") or "")
+        for r in await _own_rows(ch, "queue_id, status", queue_ids=queue_ids, **own)
+    }
+    failed = [qid for qid in queue_ids if states.get(qid) == STATUS_FAILED]
+    waiting_or_done = [qid for qid in queue_ids if qid in states and qid not in failed]
+    if not failed:
+        return Requeued([], waiting_or_done, [])
+    if await customer.switched_off(org):
+        return Requeued([], waiting_or_done, failed)
+    rows = await _own_rows(ch, ", ".join(COLUMNS), queue_ids=failed, **own)
+    # Still failed on the full read: another retry may have put one back since.
+    again = [r for r in rows if r.get("status") == STATUS_FAILED]
+    if again:
         left = max(0, int(max_attempts) - 1)
-        again = [
-            _mirror(r, status=STATUS_PENDING, attempts=left, lease_until=_EPOCH) for r in failed
-        ]
-        await ch.insert(TABLE, again, settings=_SYNC)
-    requeued = {str(r["queue_id"]) for r in failed}
-    others = {str(r["queue_id"]) for r in rows} - requeued
-    return [q for q in queue_ids if q in requeued], [q for q in queue_ids if q in others]
+        await ch.insert(
+            TABLE,
+            [_mirror(r, status=STATUS_PENDING, attempts=left, lease_until=_EPOCH) for r in again],
+            settings=_SYNC,
+        )
+    requeued = {str(r["queue_id"]) for r in again}
+    return Requeued(
+        [qid for qid in failed if qid in requeued],
+        waiting_or_done + [qid for qid in failed if qid not in requeued],
+        [],
+    )
 
 
 __all__ = [
@@ -541,6 +578,7 @@ __all__ = [
     "ENQUEUED_BY_KEY",
     "READ_SCOPE_KEY",
     "RULE_AGENT_KEY",
+    "Requeued",
     "STATUS_DONE",
     "STATUS_FAILED",
     "STATUS_PENDING",

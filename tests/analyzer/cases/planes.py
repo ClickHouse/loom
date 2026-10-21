@@ -635,6 +635,9 @@ async def _ledgers(ch: RecordingCH, c: dict[str, Any]) -> None:
     await R.redact_versions(ORG, NS, "u1", _UUID, 1, when=_DT, reason_blob="r|admin", ch=ch)
 
 
+_FAILED_BATCH = {"queue_id": _UUID, "status": "failed"}
+
+
 async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import conflicts as CF
     from server.memory.app import digest_chain as DC
@@ -933,6 +936,8 @@ def cases() -> list[Case]:
             "server.memory.app.projection_failures",
             _services,
             {"filters": (False, True)},
+            # A failed batch of the caller's, so the requeue reads its full row too.
+            rows=rows_by_substring({"SELECT queue_id, status": [_FAILED_BATCH]}),
         ),
     ]
     return out
