@@ -155,7 +155,7 @@ def _digest_rows(page: list[dict[str, Any]]) -> list[_DigestRow]:
         _DigestRow(
             session_id=str(r.get("session_id") or ""),
             summary_text=listed_text(r.get("summary_text")),
-            # a digest an earlier build wrote may still hold a credential as a key fact
+            # a digest an earlier build wrote may still hold a high shape as a key fact
             key_facts=[str(k) for k in (r.get("key_facts") or []) if not value_reads_high(k)],
             derived_from=[str(k) for k in (r.get("derived_from") or [])],
             valid_at=r.get("valid_at"),
