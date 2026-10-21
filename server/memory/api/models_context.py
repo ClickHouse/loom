@@ -12,11 +12,18 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.core.naming import SENTINEL
 from server.memory.api.models_common import _Identity
 from server.operations.base import MCP_HIDDEN
 
 
 class ContextPackInput(_Identity):
+    # The user the pack reads for; "-" reads every user in the memories section, and
+    # the rows filed under no user in the stack and working-memory sections.
+    user_id: str = Field(default=SENTINEL)
+    # The session the pack reads for; "-" reads every session in the memories section,
+    # and the rows filed under no session in the stack and working-memory sections.
+    session_id: str = Field(default=SENTINEL)
     query: str = Field(
         default="",
         description="Optional task/question used to select relevant memories and docs.",

@@ -83,8 +83,8 @@ Startup context pack for this session, once near the start of a substantial task
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
-| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
-| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `user_id` | `str` | `'-'` | The user the pack reads for; "-" reads every user in the memories section, and the rows filed under no user in the stack and working-memory sections. |
+| `session_id` | `str` | `'-'` | The session the pack reads for; "-" reads every session in the memories section, and the rows filed under no session in the stack and working-memory sections. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
 | `query` | `str` | `''` | Optional task/question used to select relevant memories and docs. |
 | `situation` | `str` | `''` | Optional situation description used to match procedures. |

@@ -366,6 +366,8 @@ async def test_an_injected_transport_without_extra_headers_still_works() -> None
 
     c = ReferenceClient("o", "ns", consumer="test", agent="ag", transport=_Plain())
     assert (await c.search("q")).ok
+    c.run_id = "r1"  # an open run: the read goes out unlabelled rather than failing
+    assert (await c.search("q")).ok
 
 
 async def test_stats_and_close() -> None:
