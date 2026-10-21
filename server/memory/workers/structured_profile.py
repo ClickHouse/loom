@@ -63,10 +63,9 @@ log = logging.getLogger(__name__)
 
 # The actor its writes carry: no request is in flight.
 WORKER_ACTOR = "process:structured-profile-worker"
-# One scan of a namespace finds up to this many times the users a pass builds there,
-# and the next passes take from that list, so a namespace's whole set of facts is read
-# at most once per SCAN_FACTOR passes, not on every pass. A list older than
-# `structured_profile_scan_max_age_seconds` is scanned again.
+# One scan lists up to SCAN_FACTOR times the namespace's share; later passes take from
+# it until it drains or is `structured_profile_scan_max_age_seconds` old, whichever
+# comes first.
 SCAN_FACTOR = 10  # not a setting: the scan's shape, sized with the scan-cost measurement
 
 # Kept in this process only, so each starts over when the worker lease moves.

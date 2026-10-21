@@ -602,6 +602,10 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         from server.memory.domain import lock as _lock
 
         _lock.assert_unlocked(head, "delete", op="memory.redact")
+    # A version that does not exist scrubs nothing, so nothing built from the memory
+    # is scrubbed either.
+    if not await memory_repo.version_exists(input.org, input.memory_id, input.version):
+        return MemoryRedactOutput(redacted=False)
     # The same holds for a profile built from this memory: a lock on it refuses the
     # redact before anything is scrubbed.
     profiles = await _profiles_built_from(input.org, target, input.memory_id)
@@ -609,10 +613,9 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     now = naive_utc_now()
     reason_blob = (input.reason or "")[:512]
     by_blob = (input.redacted_by or "")[:128]
-    await memory_repo.redact_row(
+    await memory_repo.redact_versions(
         input.org,
-        input.memory_id,
-        input.version,
+        [(input.memory_id, input.version)],
         when=now,
         reason_blob=f"{reason_blob}|{by_blob}",
     )

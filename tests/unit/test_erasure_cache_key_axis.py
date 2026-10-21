@@ -284,8 +284,11 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
 
     redacted: list[tuple[str, str, int]] = []
 
-    async def _redact_row(org, mid, version, *, when, reason_blob):
-        redacted.append((org, mid, version))
+    async def _redact_versions(org, versions, *, when, reason_blob):
+        redacted.extend((org, mid, version) for mid, version in versions)
+
+    async def _exists(org, mid, version):
+        return True
 
     deleted: list[tuple[str, str, str]] = []
 
@@ -312,7 +315,8 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         assert scrubs == ["scrub"] and apply is True
         return {}
 
-    monkeypatch.setattr(memory_repo, "redact_row", _redact_row)
+    monkeypatch.setattr(memory_repo, "version_exists", _exists)
+    monkeypatch.setattr(memory_repo, "redact_versions", _redact_versions)
     monkeypatch.setattr(memory_repo, "key_derivative_scrubs", _derivatives)
     monkeypatch.setattr(cur, "_live_link_inputs", _live_inputs)
     monkeypatch.setattr(memory_repo, "run_scrubs", _run)

@@ -71,7 +71,6 @@ _EMBEDDINGS_PURGE = "DELETE FROM loom.memory_embeddings"
 _CHUNKS_PURGE = "DELETE FROM loom.memory_chunks"
 _LINKS_SCRUB = "ALTER TABLE loom.memory_code_links UPDATE suggestion = '', judged_hash = ''"
 _MARK_REDACTED = ", redacted_at = {ts:DateTime}, redaction_reason = {rb:String}"
-_ONE_VERSION = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
 _LISTED_VERSIONS = (
     "org = {org:String} AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}"
 )
@@ -148,29 +147,6 @@ async def delete_ask_precedents_by_key(
     )
 
 
-async def redact_row(
-    org: str,
-    memory_id: str,
-    version: int,
-    *,
-    when: datetime,
-    reason_blob: str,
-    ch: _CHClient | None = None,
-) -> None:
-    """Scrub one version, addressed by (memory_id, version), on loom.memory and
-    the memory_versions mirror (ALTER UPDATE does not pass through
-    memory_versions_mv); the caller decides whether a live head may be scrubbed
-    (memory.redact refuses the named memory's head; a profile head built from
-    it is scrubbed)."""
-    ch = ch or _default_client()
-    params = {"org": org, "mid": memory_id, "v": version, "ts": when, "rb": reason_blob}
-    for update in (_MEMORY_SCRUB, _VERSIONS_SCRUB):
-        await ch.execute(
-            f"{update}{_MARK_REDACTED}\nWHERE {_ONE_VERSION}\nSETTINGS mutations_sync = 2",
-            params=params,
-        )
-
-
 async def redact_versions(
     org: str,
     versions: list[tuple[str, int]],
@@ -179,8 +155,11 @@ async def redact_versions(
     reason_blob: str,
     ch: _CHClient | None = None,
 ) -> None:
-    """Scrub every listed (memory_id, version) the way `redact_row` scrubs one,
-    in one statement per table: two mutations however many versions match."""
+    """Scrub every listed (memory_id, version) on loom.memory and the
+    memory_versions mirror (ALTER UPDATE does not pass through
+    memory_versions_mv), in one statement per table: two mutations however many
+    versions match. The caller decides which versions may be scrubbed; versions
+    share a memory_id, so the version in each pair is what keeps the others."""
     if not versions:
         return
     ch = ch or _default_client()
@@ -308,7 +287,6 @@ __all__ = [
     "Scrub",
     "key_derivative_scrubs",
     "profile_versions_built_from",
-    "redact_row",
     "redact_versions",
     "run_scrubs",
 ]

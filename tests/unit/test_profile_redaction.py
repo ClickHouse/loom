@@ -6,6 +6,7 @@ version that names it, and leaves the versions built without it. A lock on
 the profile key refuses the redact before anything is scrubbed. However many
 versions match, the scrub is one statement per version table, and the cached
 answers and precedents whose window held a scrubbed profile key are deleted.
+A version that does not exist scrubs nothing.
 """
 
 from __future__ import annotations
@@ -179,28 +180,36 @@ async def test_a_locked_profile_refuses_the_redact_before_any_scrub(monkeypatch,
 
     monkeypatch.setattr(memory_repo, "profile_versions_built_from", versions)
     monkeypatch.setattr(memory_repo, "get_by_key", head)
-    monkeypatch.setattr(memory_repo, "redact_row", no_scrub)
+    monkeypatch.setattr(memory_repo, "redact_versions", no_scrub)
     with pytest.raises(HTTPException) as e:
         await curation._profiles_built_from("o", HistoryTarget(**_TARGET_KW), _SECRET)
     assert e.value.status_code == 423
 
 
-@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-@pytest.mark.asyncio
-async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
-    monkeypatch,
-) -> None:
+# The secret memory's version 1: the version memory.redact names.
+_SECRET_VERSION = (
+    "INSERT INTO loom.memory_versions (org, namespace, agent, user_id, session_id, memory_key, "
+    "memory_type, value, memory_id, content_sha256, version) VALUES "
+    f"('o', 'n', 'a', 'u1', '-', 'user_timezone', 'fact', '\"secret place\"', '{_SECRET}', "
+    f"'{'b' * 64}', 1)"
+)
+
+
+def _redact_setup(monkeypatch: pytest.MonkeyPatch) -> _StatefulLocalCH:
+    """The secret memory, the profile versions built from it, and one cached answer
+    and one precedent whose window held the profile key; memory.redact's lookups
+    other than the version reads are stubbed."""
     import server.auth.authz as authz
     import server.memory.store as memory_repo
-    from server.memory.api.models_crud import MemoryRedactInput
     from server.memory.app import curation
-    from server.memory.store import redaction
+    from server.memory.store import history, redaction
     from server.memory.store.history import HistoryTarget
 
     ch = _StatefulLocalCH(
         *_PROFILE_TABLES,
         ddl("llm_response_cache"),
         ddl("memory_ask_precedents"),
+        _SECRET_VERSION,
         *_profile_rows('{"timezone":"secret place"}', '{"timezone":null}'),
         "INSERT INTO loom.llm_response_cache (model, key, org, text, window_keys) VALUES "
         "('m', 'k1', 'o', 'secret place', ['structured_profile']), "
@@ -210,6 +219,7 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
         "['structured_profile'])",
     )
     monkeypatch.setattr(redaction, "_default_client", lambda: ch)
+    monkeypatch.setattr(history, "_default_client", lambda: ch)
 
     async def target(*_a: Any) -> HistoryTarget:
         return HistoryTarget(**_TARGET_KW)
@@ -227,6 +237,18 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
     monkeypatch.setattr(authz, "row_in_scope", in_scope)
     monkeypatch.setattr(memory_repo, "get_by_key", head)
     monkeypatch.setattr(curation, "_live_link_inputs", no_links)
+    return ch
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
+    monkeypatch,
+) -> None:
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+
+    ch = _redact_setup(monkeypatch)
 
     out = await curation.handle_memory_redact(
         MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
@@ -236,6 +258,30 @@ async def test_redact_deletes_the_answers_whose_window_held_a_scrubbed_profile(
     cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
     assert [r["key"] for r in cached] == ["k2"]
     assert await ch.query_all("SELECT answer FROM loom.memory_ask_precedents") == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redacting_a_version_that_does_not_exist_scrubs_nothing(monkeypatch) -> None:
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+
+    ch = _redact_setup(monkeypatch)
+
+    out = await curation.handle_memory_redact(
+        MemoryRedactInput(org="o", memory_id=_SECRET, version=7, reason="pii")
+    )
+
+    assert not out.redacted
+    assert ch.executed == []
+    profile = await ch.query_all(
+        "SELECT version FROM loom.memory_versions "
+        "WHERE memory_key = 'structured_profile' AND redacted_at IS NULL ORDER BY version"
+    )
+    assert [int(r["version"]) for r in profile] == [1, 2, 3, 4]
+    cached = await ch.query_all("SELECT key FROM loom.llm_response_cache ORDER BY key")
+    assert [r["key"] for r in cached] == ["k1", "k2"]
+    assert len(await ch.query_all("SELECT answer FROM loom.memory_ask_precedents")) == 1
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

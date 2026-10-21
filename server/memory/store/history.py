@@ -242,6 +242,27 @@ async def find_history_target(
     return None if r is None else HistoryTarget.from_row(r)
 
 
+async def version_exists(
+    org: str,
+    memory_id: str,
+    version: int,
+    *,
+    ch: _CHClient | None = None,
+) -> bool:
+    """Whether the mirror holds (memory_id, version): memory.redact checks the
+    named version before it scrubs anything built from the memory."""
+    ch = ch or _default_client()
+    r = await ch.query_one(
+        """
+        SELECT 1 AS found FROM loom.memory_versions
+        WHERE org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}
+        LIMIT 1
+        """,
+        params={"org": org, "mid": memory_id, "v": version},
+    )
+    return r is not None
+
+
 async def rollback_change_rows(
     org: str,
     namespace: str,
