@@ -109,8 +109,9 @@ request's `(org, namespace, agent)`:
   `already_promoted`). Only a knowledge promotion stops new filings under its key: a
   rule promoted with `destination="memory"` leaves no `learning://<candidate_id>`
   document, so each restatement of it is filed as a new candidate. To revise a promoted
-  rule, delete its `learning://<candidate_id>` document with `knowledge.delete`: the
-  next statement under its key is filed as a new candidate. Rejecting a promoted rule
+  rule, delete its `learning://<candidate_id>` document with `knowledge.delete`: a new
+  wording under its key is then filed as a new candidate; the promoted wording itself
+  stays decided and its restatements are counted under reason `decided`. Rejecting a promoted rule
   leaves its document, so the rule is still served and still stops new filings; delete
   the document to stop serving it. A rule rejected before any promotion is never served
   back, so it stops only its own wording: a different rule under its key is still filed.
