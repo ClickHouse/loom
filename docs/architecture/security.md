@@ -724,21 +724,15 @@ returns it.
   character range overlaps a credential, and every chunk whose own text reads
   as one (a chunk can start inside a word, where a pattern's word boundary falls). A private-key block reads as a
   credential from its header to its closing line (to the end of the text without one), so
-  every chunk its body covers is held, though a body line does not read as a key alone. `memory.import_evidence` joins each
-  chunk with the run of chunks of its session at the next `chunk_index`es, each one's
-  overlap with the chunk before it dropped (a repeat of at least 50 characters; chunks with
-  no overlap are joined whole). Imported chunks have no minimum length, so a key can run
-  through a whole chunk: the run goes on until the text it adds, each chunk's overlap
-  dropped, covers 1,000 characters past the boundary
-  or meets a gap in `chunk_index`, and only the 1,000 characters each side of the boundary
-  are read. Every chunk a key in the joined text touches is held. A private-key block is
-  longer than a chunk: after a chunk that opens one, alone or joined with the next, every
-  chunk of the session at the following indexes is held up to the one that holds the
-  closing line, and to the session's last chunk when a boundary cuts that line. A session
-  written twice holds two chunks at an index, and a run is read for each version at each
-  index, once for each distinct run of texts. A call reads at most 512 distinct runs of one
-  session; past that, the chunk and every chunk of its session at a later index are held unread, so many
-  versions of one session cannot make the check's cost grow with the square of their count. The check reads one
+  every chunk its body covers is held, though a body line does not read as a key alone. `memory.import_evidence` applies the
+  same rule to each session's text rebuilt from its imported chunks: the chunks in
+  `chunk_index` order, each one's overlap with the chunk before it dropped (a repeat of at
+  least 50 characters; chunks with no overlap are joined whole), and a gap in `chunk_index`
+  starts a new text. Imported chunks have no minimum length, so a key can run through a
+  whole chunk; every chunk a key in the rebuilt text touches is held, and a private-key
+  block with no closing line holds every chunk to the end of that text. A session written
+  by two calls can hold two texts at one index, which leaves no single text to rebuild, so
+  every chunk of such a session is held. The check reads one
   call's chunks only (at most 256), so a key cut at the boundary between the last chunk of
   one call and the first chunk of the next reads as a credential in neither, and both
   chunks are embedded; an importer that sends a session's chunks in one call, or splits

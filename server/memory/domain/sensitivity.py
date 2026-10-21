@@ -38,7 +38,6 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN ((?:RSA |EC |OPENSSH |PGP )?)PRIVATE KEY-----.*?(-----END \1PRIVATE KEY-----|\Z)",
     re.S,
 )
-_PRIVATE_KEY_END = re.compile(r"-----END (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----")
 
 _HIGH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk-(?:proj-|ant-|lf-)?[A-Za-z0-9_-]{20,}"),  # OpenAI / Anthropic / Langfuse
@@ -294,163 +293,50 @@ def _overlap(previous: str, chunk: str) -> int:
     return 0
 
 
-# How far a key cut at a chunk boundary can reach on either side of it: a key shorter than a
-# chunk, plus the characters the chunks after the boundary may repeat from the one before.
-_BOUNDARY_REACH = (  # not a setting: derived from the chunk shape
-    chunk_shape.CHUNK_SIZE + 2 * chunk_shape.CHUNK_OVERLAP
-)
-
-
-def _cut_at_boundary(first: str, following: Sequence[str]) -> list[bool]:
-    """For `first` and each chunk of `following`, the chunks after it in order, whether a
-    credential that runs from `first` past its end touches it. Only the text within
-    `_BOUNDARY_REACH` of the boundary is read, so the cost does not grow with the chunks."""
-    tail = first[-_BOUNDARY_REACH:]
-    text = tail
-    # Where each chunk sits in `text`, the characters it repeats from the one before included.
-    places = [(0, len(tail))]
-    previous = first
-    for chunk in following:
-        repeat = _overlap(previous, chunk)
-        room = len(tail) + _BOUNDARY_REACH - len(text)
-        places.append((len(text) - repeat, len(text) + min(room, len(chunk) - repeat)))
-        text += chunk[repeat : repeat + room]
-        previous = chunk
-    touched = [False] * len(places)
-    for start, end in credential_spans(text):
-        # A span that touches `first` and a chunk after it; one wholly inside a single chunk
-        # is found in that chunk alone, and one that starts after `first` from a later chunk.
-        if start < len(tail) and end > places[1][0]:
-            for i, (p_start, p_end) in enumerate(places):
-                touched[i] = touched[i] or (start < p_end and end > p_start)
-    return touched
-
-
-# Distinct runs of neighbouring chunks one call reads for one session. A session sent once has
-# at most one run per chunk; past this, a chunk and the rest of its session are held without
-# being read, so many versions of a session cannot make the check's cost grow with the square
-# of the count.
-_MAX_JOINED_RUNS = 512  # not a setting: CPU bound; chunks past it are held, so it fails closed
-
-
-def _opens_private_key(text: str) -> bool:
-    """Whether `text` holds a private-key header with no closing line after it."""
-    return any(not m.group(2) for m in _PRIVATE_KEY_BLOCK.finditer(text))
-
-
-def _runs(
-    versions: dict[tuple[Hashable, int], dict[str, list[int]]],
-    session: Hashable,
-    index: int,
-    first: str,
-) -> Iterator[tuple[str, ...]]:
-    """Each run of chunk texts of `session` at consecutive indexes from `index`, one text per
-    index, that follows `first` and covers `_BOUNDARY_REACH` characters or ends at a gap. A
-    chunk's overlap with the one before does not count, as `_cut_at_boundary` drops it."""
-    stack: list[tuple[int, tuple[str, ...], str, int]] = [(index, (), first, 0)]
-    while stack:
-        at, run, previous, covered = stack.pop()
-        texts = versions.get((session, at), {})
-        if run and (covered >= _BOUNDARY_REACH or not texts):
-            yield run
-            continue
-        for content in texts:
-            added = len(content) - _overlap(previous, content)
-            stack.append((at + 1, (*run, content), content, covered + added))
-
-
-def _read_run(first: str, run: tuple[str, ...]) -> tuple[list[bool], int]:
-    """For `first` joined with `run`, whether a credential cut at the boundary touches each
-    chunk, and the place in the run of the last chunk a private-key block opened at the
-    boundary reaches, or 0 for none (no chunk of it shows that block alone)."""
-    touched = _cut_at_boundary(first, run)
-    joined = (first, *run)
-    boundary = first[-_BOUNDARY_REACH:] + "".join(run)[:_BOUNDARY_REACH]
-    reached = [k for k, hit in enumerate(touched) if hit]
-    closed = any(_PRIVATE_KEY_END.search(joined[k]) for k in reached[1:])
-    opens = _opens_private_key(boundary) and not closed
-    return touched, (reached[-1] if opens and reached else 0)
-
-
-def _read_runs(
-    versions: dict[tuple[Hashable, int], dict[str, list[int]]],
-) -> tuple[set[int], set[int]]:
-    """Joins each chunk with each run after it. Returns the chunks a credential cut at a
-    boundary touches, with the chunks held unread past `_MAX_JOINED_RUNS`, and the chunks a
-    private-key block opened at a boundary reaches."""
-    held: set[int] = set()
-    opened: set[int] = set()
-    # Runs with the same texts are read once, whatever their session.
-    read: dict[tuple[str, ...], tuple[list[bool], int]] = {}
-    runs_read: dict[Hashable, int] = {}
-    # The index from which every chunk of a session is held unread.
-    held_from: dict[Hashable, int] = {}
-    for (session, index), texts in versions.items():
-        for first, firsts in texts.items():
-            for run in _runs(versions, session, index + 1, first):
-                joined = (first, *run)
-                if joined not in read:
-                    if runs_read.get(session, 0) >= _MAX_JOINED_RUNS:
-                        held.update(firsts)
-                        held_from[session] = min(held_from.get(session, index + 1), index + 1)
-                        break
-                    runs_read[session] = runs_read.get(session, 0) + 1
-                    read[joined] = _read_run(first, run)
-                touched, last = read[joined]
-                for offset, content in enumerate(joined):
-                    if touched[offset]:
-                        held.update(versions[(session, index + offset)][content])
-                if last:
-                    opened.update(versions[(session, index + last)][joined[last]])
-    for (session, index), texts in versions.items():
-        if index >= held_from.get(session, index + 1):
-            for positions in texts.values():
-                held.update(positions)
-    return held, opened
-
-
-def _carry_open_blocks(
-    chunks: Sequence[tuple[Hashable, int, str]],
-    key_open: list[bool],
-    closes: list[bool],
-    held: list[bool],
-) -> None:
-    """Holds every chunk at the index after a chunk of its session that leaves a private-key
-    block open, and carries the block on through it unless it holds the closing line."""
-    by_index: dict[tuple[Hashable, int], list[int]] = {}
-    for i, (session, index, _) in enumerate(chunks):
-        by_index.setdefault((session, index), []).append(i)
-    # In index order, so a block carried into a chunk is carried on from it.
-    for session, index in sorted(by_index, key=lambda k: k[1]):
-        if any(key_open[a] for a in by_index[(session, index)]):
-            for b in by_index.get((session, index + 1), []):
-                held[b] = True
-                key_open[b] = key_open[b] or not closes[b]
+def _joined_runs(texts: dict[int, str]) -> Iterator[tuple[str, list[int], list[tuple[int, int]]]]:
+    """Each run of a session's chunks at consecutive indexes, `texts` keyed by `chunk_index`:
+    the run's text with each chunk's overlap with the one before dropped, its indexes, and
+    each chunk's [start, end) range in that text. A gap in `chunk_index` starts a new run."""
+    runs: list[list[int]] = []
+    for index in sorted(texts):
+        if runs and index == runs[-1][-1] + 1:
+            runs[-1].append(index)
+        else:
+            runs.append([index])
+    for indexes in runs:
+        joined = ""
+        ranges: list[tuple[int, int]] = []
+        for index in indexes:
+            content = texts[index]
+            repeat = _overlap(joined, content)
+            ranges.append((len(joined) - repeat, len(joined) + len(content) - repeat))
+            joined += content[repeat:]
+        yield joined, indexes, ranges
 
 
 def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
-    its own text or in the text it makes joined with the chunks of its session at the next
-    indexes. A key shorter than a chunk can run through any number of short chunks, so each
-    chunk is joined with the run of chunks after it that covers `_BOUNDARY_REACH` characters,
-    one run for each version at each index. Chunks with a gap in `chunk_index` are not joined.
-    Runs with the same texts are read once; past `_MAX_JOINED_RUNS` runs of one session, the
-    chunk and every chunk of that session at a later index are held.
-
-    A private-key block runs past a chunk: after a chunk that opens one and does not close
-    it, every chunk of its session is held up to and including the one with the closing
-    line. A closing line cut at a boundary is not seen, so the rest of the session is held."""
-    # The chunks of each session at each index, by text: versions with the same text are read
-    # once.
-    held = [bool(credential_spans(content)) for _, _, content in chunks]
-    versions: dict[tuple[Hashable, int], dict[str, list[int]]] = {}
-    for i, (session, index, content) in enumerate(chunks):
-        versions.setdefault((session, index), {}).setdefault(content, []).append(i)
-    cut, opened = _read_runs(versions)
-    held = [own or i in cut for i, own in enumerate(held)]
-    key_open = [_opens_private_key(c) or i in opened for i, (_, _, c) in enumerate(chunks)]
-    closes = [bool(_PRIVATE_KEY_END.search(c)) for _, _, c in chunks]
-    _carry_open_blocks(chunks, key_open, closes, held)
+    the text its session's chunks make joined in `chunk_index` order, each chunk's overlap with
+    the one before dropped, or its own text reads as one: the rule the other chunk writers
+    apply to the text they cut (`overlaps_credential`). Chunks with a gap in `chunk_index`
+    are not joined. A session that holds two texts at one index (written by two calls) has
+    no single text to rebuild, so every chunk of it is held."""
+    by_index: dict[Hashable, dict[int, list[int]]] = {}
+    for i, (session, index, _) in enumerate(chunks):
+        by_index.setdefault(session, {}).setdefault(index, []).append(i)
+    held = [False] * len(chunks)
+    for positions in by_index.values():
+        texts = {index: {chunks[i][2] for i in at} for index, at in positions.items()}
+        if any(len(versions) > 1 for versions in texts.values()):
+            for at in positions.values():
+                for i in at:
+                    held[i] = True
+            continue
+        single = {index: next(iter(versions)) for index, versions in texts.items()}
+        for joined, indexes, ranges in _joined_runs(single):
+            for index, hit in zip(indexes, overlaps_credential(joined, ranges), strict=True):
+                for i in positions[index]:
+                    held[i] = hit
     return held
 
 
