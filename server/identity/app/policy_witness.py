@@ -17,6 +17,7 @@ from collections.abc import Callable
 from typing import Any
 
 from server.core import request_tail
+from server.core.ch_writes import batched_insert_settings
 from server.identity.domain.policy_rules import (
     All,
     AnyOf,
@@ -93,9 +94,7 @@ async def _commit(table: str, row: dict[str, Any]) -> None:
     from server.core.ch import get_client
 
     row = {k: v for k, v in row.items() if k != "ts"}  # the column's DEFAULT: the server's clock
-    await get_client().insert(
-        table, [row], settings={"async_insert": 1, "wait_for_async_insert": 1}
-    )
+    await get_client().insert(table, [row], settings=batched_insert_settings())
 
 
 def hold_event(event: Any) -> bool:

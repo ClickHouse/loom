@@ -13,6 +13,7 @@ import asyncio
 import logging
 from typing import Any
 
+from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
 
@@ -59,7 +60,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None) -> None:
             "loom.memory_usage_events",
             batch,
             # wait=1: a rejected insert raises here and is re-queued, not lost unseen.
-            settings={"async_insert": 1, "wait_for_async_insert": 1},
+            settings=batched_insert_settings(),
         )
     except Exception as e:  # noqa: BLE001 — requeue on any flush failure
         # Re-queue on failure, but bounded: drop rather than OOM if CH stays down.

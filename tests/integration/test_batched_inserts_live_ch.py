@@ -26,6 +26,8 @@ async def test_batched_inserts_are_read_back_share_parts_and_land_once_per_token
             f"CREATE TABLE {table} (k String, v String) ENGINE = MergeTree ORDER BY k "
             "SETTINGS non_replicated_deduplication_window = 1000"
         )
+        # No merge may fold the parts the shared-parts check counts.
+        await c.execute(f"SYSTEM STOP MERGES {table}")
 
         # Read back at once: the insert returned after its part was written.
         await c.insert(table, [{"k": "one", "v": "a"}], settings=batched_insert_settings())

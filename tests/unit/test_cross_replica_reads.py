@@ -12,6 +12,7 @@ import pytest
 
 from server.core import namespace_write_marks, request_tail
 from server.core.ch import sequential_reads_active
+from server.core.ch_writes import batched_insert_settings
 from server.identity.app import namespace_autoregister as autoreg
 from server.identity.app import policy_witness
 from server.identity.domain import policy_rules as R
@@ -139,7 +140,7 @@ def test_a_rule_named_event_is_committed_with_the_server_clock_before_the_answer
     assert _in_request(_event("memory.get"))
     ((table, rows, settings),) = ch.inserts
     assert table == "loom.agent_events" and "ts" not in rows[0]
-    assert settings == {"async_insert": 1, "wait_for_async_insert": 1} and queued == []
+    assert settings == batched_insert_settings() and queued == []
 
 
 def test_an_event_no_rule_names_is_queued_as_usual(
