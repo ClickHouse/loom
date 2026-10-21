@@ -22,7 +22,7 @@
       "url": "https://{loom_host}/mcp",
       "variables": {
         "loom_host": {
-          "description": "Host name of your Loom server",
+          "description": "Host name of your Loom server, with :port when it is not 443",
           "isRequired": true,
           "placeholder": "loom.example.com"
         }
@@ -30,14 +30,14 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "A writer token from the dashboard (Settings, Tokens) or `loom mint-token`",
+          "description": "A writer token from the dashboard (Settings, Tokens) or `loom mint-token`; leave it empty when the server signs in through the browser",
           "value": "Bearer {token}",
-          "isRequired": true,
+          "isRequired": false,
           "isSecret": true,
           "variables": {
             "token": {
               "description": "Loom writer token (JWT)",
-              "isRequired": true,
+              "isRequired": false,
               "isSecret": true
             }
           }
