@@ -457,6 +457,10 @@ body {
 .animate-view-in {
   animation: viewIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+/* Keep scroll anchoring active as focused rows replace their offscreen size estimates. */
+.animate-view-in:focus-within {
+  transform: none !important;
+}
 
 .animate-slide-in {
   animation: slideIn 200ms cubic-bezier(0.16, 1, 0.3, 1);

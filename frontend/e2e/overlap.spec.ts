@@ -78,12 +78,31 @@ for (const width of [1400, 375]) {
       // A row list is one tab stop (useRowNav): its rows are walked with the arrows, and
       // Shift+Tab goes from the current row's controls to its open button.
       test(`${path}: a row reached with the arrows or Shift+Tab is never under the bar`, async ({ page }) => {
+        // Keep entry motion running through the traversal, even on a fast browser.
+        await page.addInitScript(() => {
+          document.addEventListener("DOMContentLoaded", () => {
+            const style = document.createElement("style");
+            style.textContent = ".animate-view-in { animation-duration: 10s; }";
+            document.head.append(style);
+          });
+        });
         await memories(page);
         if (path !== "/memories") await page.goto(path);
         const bar = page.getByLabel("Search and filters");
         await expect(bar).toBeVisible();
+        const entry = page.locator(".animate-view-in");
+        const startTime = await entry.evaluate((el) => {
+          const animation = el.getAnimations()[0];
+          if (!animation) throw new Error("missing view entry animation");
+          animation.currentTime = 1_000;
+          return animation.startTime;
+        });
+        await expect(entry).not.toHaveCSS("transform", "none");
         await page.locator("main").evaluate((m) => m.scrollTo(0, m.scrollHeight));
         await page.locator("main .list-row [data-row-open]").last().focus();
+        const opacity = await entry.evaluate((el) => Number(getComputedStyle(el).opacity));
+        expect(opacity).toBeGreaterThan(0);
+        expect(opacity).toBeLessThan(1);
         for (let i = 0; i < 12; i++) {
           await page.keyboard.press(i % 3 === 2 ? "Shift+Tab" : "ArrowUp");
           if (i % 3 === 2) await page.keyboard.press("Tab");
@@ -96,6 +115,8 @@ for (const width of [1400, 375]) {
           });
           expect(covered).toBe(false);
         }
+        await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+        expect(await entry.evaluate((el) => el.getAnimations()[0]?.startTime)).toBe(startTime);
       });
     }
   });
