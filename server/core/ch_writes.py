@@ -1,7 +1,8 @@
 """The deduplication settings `CHClient.insert` adds to every write
 (`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
-for a batched insert (`batched_insert_settings`) or a committed one
-(`committed_insert_settings`). Each returns a new dict the caller may change.
+for a batched insert (`batched_insert_settings`), a waited async insert
+(`async_insert_settings`) or a committed one (`committed_insert_settings`).
+Each returns a new dict the caller may change.
 """
 
 from __future__ import annotations
@@ -21,21 +22,21 @@ def committed_insert_settings() -> dict[str, Any]:
     return {"async_insert": 0, "wait_for_async_insert": 1}
 
 
-def batched_insert_settings(
-    *, background: bool = False, async_when_off: bool = False
-) -> dict[str, Any]:
-    """Settings of a batched insert: an async insert answered once its shared part
-    is written, waiting between the live bounds for others to join it. `background`
-    is for an insert no request waits on, which takes the longer
-    `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, the
-    committed settings, or, for a site that `async_when_off` marks (a site that is a
-    waited async insert whether or not batching is on), a waited async insert on the
-    server profile's timeouts. Why it is safe:
+def batched_insert_settings(*, background: bool = False) -> dict[str, Any]:
+    """Settings of a batched insert: `async_insert_settings` with
+    `ch_batched_inserts` on, the committed settings with it off. Why it is safe:
     docs/architecture/clickhouse.md#batched-inserts."""
     if not settings.ch_batched_inserts:
-        if async_when_off:
-            return {"async_insert": 1, "wait_for_async_insert": 1}
         return committed_insert_settings()
+    return async_insert_settings(background=background)
+
+
+def async_insert_settings(*, background: bool = False) -> dict[str, Any]:
+    """Settings of an async insert answered once its shared part is written,
+    waiting between the live bounds for others to join it, whatever
+    `ch_batched_inserts` says: for a site that is a waited async insert either way.
+    `background` is for an insert no request waits on, which takes the longer
+    `ch_batched_insert_background_wait_max_ms`."""
     if background:
         wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
     else:
@@ -113,6 +114,7 @@ def dedup_settings(token: str, base: dict[str, Any] | None) -> dict[str, Any]:
 
 
 __all__ = [
+    "async_insert_settings",
     "batched_insert_settings",
     "committed_insert_settings",
     "dedup_settings",

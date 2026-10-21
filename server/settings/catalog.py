@@ -562,8 +562,7 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False sends each insert as it was sent before batching
-    # (committed, or a waited async insert where it already was one).
+    # returns once written. False: these inserts are committed, one part each.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript
     # turns, request ledgers) for concurrent inserts to share its part; the pooled
@@ -5152,8 +5151,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # Its audit row (high-sensitivity rows) is a batched insert that waits up to
     # ch_batched_insert_wait_max_ms (50).
     "memory.bulk_get": 130,
-    # One CH insert + N embeds.
-    "memory.bulk_set": 300,
+    # One CH insert + N embeds, plus a batched audit row and an outbox row (namespaces
+    # with a webhook) that each wait up to ch_batched_insert_wait_max_ms (50).
+    "memory.bulk_set": 400,
     # 6 ALTER UPDATEs against bounded scopes.
     "memory.clear": 600,
     "memory.consolidate": 15000,

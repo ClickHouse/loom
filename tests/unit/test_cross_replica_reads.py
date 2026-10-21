@@ -12,15 +12,13 @@ import pytest
 
 from server.core import namespace_write_marks, request_tail
 from server.core.ch import sequential_reads_active
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings
 from server.identity.app import namespace_autoregister as autoreg
 from server.identity.app import policy_witness
 from server.identity.domain import policy_rules as R
 from server.observability.events import AgentEvent
 from server.settings import settings
 from tests.unit.cross_replica_fake import FakeCluster, in_request
-
-WAITED_ASYNC = {"async_insert": 1, "wait_for_async_insert": 1}
 
 
 class _Recorder:
@@ -144,9 +142,8 @@ def test_a_rule_named_event_is_written_with_the_server_clock_before_the_answer(
     assert _in_request(_event("memory.get"))
     ((table, rows, sent),) = ch.inserts
     assert table == "loom.agent_events" and "ts" not in rows[0]
-    # With batching off, the witness stays a waited async insert, never one part per row.
-    expected = batched_insert_settings() if switch else WAITED_ASYNC
-    assert sent == expected and queued == []
+    # A waited async insert on the batched bounds whatever the switch says.
+    assert sent == async_insert_settings() and queued == []
 
 
 def test_an_event_no_rule_names_is_queued_as_usual(

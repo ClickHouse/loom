@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
@@ -153,7 +153,7 @@ async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | No
         rows,
         # Waited for: the row is the only record of the lost projection, and a
         # fire-and-forget buffer dies with the replica that holds it.
-        settings=batched_insert_settings(async_when_off=True),
+        settings=async_insert_settings(),
     )
 
 

@@ -391,7 +391,7 @@ async def test_usage_labels_drain_with_a_waited_insert(monkeypatch) -> None:
     """The shutdown drain lands buffered labels, and waits for the insert."""
     import inspect
 
-    from server.core.ch_writes import batched_insert_settings
+    from server.core.ch_writes import async_insert_settings
     from server.memory.store import usage
 
     seen: list[dict] = []
@@ -405,7 +405,7 @@ async def test_usage_labels_drain_with_a_waited_insert(monkeypatch) -> None:
     usage._USAGE_BUFFER.append({"memory_id": "m"})
     monkeypatch.setattr(usage, "_default_client", lambda: _CH())
     await usage.drain()
-    assert seen == [batched_insert_settings(background=True, async_when_off=True)]
+    assert seen == [async_insert_settings(background=True)]
     assert "_usage.drain()" in inspect.getsource(boot.drain_writes)
     usage._reset_for_tests()
 

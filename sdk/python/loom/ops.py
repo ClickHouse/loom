@@ -2473,7 +2473,7 @@ OPS: dict[str, OpSpec] = {
         True,
         "writer",
         "stable",
-        300,
+        400,
         False,
         False,
     ),

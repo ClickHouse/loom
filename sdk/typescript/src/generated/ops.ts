@@ -9709,7 +9709,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.backlinks", group: "memory", method: "backlinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "memory.brief", group: "memory", method: "brief", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "memory.bulk_get", group: "memory", method: "bulkGet", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 130, audit: false, readOnly: true },
-  { name: "memory.bulk_set", group: "memory", method: "bulkSet", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: false },
+  { name: "memory.bulk_set", group: "memory", method: "bulkSet", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 400, audit: false, readOnly: false },
   { name: "memory.clear", group: "memory", method: "clear", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 600, audit: true, readOnly: false },
   { name: "memory.consolidate", group: "memory", method: "consolidate", idempotent: false, role: "writer", maturity: "stable", budgetP99Ms: 15000, audit: true, readOnly: false },
   { name: "memory.copy_to", group: "memory", method: "copyTo", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },

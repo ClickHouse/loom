@@ -101,8 +101,7 @@ settings:
   # ch_timeout_ddl_s: 300.0
 
   # Batched inserts: concurrent inserts into one table share a part and each still
-  # returns once written. False sends each insert as it was sent before batching
-  # (committed, or a waited async insert where it already was one). [live]
+  # returns once written. False: these inserts are committed, one part each. [live]
   # ch_batched_inserts: true
 
   # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript

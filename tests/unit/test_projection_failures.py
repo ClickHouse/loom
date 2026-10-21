@@ -822,7 +822,7 @@ async def test_a_replay_whose_finish_of_a_recorded_repair_fails_records_its_clos
 async def test_a_failure_row_is_waited_for_not_left_in_a_buffer() -> None:
     """The ledger row is the only record of a lost projection: the insert
     waits for the async-insert flush."""
-    from server.core.ch_writes import batched_insert_settings
+    from server.core.ch_writes import async_insert_settings
     from server.memory.app.projection_failures import record_projection_failure
 
     seen: list[tuple[str, dict]] = []
@@ -834,7 +834,7 @@ async def test_a_failure_row_is_waited_for_not_left_in_a_buffer() -> None:
     await record_projection_failure(
         org="o", namespace="n", projection="entity_edges", error="boom", ch=_CH()
     )
-    assert seen == [("loom.memory_projection_failures", batched_insert_settings())]
+    assert seen == [("loom.memory_projection_failures", async_insert_settings())]
 
 
 @pytest.mark.parametrize(

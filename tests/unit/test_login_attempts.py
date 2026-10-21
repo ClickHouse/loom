@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from server.auth import attempts, login, revocation
 from server.auth.passwords import hash_password
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings
 
 _HASH = hash_password("correct horse battery staple")
 _ROW = {
@@ -337,7 +337,7 @@ def test_attempts_are_written_as_waiting_async_inserts(auth_attempts: Any) -> No
     """One part per attempt let a spray of sign-ins flood the shared server
     with parts; a waiting async insert still lands before the recount."""
     _resolve("alice@acme.io", "wrong")
-    assert auth_attempts.settings == batched_insert_settings()
+    assert auth_attempts.settings == async_insert_settings()
 
 
 def test_every_count_reads_with_sequential_consistency(

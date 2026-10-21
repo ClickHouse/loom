@@ -8,13 +8,11 @@ from typing import Any
 
 import pytest
 
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings
 from server.core.hashing import sha256_value
 from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetResult
 from server.memory.app.projections import write_entity_triples
 from server.settings import settings
-
-WAITED_ASYNC = {"async_insert": 1, "wait_for_async_insert": 1}
 
 # What ClickHouse reads back as a fact's newest open row when it has none.
 _NO_OPEN_ROW = (None, datetime(1970, 1, 1))
@@ -414,8 +412,8 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(
     ]
     assert all(m["adapter_name"] == "row-restore" and m["co_occur"] == 0 for m in markers)
     assert [e["valid_to"] for e in ch.inserts["loom.entity_edges"]] == [until]
-    # The Undo markers are batched inserts; with batching off, waited async inserts.
-    expected = batched_insert_settings() if switch else WAITED_ASYNC
+    # The Undo markers are waited async inserts on the batched bounds whatever the switch.
+    expected = async_insert_settings()
     assert ch.settings == {"loom.entity_triples": expected, "loom.entity_edges": expected}
     # The repair runs the normal rule, each value seen at its marker.
     ((restated, at),) = repaired

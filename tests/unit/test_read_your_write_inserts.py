@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from server.core.ch_writes import (  # noqa: E402
+    async_insert_settings,
     batched_insert_settings,
     committed_insert_settings,
 )
@@ -41,9 +42,10 @@ from server.settings import settings  # noqa: E402
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
     """Every `settings=` passed to a `ch.insert` for `table`, in one module or in
     every module of a package directory: a dict literal, `committed_insert_settings()`,
-    `batched_insert_settings()` resolved to its value under the current switch (a `background=` or
-    `async_when_off=` that is not a constant reads as False), the session defaults for
-    an insert that passes none, and `{"unresolved": 1}` for any other value."""
+    `batched_insert_settings()` resolved to its value under the current switch and
+    `async_insert_settings()` (a `background=` that is not a constant reads as False),
+    the session defaults for an insert that passes none, and `{"unresolved": 1}` for any
+    other value."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
     trees = [ast.parse(f.read_text()) for f in files]
     # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`.
@@ -80,17 +82,16 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
             if kw.arg != "settings":
                 continue
             value = kw.value
-            if (
-                isinstance(value, ast.Call)
-                and getattr(value.func, "id", "") == "batched_insert_settings"
-            ):
-                flags = {
-                    k.arg: bool(k.value.value)
+            name = getattr(value.func, "id", "") if isinstance(value, ast.Call) else ""
+            if name in ("batched_insert_settings", "async_insert_settings"):
+                background = any(
+                    k.arg == "background" and isinstance(k.value, ast.Constant) and k.value.value
                     for k in value.keywords
-                    if k.arg in ("background", "async_when_off")
-                    and isinstance(k.value, ast.Constant)
-                }
-                found.append(batched_insert_settings(**flags))
+                )
+                if name == "batched_insert_settings":
+                    found.append(batched_insert_settings(background=background))
+                else:
+                    found.append(async_insert_settings(background=background))
                 continue
             if (
                 isinstance(value, ast.Call)
@@ -131,10 +132,11 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
         )
 
 
-# (module, table, background, async_when_off). `background` is the wait window every
+# (module, table, background, always_async). `background` is the wait window every
 # insert of the table must use, None where the module writes it with both (a request's
-# flush and the timer's). `async_when_off` marks the tables that are waited async
-# inserts whether or not batching is on; with it off, the others are committed.
+# flush and the timer's). `always_async` marks the tables that are waited async inserts
+# whether or not batching is on (`async_insert_settings`); with it off, the others are
+# committed.
 BATCHED_TABLES = [
     ("server/observability/audit.py", "loom.audit_log", False, False),
     ("server/observability/events.py", "loom.agent_events", False, False),
@@ -150,32 +152,30 @@ BATCHED_TABLES = [
 
 
 @pytest.mark.parametrize("switch", [True, False])
-@pytest.mark.parametrize("rel_path,table,background,async_when_off", BATCHED_TABLES)
+@pytest.mark.parametrize("rel_path,table,background,always_async", BATCHED_TABLES)
 def test_tables_written_on_every_request_are_batched(
     monkeypatch: pytest.MonkeyPatch,
     rel_path: str,
     table: str,
     background: bool | None,
-    async_when_off: bool,
+    always_async: bool,
     switch: bool,
 ) -> None:
     """A committed insert per request makes one part per row in these tables;
     batched, concurrent writers share parts and each still waits for its row. A
     request-path insert keeps the short window its op budget assumes, and with the
     switch off a request-path table is committed and a ledger flush stays a waited
-    async insert on the profile's timeouts."""
+    async insert on the same bounds."""
     monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
     windows = [False, True] if background is None else [background]
-    allowed = [
-        batched_insert_settings(background=b, async_when_off=async_when_off) for b in windows
-    ]
+    expected_fn = async_insert_settings if always_async else batched_insert_settings
+    allowed = [expected_fn(background=b) for b in windows]
     for s in settings_seen:
         assert s in allowed, (
             f"{table} in {rel_path} is written with {s}; pass "
-            f"`settings=batched_insert_settings(background={background}, "
-            f"async_when_off={async_when_off})`."
+            f"`settings={expected_fn.__name__}(background={background})`."
         )
 
 
@@ -187,16 +187,20 @@ def test_write_marks_take_the_window_of_who_waits() -> None:
 
     calls = {
         fn.name: [
-            {k.arg: k.value.value for k in c.keywords if isinstance(k.value, ast.Constant)}
+            (
+                c.func.id,
+                {k.arg: k.value.value for k in c.keywords if isinstance(k.value, ast.Constant)},
+            )
             for c in ast.walk(fn)
-            if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "batched_insert_settings"
+            if isinstance(c, ast.Call)
+            and getattr(c.func, "id", "") in ("batched_insert_settings", "async_insert_settings")
         ]
         for fn in ast.walk(ast.parse(Path(namespace_write_marks.__file__).read_text()))
         if isinstance(fn, ast.AsyncFunctionDef)
     }
-    assert calls["bump"] == [{}]
-    assert calls["flush_now"] == [{"background": True, "async_when_off": True}]
-    assert calls["mark_process_start"] == [{"background": True}]
+    assert calls["bump"] == [("batched_insert_settings", {})]
+    assert calls["flush_now"] == [("async_insert_settings", {"background": True})]
+    assert calls["mark_process_start"] == [("batched_insert_settings", {"background": True})]
 
 
 class _RecordingCH:
@@ -229,7 +233,7 @@ async def test_usage_flush_a_request_waits_on_takes_the_short_window(
         )
     finally:
         usage._reset_for_tests()
-    assert ch.settings == [batched_insert_settings(async_when_off=True)]
+    assert ch.settings == [async_insert_settings()]
 
 
 @pytest.mark.asyncio
@@ -257,7 +261,7 @@ async def test_usage_flush_of_the_timer_takes_the_background_window(
             await usage._usage_flush_loop()
     finally:
         usage._reset_for_tests()
-    assert ch.settings == [batched_insert_settings(background=True, async_when_off=True)]
+    assert ch.settings == [async_insert_settings(background=True)]
 
 
 # Every insert of these tables anywhere under server/, not one module per table.
@@ -295,12 +299,8 @@ def test_graph_projections_may_stay_async(monkeypatch: pytest.MonkeyPatch, switc
     for table in ("entity_edges", "entity_triples"):
         for wait in (False, True):
             assert graph_insert_settings(table, wait=wait, dedup_token="")["async_insert"] == 1
-        # A waited graph insert uses the same live wait bounds as every batched insert,
-        # and with batching off is a waited async insert on the server profile's timeouts.
-        expected = (
-            batched_insert_settings() if switch else {"async_insert": 1, "wait_for_async_insert": 1}
-        )
-        assert graph_insert_settings(table, wait=True, dedup_token="") == expected
+        # A waited graph insert uses the live wait bounds whatever the switch says.
+        assert graph_insert_settings(table, wait=True, dedup_token="") == async_insert_settings()
     # The projection repair's replay is the one synchronous, token-deduplicated form.
     assert graph_insert_settings("entity_edges", wait=False, dedup_token="t")["async_insert"] == 0
 

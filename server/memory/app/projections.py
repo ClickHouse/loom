@@ -19,7 +19,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
 from server.core.repo_base import param_slices
@@ -94,7 +94,7 @@ def graph_insert_settings(table: str, *, wait: bool, dedup_token: str) -> dict[s
     repair) inserts synchronously under a per-table deduplication token, so
     a replay that ran and then failed to resolve does not count its rows
     twice (ClickHouse drops a block whose token it has seen). A waited
-    insert is a batched insert, so the live wait bounds govern it."""
+    insert takes the live wait bounds whatever `ch_batched_inserts` says."""
     if dedup_token:
         return {
             "async_insert": 0,
@@ -102,7 +102,7 @@ def graph_insert_settings(table: str, *, wait: bool, dedup_token: str) -> dict[s
             "insert_deduplication_token": f"{dedup_token}:{table}",
         }
     if wait:
-        return batched_insert_settings(async_when_off=True)
+        return async_insert_settings()
     return {"async_insert": 1, "wait_for_async_insert": 0}
 
 

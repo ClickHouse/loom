@@ -29,7 +29,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import sequential_reads
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings
 from server.core.repo_base import _default_client
 
 TABLE = "loom.auth_attempts"
@@ -219,7 +219,7 @@ async def _insert(kinds_keys: list[tuple[str, str]], at: datetime) -> None:
         TABLE,
         [{"kind": kind, "key_sha256": _digest(key), "at": at} for kind, key in kinds_keys],
         # Answered once written: the recount sees the row, and a burst shares parts.
-        settings=batched_insert_settings(async_when_off=True),
+        settings=async_insert_settings(),
     )
 
 

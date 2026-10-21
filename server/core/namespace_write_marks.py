@@ -16,7 +16,7 @@ from functools import partial
 from typing import Any
 
 from server.core.background import TaskSet
-from server.core.ch_writes import batched_insert_settings
+from server.core.ch_writes import async_insert_settings, batched_insert_settings
 from server.core.datetimes import as_aware_utc as _utc
 from server.core.datetimes import naive_utc_now
 from server.core.repo_base import _CHClient, _default_client
@@ -136,9 +136,7 @@ async def flush_now(*, ch: _CHClient | None = None) -> int:
         ch = ch or _default_client()
         # Batched server-side with every other process's marks: one part per
         # busy interval, not one per flush. No request waits on the timer's flush.
-        await ch.insert(
-            TABLE, rows, settings=batched_insert_settings(background=True, async_when_off=True)
-        )
+        await ch.insert(TABLE, rows, settings=async_insert_settings(background=True))
     except Exception as e:  # noqa: BLE001 — telemetry-grade write; the marks stay buffered
         log.warning("namespace_write_marks flush failed (non-fatal, %d rows): %s", len(rows), e)
         _arm()

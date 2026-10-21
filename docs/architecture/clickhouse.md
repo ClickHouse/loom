@@ -113,7 +113,8 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 A committed insert makes one part, so a table written on every request makes parts at
 the request rate, and merges fall behind ("too many parts"). The rows written on every
 request or by every process on a short interval are sent with `async_insert = 1,
-wait_for_async_insert = 1` (`server/core/ch_writes.py`, `batched_insert_settings`):
+wait_for_async_insert = 1` (`server/core/ch_writes.py`, `batched_insert_settings` and
+`async_insert_settings`):
 `audit_log`, the `conversations` turns and `conversation_embeddings` rows of
 `conversation.append` (the embedding row under the width rule below), the `agent_events`
 flush, the policy witness's `agent_events` and `memory_exposures` rows,
@@ -158,22 +159,23 @@ hold about R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
 20 attempt batches a second holds about 4. Size the ClickHouse connection pool
 (`ch_pool_maxsize`) for that on top of the other statements.
 
-`ch_batched_inserts` (live, on by default) switches batching off. Off, the inserts that
-were committed before batching (`audit_log`, the `conversation.append` rows, the
-`agent_events` flush, the outbox, webhook attempts, evidence, belief sources, the
-write-mark bump and process-start mark) are sent committed, one part each; the ledger
-flushes (`auth_attempts`, the carry-acknowledgement, write-mark and usage-event flushes,
-the policy witness's rows, `memory_projection_failures`, the graph Undo markers and the
-waited entity-graph inserts) are waited async inserts on the server profile's own
-timeouts; fire-and-forget inserts are unchanged. Turn it off on a deployment with little
-traffic where latency matters more than parts: with writes too sparse to share a part,
-each insert still waits `ch_batched_insert_wait_min_ms`.
+`ch_batched_inserts` (live, on by default) switches batching off for `audit_log`, the
+`conversation.append` rows, the `agent_events` flush, the outbox, webhook attempts,
+evidence, belief sources, the write-mark bump and process-start mark: off, these
+inserts are committed, one part each. The ledger flushes (`auth_attempts`, the
+carry-acknowledgement, write-mark and usage-event flushes, the policy witness's rows,
+`memory_projection_failures`, the graph Undo markers and the waited entity-graph
+inserts) are waited async inserts on the same bounds either way
+(`async_insert_settings`); fire-and-forget inserts are unchanged. Turn it off on a
+deployment with little traffic where latency matters more than parts: with writes too
+sparse to share a part, each insert still waits `ch_batched_insert_wait_min_ms`.
 
 ClickHouse keys the async buffer by table, statement shape, settings and user, so one
 flush can hold rows from several orgs, and one row that fails (a vector of the wrong
-width, code 190) fails the flush for every caller in it. A batched table therefore never
-takes a row that can fail its flush: an embedding row is batched only when its coded
-width equals `embedding_dim`, and a failed shared flush is retried committed.
+width, code 190) fails the flush for every caller in it. An embedding row is batched only
+when its coded width equals `embedding_dim`, and a `conversation_embeddings` row whose
+shared flush failed with code 190 is sent again, committed; the other batched tables
+carry no coded vector.
 
 These tables stay committed:
 
@@ -865,7 +867,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 
 - `server/core/ch.py`: `set_query_tag`, `statement_class`, `statement_settings`,
   `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `batched_insert_settings`,
-  `dedup_settings`, `insert_dedup_token`; `server/core/ch_schema_guard.py`: `pending_tables`.
+  `async_insert_settings`, `dedup_settings`, `insert_dedup_token`;
+  `server/core/ch_schema_guard.py`: `pending_tables`.
 - `server/core/schema/journal.py`: the journal as data (file order, baselines, statements, the
   objects each file creates or drops).
 - `server/core/schema/migrate.py`, `server/core/schema/migrate_lease.py`: the runner, ledger, locks and gated
