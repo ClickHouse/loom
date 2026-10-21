@@ -272,7 +272,7 @@ def _dead_row(row: Mapping[str, Any], why: str) -> dict[str, Any]:
 async def _skip_row(row: Mapping[str, Any], started: datetime) -> dict[str, Any] | None:
     """The attempt row to record instead of a POST (a cooldown wait, a webhook
     removed since the pass `started`, an erased key), or None to send it."""
-    until = _cooling_until(_hook(row)[2])
+    until = _cooling_until(str(row["webhook_id"]))
     if until is not None:  # failed its last POSTs earlier in this pass
         return _wait_row(row, until=until, why="the webhook is cooling down")
     # The pass read the registrations once; a webhook.remove since then stops its sends.
@@ -322,7 +322,7 @@ async def _send(
                 finished.append(skipped)
                 return
             delivery = await _post(transport, row, urls[hook], secrets[hook])
-        _note_post(hook[2], delivery.ok)
+        _note_post(str(row["webhook_id"]), delivery.ok)
         outcome = _outcome(row, delivery)
         finished.append(outcome)
         if outcome["status"] == "pending":
@@ -378,7 +378,11 @@ async def deliver_once(
         if secrets[_hook(h)] is None:
             unsecured.append(_hook(h))
             _warn_missing_secret(str(h["org"]), str(h["secret_ref"]))
-    sendable = [k for k in usable if _cooling_until(k[2]) is None]
+    sendable = [
+        (hook_org, hook_ns, webhook_id)
+        for hook_org, hook_ns, webhook_id in usable
+        if _cooling_until(webhook_id) is None
+    ]
 
     removed = [h for h in await store.removed_webhooks(now - _removal_window()) if mine(h)]
     await store.mark_dead(
