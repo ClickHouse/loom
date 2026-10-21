@@ -1,13 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  SIGN_IN_FROM,
-  claimsFromToken,
-  provisionalNamespace,
-  rememberKinds,
-  rememberedKinds,
-  sameIdentity,
-  takeLinkToken,
-} from "./boot";
+import { describe, expect, it } from "vitest";
+import { claimsFromToken, provisionalNamespace, rememberKinds, rememberedKinds, sameIdentity } from "./boot";
 import type { MyNamespaceEntry } from "../api";
 import { VIEW_LOADERS } from "../views/registry";
 import { ALL_VIEWS } from "./state";
@@ -119,56 +111,5 @@ describe("view registry", () => {
   it("has a loader for every view", () => {
     for (const v of ALL_VIEWS) expect(typeof VIEW_LOADERS[v]).toBe("function");
     expect(Object.keys(VIEW_LOADERS).sort()).toEqual([...ALL_VIEWS].sort());
-  });
-});
-
-describe("login link token", () => {
-  afterEach(() => {
-    history.replaceState(null, "", "/");
-    sessionStorage.clear();
-  });
-
-  it("a token back on the bare root opens the page its sign-in started on, once", () => {
-    sessionStorage.setItem(SIGN_IN_FROM, "/memories?namespace=t-1-shared&memory=k");
-    history.replaceState(null, "", "/#token=abc");
-    expect(takeLinkToken()).toBe("abc");
-    expect(window.location.pathname + window.location.search + window.location.hash).toBe(
-      "/memories?namespace=t-1-shared&memory=k",
-    );
-    expect(sessionStorage.getItem(SIGN_IN_FROM)).toBeNull();
-  });
-
-  it("goes back only to a path on this origin, and only from the bare root", () => {
-    for (const from of ["//elsewhere.example/x", "/\\elsewhere.example", "https://elsewhere.example/"]) {
-      sessionStorage.setItem(SIGN_IN_FROM, from);
-      history.replaceState(null, "", "/#token=abc");
-      expect(takeLinkToken()).toBe("abc");
-      expect(window.location.pathname + window.location.search + window.location.hash).toBe("/");
-    }
-    // A token link that names its own page keeps it.
-    sessionStorage.setItem(SIGN_IN_FROM, "/memories");
-    history.replaceState(null, "", "/settings?tab=memory#token=abc");
-    expect(takeLinkToken()).toBe("abc");
-    expect(window.location.pathname + window.location.search).toBe("/settings?tab=memory");
-  });
-
-  it("takes a #token= fragment and scrubs it from the address bar", () => {
-    history.replaceState(null, "", "/setup?tab=a#token=abc.def%2Eghi");
-    expect(takeLinkToken()).toBe("abc.def.ghi");
-    expect(window.location.pathname + window.location.search + window.location.hash).toBe("/setup?tab=a");
-  });
-
-  it("never takes a ?token= query, and removes it anyway", () => {
-    history.replaceState(null, "", "/?token=leaked.jwt.value&tab=a#memories");
-    expect(takeLinkToken()).toBeNull();
-    expect(window.location.search).toBe("?tab=a");
-    expect(window.location.hash).toBe("#memories");
-    expect(window.location.href).not.toContain("leaked");
-  });
-
-  it("leaves a URL without a token alone", () => {
-    history.replaceState(null, "", "/library?q=x#y");
-    expect(takeLinkToken()).toBeNull();
-    expect(window.location.search + window.location.hash).toBe("?q=x#y");
   });
 });

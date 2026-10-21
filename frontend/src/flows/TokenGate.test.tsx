@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SIGN_IN_FROM } from "../lib/boot";
+import { SIGN_IN_FROM } from "../lib/linkToken";
 import { ApiError } from "../lib/errors";
 import { axeViolations } from "../test/axe";
 import { DOCS_QUICKSTART_URL, DOCS_TOKENS_URL, TokenGate } from "./TokenGate";
@@ -165,13 +165,15 @@ describe("TokenGate", () => {
 
     it("remembers the page the sign-in starts on, so the way back opens it", () => {
       window.__LOOM_SSO = true;
-      history.replaceState(null, "", "/memories?namespace=t-1-shared");
+      history.replaceState(null, "", "/memories?namespace=group-a-shared");
       render(<TokenGate onLogin={() => undefined} reason="expired" />);
       const link = screen.getByRole("link", { name: "Sign in with SSO" });
-      // jsdom does not navigate; the provider round trip is boot's test (takeLinkToken).
+      // jsdom does not navigate; the provider round trip is lib/linkToken.test.ts.
       link.addEventListener("click", (e) => e.preventDefault());
       fireEvent.click(link);
-      expect(sessionStorage.getItem(SIGN_IN_FROM)).toBe("/memories?namespace=t-1-shared");
+      expect(JSON.parse(sessionStorage.getItem(SIGN_IN_FROM) ?? "{}")).toMatchObject({
+        path: "/memories?namespace=group-a-shared",
+      });
       // From the bare root there is nothing to come back to.
       history.replaceState(null, "", "/");
       fireEvent.click(link);

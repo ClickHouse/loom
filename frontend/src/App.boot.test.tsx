@@ -413,25 +413,30 @@ describe("a link's namespace", () => {
     expect(useStore.getState().identity?.namespace).toBe(NS);
   });
 
-  it("a deep link survives the sign-in redirect: the token comes back to the root, the page opens", async () => {
-    // The gate remembered the link before it sent the browser to the identity provider.
-    sessionStorage.setItem("loom_sign_in_from_v1", "/memories?namespace=joined");
-    localStorage.removeItem("loom_token_v1");
-    useStore.setState({ authed: false });
-    window.history.replaceState(
-      null,
-      "",
-      `/#token=${jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] })}`,
-    );
-    serve([...MINE, JOINED]);
-    render(<App />);
-    await until(() => calls.some((c) => c.path === "memory.list"));
-    expect(useStore.getState()).toMatchObject({ view: "memories", identity: { namespace: "joined" } });
-    expect(address()).toBe("/memories?namespace=joined");
-    expect(window.location.hash).toBe("");
-    expect(sessionStorage.getItem("loom_sign_in_from_v1")).toBeNull();
-    expect(localStorage.getItem("loom_token_v1")).not.toBeNull();
-  });
+  for (const root of ["/", "/me"]) {
+    it(`a deep link survives the sign-in redirect: the token comes back to ${root}, the page opens`, async () => {
+      // The gate remembered the link before it sent the browser to the identity provider.
+      sessionStorage.setItem(
+        "loom_sign_in_from_v1",
+        JSON.stringify({ path: "/memories?namespace=joined", at: Date.now() }),
+      );
+      localStorage.removeItem("loom_token_v1");
+      useStore.setState({ authed: false });
+      window.history.replaceState(
+        null,
+        "",
+        `${root}#token=${jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] })}`,
+      );
+      serve([...MINE, JOINED]);
+      render(<App />);
+      await until(() => calls.some((c) => c.path === "memory.list"));
+      expect(useStore.getState()).toMatchObject({ view: "memories", identity: { namespace: "joined" } });
+      expect(address()).toBe("/memories?namespace=joined");
+      expect(window.location.hash).toBe("");
+      expect(sessionStorage.getItem("loom_sign_in_from_v1")).toBeNull();
+      expect(localStorage.getItem("loom_token_v1")).not.toBeNull();
+    });
+  }
 });
 
 describe("login link", () => {

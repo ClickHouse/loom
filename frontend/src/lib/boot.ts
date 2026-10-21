@@ -46,43 +46,6 @@ export function claimsFromToken(jwt: string | null | undefined): TokenClaims | n
   }
 }
 
-/** The session key for the page a single sign-on started on (the gate writes it): the
- *  identity provider sends the browser back to the root. */
-export const SIGN_IN_FROM = "loom_sign_in_from_v1";
-
-/** The page a sign-in started on, once: a path on this origin, never `//host`. */
-function takeSignInStart(): string | null {
-  try {
-    const from = sessionStorage.getItem(SIGN_IN_FROM);
-    sessionStorage.removeItem(SIGN_IN_FROM);
-    return from && /^\/(?![/\\])/.test(from) ? from : null;
-  } catch {
-    return null;
-  }
-}
-
-/** The token a login link carries in its `#token=` fragment, or null. A
- *  fragment never reaches the server or its logs; a `?token=` query does, so it
- *  is not accepted. Both are scrubbed from the address bar (and history) so a
- *  token never lingers in a copied link. A token that comes back to the bare
- *  root opens the page its sign-in started on. */
-export function takeLinkToken(): string | null {
-  const { hash, search, pathname } = window.location;
-  const fromHash = hash.startsWith("#token=");
-  const query = new URLSearchParams(search);
-  if (!fromHash && !query.has("token")) return null;
-  query.delete("token");
-  const qs = query.toString();
-  const from = fromHash && pathname === "/" && !qs ? takeSignInStart() : null;
-  history.replaceState(null, "", from ?? pathname + (qs ? `?${qs}` : "") + (fromHash ? "" : hash));
-  if (!fromHash) return null;
-  try {
-    return decodeURIComponent(hash.slice("#token=".length)) || null;
-  } catch {
-    return null;
-  }
-}
-
 /** Namespace kinds from the last membership answer this browser saw, so a
  *  deep link can tell a memory namespace from a code or QA one before
  *  list_mine answers again (a memory view never mounts on a code or tracker namespace;
