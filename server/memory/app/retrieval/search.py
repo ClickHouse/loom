@@ -174,7 +174,7 @@ async def _gather_legs(
     and record legs, and return the fact rows plus each optional leg's hits."""
     # Gather every result-independent leg in parallel — facts, chunks, the
     # BM25-only lexical union, records. None consumes another's output (the
-    # lexical dedup-against-ANN-keys runs post-gather), so sequencing would
+    # lexical dedup against the vector-leg keys runs post-gather), so sequencing would
     # only add latency. The plane mask decides which legs participate.
     # Each leg is its own `ch.query.*` span. The handler's
     # `ch.query.memory_embeddings` span covers the whole fan-out, which would

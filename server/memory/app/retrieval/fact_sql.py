@@ -141,8 +141,7 @@ async def _fact_leg_sql(
     # flag reads MORE than the plain scan (304 vs 177 ms on a large tenant).
     # `fact_codes_first` says yes only under `on`, or under `auto` when the
     # 60 s probe of system.parts read zero patch parts; the shortlist is then
-    # LIMIT x `memory_search_fact_codes_fetch_multiplier` (3.0; x1 changed the
-    # top 10 on a quarter of queries).
+    # LIMIT x `memory_search_fact_codes_fetch_multiplier`.
     # Off, the statement carries no vector settings: an exact scan. No table
     # has a vector index; the identity PREWHERE keeps the read to the tenant's
     # granules, and ClickHouse sorts their distances exactly.
