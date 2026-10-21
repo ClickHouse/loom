@@ -61,7 +61,7 @@ class OpenAIEmbedder:
         self.model_name = model
         self.dim = dim or self.DEFAULT_DIMS.get(model, 1536)
         self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key and not gateway.exchanging():
+        if not self._api_key and not gateway.keyless():
             raise RuntimeError(
                 "OPENAI_API_KEY not set; OpenAIEmbedder requires a key. "
                 "Use LOOM_EMBEDDING_MODEL=fake-ngram-3072 for local dev."

@@ -1436,11 +1436,12 @@ Embedding and LLM providers.
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
 | `LOOM_INFERENCE_TOKEN_URL` | `str` | `''` |  | Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the provider keys. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` |  | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |
+| `LOOM_INFERENCE_WORKLOAD_TOKEN_MODE` | `'exchange' \| 'bearer'` | `'exchange'` |  | How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at inference_token_url) or "bearer" (the file itself, read again at most every minute and after a 401; requires the gateway). |
 | `LOOM_INFERENCE_TOKEN_AUDIENCE` | `str` | `''` |  | With inference_token_url and no workload token: the audience of the identity token Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience. |
 | `LOOM_INFERENCE_TOKEN_SCOPE` | `str` | `''` |  | The scope sent with the inference gateway token exchange; "" sends none. |
 | `LOOM_INFERENCE_TOKEN_EXCHANGE_TIMEOUT_S` | `float` | `10.0` |  | Seconds one token exchange with the inference gateway may take. |
 | `LOOM_PROVIDER_CHECK_TIMEOUT_S` | `float` | `30.0` | live | Seconds a provider check (the dashboard's Models & keys validate and save) waits for its probe call before it reports `timeout`. |
-| `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` |  | True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set. |
+| `LOOM_INFERENCE_GATEWAY_REQUIRED` | `bool` | `False` |  | True: model calls and memory content go only to inference_gateway_hosts; on whenever a workload token is sent (inference_token_url, or the bearer mode). |
 | `LOOM_INFERENCE_GATEWAY_HOSTS` | `str` | `''` |  | Comma-separated hostnames (exact, any case) of the gateway; required, and the only hosts sent to, while the gateway is required. |
 | `LOOM_INFERENCE_CUSTOMER_HEADER` | `str` | `''` |  | Header naming the customer (the org) on every model call, for a gateway that meters by it; set, a call naming no customer is refused (server/llm/customer.py). |
 | `LOOM_INFERENCE_FEATURE_HEADER` | `str` | `''` |  | Header naming the feature that made the call (hyde, memory.search, worker.embedding, ...), with inference_customer_header only; "" sends none. |

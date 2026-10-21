@@ -2500,7 +2500,7 @@
         "inference_gateway_required": {
           "default": false,
           "type": "boolean",
-          "description": "True: model calls and memory content go only to inference_gateway_hosts; on whenever inference_token_url is set."
+          "description": "True: model calls and memory content go only to inference_gateway_hosts; on whenever a workload token is sent (inference_token_url, or the bearer mode)."
         },
         "inference_identity_headers_json": {
           "default": "",
@@ -2542,6 +2542,15 @@
           "default": "",
           "type": "string",
           "description": "The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience."
+        },
+        "inference_workload_token_mode": {
+          "default": "exchange",
+          "enum": [
+            "exchange",
+            "bearer"
+          ],
+          "type": "string",
+          "description": "How inference_workload_token_file reaches the gateway: \"exchange\" (RFC 8693, at inference_token_url) or \"bearer\" (the file itself, read again at most every minute and after a 401; requires the gateway)."
         },
         "insights_agents_connected_ttl_s": {
           "default": 60.0,

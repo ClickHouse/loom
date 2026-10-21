@@ -99,7 +99,8 @@ async def _check(
     if provider not in ("openai", "anthropic", "gemini", "compatible"):
         check.code = "unsupported_provider"
         return check
-    if not key.strip() and not (provider in ("openai", "anthropic") and gateway.exchanging()):
+    keyless = provider in ("openai", "anthropic", "compatible") and gateway.keyless()
+    if not key.strip() and not keyless:
         check.code = "missing_key"
         return check
     try:

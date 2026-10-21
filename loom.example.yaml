@@ -345,6 +345,11 @@ settings:
   # inference_token_audience. [restart]
   # inference_workload_token_file: ""
 
+  # How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at
+  # inference_token_url) or "bearer" (the file itself, read again at most every minute
+  # and after a 401; requires the gateway). [restart]
+  # inference_workload_token_mode: "exchange"
+
   # With inference_token_url and no workload token: the audience of the identity token
   # Loom signs (issuer <https public_base_url>/v1, newest RS256 key); never
   # jwt_audience. [restart]
@@ -361,7 +366,7 @@ settings:
   # provider_check_timeout_s: 30.0
 
   # True: model calls and memory content go only to inference_gateway_hosts; on whenever
-  # inference_token_url is set. [restart]
+  # a workload token is sent (inference_token_url, or the bearer mode). [restart]
   # inference_gateway_required: false
 
   # Comma-separated hostnames (exact, any case) of the gateway; required, and the only

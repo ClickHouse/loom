@@ -9,9 +9,12 @@ service-account token on Kubernetes), or one Loom signs itself
 `<LOOM_PUBLIC_BASE_URL>/v1` with the newest RS256 key of the signing keyring,
 which `/v1/.well-known/jwks.json` publishes. Either way the gateway must trust
 the issuer. Loom's own verifier never accepts that audience, so the token opens
-nothing here. Unset, the provider's key is the bearer, as always;
-`LOOM_OPENAI_BASE_URL` / `LOOM_ANTHROPIC_BASE_URL` point either at a gateway,
-and `LOOM_INFERENCE_GATEWAY_REQUIRED` (as the exchange does) refuses every call
+nothing here. With `LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer` the workload's
+token file is itself the bearer, for a gateway that verifies such tokens: read
+at most once a minute, and again at once after the gateway answers 401. Unset,
+the provider's key is the bearer, as always; `LOOM_OPENAI_BASE_URL` /
+`LOOM_ANTHROPIC_BASE_URL` point either at a gateway, and
+`LOOM_INFERENCE_GATEWAY_REQUIRED` (as a workload token does) refuses every call
 to a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list.
 """
 
@@ -48,6 +51,13 @@ _expires_at = 0.0
 _renew_at = 0.0
 _lock = asyncio.Lock()
 
+# The bearer mode's token, as last read from its file (time.monotonic), and whether
+# the gateway answered 401 since.
+_REREAD_S = 60.0  # not a setting: a platform rotates the file well before the token ends
+_file_token = ""
+_file_read_at = 0.0
+_file_refused = False
+
 
 class GatewayUnavailable(httpx.TransportError):
     """No gateway token could be had and none is in hand: an outage, retried
@@ -58,12 +68,26 @@ def exchanging() -> bool:
     return bool(settings.inference_token_url)
 
 
+def bearing() -> bool:
+    """Whether the workload token file is itself the bearer (the bearer mode)."""
+    return settings.inference_workload_token_mode == "bearer"
+
+
+def keyless() -> bool:
+    """Whether a workload token stands in for the provider key: exchanged at the
+    gateway, or sent to it as it is."""
+    return exchanging() or bearing()
+
+
 async def bearer(provider_key: str, url: str) -> str:
-    """What a model call to `url` presents: the gateway's token when Loom
-    exchanges an identity token there, else the provider key. A host off the
-    gateway is refused here, before a token is fetched for it, and on every hop
-    by the model client (`server.clients._http._on_request`)."""
+    """What a model call to `url` presents: the workload token in the bearer
+    mode, the gateway's token when Loom exchanges an identity token there, else
+    the provider key. A host off the gateway is refused here, before a token is
+    fetched for it, and on every hop by the model client
+    (`server.clients._http._on_request`)."""
     refuse_off_gateway(url)
+    if bearing():
+        return await _workload_bearer()
     if not exchanging():
         return provider_key
     now = time.time()
@@ -123,6 +147,41 @@ async def _renew() -> None:
     _renew_at = _expires_at - min(_RENEW_BEFORE_S, life / 2)
 
 
+async def _workload_bearer() -> str:
+    """The bearer mode's token: the file's content, read again once a minute has
+    passed or the gateway answered 401 to it. A failed read serves the token in
+    hand, tried again a minute later; with none in hand the call is an outage,
+    and the next call reads again."""
+    global _file_token, _file_read_at, _file_refused
+    if _file_token and not _file_refused and time.monotonic() - _file_read_at < _REREAD_S:
+        return _file_token
+    async with _lock:
+        if not _file_token or _file_refused or time.monotonic() - _file_read_at >= _REREAD_S:
+            try:
+                text = await asyncio.to_thread(
+                    Path(settings.inference_workload_token_file).read_text
+                )
+                if not text.strip():
+                    raise ValueError("the file is empty")
+                _file_token = text.strip()
+            except (OSError, ValueError) as e:
+                # Its error, never the token.
+                log.warning("inference workload token file could not be read: %s", e)
+            _file_read_at, _file_refused = time.monotonic(), False
+    if not _file_token:
+        raise GatewayUnavailable("the inference workload token file could not be read")
+    return _file_token
+
+
+async def answered(response: httpx.Response) -> None:
+    """What the gateway's answer to a model call says about the bearer: in the
+    bearer mode a 401 makes the next call read the token file again at once.
+    Runs on every response of the model client (`server.clients._http`)."""
+    global _file_refused
+    if response.status_code == 401 and bearing():
+        _file_refused = True
+
+
 async def _identity_token() -> str:
     """What Loom exchanges: the workload's token from its file, else one it
     signs itself."""
@@ -177,5 +236,6 @@ def _error_code(r: httpx.Response) -> str:
 
 
 def _reset_for_tests() -> None:
-    global _token, _expires_at, _renew_at
+    global _token, _expires_at, _renew_at, _file_token, _file_read_at, _file_refused
     _token, _expires_at, _renew_at = "", 0.0, 0.0
+    _file_token, _file_read_at, _file_refused = "", 0.0, False

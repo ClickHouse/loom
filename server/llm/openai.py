@@ -129,7 +129,7 @@ class OpenAILLMClient:
     def __init__(self, model: str, *, api_key: str | None = None) -> None:
         self.model = model
         self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key and not gateway.exchanging():
+        if not self._api_key and not gateway.keyless():
             raise RuntimeError(
                 "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
                 "Use LOOM_LLM_PROVIDER=fake for local dev."

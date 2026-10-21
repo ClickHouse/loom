@@ -429,6 +429,19 @@ account (`serviceAccount.name`); that trust is set up on the gateway's side. The
 NetworkPolicy's egress to port 443 already covers the gateway and the identity
 provider.
 
+A gateway that verifies the projected token itself takes it as the bearer: drop the
+token URL and set the bearer mode. Loom rereads the file at most once a minute, and at
+once after a 401. To name the agent each call is for, add identity headers
+([models and keys](../getting-started/models-and-keys.md#naming-the-agent-on-every-call)):
+
+```yaml
+env:
+  LOOM_INFERENCE_WORKLOAD_TOKEN_MODE: bearer
+  LOOM_INFERENCE_WORKLOAD_TOKEN_FILE: /var/run/secrets/inference/token
+  LOOM_INFERENCE_GATEWAY_HOSTS: gateway.example
+  LOOM_INFERENCE_IDENTITY_HEADERS_JSON: '{"X-Agent": "{agent}"}'
+```
+
 ## Related
 
 - [Running N replicas](./replicas.md) and [deployment](./deployment.md#n-identical-replicas)

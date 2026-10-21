@@ -82,7 +82,7 @@ def _key_absent(provider: str) -> bool:
     from server.llm import gateway
 
     env = KEY_ENV_BY_PROVIDER.get(provider)
-    return bool(env) and not provider_key(provider) and not gateway.exchanging()
+    return bool(env) and not provider_key(provider) and not gateway.keyless()
 
 
 def provider_key_missing(provider: str) -> bool:

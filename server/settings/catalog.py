@@ -3666,6 +3666,10 @@ class ProviderSettings(ModelSettings):
     # service-account token on Kubernetes). With inference_token_url, this or
     # inference_token_audience.
     inference_workload_token_file: str = ""
+    # How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at
+    # inference_token_url) or "bearer" (the file itself, read again at most every
+    # minute and after a 401; requires the gateway).
+    inference_workload_token_mode: Annotated[Literal["exchange", "bearer"], CaseFolded] = "exchange"
     # With inference_token_url and no workload token: the audience of the identity token Loom
     # signs (issuer <https public_base_url>/v1, newest RS256 key); never jwt_audience.
     inference_token_audience: str = ""
@@ -3677,7 +3681,7 @@ class ProviderSettings(ModelSettings):
     # its probe call before it reports `timeout`.
     provider_check_timeout_s: Annotated[float, LIVE] = Field(default=30.0, gt=0)
     # True: model calls and memory content go only to inference_gateway_hosts;
-    # on whenever inference_token_url is set.
+    # on whenever a workload token is sent (inference_token_url, or the bearer mode).
     inference_gateway_required: bool = False
     # Comma-separated hostnames (exact, any case) of the gateway; required, and
     # the only hosts sent to, while the gateway is required.
@@ -3899,6 +3903,17 @@ class ProviderSettings(ModelSettings):
                 "LOOM_INFERENCE_TOKEN_URL needs one of LOOM_INFERENCE_WORKLOAD_TOKEN_FILE (the "
                 "workload's token) and LOOM_INFERENCE_TOKEN_AUDIENCE (a token Loom signs)"
             )
+        if self.inference_workload_token_mode == "bearer":
+            if not self.inference_workload_token_file:
+                raise ValueError(
+                    "LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer needs "
+                    "LOOM_INFERENCE_WORKLOAD_TOKEN_FILE, the token it sends"
+                )
+            if self.inference_token_url:
+                raise ValueError(
+                    "LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer sends the workload token as it "
+                    "is: LOOM_INFERENCE_TOKEN_URL is for the exchange; unset one of them"
+                )
         return self
 
     @model_validator(mode="after")
@@ -4061,6 +4076,8 @@ class ProviderSettings(ModelSettings):
         """The setting that requires the gateway, for an error to name; "" when none does."""
         if self.inference_token_url:
             return "LOOM_INFERENCE_TOKEN_URL"
+        if self.inference_workload_token_mode == "bearer":
+            return "LOOM_INFERENCE_WORKLOAD_TOKEN_MODE"
         return "LOOM_INFERENCE_GATEWAY_REQUIRED" if self.inference_gateway_required else ""
 
     @model_validator(mode="after")

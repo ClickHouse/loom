@@ -11,7 +11,9 @@ Both follow redirects, so neither is for caller-supplied URLs: a client that
 must not be redirected to another host (webhook delivery) builds its own.
 The model client runs `_on_request` before every request it sends, each
 redirect hop included, so while the gateway is required no model call leaves
-for a host LOOM_INFERENCE_GATEWAY_HOSTS does not list.
+for a host LOOM_INFERENCE_GATEWAY_HOSTS does not list, and `_on_response`
+after every answer, which tells the gateway's bearer what it said
+(`server.llm.gateway.answered`).
 """
 
 from __future__ import annotations
@@ -64,6 +66,12 @@ async def _on_request(request: httpx.Request) -> None:
     refuse_off_gateway(str(request.url))
 
 
+async def _on_response(response: httpx.Response) -> None:
+    from server.llm import gateway
+
+    await gateway.answered(response)
+
+
 def _build(**extra: Any) -> httpx.AsyncClient:
     return _ProviderClient(
         timeout=httpx.Timeout(
@@ -97,7 +105,9 @@ def get_model_client() -> httpx.AsyncClient:
         return _model_client
     with _lock:
         if _model_client is None:
-            _model_client = _build(event_hooks={"request": [_on_request]})
+            _model_client = _build(
+                event_hooks={"request": [_on_request], "response": [_on_response]}
+            )
     return _model_client
 
 

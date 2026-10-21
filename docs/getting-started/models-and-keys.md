@@ -281,6 +281,25 @@ gateway's audience; the gateway must trust the cluster's OIDC issuer and match
 Loom's service account (`system:serviceaccount:<namespace>:<name>`), not just
 the issuer, since every pod of the cluster can get a token from it.
 
+A gateway that verifies the workload's token itself takes it as the bearer, with no
+exchange: set the bearer mode instead of a token endpoint. Loom reads the file at most
+once a minute, and again at once when the gateway answers 401, so a rotated token is
+picked up without a restart:
+
+```bash
+LOOM_INFERENCE_WORKLOAD_TOKEN_MODE=bearer
+LOOM_INFERENCE_WORKLOAD_TOKEN_FILE=/var/run/secrets/tokens/gateway   # sent as it is
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example                         # required, as with the exchange
+LOOM_OPENAI_BASE_URL=https://gateway.example/v1
+LOOM_ANTHROPIC_BASE_URL=https://gateway.example
+LOOM_EMBEDDING_PROVIDER=compatible                                   # embeddings through the gateway too
+LOOM_EMBEDDING_BASE_URL=https://gateway.example/v1
+```
+
+Name the provider and the models as in the exchange example. The token goes only to the
+gateway's hosts: the bearer mode requires the gateway, as the exchange does. A compatible
+embedding endpoint given its own `LOOM_EMBEDDING_API_KEY` sends that key instead.
+
 #### Naming the customer on every call
 
 A gateway that meters or budgets per customer reads the customer from a header.

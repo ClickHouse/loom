@@ -467,6 +467,7 @@
  "inference_token_scope": "",
  "inference_token_url": "",
  "inference_workload_token_file": "",
+ "inference_workload_token_mode": "exchange",
  "insights_agents_connected_ttl_s": 60.0,
  "instance_heartbeat_seconds": 10.0,
  "jwt_audience": "loom-platform",
