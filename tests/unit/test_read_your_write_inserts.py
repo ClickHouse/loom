@@ -117,13 +117,10 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
 BATCHED_TABLES = [
     ("server/observability/audit.py", "loom.audit_log"),
     ("server/observability/events.py", "loom.agent_events"),
-    ("server/knowledge/store/conversations.py", "loom.conversation_embeddings"),
     ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox"),
     ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts"),
     ("server/memory/app/evidence.py", "loom.memory_evidence"),
     ("server/memory/app/evidence.py", "loom.memory_belief_sources"),
-    ("server/memory/app/chunk_projection.py", "loom.memory_chunks"),
-    ("server/memory/app/projections.py", "loom.entity_vectors"),
     ("server/core/namespace_write_marks.py", "loom.namespace_write_marks"),
     ("server/core/rmt_carry.py", "loom.carry_acks"),
     ("server/auth/attempts.py", "loom.auth_attempts"),

@@ -11,7 +11,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.app.projection_errors import record_input_projection_failure
@@ -392,12 +391,15 @@ async def write_memory_chunks(
     if not rows:
         return
 
-    # Waited for, like the caller: chunks are read on the default bm25_hybrid
-    # path, so a query right after the write must find them.
+    # Synchronous for the same reason the caller is synchronous: chunks are read
+    # on the default bm25_hybrid search path, so a query landing right after the
+    # write must find them; a fire-and-forget insert would break that. Committed,
+    # not batched: a mis-sized vector fails the shared part of a batched flush,
+    # and with it every other insert in that flush.
     await ch.insert(
         "loom.memory_chunks",
         rows,
-        settings=batched_insert_settings(),
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
     if provenance_rows:
         try:

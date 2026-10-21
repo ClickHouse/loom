@@ -101,13 +101,12 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   request makes parts at the request rate, and merges fall behind ("too many parts"). The
   rows written on every request or by every process on a short interval are sent with
   `async_insert = 1, wait_for_async_insert = 1` (`batched_insert_settings`): `audit_log`,
-  `conversations` and `conversation_embeddings` from `conversation.append`, the
-  `agent_events` flush, the policy witness's `agent_events` and `memory_exposures` rows,
-  `memory_webhook_outbox`, `memory_webhook_attempts`, `memory_evidence`,
-  `memory_belief_sources`, the `memory_chunks` of `memory.set_from_messages`,
-  `entity_vectors`, `auth_attempts`, `memory_projection_failures`, the graph Undo
-  markers, `namespace_write_marks`, and the usage-event and carry-acknowledgement
-  flushes. ClickHouse collects the concurrent inserts into one table in one part per
+  the `conversations` turns of `conversation.append`, the `agent_events` flush, the
+  policy witness's `agent_events` and `memory_exposures` rows, `memory_webhook_outbox`,
+  `memory_webhook_attempts`, `memory_evidence`, `memory_belief_sources`,
+  `auth_attempts`, `memory_projection_failures`, the graph Undo markers,
+  `namespace_write_marks`, and the usage-event and carry-acknowledgement flushes.
+  ClickHouse collects the concurrent inserts into one table in one part per
   partition and answers each once those parts are written. On return the row is as
   durable and as visible as a committed insert's, and a caller's next insert lands in a
   later part, so the order of one caller's writes holds. The buffer is ClickHouse's, so a
@@ -123,8 +122,11 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
   `entity_summaries` stay committed: their fenced `INSERT … SELECT FROM input()` ([rolling
   upgrades](rolling-upgrades.md)) cannot be buffered. `entity_canonical_map` stays
   committed as well: it is partitioned by `org`, so a shared flush would still write one
-  part per org. A write whose token names the row's identity (`conversation.save_message`)
-  stays committed too: a replicated table keeps the tokens of committed and of buffered
+  part per org. The rows with a `Quantized`-coded vector (`conversation_embeddings`,
+  `entity_vectors`, `memory_chunks`) stay committed: the codec refuses a vector of
+  another width when the part is written (code 190), so one mis-sized row in a shared
+  flush would fail every other insert in it. A write whose token names the row's
+  identity (`conversation.save_message`) stays committed too: a replicated table keeps the tokens of committed and of buffered
   inserts apart, so every writer of one identity sends it the same way.
 - **Times are UTC.** `DateTime` columns carry no zone of their own, so the server
   client and the migration runner pin `session_timezone = 'UTC'` and bind aware params
@@ -800,8 +802,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 ## Source entry points
 
 - `server/core/ch.py`: `set_query_tag`, `statement_class`, `statement_settings`,
-  `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `dedup_settings`,
-  `insert_dedup_token`; `server/core/ch_schema_guard.py`: `pending_tables`.
+  `sequential_reads`, `own_write_reads`; `server/core/ch_writes.py`: `batched_insert_settings`,
+  `dedup_settings`, `insert_dedup_token`; `server/core/ch_schema_guard.py`: `pending_tables`.
 - `server/core/schema/journal.py`: the journal as data (file order, baselines, statements, the
   objects each file creates or drops).
 - `server/core/schema/migrate.py`, `server/core/schema/migrate_lease.py`: the runner, ledger, locks and gated

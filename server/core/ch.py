@@ -676,9 +676,10 @@ class CHClient:
             # Writes are committed: the INSERT returns after the part is
             # written. An insert sent with `ch_writes.batched_insert_settings()`
             # (the rows written on every request: audit, transcript turns,
-            # ledgers) shares a part with concurrent inserts instead. Block
-            # dedup stays off: identical event rows (agent_events, audit_log)
-            # are legitimate and must all land.
+            # ledgers) shares a part with concurrent inserts instead.
+            # insert_deduplicate is 0 for the session; every insert turns dedup
+            # on with its own per-batch token (ch_writes.dedup_settings), so
+            # identical event rows in separate batches all land.
             settings={
                 "async_insert": 0,
                 "wait_for_async_insert": 1,

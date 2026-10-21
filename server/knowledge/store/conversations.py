@@ -823,10 +823,12 @@ async def insert_embedding(
     """Insert one loom.conversation_embeddings row: a turn conversation.append
     embeds, or the summary conversation.compact writes."""
     ch = ch or _default_client()
+    # Committed, not batched: a mis-sized vector fails the shared part of a
+    # batched flush, and with it every other insert in that flush.
     await ch.insert(
         "loom.conversation_embeddings",
         [cast(dict[str, Any], row)],
-        settings=batched_insert_settings(),
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
 
 

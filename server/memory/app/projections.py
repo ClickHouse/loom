@@ -19,7 +19,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from server.core.ch_writes import batched_insert_settings
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.core.hashing import sha256_value
 from server.core.repo_base import param_slices
@@ -1897,8 +1896,10 @@ async def write_entity_vectors(
         }
         for ent, memory_key in entity_pairs
     ]
+    # Committed, not batched: a mis-sized vector fails the shared part of a
+    # batched flush, and with it every other insert in that flush.
     await ch.insert(
         "loom.entity_vectors",
         rows,
-        settings=batched_insert_settings(),
+        settings={"async_insert": 0, "wait_for_async_insert": 1},
     )

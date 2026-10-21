@@ -5054,9 +5054,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "context.fetch": 150,
     "context.offload": 300,
     "context.pack": 600,
-    # Two batched inserts in sequence (the message, then its embedding), each waits up
-    # to ch_batched_insert_wait_max_ms (50) on top of the ~30 ms of writes.
-    "conversation.append": 130,
+    # The message is a batched insert that waits up to ch_batched_insert_wait_max_ms
+    # (50) on top of the ~30 ms of writes; its embedding row is committed.
+    "conversation.append": 80,
     # Dominated by the LLM round-trip.
     "conversation.compact": 3500,
     "conversation.create": 30,
@@ -5230,9 +5230,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # p99, so a violation is a signal.
     "memory.set": 200,
     # LLM extraction dominates (~7K-token prompt); downstream bulk_set adds ~200ms,
-    # and about six batched inserts in sequence each wait up to
+    # and about four batched inserts in sequence each wait up to
     # ch_batched_insert_wait_max_ms (50).
-    "memory.set_from_messages": 2800,
+    "memory.set_from_messages": 2700,
     # Profile + pinned + score-ordered recall (+ optional knowledge.search),
     # each identity-scoped point-lookups.
     "memory.stack": 200,

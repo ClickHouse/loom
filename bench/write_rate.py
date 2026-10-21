@@ -10,9 +10,9 @@ form ran. Free with the fake embedder and LLM.
 `--target server` sends `memory.set` and/or `conversation.append` to a running
 server (`--op`). `--target client` runs, in this process, the two inserts a
 `conversation.append` makes (`loom.conversations`, then
-`loom.conversation_embeddings`) with the settings the store sends
-(`batched_insert_settings()`), or with `--committed` as committed inserts: the
-insert path alone, at rates one server process cannot serve. Both read the
+`loom.conversation_embeddings`) with the settings the store sends (the turn
+batched with `batched_insert_settings()`, the embedding row committed), or with
+`--committed` as two committed inserts: the insert path alone, at rates one server process cannot serve. Both read the
 ClickHouse settings (`LOOM_CH_*`, `.env`) to query the part log.
 
 A token (`--token`) covers one org, so `--orgs` above 1 needs a server with
@@ -143,7 +143,7 @@ async def _client_write(i: int, run: str, args: argparse.Namespace) -> None:
                 "embed_failed_at": ts,
             }
         ],
-        settings=settings,
+        settings=dict(_COMMITTED),
     )
 
 
