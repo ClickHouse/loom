@@ -30,23 +30,7 @@ from tests.unit.clock_fake import ManualClock
 from tests.unit.model_client import through_the_model_client
 from tests.unit.switch_state import switch_off
 
-_DENIED = "The agent is not allowed to use inference."
-_UNNAMED = "The request names no agent, and the caller has no default agent."
 _BUSY = "The agent has too many inference requests in progress. Retry later."
-_NO_TOKEN = "Inference credentials are temporarily unavailable. Retry later."
-# The refusals a deployment lists for its gateway: the budget 429 its metering passes
-# through, and the gateway's own per-agent answers, each by its exact body.
-_TABLE = {
-    "refused": [
-        {"status": 429, "code": "budget_exceeded"},
-        {"status": 403, "type": "permission_error", "message": _DENIED},
-        {"status": 400, "type": "invalid_request_error", "message": _UNNAMED},
-    ],
-    "wait": [
-        {"status": 429, "type": "rate_limit_error", "message": _BUSY},
-        {"status": 503, "type": "api_error", "message": _NO_TOKEN},
-    ],
-}
 
 
 def _chat(text: str) -> dict[str, Any]:
@@ -56,19 +40,34 @@ def _chat(text: str) -> dict[str, Any]:
     }
 
 
-def _error(status: int, kind: str, message: str, **headers: str) -> httpx.Response:
-    """An answer in the gateway's own error shape."""
-    body = {"type": "error", "error": {"type": kind, "message": message}}
+def _error(status: int, kind: str, code: str, message: str, **headers: str) -> httpx.Response:
+    """An answer in the inference proxy's error shape, its stable code included."""
+    body = {"type": "error", "error": {"type": kind, "code": code, "message": message}}
     return httpx.Response(status, json=body, headers=headers)
 
 
+# The metering gateway's budget refusal: OpenAI-shaped with a code, and in the Anthropic
+# envelope of /v1/messages with none.
+_BUDGET = httpx.Response(
+    429,
+    json={
+        "error": {"type": "budget_error", "code": "budget_exceeded", "message": "budget exceeded"}
+    },
+)
+_BUDGET_ANTHROPIC = httpx.Response(
+    429, json={"type": "error", "error": {"type": "rate_limit_error", "message": "budget exceeded"}}
+)
+
+
 class _Gateway:
-    """The gateway at gateway.example, answering by the agent a call names: agent-a
-    is over its budget, agent-d not allowed, agent-n's calls name no agent, agent-l
-    has too many requests in progress, agent-t no credential yet; agent-f's caller
-    may not act for agents (no identity's refusal), agent-x and agent-r are rate
-    limited, agent-m is over its budget for gpt-4o-mini only, and everyone else, or
-    anyone in `answered`, is answered."""
+    """The gateway at gateway.example, answering by the agent a call names, as the
+    inference proxy and the metering behind it do: agent-a and agent-q are over their
+    budget (agent-q in the Anthropic envelope), agent-d denied, agent-n named
+    incompletely, agent-l and agent-s have too many requests in progress (Retry-After
+    1 and 30), agent-w once; agent-t meets no credential, agent-u no default agent and
+    agent-f a caller that may not act for agents (none of them one identity's), agent-x
+    and agent-r are rate limited, agent-m is over its budget for gpt-4o-mini only, and
+    everyone else, or anyone in `answered`, is answered."""
 
     def __init__(self) -> None:
         self.agents: list[str] = []
@@ -81,7 +80,9 @@ class _Gateway:
         self.agents.append(agent)
         self.sent.append(request)
         if agent == "agent-w" and self.agents.count(agent) == 1:  # busy once, then answers
-            return _error(429, "rate_limit_error", _BUSY, **{"Retry-After": "1"})
+            return _error(
+                429, "rate_limit_error", "agent_request_limit", _BUSY, **{"Retry-After": "1"}
+            )
         refusal = None if agent in self.answered else self._refusal(agent, request)
         if refusal is not None:
             return refusal
@@ -95,22 +96,21 @@ class _Gateway:
 
     @staticmethod
     def _refusal(agent: str, request: httpx.Request) -> httpx.Response | None:
-        budget = httpx.Response(
-            429, json={"error": {"code": "budget_exceeded", "message": "over budget"}}
-        )
         model = json.loads(request.content or b"{}").get("model")
+        busy = (429, "rate_limit_error", "agent_request_limit", _BUSY)
         return {
-            "agent-a": budget,
-            "agent-d": _error(403, "permission_error", _DENIED),
-            "agent-n": _error(400, "invalid_request_error", _UNNAMED),
-            "agent-l": _error(429, "rate_limit_error", _BUSY, **{"Retry-After": "1"}),
-            "agent-t": _error(503, "api_error", _NO_TOKEN, **{"Retry-After": "30"}),
-            "agent-f": _error(
-                403, "permission_error", "The caller may not send inference requests for agents."
-            ),
+            "agent-a": _BUDGET,
+            "agent-q": _BUDGET_ANTHROPIC,
+            "agent-d": _error(403, "permission_error", "agent_denied", "The agent is not allowed."),
+            "agent-n": _error(400, "invalid_request_error", "identity_incomplete", "Name both."),
+            "agent-l": _error(*busy, **{"Retry-After": "1"}),
+            "agent-s": _error(*busy, **{"Retry-After": "30"}),
+            "agent-t": _error(503, "api_error", "token_unavailable", "Retry later."),
+            "agent-u": _error(400, "invalid_request_error", "identity_missing", "No agent."),
+            "agent-f": _error(403, "permission_error", "caller_forbidden", "Not for agents."),
             "agent-x": httpx.Response(429, json={"error": {"code": "budget_exceeded_soon"}}),
             "agent-r": httpx.Response(429, json={"error": {"code": "rate_limit_exceeded"}}),
-            "agent-m": budget if model == "gpt-4o-mini" else None,
+            "agent-m": _BUDGET if model == "gpt-4o-mini" else None,
         }.get(agent)
 
 
@@ -123,12 +123,17 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> ManualClock:
 
 @pytest.fixture
 def wire(monkeypatch: pytest.MonkeyPatch, clock: ManualClock) -> Iterator[_Gateway]:
-    """Identity headers naming the agent, the gateway at gateway.example listing the
-    refusals of `_TABLE`, the model client (its hooks in place) answering as
-    `_Gateway`, retries without waits."""
+    """Identity headers naming the agent, the gateway at gateway.example, the built-in
+    refusals table, the model client (its hooks in place) answering as `_Gateway`,
+    retries without waits."""
     gw = _Gateway()
     monkeypatch.setattr(settings, "inference_identity_headers_json", '{"X-Agent": "{agent}"}')
-    monkeypatch.setattr(settings, "inference_identity_refusals_json", json.dumps(_TABLE))
+    # the built-in refusals table: the default matches the gateway's answers above
+    monkeypatch.setattr(
+        settings,
+        "inference_identity_refusals_json",
+        Settings.model_fields["inference_identity_refusals_json"].default,
+    )
     monkeypatch.setattr(settings, "inference_customer_header", "")
     monkeypatch.setattr(settings, "inference_gateway_hosts", "gateway.example")
     monkeypatch.setattr(settings, "openai_base_url", "https://gateway.example/v1")
@@ -215,7 +220,11 @@ def test_a_budget_refusal_is_the_requests_error_and_touches_nothing_else(wire) -
 
 @pytest.mark.parametrize(
     ("agent", "status", "code"),
-    [("agent-d", 403, "permission_error"), ("agent-n", 400, "invalid_request_error")],
+    [
+        ("agent-d", 403, "agent_denied"),
+        ("agent-n", 400, "identity_incomplete"),
+        ("agent-q", 429, "rate_limit_error"),  # the Anthropic envelope: by type and message
+    ],
 )
 def test_each_listed_answer_is_the_identitys_refusal(wire, agent, status, code) -> None:
     _as(agent)
@@ -233,12 +242,22 @@ def test_each_listed_answer_is_the_identitys_refusal(wire, agent, status, code) 
     assert not provider_health.status()["degraded"]
 
 
-def test_another_403_is_the_providers_failure_and_is_not_retried(wire) -> None:
-    _as("agent-f")  # the gateway refuses Loom itself, for every agent alike
+@pytest.mark.parametrize(
+    ("agent", "status", "asked"),
+    [
+        ("agent-f", 403, 1),  # the gateway refuses Loom itself, for every agent alike
+        ("agent-u", 400, 1),  # no default agent: the gateway's configuration
+        ("agent-t", 503, 4),  # no credential: also what a credential outage answers
+    ],
+)
+def test_an_answer_the_table_leaves_out_is_the_providers_failure(
+    wire, agent, status, asked
+) -> None:
+    _as(agent)
     with pytest.raises(httpx.HTTPStatusError) as failed:
         _complete()
-    assert failed.value.response.status_code == 403
-    assert wire.agents == ["agent-f"]
+    assert failed.value.response.status_code == status
+    assert wire.agents == [agent] * asked  # retried only as that status always was
     assert provider_health.status()["degraded"]
 
 
@@ -252,7 +271,7 @@ def test_an_answer_is_matched_exactly_never_by_a_word_in_it(wire) -> None:
 
 @pytest.mark.parametrize(
     ("agent", "status", "wait", "asked"),
-    [("agent-l", 429, 1, 2), ("agent-t", 503, 30, 1)],
+    [("agent-l", 429, 1, 2), ("agent-s", 429, 30, 1)],
 )
 def test_a_wait_answer_is_deferred_for_its_retry_after(wire, agent, status, wait, asked) -> None:
     _as(agent)
@@ -611,7 +630,7 @@ def test_the_api_answers_a_refusal_and_a_wait_with_their_codes(wire, monkeypatch
     assert refused.status_code == 403, refused.text
     assert refused.json()["detail"]["code"] == "MODEL_CALL_REFUSED"
     assert refused.json()["detail"]["gateway_status"] == 429
-    waiting = client.post(op.http_path, json={"org": "acme", "namespace": "agent-t"})
+    waiting = client.post(op.http_path, json={"org": "acme", "namespace": "agent-s"})
     assert waiting.status_code == 503, waiting.text
     assert waiting.json()["detail"]["code"] == "MODEL_CALL_DEFERRED"
     assert waiting.headers["Retry-After"] == "30"
@@ -636,9 +655,16 @@ def test_a_refusals_table_that_does_not_parse_is_refused_at_load(table: str) -> 
         Settings(_env_file=None, inference_identity_refusals_json=table)  # type: ignore[call-arg]
 
 
-def test_the_default_table_lists_only_the_budget_429() -> None:
+def test_the_default_table_matches_by_code_and_the_codeless_budget_envelope() -> None:
     assert Settings(_env_file=None).identity_refusals() == {  # type: ignore[call-arg]
-        "refused": ({"status": 429, "code": "budget_exceeded"},)
+        "refused": (
+            {"status": 429, "code": "budget_exceeded"},
+            {"status": 429, "type": "rate_limit_error", "message": "budget exceeded"},
+            {"status": 403, "code": "agent_denied"},
+            {"status": 400, "code": "identity_incomplete"},
+            {"status": 400, "code": "identity_malformed"},
+        ),
+        "wait": ({"status": 429, "code": "agent_request_limit"},),
     }
 
 

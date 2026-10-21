@@ -2508,9 +2508,9 @@
           "description": "JSON object {header: template} every model call carries, naming whom it is for: {org} {namespace} {subject} {user_id}, {agent} (of a workload trust's agent token), {tenant} (that trust's inference_tenant_claim) and {email} (a person's). A header whose template renders empty is not sent, and those naming {agent} or {tenant} go together or not at all; set, a call naming no org is refused. \"\" sends none (server/llm/identity.py)."
         },
         "inference_identity_refusals_json": {
-          "default": "{\"refused\": [{\"status\": 429, \"code\": \"budget_exceeded\"}]}",
+          "default": "{\"refused\": [{\"status\": 429, \"code\": \"budget_exceeded\"}, {\"status\": 429, \"type\": \"rate_limit_error\", \"message\": \"budget exceeded\"}, {\"status\": 403, \"code\": \"agent_denied\"}, {\"status\": 400, \"code\": \"identity_incomplete\"}, {\"status\": 400, \"code\": \"identity_malformed\"}], \"wait\": [{\"status\": 429, \"code\": \"agent_request_limit\"}]}",
           "type": "string",
-          "description": "JSON object of the gateway answers that hold one identity, not the provider: {\"refused\": [...], \"wait\": [...]}, each entry {\"status\": <int>} and at least one of the error body's exact \"code\", \"type\" or \"message\". A refused identity's job work waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After. Read only with identity headers set (server/llm/gateway.py)."
+          "description": "JSON object of the gateway answers that hold one identity, not the provider: {\"refused\": [...], \"wait\": [...]}, each entry {\"status\": <int>} and at least one of the error body's exact \"code\", \"type\" or \"message\". A refused identity's job work waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After. The default: an agent over its budget (by code, and by type and message where the Anthropic-shaped answer carries no code), denied, or named incompletely or malformed; too many of its requests in progress waits. Never list an answer the gateway also gives for its own failure (a credential it cannot fetch, no default agent): health would stop seeing it. Read only with identity headers set (server/llm/gateway.py)."
         },
         "inference_refusal_cooldown_seconds": {
           "default": 600.0,

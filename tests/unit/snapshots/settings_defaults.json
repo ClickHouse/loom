@@ -460,7 +460,7 @@
  "inference_gateway_hosts": "",
  "inference_gateway_required": false,
  "inference_identity_headers_json": "",
- "inference_identity_refusals_json": "{\"refused\": [{\"status\": 429, \"code\": \"budget_exceeded\"}]}",
+ "inference_identity_refusals_json": "{\"refused\": [{\"status\": 429, \"code\": \"budget_exceeded\"}, {\"status\": 429, \"type\": \"rate_limit_error\", \"message\": \"budget exceeded\"}, {\"status\": 403, \"code\": \"agent_denied\"}, {\"status\": 400, \"code\": \"identity_incomplete\"}, {\"status\": 400, \"code\": \"identity_malformed\"}], \"wait\": [{\"status\": 429, \"code\": \"agent_request_limit\"}]}",
  "inference_refusal_cooldown_seconds": 600.0,
  "inference_system_customer": "loom",
  "inference_tenant_claim": "tenant_id",

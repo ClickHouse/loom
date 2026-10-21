@@ -361,20 +361,37 @@ LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} name
   makes one call per identity.
 - No other host gets the identity headers: a reranker, a classifier or a provider outside
   `LOOM_INFERENCE_GATEWAY_HOSTS` never learns whom a call is for.
-- List the answers your gateway gives for one identity in
-  `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON`, each by its status and the exact `code`, `type` or
-  `message` of its error body. The default lists only `429 budget_exceeded`:
+- `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists the answers your gateway gives for one
+  identity, each by its status and the exact `code`, `type` or `message` of its error body
+  (under `error`). Match by `code` where the gateway gives one. The default matches an
+  inference proxy's per-agent codes and the budget refusal of the metering behind it:
 
-  ```bash
-  LOOM_INFERENCE_IDENTITY_REFUSALS_JSON='{
-    "refused": [{"status": 429, "code": "budget_exceeded"},
-                {"status": 403, "type": "permission_error", "message": "The agent is not allowed to use inference."}],
-    "wait":    [{"status": 429, "type": "rate_limit_error", "message": "The agent has too many inference requests in progress. Retry later."}]
-  }'
+  ```json
+  {
+    "refused": [
+      { "status": 429, "code": "budget_exceeded" },
+      { "status": 429, "type": "rate_limit_error", "message": "budget exceeded" },
+      { "status": 403, "code": "agent_denied" },
+      { "status": 400, "code": "identity_incomplete" },
+      { "status": 400, "code": "identity_malformed" }
+    ],
+    "wait": [{ "status": 429, "code": "agent_request_limit" }]
+  }
   ```
 
+  The second entry is matched by type and message because the metering's Anthropic-shaped
+  answer on `/v1/messages` carries no code.
+
+- Never list an answer the gateway also gives for its own failure: `token_unavailable` (it
+  cannot fetch a credential, which a credential-service outage also answers) or
+  `identity_missing` (the request named no agent and the gateway has no default, a
+  configuration problem). Listed, `/v1/health` would stop seeing the outage or the
+  misconfiguration. Deployment-level answers stay provider failures too: `caller_*`,
+  `scope_not_granted` (a route the token's scopes do not cover), `route_not_found`,
+  `upstream_*`, `misconfigured`, `no_identity`.
 - An answer under `refused` makes that request answer 403 `MODEL_CALL_REFUSED`, and one under
-  `wait` 503 `MODEL_CALL_DEFERRED` with the gateway's `Retry-After`. Nothing retries either,
+  `wait` 503 `MODEL_CALL_DEFERRED` with the gateway's `Retry-After`; a wait of two seconds or
+  less is waited out once first, and the call asked again. Nothing retries either answer,
   `/v1/health` does not read them as a provider failure, and background jobs hold that
   identity's calls to the same model, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (10
   minutes by default) after a refusal and the `Retry-After` after a wait, while other work

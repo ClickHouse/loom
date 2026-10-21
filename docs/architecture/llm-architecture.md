@@ -376,13 +376,20 @@ gateway.
   `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing that identity, not a
   provider failure. Each entry names a status and at least one of the error body's `code`,
   `type` or `message` (under `error`), each matched exactly; no word in a message counts. The
-  default lists the metering's `429 budget_exceeded`. The model client's response hook
-  (`gateway.answered`) raises `ModelCallRefused` for an entry under `refused`, so the request
-  answers 403 `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`, and
+  default matches by code an agent over its budget (`budget_exceeded`), denied
+  (`agent_denied`) or named incompletely (`identity_incomplete`, `identity_malformed`), and
+  waits on `agent_request_limit`; the metering's Anthropic-shaped budget answer carries no
+  code, so it is matched by its type and its whole message. An answer the gateway also gives
+  for its own failure (`token_unavailable`, `identity_missing`) is left out, so health still
+  sees an outage or a misconfiguration. The model client's response hook (`gateway.answered`)
+  raises `ModelCallRefused` for an entry under `refused`, so the request answers 403
+  `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`, and
   `ModelCallDeferred` for one under `wait`, answered 503 `MODEL_CALL_DEFERRED` with the
-  gateway's `Retry-After`. Neither is retried or handed to the fallback model, `/v1/health`
-  reads nothing from either, and the org's switch is untouched. Both are `customer.HOLDS`, so a
-  job leaves the row as it is.
+  gateway's `Retry-After`. A request's call asked to wait two seconds or less waits it out once
+  and its sender asks again before it is deferred, as a busy provider was retried before.
+  Neither answer is retried further or handed to the fallback model, `/v1/health` reads
+  nothing from either, and the org's switch is untouched. Both are `customer.HOLDS`, so a job
+  leaves the row as it is.
 - **A job's hold.** After that answer, a job's calls (`customer.for_org`) for the identity to
   the same path and model are held: refused by the request hook (`gateway.sending`) with
   nothing sent, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` after a refusal and the answer's
@@ -409,8 +416,9 @@ goes out with the headers that rendered and no agent.
 
 **Why a table of answers.** A gateway's refusal of one identity and its own failure can share a
 status (a 403 for an agent not allowed, and for Loom's credential not allowed to act for agents),
-and a word in a message is no contract. The deployment lists the exact answers its gateway gives
-for one identity, and only those hold the identity rather than read as the provider down.
+and a word in a message is no contract. The table lists the exact answers a gateway gives for
+one identity, by their stable code wherever the gateway gives one, and only those hold the
+identity rather than read as the provider down.
 
 ## Fake providers
 
