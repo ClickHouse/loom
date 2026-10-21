@@ -162,7 +162,9 @@ def test_ambiguous_repairs_leave_room_for_other_failures(monkeypatch, clock):
     from server.llm.identity import IdentityUnread
     from server.memory.app import projection_failures
     from server.memory.workers import projection_repair
+    from tests.unit.switch_state import switch_off
 
+    switch_off()
     failures = [
         SimpleNamespace(failure_id=key, org="acme", namespace="ns", payload={})
         for key in ("ambiguous", "healthy")

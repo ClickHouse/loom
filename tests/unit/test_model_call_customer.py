@@ -955,8 +955,12 @@ def test_observe_extract_names_each_sessions_org(metered, monkeypatch, caplog) -
     async def sessions(cfg: Any, ch: Any) -> list[dict[str, Any]]:
         return [session]
 
-    async def observations(session: Any, cfg: Any, ch: Any) -> list[dict[str, Any]]:
-        return [{"memory_key": "obs:1"}]
+    async def observations(session: Any, cfg: Any, ch: Any) -> list[Any]:
+        return [
+            SimpleNamespace(
+                memory_key="obs:1", actor="", version=1, sensitivity="", value="prefers tea"
+            )
+        ]
 
     async def distill(session: Any, observations: Any) -> Any:
         await _model_call(seen)
