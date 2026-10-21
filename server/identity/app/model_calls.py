@@ -80,7 +80,7 @@ async def _set(
             "version": time.time_ns(),
         }
         await repo.insert_row(row)
-    customer.forget_switch()
+    customer.note_switch_change()
     return _output(org, row)
 
 

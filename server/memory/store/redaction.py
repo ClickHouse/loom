@@ -1,5 +1,6 @@
-"""The in-place redaction of one historical memory version, and every derived
-copy of its text.
+"""The in-place redaction of a historical memory version, of every profile
+version built from that memory (live heads included), and of every derived copy
+of their text.
 
 A redaction replaces content bytes and keeps rows, so audit, history and
 lineage still see that a version existed, who wrote it and when. What holds
@@ -25,6 +26,11 @@ the text of a version, and what this module scrubs:
     value of the key (a superseded or deleted row, or one the worker has not
     relinked yet) may hold `suggestion`, a rewrite of that value's text; it is
     blanked. The links made from the live head's value keep theirs.
+  The user's profiles built from the memory: a profile worker writes what a
+    model made of the user's facts and names the facts it read in the row's
+    trace (`profile.fold:<label>:<memory ids>`). Every version whose trace
+    names the redacted memory is scrubbed the same way, head included, since a
+    trace names the memory and not its version (`profile_keys_built_from`).
 
 Out of scope, with the reason:
   `tags`, `files`: caller-supplied labels, not the value's text.
@@ -66,7 +72,20 @@ _EMBEDDINGS_PURGE = "DELETE FROM loom.memory_embeddings"
 _CHUNKS_PURGE = "DELETE FROM loom.memory_chunks"
 _LINKS_SCRUB = "ALTER TABLE loom.memory_code_links UPDATE suggestion = '', judged_hash = ''"
 _MARK_REDACTED = ", redacted_at = {ts:DateTime}, redaction_reason = {rb:String}"
-_ONE_VERSION = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
+# The user's profile versions whose trace names the memory among those they were
+# built from (`profile.fold:<label>:<id>,<id>,...`). Redacted versions count too:
+# a retried redact must reach the same profile keys as the call that failed.
+# The builders write only under agent '-', which lets the sort key prune to the user.
+_BUILT_FROM = """namespace = {ns:String} AND agent = '-' AND user_id = {u:String}
+  AND memory_type = 'profile'
+  AND startsWith(source_trace, 'profile.fold:')
+  AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))"""
+# A profile version already redacted keeps its first redaction's time and reason.
+_REDACTED_ROWS = (
+    "org = {org:String}\n"
+    "  AND ((memory_id = {mid:UUID} AND version = {v:UInt64})"
+    " OR (redacted_at IS NULL AND " + _BUILT_FROM + "))"
+)
 
 
 @dataclass(frozen=True)
@@ -140,8 +159,10 @@ async def delete_ask_precedents_by_key(
     )
 
 
-async def redact_row(
+async def redact_versions(
     org: str,
+    namespace: str,
+    user_id: str,
     memory_id: str,
     version: int,
     *,
@@ -149,18 +170,46 @@ async def redact_row(
     reason_blob: str,
     ch: _CHClient | None = None,
 ) -> None:
-    """Scrub ONE historical version, addressed by (memory_id, version), on
-    loom.memory and the memory_versions mirror (ALTER UPDATE does not pass
-    through memory_versions_mv). Versions share a memory_id, so the version
-    filter is what keeps the live head untouched; the caller has checked that
-    this version is not the live head."""
+    """Scrub the named (memory_id, version) and every profile version of the user
+    built from the memory, on loom.memory and the memory_versions mirror (ALTER
+    UPDATE does not pass through memory_versions_mv). The rows are chosen by
+    predicate, not by a list, so it stays two mutations however long the user's
+    profile history is. The caller decides whether they may be scrubbed; versions
+    share a memory_id, so the version is what keeps the others."""
     ch = ch or _default_client()
-    params = {"org": org, "mid": memory_id, "v": version, "ts": when, "rb": reason_blob}
+    params = {
+        "org": org,
+        "ns": namespace,
+        "u": user_id,
+        "mid": memory_id,
+        "v": version,
+        "ts": when,
+        "rb": reason_blob,
+    }
     for update in (_MEMORY_SCRUB, _VERSIONS_SCRUB):
         await ch.execute(
-            f"{update}{_MARK_REDACTED}\nWHERE {_ONE_VERSION}\nSETTINGS mutations_sync = 2",
+            f"{update}{_MARK_REDACTED}\nWHERE {_REDACTED_ROWS}\nSETTINGS mutations_sync = 2",
             params=params,
         )
+
+
+async def profile_keys_built_from(
+    org: str, namespace: str, user_id: str, memory_id: str, *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The user's profile keys with a version built from `memory_id`, redacted or
+    not, each with the newest such version."""
+    ch = ch or _default_client()
+    rows: list[dict[str, Any]] = await ch.query_all(
+        f"""
+        SELECT agent, session_id, memory_key, max(version) AS newest
+        FROM loom.memory_versions
+        WHERE org = {{org:String}} AND {_BUILT_FROM}
+        GROUP BY agent, session_id, memory_key
+        ORDER BY agent, session_id, memory_key
+        """,
+        params={"org": org, "ns": namespace, "u": user_id, "mid": memory_id},
+    )
+    return rows
 
 
 async def _live_texts(
@@ -252,6 +301,7 @@ __all__ = [
     "REDACTED_VALUE",
     "Scrub",
     "key_derivative_scrubs",
-    "redact_row",
+    "profile_keys_built_from",
+    "redact_versions",
     "run_scrubs",
 ]

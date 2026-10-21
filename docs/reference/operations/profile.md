@@ -140,4 +140,30 @@ WHAT: Create or replace a profile section at `label`.
 | `char_limit` | `int \| None` | The section's size cap after the write. |
 | `value_length` | `int` | Length of the JSON-encoded value after the write, the size `char_limit` caps; the gap is the headroom left. |
 
+## `profile.structured`
+
+The user's structured profile and whether it is current.
+
+`POST /v1/profile.structured` · MCP `loom_profile_structured` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `read_scope` | `Literal['namespace', 'own_user']` | `'namespace'` | The token's read_scope is the ceiling; the op always reads the one user_id named (or pinned), and own_session is refused. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | ready: current, or all null for a user with no facts; stale: memories or schema changed since the build; pending: no live profile yet (unbuilt, expired, redacted or high); no_schema: none set or it no longer parses. |
+| `profile` | `dict[str, Any]` | Every property of the schema, null where the memories do not settle it ({} under `no_schema`). |
+| `built_at` | `datetime \| None` | When the build read the profile's sources (a lock or unlock of the key keeps it); None when no row holds it (pending, or ready for a user with no facts). |
+| `memory_id` | `str` | The memory row that holds the profile, whose history is the profile's history; empty when no row holds it (pending, or ready for a user with no facts). |
+| `version` | `int` | The row's version, higher for each rebuild; 0 when no row holds it (pending, or ready for a user with no facts). |
+| `version_text` | `str` | The same version as a decimal string, exact for a JavaScript caller (the number is above 2^53, which JSON.parse rounds): send this one to memory.delete_version. |
+| `schema_sha256` | `str` | The hash of the schema the namespace has now. |
+
 <!-- prettier-ignore-end -->

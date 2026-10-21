@@ -667,9 +667,9 @@ leg returns it. The other reads that could serve its value follow three rules:
   the `memory.stack`, context pack and MCP primer built from it, `memory.ask`'s bridge hop
   and stale-fact masks, `conflicts.propose_revision`, `namespace.validate`'s checks that
   quote a value, a search's duplicate substitution (a `high` canonical is not seated in its
-  duplicate's place), the profile fold, the entity graph (a row written as `high` projects
-  only the entities its writer declared, and the entity extractor never sends it to its
-  model, nor an unlabelled value that reads as a credential; for a fact
+  duplicate's place), the profile fold and the structured profile, the entity graph (a row
+  written as `high` projects only the entities its writer declared, and the entity
+  extractor never sends it to its model, nor an unlabelled value that reads as a credential; for a fact
   `memory.set_from_messages` extracts, the declared entities are the extraction model's,
   read from the same turn), the entities of a `high` row in `memory.list`, `memory.related`
   and the graph walk's recency seeds, the candidates `procedure.match` reads, the bodies
@@ -837,14 +837,41 @@ own, or carries one a later sweep may not have set yet, is checked whatever the 
 with its string escapes undone): `memory.export_evidence` (chunks, and digests with their
 key facts decoded), `bodies: "source"`, the observations `observe_extract` sends its
 model, the entity extractor's input, the existing memories an extraction prompt shows, the
-rows `memory.consolidate` and the profile fold send their models, a session digest's key
-facts when written, listed by `memory.digests` or read by the outcome judge, and the
+rows `memory.consolidate`, the profile fold and the structured profile send their models, a
+session digest's key facts when written, listed by `memory.digests` or read by the outcome judge, and the
 chunks, digests and turns above when written and when served. The `sensitivity_sweep`
 worker (on, daily) labels memory rows from paths that skip it, every high shape counting
 as `credential` for its default shape filter: a new version per row and, for `high`,
 tombstoned embedding rows and entity vectors. Until the sweep labels it, an unlabelled row
 that holds a credential is embedded like any other, so search serves it, and `memory.ask`
 and the conflict judge can send it to their models.
+
+A redaction (`memory.redact`) scrubs the version it names, that key's derived rows, and
+every version of the user's profiles whose trace names the memory: the structured profile
+and the free-text fold's `consolidated_profile` name the memories they read in their trace
+(`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
+memory is scrubbed with its key's derived rows, the live one included. The trace names
+the memory and not its version, so a profile built from another version of it is scrubbed
+too. The named version and every profile version reached are scrubbed in one statement
+per version table, so the redaction issues two mutations however many profile versions
+name the memory. The cached
+answers and ask precedents whose window held a scrubbed profile key are deleted with those
+of the memory's own key. A window records bare keys, and every user's profile has the same
+key, so this reach is org-wide: one redaction clears every cached answer and precedent in
+the org that rendered any user's profile, in every namespace, and each profile key reached
+adds one deletion per table. A profile version whose trace names no memory ids
+(`profile.fold:<label>` alone, as a build that does not record its sources writes it,
+including an older build during a rolling upgrade) is not reached and keeps the text until
+the user is erased. A lock on a profile key reached refuses the redaction
+before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
+profile is left out of `profile.render`, `profile.structured` and profile search, and so
+of every pack and primer, until the worker rebuilds it from the user's current facts; the
+fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
+its minimum memory count or in a namespace that has turned the fold off.
+
+A structured profile is served only from a row written as `worker:structured-profile`, an
+actor kind no token maps to, so a caller cannot forge one
+([memory invariants](memory-architecture.md#invariants)).
 
 ## Audit log
 
@@ -869,6 +896,21 @@ in scope fails the saga. The saga, the census registry and the rule for new tabl
 [memory architecture](memory-architecture.md#erasure-saga); the caller's view is in
 [retention and erasure](../features/memory/retention-and-erasure.md). Erasure and audit
 hashing are engineering primitives, not a compliance guarantee.
+
+The [analytics export](../operations/analytics-export.md) copies rows to a store erasure
+does not reach (an S3 bucket a warehouse loads), as `loom export-okf --out` does with a
+namespace's memory ([copying a namespace](../operations/okf-sync.md)). It is therefore an
+allowlist of aggregate and registry columns with no memory content and no stored person
+identifier: users and sessions leave as distinct counts only, and
+`tests/integration/test_analytics_export_live_ch.py` pins each entity's exact column list.
+Org, namespace and agent names always leave as a keyed reference SipHash-2-4-128, because a
+personal namespace carries its owner's email and self-signup a username. The hash is a
+pseudonym the key's holder can recompute, one string has one hash in every org and column,
+and erasure in Loom does not reach rows already exported. The key (32 characters or more) is
+in a Secret only the export's pod reads; ClickHouse's query and debug logs record it as a
+bound parameter, on Loom's server and on any warehouse server that joins with it. The
+bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
+pods, and the upload never replaces an object.
 
 ## Secrets
 

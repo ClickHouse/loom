@@ -2213,6 +2213,50 @@ class MemorySettings(BaseModel):
     # `memory_key` of the folded profile row.
     profile_consolidation_label: str = "consolidated_profile"
 
+    # ---- structured profiles ----
+    # Run the worker that builds each user's structured profile in the namespace's
+    # schema (LLM calls, only where `profile_schema.set` set one).
+    structured_profile_enabled: bool = True
+    # Seconds between structured profile passes. Above 0.
+    structured_profile_interval_seconds: int = Field(default=120, gt=0)
+    # Seconds the structured profile worker waits after a pass that reached every
+    # namespace with a schema and took no user. Above 0.
+    structured_profile_idle_interval_seconds: int = Field(default=600, gt=0)
+    # Seconds one namespace's scan for users behind their structured profile may run;
+    # past it the scan fails and the namespace backs off. Above 0.
+    structured_profile_scan_timeout_seconds: Annotated[int, LIVE] = Field(default=60, gt=0)
+    # Bytes of memory one namespace's structured profile scan may use (ClickHouse
+    # max_memory_usage). At least 1 MiB.
+    structured_profile_scan_max_memory_bytes: Annotated[int, LIVE] = Field(
+        default=4 * 1024**3, ge=1024**2
+    )
+    # Structured profiles one pass builds; the namespaces in each page the pass reads
+    # share it equally, and the pass reads on while budget is left. At least 1.
+    structured_profile_max_users_per_pass: Annotated[int, LIVE] = Field(default=20, ge=1)
+    # Seconds a structured profile pass may run before the supervisor abandons it;
+    # it takes no user in the second half. Above 0.
+    structured_profile_max_pass_seconds: float = Field(default=600.0, gt=0)
+    # Memories read into one structured profile build, highest confidence then newest
+    # first. At least 1.
+    structured_profile_memory_limit: Annotated[int, LIVE] = Field(default=100, ge=1)
+    # Seconds after a structured profile is built before new memories rebuild it; a
+    # schema change or a deleted source skips this wait. 0 rebuilds on the next pass.
+    structured_profile_cooldown_seconds: Annotated[int, LIVE] = Field(default=600, ge=0)
+    # Seconds a user or namespace whose structured profile build failed waits before
+    # the first retry; each further failure doubles it. Above 0.
+    structured_profile_backoff_base_seconds: Annotated[int, LIVE] = Field(default=300, gt=0)
+    # Longest wait, in seconds, of a user or namespace whose structured profile build
+    # keeps failing. Above 0.
+    structured_profile_backoff_cap_seconds: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
+    # Seconds a refused or cut-off structured profile build waits before it is tried
+    # again with nothing changed. Above 0.
+    structured_profile_refusal_retry_seconds: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
+    # Seconds a namespace's scan for users behind their structured profile serves
+    # later passes before it is run again. Above 0.
+    structured_profile_scan_max_age_seconds: Annotated[int, LIVE] = Field(default=600, gt=0)
+    # `memory_key` of the structured profile row.
+    structured_profile_label: str = "structured_profile"
+
     # ---- reflection distillation ----
     # Reflection distillation: label recent sessions that carry no outcome
     # (positive / negative / unclear into loom.session_outcomes_by_user), pair each
@@ -3157,6 +3201,9 @@ class ModelSettings(BaseModel):
     # Model of the profile fold, which consolidates an identity's memories into its
     # profile; "" = `llm_model`.
     profile_consolidation_model: str = ""
+    # Model of the structured profile builder, which fills a user's profile in the
+    # namespace's schema; "" = `llm_model`.
+    structured_profile_model: str = ""
     # Reflection distillation: the outcome labeller and the contrast writer.
     reflection_distill_model: str = ""
     # The code-link `revise` judge: does a memory's claim still hold for its code's
@@ -3455,6 +3502,9 @@ class ObservabilitySettings(BaseModel):
     # shares no state with retrieval). 0.0 = off: it costs money per search;
     # a few percent (e.g. 0.05) suits production.
     retrieval_judge_sample_rate: float = 0.0
+    # Secret that `loom export-analytics` hashes org, namespace and agent names
+    # under: a random string of 32 or more characters; a new key changes every hash.
+    analytics_export_name_key: str = ""
 
     # ---- timeouts, budgets and caches ----
     # Seconds one agents.connected answer per (org, namespace, window, caller) is
@@ -5047,6 +5097,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "profile.render": 60,
     "profile.replace": 80,
     "profile.set": 30,
+    # The schema, the profile row and one user's digest aggregate.
+    "profile.structured": 60,
+    # A point read, then one synchronous insert.
+    "profile_schema.clear": 100,
+    # One point read by (org, namespace).
+    "profile_schema.get": 50,
+    # One synchronous insert.
+    "profile_schema.set": 100,
     "run.begin": 150,
     "run.complete": 800,
     "run.get": 300,
@@ -5194,6 +5252,8 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "period_digest": 420,
     # profile consolidation: one identity's folded profile.
     "profile_fold": 320,
+    # structured profile: the object around its properties, added to answer_tokens(props).
+    "structured_profile": 32,
     # the reachability probe a provider configuration change runs.
     "provider_validation": 128,
     # the retrieval judge: one result's relevance grade.

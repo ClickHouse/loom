@@ -35,7 +35,7 @@ from server.memory.api.models_records import (
     SchemaFieldOutput,
 )
 from server.memory.domain import record_constraints
-from server.memory.domain.record_values import _FIELD_RE, _check_record_fields, _coerce_record_value
+from server.memory.domain.record_values import FIELD_RE, _check_record_fields, coerce_record_value
 from server.memory.store import next_version
 from server.memory.store.record_query import _build_record_query
 
@@ -45,7 +45,7 @@ _FIELD_TYPES = {"string", "number", "integer", "boolean"}
 def _validate_schema_fields(fields: list[SchemaFieldInput]) -> None:
     seen: set[str] = set()
     for field in fields:
-        if not _FIELD_RE.match(field.name):
+        if not FIELD_RE.match(field.name):
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -462,7 +462,7 @@ def _record_field_rows(
         field_type = str(field_def.get("field_type") or "string")
         if field_type not in _FIELD_TYPES:
             field_type = "string"
-        value_string, value_number, value_bool = _coerce_record_value(
+        value_string, value_number, value_bool = coerce_record_value(
             field.value,
             field_type,
             field_name=field_name,

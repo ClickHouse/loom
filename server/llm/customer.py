@@ -84,7 +84,7 @@ async def _read() -> frozenset[str]:
     from server.core.ch import get_client, own_write_reads
 
     # Every org switched off, one row each: never cut short, which would fail open.
-    # Sequentially consistent: the read after `forget_switch` must see the change
+    # Sequentially consistent: the read after `note_switch_change` must see the change
     # just written, and every process's read the newest change on any replica.
     with own_write_reads():
         rows = await get_client().query_all(
@@ -94,7 +94,7 @@ async def _read() -> frozenset[str]:
 
 
 # The orgs switched off, as this process last read them.
-_switch: PolledCopy[frozenset[str]] = PolledCopy("model-call switch", frozenset(), _read, log)
+_switch: PolledCopy[frozenset[str]] = PolledCopy("model-call switch", _read, log)
 
 
 @contextlib.contextmanager
@@ -238,11 +238,6 @@ async def switched_off_orgs() -> frozenset[str]:
     return off
 
 
-def forget_switch() -> None:
-    """Make the next call read the switch again, for a change just made here.
-    The copy in hand keeps its age, so a failed read serves it as before."""
-    _switch.forget()
-
-
-def _reset_for_tests(off: frozenset[str] = frozenset(), *, read: bool = True) -> None:
-    _switch._reset_for_tests(off, read=read, refresh_s=settings.model_calls_policy_refresh_seconds)
+def note_switch_change() -> None:
+    """Make the next call read the switch again, for a change just made here."""
+    _switch.note_change()
