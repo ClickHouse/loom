@@ -29,7 +29,7 @@ the text of a version, and what this module scrubs:
     model made of the user's facts and names the facts it read in the row's
     trace (`profile.fold:<label>:<memory ids>`). Every version whose trace
     names the redacted memory is scrubbed the same way, head included, since a
-    trace names the memory and not its version (`profile_versions_built_from`).
+    trace names the memory and not its version (`profile_keys_built_from`).
 
 Out of scope, with the reason:
   `tags`, `files`: caller-supplied labels, not the value's text.
@@ -71,8 +71,15 @@ _EMBEDDINGS_PURGE = "DELETE FROM loom.memory_embeddings"
 _CHUNKS_PURGE = "DELETE FROM loom.memory_chunks"
 _LINKS_SCRUB = "ALTER TABLE loom.memory_code_links UPDATE suggestion = '', judged_hash = ''"
 _MARK_REDACTED = ", redacted_at = {ts:DateTime}, redaction_reason = {rb:String}"
-_LISTED_VERSIONS = (
-    "org = {org:String} AND (memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}"
+# The user's profile versions, not redacted yet, whose trace names the memory among
+# those they were built from (`profile.fold:<label>:<id>,<id>,...`).
+_BUILT_FROM = """namespace = {ns:String} AND user_id = {u:String}
+  AND memory_type = 'profile' AND redacted_at IS NULL
+  AND startsWith(source_trace, 'profile.fold:')
+  AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))"""
+_REDACTED_ROWS = (
+    "org = {org:String}\n"
+    "  AND ((memory_id = {mid:UUID} AND version = {v:UInt64}) OR (" + _BUILT_FROM + "))"
 )
 
 
@@ -149,43 +156,51 @@ async def delete_ask_precedents_by_key(
 
 async def redact_versions(
     org: str,
-    versions: list[tuple[str, int]],
+    namespace: str,
+    user_id: str,
+    memory_id: str,
+    version: int,
     *,
     when: datetime,
     reason_blob: str,
     ch: _CHClient | None = None,
 ) -> None:
-    """Scrub every listed (memory_id, version) on loom.memory and the
-    memory_versions mirror (ALTER UPDATE does not pass through
-    memory_versions_mv), in one statement per table: two mutations however many
-    versions match. The caller decides which versions may be scrubbed; versions
-    share a memory_id, so the version in each pair is what keeps the others."""
-    if not versions:
-        return
+    """Scrub the named (memory_id, version) and every profile version of the user
+    built from the memory, on loom.memory and the memory_versions mirror (ALTER
+    UPDATE does not pass through memory_versions_mv). The rows are chosen by
+    predicate, not by a list, so it stays two mutations however long the user's
+    profile history is. The caller decides whether they may be scrubbed; versions
+    share a memory_id, so the version is what keeps the others."""
     ch = ch or _default_client()
-    params = {"org": org, "pairs": versions, "ts": when, "rb": reason_blob}
+    params = {
+        "org": org,
+        "ns": namespace,
+        "u": user_id,
+        "mid": memory_id,
+        "v": version,
+        "ts": when,
+        "rb": reason_blob,
+    }
     for update in (_MEMORY_SCRUB, _VERSIONS_SCRUB):
         await ch.execute(
-            f"{update}{_MARK_REDACTED}\nWHERE {_LISTED_VERSIONS}\nSETTINGS mutations_sync = 2",
+            f"{update}{_MARK_REDACTED}\nWHERE {_REDACTED_ROWS}\nSETTINGS mutations_sync = 2",
             params=params,
         )
 
 
-async def profile_versions_built_from(
+async def profile_keys_built_from(
     org: str, namespace: str, user_id: str, memory_id: str, *, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The user's profile versions, not redacted yet, whose trace names `memory_id`
-    among the memories they were built from (`profile.fold:<label>:<id>,<id>,...`)."""
+    """The user's profile keys with a version, not redacted yet, built from
+    `memory_id`, each with the newest such version."""
     ch = ch or _default_client()
     rows: list[dict[str, Any]] = await ch.query_all(
-        """
-        SELECT toString(memory_id) AS memory_id, version, agent, session_id, memory_key
+        f"""
+        SELECT agent, session_id, memory_key, max(version) AS newest
         FROM loom.memory_versions
-        WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {u:String}
-          AND memory_type = 'profile' AND redacted_at IS NULL
-          AND startsWith(source_trace, 'profile.fold:')
-          AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))
-        LIMIT 1 BY memory_id, version
+        WHERE org = {{org:String}} AND {_BUILT_FROM}
+        GROUP BY agent, session_id, memory_key
+        ORDER BY agent, session_id, memory_key
         """,
         params={"org": org, "ns": namespace, "u": user_id, "mid": memory_id},
     )
@@ -281,7 +296,7 @@ __all__ = [
     "REDACTED_VALUE",
     "Scrub",
     "key_derivative_scrubs",
-    "profile_versions_built_from",
+    "profile_keys_built_from",
     "redact_versions",
     "run_scrubs",
 ]

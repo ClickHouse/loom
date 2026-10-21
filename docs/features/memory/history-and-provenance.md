@@ -153,6 +153,8 @@ the lineage tables (ids and hashes only), `loom.shared` and the entity graph.
   deletion is org-wide: every user's profile has the same key, so it clears every cached
   answer and precedent in the org whose window held that key, in every namespace.
 - The namespace is checked after the fetch; a refusal answers `redacted=false`, not 403.
+- A version that does not exist answers `redacted=false` and scrubs nothing, no profile
+  version included.
 - It runs a synchronous `ALTER TABLE … UPDATE` on the two memory tables and a lightweight
   `DELETE` on derived rows: an administrative call.
 

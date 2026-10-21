@@ -976,7 +976,8 @@ class MemoryRedactInput(BaseModel):
 
 
 class MemoryRedactOutput(BaseModel):
-    redacted: bool  # False if memory_id not found
+    # False when memory_id or that version is not found, or the namespace does not match
+    redacted: bool
     refused_head: bool = False  # True when the target was the live head
     # UTC time of the scrub; None when nothing was redacted.
     redacted_at: datetime | None = None

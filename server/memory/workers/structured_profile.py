@@ -236,8 +236,8 @@ def _note_failure(key: tuple[str, str, str]) -> None:
 
 def _note_namespace_failure(org: str, namespace: str, schema_sha256: str) -> None:
     last = _namespace_backoff.get((org, namespace))
-    same_schema = last is not None and last.schema_sha256 == schema_sha256
-    wait = _next_wait(last.wait if same_schema else 0.0)
+    previous = last.wait if last is not None and last.schema_sha256 == schema_sha256 else 0.0
+    wait = _next_wait(previous)
     _namespace_backoff[(org, namespace)] = _Wait(time.monotonic() + wait, wait, schema_sha256)
 
 

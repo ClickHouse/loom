@@ -617,7 +617,10 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     # mutations, and no failure between them leaves the fact scrubbed but not its profiles.
     await memory_repo.redact_versions(
         input.org,
-        [(input.memory_id, input.version), *(v for p in profiles for v in p.versions)],
+        target.namespace,
+        target.user_id,
+        input.memory_id,
+        input.version,
         when=now,
         reason_blob=f"{reason_blob}|{by_blob}",
     )
@@ -655,12 +658,13 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
 
 @dataclass
 class _ProfileScrub:
-    """One profile key built from a redacted memory: the versions to scrub and its head."""
+    """One profile key built from a redacted memory: the newest version built from
+    it and the key's head."""
 
     agent: str
     session_id: str
     memory_key: str
-    versions: list[tuple[str, int]]
+    newest: int
     head: MemoryRow | None = None
 
 
@@ -672,16 +676,13 @@ async def _profiles_built_from(
     import server.memory.store as memory_repo
     from server.memory.domain import lock as _lock
 
-    by_key: dict[tuple[str, str, str], _ProfileScrub] = {}
-    for v in await memory_repo.profile_versions_built_from(
+    rows = await memory_repo.profile_keys_built_from(
         org, target.namespace, target.user_id, memory_id
-    ):
-        agent, session_id, memory_key = str(v["agent"]), str(v["session_id"]), str(v["memory_key"])
-        key = (agent, session_id, memory_key)
-        if key not in by_key:
-            by_key[key] = _ProfileScrub(agent, session_id, memory_key, versions=[])
-        by_key[key].versions.append((str(v["memory_id"]), int(v["version"])))
-    profiles = [by_key[k] for k in sorted(by_key)]
+    )
+    profiles = [
+        _ProfileScrub(str(r["agent"]), str(r["session_id"]), str(r["memory_key"]), int(r["newest"]))
+        for r in rows
+    ]
     for p in profiles:
         p.head = await memory_repo.get_by_key(
             memory_repo.Identity(
@@ -709,9 +710,11 @@ async def _scrub_profile_derivatives(
     import server.memory.store as memory_repo
 
     for p in profiles:
-        # A scrubbed head keeps no text, so none of the key's derived rows is live.
+        # A scrubbed head keeps no text, so none of the key's derived rows is live. The
+        # head is the key's newest version, so it was scrubbed unless a later version
+        # was built without the memory.
         head = p.head
-        if head is not None and head.version in {v for _, v in p.versions}:
+        if head is not None and head.version <= p.newest:
             head = None
         scrubs = await memory_repo.key_derivative_scrubs(
             org,

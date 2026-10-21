@@ -71,7 +71,7 @@ def _literal(expr: str) -> Any:
 async def _redact() -> list[tuple[str, dict[str, Any]]]:
     ch = _StubCH()
     await mr.redact_versions(
-        "acme", [(_MID, 17)], when=datetime(2026, 1, 1), reason_blob="pii|admin", ch=ch
+        "acme", "n", "u1", _MID, 17, when=datetime(2026, 1, 1), reason_blob="pii|admin", ch=ch
     )
     return ch.statements
 
@@ -92,8 +92,8 @@ async def test_both_version_tables_scrub_every_text_column() -> None:
         name = _table(sql).removeprefix("loom.")
         assert _stored_text_columns(name) <= cols, sorted(_stored_text_columns(name) - cols)
         assert {"redacted_at", "redaction_reason"} <= cols
-        # Only the listed (memory_id, version) pairs: the other versions share the memory_id.
-        assert "(memory_id, version) IN {pairs:Array(Tuple(UUID, UInt64))}" in sql
+        # Only the named version: the other versions share the memory_id.
+        assert "(memory_id = {mid:UUID} AND version = {v:UInt64})" in sql
 
 
 async def test_a_rollback_to_a_redacted_version_never_revives_the_object() -> None:

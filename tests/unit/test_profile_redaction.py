@@ -41,10 +41,12 @@ class _StatefulLocalCH:
     def __init__(self, *setup: str) -> None:
         self.setup = list(setup)
         self.executed: list[str] = []
+        self.bound: list[str] = []
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
         self.setup += [*_set_params(params), sql]
         self.executed.append(sql)
+        self.bound += [format_bind_value(v) for v in (params or {}).values()]
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         return run([*self.setup, *_set_params(params)], sql)
@@ -140,7 +142,51 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
     )
     assert [r["redacted"] for r in fact] == [1]
     # A second redaction finds nothing left to scrub.
-    assert await memory_repo.profile_versions_built_from("o", "n", "u1", _SECRET) == []
+    assert await memory_repo.profile_keys_built_from("o", "n", "u1", _SECRET) == []
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redact_scrubs_more_profile_versions_than_one_parameter_holds(monkeypatch) -> None:
+    from server.core.repo_base import _PARAM_BYTES, param_slices
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation
+
+    ch = _redact_setup(monkeypatch)
+    # Versions 5..3004 were built from the secret memory too: listed as
+    # (memory_id, version) pairs, they would not fit in one bound parameter.
+    newest = 3004
+    assert len(param_slices([(_PROFILE, v) for v in range(5, newest + 1)])) > 1
+    trace = f"profile.fold:structured_profile:{_OTHER},{_SECRET}"
+    for table in ("memory", "memory_versions"):
+        ch.setup.append(
+            f"INSERT INTO loom.{table} (org, namespace, agent, user_id, session_id, "
+            "memory_key, memory_type, value, memory_id, content_sha256, version, "
+            "source_trace) SELECT 'o', 'n', '-', 'u1', '-', 'structured_profile', "
+            f"'profile', 'secret place', '{_PROFILE}', '{'a' * 64}', number + 5, "
+            f"'{trace}' FROM numbers({newest - 4})"
+        )
+
+    class _NewestHead(_Head):
+        version = newest
+
+    async def head(*_a: Any, **_k: Any) -> _NewestHead:
+        return _NewestHead()
+
+    monkeypatch.setattr("server.memory.store.get_by_key", head)
+
+    out = await curation.handle_memory_redact(
+        MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+    )
+
+    assert out.redacted
+    assert sum(1 for sql in ch.executed if "UPDATE" in sql and "redacted_at" in sql) == 2
+    assert max(len(v) for v in ch.bound) < _PARAM_BYTES
+    rows = await ch.query_all(
+        "SELECT version FROM loom.memory_versions "
+        "WHERE memory_key = 'structured_profile' AND redacted_at IS NULL"
+    )
+    assert [int(r["version"]) for r in rows] == [4]
 
 
 @pytest.mark.asyncio
@@ -153,15 +199,7 @@ async def test_a_locked_profile_refuses_the_redact_before_any_scrub(monkeypatch,
     from server.memory.store.history import HistoryTarget
 
     async def versions(*_a: Any) -> list[dict[str, Any]]:
-        return [
-            {
-                "memory_id": _PROFILE,
-                "version": 1,
-                "agent": "-",
-                "session_id": "-",
-                "memory_key": "structured_profile",
-            }
-        ]
+        return [{"agent": "-", "session_id": "-", "memory_key": "structured_profile", "newest": 1}]
 
     class _Locked(_Head):
         lock_mode = mode
@@ -172,7 +210,7 @@ async def test_a_locked_profile_refuses_the_redact_before_any_scrub(monkeypatch,
     async def no_scrub(*_a: Any, **_k: Any) -> None:
         raise AssertionError("nothing is scrubbed under a lock")
 
-    monkeypatch.setattr(memory_repo, "profile_versions_built_from", versions)
+    monkeypatch.setattr(memory_repo, "profile_keys_built_from", versions)
     monkeypatch.setattr(memory_repo, "get_by_key", head)
     monkeypatch.setattr(memory_repo, "redact_versions", no_scrub)
     with pytest.raises(HTTPException) as e:
@@ -328,7 +366,10 @@ async def test_a_redacted_profile_head_leaves_render_and_profile_search(
     profiles = await curation._profiles_built_from("o", target, _SECRET)
     await memory_repo.redact_versions(
         "o",
-        [v for p in profiles for v in p.versions],
+        "n",
+        "u1",
+        _SECRET,
+        1,
         when=datetime(2026, 1, 1),
         reason_blob="r|admin",
     )
