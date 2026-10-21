@@ -94,7 +94,7 @@ def _value_tokens(prop: ProfileProperty) -> int:
     """The tokens one value of the property may take, framing included."""
     if prop.scalar_type != "string":
         return SCALAR_TOKENS + FRAMING_TOKENS
-    max_length = dict(prop.constraints).get("max_length")
+    max_length: int | None = dict(prop.constraints).get("max_length")
     if prop.enum:
         max_length = max(len(v) for v in prop.enum)
     if max_length is None:

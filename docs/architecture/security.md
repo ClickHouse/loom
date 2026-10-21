@@ -767,6 +767,10 @@ of every pack and primer, until the worker rebuilds it from the user's current f
 fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
 its minimum memory count or in a namespace that has turned the fold off.
 
+A structured profile is served only from a row written as `worker:structured-profile`, an
+actor kind no token maps to, so a caller cannot forge one
+([memory invariants](memory-architecture.md#invariants)).
+
 ## Audit log
 
 `emit` in `server/observability/audit.py` writes `loom.audit_log` rows. `row_hash` is

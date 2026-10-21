@@ -192,7 +192,7 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
         status="ready" if current else "stale",
         # memory.set stores canonical JSON; a value that is no object projects to all null.
         profile=profile_schema.project(props, json.loads(row["value"])),
-        built_at=row["updated_at"],
+        built_at=row["valid_at"],
         memory_id=str(row["memory_id"]),
         version=int(row["version"]),
         version_text=str(row["version"]),

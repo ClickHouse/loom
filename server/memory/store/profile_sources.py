@@ -193,7 +193,7 @@ async def profile_row(
     }
     row: dict[str, Any] | None = await ch.query_one(
         f"""
-        SELECT toString(memory_id) AS memory_id, version, value, tags, updated_at,
+        SELECT toString(memory_id) AS memory_id, version, value, tags, valid_at,
                pinned, lock_mode, lock_until, sensitivity
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}

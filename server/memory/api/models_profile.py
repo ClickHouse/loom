@@ -178,8 +178,8 @@ class ProfileStructuredOutput(BaseModel):
     # Every property of the schema, null where the memories do not settle it ({} under
     # `no_schema`).
     profile: dict[str, Any] = {}
-    # When the profile was built; None when no row holds it (pending, or ready for a user
-    # with no facts).
+    # When the build read the profile's sources (a lock or unlock of the key keeps it);
+    # None when no row holds it (pending, or ready for a user with no facts).
     built_at: datetime | None = None
     # The memory row that holds the profile, whose history is the profile's history; empty
     # when no row holds it (pending, or ready for a user with no facts).

@@ -86,8 +86,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
-   token; `source_class` is set by the server (`memory/domain/provenance.py`), and the body
-   may only request a downgrade.
+   token; a worker with no auth context writes as its pipeline actor (`worker:<name>`).
+   `source_class` is set by the server (`memory/domain/provenance.py`), and the body may
+   only request a downgrade.
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
@@ -511,6 +512,12 @@ hash, source class and verdict. The row hash and the checkpoint chain are descri
   (`server/memory/app/provenance.py` `writer_actor`, `server/memory/domain/provenance.py`
   `source_class_for`). A request may only
   downgrade to `derived`, `external` or `imported`.
+- A worker with no auth context writes as its pipeline actor (`pipeline_actor` in
+  `server/memory/domain/provenance.py`). `worker:<name>` is a kind no token maps to:
+  `trust.actor_for` yields only `human:` or `process:`. `profile.structured` and the
+  worker's `users_behind` trust a profile row only when its `actor` is
+  `worker:structured-profile`, so a caller who writes the profile key with `memory.set`
+  cannot forge a served profile or mark a user current.
 - A `high`-sensitivity row and a non-searchable type have no embedding row.
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM
