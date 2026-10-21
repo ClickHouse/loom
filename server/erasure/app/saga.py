@@ -354,6 +354,17 @@ async def run_saga(
                 failure_reason=str(e)[:512],
                 steps_completed=sorted(completed),
             )
+    # After the census and before the checkpoint: a crash in between reopens the saga,
+    # which announces again under the same event id. The event names the erasure only,
+    # never the user or a key.
+    erased_namespaces: list[str] | None = None  # a user's erasure: every namespace
+    if input.scope_type != "user_id":
+        erased_namespaces = (
+            [census_scope_value]
+            if isinstance(census_scope_value, str)
+            else list(census_scope_value)
+        )
+    await webhooks.announce_erasure(input.org, erased_namespaces, erasure_id)
     completed_at = datetime.now(UTC).replace(tzinfo=None)
     await checkpoint(
         row=row,
@@ -377,15 +388,6 @@ async def run_saga(
         },
         request_id=erasure_id,
     )
-    # After the census: the event names the erasure only, never the user or a key.
-    erased_namespaces: list[str] | None = None  # a user's erasure: every namespace
-    if input.scope_type != "user_id":
-        erased_namespaces = (
-            [census_scope_value]
-            if isinstance(census_scope_value, str)
-            else list(census_scope_value)
-        )
-    await webhooks.announce_erasure(input.org, erased_namespaces, erasure_id)
 
     return ErasureRequestOutput(
         erasure_id=erasure_id,

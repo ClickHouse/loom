@@ -135,7 +135,7 @@ async def live_webhooks(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
 
 
 async def removed_webhooks(since: datetime, *, ch: _CHClient | None = None) -> list[Hook]:
-    """The registrations removed since `since`: older ones have no event left."""
+    """The registrations removed since `since`."""
     ch = ch or _default_client()
     with own_write_reads():
         rows = await ch.query_all(

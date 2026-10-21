@@ -494,7 +494,8 @@ when a webhook of the namespace takes `memory.tombstoned`, reads back the rows t
 mutation stamped, 1000 at a time in sort-key order, one outbox insert per page.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
-the events of removed webhooks, those that waited 2.5 days for a secret, and those a
+the events of webhooks removed in the last ten lease lengths (an event of a removed
+webhook is never due, so later passes skip it), those that waited 2.5 days for a secret, and those a
 receiver has not taken in 2.75 days ("not delivered in time"), then reads
 the due events of the webhooks it can send to (registered, a usable secret, not cooling
 down) through the outbox's sort key (`org, namespace, webhook_id, occurred_at`): the

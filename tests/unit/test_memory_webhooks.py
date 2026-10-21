@@ -816,9 +816,15 @@ async def _run_saga(monkeypatch: pytest.MonkeyPatch, *, scope_type: str, value: 
     async def erased(org: str, namespaces: Any, erasure_id: str) -> None:
         calls.append((org, namespaces))
 
+    async def checkpoint(*a: Any, status: str, **k: Any) -> None:
+        if status == "completed":
+            # A crash at the checkpoint finds the erasure already announced.
+            assert calls, "announced after the completed checkpoint"
+        calls.append(("checkpoint", status))
+
     monkeypatch.setattr(saga, "_saga_user_id", steps)
     monkeypatch.setattr(saga, "_saga_namespace", steps)
-    monkeypatch.setattr(saga, "checkpoint", noop)
+    monkeypatch.setattr(saga, "checkpoint", checkpoint)
     monkeypatch.setattr(saga, "_census_tail", noop)
     monkeypatch.setattr(saga.audit, "emit", noop)
     monkeypatch.setattr(app, "announce_erasure", erased)
@@ -847,12 +853,14 @@ async def test_a_completed_saga_announces_the_erasure_to_its_scope(
     monkeypatch: pytest.MonkeyPatch, scope_type: str, value: str, namespaces: Any
 ) -> None:
     calls = await _run_saga(monkeypatch, scope_type=scope_type, value=value, fail=False)
-    assert calls == [("acme", namespaces)]
+    # Before the checkpoint: a crash in between reopens the saga, which announces again.
+    assert calls == [("acme", namespaces), ("checkpoint", "completed")]
 
 
 @pytest.mark.asyncio
 async def test_a_failed_saga_announces_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert await _run_saga(monkeypatch, scope_type="namespace", value="chat", fail=True) == []
+    calls = await _run_saga(monkeypatch, scope_type="namespace", value="chat", fail=True)
+    assert calls == [("checkpoint", "failed")]
 
 
 # ------------------------------------------------------------ delivery
@@ -868,6 +876,7 @@ class FakeStore:
         self.outbox = outbox
         self.hooks = hooks
         self.removed: list[tuple[str, str, str]] = []
+        self.removed_at = NOW
         self.attempts: list[dict[str, Any]] = []
         self.history: set[tuple[str, ...]] = {KEY}
 
@@ -924,7 +933,7 @@ class FakeStore:
         return [dict(h) for h in self.hooks]
 
     async def removed_webhooks(self, since: datetime) -> list[tuple[str, str, str]]:
-        return list(self.removed)
+        return list(self.removed) if self.removed_at >= since else []
 
     async def insert_attempts(self, rows: list[dict[str, Any]]) -> None:
         self.attempts.extend(dict(r) for r in rows)
@@ -1073,6 +1082,25 @@ async def test_events_of_a_removed_webhook_are_dead_in_one_batch_without_a_send(
     assert seen == []
     assert {fake.last(o["event_id"])["status"] for o in fake.outbox} == {"dead"}
     assert fake.last()["last_error"] == "the webhook was removed"
+
+
+@pytest.mark.asyncio
+async def test_a_webhook_removed_before_the_window_costs_no_statement(
+    fake: FakeStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake.hooks = []
+    fake.removed = [("acme", "chat", "wh1")]
+    marked: list[list[Any]] = []
+
+    async def mark_dead(now: datetime, *, hooks: list[Any], **_: Any) -> None:
+        marked.append(hooks)
+
+    monkeypatch.setattr(fake, "mark_dead", mark_dead)
+    late = NOW + worker._removal_window() + timedelta(seconds=1)
+    await _pass(lambda r: httpx.Response(204), now=late)
+    assert ("acme", "chat", "wh1") not in [h for hooks in marked for h in hooks]
+    await _pass(lambda r: httpx.Response(204), now=NOW + worker._removal_window())
+    assert [("acme", "chat", "wh1")] in marked
 
 
 @pytest.mark.asyncio

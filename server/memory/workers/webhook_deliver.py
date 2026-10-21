@@ -3,9 +3,10 @@
 The write paths leave one loom.memory_webhook_outbox row per (event, webhook)
 (server/memory/app/webhooks.py), and nothing rewrites it. Each pass:
 
-- marks dead, in one statement each, the events of removed webhooks and the
-  events that waited `SECRET_DEADLINE` for a usable secret, and those a
-  receiver did not take within `DELIVERY_DEADLINE`;
+- marks dead, in one statement each, the events of webhooks removed in the
+  last few pass deadlines (`_removal_window`), the events that waited
+  `SECRET_DEADLINE` for a usable secret, and those a receiver did not take
+  within `DELIVERY_DEADLINE`;
 - takes the due events of the webhooks it can send to (registered, with a
   usable secret, not cooling down) in turns: every webhook's oldest first, then
   every webhook's second, at most `memory_webhook_posts_per_webhook` of each
@@ -87,6 +88,14 @@ def _lease_seconds() -> float:
         settings.memory_webhook_deliver_max_pass_seconds
         + settings.memory_webhook_lease_margin_seconds
     )
+
+
+def _removal_window() -> timedelta:
+    """How long after a webhook.remove a pass still marks the webhook's events dead:
+    several passes, so one that fails or runs late is caught up by the next. An event
+    of a removed webhook is never due, so after the window it waits for the TTL at no
+    cost instead of a statement over all its events every pass."""
+    return timedelta(seconds=10 * _lease_seconds())  # not a setting: derived from the lease
 
 
 @dataclass
@@ -336,7 +345,7 @@ async def deliver_once(
     unsecured = [k for k in secrets if k not in usable]
     sendable = [k for k in usable if _cooling_until(k[2]) is None]
 
-    removed = [h for h in await store.removed_webhooks(since) if mine(h)]
+    removed = [h for h in await store.removed_webhooks(now - _removal_window()) if mine(h)]
     await store.mark_dead(
         now, since=since, hooks=removed, reason="the webhook was removed", version=next_version()
     )
