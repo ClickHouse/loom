@@ -10,6 +10,7 @@ own writers (`write_memory_chunks`, `_insert_session_summary`)."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -320,7 +321,9 @@ async def handle_memory_import_evidence(
         embedded = await embed_plain(
             [c.content for c in chunks],
             lambda texts: _embed_all(embedder, texts),
-            held=split_credentials([(c.session_id, c.chunk_index, c.content) for c in chunks]),
+            held=await asyncio.to_thread(
+                split_credentials, [(c.session_id, c.chunk_index, c.content) for c in chunks]
+            ),
         )
         rows: list[dict[str, Any]] = []
         link_specs: list[tuple[str, int, str, int, int, list[str]]] = []

@@ -287,25 +287,44 @@ def _overlap(previous: str, chunk: str) -> int:
     return 0
 
 
+# How far a key cut at a chunk boundary can reach on either side of it: a key shorter than a
+# chunk, plus the characters the second chunk may repeat from the first.
+_BOUNDARY_REACH = (  # not a setting: derived from the chunk shape
+    chunk_shape.CHUNK_SIZE + 2 * chunk_shape.CHUNK_OVERLAP
+)
+
+
+def _cut_at_boundary(first: str, second: str) -> bool:
+    """Whether a credential runs from `first` into the `second` that follows it. Only the text
+    within `_BOUNDARY_REACH` of the boundary is read, so the cost does not grow with the chunks."""
+    repeat = _overlap(first, second)
+    tail = first[-_BOUNDARY_REACH:]
+    text = tail + second[repeat : repeat + _BOUNDARY_REACH]
+    # A span that touches both chunks; one wholly inside either is found in that chunk alone.
+    return any(
+        start < len(tail) and end > len(tail) - repeat for start, end in credential_spans(text)
+    )
+
+
 def split_credentials(chunks: Sequence[tuple[Hashable, int, str]]) -> list[bool]:
     """For each `(session, chunk_index, content)` chunk, whether it overlaps a credential in
     its own text or in the text it makes joined with a chunk of its session at the next index.
-    Chunks with a gap in `chunk_index` are not joined. Why pairs suffice:
-    docs/architecture/security.md, Sensitivity."""
+    Chunks with a gap in `chunk_index` are not joined. A key shorter than a chunk is cut by at
+    most one boundary, so pairs of neighbouring chunks are enough. Pairs with the same
+    contents are read once."""
     held = [bool(credential_spans(content)) for _, _, content in chunks]
     by_index: dict[tuple[Hashable, int], list[int]] = {}
     for i, (session, index, _) in enumerate(chunks):
         by_index.setdefault((session, index), []).append(i)
+    cut: dict[tuple[str, str], bool] = {}
     for (session, index), firsts in by_index.items():
         for a in firsts:
             for b in by_index.get((session, index + 1), []):
-                first, second = chunks[a][2], chunks[b][2]
-                repeat = _overlap(first, second)
-                source = first + second[repeat:]
-                ranges = [(0, len(first)), (len(first) - repeat, len(source))]
-                in_first, in_second = overlaps_credential(source, ranges)
-                held[a] = held[a] or in_first
-                held[b] = held[b] or in_second
+                pair = (chunks[a][2], chunks[b][2])
+                if pair not in cut:
+                    cut[pair] = _cut_at_boundary(*pair)
+                if cut[pair]:
+                    held[a] = held[b] = True
     return held
 
 

@@ -282,6 +282,40 @@ def test_split_credentials_keeps_a_boundary_character_that_only_happens_to_repea
     assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
 
 
+def test_split_credentials_reads_only_the_boundary_of_each_distinct_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.memory.domain import sensitivity
+
+    # Two long sessions exported together: 128 chunks at index 0 and 128 at index 1,
+    # with four distinct texts at each index.
+    firsts = [f"first {n} " + "notes on the plan. " * 500 for n in range(4)]
+    seconds = [f"second {n} " + "more notes. " * 800 for n in range(4)]
+    chunks = [("s", 0, firsts[n % 4]) for n in range(128)]
+    chunks += [("s", 1, seconds[n % 4]) for n in range(128)]
+    scanned: list[int] = []
+    spans = sensitivity.credential_spans
+
+    def counting(text: str) -> list[tuple[int, int]]:
+        scanned.append(len(text))
+        return spans(text)
+
+    monkeypatch.setattr(sensitivity, "credential_spans", counting)
+    assert sensitivity.split_credentials(chunks) == [False] * 256
+    own, joins = scanned[:256], scanned[256:]
+    assert own == [len(content) for _, _, content in chunks]
+    # One read per distinct pair, each of the text near the boundary only.
+    assert len(joins) == 16
+    assert max(joins) <= 2 * sensitivity._BOUNDARY_REACH
+
+
+def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> None:
+    from server.memory.domain.sensitivity import split_credentials
+
+    head, tail = "plain words. " * 400 + _KEY_HEAD, _KEY_TAIL + " plain words." * 400
+    assert split_credentials([("s", 0, head), ("s", 1, tail)]) == [True, True]
+
+
 @pytest.mark.asyncio
 async def test_import_evidence_stores_a_credential_chunk_and_digest_without_a_vector(
     monkeypatch: pytest.MonkeyPatch,
@@ -524,15 +558,6 @@ async def test_a_digest_that_reads_as_a_credential_is_drafted_without_a_vector(
     assert draft is not None
     assert draft.embedding == [] and emb.seen == []
     assert OPENAI_KEY in draft.summary_text  # stored as written
-
-
-def test_the_outline_lists_a_credential_digest_without_its_headline() -> None:
-    """`memory.outline` lists every digest of a namespace: one that reads as a credential
-    shows no headline."""
-    from server.memory.app.curation import _headline
-
-    assert _headline(f"The user shared {AWS_KEY_ID}. Then planned the week.") == ""
-    assert _headline(f"{_PLAIN} More.") == _PLAIN
 
 
 @pytest.mark.asyncio

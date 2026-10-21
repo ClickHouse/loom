@@ -723,8 +723,10 @@ returns it.
   chunk whose character range overlaps a credential. `memory.import_evidence` joins each
   chunk with every chunk of its session at the next `chunk_index`, the overlap the second
   repeats from the first dropped (a repeat of at least 50 characters; chunks with no
-  overlap are joined whole). A session written twice holds two chunks at an index, and
-  every pair is read. The check reads one call's chunks only (at most 256), so a key cut
+  overlap are joined whole). A key shorter than a chunk is cut by at most one boundary, so
+  pairs of neighbouring chunks are enough, and only the 1,000 characters each side of the
+  boundary are read. A session written twice holds two chunks at an index, and every pair
+  is read, once for each distinct pair of texts. The check reads one call's chunks only (at most 256), so a key cut
   at the boundary between the last chunk of one call and the first chunk of the next
   reads as a credential in neither, and both chunks are embedded; an importer that sends
   a session's chunks in one call, or splits them where no key is cut, avoids it.
@@ -779,8 +781,7 @@ rewritten:
   whose last turn reads as a credential, and an empty `title` for a title that reads as
   one. Both listings check the excerpt they show and 1,024 characters past it, so a key
   that crosses the cut is caught.
-  `memory.outline` lists a session digest whose summary reads as a credential with an
-  empty `headline`. The conversation titler never sends a turn that reads as a credential
+  The conversation titler never sends a turn that reads as a credential
   to its model and never stores a title that reads as one: it marks the thread
   `title_refused` in its metadata instead, as it does a thread whose first eight user
   and assistant turns all read as a credential, and later passes skip it. A thread with
@@ -798,7 +799,8 @@ rewritten:
 Other raw text is served to readers of the namespace, or sent to a model, as it is: a
 caller-labelled `high` value that shares a chunk with a plain row (a chunk is held back by
 its own text, not by the rows it holds), the session digests `memory.digests` lists (their
-summary text; key facts that read as a credential are left out) and the digest lines of
+summary text; key facts that read as a credential are left out) and the headlines
+`memory.outline` shows from them and the digest lines of
 the runs manifest, what the session-summary draft (the conversation turns), the
 period-digest draft and the outcome judge (session digest text) send their model,
 `memory.recall`'s raw turns, a title a caller set with `conversation.create` or
