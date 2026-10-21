@@ -133,7 +133,8 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   registered later, until `extraction_policy.clear` removes it; the org-scope
   `extraction_policy.get` lists them. Every server holds every
   org's policies and reads them all at each refresh, so the cap bounds each org's share
-  of that read (about 4 MiB at the default); the read grows with the number of orgs that
+  of that read (about 4 million characters at the default: about 4 MiB of ASCII text, up
+  to 16 MiB of multi-byte text); the read grows with the number of orgs that
   hold a policy. A rule for every end user belongs in the org's policy, not in a policy
   per personal collection.
 - **Who.** All three ops need `org_admin` of that org; setting and clearing are audited.
