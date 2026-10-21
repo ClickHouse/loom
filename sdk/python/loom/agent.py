@@ -13,7 +13,7 @@ import sys
 import time
 from collections.abc import Mapping
 from types import TracebackType
-from typing import Any
+from typing import Any, Literal
 
 from loom._logging import logger
 from loom.account import AccountClient
@@ -363,7 +363,7 @@ class Agent:
                 )
         return brief if isinstance(brief, dict) else {}
 
-    async def guide(self, part: str = "skill") -> str:
+    async def guide(self, part: Literal["skill", "reference", "all"] = "skill") -> str:
         """How to use Loom, as Markdown — `mentor.guide`: the loop, where
         each kind of state goes and how to read answers (`part="skill"`),
         every plane with its ops (`"reference"`), or both (`"all"`). Put it

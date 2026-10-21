@@ -317,9 +317,7 @@ async def _loom_primer_text(
 
 
 def _guide_rule(tool: dict[str, str | None]) -> str:
-    """Rule 7: where the full usage guide is, when the connection reaches it."""
-    if tool["mentor.guide"] is None:
-        return ""
+    """Rule 7: where the full usage guide is. A read op, so every toolset reaches it."""
     return (
         f"\n\n**7. Guide.** {tool['mentor.guide']} returns how to use Loom: "
         "where each kind of state goes and how to read what comes back "

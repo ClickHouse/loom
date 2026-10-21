@@ -18,10 +18,10 @@ def _guide() -> tuple[str, str, str]:
     skill = (AGENT_GUIDE_DIR / "SKILL.md").read_text(encoding="utf-8")
     reference = (AGENT_GUIDE_DIR / "reference.md").read_text(encoding="utf-8")
     front = _FRONTMATTER.match(skill)
-    if front is None:
-        raise RuntimeError("skills/loom/SKILL.md has no frontmatter")
-    version = _VERSION.search(front.group(1))
-    return (version.group(1) if version else "", skill[front.end() :], reference)
+    version = _VERSION.search(front.group(1)) if front else None
+    if front is None or version is None:
+        raise RuntimeError("skills/loom/SKILL.md has no frontmatter with metadata.version")
+    return (version.group(1), skill[front.end() :], reference)
 
 
 async def handle_mentor_guide(inp: MentorGuideInput) -> MentorGuideOutput:

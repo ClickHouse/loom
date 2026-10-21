@@ -98,16 +98,14 @@ class MentorGuideInput(BaseModel):
     is the same for every caller."""
 
     org: str = ""
-    # `skill`: the loop, the write rules and how to read answers (about 2,500 tokens).
-    # `reference`: every plane with its ops. `all`: both.
+    # Which part: `skill` (the loop and the rules), `reference` (every plane and its ops) or `all`.
     part: Literal["skill", "reference", "all"] = "skill"
 
 
 class MentorGuideOutput(BaseModel):
     # The guide's version (`metadata.version` of skills/loom/SKILL.md).
     version: str
+    # The part returned, as requested.
     part: str
     # The guide as Markdown, without the skill's frontmatter.
     text: str
-    # The parts this server can return.
-    parts: list[str] = Field(default_factory=lambda: ["skill", "reference", "all"])

@@ -2,7 +2,7 @@
 name: loom
 license: Apache-2.0
 metadata:
-  version: "1.1.0"
+  version: "1.0.0"
 description: "How an agent uses Loom: memory, documents, working state, runs and code intelligence that persist across sessions and are shared with other agents. WHEN: you have a Loom server (LOOM_BASE_URL, an SDK `Agent`, `loom_*` MCP tools) and you start a task, learn a durable fact, hold a document or a large blob, need to resume, hand work to another agent, or answer from what an earlier session knew. Covers MCP, the Python and TypeScript SDKs and plain HTTP."
 ---
 
@@ -22,8 +22,8 @@ ways from one registry:
 | HTTP | `POST /v1/memory.set` with `Authorization: Bearer <token>` and a JSON body |
 
 The fields are the same everywhere. `loom_op {op: "help", query: "<words>"}`
-(MCP) or `ops.capabilities` lists what this server serves and your token
-may call. The full catalog of planes is in `reference.md` beside this file;
+(MCP) or `ops.capabilities` lists every op this server serves, with the
+role each one needs. The full catalog of planes is in `reference.md` beside this file;
 over the wire, `mentor.guide` with `part: "reference"` returns it.
 
 ## Why use it
@@ -68,7 +68,7 @@ over the wire, `mentor.guide` with `part: "reference"` returns it.
 | A fact still true next week (a decision, constraint, owner, preference) | `memory.set`: one fact per call, one key per fact | working memory |
 | A transcript, email or thread with facts in it | `memory.set_from_messages`: the server extracts them | one giant `memory.set` |
 | A document over about 2 KB (spec, runbook, report) | `knowledge.upsert` as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |
-| Rows with identity (PRs by number, services by id) | `memory_schema.register` once, then `memory.record.write` | one memory per batch |
+| Rows with identity (PRs by number, services by id) | `memory.record.write` against a schema an admin registered (`memory_schema.register`; a writer proposes one with `memory_schema.propose`) | one memory per batch |
 | Your plan, a checklist, a lease, a cursor, "where was I" | `working_memory.set` / `append` by `block_key` | `memory.set` read in a loop |
 | A log, diff or tool output too big for context | `context.offload`, then `context.fetch` | memory or working memory |
 | Work for another agent | `task.create` into its inbox | a memory it might search for |
@@ -82,8 +82,9 @@ over the wire, `mentor.guide` with `part: "reference"` returns it.
 - **Key** `<scope>/<kind>/<id>`, readable: `billing/decision/refund-window`,
   never a hash. Facets go in `tags`; people, services and things in
   `entities`.
-- **Value** states the claim first, in plain text; the source follows. Only
-  the first 1,200 characters are embedded.
+- **Value** states the claim first, in plain text; the source follows. The
+  row's vector is built from its first 1,200 characters, so the claim goes
+  there.
 - **A revision rewrites the same key.** Loom keeps every version
   (`memory.history`); never mint `_v2` keys or index rows that name keys.
 - **Provenance:** `source_resource_id` for the file, URL or document it came
@@ -102,7 +103,7 @@ over the wire, `mentor.guide` with `part: "reference"` returns it.
 | 409 `PINNED_CONFLICT` | a person pinned the existing fact | report it; never retry under a new key |
 | `noop`, `merged_into_key`, `duplicate_of` | already known | nothing more to store |
 | `advisories` on a write | the shape is wrong (a blob, double-encoded JSON) | fix the shape, by the table above |
-| `abstain: true` on a read | nothing cleared the relevance floor | answer "not in memory", not the nearest weak hit |
+| `abstain: true` on a read | nothing cleared the relevance floor | treat it as "not in Loom" and use your other context; never present the nearest weak hit as the answer |
 | `pending_extraction` > 0 | extraction has not run yet | an empty result is not evidence of absence |
 | `source_class`, `verified`, `verification` | how a row entered memory and whether someone attested it | weigh `external` and unverified rows as claims |
 | `hint` on a result (header `X-Loom-Hint`) | the mentor names a plane you are not using | act on it once; `mentor.brief` has the counts |

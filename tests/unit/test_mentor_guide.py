@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 
+import server
 from server.core.paths import AGENT_GUIDE_DIR, REPO_ROOT
 from server.insights.api.models_mentor import MentorGuideInput
 from server.insights.app.mentor_guide import handle_mentor_guide
@@ -18,9 +19,9 @@ def _guide(part: str):
 
 def test_skill_part_is_the_body_without_frontmatter_and_carries_the_version() -> None:
     out = _guide("skill")
-    # The root skills ship in one plugin and share its version.
+    # The root skills ship in one plugin and are released with the server, at its version.
     manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
-    assert out.version == manifest["version"]
+    assert out.version == manifest["version"] == server.__version__
     assert out.text.startswith("# loom")
     assert "description:" not in out.text
 

@@ -6229,7 +6229,6 @@ export interface MentorGuideOutput {
   version: string;
   part: string;
   text: string;
-  parts?: string[];
 }
 
 export interface NamespaceAuditInput {

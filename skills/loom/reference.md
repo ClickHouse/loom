@@ -44,12 +44,13 @@ key only.
 ## Typed records — tables of facts with identity
 
 When the facts are rows (a PR by number, an alert by id, a service by name),
-register a schema once and write records; queries filter and aggregate
+an admin registers a schema once and agents write records; queries filter and aggregate
 instead of ranking prose.
 
 | Op | Use it to |
 |---|---|
-| `memory_schema.register` | Declare the record type, its identity fields and columns. |
+| `memory_schema.register` | Declare the record type, its identity fields and columns (admin). |
+| `memory_schema.propose`† | Propose a schema as a writer; an admin approves it. |
 | `memory.record.write` | Upsert one record by its identity. |
 | `memory.record.query` | Filter and page records. |
 | `memory.record.history`, `memory.record.conflicts`† | A record's versions; records two writers disagree on. |

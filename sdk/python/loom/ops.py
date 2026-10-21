@@ -14030,7 +14030,6 @@ class MentorGuideOutput(TypedDict, total=False):
     version: Required[str]
     part: Required[str]
     text: Required[str]
-    parts: NotRequired[list[str]]
 
 
 class NamespaceAuditInput(TypedDict, total=False):

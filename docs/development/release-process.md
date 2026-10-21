@@ -1,6 +1,6 @@
 # Release process
 
-Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the `loom-code` skill share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version.
+Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the root skills (`loom-code`, `loom`) share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version.
 
 ## Where the version lives
 

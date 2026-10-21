@@ -134,8 +134,8 @@ export class Agent {
    * agent that has no plugin to carry it.
    */
   async guide(part: "skill" | "reference" | "all" = "skill"): Promise<string> {
-    const out = await this.client.call("mentor.guide", { part });
-    return out.text ?? "";
+    const out = await this.call("mentor.guide", { part });
+    return out.text;
   }
 
   /** With `LOOM_MENTOR_BRIEF=on`, the first call of an Agent also runs
