@@ -22,6 +22,7 @@ from server.memory.app.provenance import writer_actor
 from server.memory.domain import provenance as prov
 from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+from tests.unit.clock_fake import ManualClock
 
 # ------------------------------------------------------------- (a) principal
 
@@ -455,6 +456,24 @@ async def test_a_pass_pages_past_selected_rows_it_leaves_unlabelled(monkeypatch)
         assert json.loads(ctx.cursor) == cursor
 
 
+class _ClockedCH(_LocalCH):
+    """A `_LocalCH` that moves `clock` forward by `seconds` after its first FINAL read,
+    so the time runs out after the first page however often the scan reads the clock."""
+
+    def __init__(self, ch: _LocalCH, clock: ManualClock, seconds: float) -> None:
+        super().__init__(ch.setup, ch.params)
+        self.clock = clock
+        self.seconds = seconds
+        self.moved = False
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
+        rows = await super().query_all(sql, params)
+        if "FINAL" in sql and not self.moved:
+            self.moved = True
+            self.clock.advance(self.seconds)
+        return rows
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_cursor(
@@ -465,6 +484,7 @@ async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_c
     # applies the PIN row it found, says it was truncated and stores its cursor. Given the
     # time, the same pass labels all three.
     from server.workers import pass_context
+    from server.workers.registry import pass_deadline_seconds
 
     rows = [
         _Row("o", "n", "-", _uuid(1), "a_pin", "badge PIN is 4471", 60),
@@ -473,11 +493,9 @@ async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_c
         _Row("o", "n", "-", _uuid(4), "d_pin", "door PIN is 5582", 60),
         _Row("o", "n", "-", _uuid(5), "e_pin", "gate PIN is 6693", 60, agent="b"),
     ]
-    ch = _local_memory(rows)
-    # The clock reads 0 when the scan starts and before its first page, then far past the
-    # pass's time.
-    ticks = iter([0.0, 0.0])
-    monkeypatch.setattr(sweep, "monotonic", lambda: next(ticks, 1e9))
+    clock = ManualClock()
+    monkeypatch.setattr(sweep, "monotonic", clock.monotonic)
+    ch = _ClockedCH(_local_memory(rows), clock, pass_deadline_seconds("sensitivity_sweep"))
     ctx = pass_context.begin("sensitivity_sweep", resume_cursor="")
     try:
         applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=3, pages=10)
@@ -487,7 +505,7 @@ async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_c
     assert out["truncated"] and out["relabelled"] == 1
     assert json.loads(ctx.cursor) == ["o", "n", "a"]
 
-    monkeypatch.setattr(sweep, "monotonic", lambda: 0.0)
+    # The clock moved only once, so the second pass has its whole time.
     applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=3, pages=10)
     assert [c.memory_key for c in applied] == ["a_pin", "d_pin", "e_pin"]
 
@@ -522,14 +540,6 @@ async def test_a_pass_that_cannot_reread_every_agent_it_moved_past_says_it_was_t
     )
     assert applied == []
     assert out["scanned"] == 5 and out["truncated"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-async def test_a_limit_of_zero_reads_nothing() -> None:
-    ch = _local_memory(_spin_rows_then_a_pin(2))
-    report = await sweep.scan(since_days=2, limit=0, page_size=2, pages=None, ch=ch)  # type: ignore[arg-type]
-    assert report.candidates == [] and not report.truncated and report.resume_after is None
 
 
 @pytest.mark.asyncio
@@ -1034,7 +1044,7 @@ async def test_the_cli_sweep_pages_through_its_whole_scope(capsys, monkeypatch) 
     assert len(key_reads) > 1
 
 
-def test_the_cli_sweep_limit_takes_a_positive_integer_only() -> None:
+def test_the_cli_sweep_limit_takes_a_positive_integer_only(capsys) -> None:
     import argparse
 
     from server.cli.ops import _add_sensitivity_sweep_parser
@@ -1042,9 +1052,10 @@ def test_the_cli_sweep_limit_takes_a_positive_integer_only() -> None:
     parser = argparse.ArgumentParser()
     _add_sensitivity_sweep_parser(parser.add_subparsers())
     assert parser.parse_args(["sensitivity-sweep", "--limit", "1"]).limit == 1
-    for bad in ("0", "-1"):
+    for bad in ("abc", "0", "-1"):
         with pytest.raises(SystemExit):
             parser.parse_args(["sensitivity-sweep", "--limit", bad])
+        assert f"{bad!r} is not a positive integer" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio

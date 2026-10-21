@@ -238,7 +238,7 @@ async def scan(
     keep = {str(x).strip().lower() for x in (only_shapes or ()) if str(x).strip()}
     report = SweepReport()
     shape_re = coarse_shape_re(keep)
-    if not shape_re or limit < 1:  # no shape the detector gives, or no candidate wanted
+    if not shape_re:  # no shape the detector gives
         return report
     params: dict[str, Any] = {"shape": shape_re, "lim": page_size}
     if org:
