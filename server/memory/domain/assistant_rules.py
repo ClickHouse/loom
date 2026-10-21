@@ -128,8 +128,15 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9'$]+", re.sub(r"\bdo not\b", "don't", text))
 
 
+def _stem(word: str) -> str:
+    # "replies" and "reply" share one stem, as "answers" and "answer" do.
+    if word.endswith("ies"):
+        return word.removesuffix("ies") + "y"
+    return word.removesuffix("s")
+
+
 def _stems(words: list[str]) -> set[str]:
-    return {word.removesuffix("s") for word in words if word not in _COMMON}
+    return {_stem(word) for word in words if word not in _COMMON}
 
 
 def _opens_imperative(words: list[str], i: int) -> bool:
@@ -173,13 +180,24 @@ def _imperative_words(sentence: str, words: list[str]) -> list[str]:
     return []
 
 
-def _negative(words: list[str]) -> bool:
-    """Whether `words` ask for a behaviour not to happen ("never escalate ...").
-    "only" and "anything but" ask for the one behaviour they name ("Don't answer me
-    in anything but French"), so they read as positive."""
+def _negative(words: list[str], opening: str) -> bool:
+    """Whether `words` ask for a behaviour not to happen, read from the word that
+    opens the ask (`opening`), not from a negation later on ("Always answer me in
+    French, not English" asks for French). "only" and "anything but" ask for the
+    one behaviour they name ("Don't answer me in anything but French"), so they
+    read as positive."""
     if "only" in words or "anything but" in " ".join(words):
         return False
-    return bool(_NEGATIONS & set(words))
+    return opening in _NEGATIONS
+
+
+def _rule_opening(words: list[str]) -> str:
+    """The word that states a rule's polarity: the one after "assistant", or after
+    "does" or "will" there ("The assistant does not ...")."""
+    after = words[words.index("assistant") + 1 :] if "assistant" in words else words
+    if after[:1] and after[0] in {"does", "will"}:
+        after = after[1:]
+    return after[0] if after else ""
 
 
 def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]) -> bool:
@@ -200,7 +218,7 @@ def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: 
         shared = rule & _stems(requested[1:])
         if len(shared) < 2 or 2 * len(shared) < len(rule):
             continue
-        if _negative(requested) == _negative(rule_words):
+        if _negative(requested, requested[0]) == _negative(rule_words, _rule_opening(rule_words)):
             return True
     return False
 

@@ -761,6 +761,8 @@ async def test_a_rule_after_a_users_turn_on_its_topic_is_filed(queue: _Queue, as
 
 _ESCALATES = "The assistant always escalates any refund over $500 to a human."
 _NEVER_ESCALATES = "The assistant never escalates any refund over $500 to a human."
+_IN_FRENCH = "The assistant always answers the user in French."
+_REPLIES_IN_FRENCH = "The assistant always replies to the user in French."
 
 
 @pytest.mark.parametrize(
@@ -770,6 +772,9 @@ _NEVER_ESCALATES = "The assistant never escalates any refund over $500 to a huma
         ("Never escalate my refund over $500 to a human.", _NEVER_ESCALATES, True),
         ("Never escalate my refund over $500 to a human.", _ESCALATES, False),
         ("Always escalate my refund over $500 to a human.", _NEVER_ESCALATES, False),
+        # A negation after the opening ask word names an exclusion, not the polarity.
+        ("Please always answer me in French, not English.", _IN_FRENCH, True),
+        ("Always reply in French, never in English.", _REPLIES_IN_FRENCH, True),
     ],
 )
 @pytest.mark.parametrize("indices", [[1], [3, 1]])
