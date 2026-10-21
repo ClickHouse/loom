@@ -144,8 +144,8 @@ async def export_conversations(
     exist. The second reads the text of the rows up to that point. Neither reads a
     turn appended after `as_of`; one written meanwhile with an earlier stamp of its
     own can still be read, and is dropped, as the first statement never measured it.
-    A measured turn such a write pushes out of the page marks the section truncated,
-    so the page can then even be empty."""
+    A measured turn missing from the read (pushed out by such a write, or deleted
+    meanwhile) marks the section truncated, so the page can then even be empty."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     column = "user_id" if scope_type == "user_id" else "namespace"
@@ -211,8 +211,9 @@ async def export_conversations(
     measured = Counter(_turn_key(s) for s in kept)
     served: list[dict[str, Any]] = []
     for r in rows:
-        if measured[_turn_key(r)] > 0:
-            measured[_turn_key(r)] -= 1
+        key = _turn_key(r)
+        if measured[key] > 0:
+            measured[key] -= 1
             served.append(r)
     left_out = len(kept) < len(sizes) or measured.total() > 0
     return cast("list[ConversationExportRow]", served), left_out

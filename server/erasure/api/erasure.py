@@ -245,11 +245,11 @@ class ErasureExportOutput(BaseModel):
     knowledge: ErasureExportSection
     # Turns and saved messages in scope with their `sensitivity`, up to
     # `erasure_export_conversation_max_bytes` of text plus the turn that crosses it.
-    # `is_saved` marks a saved message, `sensitivity` is 'high' when the text reads as
-    # high, and tombstoned rows come too when `include_tombstoned`.
+    # `is_saved` marks a saved message, 'high' marks text that reads as high, and
+    # tombstoned rows come too when `include_tombstoned`.
     conversations: ErasureExportSection
-    # `loom.conversation_threads` rows in scope: each thread's title and metadata, capped
-    # by `section_limit` rows only (no byte budget).
+    # Threads in scope with their title, metadata and `sensitivity`, capped by
+    # `section_limit` rows only (no byte budget).
     conversation_threads: ErasureExportSection
     # Per-request ledger rows in scope, newest first.
     agent_events: ErasureExportSection

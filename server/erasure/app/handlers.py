@@ -136,7 +136,8 @@ async def _export_memory(
 _MEMORY_SUBJECT = ("memory_key", "memory_id", "version")
 # Conversation rows carry no label; their text decides, as for raw evidence.
 _CONVERSATION_TEXT = ("content", "reasoning", "metadata")
-# A turn is one (agent, thread_id, msg_id) of its namespace; a thread, one (agent, thread_id).
+# The audit subject of a turn is its agent, thread_id and msg_id; of a thread, its agent
+# and thread_id.
 _CONVERSATION_SUBJECT = ("agent", "thread_id", "msg_id")
 _THREAD_TEXT = ("title", "metadata")
 _THREAD_SUBJECT = ("agent", "thread_id")
