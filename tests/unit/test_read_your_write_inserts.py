@@ -90,7 +90,7 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
         )
 
 
-def test_entity_projections_may_stay_async() -> None:
+def test_graph_projections_may_stay_async() -> None:
     """The counter-case, so the rule above reads as a decision and not a blanket
     ban: the entity graph is opt-in on read (`search_mode=graph`) and eventual
     there is fine, so those inserts intentionally stay async."""

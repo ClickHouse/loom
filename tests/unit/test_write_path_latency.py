@@ -3,9 +3,8 @@
 - memory.set's entity-graph projection runs beside the response (canonical
   read + insert + edge inserts, off the serial tail); supersession and the
   audit row share one round trip.
-- memory.update embeds value and key in one round trip, defers the LLM judge
-  like memory.set, writes its two rows concurrently, and a pending
-  verdict clears the old value's stale mark (the settle re-marks it).
+- memory.update embeds value and key in one round trip, writes its two rows
+  concurrently, and a clear verdict drops the old value's stale mark.
 - The HTTP transport's post-handler rows (budget violation, op audit,
   idempotency replay) are written concurrently.
 """
@@ -19,10 +18,9 @@ from typing import Any
 import pytest
 
 from server.memory.app import after_write
-from server.memory.app import conflict_deferred as cd
 from server.memory.app import set_commit as set_commit
 from server.memory.app import update as update_mod
-from server.memory.domain.conflicts import ConflictResult, PendingJudge
+from server.memory.domain.conflicts import ConflictResult
 from tests.unit.test_memory_update_conflict import _ID_A, _input, _row, wired  # noqa: F401
 
 # ---- after_write -------------------------------------------------------------
@@ -114,7 +112,9 @@ def _set_input(value: str = "Alice deploys Project Phoenix on Tuesday") -> Any:
     return MemorySetInput(org="o", namespace="n", agent="a", memory_key="deploy_day", value=value)
 
 
-async def _post_insert(value: str = "Alice deploys Project Phoenix on Tuesday") -> None:
+async def _post_insert(
+    value: str = "Alice deploys Project Phoenix on Tuesday", revised: bool = False
+) -> None:
     await set_commit._set_post_insert(
         _set_input(value),
         ch=object(),
@@ -124,7 +124,62 @@ async def _post_insert(value: str = "Alice deploys Project Phoenix on Tuesday") 
         source_class="asserted",
         verdict="clear",
         actor="u",
+        revised=revised,
     )
+
+
+@pytest.mark.asyncio
+async def test_a_revision_waits_for_its_entity_projection(post_insert) -> None:
+    # The close of what the revision dropped runs next: the new value's edge links must
+    # be in by then.
+    seen, gate = post_insert
+    gate.set()
+    await asyncio.wait_for(_post_insert(revised=True), timeout=1.0)
+    assert seen["scheduled"] == [] and "entities" in seen["order"]
+    # Its edges are readable once it returns, as the projection beside a response's are.
+    assert seen["project_kw"]["wait_visible"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revised", [True, False])
+async def test_a_plain_insert_projects_its_edges_as_an_embedded_write_does(
+    post_insert, monkeypatch, revised
+) -> None:
+    # A type that is not embedded writes through the plain insert. Its edges are flushed
+    # and fenced on its value as `_set_post_insert` writes them: a revision awaits them
+    # (it closes what it dropped right after), a first write leaves them beside the response.
+    import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemorySetInput
+
+    seen, gate = post_insert
+
+    async def _nothing(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(set_commit, "insert_memory_versions", _nothing)
+    monkeypatch.setattr(set_commit, "project_stated_relations", _nothing)
+    monkeypatch.setattr(memory_repo, "tombstone_vectors_of", _nothing)
+    w = set_commit._SetWrite(
+        input=MemorySetInput(
+            org="o", namespace="n", agent="a", memory_key="k", value="Alice works with Bob"
+        ),
+        version=2,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+        new_sha="sha",
+        memory_row={"version": 2},
+        memory_id="m1",
+        had_existing_row=revised,
+    )
+    if revised:
+        gate.set()
+    await asyncio.wait_for(set_commit._set_plain_insert(w, object()), timeout=1.0)
+    assert seen["scheduled"] == ([] if revised else ["loom-set-entities"])
+    gate.set()
+    await after_write.drain(timeout_s=1.0)
+    assert seen["project_kw"]["wait_visible"] is True
+    assert seen["project_kw"]["content_sha256"] == "sha"
 
 
 @pytest.mark.asyncio
@@ -134,11 +189,19 @@ async def test_set_returns_before_its_entity_projection_lands(post_insert) -> No
     assert seen["scheduled"] == ["loom-set-entities"]
     # Scoped to its namespace, so a walk there waits for it; its edges wait for their flush.
     # The entities decided once, handed to the projection rather than mined again.
-    from server.memory.app.entity_projections import set_entities_for_projection
+    from server.memory.app.set_entities import set_entities_for_projection
 
     ents = set_entities_for_projection(_set_input(), _set_input().value)
     assert seen["scope"] == ("o", "n")
-    assert seen["project_kw"] == {"wait_visible": True, "ents": ents}
+    # With its value's hash, so one landing after a revision of the row leaves no edge.
+    want = {
+        "memory_id": "m1",
+        "wait_visible": True,
+        "ents": ents,
+        "content_sha256": "sha",
+        "high": False,
+    }
+    assert seen["project_kw"] == want
     assert "entities" not in seen["order"]
     assert {"supersede", "audit"} <= set(seen["order"])
     # The audit row is the write's receipt: hashes, never the value.
@@ -203,30 +266,13 @@ async def test_value_and_key_embed_in_one_round_trip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_update_defers_the_judge_and_clears_the_stale_mark(wired, monkeypatch) -> None:  # noqa: F811
-    pending = ConflictResult(
-        verdict=cd.PENDING, peers=[], pending_judge=PendingJudge.__new__(PendingJudge)
-    )
-    ch, calls = wired(pending)
-    scheduled: list[tuple[Any, str, int]] = []
-    monkeypatch.setattr(
-        cd,
-        "schedule_settle",
-        lambda ident, result, *, memory_id, version, created_at, cfg=None, **_: scheduled.append(
-            (ident, memory_id, version)
-        ),
-    )
+async def test_a_clear_revision_drops_the_stale_mark(wired) -> None:  # noqa: F811
+    ch, _calls = wired(ConflictResult(verdict="clear", peers=[]))
     out = await update_mod.handle_memory_update(_input(run_id="run-7"))
-    assert calls.check[0]["defer_judge"] is True
-    assert out.updated and out.conflict_verdict == cd.PENDING
-    # The old value's `conflicted` mark is not carried onto the new value:
-    # the settle re-marks the row if the new value still conflicts.
+    assert out.updated and out.conflict_verdict == "clear"
+    # The old value's `conflicted` mark is not carried onto the new value.
     ((_, rows),) = ch.inserts
     assert rows[0]["status"] == "active" and rows[0]["conflict_with"] == []
-    ((ident, memory_id, version),) = scheduled
-    assert memory_id == _ID_A and ident.memory_key == "deploy_day"
-    assert version == rows[0]["version"], "the settle stamps the revision it judged"
-    assert ident.memory_type == "semantic" and ident.run_id == "run-7" and ident.org == "test"
 
 
 @pytest.mark.asyncio
@@ -335,7 +381,13 @@ async def test_update_reads_its_write_config_in_one_prefetch(wired, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) -> None:
-    from server.memory.app import entity_projections
+    from server.memory.app import (
+        edge_links,
+        edge_repair,
+        graph_holders,
+        projections,
+        set_entities,
+    )
 
     def _mined(*_: Any) -> list[str]:
         raise AssertionError("mined twice")
@@ -345,9 +397,51 @@ async def test_the_projection_does_not_mine_entities_it_was_handed(monkeypatch) 
     async def _edges(bulk: Any, results: Any, **_: Any) -> None:
         written.append(bulk.entries[0].entities)
 
-    monkeypatch.setattr(entity_projections, "set_entities_for_projection", _mined)
-    monkeypatch.setattr(entity_projections, "write_entity_edges", _edges)
-    n = await entity_projections.project_memory_set_entities(
-        _set_input(), memory_key="k", value="v", ch=object(), ents=["alice", "bob"]
+    monkeypatch.setattr(set_entities, "set_entities_for_projection", _mined)
+    monkeypatch.setattr(projections, "write_entity_edges", _edges)
+
+    async def _held(*_: Any, **__: Any) -> set[str]:
+        return {"m"}
+
+    async def _no_overtaken(*_: Any, **__: Any) -> None:
+        return None
+
+    monkeypatch.setattr(graph_holders, "rows_holding", _held)
+    monkeypatch.setattr(edge_repair, "end_overtaken_edges", _no_overtaken)
+    monkeypatch.setattr(edge_links, "end_overtaken_edges", _no_overtaken)
+    n = await edge_links.project_memory_set_entities(
+        _set_input(),
+        memory_key="k",
+        value="v",
+        ch=object(),
+        ents=["alice", "bob"],
+        memory_id="m",
+        content_sha256="sha",
     )
     assert n == 2 and written == [["alice", "bob"]]
+
+
+@pytest.mark.asyncio
+async def test_a_projection_of_a_value_revised_away_writes_nothing(monkeypatch) -> None:
+    from server.memory.app import edge_links, graph_holders, projections
+
+    written: list[Any] = []
+
+    async def _edges(bulk: Any, results: Any, **_: Any) -> None:
+        written.append(bulk.entries[0].entities)
+
+    async def _revised(*_: Any, **__: Any) -> set[str]:
+        return set()  # the row holds another value now
+
+    monkeypatch.setattr(projections, "write_entity_edges", _edges)
+    monkeypatch.setattr(graph_holders, "rows_holding", _revised)
+    n = await edge_links.project_memory_set_entities(
+        _set_input(),
+        memory_key="k",
+        value="v",
+        ch=object(),
+        ents=["alice", "bob"],
+        memory_id="m",
+        content_sha256="old",
+    )
+    assert n == 0 and written == []

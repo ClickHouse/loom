@@ -111,6 +111,7 @@ def test_contradicts_between_two_memories_opens_a_conflict() -> None:
 
     async def mark(**kw):
         calls.append(kw)
+        return "conflict"
 
     with (
         patch.object(memory_repo, "get_by_key", get_by_key),
@@ -148,6 +149,26 @@ def test_contradicts_with_an_entity_endpoint_or_tombstone_opens_nothing() -> Non
         tomb = _link(_FakeCH(), relation="contradicts", tombstone=True)
         assert tomb.linked is False and tomb.conflict_opened is False
     assert calls == []
+
+
+def test_contradicts_against_a_superseded_memory_opens_nothing() -> None:
+    # "b" was superseded: the mark skips it and flags nothing, so no conflict opened.
+    from server.memory import store as memory_repo
+
+    fake = _FakeCH()
+
+    async def get_by_key(ident, key, **kw):
+        return _memory("id-" + key)
+
+    async def get_by_id(memory_id, **kw):
+        return SimpleNamespace(memory_id=memory_id, status="superseded")
+
+    with (
+        patch.object(memory_repo, "get_by_key", get_by_key),
+        patch.object(memory_repo, "get_by_id", get_by_id),
+    ):
+        out = _link(fake, relation="contradicts")
+    assert out.linked is True and out.conflict_opened is False and len(fake.rows) == 1
 
 
 def test_conflict_marking_failure_keeps_the_edge() -> None:

@@ -2010,11 +2010,10 @@
           "type": "string",
           "description": "JSON {label: {\"table\": \"loom.x\", \"dim\": 256}}: where a label's chunk rows live (the coded vector column is fixed-width). Absent label = loom.code_chunks. Inserts and the vector leg route by it."
         },
-        "conflict_sweep_interval_seconds": {
-          "default": 30.0,
-          "exclusiveMinimum": 0,
-          "type": "number",
-          "description": "Seconds between passes of the always-on sweep that re-runs the deferred conflict judges a stopped replica left owed."
+        "conflict_resolver_model": {
+          "default": "gpt-6.1-sol",
+          "type": "string",
+          "description": "The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence thresholds were set on this model; a cheaper one is only safe for clears."
         },
         "conflict_threshold": {
           "default": 0.85,
@@ -2748,7 +2747,7 @@
         "llm_model": {
           "default": "",
           "type": "string",
-          "description": "The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
+          "description": "The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left \"\". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1)."
         },
         "llm_openai_reasoning_effort": {
           "default": "",
@@ -3392,6 +3391,12 @@
           "type": "string",
           "description": "Bulk-path exact dedup. \"session\" = a byte-identical value is skipped only under the same key in the same session. \"identity\" = a live row anywhere in (org, namespace, agent, user_id) with the same content_sha256 is the fact; the entry becomes an `evidence` reinforcement of it, named in `identity_duplicates`."
         },
+        "memory_bulk_follow_max_pairs": {
+          "default": 1024,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all."
+        },
         "memory_calibration_namespace_miss_ttl_s": {
           "default": 60.0,
           "exclusiveMinimum": 0,
@@ -3472,29 +3477,112 @@
           "type": "number",
           "description": "Seconds a branch's own read and parse of a code lesson may take, a share of the code plane's enrichment bound; past it the lesson is served as trunk last checked it."
         },
-        "memory_conflict_judge": {
-          "default": false,
-          "type": "boolean",
-          "description": "When the cosine check would flag a write, one cheap LLM call labels the closest peers (contradiction / elaboration / restatement / unrelated) and the verdict follows: conflict / refines (supersedes with a `refines` edge) / merge / clear. One call per flagged write."
-        },
-        "memory_conflict_judge_max_peers": {
-          "default": 3,
+        "memory_conflict_resolver_batch": {
+          "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Closest peers the conflict judge labels in its one call per flagged write."
+          "description": "Marked rows read per batch; a full batch with no errors is followed at once by the next, for up to memory_conflict_resolver_burst_seconds of a pass."
         },
-        "memory_conflict_judge_min_similarity": {
-          "default": 0.7,
+        "memory_conflict_resolver_burst_seconds": {
+          "default": 300.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds a pass whose owed read came back full keeps reading the next batch at once; a short read ends it. 0 = one batch a pass. At most half of memory_conflict_resolver_max_pass_seconds, so a pass ends before its deadline."
+        },
+        "memory_conflict_resolver_cap_share": {
+          "default": 0.25,
           "exclusiveMinimum": 0.0,
           "maximum": 1.0,
           "type": "number",
-          "description": "With the judge on, peers down to this cosine are judged too (never flagged on cosine alone), catching knowledge updates filed under a different key."
+          "description": "The share of a namespace's daily LLM cost cap the conflict resolver may spend, counted over its own calls; the rest stays for the requests."
         },
-        "memory_conflict_sweep_max_rows_per_pass": {
-          "default": 50,
+        "memory_conflict_resolver_clear_confidence": {
+          "default": 0.9,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number",
+          "description": "Below this confidence a verdict changes nothing. At or above it a compatible verdict clears the pair's flag."
+        },
+        "memory_conflict_resolver_concurrency": {
+          "default": 8,
           "minimum": 1,
           "type": "integer",
-          "description": "Most unresolved conflicts one conflict-sweep pass re-judges."
+          "description": "Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time; doubling it roughly doubles the rows judged a minute, up to the provider's rate limit."
+        },
+        "memory_conflict_resolver_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "The conflict resolver: a leader-only worker that judges each write marked for it (a live peer of its type at cosine >= memory_conflict_resolver_min_similarity, or flagged `conflicted`) against its nearest peers in one LLM call, then retires, flags or clears. Unset, it is resolved at load: off when the LLM provider or conflict_resolver_model's provider is `fake`, else on (without the key, writes are marked and judged once it is set); true / false force it. ~$0.005 per judged write on gpt-6.1-sol."
+        },
+        "memory_conflict_resolver_flag_confidence": {
+          "default": 0.95,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number",
+          "description": "An update or a contradiction at or above this confidence acts: it flags the pair for review, or retires where the retire confidence and the policy allow; below it, it changes nothing. Between the clear confidence and the retire confidence."
+        },
+        "memory_conflict_resolver_interval_seconds": {
+          "default": 10.0,
+          "minimum": 1.0,
+          "type": "number",
+          "description": "Seconds the resolver waits after a pass before the next one; at least 1."
+        },
+        "memory_conflict_resolver_max_attempts": {
+          "default": 3,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Times a row is judged and left owed (a flagged peer the answer leaves out, an error after the call) before it is stamped, errored: each is a paid call."
+        },
+        "memory_conflict_resolver_max_owed_age_days": {
+          "default": 30,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Days a write stays owed a judgement: an owed row older than this is no longer judged, and stays as it was written."
+        },
+        "memory_conflict_resolver_max_pass_seconds": {
+          "default": 600.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a conflict-resolver pass may run before the supervisor abandons it."
+        },
+        "memory_conflict_resolver_max_peers": {
+          "default": 8,
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Most peers judged with a row in one call, nearest first."
+        },
+        "memory_conflict_resolver_min_similarity": {
+          "default": 0.6,
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0,
+          "type": "number",
+          "description": "Peers down to this cosine (same memory_type) mark a write for the resolver and join the cluster it is judged in. The cosine `conflicted` flag stays at the conflict threshold. A peer at this cosine or above can be an update of the row; below it, almost never."
+        },
+        "memory_conflict_resolver_pause_after_stop_seconds": {
+          "default": 300.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds the resolver waits after a pass the model, the locks or a provider outage stopped, and a namespace whose rows got the same refusal row after row waits alone."
+        },
+        "memory_conflict_resolver_recheck_batch": {
+          "default": 8,
+          "minimum": 0,
+          "type": "integer",
+          "description": "Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's judge) re-checked per pass, after the marked rows. 0 = no re-check."
+        },
+        "memory_conflict_resolver_recheck_idle_seconds": {
+          "default": 300.0,
+          "minimum": 0,
+          "type": "number",
+          "description": "Seconds before the re-check of unjudged `conflicted` rows runs again once its read came back short; the read scans every `conflicted` row."
+        },
+        "memory_conflict_resolver_retire_confidence": {
+          "default": 0.98,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number",
+          "description": "An update at or above this confidence retires the older row (auto_reinforce, newest_wins); one between the flag confidence and this is flagged for review."
         },
         "memory_conflicts_count_ttl_s": {
           "default": 60.0,
@@ -5018,7 +5106,7 @@
         "retention_audit_log_days": {
           "default": 0,
           "type": "integer",
-          "description": "Days `loom.audit_log` rows are kept; 0 = forever."
+          "description": "Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again."
         },
         "retention_chunks_days": {
           "default": 0,
@@ -5273,7 +5361,7 @@
         "task_lease_sweep_enabled": {
           "default": true,
           "type": "boolean",
-          "description": "Lease sweeper: return expired leases to todo, resume deferred tasks at resume_at, escalate stale triage. One read per pass."
+          "description": "Lease sweeper: return expired leases to todo, resume deferred tasks at resume_at, escalate stale triage, and put right lease rows a race left out of step with their task."
         },
         "task_lease_sweep_idle_interval_seconds": {
           "default": 300,

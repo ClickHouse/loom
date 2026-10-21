@@ -896,10 +896,25 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CONFLICT_THRESHOLD` | `float` | `0.85` |  | memory.set flags a write `conflicted` when an active peer in the same (org, namespace, memory_type) sits at cosine ≥ this. Tuned for text-embedding-3-*; 1.0 disables. Per-namespace override: loom.namespaces.conflict_threshold. |
-| `LOOM_MEMORY_CONFLICT_JUDGE` | `bool` | `False` |  | When the cosine check would flag a write, one cheap LLM call labels the closest peers (contradiction / elaboration / restatement / unrelated) and the verdict follows: conflict / refines (supersedes with a `refines` edge) / merge / clear. One call per flagged write. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MAX_PEERS` | `int` | `3` |  | Closest peers the conflict judge labels in its one call per flagged write. |
-| `LOOM_MEMORY_CONFLICT_JUDGE_MIN_SIMILARITY` | `float` | `0.7` |  | With the judge on, peers down to this cosine are judged too (never flagged on cosine alone), catching knowledge updates filed under a different key. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` | `bool` | `False` |  | The conflict resolver: a leader-only worker that judges each write marked for it (a live peer of its type at cosine >= memory_conflict_resolver_min_similarity, or flagged `conflicted`) against its nearest peers in one LLM call, then retires, flags or clears. Unset, it is resolved at load: off when the LLM provider or conflict_resolver_model's provider is `fake`, else on (without the key, writes are marked and judged once it is set); true / false force it. ~$0.005 per judged write on gpt-6.1-sol. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` | `float` | `0.6` |  | Peers down to this cosine (same memory_type) mark a write for the resolver and join the cluster it is judged in. The cosine `conflicted` flag stays at the conflict threshold. A peer at this cosine or above can be an update of the row; below it, almost never. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PEERS` | `int` | `8` | live | Most peers judged with a row in one call, nearest first. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE` | `float` | `0.98` |  | An update at or above this confidence retires the older row (auto_reinforce, newest_wins); one between the flag confidence and this is flagged for review. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE` | `float` | `0.95` |  | An update or a contradiction at or above this confidence acts: it flags the pair for review, or retires where the retire confidence and the policy allow; below it, it changes nothing. Between the clear confidence and the retire confidence. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE` | `float` | `0.9` |  | Below this confidence a verdict changes nothing. At or above it a compatible verdict clears the pair's flag. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_BATCH` | `int` | `40` | live | Marked rows read per batch; a full batch with no errors is followed at once by the next, for up to memory_conflict_resolver_burst_seconds of a pass. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_BATCH` | `int` | `8` | live | Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's judge) re-checked per pass, after the marked rows. 0 = no re-check. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CAP_SHARE` | `float` | `0.25` | live | The share of a namespace's daily LLM cost cap the conflict resolver may spend, counted over its own calls; the rest stays for the requests. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_OWED_AGE_DAYS` | `int` | `30` | live | Days a write stays owed a judgement: an owed row older than this is no longer judged, and stays as it was written. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_CONCURRENCY` | `int` | `8` |  | Rows of a pass judged at once (LLM calls in flight). 1 judges them one at a time; doubling it roughly doubles the rows judged a minute, up to the provider's rate limit. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_INTERVAL_SECONDS` | `float` | `10.0` |  | Seconds the resolver waits after a pass before the next one; at least 1. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PASS_SECONDS` | `float` | `600.0` |  | Seconds a conflict-resolver pass may run before the supervisor abandons it. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_BURST_SECONDS` | `float` | `300.0` |  | Seconds a pass whose owed read came back full keeps reading the next batch at once; a short read ends it. 0 = one batch a pass. At most half of memory_conflict_resolver_max_pass_seconds, so a pass ends before its deadline. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_MAX_ATTEMPTS` | `int` | `3` | live | Times a row is judged and left owed (a flagged peer the answer leaves out, an error after the call) before it is stamped, errored: each is a paid call. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_PAUSE_AFTER_STOP_SECONDS` | `float` | `300.0` | live | Seconds the resolver waits after a pass the model, the locks or a provider outage stopped, and a namespace whose rows got the same refusal row after row waits alone. |
+| `LOOM_MEMORY_CONFLICT_RESOLVER_RECHECK_IDLE_SECONDS` | `float` | `300.0` | live | Seconds before the re-check of unjudged `conflicted` rows runs again once its read came back short; the read scans every `conflicted` row. |
 | `LOOM_BULK_CONFLICT_CHECK_MAX_ENTRIES` | `int` | `200` |  | Entries per bulk call that get the conflict check; later entries are written unchecked and counted. 0 = none are checked. |
+| `LOOM_MEMORY_BULK_FOLLOW_MAX_PAIRS` | `int` | `1024` | live | Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` |  | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` |  | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
 | `LOOM_DUPLICATE_THRESHOLD` | `float` | `0.97` |  | Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate' with a duplicate_of pointer instead of 'conflicted'. Per-namespace override: loom.namespaces.duplicate_threshold. |
@@ -923,7 +938,6 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS` | `int` | `25` |  | Recorded projection failures one pass retries (at least 1). |
 | `LOOM_USAGE_FOLD_ENABLED` | `bool` | `True` |  | Fold loom.memory_usage_totals onto the ranking columns (reinforcement boost, memory.list sort_by=score, auto-promote gate); off, they freeze at write-time values. |
 | `LOOM_USAGE_FOLD_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between usage-fold passes. |
-| `LOOM_CONFLICT_SWEEP_INTERVAL_SECONDS` | `float` | `30.0` |  | Seconds between passes of the always-on sweep that re-runs the deferred conflict judges a stopped replica left owed. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_ENABLED` | `bool` | `True` |  | Re-emit, with a tombstone, vector rows still live after their loom.memory row was tombstoned or erased, so search stops offering them. Bounded per pass; loom.integrity.orphan_vectors should read 0 between passes. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_INTERVAL_SECONDS` | `int` | `600` |  | Seconds between orphan vector reconcile passes. |
 | `LOOM_ORPHAN_VECTOR_RECONCILE_MAX_KEYS_PER_PASS` | `int` | `500` |  | Orphaned keys one pass re-emits tombstones for (at least 1). |
@@ -1095,7 +1109,6 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_BLACKLIST_SWEEP_LIMIT` | `int` | `5000` | live | Most memories one blacklist sweep checks against the patterns. |
 | `LOOM_MEMORY_USAGE_FOLD_MAX_MEMORIES_PER_PASS` | `int` | `1000` |  | Most memories one usage-fold pass folds. |
 | `LOOM_MEMORY_USAGE_FOLD_PASS_TIME_BUDGET_S` | `float` | `120.0` |  | Seconds one usage-fold pass may run before it stops and leaves the rest to the next. |
-| `LOOM_MEMORY_CONFLICT_SWEEP_MAX_ROWS_PER_PASS` | `int` | `50` | live | Most unresolved conflicts one conflict-sweep pass re-judges. |
 | `LOOM_MEMORY_CONFLICTS_COUNT_TTL_S` | `float` | `60.0` | live | Seconds a namespace's open-conflict count is cached between reads. |
 | `LOOM_MEMORY_COVERAGE_SWEEP_GATE_TTL_S` | `float` | `60.0` | live | Seconds a namespace's coverage-sweep override is cached. |
 | `LOOM_MEMORY_FACTS_TRAVERSE_TTL_S` | `float` | `60.0` | live | Seconds a facts.traverse result is reused for the same walk. |
@@ -1324,7 +1337,7 @@ Models: which model does each job.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, the conflict judge, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
+| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 
@@ -1336,6 +1349,7 @@ Models: which model does each job.
 | `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP` | `str` | `''` |  | memory.ask cheap tier. "" = off: every ask uses memory_ask_synth_model. When set, server/memory/domain/synth_policy.py routes easy asks cheap and hard ones strong; an empty, uncited or hedging cheap answer escalates to strong once. route_tier / route_reason / synth_model on the output record the choice. |
 | `LOOM_MEMORY_ASK_MID_MODEL` | `str` | `''` |  | memory.ask mid tier. "" = none. With a model set, strong-routed asks whose reason is in memory_ask_synth_mid_routes go mid; an empty, uncited or hedging mid answer escalates to strong once. |
 | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` | `str` | `'claude-opus-5-5'` |  | The durability check on a coding capture: one batched call per capture per listed model (CSV) judges each fact durable or not and folds same-claim paraphrases and replaced states. A fact is dropped only when every model says drop; folds come from the first. Fails open. "" turns it off. |
+| `LOOM_CONFLICT_RESOLVER_MODEL` | `str` | `'gpt-6.1-sol'` |  | The conflict resolver's judge (memory_conflict_resolver_enabled). Its confidence thresholds were set on this model; a cheaper one is only safe for clears. |
 | `LOOM_PROFILE_CONSOLIDATION_MODEL` | `str` | `''` |  | Model of the profile fold, which consolidates an identity's memories into its profile; "" = `llm_model`. |
 | `LOOM_STRUCTURED_PROFILE_MODEL` | `str` | `''` |  | Model of the structured profile builder, which fills a user's profile in the namespace's schema; "" = `llm_model`. |
 | `LOOM_REFLECTION_DISTILL_MODEL` | `str` | `''` |  | Reflection distillation: the outcome labeller and the contrast writer. |
@@ -1598,7 +1612,7 @@ Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` |  | Days `loom.audit_log` rows are kept; 0 = forever. |
+| `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` |  | Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again. |
 | `LOOM_RETENTION_AGENT_EVENTS_DAYS` | `int` | `0` |  | Days `loom.agent_events` rows are kept; 0 = forever. |
 | `LOOM_RETENTION_MEMORY_DAYS` | `int` | `0` |  | Days `loom.memory` rows are kept; 0 = forever. |
 | `LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS` | `int` | `0` |  | Days `loom.memory_embeddings` rows are kept; 0 = forever. |
@@ -1639,7 +1653,7 @@ The task inbox workers and what run.complete does to a run's rows.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_TASK_LEASE_SWEEP_ENABLED` | `bool` | `True` |  | Lease sweeper: return expired leases to todo, resume deferred tasks at resume_at, escalate stale triage. One read per pass. |
+| `LOOM_TASK_LEASE_SWEEP_ENABLED` | `bool` | `True` |  | Lease sweeper: return expired leases to todo, resume deferred tasks at resume_at, escalate stale triage, and put right lease rows a race left out of step with their task. |
 | `LOOM_TASK_LEASE_SWEEP_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between task-lease sweep passes while there is work. |
 | `LOOM_TASK_LEASE_SWEEP_IDLE_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between task-lease sweep passes that found nothing. |
 | `LOOM_TASK_WEBHOOK_DELIVER_ENABLED` | `bool` | `True` |  | Post one Standard Webhooks-signed notice per new event batch to each inbox's webhook_url; the secret comes from the env var task_inboxes.webhook_secret_ref names (`LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, one of the inbox org's own). |

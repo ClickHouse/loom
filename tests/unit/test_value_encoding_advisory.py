@@ -77,7 +77,7 @@ async def test_memory_set_carries_the_advisory_and_still_writes(
 ) -> None:
     seen: list[MemorySetInput] = []
 
-    async def _inner(input: MemorySetInput) -> MemorySetOutput:
+    async def _inner(input: MemorySetInput, **_: object) -> MemorySetOutput:
         seen.append(input)
         return MemorySetOutput(
             version=7, memory_id="m1", namespace=input.namespace, memory_key=input.memory_key
@@ -132,7 +132,7 @@ def test_dict_envelope_passed_as_a_json_object_is_flagged() -> None:
 async def test_memory_set_with_a_boolean_value_still_answers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _inner(input: MemorySetInput) -> MemorySetOutput:
+    async def _inner(input: MemorySetInput, **_: object) -> MemorySetOutput:
         return MemorySetOutput(version=1)
 
     monkeypatch.setattr(_mw, "_handle_memory_set", _inner)

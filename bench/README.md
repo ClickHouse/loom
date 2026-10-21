@@ -169,6 +169,12 @@ External harnesses with loom plugged in live in their own folders:
   resolver by arithmetic.
 - **`supersession_audit.py`** — what each supersession did to the fact
   (restates, extends, corrects, …), from `loom.memory_versions`.
+- **`conflict_resolver_long_session.py`** — one user's twelve sessions in a
+  `newest_wins` namespace, against a server with the conflict resolver on and
+  one with it off: the share of changing attributes left with one live value,
+  stale top hits, false retirements and flags, and the resolver's calls, cost
+  and drain time. The scenario and its ground truth are
+  `conflict_resolver_scenario.py`.
 - **`fama_forgetting.py`**, **`mutation_sequence.py`**,
   **`temporal_assertions.py`** — bi-temporal invariants: a closed validity
   interval is never surfaced after it closes and stays queryable inside it.
