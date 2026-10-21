@@ -4,7 +4,7 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { getNamespaceGuide, saveNamespaceGuide, type NamespaceGuide } from "../api";
 import { toast } from "../components/Toast";
-import { Alert, Loading } from "../components/ui";
+import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { humanizeError, relativeTime } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
@@ -16,8 +16,24 @@ interface Props {
   namespace: string;
   /** A writer or admin edits; everyone else reads. */
   canEdit: boolean;
+  /** Open on the editor when the guide's read finds none and the caller can edit (the
+   *  Memories header); otherwise on the read view. */
+  startEditing?: boolean;
   onSaved: () => void;
 }
+
+/** A first guide starts from the questions a newcomer to the namespace asks. */
+const STARTER = `## What this namespace holds
+
+## Keys
+- \`<prefix>/<id>\`: …
+
+## Tags
+- \`<tag>\`: what it marks
+
+## How to use it
+- …
+`;
 
 /**
  * A namespace's guide: what it holds and how to use it, the text agents read at session
@@ -25,7 +41,7 @@ interface Props {
  * when someone saved in between, their text is shown beside the draft to merge before
  * saving again on top of it.
  */
-export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSaved }: Props) {
+export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, startEditing, onSaved }: Props) {
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -41,7 +57,10 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
     async (signal, live) => {
       try {
         const g = await getNamespaceGuide(org, namespace, { signal });
-        if (live()) setGuide(g);
+        if (!live()) return;
+        setGuide(g);
+        // Someone may have written one since the caller looked: then it is read first.
+        if (startEditing && canEdit && !g.found) startEdit(g);
       } catch (e) {
         if (live()) setError(humanizeError(e));
       }
@@ -49,17 +68,20 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
     [org, namespace],
   );
 
-  const startEdit = (g: NamespaceGuide) => {
-    setContent(g.content);
+  function startEdit(g: NamespaceGuide) {
+    setContent(g.found ? g.content : STARTER);
     setSummary(g.summary);
     setNote("");
     setBase(g);
     setConflict(false);
     setEditing(true);
-  };
+  }
+
+  // The outline as given, give or take whitespace anywhere, is not a guide yet.
+  const untouched = content.replace(/\s+/g, "") === STARTER.replace(/\s+/g, "");
 
   const save = async () => {
-    if (!base) return;
+    if (!base || untouched) return;
     setBusy(true);
     try {
       // A summary left as the saved one is not sent, so the server keeps whatever
@@ -165,7 +187,6 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
               onChange={setContent}
               rows={16}
               maxLength={32000}
-              placeholder={"# What this namespace holds\n\nKeys: …\nTags: …"}
             />
             <TextField id="guide-note" label="What changed" value={note} onChange={setNote} maxLength={500} />
           </div>
@@ -173,9 +194,13 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, onSav
             <Button type="secondary" htmlType="button" disabled={busy} onClick={() => close(false)}>
               Cancel
             </Button>
-            <Button type="primary" htmlType="submit" loading={busy} disabled={busy}>
-              Save
-            </Button>
+            {/* The outline is questions to answer: saved as it is, every agent session would
+                start with it. */}
+            <Unavailable reason={untouched ? "Fill in the outline first" : null}>
+              <Button type="primary" htmlType="submit" loading={busy} disabled={busy}>
+                Save
+              </Button>
+            </Unavailable>
           </ModalFooter>
         </form>
       )}

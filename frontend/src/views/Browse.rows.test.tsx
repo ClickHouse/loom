@@ -7,10 +7,12 @@ import { axeViolations } from "../test/axe";
 import { Browse } from "./Browse";
 
 // A space is one list row: the namespace in mono and its visibility badge
-// on line 1, its description on line 2; at the right its member count, the one inline
-// action (Invite where you manage it, else Join, Pending or Request upgrade) and a More
-// menu (Settings for a manager, Copy name, Leave for a member). The rows are one tab stop
-// (`useRowNav`); Create namespace is the page header's primary.
+// on line 1, its description on line 2, its guide's summary on line 3 when it has one (a
+// link to the guide for a member); at the right its member count, the one inline action
+// (Invite where you manage it, else Join, Pending or Request upgrade) and a More menu
+// (Settings for a manager, Guide for a member where no summary is shown, Copy name, Leave
+// for a member). The rows are one tab stop (`useRowNav`); Create namespace is the page
+// header's primary.
 
 const browse: BrowseEntry[] = [
   {
@@ -23,7 +25,16 @@ const browse: BrowseEntry[] = [
     member_count: 1,
     created_at: "",
   },
-  { namespace: "beta", description: "", kind: "memory", owner_email: "", member_count: 2, created_at: "" },
+  {
+    namespace: "beta",
+    description: "",
+    kind: "memory",
+    owner_email: "",
+    member_count: 2,
+    created_at: "",
+    guide_revision: 1,
+    guide_summary: "Beta's conventions",
+  },
 ];
 const mine: MyNamespaceEntry[] = [
   {
@@ -57,6 +68,16 @@ vi.mock("../api", async (importOriginal) => {
     browseNamespaces: vi.fn(async () => browse),
     leaveNamespace: (...a: unknown[]) => leaveNamespace(...(a as [])),
     joinNamespace: (...a: unknown[]) => joinNamespace(...(a as [])),
+    // A namespace with no guide yet, whichever one the dialog reads.
+    getNamespaceGuide: vi.fn(async () => ({
+      found: false,
+      revision: 0,
+      content: "",
+      summary: "",
+      note: "",
+      updated_by: "",
+      updated_at: null,
+    })),
   };
 });
 vi.mock("../lib/sharedReads", () => ({ sharedMine: () => Promise.resolve(mine) }));
@@ -134,6 +155,11 @@ describe("Spaces: the rows", () => {
     expect(within(alpha).getByText("Public")).toBeInTheDocument();
     expect(within(alpha).getByText("1 member")).toBeInTheDocument();
     expect(within(alpha).getByText("Support team runbooks")).toBeInTheDocument();
+    // A non-member reads the summary only; a member opens the guide from it.
+    expect(screen.queryByRole("button", { name: /^Guide: One runbook/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Guide: Beta's conventions" }));
+    expect(await screen.findByRole("dialog", { name: "Guide for beta" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
     // The guide's summary is the directory's view of it, for members or not.
     expect(within(alpha).getByText("Guide: One runbook per service, keyed runbook/<service>")).toBeInTheDocument();
     expect(within(alpha).getByRole("button", { name: "Join" })).toBeInTheDocument();
@@ -151,8 +177,8 @@ describe("Spaces: the rows", () => {
     expect(within(beta).getByRole("button", { name: "Request upgrade" })).toBeInTheDocument();
     await user.click(within(beta).getByRole("button", { name: "Actions for beta" }));
     menu = await screen.findByRole("menu", { name: "Actions for beta" });
-    // A member opens the guide; a non-member (alpha) is not offered one it could not read.
-    expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
+    // beta's guide opens from its summary link, so its menu does not offer it twice.
+    expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
     await user.click(within(menu).getByRole("menuitem", { name: "Leave" }));
     await waitFor(() => expect(leaveNamespace).toHaveBeenCalledWith("acme", "beta"));
   });
@@ -175,6 +201,80 @@ describe("Spaces: the rows", () => {
       await user.click(within(row("personal-alice")).getByRole("button", { name: "Actions for personal-alice" }));
       const menu = await screen.findByRole("menu", { name: "Actions for personal-alice" });
       expect(within(menu).getByRole("menuitem", { name: "Guide" })).toBeInTheDocument();
+    } finally {
+      mine.pop();
+    }
+  });
+
+  it("a namespace you manage offers its writer the guide's editor", async () => {
+    const user = userEvent.setup();
+    render(<Browse />);
+    await screen.findAllByText("alpha");
+    await user.click(within(row("team")).getByRole("button", { name: "Actions for team" }));
+    const menu = await screen.findByRole("menu", { name: "Actions for team" });
+    await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
+    await user.click(await screen.findByRole("button", { name: "Write the guide" }));
+    // A first guide from Spaces starts on the same outline, which does not save unchanged.
+    const editor = await screen.findByLabelText("Guide (Markdown)");
+    expect((editor as HTMLTextAreaElement).value).toContain("## What this namespace holds");
+    expect(screen.getByRole("button", { name: "Save" })).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("a namespace a viewer token names without a grant offers its guide to read only", async () => {
+    // `jwt`: the namespace is the token's, and its claim (viewer) is the role.
+    useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme", roles: ["viewer"] } });
+    browse.push({
+      namespace: "tokenonly",
+      description: "",
+      kind: "memory",
+      owner_email: "",
+      member_count: 1,
+      created_at: "",
+    });
+    mine.push({
+      namespace: "tokenonly",
+      role: "jwt",
+      status: "active",
+      visibility: "public",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "memory",
+    });
+    try {
+      const user = userEvent.setup();
+      render(<Browse />);
+      await screen.findAllByText("tokenonly");
+      await user.click(within(row("tokenonly")).getByRole("button", { name: "Actions for tokenonly" }));
+      const menu = await screen.findByRole("menu", { name: "Actions for tokenonly" });
+      await user.click(within(menu).getByRole("menuitem", { name: "Guide" }));
+      expect(await screen.findByText(/No guide yet\. Agents that write here/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Write the guide" })).toBeNull();
+    } finally {
+      browse.pop();
+      mine.pop();
+    }
+  });
+
+  it("an end user's personal collection offers no guide in its menu", async () => {
+    mine.push({
+      namespace: "col-me-alice",
+      role: "admin",
+      status: "active",
+      visibility: "private",
+      description: "",
+      joined_at: null,
+      is_new: false,
+      kind: "memory",
+    });
+    try {
+      const user = userEvent.setup();
+      render(<Browse />);
+      await screen.findAllByText("alpha");
+      await user.click(within(row("col-me-alice")).getByRole("button", { name: "Actions for col-me-alice" }));
+      const menu = await screen.findByRole("menu", { name: "Actions for col-me-alice" });
+      // It takes no guide, so its menu offers none.
+      expect(within(menu).queryByRole("menuitem", { name: "Guide" })).toBeNull();
     } finally {
       mine.pop();
     }
