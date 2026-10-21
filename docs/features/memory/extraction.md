@@ -68,10 +68,7 @@ restart, see [runtime settings](../../operations/runtime-settings.md)), the extr
 call also returns these, marked `"about": "agent"`, at no extra model call. The setting
 is the only way on: a request's `agent_learnings=false` turns it off for that call, and
 `agent_learnings=true` while the setting is off is ignored and named in `ignored_args`
-(and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. On
-an extraction eval it filed every bot rule for review, while off about half were stored
-as the user's memory and the rest dropped; recall of user facts held, no user fact was
-filed as a bot rule, and input tokens rose by under 2%. Turn it on, and review
+(and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. Turn it on, and review
 `assistant_turn` candidates, only once no replica runs a build without it: an older
 build does not erase `loom.learnings_supporters`, and on promote it writes the bot's
 rule as the approver's own memory
