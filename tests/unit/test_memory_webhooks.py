@@ -809,6 +809,14 @@ async def test_a_sweep_cut_short_announces_the_rows_it_relabelled_in_one_insert(
             memory_key=key,
             level="medium",
             shapes=("email",),
+            sort_key={
+                "org": "acme",
+                "namespace": "chat",
+                "agent": "bot",
+                "user_id": "u1",
+                "session_id": "-",
+                "memory_key": key,
+            },
         )
 
     async def write(org: str, ids: list[str], update: Any, **k: Any) -> int:
