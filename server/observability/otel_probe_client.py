@@ -35,6 +35,11 @@ _PROBE_LOCK = threading.Lock()
 _PROBE_QUERY_LOCK = threading.Lock()
 
 
+def database_parameters() -> dict[str, str]:
+    """`{loom_db:String}` and `{telemetry_db:String}`: Loom's configured databases."""
+    return {"loom_db": database(), "telemetry_db": telemetry_database()}
+
+
 class _ProbeClient:
     """Forwards `query` / `command` to the cached sync client; a failure
     closes and forgets that client so the next probe starts clean."""
@@ -62,11 +67,7 @@ class _ProbeClient:
         # tables by Loom's databases names them as parameters, bound here.
         sql = args[0] if args and isinstance(args[0], str) else ""
         if "{loom_db:String}" in sql or "{telemetry_db:String}" in sql:
-            kwargs["parameters"] = {
-                "loom_db": database(),
-                "telemetry_db": telemetry_database(),
-                **dict(kwargs.get("parameters") or {}),
-            }
+            kwargs["parameters"] = {**database_parameters(), **dict(kwargs.get("parameters") or {})}
         with _PROBE_QUERY_LOCK:
             client = self._target()
             try:

@@ -1418,6 +1418,7 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_LANGFUSE_CAPTURE_IO_LEVEL` | `'off' \| 'query' \| 'all'` | `'off'` |  | How much LLM prompt and completion text is recorded, by what the prompt holds: "off" records none (the default; consent is given, not withdrawn); "query" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); "all" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated. |
 | `LOOM_LANGFUSE_GENERATION_IO_MAX_CHARS` | `int` | `2000` |  | Per-field cap on recorded prompt/completion text; truncation adds an explicit marker. |
 | `LOOM_RETRIEVAL_JUDGE_SAMPLE_RATE` | `float` | `0.0` |  | Fraction of searches sent to an independent LLM judge, written back as a `retrieval_relevance` score (unlike loom's own confidence scores, it shares no state with retrieval). 0.0 = off: it costs money per search; a few percent (e.g. 0.05) suits production. |
+| `LOOM_ANALYTICS_EXPORT_NAME_KEY` | `str` | *(unset)* |  | Secret that `loom export-analytics` hashes org, namespace and agent names under: a random string of 32 or more characters; a new key changes every hash. |
 
 ### Timeouts, budgets and caches
 
