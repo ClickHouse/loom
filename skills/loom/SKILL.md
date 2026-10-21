@@ -25,15 +25,10 @@ The fields are the same everywhere. `loom_op {op: "help", query: "<words>"}`
 (MCP) finds ops by words, with their arguments; `ops.capabilities` lists
 every op this server serves, with the role each one needs.
 
-The full catalog of planes is the reference: `mentor.guide` with
+The full catalog of planes is the reference: `mentor.guide`† with
 `part: "reference"` returns it (installed as a skill, it is `reference.md`
-beside this file). It marks experimental ops with †, whose fields may
+beside this file). Both mark experimental ops with †, whose fields may
 change between releases, and ops MCP does not serve with ‡.
-Experimental ops this file names: `blacklist.add`, `context.fetch`,
-`context.offload`, `decision.record`, `knowledge.upsert`, `memory.history`,
-`memory_schema.propose`, `mentor.guide`, `procedure.record_run`,
-`search.query`, `session.brief_get`, `session.brief_save`, `task.create`,
-`task.heartbeat`, `task.pull`, `working_memory.append`.
 
 ## Why use it
 
@@ -44,7 +39,7 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
   which source, whether a person verified it, and whether a newer fact
   contradicts it. A search that finds nothing says so (`abstain`).
 - **Your context stays small.** One `context.pack` call loads what matters
-  for the task inside a token budget; large logs go to `context.offload`
+  for the task inside a token budget; large logs go to `context.offload`†
   and come back by pattern.
 - **You coordinate without a side channel.** The task inbox, decisions and
   session briefs are shared state other agents and later sessions read.
@@ -61,12 +56,13 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
    task needs them.
 2. **Open a run** for a task with an outcome: `run.begin(goal=...)`, then
    pass its `run_id` in the body of your writes, your working-memory calls
-   and `context.pack`. On `memory.search`‡ and `memory.ask`, send it as the
+   and `context.pack` (TypeScript: `runId` in `agent.call`'s scope
+   argument). On `memory.search`‡ and `memory.ask`, send it as the
    `X-Loom-Run-Id` header instead: there a body `run_id` filters to the
    run's own rows. The Python SDK's `agent.run_scope(...)` does this for
    writes and those two reads; pass `run_id` yourself to `context.pack` and
    working-memory reads.
-3. **Search once per question.** `search.query` (`loom_search` over MCP)
+3. **Search once per question.** `search.query`† (`loom_search` over MCP)
    covers memory, profile, knowledge and conversations in one call;
    `memory.ask` returns a cited answer. Do not search before writing a fact
    the user just told you.
@@ -80,16 +76,16 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
 |---|---|---|
 | A fact still true next week (a decision, constraint, owner, preference) | `memory.set`: one fact per call, one key per fact | working memory |
 | A transcript, email or thread with facts in it | `memory.set_from_messages`: the server extracts them | one giant `memory.set` |
-| A document over about 2 KB (spec, runbook, report) | `knowledge.upsert` as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |
-| Rows with identity (PRs by number, services by id) | `memory.record.write` against a schema an admin registered (`memory_schema.register`; a writer proposes one with `memory_schema.propose`) | one memory per batch |
-| Your plan, a checklist or a cursor for the task in hand | `working_memory.set` or `working_memory.append` by `block_key`; a block belongs to one `(agent, user_id, session_id, run_id)` | `memory.set` read in a loop |
-| Where you are, for a later session or another agent to resume | `session.brief_save`, read back with `session.brief_get` | working memory, which is read back only under the identity that wrote it |
-| Work several agents may pick up | the task inbox: `task.pull` claims a task, `task.heartbeat` keeps the claim | a lock row in memory or working memory |
-| A log, diff or tool output too big for context | `context.offload`, then `context.fetch` | memory or working memory |
-| Work for another agent | `task.create` into its inbox | a memory it might search for |
-| A choice made, with its reasons | `decision.record` | a free-text memory |
-| A procedure that worked | `procedure.add`, then `procedure.record_run` per use | a memory describing steps |
-| Something the user never wants stored | `blacklist.add` the pattern | a memory saying "don't store X" |
+| A document over about 2 KB (spec, runbook, report) | `knowledge.upsert`† as Markdown, plus one pointer `memory.set` | `memory.set` holding the text |
+| Rows with identity (PRs by number, services by id) | `memory.record.write` against a schema an admin registered (`memory_schema.register`; a writer proposes one with `memory_schema.propose`†) | one memory per batch |
+| Your plan, a checklist or a cursor for the task in hand | `working_memory.set` or `working_memory.append`† by `block_key`; a block belongs to one `(agent, user_id, session_id, run_id)` | `memory.set` read in a loop |
+| Where you are, for a later session or another agent to resume | `session.brief_save`†, read back with `session.brief_get`† | working memory, which is read back only under the identity that wrote it |
+| Work several agents may pick up | the task inbox: `task.pull`† claims a task, `task.heartbeat`† keeps the claim | a lock row in memory or working memory |
+| A log, diff or tool output too big for context | `context.offload`†, then `context.fetch`† | memory or working memory |
+| Work for another agent | `task.create`† into its inbox | a memory it might search for |
+| A choice made, with its reasons | `decision.record`† | a free-text memory |
+| A procedure that worked | `procedure.add`, then `procedure.record_run`† per use | a memory describing steps |
+| Something the user never wants stored | `blacklist.add`† the pattern | a memory saying "don't store X" |
 | Reasoning, greetings, intermediate output | nothing | anything |
 
 ## How to write a fact
@@ -101,7 +97,7 @@ Experimental ops this file names: `blacklist.add`, `context.fetch`,
   row's vector is built from its first 1,200 characters, so the claim goes
   there.
 - **A revision rewrites the same key.** Loom keeps every version
-  (`memory.history`); never mint `_v2` keys or index rows that name keys.
+  (`memory.history`†); never mint `_v2` keys or index rows that name keys.
 - **Provenance:** `source_resource_id` for the file, URL or document it came
   from; `valid_at` for when it was observed; absolute dates, never
   "yesterday".
@@ -132,18 +128,31 @@ fixes `org` and the namespaces you may read and write. A namespace is the
 read boundary: everyone who reads it reads every row in it. On writes, set
 `agent` to your stable name (authorship, not isolation), `user_id` to the
 end user when you serve many, `session_id` to the conversation or job, and
-`run_id` to the task execution. On reads the same fields select rows:
+`run_id` to the task execution.
 
-- `memory.search`‡ and `memory.ask` read every author unless the body names
-  an `agent`; a `user_id`, `session_id` or `run_id` there narrows the read
-  to those rows. Send only the narrowing you mean, such as `user_id` to
-  read one user's memories.
-- `memory.list` matches `agent`, `user_id` and `session_id` exactly, an
-  omitted one as `-`; `"*"` on a field reads every value. It ignores
-  `run_id`.
-- `agent.call` in both SDKs stamps your `agent` and `-` for the rest; pass
-  `agent: "*"` (and `"*"` for `user_id` or `session_id` on `memory.list`)
-  to read beyond your own rows.
+On reads the same fields select rows, and each read op treats them its own
+way; its field list (operations reference, `loom_op` help) says how. The
+reads the loop uses:
+
+- `search.query`† reads every author and user in every namespace your token
+  reads; it has no `user_id` or `session_id`. To read one user's rows, use
+  `memory.ask` or `memory.search`‡ with `user_id`.
+- `memory.search`‡, `memory.ask` and the memories in `context.pack` read
+  every author unless you name an `agent`; a `user_id` or `session_id`
+  narrows them to those rows. A `context.pack` that names this session's
+  `session_id` recalls only this session's memories, so leave it off when
+  the task needs what earlier sessions learned.
+- `memory.get` and `memory.delete` take your row under the key, else the
+  same user's row under another agent.
+- `memory.list` needs `agent` and matches `agent`, `user_id` and
+  `session_id` exactly (`user_id` and `session_id` default to `-`); `"*"`
+  on a field reads every value.
+
+Read and revise through the SDKs' typed helpers (Python `agent.memory.*`,
+TypeScript `agent.recall` and `agent.ask`): they send the identity each op
+expects. A raw `agent.call` stamps your own `agent` and `-` for the rest;
+in TypeScript it takes `userId`, `sessionId` and `runId` in its scope
+argument, not the body.
 
 A token minted with an
 `own_user` read scope refuses a read without `user_id` (400
@@ -152,7 +161,7 @@ user (as an end user's token is), which reads that user's rows.
 Such a token, and an end user's, reaches only ops that keep their answer
 inside that user: any other op answers 403 `AUTH_INSUFFICIENT` naming it.
 That covers namespace-wide reads (`namespace.validate`, `mentor.brief`),
-namespace-wide refusals (`blacklist.add`) and revisions by key or id
+namespace-wide refusals (`blacklist.add`†) and revisions by key or id
 (`memory.update`, `memory.move`); skip that step or ask the owner.
 
 ## End-of-task review
@@ -162,7 +171,7 @@ Before you report done, write only what earns a yes:
 1. Did I make or learn a decision, constraint or owner a later session needs?
 2. Did a stored memory turn out wrong? Revise it under the same key.
 3. Did the user correct me? Revise; if they rejected it, `memory.delete` and
-   `blacklist.add` when it would recur.
+   `blacklist.add`† when it would recur.
 4. Did I produce an artifact (a file, a PR, a dashboard) later work should
    know about?
 5. Did I learn something non-obvious that cost real effort?

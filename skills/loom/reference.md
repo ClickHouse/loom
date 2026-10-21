@@ -1,6 +1,6 @@
 # Loom planes — what each holds, when to use it, its ops
 
-Read the skill first (`mentor.guide` with `part: "skill"`, or `SKILL.md`
+Read the skill first (`mentor.guide`† with `part: "skill"`, or `SKILL.md`
 beside this file): it has the loop, the write rules and how to read
 answers. This file is the catalog. Each plane lists what it is for, what it
 gives you, and its main ops. Ops marked † are experimental: their fields may
@@ -78,12 +78,12 @@ here and one short claim pointing at it in memory.
 
 Small named blocks (`block_key`, default `scratchpad`, 4,096 characters by
 default, up to 16,384) keyed by `(agent, user_id, session_id, run_id)`:
-`working_memory.get` and `render` read back under exactly that identity, so
+`working_memory.get`† and `render` read back under exactly that identity, so
 another agent does not see them. `context.pack` loads three layers: the
 run's blocks, the session's (`run_id` `-`) and the agent's (`session_id` and
-`run_id` `-`), so a block written with `session_id` `-` reaches every later
-session of that agent. Never embedded, ranked or conflict-checked. Use for
-the plan, a checklist, a cursor, a resume point; for another agent, a
+`run_id` `-`), so a block written with `session_id` `-` reaches every
+later session of that agent and user. Never embedded, ranked or
+conflict-checked. Use for the plan, a checklist, a cursor, a resume point; for another agent, a
 session brief or the task inbox.
 
 | Op | Use it to |
@@ -122,14 +122,14 @@ on loses that boost.
 
 | Op | Use it to |
 |---|---|
-| `run.begin` | Open a run (`goal`, optional `budget_usd`, `budget_seconds`); returns `run_id`. |
+| `run.begin` | Open a run (`goal`, optional `budget_usd` with a `session_id`, `budget_seconds`); returns `run_id`. |
 | `run.complete` | Close it: `status`, `memories_used` (what you relied on), `final_response`, an optional reflection. |
 | `run.get`, `run.list`‡ | A run's record, with `over_budget`; recent runs. |
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
 Python: `async with agent.run_scope(goal=...) as run:` opens and closes it,
-stamps `run_id` on writes inside (working-memory writes included), and
-labels `memory.search` and `memory.ask` with the `X-Loom-Run-Id` header (a
+stamps `run_id` on writes inside (of working memory, `set` and `append`), and
+labels `memory.search`‡ and `memory.ask` with the `X-Loom-Run-Id` header (a
 body `run_id` there filters to the run's rows). `context.pack` and
 working-memory reads take the run's `run_id` from you.
 

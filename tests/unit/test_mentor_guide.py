@@ -51,28 +51,13 @@ def test_every_op_the_guide_names_is_registered() -> None:
     assert named <= set(OPERATIONS_BY_NAME), sorted(named - set(OPERATIONS_BY_NAME))
 
 
-def test_the_skill_lists_every_experimental_op_it_names() -> None:
-    text = _guide("skill").text
-    listed = re.search(r"Experimental ops this file names: (.*?)\.\n\n", text, re.S)
-    assert listed, "SKILL.md lists its experimental ops"
-    experimental = {n for n in _named_ops(text) if OPERATIONS_BY_NAME[n].maturity == "experimental"}
-    assert set(re.findall(r"`([a-z_.]+)`", listed.group(1))) == experimental
-
-
-def test_ops_in_the_reference_carry_the_experimental_and_not_on_mcp_markers() -> None:
-    for row in re.findall(r"^\| (`[^|]+)\|", _guide("reference").text, re.M):
-        for name, experimental, hidden in re.findall(r"`([a-z_.]+)`(†?)(‡?)", row):
-            if name in OPERATIONS_BY_NAME:
-                assert bool(experimental) == (
-                    OPERATIONS_BY_NAME[name].maturity == "experimental"
-                ), name
-                assert bool(hidden) == (name in _MCP_HIDDEN_OPS), name
-
-
-def test_every_op_the_skill_names_that_mcp_refuses_carries_the_marker() -> None:
-    text = _guide("skill").text
-    for name in _named_ops(text) & _MCP_HIDDEN_OPS:
-        assert f"`{name}`‡" in text, name
+def test_every_op_the_guide_names_carries_its_experimental_and_not_on_mcp_markers() -> None:
+    for name, experimental, hidden in re.findall(
+        r"`([a-z_]+(?:\.[a-z_]+)+)`(†?)(‡?)", _guide("all").text
+    ):
+        if name in OPERATIONS_BY_NAME:
+            assert bool(experimental) == (OPERATIONS_BY_NAME[name].maturity == "experimental"), name
+            assert bool(hidden) == (name in _MCP_HIDDEN_OPS), name
 
 
 # Every kind of token that may read the guide, with the roles the server gives it
@@ -93,6 +78,14 @@ _CALLERS = {
         is_service_account=True,
         read_scope="own_user",
         read_user_id="u1",
+    ),
+    "own-user-unpinned": AuthInfo(
+        subject="sa:bot",
+        org="acme",
+        namespaces=("n",),
+        roles=(Role.VIEWER,),
+        is_service_account=True,
+        read_scope="own_user",
     ),
     "end-user": AuthInfo(
         subject="user:u1",
