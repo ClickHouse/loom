@@ -184,14 +184,23 @@ rows' graph facts before it answers, and a record that fails is owed to the proj
 repair, which writes it once; the conflict resolver writes its own after the retirement,
 owed the same way.
 
+[`memory.auto_retirements`](../../reference/operations/memory.md#memoryauto_retirements)
+lists the records of the last 30 days (or since `since`), one row per retired memory,
+newest record first: its ids, keys and identity, the reason, `unconfirmed` and the
+conflict resolver's `judge_*` fields. A caller whose read is narrowed to one user or
+session gets only that user's or session's rows. A page holds about `limit` rows (50 by
+default): a record is never split across pages, and one whose rows the read scope leaves
+out still moves `next_cursor`. `memory.statuses` reads which retirements still stand.
+
 #### The Auto-resolved tab
 
-The Review queue's **Auto-resolved** tab lists the last 30 days, a page of 20 records at
-a time. A row the re-read could not confirm is marked "may not have taken effect". To
-mark rows already restored, the tab reads up to 2,500 `memory.unsupersede` records (5
-pages of 500) back to the oldest retirement it shows. Past that, an older row still
-offers Undo: undoing a row an Undo already restored shows it restored, and one written
-or retired since shows "Changed since". A row shows as restored only while
+The Review queue's **Auto-resolved** tab lists the last 30 days through
+`memory.auto_retirements`, 50 retired memories a page. A row the re-read could not
+confirm is marked "may not have taken effect". To mark rows already restored, the tab
+reads up to 2,500 `memory.unsupersede` records (5 pages of 500) back to the oldest
+retirement it shows. Past that, an older row still offers Undo: undoing a row an Undo
+already restored shows it restored, and one written or retired since shows "Changed
+since". A row shows as restored only while
 `memory.statuses` reads it no longer retired behind that memory, so the record of an
 Undo whose restore failed still offers Undo, and so does a row whose state could not be
 read: a repeat Undo of a restored row answers restored.

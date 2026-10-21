@@ -98,48 +98,35 @@ export function parseAuditSubject(raw: string): Record<string, unknown> {
   }
 }
 
-const str = (v: unknown): string => (v == null ? "" : String(v));
-
-/** One page of the memories Loom retired on its own in a namespace, newest first: one row
- *  per retired memory, flattened out of the `memory.auto_supersede` audit records. A page
- *  is `limit` records (default 20), each listing up to 200 retired memories. `since`
- *  defaults to 30 days back; pass the returned `next_cursor` as `cursor` for the next,
- *  older page. `current`: each row's state now, unless `withCurrent` is false. */
+/** One page of the memories Loom retired on its own in a namespace, newest record first
+ *  (`memory.auto_retirements`, which keeps only the entries inside the caller's read
+ *  scope). A page is about `limit` retired memories (default 50): a record is never split
+ *  across pages. `since` defaults to 30 days back; pass the returned `next_cursor` as
+ *  `cursor` for the next, older page. `current`: each row's state now, unless
+ *  `withCurrent` is false. */
 export async function listAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
   opts: { limit?: number; since?: string; cursor?: string; withCurrent?: boolean } & RequestOpts = {},
 ): Promise<{ rows: AutoResolvedRow[]; next_cursor: string | null }> {
-  const page = await listAuditLog(id, {
-    event_type: "memory.auto_supersede",
-    limit: opts.limit ?? 20,
+  const body: Record<string, unknown> = {
+    org: id.org,
+    namespace: id.namespace,
+    limit: opts.limit ?? 50,
     since: opts.since ?? new Date(Date.now() - AUTO_RESOLVED_WINDOW_MS).toISOString(),
-    cursor: opts.cursor,
-    fields: ["ts", "subject"],
-    signal: opts.signal,
-  });
-  const out: AutoResolvedRow[] = [];
-  for (const r of page.rows || []) {
-    const subject = parseAuditSubject(r.subject);
-    const retired = Array.isArray(subject["retired"]) ? (subject["retired"] as unknown[]) : [];
-    for (const e of retired) {
-      if (!e || typeof e !== "object" || Array.isArray(e)) continue;
-      const m = e as Record<string, unknown>;
-      if (!m["memory_id"] || !m["memory_key"]) continue;
-      out.push({
-        memory_id: str(m["memory_id"]),
-        memory_key: str(m["memory_key"]),
-        agent: str(m["agent"]) || "-",
-        user_id: str(m["user_id"]) || "-",
-        session_id: str(m["session_id"]) || "-",
-        superseded_by: str(m["superseded_by"]),
-        superseded_by_key: m["superseded_by_key"] ? str(m["superseded_by_key"]) : undefined,
-        label: m["label"] ? str(m["label"]) : undefined,
-        unconfirmed: m["unconfirmed"] === "true" || undefined,
-        reason: str(subject["reason"]),
-        ts: r.ts,
-      });
-    }
-  }
+  };
+  if (opts.cursor) body["cursor"] = opts.cursor;
+  const page: { rows?: AutoResolvedRow[]; next_cursor?: string | null } = await post(
+    "/v1/memory.auto_retirements",
+    body,
+    opts.signal,
+  );
+  const out = (page.rows || []).map((r) => ({
+    ...r,
+    // Absent when empty: the tab shows them only when set.
+    superseded_by_key: r.superseded_by_key || undefined,
+    label: r.label || undefined,
+    unconfirmed: r.unconfirmed || undefined,
+  }));
   if (opts.withCurrent !== false && out.length > 0) {
     try {
       const now = await memoryStatuses(id, [...new Set(out.map((r) => r.memory_id))], { signal: opts.signal });
@@ -152,9 +139,9 @@ export async function listAutoResolved(
   return { rows: out, next_cursor: page.next_cursor ?? null };
 }
 
-/** Whether the Auto-resolved tab has a row to show: its newest records (five: one may list
- *  no entry the tab can show), read with the tab's filter. The sidebar shows the Review
- *  queue for it when there is no open conflict. */
+/** Whether the Auto-resolved tab has a row to show: its five newest retirements, read with
+ *  the tab's filter. The sidebar shows the Review queue for it when there is no open
+ *  conflict. */
 export async function hasAutoResolved(
   id: Pick<Identity, "org" | "namespace">,
   opts: RequestOpts = {},

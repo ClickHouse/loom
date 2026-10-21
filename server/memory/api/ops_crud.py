@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from server.memory.api.models_apply import MemoryApplyInput, MemoryApplyOutput
 from server.memory.api.models_crud import (
+    MemoryAutoRetirementsInput,
+    MemoryAutoRetirementsOutput,
     MemoryClearInput,
     MemoryClearOutput,
     MemoryDeleteInput,
@@ -43,6 +45,7 @@ from server.memory.app.apply_ops import (
     handle_memory_apply,
     handle_memory_sweep_expired,
 )
+from server.memory.app.auto_resolution import handle_memory_auto_retirements
 from server.memory.app.curation import handle_memory_redact
 from server.memory.app.handlers import (
     handle_memory_clear,
@@ -274,6 +277,18 @@ memory_statuses = Operation(
     input_model=MemoryStatusesInput,
     output_model=MemoryStatusesOutput,
     handler=handle_memory_statuses,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+
+memory_auto_retirements = Operation(
+    name="memory.auto_retirements",
+    maturity="experimental",
+    input_model=MemoryAutoRetirementsInput,
+    output_model=MemoryAutoRetirementsOutput,
+    handler=handle_memory_auto_retirements,
     idempotent=True,
     required_role=Role.VIEWER,
     audit=False,

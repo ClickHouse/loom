@@ -29,7 +29,14 @@ async def audit_rows_for_request(request_id: str, *, limit: int = 100) -> list[a
 # hash; no first-format cursor starts with `v` (it starts with the year), and the
 # request id goes last so a `|` in it is kept. This build reads both; the next
 # release may write v2 (docs/architecture/rolling-upgrades.md, rule 4).
+# `record_cursor` writes v2 already: its op is one the previous build does not serve.
 _V2 = "v2|"
+
+
+def record_cursor(row: AuditListRow) -> str:
+    """A cursor whose page starts strictly after `row`."""
+    raw = f"{_V2}{row.ts.isoformat()}|{row.row_hash}|{row.request_id}"
+    return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
 
 def _decode_page_cursor(cursor: str) -> tuple[datetime, str, str | None]:
@@ -51,6 +58,29 @@ def _decode_page_cursor(cursor: str) -> tuple[datetime, str, str | None]:
     if len(row_hash.encode("utf-8")) not in (0, 64):
         raise ValidationError("cursor is not one this op issued")
     return ts, request_id, row_hash
+
+
+async def namespace_events(
+    org: str,
+    namespace: str,
+    event_type: str,
+    *,
+    since: datetime | None,
+    cursor: str | None,
+    limit: int,
+) -> list[AuditListRow]:
+    """Up to `limit` of one namespace's `event_type` rows, newest first, after `cursor`
+    (one `record_cursor` or `audit.list` issued). The caller authorizes the namespace."""
+    page = await audit_repo.list_page(
+        org,
+        scope_where=" AND namespace = {ns:String}",
+        scope_params={"ns": namespace},
+        event_type=event_type,
+        since=since,
+        before=_decode_page_cursor(cursor) if cursor else None,
+        limit=limit,
+    )
+    return [AuditListRow(**r.model_dump()) for r in page]
 
 
 def _same_write(a: audit_repo.AuditRow, b: audit_repo.AuditRow) -> bool:

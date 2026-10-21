@@ -178,6 +178,7 @@ OpName = Literal[
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
+    "memory.auto_retirements",
     "memory.backlinks",
     "memory.brief",
     "memory.bulk_get",
@@ -503,6 +504,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
+    "memory.auto_retirements",
     "memory.backlinks",
     "memory.brief",
     "memory.bulk_get",
@@ -2356,6 +2358,18 @@ OPS: dict[str, OpSpec] = {
         60,
         True,
         False,
+    ),
+    "memory.auto_retirements": OpSpec(
+        "memory.auto_retirements",
+        "MemoryAutoRetirementsInput",
+        "MemoryAutoRetirementsBody",
+        "MemoryAutoRetirementsOutput",
+        True,
+        "viewer",
+        "experimental",
+        200,
+        False,
+        True,
     ),
     "memory.backlinks": OpSpec(
         "memory.backlinks",
@@ -10400,6 +10414,49 @@ class MemoryAssignCategoryBody(TypedDict, total=False):
 class MemoryAssignCategoryOutput(TypedDict, total=False):
     assigned: Required[bool]
     category_id: Required[str]
+
+
+class MemoryAutoRetirementsInput(TypedDict, total=False):
+    "The memories Loom retired on its own (the conflict resolver, `newest_wins`),"
+
+    org: Required[str]
+    namespace: Required[str]
+    since: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class MemoryAutoRetirementsBody(TypedDict, total=False):
+    "The memories Loom retired on its own (the conflict resolver, `newest_wins`),"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    since: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+    cursor: NotRequired[Optional[str]]
+
+
+class MemoryAutoRetirementsOutput(TypedDict, total=False):
+    rows: NotRequired[list["MemoryAutoRetirement"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
+class MemoryAutoRetirement(TypedDict, total=False):
+    ts: Required[str]  # date-time as ISO-8601 text
+    reason: Required[str]
+    memory_id: Required[str]
+    memory_key: Required[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    superseded_by: NotRequired[str]
+    superseded_by_key: NotRequired[str]
+    label: NotRequired[str]
+    unconfirmed: NotRequired[bool]
+    judge_verdict: NotRequired[str]
+    judge_confidence: NotRequired[Optional[float]]
+    judge_model: NotRequired[str]
+    judge_prompt_version: NotRequired[str]
 
 
 class MemoryBacklinksInput(TypedDict, total=False):

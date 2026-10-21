@@ -3964,3 +3964,53 @@ async def test_an_unlabelled_credential_never_reaches_the_judge(
     out = await run_pass()
     assert llm.calls == [] and out["judged"] == 0
     assert (await _marks(ch, org))["deploy_token_now"] == 2, "stamped judged"
+
+
+async def test_auto_retirements_reads_only_the_callers_users_records(ch) -> None:
+    """Two users' retirements on record: a read narrowed to one user lists only that
+    user's entries, a namespace-wide viewer lists both, newest record first."""
+    from server.identity.domain.read_scope import (
+        WHOLE_NAMESPACE,
+        ReadFilters,
+        bind_request_read_filters,
+    )
+    from server.memory.api.models_crud import MemoryAutoRetirementsInput
+    from server.memory.app import auto_resolution as ar
+    from tests.unit.principals import acting_as, principal
+
+    org = unique_org("auto-retirements")
+    for user in ("u1", "u2"):
+        entry = {
+            "memory_id": str(uuid.uuid4()),
+            "memory_key": f"{user}_city",
+            "agent": "bot",
+            "user_id": user,
+            "session_id": "s1",
+            "superseded_by": str(uuid.uuid4()),
+            "judge_confidence": "0.9",
+        }
+        assert await ar.record_auto_supersessions(
+            org=org, namespace=NS, retired=[entry], reason=ar.CONFLICT_RESOLVER
+        )
+        await asyncio.sleep(0.01)  # the records' timestamps order them
+
+    async def users(**kw: Any) -> list[str]:
+        out = await ar.handle_memory_auto_retirements(
+            MemoryAutoRetirementsInput(org=org, namespace=NS, **kw)
+        )
+        return [r.user_id for r in out.rows]
+
+    assert await users() == ["u2", "u1"]
+    auth = principal("viewer", org=org, namespaces=(NS,))
+    try:
+        with acting_as(auth):
+            bind_request_read_filters(auth, ReadFilters("own_user", "u1", None))
+            assert await users() == ["u1"]
+    finally:
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
+    # Paged one record at a time, the cursor walks both.
+    first = await ar.handle_memory_auto_retirements(
+        MemoryAutoRetirementsInput(org=org, namespace=NS, limit=1)
+    )
+    assert [r.user_id for r in first.rows] == ["u2"] and first.next_cursor
+    assert await users(limit=1, cursor=first.next_cursor) == ["u1"]

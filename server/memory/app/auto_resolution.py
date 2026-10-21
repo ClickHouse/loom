@@ -8,10 +8,18 @@ docs/features/memory/conflicts-and-refusal.md."""
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from server.identity.domain.read_scope import row_in_read_scope
+from server.memory.api.models_crud import (
+    MemoryAutoRetirement,
+    MemoryAutoRetirementsInput,
+    MemoryAutoRetirementsOutput,
+)
 from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 
@@ -335,3 +343,65 @@ async def _follow(
 
         # Recorded and followed: nothing is left for the intent to owe.
         intent_marks.resolve_soon(scope.org, intents)
+
+
+def _confidence(raw: Any) -> float | None:
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def retirements_in(ts: datetime, subject: str) -> list[MemoryAutoRetirement]:
+    """The retired memories one record's `subject` lists; an entry with no id or key is
+    left out, as is every entry of a subject that is not a record."""
+    try:
+        record = json.loads(subject)
+    except ValueError:
+        return []
+    if not isinstance(record, dict) or not isinstance(record.get("retired"), list):
+        return []
+    out = []
+    for e in record["retired"]:
+        if not isinstance(e, dict) or not e.get("memory_id") or not e.get("memory_key"):
+            continue
+        fields: dict[str, Any] = {f: str(e[f]) for f in _ENTRY_FIELDS if e.get(f)}
+        fields["unconfirmed"] = fields.get("unconfirmed") == "true"
+        fields["judge_confidence"] = _confidence(fields.get("judge_confidence"))
+        out.append(MemoryAutoRetirement(ts=ts, reason=str(record.get("reason") or ""), **fields))
+    return out
+
+
+async def handle_memory_auto_retirements(
+    input: MemoryAutoRetirementsInput,
+) -> MemoryAutoRetirementsOutput:
+    """memory.auto_retirements: the `memory.auto_supersede` records of the namespace,
+    one row per retired memory inside the request's read scope. A call reads at most
+    `limit` records and stops after the record that brings the page to `limit` rows, so a
+    page can hold more than `limit` rows (a record is never split) or, when the scope
+    leaves records out, fewer with `next_cursor` set."""
+    from server.identity.app.request_scope import request_scope
+    from server.insights.app.audit import namespace_events, record_cursor
+
+    scope = request_scope()
+    # The Auto-resolved tab's window (AUTO_RESOLVED_WINDOW_MS in frontend/src/api/audit.ts).
+    since = input.since or datetime.now(UTC) - timedelta(days=30)
+    records = await namespace_events(
+        input.org,
+        input.namespace,
+        EVENT_TYPE,
+        since=since,
+        cursor=input.cursor,
+        limit=input.limit + 1,  # +1 to tell whether an older page exists
+    )
+    rows: list[MemoryAutoRetirement] = []
+    read = 0
+    for record in records[: input.limit]:
+        if len(rows) >= input.limit:
+            break
+        read += 1
+        for r in retirements_in(record.ts, record.subject):
+            if row_in_read_scope(scope, r.user_id, r.session_id):
+                rows.append(r)
+    next_cursor = record_cursor(records[read - 1]) if read < len(records) else None
+    return MemoryAutoRetirementsOutput(rows=rows, next_cursor=next_cursor)

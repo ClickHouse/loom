@@ -869,6 +869,10 @@
               "body",
               "options"
             ],
+            "auto_retirements": [
+              "body",
+              "options"
+            ],
             "backlinks": [
               "body",
               "options"

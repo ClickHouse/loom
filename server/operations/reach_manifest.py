@@ -267,6 +267,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "plugin_hook",
     ),
     "memory.assign_category": ("sdk_method",),
+    "memory.auto_retirements": ("plugin_hook",),
     "memory.bulk_get": (
         "sdk_method",
         "plugin_hook",

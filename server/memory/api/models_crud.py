@@ -594,6 +594,55 @@ class MemoryStatusesOutput(BaseModel):
     rows: list[MemoryStatus] = Field(default_factory=list)
 
 
+class MemoryAutoRetirementsInput(BaseModel):
+    """The memories Loom retired on its own (the conflict resolver, `newest_wins`),
+    newest record first, inside the request's read scope."""
+
+    org: str
+    namespace: str
+    # Only records written at or after this time; unset, the last 30 days.
+    since: datetime | None = None
+    # Retired memories per page, 1 to 200 (default 50). A record's entries are never split
+    # across pages, so a page can hold more; under a narrowed read scope it can hold fewer,
+    # even none, with `next_cursor` set.
+    limit: int = Field(default=50, ge=1, le=200)
+    # The `next_cursor` of the previous page; unset, the newest page.
+    cursor: str | None = None
+
+
+class MemoryAutoRetirement(BaseModel):
+    # When the retirement was recorded.
+    ts: datetime
+    # Why it retired: `conflict_resolver`, `same_key_newest_wins`,
+    # `newest_wins_contradiction` or `value_update`.
+    reason: str
+    memory_id: str
+    memory_key: str
+    agent: str = "-"
+    user_id: str = "-"
+    session_id: str = "-"
+    # The memory it retired behind, and that memory's key.
+    superseded_by: str = ""
+    superseded_by_key: str = ""
+    # The conflict resolver's label for the pair (`update`); empty on other paths.
+    label: str = ""
+    # The re-read after the write could not confirm the retirement took effect.
+    unconfirmed: bool = False
+    # The conflict resolver's judgement; empty (None for the confidence) on other paths.
+    judge_verdict: str = ""
+    judge_confidence: float | None = None
+    judge_model: str = ""
+    judge_prompt_version: str = ""
+
+
+class MemoryAutoRetirementsOutput(BaseModel):
+    # One row per retired memory, newest record first. `memory.statuses` tells which
+    # still stand; `memory.restore` undoes one.
+    rows: list[MemoryAutoRetirement] = Field(default_factory=list)
+    # Pass back as `cursor` for the next, older page; None when this page is the last.
+    next_cursor: str | None = None
+
+
 class MemoryClearInput(BaseModel):
     """Bulk-tombstone memories in one scope.
 

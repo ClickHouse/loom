@@ -4999,6 +4999,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # call; a retrieval_only / abstained call pays no LLM latency.
     "memory.ask": 8000,
     "memory.assign_category": 60,
+    # One audit_log page of the namespace's auto_supersede records, as audit.list reads.
+    "memory.auto_retirements": 200,
     "memory.backlinks": 200,
     "memory.brief": 4000,
     "memory.bulk_get": 80,

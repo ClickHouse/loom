@@ -3839,6 +3839,37 @@ export interface MemoryAssignCategoryOutput {
   category_id: string;
 }
 
+export interface MemoryAutoRetirementsInput {
+  org: string;
+  namespace: string;
+  since?: string | null;
+  limit?: number;
+  cursor?: string | null;
+}
+
+export interface MemoryAutoRetirement {
+  ts: string; // date-time
+  reason: string;
+  memory_id: string;
+  memory_key: string;
+  agent?: string;
+  user_id?: string;
+  session_id?: string;
+  superseded_by?: string;
+  superseded_by_key?: string;
+  label?: string;
+  unconfirmed?: boolean;
+  judge_verdict?: string;
+  judge_confidence?: number | null;
+  judge_model?: string;
+  judge_prompt_version?: string;
+}
+
+export interface MemoryAutoRetirementsOutput {
+  rows?: MemoryAutoRetirement[];
+  next_cursor?: string | null;
+}
+
 export interface MemoryBacklinksInput {
   org: string;
   namespace: string;
@@ -8819,6 +8850,7 @@ export type OpName =
   | "memory.apply"
   | "memory.ask"
   | "memory.assign_category"
+  | "memory.auto_retirements"
   | "memory.backlinks"
   | "memory.brief"
   | "memory.bulk_get"
@@ -9144,6 +9176,7 @@ export interface OpMap {
   "memory.apply": { input: MemoryApplyInput; output: MemoryApplyOutput };
   "memory.ask": { input: MemoryAskInput; output: MemoryAskOutput };
   "memory.assign_category": { input: MemoryAssignCategoryInput; output: MemoryAssignCategoryOutput };
+  "memory.auto_retirements": { input: MemoryAutoRetirementsInput; output: MemoryAutoRetirementsOutput };
   "memory.backlinks": { input: MemoryBacklinksInput; output: MemoryBacklinksOutput };
   "memory.brief": { input: MemoryBriefInput; output: MemoryBriefOutput };
   "memory.bulk_get": { input: MemoryBulkGetInput; output: MemoryBulkGetOutput };
@@ -9469,6 +9502,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.apply", group: "memory", method: "apply", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 3000, audit: true, readOnly: false },
   { name: "memory.ask", group: "memory", method: "ask", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "memory.assign_category", group: "memory", method: "assignCategory", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
+  { name: "memory.auto_retirements", group: "memory", method: "autoRetirements", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "memory.backlinks", group: "memory", method: "backlinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "memory.brief", group: "memory", method: "brief", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "memory.bulk_get", group: "memory", method: "bulkGet", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
@@ -9658,4 +9692,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 322;
+export const GENERATED_OP_COUNT = 323;

@@ -278,6 +278,8 @@ SCOPED_OPS = frozenset(
         "conversation.search_saved_messages",
         "memory.aggregate",
         "memory.ask",
+        # Each retired entry is kept only when its user and session lie inside the scope.
+        "memory.auto_retirements",
         "memory.bulk_get",
         "memory.digests",
         "memory.evidence",

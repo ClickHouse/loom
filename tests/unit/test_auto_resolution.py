@@ -4,6 +4,7 @@ did retire."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -1162,3 +1163,153 @@ def test_a_retired_entry_keeps_the_judges_fields_and_not_the_rows_confidence() -
     judged = retired_entry(row, superseded_by="m2", judge_verdict="update", judge_confidence="0.99")
     assert judged["judge_verdict"] == "update" and judged["judge_confidence"] == "0.99"
     assert "confidence" not in judged
+
+
+# memory.auto_retirements: the records read back, one row per retired memory.
+
+
+def _record(n: int, *entries: Any, reason: str = ar.CONFLICT_RESOLVER) -> Any:
+    from server.insights.api.models_audit import AuditListRow
+
+    return AuditListRow(
+        ts=datetime(2026, 10, 1, 12, 0, n, tzinfo=UTC),
+        event_type=ar.EVENT_TYPE,
+        org="o",
+        namespace="ns",
+        actor="process:loom",
+        subject=json.dumps({"reason": reason, "count": len(entries), "retired": list(entries)}),
+        request_id=f"r{n}",
+        row_hash=f"{n:064d}",
+    )
+
+
+def _entry(mid: str, user: str = "u", session: str = "s", **extra: Any) -> dict[str, str]:
+    return ar.retired_entry(_retired(mid, user_id=user, session_id=session, **extra))
+
+
+@pytest.fixture
+def audit_read(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """The audit read, stubbed: it answers `pages` in order and logs each call."""
+    from server.insights.app import audit
+
+    stub = SimpleNamespace(pages=[], calls=[])
+
+    async def _events(org, namespace, event_type, **kw):
+        stub.calls.append({"org": org, "namespace": namespace, "event_type": event_type, **kw})
+        return stub.pages.pop(0) if stub.pages else []
+
+    monkeypatch.setattr(audit, "namespace_events", _events)
+    return stub
+
+
+async def _retirements(**kw: Any) -> Any:
+    from server.memory.api.models_crud import MemoryAutoRetirementsInput
+
+    return await ar.handle_memory_auto_retirements(
+        MemoryAutoRetirementsInput(org="o", namespace="ns", **kw)
+    )
+
+
+async def test_each_retired_entry_is_one_row_with_typed_fields(audit_read) -> None:
+    judged = _entry(
+        "m1",
+        label="update",
+        superseded_by_key="user_city",
+        judge_verdict="update",
+        judge_confidence="0.97",
+        judge_model="m",
+        judge_prompt_version="v3",
+    )
+    audit_read.pages = [
+        [
+            _record(2, judged, {"memory_key": "no_id"}, "x"),
+            _record(1, _entry("m2", unconfirmed=True), reason=ar.SAME_KEY_NEWEST_WINS),
+            _record(0).model_copy(update={"subject": "{not json"}),
+        ]
+    ]
+    out = await _retirements()
+    assert [(r.memory_id, r.reason) for r in out.rows] == [
+        ("m1", ar.CONFLICT_RESOLVER),
+        ("m2", ar.SAME_KEY_NEWEST_WINS),
+    ]
+    first, second = out.rows
+    assert first.model_dump() == {
+        "ts": datetime(2026, 10, 1, 12, 0, 2, tzinfo=UTC),
+        "reason": ar.CONFLICT_RESOLVER,
+        "memory_id": "m1",
+        "memory_key": "user_city",
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "superseded_by": "new",
+        "superseded_by_key": "user_city",
+        "label": "update",
+        "unconfirmed": False,
+        "judge_verdict": "update",
+        "judge_confidence": 0.97,
+        "judge_model": "m",
+        "judge_prompt_version": "v3",
+    }
+    assert second.unconfirmed is True and second.judge_confidence is None
+    assert out.next_cursor is None
+    (call,) = audit_read.calls
+    assert (call["org"], call["namespace"], call["event_type"]) == ("o", "ns", ar.EVENT_TYPE)
+    assert call["limit"] == 51 and call["cursor"] is None
+    # Unset, the last 30 days.
+    assert abs((datetime.now(UTC) - call["since"]).days - 30) <= 1
+
+
+async def test_a_narrowed_read_keeps_only_its_own_users_entries(audit_read) -> None:
+    from server.identity.domain.read_scope import (
+        WHOLE_NAMESPACE,
+        ReadFilters,
+        bind_request_read_filters,
+    )
+    from tests.unit.principals import acting_as, principal
+
+    page = [
+        _record(1, _entry("mine", "u1", "s1"), _entry("theirs", "u2"), _entry("other", "u1", "s2"))
+    ]
+    auth = principal("viewer", org="o", namespaces=("ns",))
+    try:
+        with acting_as(auth):
+            bind_request_read_filters(auth, ReadFilters("own_user", "u1", None))
+            audit_read.pages = [list(page)]
+            assert [r.memory_id for r in (await _retirements()).rows] == ["mine", "other"]
+            bind_request_read_filters(auth, ReadFilters("own_session", "u1", "s1"))
+            audit_read.pages = [list(page)]
+            assert [r.memory_id for r in (await _retirements()).rows] == ["mine"]
+    finally:
+        bind_request_read_filters(None, WHOLE_NAMESPACE)
+    audit_read.pages = [list(page)]
+    assert [r.memory_id for r in (await _retirements()).rows] == ["mine", "theirs", "other"]
+
+
+async def test_a_page_ends_after_the_record_that_fills_it(audit_read) -> None:
+    from server.insights.app.audit import _decode_page_cursor
+
+    newest, middle, oldest = (
+        _record(3, _entry("a"), _entry("b")),
+        _record(2, _entry("c"), _entry("d")),
+        _record(1, _entry("e")),
+    )
+    audit_read.pages = [[newest, middle, oldest]]
+    out = await _retirements(limit=3)
+    # The second record is read whole: a page can pass `limit`.
+    assert [r.memory_id for r in out.rows] == ["a", "b", "c", "d"]
+    assert _decode_page_cursor(out.next_cursor) == (middle.ts, "r2", middle.row_hash)
+
+    audit_read.pages = [[oldest]]
+    out = await _retirements(limit=3, cursor=out.next_cursor)
+    assert [r.memory_id for r in out.rows] == ["e"] and out.next_cursor is None
+    assert audit_read.calls[-1]["cursor"] is not None
+
+
+async def test_a_full_read_with_an_older_record_left_carries_a_cursor(audit_read) -> None:
+    """Records the scope leaves out still move the cursor: the page is short, not last."""
+    from server.insights.app.audit import _decode_page_cursor
+
+    audit_read.pages = [[_record(3), _record(2), _record(1)]]
+    out = await _retirements(limit=2)
+    assert out.rows == []
+    assert _decode_page_cursor(out.next_cursor)[1] == "r2"

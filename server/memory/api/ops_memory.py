@@ -27,6 +27,7 @@ from server.memory.api.ops_bulk import (
 )
 from server.memory.api.ops_crud import (
     memory_apply,
+    memory_auto_retirements,
     memory_clear,
     memory_delete,
     memory_delete_version,
@@ -99,6 +100,7 @@ OPERATIONS: list[Operation] = [
     memory_delete_version,
     memory_restore,
     memory_statuses,
+    memory_auto_retirements,
     memory_move,
     memory_clear,
     memory_keys,

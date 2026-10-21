@@ -9,11 +9,10 @@ import {
 } from "./api";
 import { isRecord } from "./lib/guards";
 
-// The Auto-resolved tab reads `memory.auto_supersede` audit rows (one per write and
-// path, each listing up to 200 retired rows) and `memory.unsupersede` rows (one per
-// restore). Both are flattened client-side.
+// The Auto-resolved tab reads `memory.auto_retirements` (one row per retired memory) and
+// `memory.unsupersede` audit rows (one per restore), the second flattened client-side.
 
-// A page of audit rows, or of `memory.statuses` rows, answered in order.
+// Pages of rows (`memory.auto_retirements`, `memory.statuses`, audit), answered in order.
 function stubAudit(pages: Array<{ rows: Array<Record<string, unknown>>; next_cursor?: string | null }>) {
   const bodies: Record<string, unknown>[] = [];
   vi.stubGlobal(
@@ -28,13 +27,23 @@ function stubAudit(pages: Array<{ rows: Array<Record<string, unknown>>; next_cur
   return bodies;
 }
 
-const entry = (id: string, extra: Record<string, unknown> = {}) => ({
+// A `memory.auto_retirements` row: the op flattens and scopes the records server-side.
+const retirement = (id: string, extra: Record<string, unknown> = {}) => ({
+  ts: "2026-10-02T00:00:00Z",
+  reason: "conflict_resolver",
   memory_id: id,
   memory_key: `key_${id}`,
   agent: "a",
   user_id: "u",
   session_id: "s",
   superseded_by: `new_${id}`,
+  superseded_by_key: "",
+  label: "",
+  unconfirmed: false,
+  judge_verdict: "",
+  judge_confidence: null,
+  judge_model: "",
+  judge_prompt_version: "",
   ...extra,
 });
 
@@ -43,55 +52,28 @@ describe("listAutoResolved", () => {
     vi.unstubAllGlobals();
   });
 
-  it("flattens each audit row's retired list, newest row first, and skips malformed entries", async () => {
+  it("reads memory.auto_retirements for the last 30 days, empty optional fields absent", async () => {
     const bodies = stubAudit([
       {
         rows: [
-          {
-            ts: "2026-10-02T00:00:00Z",
-            subject: JSON.stringify({
-              reason: "conflict_resolver",
-              count: 3,
-              retired: [entry("a", { label: "elaboration", superseded_by_key: "k" }), { memory_key: "no_id" }, "x"],
-            }),
-          },
-          { ts: "2026-10-01T00:00:00Z", subject: "{not json" },
-          {
-            ts: "2026-10-01T00:00:00Z",
-            subject: JSON.stringify({
-              reason: "newest_wins_contradiction",
-              retired: [entry("b", { agent: "" }), entry("c", { unconfirmed: "true" })],
-            }),
-          },
-          {
-            ts: "2026-09-30T00:00:00Z",
-            subject: JSON.stringify({ reason: "newest_wins_contradiction", retired: "nope" }),
-          },
+          retirement("a", { label: "update", superseded_by_key: "k" }),
+          retirement("b", { unconfirmed: true, reason: "newest_wins_contradiction" }),
         ],
         next_cursor: "c2",
       },
+      { rows: [] },
     ]);
     const out = await listAutoResolved({ org: "o", namespace: "n" });
     expect(out.next_cursor).toBe("c2");
     expect(out.rows.map((r) => [r.memory_id, r.reason, r.ts])).toEqual([
       ["a", "conflict_resolver", "2026-10-02T00:00:00Z"],
-      ["b", "newest_wins_contradiction", "2026-10-01T00:00:00Z"],
-      ["c", "newest_wins_contradiction", "2026-10-01T00:00:00Z"],
+      ["b", "newest_wins_contradiction", "2026-10-02T00:00:00Z"],
     ]);
-    expect(out.rows.map((r) => r.unconfirmed)).toEqual([undefined, undefined, true]);
-    expect(out.rows[0]).toMatchObject({
-      label: "elaboration",
-      superseded_by_key: "k",
-      memory_key: "key_a",
-      superseded_by: "new_a",
-    });
-    // An empty identity part reads as the sentinel the restore expects.
-    expect(out.rows[1]?.agent).toBe("-");
+    expect(out.rows[0]).toMatchObject({ label: "update", superseded_by_key: "k", unconfirmed: undefined });
+    expect(out.rows[1]).toMatchObject({ label: undefined, superseded_by_key: undefined, unconfirmed: true });
     const body = bodies[0] ?? {};
-    expect(body.event_type).toBe("memory.auto_supersede");
-    expect(body.namespace).toBe("n");
+    expect(body).toMatchObject({ org: "o", namespace: "n", limit: 50 });
     expect(body.cursor).toBeUndefined();
-    // A 30-day bound by default.
     const since = Date.parse(String(body.since));
     expect(Date.now() - since).toBeGreaterThan(29 * 86_400_000);
     expect(Date.now() - since).toBeLessThan(31 * 86_400_000);
@@ -99,14 +81,7 @@ describe("listAutoResolved", () => {
 
   it("attaches each row's state now from memory.statuses", async () => {
     const bodies = stubAudit([
-      {
-        rows: [
-          {
-            ts: "2026-10-02T00:00:00Z",
-            subject: JSON.stringify({ reason: "conflict_resolver", retired: [entry("a"), entry("b")] }),
-          },
-        ],
-      },
+      { rows: [retirement("a"), retirement("b")] },
       { rows: [{ memory_id: "a", status: "superseded", superseded_by: "new_a" }] },
     ]);
     const out = await listAutoResolved({ org: "o", namespace: "n" });
@@ -121,8 +96,7 @@ describe("listAutoResolved", () => {
       vi.fn(async () => {
         call += 1;
         if (call === 1) {
-          const subject = JSON.stringify({ reason: "conflict_resolver", retired: [entry("a")] });
-          const body = JSON.stringify({ rows: [{ ts: "2026-10-02T00:00:00Z", subject }] });
+          const body = JSON.stringify({ rows: [retirement("a")] });
           return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
         }
         return new Response("{}", { status: 500 });
@@ -146,29 +120,12 @@ describe("hasAutoResolved", () => {
     vi.unstubAllGlobals();
   });
 
-  it("reads five records and counts them only if one holds a retirement the tab can show", async () => {
-    const shown = JSON.stringify({ reason: "newest_wins_contradiction", retired: [entry("a")] });
-    const malformed = JSON.stringify({ reason: "newest_wins_contradiction", retired: [{ memory_key: "no_id" }] });
-    const bodies = stubAudit([
-      // The newest record lists nothing the tab shows; an older one does.
-      {
-        rows: [
-          { ts: "2026-10-02T00:00:00Z", subject: malformed },
-          { ts: "2026-10-01T00:00:00Z", subject: shown },
-        ],
-      },
-      { rows: [{ ts: "2026-10-02T00:00:00Z", subject: malformed }] },
-    ]);
+  it("reads the newest five and answers whether any row came back", async () => {
+    const bodies = stubAudit([{ rows: [retirement("a")] }, { rows: [], next_cursor: "c2" }]);
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(true);
-    // The Auto-resolved tab drops an entry with no id or key: so does the sidebar.
     expect(await hasAutoResolved({ org: "o", namespace: "n" })).toBe(false);
-    expect(bodies[0]).toMatchObject({
-      org: "o",
-      namespace: "n",
-      event_type: "memory.auto_supersede",
-      limit: 5,
-      fields: ["ts", "subject"],
-    });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toMatchObject({ org: "o", namespace: "n", limit: 5 });
     const since = Date.parse(String(bodies[0]?.["since"]));
     expect(Date.now() - since).toBeGreaterThan(29 * 24 * 3600 * 1000);
     expect(Date.now() - since).toBeLessThan(31 * 24 * 3600 * 1000);

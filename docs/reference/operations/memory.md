@@ -240,6 +240,25 @@ Link a memory to one of the namespace's registered categories.
 | `assigned` | `bool` | True when the link was written; False when it was rescinded. |
 | `category_id` | `str` | The id of the named category. |
 
+## `memory.auto_retirements`
+
+The memories Loom retired on its own (the conflict resolver, `newest_wins`), newest record first, inside the request's read scope.
+
+`POST /v1/memory.auto_retirements` · MCP `loom_memory_auto_retirements` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `since` | `datetime \| None` | `None` | Only records written at or after this time; unset, the last 30 days. |
+| `limit` | `int` | `50` | Retired memories per page, 1 to 200 (default 50). |
+| `cursor` | `str \| None` | `None` | The `next_cursor` of the previous page; unset, the newest page. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `rows` | `list[MemoryAutoRetirement]` | One row per retired memory, newest record first. |
+| `next_cursor` | `str \| None` | Pass back as `cursor` for the next, older page; None when this page is the last. |
+
 ## `memory.backlinks`
 
 What points at one memory: its version chain, the digests whose lineage names it, the typed links in and out of it, how many evidence turns support it, and the memories that share its entities.
