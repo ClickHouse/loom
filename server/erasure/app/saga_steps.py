@@ -184,6 +184,7 @@ _UNCOUNTED_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("events.delete", ledger_steps.delete_events_by_namespace),
     ("memory_drops.delete", ledger_steps.delete_memory_drops_by_namespace),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
+    ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_namespace),
     ("learnings_queue.delete", ledger_steps.delete_learnings_queue_by_namespace),
     ("tasks.delete", ledger_steps.delete_tasks_by_namespace),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_namespace),
@@ -201,6 +202,7 @@ _UNCOUNTED_STEPS_USER: tuple[UserStep, ...] = (
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_user),
     ("events.delete", ledger_steps.delete_events_by_user),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_user),
+    ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_user),
     ("agent_runs.delete", ledger_steps.delete_agent_runs_by_user),
     ("consolidation_runs.delete", ledger_steps.delete_consolidation_runs_by_user),
     # Org-wide, not by the stamped subject: a replay a service account stored

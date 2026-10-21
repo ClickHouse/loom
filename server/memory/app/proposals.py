@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.app import webhooks
 from server.memory.domain.proposal_policy import ProposalPolicy, parse_policy
 from server.memory.store.inserts import insert_memory_versions
 from server.settings import settings
@@ -196,6 +197,10 @@ async def decide(
     if not to_write:
         return out
     await insert_memory_versions(to_write, ch=ch)
+    if decision == "accept":
+        # The accepted row is the key's first served one: a proposal may not land on a
+        # key that holds a fact. A rejected proposal was never served or announced.
+        await webhooks.announce([("memory.written", r) for r in to_write])
     # Every decided row, `active` included: write_versions_by_ids mirrors only
     # non-active flips, and an accepted proposal's mirror still says proposed.
     await memory_repo.mirror_status_to_embeddings(to_write, ch=ch)

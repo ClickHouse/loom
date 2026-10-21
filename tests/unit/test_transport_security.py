@@ -241,7 +241,7 @@ async def test_erasure_status_namespace_scope_requires_namespace_coverage(
     assert out.found is False and out.scope_value is None
 
 
-async def test_erasure_status_same_org_token_allowed(
+async def test_erasure_status_user_saga_needs_the_org_wide_view(
     monkeypatch: pytest.MonkeyPatch, _no_grants, _auth_ctx
 ) -> None:
     from server.erasure.api.erasure import ErasureStatusInput
@@ -255,7 +255,12 @@ async def test_erasure_status_same_org_token_allowed(
 
     monkeypatch.setattr(erasure_ledger, "fetch_request_status", fake_fetch)
 
+    # A same-org member does not learn which user was erased.
     _auth_ctx(_auth_info("dev", roles=(Role.VIEWER,)))
+    out = await handle_erasure_status(ErasureStatusInput(erasure_id=row["id"]))
+    assert out.found is False and out.scope_value is None
+
+    _auth_ctx(_auth_info("dev", roles=(Role.ORG_ADMIN,)))
     out = await handle_erasure_status(ErasureStatusInput(erasure_id=row["id"]))
     assert out.found is True
     assert out.org == "dev"

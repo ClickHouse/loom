@@ -335,7 +335,7 @@ async def _set_expiry(
     return expires_at
 
 
-async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
+async def _set_prepare_value(w: _SetWrite) -> None:
     """Phase 4 of memory.set: serialize the value and gate it before any write.
 
     Sets serialized_value, new_sha, the reinforcement fields, the sensitivity
@@ -344,7 +344,7 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     """
     from server.observability.otel import traced
 
-    input, existing, expires_at = w.input, w.existing, w.expires_at
+    input, existing, expires_at, restated = w.input, w.existing, w.expires_at, w.restated
 
     serialized_value = json.dumps(input.value)
     new_sha = _content_sha256(input.value)
@@ -354,13 +354,13 @@ async def _set_prepare_value(w: _SetWrite, _restated: bool) -> None:
     # signal: the version row carries base + 1, and the usage fold propagates the base to the
     # embeddings row's search-side boost.
     reinforcement_count_for_insert = (
-        int(getattr(existing, "reinforcement_count", 1) or 1) + 1 if _restated else 1
+        int(getattr(existing, "reinforcement_count", 1) or 1) + 1 if restated else 1
     )
     last_reinforced_at_for_insert = naive_utc_now()
     # When the fact was last said, for the maintenance age rule: a restatement is a fresh
     # mention; a new value keeps the caller's/extractor's date (NULL here — the bulk path
     # sets it).
-    mentioned_at_for_insert = last_reinforced_at_for_insert if _restated else None
+    mentioned_at_for_insert = last_reinforced_at_for_insert if restated else None
 
     # Server-enforced char cap, measured against the canonical JSON form
     # (what we store). NULL = no cap.
@@ -647,8 +647,9 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         retyped_from=retyped_from,
         existing=existing,
         expires_at=expires_at,
+        restated=_restated,
     )
-    await _set_prepare_value(w, _restated)
+    await _set_prepare_value(w)
     if input.proposed:
         await _refuse_proposal_over_fact(input)
     await _set_check_if_match(w)

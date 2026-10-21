@@ -7,7 +7,8 @@ the profile key refuses the redact before anything is scrubbed. However many
 versions match, the named version and the profile versions are scrubbed in one
 statement per version table, and the cached answers and precedents whose window
 held a scrubbed profile key are deleted. A retry after a failure reaches the
-same profile keys. A version that does not exist scrubs nothing.
+same profile keys. A version that does not exist scrubs nothing. The memory and
+each profile key it scrubbed are announced as `memory.redacted`.
 """
 
 from __future__ import annotations
@@ -90,6 +91,8 @@ def _profile_rows(built_with: str, built_without: str) -> list[str]:
 
 
 _TARGET_KW: dict[str, Any] = {
+    "org": "o",
+    "memory_id": _SECRET,
     "namespace": "n",
     "agent": "a",
     "user_id": "u1",
@@ -101,6 +104,15 @@ _TARGET_KW: dict[str, Any] = {
 
 
 class _Head:
+    """The profile key's head, version 4."""
+
+    org = "o"
+    namespace = "n"
+    agent = "-"
+    user_id = "u1"
+    session_id = "-"
+    memory_key = "structured_profile"
+    memory_id = _PROFILE
     version = 4
     lock_mode = ""
     lock_until = None
@@ -330,6 +342,36 @@ async def test_a_retried_redact_scrubs_the_profile_rows_a_failed_one_left(monkey
     assert [r["content_excerpt"] for r in excerpts] == ['{"timezone":null}']
     cached = await ch.query_all("SELECT key FROM loom.llm_response_cache")
     assert [r["key"] for r in cached] == ["k2"]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_redact_announces_the_memory_and_each_profile_key_it_scrubbed(monkeypatch) -> None:
+    """A receiver that mirrors the profile key hears that its versions were scrubbed,
+    as one that mirrors the memory's own key does."""
+    from server.memory.api.models_crud import MemoryRedactInput
+    from server.memory.app import curation, webhooks
+    from server.memory.store import webhooks as webhook_store
+    from tests.unit.ch_fake import RecordingCH
+
+    _redact_setup(monkeypatch)
+    outbox = RecordingCH()
+    monkeypatch.setattr(webhook_store, "_default_client", lambda: outbox)
+    hooks = {("o", "n"): (("wh1", frozenset({"memory.redacted"})),)}
+    webhooks._registry._reset_for_tests(hooks, read_age_s=0.0, due_in_s=float("inf"))
+    try:
+        await curation.handle_memory_redact(
+            MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
+        )
+    finally:
+        webhooks._registry._reset_for_tests(None, read_age_s=None, due_in_s=0.0)
+
+    rows = outbox.inserted("memory_webhook_outbox")
+    assert [(r["event_type"], r["memory_key"], r["memory_version"]) for r in rows] == [
+        ("memory.redacted", "user_timezone", 1),
+        ("memory.redacted", "structured_profile", 3),
+    ]
+    assert rows[1]["memory_id"] == _PROFILE
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

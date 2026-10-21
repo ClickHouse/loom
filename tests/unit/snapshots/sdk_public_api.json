@@ -1679,6 +1679,27 @@
             ]
           }
         },
+        "webhook": {
+          "class": "WebhookOps",
+          "methods": {
+            "deliveries": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ],
+            "register": [
+              "body",
+              "options"
+            ],
+            "remove": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "working_memory": {
           "class": "WorkingMemoryOps",
           "methods": {
