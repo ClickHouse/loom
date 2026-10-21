@@ -98,8 +98,8 @@ They differ from `conversation.append` and `conversation.search` in six ways:
   end-user token calls these ops with `namespace: "@me"`
   ([sharing](../architecture/sharing.md#saved-messages)). The conversation tables have no
   `session_id`, so an `own_session` token is refused.
-  `conversation.search` and `conversation.get` stay refused under such a token, because
-  a thread mixes users and has no user axis to bound.
+  Every other conversation op (`append`, `get`, `list`, `search`, `threads`, ...) stays
+  refused under such a token, because a thread mixes users and has no user axis to bound.
 - **Ownership, deletion and role are checked on every save.** Saving a message stored
   under another `user_id` answers `indexed: false, reason: "owner_mismatch"`. A tombstoned
   message answers `reason: "deleted"`, and a stored system or tool turn, which is never

@@ -72,11 +72,10 @@ The same five ops serve both ways a chat runs in front of Loom:
   stores the text the request sends as a saved-only row, and unsaving it removes the row.
   As under the pinned token above, a body naming another user is refused with 403.
 
-A save that is not indexed answers `indexed: false` with a `reason` ([Saving single
-messages](../features/conversations-and-sessions.md#saving-single-messages)). A client
-draws a conversation's saved state with one `conversation.saved_status` call, and a user
-erasure takes the user's conversation rows, saved ones included. A user-scope
-`erasure.export` does not cover saved messages yet: it reads no conversation rows, so a
+A save that is not indexed answers `indexed: false` with a `reason` (listed on the
+feature page). A client draws a conversation's saved state with one
+`conversation.saved_status` call, and a user erasure takes the user's conversation rows,
+saved ones included. A user-scope `erasure.export` reads no conversation rows, so a
 user's saved messages are not in their export.
 
 ## Identity
@@ -243,7 +242,7 @@ asked to delete. `collection.delete` purges what its collection held (a namespac
 that takes the rows off disk) before the collection leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
 read, and in the user's own personal collection. Their saved messages are conversation
-rows, which the export does not cover yet ([Saved messages](#saved-messages)). An org
+rows, which the export does not read ([Saved messages](#saved-messages)). An org
 admin may erase a collection's rows without reading them; a platform admin sees every
 collection. Each section's read leaves out what the caller may not see before its limit,
 so a hidden row never takes a visible row's place on the page.

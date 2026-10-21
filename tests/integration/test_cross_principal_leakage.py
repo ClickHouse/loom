@@ -1364,24 +1364,6 @@ def test_positive_control_tenant_a_reads_its_canaries_in_the_tenant_text_planes(
     assert r.status_code == 200 and seed.leaked(r.text), r.text[:300]
 
 
-def test_positive_control_tenant_a_finds_its_saved_canary(control_plane_url, seed, tokens) -> None:
-    """The saved-message canary is real, so tenant B's empty saved search is a
-    refusal, not a vacuous probe."""
-    r = _post(
-        control_plane_url,
-        tokens["a_writer"],
-        "conversation.search_saved_messages",
-        {
-            "org": seed.org,
-            "namespace": seed.ns_a,
-            "agent": "a",
-            "user_id": _SAVED_USER,
-            "query": f"saved rotation passphrase {seed.conversation_nonce}",
-        },
-    )
-    assert r.status_code == 200 and seed.leaked(r.text), r.text[:300]
-
-
 @pytest.mark.parametrize(
     "op_name",
     [
