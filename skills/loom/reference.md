@@ -12,9 +12,10 @@ Calling convention, by surface: MCP tool `loom_<op_with_underscores>` or
 `loom_op {op, arguments}`; Python `await agent.call("<op>", {...})`;
 TypeScript `await agent.call("<op>", {...})`; HTTP `POST /v1/<op>`. The SDKs
 stamp `org`, `namespace` and `agent` for you; over HTTP you send them. A
-stamped `agent` narrows every op that looks rows up by author to your own
-rows; pass `agent: "*"` when you mean every author, except on the ops about
-you that the skill's Identity section names. Ops
+stamped `agent` narrows reads that look rows up by author, and
+`memory.update`, to your own rows; pass `agent: "*"` there when you mean
+every author, except on the ops about you and on `memory.delete`, which the
+skill's Identity section names. Ops
 marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
 `loom_search` searches memory, knowledge and conversations, and the rest are
 SDK and HTTP only.
@@ -130,10 +131,12 @@ on loses that boost.
 | `run.get`, `run.list`‡ | A run's record, with `over_budget`; recent runs. |
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
-Python: `async with agent.run_scope(goal=...) as run:` opens and closes it,
-stamps the run's `run_id` on writes and labels recall reads with the
+Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
+Its typed helpers carry the run's `run_id`, and label recall reads with the
 `X-Loom-Run-Id` header (a body `run_id` on `memory.search`‡ or `memory.ask`
-filters to the run's rows). The typed `agent.memory.update` sends no run,
+filters to the run's rows). A raw `agent.call` in the scope gets the run
+only on writes (working memory: `set` and `append`); pass `run_id` on its
+other working-memory calls and on `context.pack`. The typed `agent.memory.update` sends no run,
 and `memory.update_by_id` has no run field: revise by key through
 `agent.call("memory.update", {"agent": "*", ...})` inside a run.
 

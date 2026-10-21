@@ -47,7 +47,7 @@ The agent guide this server ships; the same for every caller.
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
-| `part` | `Literal['skill', 'reference', 'all']` | `'skill'` | Which part: `skill` (the loop and the rules), `reference` (every plane and its ops) or `all`. |
+| `part` | `Literal['skill', 'reference', 'all']` | `'skill'` | Which part: `skill` (the loop and rules, the default), `reference` (each plane) or `all`. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

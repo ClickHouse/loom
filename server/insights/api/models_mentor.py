@@ -97,7 +97,7 @@ class MentorGuideInput(BaseModel):
     """The agent guide this server ships; the same for every caller."""
 
     org: str = ""
-    # Which part: `skill` (the loop and the rules), `reference` (every plane and its ops) or `all`.
+    # Which part: `skill` (the loop and rules, the default), `reference` (each plane) or `all`.
     part: Literal["skill", "reference", "all"] = "skill"
 
 

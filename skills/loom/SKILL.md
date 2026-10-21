@@ -60,9 +60,12 @@ change between releases, and ops MCP does not serve with ‡.
    `context.pack`, and keep it off `memory.search`‡ and `memory.ask`, where
    a `run_id` filters to the run's own rows (over HTTP, the `X-Loom-Run-Id`
    header labels a read without filtering it). In Python,
-   `agent.run_scope(...)` stamps writes and labels reads for you, except
-   that the typed `agent.memory.update` sends no run: inside a run, revise
-   through `agent.call("memory.update", {"agent": "*", ...})`; in TypeScript,
+   the typed helpers inside `agent.run_scope(...)` carry the run for you,
+   except `agent.memory.update`, which sends none: revise through
+   `agent.call("memory.update", {"agent": "*", ...})`. A raw `agent.call`
+   in the scope gets the run only on writes (working memory: `set` and
+   `append`), so pass `run_id` yourself on its other working-memory calls
+   and on `context.pack`; in TypeScript,
    pass `runId` in the scope argument of writes, working-memory calls and
    `contextPack`, never of `recall` or `ask`; over MCP, the connection's own
    run labels reads.
@@ -139,8 +142,11 @@ end user when you serve many, `session_id` to the conversation or job, and
 On reads the same fields select rows, and ops differ in how. Three rules
 cover the loop:
 
-- **Every author: send `agent: "*"`.** A raw `agent.call` stamps your own
-  `agent`, which narrows most reads and `memory.update` to rows you wrote.
+- **Every author: send `agent: "*"` on reads and `memory.update`.** A raw
+  `agent.call` stamps your own `agent`, which narrows most reads and
+  `memory.update` to rows you wrote. Never on `memory.delete`: there your
+  stamped `agent` and `user_id` keep the delete to your own user's row,
+  and `"*"` would remove the newest row under the key from any user.
   The typed search, ask and update helpers (Python `agent.memory.search`,
   `ask`, `update`; TypeScript `agent.recall`, `agent.ask`) already read
   every author. Not on ops about you: `context.pack` and
