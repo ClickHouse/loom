@@ -341,7 +341,6 @@ _NEVER_ZERO = [
     "memory_profile_cas_max_retries",
     "memory_profile_search_embed_cap",
     "memory_proposals_scan_cap",
-    "memory_conflict_sweep_max_rows_per_pass",
     "sensitivity_sweep_max_rows_per_pass",
     "sensitivity_sweep_pages_per_pass",
     "memory_entity_extract_parse_fail_max",

@@ -124,6 +124,26 @@ class Settings(
         env_copied_from_settings_file) supplied when this object loaded."""
         return self._loaded_from.get(source, frozenset())
 
+    @model_validator(mode="after")
+    def _resolve_conflict_resolver(self) -> Settings:
+        """Unset, the conflict resolver is on unless the LLM provider or its model's
+        provider is `fake`; an explicit value is never overridden. A missing key does
+        not turn it off: writes are still marked, and the worker judges them once the
+        key is there."""
+        if "memory_conflict_resolver_enabled" not in self.model_fields_set:
+            self.memory_conflict_resolver_enabled = "fake" not in (
+                self.llm_provider,
+                self.conflict_resolver_provider(),
+            )
+            self._inferred_fields |= {"memory_conflict_resolver_enabled"}
+        return self
+
+    def conflict_resolver_provider(self) -> str:
+        """The provider the conflict resolver's model runs on."""
+        from server.core.llm_provider import provider_for_model
+
+        return provider_for_model(self.conflict_resolver_model, self.llm_provider)
+
     def inference_issuer(self) -> str:
         """The `iss` of the identity tokens Loom signs for an inference gateway
         (`inference_token_audience`): its public address under /v1, where the

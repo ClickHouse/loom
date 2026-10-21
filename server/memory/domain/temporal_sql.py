@@ -26,6 +26,9 @@ knowledge_time — "what loom KNEW at T". Record axis: written by T and not yet
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 # Status values a live (non-replay) read admits. Under knowledge_time a
 # 'superseded' row is admitted when its retirement postdates the anchor.
 LIVE_STATUSES: tuple[str, ...] = ("active", "duplicate", "conflicted")
@@ -77,6 +80,48 @@ def served_status_sql(
         include_proposed=include_proposed,
     )
     return f"{_c(alias, 'status')} IN ({', '.join(repr(x) for x in statuses)})"
+
+
+# An entity edge's holder: a `loom.memory` row live, not deleted, not expired and its
+# validity not ended. A 'high' row counts: the only edges linked to it are those of the
+# entities its writer declared (its value is never mined).
+EDGE_HOLDER_SQL = (
+    f"tombstoned_at IS NULL AND status IN ({', '.join(repr(s) for s in LIVE_STATUSES)})"
+    " AND (expires_at IS NULL OR expires_at > now())"
+    " AND (valid_to IS NULL OR valid_to > now())"
+)
+
+# A row whose current value may hold graph facts mined or stated from its text: an edge
+# holder that is not 'high' (a 'high' row's content stays out of the shared graph). Every
+# path that keeps or reopens a row's triples asks this; a point write asks its Python twin
+# (`graph_holders.holds_graph_facts`) of the row it just wrote.
+GRAPH_HOLDER_SQL = EDGE_HOLDER_SQL + " AND sensitivity != 'high'"
+
+# A row that still holds the value it was written with, for the edges of its declared
+# entities: not deleted and not retired (superseded, rejected or tombstoned), which keep
+# the row's value, so the columns tell. No validity or expiry test, so a proposal or a
+# fact dated in the past still counts.
+EDGE_HOLDS_VALUE_SQL = (
+    "tombstoned_at IS NULL"
+    f" AND status IN ({', '.join(repr(s) for s in (*LIVE_STATUSES, PROPOSED_STATUS))})"
+)
+
+# The same, not counting a row re-set as 'high': it holds none of its value's graph facts.
+HOLDS_VALUE_SQL = EDGE_HOLDS_VALUE_SQL + " AND sensitivity != 'high'"
+
+
+def edge_holder_sql(entities: Sequence[str]) -> tuple[str, dict[str, Any]]:
+    """(the test, its parameters) for a row still holding the value an edge between
+    `entities` was projected from: not deleted or retired, and not 'high' unless the row
+    names every one of them (a 'high' row keeps only the edges of the entities on it).
+    With no entities, a 'high' row holds none."""
+    if not entities:
+        return HOLDS_VALUE_SQL, {}
+    return (
+        f"{EDGE_HOLDS_VALUE_SQL}"
+        " AND (sensitivity != 'high' OR hasAll(entities, {edge_entities:Array(String)}))",
+        {"edge_entities": sorted(set(entities))},
+    )
 
 
 def _c(alias: str, col: str) -> str:

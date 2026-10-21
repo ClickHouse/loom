@@ -92,8 +92,8 @@ class ErasureClient:
         """Export all data Loom holds about a subject (data portability).
 
         Returns a dict with `counts` and per-section payloads (memory, knowledge,
-        conversations, conversation_threads, agent_events, audit_log). Each section may carry `truncated=True` if it
-        exceeded `section_limit`."""
+        conversations, conversation_threads, agent_events, audit_log). Each section
+        may carry `truncated=True` if it exceeded `section_limit`."""
         return await self._agent.transport.post(
             "/v1/erasure.export",
             {

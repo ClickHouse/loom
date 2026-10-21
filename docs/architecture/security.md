@@ -799,8 +799,9 @@ no search leg returns it. The other reads that could serve its value follow thre
   extractor ran (one written unlabelled, or arriving that way through `memory.copy_to` or an
   import) keeps the entities mined from its value on the row, not served by those reads. A
   row re-set as `high` through `memory.set` carries only its declared entities. Either way
-  the graph edges an earlier version projected remain: `facts.traverse` and `facts.path`
-  still walk them, as do `memory.backlinks` (which names a `high` key's shared entities and
+  the row keeps the graph edges of the entities on it and no other: those an earlier
+  version's text gave the graph end. The edges it keeps are walked by `facts.traverse` and
+  `facts.path`, as by `memory.backlinks` (which names a `high` key's shared entities and
   neighbours from them), `namespace.summary`'s top entities, `memory.outline`,
   `namespace.taxonomy`'s communities, the graph export and search's graph mode and
   expansion.
@@ -964,7 +965,7 @@ the chunks, digests and turns above when written and when served. The
 a new version per row and, for `high`, tombstoned embedding rows and entity vectors. Until
 the sweep labels it, an unlabelled row that holds a high shape (a credential, card
 number, SSN or stated PIN) is embedded like any other, so search serves it, and
-`memory.ask` and the conflict judge can send it to their models.
+`memory.ask` can send it to its model; the conflict resolver reads every row and peer for a high shape before its prompt and sends none that holds one.
 The worker reads only the trailing window and the shapes in
 `LOOM_SENSITIVITY_SWEEP_SHAPES` (`credential` and `email` by default); the historical
 backlog and the shapes the worker leaves out (by default IBAN-only rows, shape `other`,

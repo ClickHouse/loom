@@ -266,7 +266,7 @@ def test_same_key_supersession_reads_only_the_writers_rows() -> None:
     _run_as(
         _pinned("U"),
         lambda: supersede_same_key_rows(
-            org="o", namespace="n", new_rows=rows, ch=ch, policy="newest_wins"
+            follows=[], org="o", namespace="n", new_rows=rows, ch=ch, policy="newest_wins"
         ),
     )
     assert _scoped_to_u(ch)

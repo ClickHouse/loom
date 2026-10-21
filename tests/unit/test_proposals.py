@@ -209,7 +209,11 @@ def test_mark_peers_keeps_a_proposal_on_trial(monkeypatch: pytest.MonkeyPatch) -
         writes.append((ids, update(row)))
         return 1
 
+    async def _get(mid: str, **kw: Any) -> Any:
+        return _Row(mid, "active")
+
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
+    monkeypatch.setattr(memory_repo, "get_by_id", _get)
     asyncio.run(conflicts.mark_peers_conflicted(org="o", new_memory_id="new", peer_ids=["peer"]))
     assert writes == [
         (["new"], {"status": "proposed", "conflict_with": ["peer"]})
@@ -238,7 +242,6 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
 
     monkeypatch.setattr(memory_repo, "get_by_id", _get)
     monkeypatch.setattr(memory_repo, "supersede_duplicates", _never)
-    monkeypatch.setattr(conflicts, "_truncating_refines", _never)
     peer = conflict_rules.ConflictPeer(
         memory_id="p",
         memory_key="old",
