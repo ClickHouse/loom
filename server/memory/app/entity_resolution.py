@@ -470,9 +470,8 @@ async def resolve_entities_for_write(
             )
     if insert_rows:
         try:
-            # Committed: the next session of the same ingest must read these
-            # resolutions, and a batched flush of a table partitioned by org
-            # would write one part per org anyway.
+            # Committed: partitioned by org, so a shared flush that spans more than
+            # max_partitions_per_insert_block orgs would fail every insert waiting on it.
             await ch.insert(
                 "loom.entity_canonical_map",
                 insert_rows,

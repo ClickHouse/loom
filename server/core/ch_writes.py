@@ -1,6 +1,6 @@
-"""What `CHClient.insert` applies to a write before it is sent: the
-deduplication token that makes a retried batch land once (`dedup_settings`).
-Also the settings of a batched insert (`batched_insert_settings`).
+"""The deduplication settings `CHClient.insert` adds to every write
+(`dedup_settings`, `insert_dedup_token`), and the settings a call site passes
+for a batched insert (`batched_insert_settings`).
 """
 
 from __future__ import annotations

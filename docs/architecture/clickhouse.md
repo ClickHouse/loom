@@ -141,8 +141,8 @@ These tables stay committed:
 - **Version rows** of `memory`, `memory_embeddings`, `shared`, `session_summaries` and
   `entity_summaries`: their fenced `INSERT … SELECT FROM input()` ([rolling
   upgrades](rolling-upgrades.md)) cannot be buffered.
-- **`entity_canonical_map`**: it is partitioned by `org`, so a shared flush would still
-  write one part per org.
+- **`entity_canonical_map`**: it is partitioned by `org`, so a shared flush that spans
+  more than `max_partitions_per_insert_block` orgs would fail every insert waiting on it.
 - **Rows with a `Quantized`-coded vector** (`conversation_embeddings`, `entity_vectors`,
   `memory_chunks`): the codec refuses a vector of another width when the part is written
   (code 190), so one mis-sized row would fail every other insert in its flush.

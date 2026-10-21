@@ -96,7 +96,6 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
 READ_PATH_TABLES = [
     ("server/memory/store", "loom.memory_embeddings"),
     ("server/memory/store", "loom.memory"),
-    ("server/memory/app/chunk_projection.py", "loom.memory_chunks"),
 ]
 
 
@@ -107,6 +106,7 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
     for s in settings_seen:
         # The guarantee is "written before the INSERT returns":
         # `wait_for_async_insert = 1`, committed or batched.
+        # `loom.memory_chunks` is also on this path; COMMITTED_TABLES pins it.
         assert s.get("wait_for_async_insert") == 1 and s.get("async_insert") in (0, 1), (
             f"{table} in {rel_path} is written with {s}. This table is read on the "
             "default search path, so a fire-and-forget insert lets memory.set "
@@ -139,6 +139,30 @@ def test_tables_written_on_every_request_are_batched(rel_path: str, table: str) 
         assert s == batched_insert_settings(), (
             f"{table} in {rel_path} is written with {s}; pass "
             "`settings=batched_insert_settings()` so its inserts share parts."
+        )
+
+
+COMMITTED_TABLES = [
+    # A Quantized-coded vector: the codec refuses a row of another width (code 190).
+    ("server/memory/app/chunk_projection.py", "loom.memory_chunks"),
+    ("server/knowledge/store/conversations.py", "loom.conversation_embeddings"),
+    ("server/memory/app/projections.py", "loom.entity_vectors"),
+    # PARTITION BY org: a flush across too many orgs exceeds max_partitions_per_insert_block.
+    ("server/memory/app/entity_resolution.py", "loom.entity_canonical_map"),
+]
+
+
+@pytest.mark.parametrize("rel_path,table", COMMITTED_TABLES)
+def test_tables_that_fail_a_whole_flush_stay_committed(rel_path: str, table: str) -> None:
+    """A block-level error in a shared flush fails every insert waiting on it, so
+    one tenant's bad row or org count would fail another tenant's write."""
+    settings_seen = _insert_settings(ROOT / rel_path, table)
+    assert settings_seen, f"no insert of {table} in {rel_path}"
+    for s in settings_seen:
+        assert s == {"async_insert": 0, "wait_for_async_insert": 1}, (
+            f"{table} in {rel_path} is written with {s}. Keep it committed: a "
+            "block-level error in a shared flush fails every insert waiting on it, "
+            "including other tenants' inserts."
         )
 
 
