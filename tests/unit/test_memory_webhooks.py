@@ -797,26 +797,16 @@ async def test_a_sweep_cut_short_announces_the_rows_it_relabelled_in_one_insert(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
 ) -> None:
     from server.memory.app import sensitivity_sweep
+    from server.memory.store.sensitivity_sweep_sql import SORT_KEY
 
     def candidate(key: str) -> sensitivity_sweep.SweepCandidate:
+        ident = ("acme", "chat", "bot", "u1", "-", key)
         return sensitivity_sweep.SweepCandidate(
-            memory_id=f"m-{key}",
-            org="acme",
-            namespace="chat",
-            agent="bot",
-            user_id="u1",
-            session_id="-",
-            memory_key=key,
+            f"m-{key}",
+            *ident,
             level="medium",
             shapes=("email",),
-            sort_key={
-                "org": "acme",
-                "namespace": "chat",
-                "agent": "bot",
-                "user_id": "u1",
-                "session_id": "-",
-                "memory_key": key,
-            },
+            sort_key=dict(zip(SORT_KEY, ident, strict=True)),
         )
 
     async def write(org: str, ids: list[str], update: Any, **k: Any) -> int:
