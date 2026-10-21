@@ -140,7 +140,7 @@ class StructuredProfileConfig:
 class StructuredProfileResult:
     namespaces_reached: int = 0
     profiles_written: int = 0
-    # Builds that wrote nothing: already current, or a fact erased while the model ran.
+    # Builds that wrote nothing: already current, or the sources changed while the model ran.
     skipped: int = 0
     # Builds the profile row refused; the user waits for their memories to change.
     refused: int = 0
@@ -352,6 +352,7 @@ async def _scan(
             refused=refused_at(schema.org, schema.namespace),
             timeout_seconds=settings.structured_profile_scan_timeout_seconds,
             max_memory_bytes=settings.structured_profile_scan_max_memory_bytes,
+            scope=WHOLE_NAMESPACE,
         )
     except Exception as e:  # one namespace's scan must not stop the pass
         result.errors += 1
@@ -456,12 +457,11 @@ def _refuses_a_write(row: dict[str, Any] | None) -> bool:
 async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     """Build and write one user's profile; returns how many of the model's values
     broke the schema and were stored as null, or None when nothing was written: the
-    profile was already current, or a fact the build read stopped being a current
-    fact while the model ran.
+    profile was already current, or the user's sources changed while the model ran.
     Raises `Refused` when the profile row will not take the write."""
     org, ns = schema.org, schema.namespace
-    # The digest and its time first: a fact written while the model runs leaves the
-    # profile behind it, and the next pass rebuilds it.
+    # The digest and its time first: the write is checked against this digest once
+    # the model has answered.
     read_at = naive_utc_now_seconds()
     digest, count = await profile_sources.sources_digest(
         org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
@@ -483,7 +483,11 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     # A pin or lock still holds on a head that was redacted or expired, which reads as
     # no profile; checked before paying for the model call.
     hold = existing or await profile_sources.profile_head_hold(
-        org=org, namespace=ns, user_id=user_id, label=settings.structured_profile_label
+        org=org,
+        namespace=ns,
+        user_id=user_id,
+        label=settings.structured_profile_label,
+        scope=WHOLE_NAMESPACE,
     )
     if _refuses_a_write(hold):
         raise Refused(digest, profile_version, 0)
@@ -503,15 +507,16 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
     with customer.for_org(org), pipeline_actor(WORKER_ACTOR):
         if facts:
             answer = await _ask(org, ns, schema.props, facts)
-        # A fact the model read that is no longer current (erased or deleted while it
-        # ran) stops the write: this narrows the window in which a profile could land
-        # above an erasure, and the erasure saga's census fails closed on one that does.
-        if used:
-            live = await profile_sources.live_ids(
-                org=org, namespace=ns, user_id=user_id, memory_ids=used, scope=WHOLE_NAMESPACE
-            )
-            if len(live) < len(used):
-                return None
+        # Sources that moved while the model ran (a fact edited, redacted, erased,
+        # deleted or added) stop the write: the model may have read text that is gone,
+        # and the next pass rebuilds from what is current. This narrows the window in
+        # which a profile could land above an erasure or a redact, and the erasure
+        # saga's census fails closed on one that does.
+        now_digest, _ = await profile_sources.sources_digest(
+            org=org, namespace=ns, user_id=user_id, scope=WHOLE_NAMESPACE
+        )
+        if now_digest != digest:
+            return None
         profile, dropped = profile_schema.conform(schema.props, answer)
         try:
             await schema_app.write_structured_profile(
@@ -530,7 +535,7 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
             # A 4xx from memory.set (a lock or pin set since the check, the char
             # limit, the blacklist) refuses the same build again; anything else is a
             # failure to retry.
-            status = getattr(e, "status_code", 500)
+            status = e.status_code
             if 400 <= status < 500:
                 raise Refused(digest, profile_version, status) from e
             raise

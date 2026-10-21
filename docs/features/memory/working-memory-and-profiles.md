@@ -107,12 +107,12 @@ schema; the `structured_profile` worker keeps each user's profile current in tha
 from the user's memories; `profile.structured` returns it with its status. A read never
 calls a model.
 
-| Op                     | Role   | Does                                                                         |
-| ---------------------- | ------ | ---------------------------------------------------------------------------- |
-| `profile_schema.set`   | admin  | Set the namespace's schema (`json_schema`); audited. Replaces the old one.   |
-| `profile_schema.get`   | viewer | The schema, its `schema_sha256`, who set it and when.                        |
-| `profile_schema.clear` | admin  | Remove the schema; audited. Built profiles stay as memory rows.              |
-| `profile.structured`   | viewer | One user's profile: `profile`, `status`, `built_at`, `memory_id`, `version`. |
+| Op                     | Role   | Does                                                                                                                                         |
+| ---------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `profile_schema.set`   | admin  | Set the namespace's schema (`json_schema`); audited. Replaces the old one.                                                                   |
+| `profile_schema.get`   | viewer | The schema, its `schema_sha256`, who set it and when.                                                                                        |
+| `profile_schema.clear` | admin  | Remove the schema; audited. Built profiles stay as memory rows.                                                                              |
+| `profile.structured`   | viewer | One user's profile: `profile`, `status`, `built_at`, `memory_id`, `version` (and `version_text`, the same as a string, exact in JavaScript). |
 
 The schema is a JSON Schema object with 1 to 64 `properties`, at most 16 KiB. Each
 property has a `type` (`string`, `number`, `integer`, `boolean`, or `array` with `items`
@@ -175,9 +175,12 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   row's last change, does not. The digest covers every source,
   while a build reads only the `LOOM_STRUCTURED_PROFILE_MEMORY_LIMIT` (100) most confident
   and newest: for a user with more facts than that, a change to one outside that set still
-  costs a model call that cannot change the answer. A schema change or a deletion
-  (fewer sources than the profile was built from) is rebuilt on the next pass; other
-  changes after `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
+  costs a model call that cannot change the answer. A schema change is rebuilt on the
+  next pass. A deletion (fewer sources than the profile was built from) skips the
+  cooldown and is rebuilt once the namespace is next scanned, at most
+  `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) later; `profile.structured`
+  reports it `stale` at once. Other changes are rebuilt after
+  `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
   whose facts are all gone gets an all-`null` profile without a model call. An expired,
   redacted or `high` profile row reads as no profile (`pending`) and is rebuilt.
 - **Validation.** The model's answer is held to the schema before it is written: a value

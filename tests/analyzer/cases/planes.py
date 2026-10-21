@@ -807,28 +807,26 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
         await profile_sources.sources_digest(
             org=ORG, namespace=NS, user_id="u1", scope=scope, ch=ch
         )
-        await profile_sources.live_ids(
-            org=ORG, namespace=NS, user_id="u1", memory_ids=["m1"], scope=scope, ch=ch
-        )
         await profile_sources.profile_row(
             org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
         )
-    await profile_sources.profile_head_hold(
-        org=ORG, namespace=NS, user_id="u1", label="structured_profile", ch=ch
-    )
-    await profile_sources.users_behind(
-        org=ORG,
-        namespace=NS,
-        label="structured_profile",
-        schema_sha256="0" * 64,
-        cooldown_seconds=600,
-        limit=10,
-        skip=("u2",),
-        refused={"u3": ("0" * 16, 1)},
-        timeout_seconds=60,
-        max_memory_bytes=4 * 1024**3,
-        ch=ch,
-    )
+        await profile_sources.profile_head_hold(
+            org=ORG, namespace=NS, user_id="u1", label="structured_profile", scope=scope, ch=ch
+        )
+        await profile_sources.users_behind(
+            org=ORG,
+            namespace=NS,
+            label="structured_profile",
+            schema_sha256="0" * 64,
+            cooldown_seconds=600,
+            limit=10,
+            skip=("u2",),
+            refused={"u3": ("0" * 16, 1)},
+            timeout_seconds=60,
+            max_memory_bytes=4 * 1024**3,
+            scope=scope,
+            ch=ch,
+        )
 
 
 def cases() -> list[Case]:

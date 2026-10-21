@@ -157,37 +157,6 @@ async def sources_digest(
     return str(row["digest"]), int(row["n"])
 
 
-async def live_ids(
-    *,
-    org: str,
-    namespace: str,
-    user_id: str,
-    memory_ids: list[str],
-    scope: ReadFilters,
-    ch: _CHClient | None = None,
-) -> set[str]:
-    """Which of `memory_ids` are still current facts of the user."""
-    ch = ch or _default_client()
-    params: dict[str, Any] = {
-        "org": org,
-        "ns": namespace,
-        "uid": user_id,
-        "ids": memory_ids,
-        "types": STRUCTURED_TYPES,
-    }
-    rows = await ch.query_all(
-        f"""
-        SELECT toString(memory_id) AS memory_id
-        FROM loom.memory FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}
-          AND toString(memory_id) IN {{ids:Array(String)}} AND {CURRENT_FACTS}
-          {scope_and(scope, params)}
-        """,
-        params=params,
-    )
-    return {str(r["memory_id"]) for r in rows}
-
-
 async def profile_row(
     *,
     org: str,
@@ -216,21 +185,28 @@ async def profile_row(
 
 
 async def profile_head_hold(
-    *, org: str, namespace: str, user_id: str, label: str, ch: _CHClient | None = None
+    *,
+    org: str,
+    namespace: str,
+    user_id: str,
+    label: str,
+    scope: ReadFilters,
+    ch: _CHClient | None = None,
 ) -> dict[str, Any] | None:
     """The pin and lock of the user's structured profile key's head, redacted or
     expired: a write to the key checks its head, not the row a reader is served."""
     ch = ch or _default_client()
+    params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "label": label}
     row: dict[str, Any] | None = await ch.query_one(
-        """
+        f"""
         SELECT pinned, lock_mode, lock_until
         FROM loom.memory FINAL
-        WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {uid:String}
-          AND agent = '-' AND session_id = '-' AND memory_key = {label:String}
-          AND memory_type = 'profile' AND tombstoned_at IS NULL
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}
+          AND agent = '-' AND session_id = '-' AND memory_key = {{label:String}}
+          AND memory_type = 'profile' AND tombstoned_at IS NULL{scope_and(scope, params)}
         LIMIT 1
         """,
-        params={"org": org, "ns": namespace, "uid": user_id, "label": label},
+        params=params,
     )
     return row
 
@@ -256,6 +232,7 @@ async def users_behind(
     refused: dict[str, tuple[str, int]] | None = None,
     timeout_seconds: float,
     max_memory_bytes: int,
+    scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> list[Behind]:
     """Users of the namespace whose structured profile is missing, built under
@@ -295,7 +272,7 @@ async def users_behind(
             SELECT user_id, {SOURCES_DIGEST} AS digest, count() AS n
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
-              AND {CURRENT_FACTS}
+              AND {CURRENT_FACTS}{scope_and(scope, params)}
             GROUP BY user_id
         ) AS s
         FULL JOIN (
@@ -305,7 +282,7 @@ async def users_behind(
                    )) AS built_from
             FROM loom.memory FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id != '-'
-              AND {_LIVE_PROFILE}
+              AND {_LIVE_PROFILE}{scope_and(scope, params)}
         ) AS p ON p.user_id = s.user_id
         WHERE if(s.user_id != '', s.user_id, p.user_id) NOT IN {{skip:Array(String)}}
           AND (NOT has(p.tags, {{schema_tag:String}})

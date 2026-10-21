@@ -285,16 +285,18 @@ def test_a_pinned_or_locked_profile_refuses_a_write() -> None:
 
 def _one_user(
     monkeypatch: pytest.MonkeyPatch,
-    live_after: set[str],
+    digest_after: str = "d1",
     existing: dict[str, Any] | None = None,
     head: dict[str, Any] | None = None,
 ) -> list[Any]:
-    """A build of one user who has facts m1 and m2, of which `live_after` are still
-    current once the model has answered; `head` is the key's head when it is not the
-    live row (redacted or expired). Returns what was written."""
+    """A build of one user who has facts m1 and m2, whose sources digest is "d1" when
+    the build starts and `digest_after` once the model has answered; `head` is the
+    key's head when it is not the live row (redacted or expired). Returns what was
+    written."""
+    digests = ["d1", digest_after]
 
     async def sources_digest(**kw: Any) -> tuple[str, int]:
-        return ("d1", 2)
+        return (digests.pop(0), 2)
 
     async def profile_row(**kw: Any) -> dict[str, Any] | None:
         return existing
@@ -308,9 +310,6 @@ def _one_user(
             {"memory_id": "m2", "value": '"I speak en."', "since": "2026-01-02"},
         ]
 
-    async def live_ids(**kw: Any) -> set[str]:
-        return set(live_after)
-
     async def ask(*a: Any) -> dict[str, Any]:
         return {"tz": "UTC"}
 
@@ -323,7 +322,6 @@ def _one_user(
     monkeypatch.setattr(profile_sources, "profile_row", profile_row)
     monkeypatch.setattr(profile_sources, "profile_head_hold", profile_head_hold)
     monkeypatch.setattr(profile_sources, "user_facts", user_facts)
-    monkeypatch.setattr(profile_sources, "live_ids", live_ids)
     monkeypatch.setattr(schema_app, "write_structured_profile", write)
     monkeypatch.setattr(w, "_ask", ask)
     return written
@@ -337,16 +335,40 @@ _real_write = schema_app.write_structured_profile
 async def test_a_fact_erased_while_the_model_ran_stops_the_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    written = _one_user(monkeypatch, {"m1"})  # m2 erased during the model call
+    written = _one_user(monkeypatch, digest_after="d2")  # m2 erased during the model call
     assert await w.build_profile(_ONE, "u1") is None
     assert written == []
+
+
+@pytest.mark.asyncio
+async def test_a_fact_edited_while_the_model_ran_stops_the_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m1 moves to a new version (its old one then redacted) during the model call:
+    the model read text that is gone, so nothing is written."""
+    written = _one_user(monkeypatch)
+    calls = 0
+
+    async def sources_digest(**kw: Any) -> tuple[str, int]:
+        # Before the call m1 is at version 1, after it at version 2.
+        return ("d1" if calls == 0 else "d-m1-v2", 2)
+
+    async def ask(*a: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        return {"tz": "UTC"}
+
+    monkeypatch.setattr(profile_sources, "sources_digest", sources_digest)
+    monkeypatch.setattr(w, "_ask", ask)
+    assert await w.build_profile(_ONE, "u1") is None
+    assert calls == 1 and written == []
 
 
 @pytest.mark.asyncio
 async def test_a_build_writes_its_label_tags_and_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
-    _one_user(monkeypatch, {"m1", "m2"})
+    _one_user(monkeypatch)
     monkeypatch.setattr(schema_app, "write_structured_profile", _real_write)
     sections: list[Any] = []
 
@@ -378,7 +400,7 @@ async def test_a_profile_already_current_is_not_built_again(
         "lock_until": None,
         "tags": ["profile_schema:" + "h" * 16, "profile_sources:d1", "profile_count:2"],
     }
-    written = _one_user(monkeypatch, {"m1", "m2"}, existing=current)
+    written = _one_user(monkeypatch, existing=current)
     assert await w.build_profile(_ONE, "u1") is None
     assert written == []
 
@@ -388,7 +410,7 @@ async def test_a_pinned_profile_is_refused_before_the_model_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pinned = {"version": 7, "pinned": 1, "lock_mode": "", "lock_until": None, "tags": []}
-    written = _one_user(monkeypatch, {"m1", "m2"}, existing=pinned)
+    written = _one_user(monkeypatch, existing=pinned)
 
     async def no_call(*a: Any) -> dict[str, Any]:
         raise AssertionError("no model call for a refused build")
@@ -405,7 +427,7 @@ async def test_a_pin_on_a_redacted_head_is_refused_before_the_model_call(
 ) -> None:
     # A redacted head reads as no profile, but its pin still refuses the write.
     pinned = {"pinned": 1, "lock_mode": "", "lock_until": None}
-    written = _one_user(monkeypatch, {"m1", "m2"}, head=pinned)
+    written = _one_user(monkeypatch, head=pinned)
 
     async def no_call(*a: Any) -> dict[str, Any]:
         raise AssertionError("no model call for a refused build")
@@ -420,7 +442,7 @@ async def test_a_pin_on_a_redacted_head_is_refused_before_the_model_call(
 async def test_a_write_the_row_refuses_is_a_refusal_carrying_the_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _one_user(monkeypatch, {"m1", "m2"})
+    _one_user(monkeypatch)
 
     async def refuse(**kw: Any) -> None:
         raise HTTPException(status_code=422, detail={"code": "CHAR_LIMIT_EXCEEDED"})
@@ -477,7 +499,7 @@ async def test_the_configured_model_answers(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_what_the_write_answers_decides_refusal_or_failure(
     monkeypatch: pytest.MonkeyPatch, status: int, code: str, refused: bool
 ) -> None:
-    _one_user(monkeypatch, {"m1", "m2"})
+    _one_user(monkeypatch)
 
     async def answer(**kw: Any) -> None:
         raise HTTPException(status_code=status, detail={"code": code})
@@ -658,7 +680,7 @@ async def test_a_user_with_no_facts_and_no_profile_gets_no_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A user erased after a scan listed them: the cached entry writes nothing."""
-    written = _one_user(monkeypatch, set())
+    written = _one_user(monkeypatch)
 
     async def nothing(**kw: Any) -> tuple[str, int]:
         return ("", 0)

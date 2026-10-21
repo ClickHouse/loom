@@ -244,6 +244,7 @@ async def _behind(
     limit: int = 10,
     refused: dict[str, tuple[str, int]] | None = None,
 ) -> list[str]:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import profile_sources as src
 
     behind = await src.users_behind(
@@ -256,6 +257,7 @@ async def _behind(
         refused=refused,
         timeout_seconds=60,
         max_memory_bytes=4 * 1024**3,
+        scope=WHOLE_NAMESPACE,
         ch=ch,
     )
     return [b.user_id for b in behind]
@@ -474,24 +476,6 @@ async def test_a_user_whose_memories_are_gone_is_rebuilt_empty() -> None:
     assert await _behind(_LocalCH(*emptied)) == []
 
 
-@_needs_ch
-@pytest.mark.asyncio
-async def test_only_the_named_facts_that_are_still_current_are_live() -> None:
-    from server.identity.domain.read_scope import WHOLE_NAMESPACE
-    from server.memory.store import profile_sources as src
-
-    ch = _LocalCH(
-        ddl("memory"),
-        _fact(_A, "u1", "tz", "a"),
-        _fact(_B, "u1", "lang", "b"),
-        _fact(_B, "u1", "lang", "b", version=2, tombstoned_at="now()"),
-    )
-    live = await src.live_ids(
-        org="o", namespace="n", user_id="u1", memory_ids=[_A, _B], scope=WHOLE_NAMESPACE, ch=ch
-    )
-    assert live == {_A}
-
-
 def test_a_number_that_is_not_finite_or_exact_reads_null() -> None:
     props = ps.parse(
         _schema(n={"type": "number", "description": "d"}, i={"type": "integer", "description": "d"})
@@ -629,6 +613,7 @@ async def test_a_stored_schema_that_no_longer_parses_reads_as_no_schema(
 @_needs_ch
 @pytest.mark.asyncio
 async def test_every_digest_is_16_hex_characters() -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.store import profile_sources as src
 
     users = [f"u{i:02d}" for i in range(64)]
@@ -645,6 +630,7 @@ async def test_every_digest_is_16_hex_characters() -> None:
         limit=len(users),
         timeout_seconds=60,
         max_memory_bytes=4 * 1024**3,
+        scope=WHOLE_NAMESPACE,
         ch=_LocalCH(ddl("memory"), *facts),
     )
     digests = [b.digest for b in behind]
