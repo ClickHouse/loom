@@ -171,7 +171,8 @@ async def record_usage_event(
 ) -> None:
     """Append a usage event for the AggregatingMergeTree totals. Buffered and
     flushed by the background loop; the call that fills the buffer waits for its
-    flush (the short batched window). Drops past 10x the bound.
+    flush (the short batched window). A failed flush requeues its batch, dropping it
+    when the buffer would pass 10x the bound.
 
     `agent` carries which client triggered the event (for per-agent recall
     breakdown); empty string is valid for paths without a clear agent.

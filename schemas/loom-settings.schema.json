@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Concurrent inserts into one table share a part and each returns once written; false commits them, one part each (pool sizing: docs/architecture/clickhouse.md#batched-inserts)."
+          "description": "Batch the inserts written on every request (audit rows, transcript turns, outbox, evidence; list and pool sizing: docs/architecture/clickhouse.md#batched-inserts) so concurrent ones share a part; false commits them, one part each. Ledger flushes stay waited async inserts either way."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,

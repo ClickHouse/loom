@@ -101,9 +101,10 @@ settings:
   # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. [restart]
   # ch_timeout_ddl_s: 300.0
 
-  # Concurrent inserts into one table share a part and each returns once written; false
-  # commits them, one part each (pool sizing:
-  # docs/architecture/clickhouse.md#batched-inserts). [live]
+  # Batch the inserts written on every request (audit rows, transcript turns, outbox,
+  # evidence; list and pool sizing: docs/architecture/clickhouse.md#batched-inserts) so
+  # concurrent ones share a part; false commits them, one part each. Ledger flushes stay
+  # waited async inserts either way. [live]
   # ch_batched_inserts: true
 
   # Longest wait, ms, of a batched or waited async insert a request waits on for others

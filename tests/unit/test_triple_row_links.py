@@ -424,6 +424,39 @@ async def test_an_undo_weighs_what_is_open_with_pending_closes_applied(
     ]
 
 
+@pytest.mark.parametrize("switch", [True, False])
+async def test_a_follow_plans_successors_are_waited_inserts_on_the_batched_bounds(
+    monkeypatch, switch: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.app.triple_projections import write_follow_plan
+    from server.memory.domain import triples_follow_rows as tfr
+
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
+    successor = tfr.Successor(
+        subject="user",
+        relation="live_in",
+        object="berlin",
+        memory_key="home",
+        valid_from=None,
+        confidence=1.0,
+        provenance="extracted",
+        memory_id="m2",
+        content_sha256="sha",
+        user_id="u",
+    )
+    ch = _CH()
+    scope = SimpleNamespace(org="o", namespace="ns")
+    await write_follow_plan(scope, tfr.FollowPlan(closes=[], inserts=[successor]), ch=ch)
+    expected = async_insert_settings()
+    assert ch.settings == {
+        "loom.entity_triple_memories": expected,
+        "loom.entity_triple_rows": expected,
+        "loom.entity_triples": expected,
+    }
+
+
 async def test_an_undo_refused_on_the_fly_writes_nothing_and_is_recorded(monkeypatch) -> None:
     # While another org's subquery mutation is pending, ClickHouse refuses every
     # on-the-fly read of the table: the Undo writes nothing to the graph, and the
