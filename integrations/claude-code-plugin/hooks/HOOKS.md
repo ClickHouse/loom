@@ -137,8 +137,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   to once per session; the hook repeats that limit (six per session) and
   makes no request of its own.
 - **loom-blast-radius.** After Edit/Write/MultiEdit in a loom-indexed repo,
-  diffs the file against HEAD, sends its paths and hunk headers only
-  (`diffHeaders`) and asks code.impact (depth 1) what the touched symbols
+  diffs the file against HEAD, sends its paths, hunk ranges and function names
+  only (`diffHeaders`) and asks code.impact (depth 1) what the touched symbols
   reach; injects one line — callers, tests reaching the change, and co-change
   partner files this session has not touched. The same touched set is
   reported once per session. LOOM_BLAST_RADIUS=off disables.
@@ -192,7 +192,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
 - **loom-test-gate.** With uncommitted changes this session made in a
   loom-indexed repo (dirty paths the transcript shows an edit tool targeted
   or a shell command named; a tree left dirty before the session gates
-  nothing), sends the change's paths and hunk headers only (`diffHeaders`) to
+  nothing), sends the change's paths, hunk ranges and function names only
+  (`diffHeaders`) to
   code.test_gate for its obligations and blocks the stop once per distinct
   change with a reason naming them. LOOM_TEST_GATE=off disables;
   LOOM_TEST_GATE_DEPTH sets hops (1-3).

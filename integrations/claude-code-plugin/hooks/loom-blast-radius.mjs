@@ -83,14 +83,15 @@ async function main() {
 
   // The session's edits to this file, as the index will see them: post-image
   // line numbers, no context lines to subtract. Untracked = nothing depends
-  // on it yet; empty = the edit was a no-op or already committed, or the outline
-  // sent in its place has nothing the server can read.
+  // on it yet; empty = the edit was a no-op or already committed. The outline is
+  // sent in its place; with no `+++` path in it (a mode-only change, a binary file,
+  // a header dropped for a line end) the server has nothing to read.
   const diff = git(["diff", ...DIFF_ARGS, "--unified=0", "HEAD", "--", rel], root, {
     timeoutMs: 2000,
     raw: true,
   });
   const outline = diffHeaders(diff, 200_000);
-  if (!outline) {
+  if (!/^\+\+\+ /m.test(outline)) {
     scheduleExit(0);
     return;
   }

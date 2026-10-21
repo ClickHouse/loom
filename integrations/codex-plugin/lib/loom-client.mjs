@@ -755,8 +755,9 @@ export function redactHead(text, max, token = resolveToken()) {
 }
 
 // What a hook's `git diff` passes so the user's diff settings cannot change what is
-// sent: no external tool, colour or textconv program, git's own path prefixes, and
-// a submodule as one line rather than its commit subjects.
+// sent: no external tool, colour or textconv program, git's own path prefixes, a
+// submodule as one line rather than its commit subjects, and git's default hunk
+// boundaries (no merging of nearby hunks, the default algorithm).
 export const DIFF_ARGS = [
   "--no-ext-diff",
   "--no-color",
@@ -764,6 +765,8 @@ export const DIFF_ARGS = [
   "--src-prefix=a/",
   "--dst-prefix=b/",
   "--submodule=short",
+  "--inter-hunk-context=0",
+  "--diff-algorithm=myers",
 ];
 
 // A hunk header: its ranges, then the function context git appends to it.
