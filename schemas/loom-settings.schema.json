@@ -3469,13 +3469,13 @@
           "default": 40,
           "minimum": 1,
           "type": "integer",
-          "description": "Marked rows read per batch; a full batch with no errors is followed at once by the next, for up to 300 s of a pass."
+          "description": "Marked rows read per batch; a full batch with no errors is followed at once by the next, for up to memory_conflict_resolver_burst_seconds of a pass."
         },
         "memory_conflict_resolver_burst_seconds": {
           "default": 300.0,
           "minimum": 0,
           "type": "number",
-          "description": "Seconds a pass whose owed read came back full keeps reading the next batch at once (half of memory_conflict_resolver_max_pass_seconds); a short read ends it. 0 = one batch a pass."
+          "description": "Seconds a pass whose owed read came back full keeps reading the next batch at once; a short read ends it. 0 = one batch a pass. At most half of memory_conflict_resolver_max_pass_seconds, so a pass ends before its deadline."
         },
         "memory_conflict_resolver_cap_share": {
           "default": 0.25,

@@ -2194,6 +2194,21 @@ async def test_a_pass_tags_its_queries_as_the_resolver(pass_env: NS, monkeypatch
     assert tags == ["worker.conflict_resolver"]
 
 
+def test_a_resolver_burst_ends_within_half_the_pass_deadline() -> None:
+    from pydantic import ValidationError
+
+    from server.settings.catalog import MemorySettings
+
+    with pytest.raises(ValidationError, match="BURST_SECONDS must be at most half"):
+        MemorySettings(memory_conflict_resolver_max_pass_seconds=200.0)
+    assert (
+        MemorySettings(
+            memory_conflict_resolver_burst_seconds=100.0
+        ).memory_conflict_resolver_max_pass_seconds
+        == 600.0
+    )
+
+
 def test_the_resolver_interval_is_at_least_a_second() -> None:
     from pydantic import ValidationError
 
@@ -2252,18 +2267,6 @@ def test_a_flag_takes_the_flag_confidence(verdict: str) -> None:
 def test_a_compatible_verdict_still_clears_at_the_clear_confidence() -> None:
     assert _action(_v("related", 0.90)) == cr.CLEAR
     assert _action(_v("related", 0.89)) == cr.NOTHING
-
-
-async def test_another_anonymous_session_with_nothing_flagged_is_not_judged(row_env: NS) -> None:
-    """The anonymous user's other sessions are other tasks: a verdict there can only
-    clear a flag, and this pair has none, so no call is paid for and the row is
-    stamped."""
-    row_env.mem = _mem(user_id="-")
-    row_env.heads["m1"] = row_env.mem
-    row_env.peers = [{**row_env.peers[0], "user_id": "-"}]
-    counts = await _resolve()
-    assert row_env.llm_calls == 0 and counts.judged == 0
-    assert row_env.stamped == ["office_city"] and row_env.acted == []
 
 
 async def test_another_anonymous_session_still_flagged_is_judged_and_cleared(row_env: NS) -> None:

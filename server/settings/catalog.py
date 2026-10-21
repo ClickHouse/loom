@@ -2137,7 +2137,7 @@ class MemorySettings(BaseModel):
     # verdict clears the pair's flag.
     memory_conflict_resolver_clear_confidence: float = Field(default=0.90, ge=0.0, le=1.0)
     # Marked rows read per batch; a full batch with no errors is followed at once by the
-    # next, for up to 300 s of a pass.
+    # next, for up to memory_conflict_resolver_burst_seconds of a pass.
     memory_conflict_resolver_batch: Annotated[int, LIVE] = Field(default=40, ge=1)
     # Rows already `conflicted` that no resolver judged (a cosine flag, or an older build's
     # judge) re-checked per pass, after the marked rows. 0 = no re-check.
@@ -2155,10 +2155,10 @@ class MemorySettings(BaseModel):
     memory_conflict_resolver_interval_seconds: float = Field(default=10.0, ge=1.0)
     # Seconds a conflict-resolver pass may run before the supervisor abandons it.
     memory_conflict_resolver_max_pass_seconds: float = Field(default=600.0, gt=0)
-    # Seconds a pass whose owed read came back full keeps reading the next batch at once
-    # (half of memory_conflict_resolver_max_pass_seconds); a short read ends it. 0 = one
-    # batch a pass.
-    memory_conflict_resolver_burst_seconds: Annotated[float, LIVE] = Field(default=300.0, ge=0)
+    # Seconds a pass whose owed read came back full keeps reading the next batch at once; a
+    # short read ends it. 0 = one batch a pass. At most half of
+    # memory_conflict_resolver_max_pass_seconds, so a pass ends before its deadline.
+    memory_conflict_resolver_burst_seconds: float = Field(default=300.0, ge=0)
     # Times a row is judged and left owed (a flagged peer the answer leaves out, an error
     # after the call) before it is stamped, errored: each is a paid call.
     memory_conflict_resolver_max_attempts: Annotated[int, LIVE] = Field(default=3, ge=1)
@@ -2606,9 +2606,10 @@ class MemorySettings(BaseModel):
     # ===== MemoryAsk ==============================================================
 
     @model_validator(mode="after")
-    def _check_resolver_confidences(self) -> MemorySettings:
+    def _check_resolver_settings(self) -> MemorySettings:
         """Retiring takes more confidence than flagging, and flagging than clearing: the
-        band between the flag and the retire confidence is the one that goes to review."""
+        band between the flag and the retire confidence is the one that goes to review. A
+        pass's burst ends before the supervisor's deadline would cut its bookkeeping."""
         if not (
             self.memory_conflict_resolver_clear_confidence
             <= self.memory_conflict_resolver_flag_confidence
@@ -2618,6 +2619,14 @@ class MemorySettings(BaseModel):
                 "LOOM_MEMORY_CONFLICT_RESOLVER_FLAG_CONFIDENCE must lie between "
                 "LOOM_MEMORY_CONFLICT_RESOLVER_CLEAR_CONFIDENCE and "
                 "LOOM_MEMORY_CONFLICT_RESOLVER_RETIRE_CONFIDENCE"
+            )
+        if (
+            self.memory_conflict_resolver_burst_seconds
+            > self.memory_conflict_resolver_max_pass_seconds / 2
+        ):
+            raise ValueError(
+                "LOOM_MEMORY_CONFLICT_RESOLVER_BURST_SECONDS must be at most half of "
+                "LOOM_MEMORY_CONFLICT_RESOLVER_MAX_PASS_SECONDS"
             )
         return self
 

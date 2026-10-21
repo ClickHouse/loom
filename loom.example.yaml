@@ -2566,7 +2566,7 @@ settings:
   # memory_conflict_resolver_clear_confidence: 0.9
 
   # Marked rows read per batch; a full batch with no errors is followed at once by the
-  # next, for up to 300 s of a pass. [live]
+  # next, for up to memory_conflict_resolver_burst_seconds of a pass. [live]
   # memory_conflict_resolver_batch: 40
 
   # Rows already `conflicted` that no resolver judged (a cosine flag, or an older
@@ -2593,9 +2593,10 @@ settings:
   # [restart]
   # memory_conflict_resolver_max_pass_seconds: 600.0
 
-  # Seconds a pass whose owed read came back full keeps reading the next batch at once
-  # (half of memory_conflict_resolver_max_pass_seconds); a short read ends it. 0 = one
-  # batch a pass. [live]
+  # Seconds a pass whose owed read came back full keeps reading the next batch at once;
+  # a short read ends it. 0 = one batch a pass. At most half of
+  # memory_conflict_resolver_max_pass_seconds, so a pass ends before its deadline.
+  # [restart]
   # memory_conflict_resolver_burst_seconds: 300.0
 
   # Times a row is judged and left owed (a flagged peer the answer leaves out, an error

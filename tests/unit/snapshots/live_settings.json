@@ -159,7 +159,6 @@
  "memory_code_links_sweep_interval_s",
  "memory_code_plane_parse_timeout_s",
  "memory_conflict_resolver_batch",
- "memory_conflict_resolver_burst_seconds",
  "memory_conflict_resolver_cap_share",
  "memory_conflict_resolver_max_attempts",
  "memory_conflict_resolver_max_owed_age_days",

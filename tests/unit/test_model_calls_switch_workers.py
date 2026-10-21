@@ -90,8 +90,6 @@ def test_projection_repair_scans_no_failure_of_a_switched_off_org(monkeypatch) -
             limit=5, exclude_orgs=frozenset({"acme"}), ch=ch
         )
     )
-    # The scan's own statement; the other reads which orgs are under erasure.
-    ch.sent = [(sql, p) for sql, p in ch.sent if "memory_projection_failures" in sql]
     assert _excludes(ch, "acme")
     seen: list[frozenset[str]] = []
 

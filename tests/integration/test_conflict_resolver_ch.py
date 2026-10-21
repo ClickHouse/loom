@@ -789,9 +789,9 @@ async def test_a_spelling_twin_of_the_row_is_its_peer(ch, wired, monkeypatch) ->
 async def test_other_anonymous_sessions_take_no_place_from_a_same_session_peer(
     ch, wired, monkeypatch
 ) -> None:
-    """Eight other sessions of the anonymous user hold the row's key, nearer than its
-    same-session peer. They have no flag with the row, so they take no place in its
-    cluster, and the same-session pair is judged."""
+    """Forty other sessions of the anonymous user hold the row's key, nearer than its
+    same-session peer and more than the nearest read returns. They have no flag with the
+    row, so the reads leave them out, and the same-session pair is judged."""
     from server.memory.app import after_write, conflicts
     from server.memory.domain.conflicts import ConflictResult
     from server.memory.store import conflict_resolver as queue
@@ -804,12 +804,12 @@ async def test_other_anonymous_sessions_take_no_place_from_a_same_session_peer(
 
     with monkeypatch.context() as m:
         m.setattr(conflicts, "check_on_commit", clear)
-        for i in range(8):
+        for i in range(40):
             await _set(org, f"other{i}", "status", f"build {i} is green", user="-")
         await _set(org, "s1", "office_city", "The office is in Paris", user="-")
         await _set(org, "s1", "status", "The office moved to Rome", user="-")
         await after_write.drain()
-    for i in range(8):
+    for i in range(40):
         vec = _vec((300, 1.0), (301, 0.01 * i))
         await _place(ch, org, f"other{i}", "status", vec, owed=False, user="-")
     await _place(ch, org, "s1", "office_city", _vec((300, 0.9), (302, 0.436)), owed=False, user="-")
@@ -1209,7 +1209,7 @@ async def test_a_set_on_the_winner_after_the_re_read_retires_nothing(
     out = await run_pass()
     after = await _rows(ch, org)
     assert after["office_city"]["status"] == "active"
-    assert after["office_city"]["superseded_by"] is None
+    assert after["office_city"]["superseded_by"] == ""
     assert out["retired"] == 0
 
 

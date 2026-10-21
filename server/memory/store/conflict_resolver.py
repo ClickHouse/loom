@@ -24,7 +24,7 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
 
-from server.core.naming import SENTINEL, is_anonymous_user, same_session
+from server.core.naming import SENTINEL, is_anonymous_user, session_spellings
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.embeddings import live_embedding_rows_for_key, reemit_rows
 
@@ -52,13 +52,14 @@ ERASURE_ABANDONED_PREFIX = "max_attempts ("
 # has no directory row and is live), an org with an erasure queued, running or failed
 # and due a retry (its saga deletes what the resolver would write a new version of),
 # and the namespaces in `capped` (over their daily cost cap, read by the worker).
-_ERASING_ORGS = f"""
+# The orgs with an erasure a write waits for (an abandoned saga never runs again).
+ERASING_ORGS_SQL = f"""
               SELECT org FROM loom.erasure_requests FINAL
               WHERE status IN ('queued', 'in_progress', 'failed')
                 AND NOT startsWith(failure_reason, '{ERASURE_ABANDONED_PREFIX}')"""
 _NOT_SKIPPED = f"""(org, namespace) NOT IN (
               SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)
-          AND org NOT IN ({_ERASING_ORGS})
+          AND org NOT IN ({ERASING_ORGS_SQL})
           AND (org, namespace) NOT IN {{capped:Array(Tuple(String, String))}}"""
 
 # An owed row older than `max_age` days is no longer read: it stays as it was written.
@@ -168,21 +169,12 @@ async def unjudged_conflicted_rows(
     return await ch.query_all(_in_turns(_UNJUDGED), params)
 
 
-async def erasing_orgs(*, ch: _CHClient | None = None) -> list[str]:
-    """The orgs with an erasure `under_erasure` answers True for."""
-    ch = ch or _default_client()
-    rows = await ch.query_all(
-        f"SELECT DISTINCT org FROM ({_ERASING_ORGS}) SETTINGS select_sequential_consistency = 1"
-    )
-    return [str(r["org"]) for r in rows]
-
-
 async def under_erasure(org: str, *, ch: _CHClient | None = None) -> bool:
     """Whether `org` has an erasure the queue leaves it out for: read again right
     before each write, since one can be requested while a row's call is in flight."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        f"SELECT count() AS n FROM ({_ERASING_ORGS}) WHERE org = {{org:String}}"
+        f"SELECT count() AS n FROM ({ERASING_ORGS_SQL}) WHERE org = {{org:String}}"
         " SETTINGS select_sequential_consistency = 1",
         {"org": org},
     )
@@ -251,13 +243,15 @@ _LIVE_VECTORS = """
 
 def _nearest_sql() -> str:
     """The row's nearest vectors in its subject: the same user (the anonymous user is
-    one subject per agent), any session, its own vector left out. A same-key row of
-    another session is a peer like any other."""
+    one subject per agent), its own vector left out. A named user's other sessions are
+    peers like any other; the anonymous user's are separate tasks, so only its own
+    session is read (a flagged peer of another session comes through `_ANCHORED_SQL`)."""
     from server.core.vectors.search_settings import vector_search_settings
 
     return (
         _LIVE_VECTORS
         + """
+          AND ({anon:UInt8} = 0 OR session_id IN {own_sessions:Array(String)})
         ORDER BY dist ASC
         LIMIT {lim:UInt32}
         """
@@ -289,10 +283,11 @@ _PEER_ROWS_SQL = """
         """
 
 
-# The row's flagged peers (read from its head: it can hold thousands) and the nearest rows
-# of its key in other sessions, bounded, with their distance: they join the cluster whatever
-# the cutoff or the floor, since the row may be owed for them alone. Only the row's subject:
-# a cosine flag can name another user's row, whose text must not reach the prompt.
+# The row's flagged peers (read from its head: it can hold thousands) and, for a named
+# user, the nearest rows of its key in other sessions, bounded, with their distance: they
+# join the cluster whatever the cutoff or the floor, since the row may be owed for them
+# alone. Only the row's subject: a cosine flag can name another user's row, whose text
+# must not reach the prompt.
 _FLAGGED_IDENTITIES_SQL = """
                   SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL
                   WHERE org = {org:String} AND namespace = {ns:String} AND memory_id IN (
@@ -312,7 +307,7 @@ _ANCHORED_SQL = (
         UNION ALL"""
     + _LIVE_VECTORS
     + """
-          AND memory_key = {k:String}
+          AND memory_key = {k:String} AND {anon:UInt8} = 0
         ORDER BY dist ASC
         LIMIT {same_lim:UInt32}
         SETTINGS select_sequential_consistency = 1
@@ -351,13 +346,12 @@ async def cluster_peers(
     limit: int,
     prefer: frozenset[str] = frozenset(),
     shown: frozenset[str] = frozenset(),
-    row_id: str = "",
     ch: _CHClient | None = None,
 ) -> Cluster:
-    """Up to `limit` live peers of the queue row `row` (whose memory id is `row_id`), each
-    with `similarity`: its flags (`prefer`, those not `shown` before first) and its key's
-    other sessions take places ahead of the nearest rows, so the pairs it is owed for are
-    always judged."""
+    """Up to `limit` live peers of the queue row `row`, each with `similarity`: its flags
+    (`prefer`, those not `shown` before first) and a named user's other sessions of its
+    key take places ahead of the nearest rows, so the pairs it is owed for are always
+    judged."""
     ch = ch or _default_client()
     emb = [float(x) for x in (row.get("embedding") or [])]
     if not emb:
@@ -371,6 +365,7 @@ async def cluster_peers(
         "k": str(row["memory_key"]),
         "mt": str(row["memory_type"]),
         **_subject_params(str(row["user_id"])),
+        "own_sessions": session_spellings(str(row["session_id"])),
         "emb": emb,
         "model": str(row["embedding_model"]),
         "dim": len(emb),
@@ -389,16 +384,6 @@ async def cluster_peers(
         for r in rows
         if key_identity(r) in found
     ]
-    if is_anonymous_user(str(row["user_id"])):
-        # Another session of the anonymous user is a separate task: the resolver acts on
-        # such a pair only to clear a flag between the two, so an unflagged one takes no place.
-        peers = [
-            p
-            for p in peers
-            if str(p["memory_id"]) in prefer
-            or row_id in p["conflict_with"]
-            or same_session(str(p["session_id"]), str(row["session_id"]))
-        ]
     peers.sort(key=lambda p: (-p["similarity"], str(p["memory_key"])))
     key = str(row["memory_key"])
     flagged = [p for p in peers if str(p["memory_id"]) in prefer]
@@ -627,7 +612,6 @@ __all__ = [
     "asserted_versions",
     "cluster_peers",
     "dead_flags",
-    "erasing_orgs",
     "key_identity",
     "owed_rows",
     "protected_ids",

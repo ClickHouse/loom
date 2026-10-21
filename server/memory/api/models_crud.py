@@ -6,6 +6,7 @@ addressing pair (get_by_id / update_by_id) plus redact.
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
@@ -243,10 +244,15 @@ class MemoryGetOutput(ProjectedRow):
 # is cut, not refused. When the canonical form dropped something, the refusal says what
 # it was stored as and why, since "has" and "is a" look long enough until the copula is
 # dropped; a part that is only too short ("x") just says so.
+def _width(text: str) -> int:
+    """Characters, a wide one (CJK) counted twice: one is a whole word ("爱", "住")."""
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+
+
 def _canonical_at_least(min_chars: int, canonical: Any, dropped: str, needs: str) -> AfterValidator:
     def check(raw: str) -> str:
         stored = canonical(raw)
-        if len(stored) >= min_chars:
+        if _width(stored) >= min_chars:
             return raw
         if stored == raw.strip().lower():  # nothing dropped, only lowercased
             raise ValueError(f"{raw!r} is too short: {needs}")

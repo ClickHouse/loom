@@ -638,7 +638,6 @@ async def resolve_row(
         limit=int(settings.memory_conflict_resolver_max_peers),
         prefer=frozenset(str(x) for x in row.conflict_with),
         shown=shown,
-        row_id=str(row.memory_id),
     )
     peers = cluster.peers
     if peers:
@@ -762,24 +761,12 @@ async def _judge_and_act(
     counts: Counts,
 ) -> set[str]:
     """Judge the row and act on the answer; the ids of the peers it gave no verdict."""
-    # Another session of the anonymous user can only be cleared (`_cross_session`): a
-    # pair with no flag between them, on either side, has nothing a call could change.
-    # The cluster leaves such peers out; this keeps the rule where the verdicts act.
-    flagged = {str(x) for x in row.conflict_with}
-    kept = [
-        p
-        for p in peers
-        if str(p["memory_id"]) in flagged
-        or str(row.memory_id) in p["conflict_with"]
-        or not _cross_session(row, p)
-    ]
-    counts.skipped_no_action += len(peers) - len(kept)
-    found = await _assertion_order(org, namespace, [row, *kept])
+    found = await _assertion_order(org, namespace, [row, *peers])
     # A pair a person's Undo settled skips the judge call; for the others the re-read
     # under the locks decides.
-    settled = {str(p["memory_id"]) for p in kept if _undone(row, p, found.when, found.undos)}
+    settled = {str(p["memory_id"]) for p in peers if _undone(row, p, found.when, found.undos)}
     counts.skipped_no_action += len(settled)
-    peers = [p for p in kept if str(p["memory_id"]) not in settled]
+    peers = [p for p in peers if str(p["memory_id"]) not in settled]
     if not peers:
         return set()
     new, notes = notes_for(row, peers, {mid: when for mid, (when, _) in found.when.items()})

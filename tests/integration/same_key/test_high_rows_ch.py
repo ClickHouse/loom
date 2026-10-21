@@ -549,7 +549,10 @@ async def test_a_bulk_write_making_many_rows_high_owes_one_drop(ch, org, monkeyp
     await handle_memory_bulk_set(write(""))
     await after_write.drain()
     assert await _edge_links(ch, org) > 0
-    await handle_memory_bulk_set(write("high"))
+    out = await handle_memory_bulk_set(write("high"))
+    # Each row got a new version and owes one drop: a failure below is then the drop's.
+    assert [r.version > 0 for r in out.written] == [True] * 5, out.written
+    assert await _drop_intents(ch, org) in (["active"], ["resolved"])
     await after_write.drain()
     await intent_marks.drain()
     assert await _edge_links(ch, org) == 0

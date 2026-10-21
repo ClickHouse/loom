@@ -476,11 +476,11 @@ async def scan_active_projection_failures(
     a retry would only answer `pending` for are left out, so they hold no place ahead of
     the rest: those of an org under erasure and follow intents within their grace, and
     those of `exclude_orgs` (orgs whose model calls are switched off), which wait."""
-    from server.memory.store.conflict_resolver import erasing_orgs
+    from server.memory.store.conflict_resolver import ERASING_ORGS_SQL
 
     ch = ch or get_client()
     rows = await ch.query_all(
-        """
+        f"""
         SELECT
             toString(failure_id) AS failure_id,
             org,
@@ -498,16 +498,15 @@ async def scan_active_projection_failures(
             resolved_at
         FROM loom.memory_projection_failures
         WHERE status = 'active'
-          AND org NOT IN {erasing:Array(String)}
-          AND NOT has({off:Array(String)}, org)
-          AND NOT (projection = {follow_owed:String}
-                   AND created_at > now() - INTERVAL {grace:UInt32} SECOND)
+          AND org NOT IN ({ERASING_ORGS_SQL})
+          AND org NOT IN {{off:Array(String)}}
+          AND NOT (projection = {{follow_owed:String}}
+                   AND created_at > now() - INTERVAL {{grace:UInt32}} SECOND)
         ORDER BY created_at ASC, failure_id ASC
-        LIMIT {lim:UInt32}
+        LIMIT {{lim:UInt32}}
         """,
         params={
             "lim": int(limit),
-            "erasing": await erasing_orgs(ch=ch),
             "off": sorted(exclude_orgs),
             "follow_owed": FOLLOW_OWED,
             "grace": FOLLOW_OWED_GRACE_S,
