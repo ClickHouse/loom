@@ -2246,9 +2246,8 @@ class MemorySettings(BaseModel):
     # Longest wait, in seconds, of a user or namespace whose structured profile build
     # keeps failing. Above 0.
     structured_profile_backoff_cap_seconds: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
-    # Seconds before a structured profile build its profile row refused (a lock, a
-    # pin, a 4xx) or whose answer was cut off at the output cap is tried again with
-    # nothing changed. Above 0.
+    # Seconds a refused or cut-off structured profile build waits before it is tried
+    # again with nothing changed. Above 0.
     structured_profile_refusal_retry_seconds: Annotated[int, LIVE] = Field(default=6 * 3600, gt=0)
     # Seconds a namespace's scan for users behind their structured profile serves
     # later passes before it is run again. Above 0.
@@ -5248,11 +5247,7 @@ LLM_MAX_TOKENS: dict[str, int] = {
     "period_digest": 420,
     # profile consolidation: one identity's folded profile.
     "profile_fold": 320,
-    # the structured profile worker: the tokens for one user's profile object around its
-    # properties, added to the schema's estimate of a full answer (each key, and each
-    # value sized by its maxLength, its longest enum value or a default for a short
-    # phrase; at most 16,384). A string longer than the estimate allows can still be cut
-    # off: that build is refused until the user's memories or the schema change.
+    # structured profile: the object around its properties, added to answer_tokens(props).
     "structured_profile": 32,
     # the reachability probe a provider configuration change runs.
     "provider_validation": 128,

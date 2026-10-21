@@ -954,7 +954,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` | `int` | `600` | live | Seconds after a structured profile is built before new memories rebuild it; a schema change or a deleted source skips this wait. 0 rebuilds on the next pass. |
 | `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` | `int` | `300` | live | Seconds a user or namespace whose structured profile build failed waits before the first retry; each further failure doubles it. Above 0. |
 | `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` | `int` | `21600` | live | Longest wait, in seconds, of a user or namespace whose structured profile build keeps failing. Above 0. |
-| `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` | `int` | `21600` | live | Seconds before a structured profile build its profile row refused (a lock, a pin, a 4xx) or whose answer was cut off at the output cap is tried again with nothing changed. Above 0. |
+| `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` | `int` | `21600` | live | Seconds a refused or cut-off structured profile build waits before it is tried again with nothing changed. Above 0. |
 | `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` | `int` | `600` | live | Seconds a namespace's scan for users behind their structured profile serves later passes before it is run again. Above 0. |
 | `LOOM_STRUCTURED_PROFILE_LABEL` | `str` | `'structured_profile'` |  | `memory_key` of the structured profile row. |
 

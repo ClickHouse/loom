@@ -86,7 +86,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
-   token; a worker with no auth context writes as its pipeline actor (`worker:<name>`).
+   token; a worker that sets `pipeline_actor` writes as it (the structured profile worker
+   writes `worker:structured-profile`); other workers with no auth context write an empty
+   actor.
    `source_class` is set by the server (`memory/domain/provenance.py`), and the body may
    only request a downgrade.
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
