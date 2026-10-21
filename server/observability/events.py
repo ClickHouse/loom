@@ -256,12 +256,8 @@ class EventEmitter:
             return
         self._inflight += 1
         try:
-            # Each process flushes every interval; batched, the flushes of every
-            # process share parts, and the rows are visible when the insert
-            # returns (tests, live event streams). The client projects
-            # the rows onto the table's live columns, so a
-            # column this build stamps and the service lacks costs the
-            # column, not the batch.
+            # Batched: every process's flushes share parts, visible on return. The client
+            # projects rows onto the live columns, so a column the service lacks costs the column.
             await get_client().insert(
                 "loom.agent_events",
                 [e.to_row() for e in batch],
