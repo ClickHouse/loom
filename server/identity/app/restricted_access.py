@@ -75,7 +75,7 @@ async def note_restricted_access(
     namespace. Returns True when the row was written (or, with
     `restricted_audit_inline` off, scheduled). Never raises.
 
-    By default the row is waited for (a batched insert) before the handler
+    By default the row is waited for before the handler
     runs, so a process killed after answering never loses it. The read pays
     that insert's round trip, up to `ch_batched_insert_wait_max_ms` of
     batching, and the part write;

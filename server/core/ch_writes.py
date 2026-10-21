@@ -14,15 +14,24 @@ from server.settings import settings
 # Insert settings that commit the rows before the insert returns.
 COMMITTED_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 0, "wait_for_async_insert": 1}
 
+# A waited async insert on the server profile's own flush timeouts.
+_PROFILE_ASYNC_INSERT_SETTINGS: dict[str, Any] = {"async_insert": 1, "wait_for_async_insert": 1}
 
-def batched_insert_settings(*, background: bool = False) -> dict[str, Any]:
+
+def batched_insert_settings(
+    *, background: bool = False, async_when_off: bool = False
+) -> dict[str, Any]:
     """Settings of a batched insert: an async insert answered once its shared part
     is written, waiting between the live bounds for others to join it. `background`
     is for an insert no request waits on, which takes the longer
     `ch_batched_insert_background_wait_max_ms`. With `ch_batched_inserts` off, a
-    copy of the committed settings. Why it is safe:
+    copy of the committed settings, or, for a site that `async_when_off` marks
+    (one that was a waited async insert before the switch existed), a waited async
+    insert on the server profile's timeouts. Why it is safe:
     docs/architecture/clickhouse.md#batched-inserts."""
     if not settings.ch_batched_inserts:
+        if async_when_off:
+            return dict(_PROFILE_ASYNC_INSERT_SETTINGS)
         return dict(COMMITTED_INSERT_SETTINGS)
     if background:
         wait_max = int(settings.ch_batched_insert_background_wait_max_ms)
@@ -100,6 +109,7 @@ def dedup_settings(token: str, base: dict[str, Any] | None) -> dict[str, Any]:
 
 
 __all__ = [
+    "COMMITTED_INSERT_SETTINGS",
     "batched_insert_settings",
     "dedup_settings",
     "insert_dedup_token",

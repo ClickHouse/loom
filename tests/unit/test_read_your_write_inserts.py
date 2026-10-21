@@ -32,14 +32,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from server.core.ch_writes import batched_insert_settings  # noqa: E402
+from server.settings import settings  # noqa: E402
 
 
 def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
     """Every `settings=` passed to a `ch.insert` for `table`, in one module or in
     every module of a package directory: a dict literal, `batched_insert_settings()`
-    resolved to its value (a `background=` that is not a constant reads as False:
-    either value is a batched insert), the session defaults for an insert that passes
-    none, and `{"unresolved": 1}` for any other value."""
+    resolved to its value under the current switch (a `background=` or
+    `async_when_off=` that is not a constant reads as False), the session defaults for
+    an insert that passes none, and `{"unresolved": 1}` for any other value."""
     files = sorted(path.rglob("*.py")) if path.is_dir() else [path]
     trees = [ast.parse(f.read_text()) for f in files]
     # A module-level name bound to the table, like `OUTBOX = "loom.memory_webhook_outbox"`.
@@ -80,11 +81,13 @@ def _insert_settings(path: Path, table: str) -> list[dict[str, int]]:
                 isinstance(value, ast.Call)
                 and getattr(value.func, "id", "") == "batched_insert_settings"
             ):
-                background = any(
-                    k.arg == "background" and isinstance(k.value, ast.Constant) and k.value.value
+                flags = {
+                    k.arg: bool(k.value.value)
                     for k in value.keywords
-                )
-                found.append(batched_insert_settings(background=bool(background)))
+                    if k.arg in ("background", "async_when_off")
+                    and isinstance(k.value, ast.Constant)
+                }
+                found.append(batched_insert_settings(**flags))
                 continue
             if not isinstance(value, ast.Dict):
                 # A name or another call: unknown here, so it fails every check.
@@ -119,33 +122,71 @@ def test_default_read_path_tables_are_written_synchronously(rel_path: str, table
         )
 
 
+# (module, table, background, async_when_off). `background` is the wait window every
+# insert of the table must use, None where the module writes it with both (a request's
+# flush and the timer's). `async_when_off` marks the tables that were waited async
+# inserts before the switch, so turning it off sends them that way again.
 BATCHED_TABLES = [
-    ("server/observability/audit.py", "loom.audit_log"),
-    ("server/observability/events.py", "loom.agent_events"),
-    ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox"),
-    ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts"),
-    ("server/memory/app/evidence.py", "loom.memory_evidence"),
-    ("server/memory/app/evidence.py", "loom.memory_belief_sources"),
-    ("server/core/namespace_write_marks.py", "loom.namespace_write_marks"),
-    ("server/core/rmt_carry.py", "loom.carry_acks"),
-    ("server/auth/attempts.py", "loom.auth_attempts"),
-    ("server/memory/app/projection_failures.py", "loom.memory_projection_failures"),
-    ("server/memory/store/usage.py", "loom.memory_usage_events"),
+    ("server/observability/audit.py", "loom.audit_log", False, False),
+    ("server/observability/events.py", "loom.agent_events", False, False),
+    ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox", False, False),
+    ("server/memory/store/webhooks.py", "loom.memory_webhook_attempts", True, False),
+    ("server/memory/app/evidence.py", "loom.memory_evidence", False, False),
+    ("server/memory/app/evidence.py", "loom.memory_belief_sources", False, False),
+    ("server/core/rmt_carry.py", "loom.carry_acks", False, True),
+    ("server/auth/attempts.py", "loom.auth_attempts", False, True),
+    ("server/memory/app/projection_failures.py", "loom.memory_projection_failures", False, True),
+    ("server/memory/store/usage.py", "loom.memory_usage_events", None, True),
 ]
 
 
-@pytest.mark.parametrize("rel_path,table", BATCHED_TABLES)
-def test_tables_written_on_every_request_are_batched(rel_path: str, table: str) -> None:
+@pytest.mark.parametrize("switch", [True, False])
+@pytest.mark.parametrize("rel_path,table,background,async_when_off", BATCHED_TABLES)
+def test_tables_written_on_every_request_are_batched(
+    monkeypatch: pytest.MonkeyPatch,
+    rel_path: str,
+    table: str,
+    background: bool | None,
+    async_when_off: bool,
+    switch: bool,
+) -> None:
     """A committed insert per request makes one part per row in these tables;
-    batched, concurrent writers share parts and each still waits for its row."""
+    batched, concurrent writers share parts and each still waits for its row. A
+    request-path insert keeps the short window its op budget assumes, and with the
+    switch off each table is written as it was before the switch."""
+    monkeypatch.setattr(settings, "ch_batched_inserts", switch)
     settings_seen = _insert_settings(ROOT / rel_path, table)
     assert settings_seen, f"no `settings=` on any {table} insert in {rel_path}"
-    batched = (batched_insert_settings(), batched_insert_settings(background=True))
+    windows = [False, True] if background is None else [background]
+    allowed = [
+        batched_insert_settings(background=b, async_when_off=async_when_off) for b in windows
+    ]
     for s in settings_seen:
-        assert s in batched, (
+        assert s in allowed, (
             f"{table} in {rel_path} is written with {s}; pass "
-            "`settings=batched_insert_settings()` so its inserts share parts."
+            f"`settings=batched_insert_settings(background={background}, "
+            f"async_when_off={async_when_off})`."
         )
+
+
+def test_write_marks_take_the_window_of_who_waits() -> None:
+    """The request's bump waits the short window and the committed form when the
+    switch is off; the timer's flush and the process-start mark take the background
+    window, and the flush was a waited async insert before the switch."""
+    from server.core import namespace_write_marks
+
+    calls = {
+        fn.name: [
+            {k.arg: k.value.value for k in c.keywords if isinstance(k.value, ast.Constant)}
+            for c in ast.walk(fn)
+            if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "batched_insert_settings"
+        ]
+        for fn in ast.walk(ast.parse(Path(namespace_write_marks.__file__).read_text()))
+        if isinstance(fn, ast.AsyncFunctionDef)
+    }
+    assert calls["bump"] == [{}]
+    assert calls["flush_now"] == [{"background": True, "async_when_off": True}]
+    assert calls["mark_process_start"] == [{"background": True}]
 
 
 # Every insert of these tables anywhere under server/, not one module per table.
@@ -182,7 +223,9 @@ def test_graph_projections_may_stay_async() -> None:
         for wait in (False, True):
             assert graph_insert_settings(table, wait=wait, dedup_token="")["async_insert"] == 1
         # A waited graph insert uses the same live wait bounds as every batched insert.
-        assert graph_insert_settings(table, wait=True, dedup_token="") == batched_insert_settings()
+        assert graph_insert_settings(table, wait=True, dedup_token="") == batched_insert_settings(
+            async_when_off=True
+        )
     # The projection repair's replay is the one synchronous, token-deduplicated form.
     assert graph_insert_settings("entity_edges", wait=False, dedup_token="t")["async_insert"] == 0
 

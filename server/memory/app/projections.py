@@ -102,7 +102,7 @@ def graph_insert_settings(table: str, *, wait: bool, dedup_token: str) -> dict[s
             "insert_deduplication_token": f"{dedup_token}:{table}",
         }
     if wait:
-        return batched_insert_settings()
+        return batched_insert_settings(async_when_off=True)
     return {"async_insert": 1, "wait_for_async_insert": 0}
 
 

@@ -459,7 +459,7 @@ class AuthSettings(BaseModel):
     # token names the namespace AND who holds a live direct grant. False: every
     # read is refused while ingest continues.
     restricted_serve: bool = True
-    # Write the `namespace.restricted_access` audit row (a batched insert) every
+    # Write the `namespace.restricted_access` audit row (waited for) every
     # admitted read of a restricted namespace writes before answering (inline). True
     # by default: a row written beside the request is lost when the process is killed
     # before it lands. False trades that row for the awaited insert's latency (its
@@ -562,8 +562,11 @@ class ClickHouseSettings(BaseModel):
     # Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound.
     ch_timeout_ddl_s: float = 300.0
     # Batched inserts: concurrent inserts into one table share a part and each still
-    # returns once written. False sends the inserts that would be batched as committed
-    # inserts, one part each; fire-and-forget inserts are unchanged.
+    # returns once written. False puts each insert back in its form before batching:
+    # committed, one part each, where it was committed, and a waited async insert on the
+    # server profile's timeouts where it was one (auth attempts, the carry-ack, write-mark
+    # and usage flushes, policy-witness rows, projection failures, graph inserts);
+    # fire-and-forget inserts are unchanged.
     ch_batched_inserts: Annotated[bool, LIVE] = True
     # Longest wait, ms, of a batched insert a request waits on (audit rows, transcript
     # turns, request ledgers) for concurrent inserts to share its part; the pooled

@@ -219,7 +219,7 @@ async def _insert(kinds_keys: list[tuple[str, str]], at: datetime) -> None:
         TABLE,
         [{"kind": kind, "key_sha256": _digest(key), "at": at} for kind, key in kinds_keys],
         # Answered once written: the recount sees the row, and a burst shares parts.
-        settings=batched_insert_settings(),
+        settings=batched_insert_settings(async_when_off=True),
     )
 
 

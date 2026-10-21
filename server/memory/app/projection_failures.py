@@ -153,7 +153,7 @@ async def insert_projection_failures(rows: list[dict[str, Any]], *, ch: Any | No
         rows,
         # Waited for: the row is the only record of the lost projection, and a
         # fire-and-forget buffer dies with the replica that holds it.
-        settings=batched_insert_settings(),
+        settings=batched_insert_settings(async_when_off=True),
     )
 
 

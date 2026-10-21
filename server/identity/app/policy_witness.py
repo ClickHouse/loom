@@ -94,7 +94,7 @@ async def _write(table: str, row: dict[str, Any]) -> None:
     from server.core.ch import get_client
 
     row = {k: v for k, v in row.items() if k != "ts"}  # the column's DEFAULT: the server's clock
-    await get_client().insert(table, [row], settings=batched_insert_settings())
+    await get_client().insert(table, [row], settings=batched_insert_settings(async_when_off=True))
 
 
 def hold_event(event: Any) -> bool:

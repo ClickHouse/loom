@@ -153,7 +153,13 @@ insert adds up to its window, and holds its pooled connection meanwhile. A susta
 batched inserts a second therefore hold about R × `ch_batched_insert_wait_max_ms` / 1000
 connections, and the ClickHouse connection pool (`ch_pool_maxsize`) is sized for that on
 top of the other statements. `ch_batched_inserts` (live, on by default) switches
-batching off: the batched inserts are then sent committed, one part each, and
+batching off and puts each insert back in its earlier form: the tables that were
+committed before (`audit_log`, the `conversation.append` rows, the `agent_events` flush,
+the outbox, webhook attempts, evidence, belief sources, the write-mark bump and
+process-start mark) are sent committed, one part each; the ones that were already waited
+async inserts (`auth_attempts`, the carry-acknowledgement, write-mark and usage-event
+flushes, the policy witness's rows, `memory_projection_failures`, the graph Undo markers
+and the waited entity-graph inserts) stay async on the server profile's own timeouts;
 fire-and-forget inserts are unchanged. Turn it off on a deployment with little traffic where latency
 matters more than parts: with writes too sparse to share a part, each insert still waits
 `ch_batched_insert_wait_min_ms`.

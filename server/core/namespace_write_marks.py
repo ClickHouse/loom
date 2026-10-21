@@ -136,7 +136,9 @@ async def flush_now(*, ch: _CHClient | None = None) -> int:
         ch = ch or _default_client()
         # Batched server-side with every other process's marks: one part per
         # busy interval, not one per flush. No request waits on the timer's flush.
-        await ch.insert(TABLE, rows, settings=batched_insert_settings(background=True))
+        await ch.insert(
+            TABLE, rows, settings=batched_insert_settings(background=True, async_when_off=True)
+        )
     except Exception as e:  # noqa: BLE001 — telemetry-grade write; the marks stay buffered
         log.warning("namespace_write_marks flush failed (non-fatal, %d rows): %s", len(rows), e)
         _arm()

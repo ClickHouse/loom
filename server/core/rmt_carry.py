@@ -234,7 +234,7 @@ async def _publish(ch: Any, *, force: bool = False) -> bool:
             ACK_TABLE,
             [{"process": process_id(), "fingerprints": value}],
             # Durable when it returns; the processes' refreshes share parts.
-            settings=batched_insert_settings(),
+            settings=batched_insert_settings(async_when_off=True),
         )
     except Exception as e:  # noqa: BLE001 — re-published next poll; writes wait for it
         log.warning("rmt carry: acknowledgement not written (%s)", e)
@@ -585,7 +585,7 @@ async def withdraw(ch: Any) -> None:
         await ch.insert(
             ACK_TABLE,
             [{"process": process_id(), "fingerprints": "{}"}],
-            settings=batched_insert_settings(),
+            settings=batched_insert_settings(async_when_off=True),
         )
 
 

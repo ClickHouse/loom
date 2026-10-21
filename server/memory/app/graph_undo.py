@@ -174,7 +174,7 @@ async def restate_facts(
     # This Undo's markers are the rows carrying its id: a replay finds them and adds
     # none, and no other Undo takes them for its own.
     fresh = [m for m in markers if not m.row["restored"]]
-    settings = batched_insert_settings()
+    settings = batched_insert_settings(async_when_off=True)
     # Edges first: if the triple markers then fail to land, a replay finds these edges
     # and adds none.
     await _insert_edge_markers(

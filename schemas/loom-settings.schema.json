@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False sends the inserts that would be batched as committed inserts, one part each; fire-and-forget inserts are unchanged."
+          "description": "Batched inserts: concurrent inserts into one table share a part and each still returns once written. False puts each insert back in its form before batching: committed, one part each, where it was committed, and a waited async insert on the server profile's timeouts where it was one (auth attempts, the carry-ack, write-mark and usage flushes, policy-witness rows, projection failures, graph inserts); fire-and-forget inserts are unchanged."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
@@ -5108,7 +5108,7 @@
         "restricted_audit_inline": {
           "default": true,
           "type": "boolean",
-          "description": "Write the `namespace.restricted_access` audit row (a batched insert) every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the awaited insert's latency (its round trip, up to `ch_batched_insert_wait_max_ms` of batching, and the part write)."
+          "description": "Write the `namespace.restricted_access` audit row (waited for) every admitted read of a restricted namespace writes before answering (inline). True by default: a row written beside the request is lost when the process is killed before it lands. False trades that row for the awaited insert's latency (its round trip, up to `ch_batched_insert_wait_max_ms` of batching, and the part write)."
         },
         "restricted_serve": {
           "default": true,

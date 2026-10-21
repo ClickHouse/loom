@@ -121,7 +121,8 @@ def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_commi
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An insert no request waits on waits up to the background bound; with
-    `ch_batched_inserts` off every batched insert is sent committed, read per call."""
+    `ch_batched_inserts` off a batched insert is sent committed, or as a waited async
+    insert on the profile's timeouts where it was one before the switch, read per call."""
     monkeypatch.setattr(settings, "ch_batched_insert_wait_min_ms", 10)
     monkeypatch.setattr(settings, "ch_batched_insert_background_wait_max_ms", 200)
     s = ch_writes.batched_insert_settings(background=True)
@@ -131,3 +132,6 @@ def test_background_inserts_take_the_longer_wait_and_the_switch_sends_them_commi
     committed = {"async_insert": 0, "wait_for_async_insert": 1}
     assert ch_writes.batched_insert_settings() == committed
     assert ch_writes.batched_insert_settings(background=True) == committed
+    profile_async = {"async_insert": 1, "wait_for_async_insert": 1}
+    assert ch_writes.batched_insert_settings(async_when_off=True) == profile_async
+    assert ch_writes.batched_insert_settings(background=True, async_when_off=True) == profile_async

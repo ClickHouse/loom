@@ -61,7 +61,7 @@ async def _flush_usage_buffer_now(ch: _CHClient | None = None, *, background: bo
             "loom.memory_usage_events",
             batch,
             # wait=1: a rejected insert raises here and is re-queued, not lost unseen.
-            settings=batched_insert_settings(background=background),
+            settings=batched_insert_settings(background=background, async_when_off=True),
         )
     except Exception as e:  # noqa: BLE001 — requeue on any flush failure
         # Re-queue on failure, but bounded: drop rather than OOM if CH stays down.
@@ -117,16 +117,11 @@ def _ensure_usage_flusher_started() -> None:
     record_usage_event so we don't need a server-startup hook."""
     global _USAGE_FLUSH_TASK
     if _USAGE_FLUSH_TASK is None or _USAGE_FLUSH_TASK.done():
-        try:
-            # Started by whichever request first records usage; it must not
-            # carry that request's tag for the rest of the process.
-            from server.core.background import detached_task
+        # Started by whichever request first records usage; it must not
+        # carry that request's tag for the rest of the process.
+        from server.core.background import detached_task
 
-            _USAGE_FLUSH_TASK = detached_task(_usage_flush_loop(), name="loom-usage-flush")
-        except RuntimeError:
-            # No running loop (sync caller); the periodic flush will
-            # take over once a loop is running.
-            pass
+        _USAGE_FLUSH_TASK = detached_task(_usage_flush_loop(), name="loom-usage-flush")
 
 
 def _reset_for_tests() -> None:
