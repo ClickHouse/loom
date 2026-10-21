@@ -252,36 +252,45 @@ async def test_clear_star_user_tombstones_without_a_user_filter(
     assert "uid" not in memory_alter.params
 
 
-@pytest.mark.asyncio
-async def test_clear_keeps_vectors_only_for_the_locked_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A key locked under one agent leaves the other agents' vectors of it to the clear."""
-    from server.memory.api.models_crud import MemoryClearInput
-    from server.memory.app.handlers import handle_memory_clear
-    from tests.unit.ch_fake import RecordingCH
-
-    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
-    ch.on("SELECT count() AS n", [{"n": 2}])
-    ch.install(monkeypatch)
-    out = await handle_memory_clear(
-        MemoryClearInput(
-            org="acme", namespace="chat", user_id="u1", agent="*", confirm_subject="u1"
-        )
-    )
-    assert out.locked_skipped == 1
-    (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
-    assert "(agent, user_id, session_id, memory_key) NOT IN" in emb_alter.sql
-    assert "SELECT agent, user_id, session_id, memory_key FROM loom.memory FINAL" in emb_alter.sql
+# (agent, user_id, session_id, memory_key, lock_mode) rows; the first is always locked.
+_STAR_AGENT_ROWS = [
+    ("A", "u1", "-", "K", "read_only"),
+    ("B", "u1", "-", "K", ""),
+    ("B", "u1", "-", "J", ""),
+    ("B", "u2", "-", "K", ""),  # another user: outside the clear
+]
+_STAR_USER_ROWS = [
+    ("A", "u1", "-", "K", "read_only"),
+    ("A", "u2", "-", "K", ""),
+    ("A", "u2", "-", "J", ""),
+    ("B", "u2", "-", "K", ""),  # another agent: outside the clear
+]
+_SESSION_ROWS = [
+    ("A", "u1", "s1", "K", "read_only"),
+    ("A", "u1", "s2", "K", ""),
+]
 
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(not CLICKHOUSE, reason="clickhouse binary not installed")
-async def test_the_vector_exclusion_spares_only_the_locked_identity_in_clickhouse(
+@pytest.mark.parametrize(
+    ("user_id", "agent", "rows", "live"),
+    [
+        ("u1", "*", _STAR_AGENT_ROWS, [("A", "u1", "-", "K"), ("B", "u2", "-", "K")]),
+        ("*", "A", _STAR_USER_ROWS, [("A", "u1", "-", "K"), ("B", "u2", "-", "K")]),
+        ("u1", "A", _SESSION_ROWS, [("A", "u1", "s1", "K")]),
+    ],
+    ids=["star-agent", "star-user", "same-key-other-session"],
+)
+async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
     monkeypatch: pytest.MonkeyPatch,
+    user_id: str,
+    agent: str,
+    rows: list[tuple[str, str, str, str, str]],
+    live: list[tuple[str, str, str, str]],
 ) -> None:
-    """Key K locked under agent A, live under B, and J under B: the embeddings
-    statement a star-agent clear runs matches B's K and J, never A's K."""
+    """The embeddings mutation a clear builds, run on schema.sql's tables: a key locked
+    under one identity keeps that identity's vector, and only that one."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
     from tests.unit.ch_fake import RecordingCH
@@ -289,39 +298,41 @@ async def test_the_vector_exclusion_spares_only_the_locked_identity_in_clickhous
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
     ch.on("SELECT count() AS n", [{"n": 1}])
     ch.install(monkeypatch)
-    await handle_memory_clear(
-        MemoryClearInput(org="o", namespace="n", user_id="u1", agent="*", confirm_subject="u1")
+    subject = agent if user_id == "*" else user_id
+    out = await handle_memory_clear(
+        MemoryClearInput(
+            org="o", namespace="n", user_id=user_id, agent=agent, confirm_subject=subject
+        )
     )
+    assert out.locked_skipped == 1
     (emb_alter,) = ch.statements("ALTER TABLE loom.memory_embeddings", kind="execute")
-    where = emb_alter.sql.split("WHERE", 1)[1].split("SETTINGS", 1)[0]
 
-    ids = "'o', 'n', 'u1', '-'"
-    rows = [("A", "K", "read_only"), ("B", "K", ""), ("B", "J", "")]
+    cols = "org, namespace, agent, user_id, session_id, memory_key, version"
     setup = [
         "SET enable_quantized_codec = 1",
         ddl("memory"),
         ddl("memory_embeddings"),
         *(
-            "INSERT INTO loom.memory (org, namespace, user_id, session_id, agent, memory_key,"
-            f" memory_id, version, lock_mode) VALUES ({ids}, '{a}', '{k}', generateUUIDv4(), 1,"
-            f" '{mode}')"
-            for a, k, mode in rows
+            f"INSERT INTO loom.memory ({cols}, memory_id, lock_mode)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1, generateUUIDv4(), '{mode}'"
+            for a, u, s, k, mode in rows
         ),
         *(
-            "INSERT INTO loom.memory_embeddings (org, namespace, user_id, session_id, agent,"
-            f" memory_key, version, embedding, memory_key_embedding) SELECT {ids}, '{a}', '{k}',"
+            f"INSERT INTO loom.memory_embeddings ({cols}, embedding, memory_key_embedding)"
+            f" SELECT 'o', 'n', '{a}', '{u}', '{s}', '{k}', 1,"
             # Both vector columns at the codec's declared dimension.
-            " 1, arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
-            for a, k, _ in rows
+            " arrayWithConstant(3072, 0.), arrayWithConstant(3072, 0.)"
+            for a, u, s, k, _ in rows
         ),
+        emb_alter.sql,
     ]
     got = run(
         setup,
-        f"SELECT agent, memory_key FROM loom.memory_embeddings FINAL WHERE {where}"
-        " ORDER BY agent, memory_key",
-        {k: v for k, v in emb_alter.params.items() if k != "at"},
+        "SELECT agent, user_id, session_id, memory_key FROM loom.memory_embeddings FINAL"
+        " WHERE tombstoned_at IS NULL ORDER BY agent, user_id, session_id, memory_key",
+        emb_alter.params,
     )
-    assert [(r["agent"], r["memory_key"]) for r in got] == [("B", "J"), ("B", "K")]
+    assert [(r["agent"], r["user_id"], r["session_id"], r["memory_key"]) for r in got] == live
 
 
 @pytest.mark.asyncio

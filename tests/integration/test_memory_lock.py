@@ -203,6 +203,8 @@ def test_a_star_agent_clear_leaves_only_the_locked_identity(
     assert r.status_code == 200, r.text
     c = r.json()
     assert c["locked_skipped"] == 1 and c["rows_affected"]["loom.memory"] == 2
+    # Agent b's vector of the locked key goes too: only agent a's is excluded.
+    assert c["rows_affected"]["loom.memory_embeddings"] == 2
 
     def found(agent: str, key: str) -> bool:
         return _post(writer, "memory.get", ident(agent, memory_key=key)).json()["found"]
