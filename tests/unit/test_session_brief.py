@@ -547,6 +547,15 @@ def test_save_falls_back_to_the_deterministic_builder(mem, monkeypatch) -> None:
     assert out2.author == "deterministic" and out2.revision == 2
 
 
+def test_with_no_policy_a_switched_off_org_falls_back_to_the_deterministic_builder(
+    mem, monkeypatch
+) -> None:
+    _llm(monkeypatch, [customer.ModelCallsDisabled("model calls are off for this org")])
+    out = _save(brief_key="mine", events=_session())
+    assert out.changed and out.author == "deterministic"
+    assert "Goal:\nAdd a session brief plane" in out.rendered
+
+
 def test_the_fake_provider_never_writes_a_brief(mem, monkeypatch) -> None:
     fake = _LLM([])
     fake.provider = "fake"

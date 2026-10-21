@@ -607,8 +607,9 @@ async def distill_notes(
             # A derived row with no entities gets no entity-ANN boost and no
             # entity-overlap credit when the question names one ("what about
             # server/main.py"): reachable by cosine, but un-boosted. The
-            # hint's entities are the session's paths.
-            # Under a policy no path from the raw calls is stored.
+            # hint's entities are the session's paths, so a question naming a
+            # file boosts it; under an operator policy none is taken from the
+            # raw calls.
             hint_entities = [] if policy else hint_entities_for(observations)
             await handle_memory_set(
                 MemorySetInput(

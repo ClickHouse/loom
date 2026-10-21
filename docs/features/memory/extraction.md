@@ -123,8 +123,9 @@ curl -sX POST http://localhost:7777/v1/extraction_policy.set \
   parent's, so a rule for a whole subtree belongs in the org's policy.
   `extraction_policy.get` returns a scope's policy and the `effective` text its
   extractions run under; for scope `org` it also lists in `namespace_policies` every
-  namespace that holds a policy of its own. `extraction_policy.clear` removes one scope's policy (clearing a
-  namespace's leaves the org's in force; clearing a scope that holds none writes nothing). A policy is at most 4,096 characters.
+  namespace that holds a policy of its own. `extraction_policy.clear` removes one
+  scope's policy: clearing a namespace's leaves the org's in force, and clearing a scope
+  that holds none writes nothing. A policy is at most 4,096 characters.
 - **Bound.** An org holds its own policy and at most
   [`LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`](../../reference/configuration.md#extraction)
   namespace policies (1,000 by default; one more is refused). Deleting a namespace leaves
