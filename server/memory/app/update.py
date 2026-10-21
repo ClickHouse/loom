@@ -16,6 +16,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
+from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -198,8 +199,9 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
                 "message": (
                     f"memory_key {input.memory_key!r} is live under "
                     f"{len(rows)} identity tuples in namespace "
-                    f"{input.namespace!r}; pass agent/user_id/session_id to "
-                    "narrow it, or memory.update_by_id with one of the ids"
+                    f"{input.namespace!r}; pass a named agent/user_id/session_id "
+                    'to narrow it ("-" does not narrow, nor "*" for agent), or '
+                    "memory.update_by_id with one of the ids"
                 ),
                 "memory_key": input.memory_key,
                 "candidates": [c.model_dump() for c in rows],
@@ -246,9 +248,15 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
         "ns": input.namespace,
         "key": input.memory_key,
     }
-    for col in ("agent", "user_id", "session_id"):
-        val = getattr(input, col, "") or ""
-        if val:
+    # "-" (the identity sentinel the SDKs stamp) means unset, and "*" too for agent,
+    # as in memory.ask.
+    narrowing = {
+        "agent": named(input.agent, wildcard=True),
+        "user_id": named(input.user_id),
+        "session_id": named(input.session_id),
+    }
+    for col, val in narrowing.items():
+        if val is not None:
             where.append(f"{col} = {{{col}:String}}")
             params[col] = val
     sql = f"""
@@ -536,10 +544,8 @@ def _status_columns(conflict_result: Any) -> tuple[str, dict[str, Any]]:
 def _revision_run_id(input: Any, existing: MemoryRow) -> str:
     """A revision made under a run carries that run on its version row (the `acted` fold joins
     the run's writes to what the run was shown); a caller naming no run keeps the row's own."""
-    revision_run_id = str(getattr(input, "run_id", "") or "").strip()
-    if revision_run_id in ("", "-"):
-        revision_run_id = str(getattr(existing, "run_id", "-") or "-")
-    return revision_run_id
+    revision_run_id = named(str(getattr(input, "run_id", "") or "").strip())
+    return revision_run_id or str(getattr(existing, "run_id", "-") or "-")
 
 
 async def _update_post_write(

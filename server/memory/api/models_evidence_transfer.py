@@ -54,7 +54,7 @@ class MemoryExportEvidenceInput(BaseModel):
     namespace: str
     # `edges` pages the namespace's live operator_edges.
     kind: str = Field(default="chunks", pattern="^(chunks|digests|edges)$")
-    session_id: str = ""  # optional: one session only
+    session_id: str = ""  # optional: one session only; "" or "-" = every session
     # Rows per page (1–2000); `has_more` says whether another page follows.
     limit: int = Field(default=500, ge=1, le=2000)
     cursor: str = ""  # opaque keyset cursor from a previous page

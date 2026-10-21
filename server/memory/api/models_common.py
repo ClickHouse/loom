@@ -11,7 +11,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from server.core.naming import SENTINEL
+from server.core.naming import SENTINEL, named
 
 # Open string at the wire so operators can register custom taxonomies via
 # tag_registry. Core four (semantic/procedural/preference = searchable+embedded,
@@ -41,8 +41,8 @@ def run_next_hint(run_id: str | None) -> str:
     tokens). Names the exact op and field so the agent can act without
     reading a description: the `used` signal only exists if it is reported.
     """
-    rid = (run_id or "").strip()
-    if not rid or rid == SENTINEL:
+    rid = named((run_id or "").strip())
+    if rid is None:
         return ""
     return (
         f"run_id={rid}: when you rely on a result, keep its memory_key and pass "

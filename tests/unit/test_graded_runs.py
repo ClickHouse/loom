@@ -125,9 +125,13 @@ def test_unknown_target_is_not_found(env: dict[str, Any], monkeypatch: pytest.Mo
         _grade(_CH([]), monkeypatch, run_id="nope", grade="pass")
 
 
-def test_exactly_one_target_and_a_verdict() -> None:
-    with pytest.raises(ValidationError):
-        RunGradeInput(org="o", namespace="n", grade="pass")
+def test_exactly_one_target_and_a_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core.errors import ValidationError as LoomValidationError
+
+    # No target is refused by the handler, after the transport's read-scope gate: a
+    # token bounded below the namespace gets the gate's 403 first.
+    with pytest.raises(LoomValidationError):
+        _grade(_CH([]), monkeypatch, grade="pass")
     with pytest.raises(ValidationError):
         RunGradeInput(org="o", namespace="n", run_id="r", session_id="s", grade="pass")
     with pytest.raises(ValidationError):

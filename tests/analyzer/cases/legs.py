@@ -298,6 +298,8 @@ async def _memory_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         exclude_high_sensitivity=c["as_of"],
         ch=ch,
         include_duplicates=c["as_of"],
+        exclude_transcripts=not c["as_of"],
+        exclude_memory_types=[] if c["as_of"] else ["episodic", "reflection"],
         scope=WHOLE_NAMESPACE,
     )
     await M.count_by_namespace(

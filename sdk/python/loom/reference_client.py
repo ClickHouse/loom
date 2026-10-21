@@ -31,6 +31,7 @@ degrades to "no memory this turn" rather than a stack trace. Construct with
 
 from __future__ import annotations
 
+import inspect
 import os
 import time
 from collections.abc import Iterable, Mapping, Sequence
@@ -38,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from loom.errors import LoomError
+from loom.run import AMBIENT_RUN_HEADER, RECALL_READ_PATHS
 from loom.transport import Transport, consumer_label
 
 # Traffic classes `namespace.register` accepts as `traffic_class`.
@@ -189,6 +191,18 @@ def normalize_consumer(consumer: str) -> str:
     return tag
 
 
+def _takes_extra_headers(transport: Any) -> bool:
+    """Whether `transport.post_with_meta` accepts `extra_headers` (a caller's own
+    transport may predate it)."""
+    try:
+        params = inspect.signature(transport.post_with_meta).parameters
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return "extra_headers" in params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+
+
 class ReferenceClient:
     """One access layer for a consumer: identity + consumer tag on every call,
     timeouts, fail-soft retries, additive-field guards, outcome reporting and
@@ -226,8 +240,10 @@ class ReferenceClient:
         self.calls_by_op: dict[str, int] = {}
         self.failures_by_code: dict[str, int] = {}
         self.catalogue: ProbeReport | None = None
-        # An injected transport is the caller's: its consumer, its lifetime.
+        # An injected transport is the caller's: its consumer, its lifetime. Reads under
+        # an open run are labelled only through a transport that takes `extra_headers`.
         self._owns_transport = transport is None
+        self._labels_reads = transport is None or _takes_extra_headers(transport)
         self._transport: Any = transport or Transport(
             base_url or os.environ.get("LOOM_BASE_URL", "http://localhost:7777"),
             api_key or os.environ.get("LOOM_API_KEY"),
@@ -254,6 +270,15 @@ class ReferenceClient:
 
     # -- the one call path ---------------------------------------------------
 
+    def _run_label(self, op: str) -> dict[str, Any]:
+        """`post_with_meta` keyword arguments labelling a recall read with the open
+        run, where a body run_id would filter. Empty on any other call, and on every
+        call through an injected transport that takes no `extra_headers` (its reads
+        then go unlabelled)."""
+        if self._labels_reads and self.run_id and f"/v1/{op}" in RECALL_READ_PATHS:
+            return {"extra_headers": {AMBIENT_RUN_HEADER: self.run_id}}
+        return {}
+
     def identity(self, op: str) -> dict[str, Any]:
         """The identity fields every request carries for this op."""
         ident: dict[str, Any] = {"org": self.org}
@@ -265,7 +290,9 @@ class ReferenceClient:
                 ident["user_id"] = self.user_id
             if self.session_id is not None:
                 ident["session_id"] = self.session_id
-            if self.run_id and op.startswith("memory."):
+            # On a recall read (RECALL_READ_PATHS) a body run_id filters to the run's own
+            # rows; `call` labels those reads with the run's header instead.
+            if self.run_id and op.startswith("memory.") and f"/v1/{op}" not in RECALL_READ_PATHS:
                 ident["run_id"] = self.run_id
         return ident
 
@@ -310,6 +337,7 @@ class ReferenceClient:
                 f"/v1/{op}",
                 body,
                 timeout_s=timeout_s if timeout_s is not None else self.timeout_s,
+                **self._run_label(op),
             )
         except Exception as e:  # noqa: BLE001 — fail-soft: never crash the host session
             # A failed call reports no attempt count; it is counted once.
@@ -570,9 +598,10 @@ class ReferenceClient:
         return await self.call("code.outcome", body, required=("recorded",))
 
     async def run_begin(self, goal: str, **fields: Any) -> CallResult:
-        """Open a run: every memory call until `run_complete`
-        carries its `run_id`, so the ledger joins what was read to what the
-        run then did."""
+        """Open a run: until `run_complete`, memory calls carry its `run_id`,
+        except recall reads (`RECALL_READ_PATHS`), where a body run_id filters
+        to the run's own rows; those are labelled with it (`X-Loom-Run-Id`)
+        instead, so the ledger still joins what the run read to what it did."""
         r = await self.call("run.begin", {"goal": goal, **fields}, required=("run_id",))
         if r.ok:
             self.run_id = str(r.data["run_id"])

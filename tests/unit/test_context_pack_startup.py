@@ -87,6 +87,98 @@ def test_startup_pack_zero_query_recall(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Pinned" in out.sections["memories"]  # pin surfaced, recency-merged
 
 
+@pytest.mark.parametrize(
+    ("user_id", "session_id", "read"),
+    [("-", "-", ("*", "*")), ("u1", "-", ("u1", "*")), ("u1", "s1", ("u1", "s1"))],
+)
+def test_startup_recall_reads_the_identity_sentinel_as_unset(
+    monkeypatch: pytest.MonkeyPatch, user_id: str, session_id: str, read: tuple[str, str]
+) -> None:
+    """`Agent.call` stamps user_id / session_id "-"; like the pack's query path, the
+    startup recall reads it as no filter, not as the rows written with no user."""
+    from server.memory import store as memory_repo
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+
+    seen: list[tuple[str, str]] = []
+
+    async def _list(ident: Any, **kw: Any) -> list[Any]:
+        seen.append((ident.user_id, ident.session_id))
+        return []
+
+    monkeypatch.setattr(memory_repo, "list_by_namespace", _list)
+
+    class _DeadCH:
+        def __getattr__(self, _n: str) -> Any:
+            async def _boom(*a: Any, **k: Any) -> Any:
+                raise RuntimeError("no CH")
+
+            return _boom
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _DeadCH())
+    asyncio.run(
+        handle_context_pack(
+            ContextPackInput(
+                org="o",
+                namespace="ns",
+                agent="a",
+                user_id=user_id,
+                session_id=session_id,
+                query="",
+                mode="startup",
+                top_k=5,
+            )
+        )
+    )
+    assert seen and set(seen) == {read}
+
+
+def test_startup_recall_leaves_transcripts_out_before_its_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every session's tool-call transcripts would fill the k*2 newest rows once the
+    session axis is open, so the recall leaves them (and the types an unfiltered search
+    leaves out) out in the statement, not after it."""
+    from server.memory import store as memory_repo
+    from server.memory.api.models_context import ContextPackInput
+    from server.memory.app.context_pack import handle_context_pack
+    from server.memory.domain.memory_types import excluded_from_unfiltered_search
+
+    seen: list[dict[str, Any]] = []
+
+    async def _list(ident: Any, **kw: Any) -> list[Any]:
+        seen.append(kw)
+        return []
+
+    monkeypatch.setattr(memory_repo, "list_by_namespace", _list)
+
+    class _DeadCH:
+        def __getattr__(self, _n: str) -> Any:
+            async def _boom(*a: Any, **k: Any) -> Any:
+                raise RuntimeError("no CH")
+
+            return _boom
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _DeadCH())
+    for session_id, excluded in (("-", list(excluded_from_unfiltered_search())), ("s1", [])):
+        seen.clear()
+        asyncio.run(
+            handle_context_pack(
+                ContextPackInput(
+                    org="o",
+                    namespace="ns",
+                    agent="a",
+                    session_id=session_id,
+                    query="",
+                    mode="startup",
+                    top_k=5,
+                )
+            )
+        )
+        assert seen and all(kw["exclude_transcripts"] for kw in seen)
+        assert all(list(kw["exclude_memory_types"]) == excluded for kw in seen)
+
+
 def test_task_mode_without_query_recalls_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Only startup is zero-query-friendly; other modes stay query-driven."""
     from server.memory import store as memory_repo
