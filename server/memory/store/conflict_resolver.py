@@ -47,16 +47,17 @@ _LIVE_VECTOR = """tombstoned_at IS NULL
 # (erasure.store.ledger.ABANDONED_REASON_PREFIX; this store may not import it).
 ERASURE_ABANDONED_PREFIX = "max_attempts ("
 
+# The orgs with an erasure a write waits for (an abandoned saga never runs again). The
+# projection repair's scan reads it too.
+ERASING_ORGS_SQL = f"""
+              SELECT org FROM loom.erasure_requests FINAL
+              WHERE status IN ('queued', 'in_progress', 'failed')
+                AND NOT startsWith(failure_reason, '{ERASURE_ABANDONED_PREFIX}')"""
 # Rows the resolver leaves out of its queue, so they hold no place in it: a namespace
 # soft-deleted by namespace.delete (its data stays in place; an unregistered namespace
 # has no directory row and is live), an org with an erasure queued, running or failed
 # and due a retry (its saga deletes what the resolver would write a new version of),
 # and the namespaces in `capped` (over their daily cost cap, read by the worker).
-# The orgs with an erasure a write waits for (an abandoned saga never runs again).
-ERASING_ORGS_SQL = f"""
-              SELECT org FROM loom.erasure_requests FINAL
-              WHERE status IN ('queued', 'in_progress', 'failed')
-                AND NOT startsWith(failure_reason, '{ERASURE_ABANDONED_PREFIX}')"""
 _NOT_SKIPPED = f"""(org, namespace) NOT IN (
               SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active)
           AND org NOT IN ({ERASING_ORGS_SQL})
@@ -245,7 +246,8 @@ def _nearest_sql() -> str:
     """The row's nearest vectors in its subject: the same user (the anonymous user is
     one subject per agent), its own vector left out. A named user's other sessions are
     peers like any other; the anonymous user's are separate tasks, so only its own
-    session is read (a flagged peer of another session comes through `_ANCHORED_SQL`)."""
+    session is read (a peer the row flags comes through `_ANCHORED_SQL`; one that flags
+    only the row, when the row's side of the mark was lost, waits for a person)."""
     from server.core.vectors.search_settings import vector_search_settings
 
     return (
@@ -605,6 +607,7 @@ async def asserted_versions(
 
 
 __all__ = [
+    "ERASING_ORGS_SQL",
     "JUDGED_MARK",
     "OWED_MARK",
     "Asserted",

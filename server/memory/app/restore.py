@@ -17,6 +17,7 @@ from server.memory.api.models_crud import (
     MemoryRestoreInput,
     MemoryRestoreOutput,
 )
+from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.temporal_sql import SERVED_STATUSES
@@ -593,6 +594,9 @@ async def handle_memory_restore(input: MemoryRestoreInput) -> MemoryRestoreOutpu
                     operation="memory.restore",
                     outcome_unknown=True,
                 ) from e
+        # The row is live: announce it before anything below can fail, since a retry finds
+        # the key live and restores (and announces) nothing.
+        await webhooks.announce([("memory.restored", restore_row)])
         if existing.sensitivity == "high":
             # The key is high again: a plain write still embedding lands below the fence.
             from server.memory.app.high_fence import fence_high

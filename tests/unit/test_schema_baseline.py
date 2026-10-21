@@ -34,6 +34,7 @@ TRANSIENT_TABLES = {
     "memory_code_link_queue": "the code link worker's queue of memory writes (keys only)",
     "consolidation_runs": "the consolidation worker's run ledger",
     "delete_version_checks": "memory.delete_version's owed checks (identity and key only)",
+    "memory_webhook_outbox": "memory webhook events to send (identity, key and id only)",
     "memory_projection_failures": "the repair queue; a resolved entry is done",
 }
 
@@ -114,13 +115,14 @@ def test_the_journal_files() -> None:
         "060_conversation_saved_at.sql",
         "061_profile_schemas.sql",
         "062_extraction_policies.sql",
-        "063_entity_triple_rows.sql",
-        "064_projection_failure_abandoned.sql",
-        "065_entity_triple_seen_at.sql",
-        "066_graph_restore_id.sql",
-        "067_entity_edge_rows.sql",
-        "068_entity_edge_close_id.sql",
-        "069_projection_failure_ttl.sql",
+        "063_memory_webhooks.sql",
+        "064_entity_triple_rows.sql",
+        "065_projection_failure_abandoned.sql",
+        "066_entity_triple_seen_at.sql",
+        "067_graph_restore_id.sql",
+        "068_entity_edge_rows.sql",
+        "069_entity_edge_close_id.sql",
+        "070_projection_failure_ttl.sql",
     ]
 
 

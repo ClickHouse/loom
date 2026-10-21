@@ -7,39 +7,31 @@ task ids, never the task text. The notice is a wake-up hint: the receiver
 pulls with ``task.pull`` (the claim is the pull) and the tables stay the
 source of truth, so a lost or duplicated notice costs one extra pull.
 
-Signed per the Standard Webhooks spec: ``webhook-id`` (the batch's last
-seq — the receiver's idempotency key), ``webhook-timestamp`` (unix
-seconds) and ``webhook-signature: v1,<base64 HMAC-SHA256>`` over
-``"{id}.{timestamp}.{body}"``. The secret is read from the environment
-variable ``task_inboxes.webhook_secret_ref`` names (a ``whsec_`` prefix
-marks a base64 key, as the spec's generators emit); it is never stored in
-ClickHouse and never logged, and only a name of the inbox org's own
-(``states.webhook_secret_ref_ok``) is read. Acknowledgement is any 2xx inside a 10 s
-window; anything else retries with backoff (next pass, 5 s, 5 min, 30 min,
-capped) tracked in ``loom.task_webhook_cursor``.
+Signed per the Standard Webhooks spec (`server.core.webhooks`), with the
+batch's last seq as ``webhook-id`` (the receiver's idempotency key). The
+secret is read from the environment variable
+``task_inboxes.webhook_secret_ref`` names, one of the inbox org's own.
+Acknowledgement is any 2xx inside a 10 s window; anything else retries with
+backoff (next pass, 5 s, 5 min, 30 min, capped) tracked in
+``loom.task_webhook_cursor``.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import logging
-import os
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from server.core import webhooks
 from server.core.datetimes import to_naive_utc as _naive
-from server.core.hosts import vet_host
+from server.core.webhook_secrets import webhook_secret_org_prefix
 from server.settings import settings
 from server.tasks.domain import cursors as task_cursors
-from server.tasks.domain.states import webhook_secret_org_prefix, webhook_secret_ref_ok
 from server.tasks.store import repo as repo
 from server.tasks.store.rows import TaskEventRow, WebhookCursorRow, WebhookInboxRow
 from server.workers import pass_context
@@ -49,7 +41,7 @@ log = logging.getLogger(__name__)
 
 ACK_TIMEOUT_SECONDS = 10.0  # not a setting: with MAX_POSTS_PER_PASS, fills the pass deadline
 # Notices POSTed per pass. The pass runs under a 120 s deadline and each POST
-# may wait the whole ack window, so ten is the most that always fit; inboxes
+# ends within ACK_TIMEOUT_SECONDS, DNS lookup included, so ten fit; inboxes
 # past the cap go first next pass (they are ordered by their cursor's
 # next_try_at, and a delivered inbox's moves to now).
 MAX_POSTS_PER_PASS = 10  # not a setting: with ACK_TIMEOUT_SECONDS, fills the pass deadline
@@ -77,22 +69,7 @@ class DeliverResult:
         return self.delivered + self.failed + self.deferred
 
 
-# ---------------------------------------------------------------- signing
-
-
-def secret_bytes(raw: str) -> bytes:
-    """The HMAC key: a ``whsec_``-prefixed value is base64 (the spec's
-    generated form); anything else is the literal UTF-8 string."""
-    if raw.startswith("whsec_"):
-        return base64.b64decode(raw[len("whsec_") :])
-    return raw.encode("utf-8")
-
-
-def sign(secret: bytes, *, msg_id: str, timestamp: int, body: bytes) -> str:
-    """``v1,<base64 HMAC-SHA256("{id}.{timestamp}.{body}")>``."""
-    signed = f"{msg_id}.{timestamp}.".encode() + body
-    digest = hmac.new(secret, signed, hashlib.sha256).digest()
-    return "v1," + base64.b64encode(digest).decode("ascii")
+# ---------------------------------------------------------------- notice
 
 
 def backoff_seconds(attempts: int) -> int:
@@ -128,16 +105,6 @@ def notice_body(org: str, inbox: str, since_seq: int, rows: list[TaskEventRow]) 
     return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def signed_headers(secret: bytes, *, msg_id: str, timestamp: int, body: bytes) -> dict[str, str]:
-    return {
-        "content-type": "application/json",
-        "user-agent": USER_AGENT,
-        "webhook-id": msg_id,
-        "webhook-timestamp": str(timestamp),
-        "webhook-signature": sign(secret, msg_id=msg_id, timestamp=timestamp, body=body),
-    }
-
-
 # ---------------------------------------------------------------- the pass
 
 
@@ -161,75 +128,24 @@ def _cursor_row(
     }
 
 
-async def pinned_target(url: str) -> tuple[str, str, str, str]:
-    """(refusal, request URL, Host header, TLS server name) for a webhook URL. The
-    host must resolve to public addresses only (`vet_host`, as for tracker
-    sources), and the request goes to the address vetted here, so a second DNS
-    answer cannot point it inward; the name stays the Host header, the SNI and the
-    name the certificate is checked against. http and https only."""
-    parts = urlsplit(url)
-    host = parts.hostname or ""
-    if parts.scheme not in ("http", "https") or not host:
-        return "webhook_url must be an http or https URL with a host", "", "", ""
-    try:
-        port = parts.port
-    except ValueError:
-        return "webhook_url has an invalid port", "", "", ""
-    refusal, address = await vet_host(host)
-    if refusal:
-        return refusal, "", "", ""
-    suffix = f":{port}" if port else ""
-    literal = f"[{address}]" if ":" in address else address
-    name = f"[{host}]" if ":" in host else host
-    pinned = urlunsplit((parts.scheme, literal + suffix, parts.path, parts.query, ""))
-    return "", pinned, name + suffix, host
-
-
-async def _post(
-    transport: httpx.AsyncBaseTransport | None, url: str, headers: dict[str, str], body: bytes
-) -> int:
-    """The HTTP status, or 0 when the URL is refused or no answer arrived inside
-    the ack window. Redirects are not followed. Each delivery has its own client:
-    a pooled connection is keyed by the pinned address, so a second inbox on the
-    same address would reuse a TLS session verified for another name."""
-    refusal, pinned, host_header, server_name = await pinned_target(url)
-    if refusal:
-        log.warning("task webhook: %s refused: %s", url, refusal)
-        return 0
-    try:
-        async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
-            response = await client.post(
-                pinned,
-                content=body,
-                headers={**headers, "Host": host_header},
-                timeout=ACK_TIMEOUT_SECONDS,
-                follow_redirects=False,
-                extensions={"sni_hostname": server_name},
-            )
-    except httpx.HTTPError as e:
-        log.info("task webhook: no answer from %s: %s", url, type(e).__name__)
-        return 0
-    return int(response.status_code)
-
-
-def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str]) -> bytes | None:
+def _secret_for(inbox_row: WebhookInboxRow, env: Mapping[str, str] | None) -> bytes | None:
     ref = str(inbox_row.get("webhook_secret_ref") or "")
     key = (str(inbox_row["org"]), str(inbox_row["inbox"]))
     # A row written before the org rule may name any variable: never read it.
-    raw = env.get(ref, "") if webhook_secret_ref_ok(key[0], ref) else ""
-    if not raw:
+    secret = webhooks.read_secret(key[0], ref, env)
+    if secret is None:
         if key not in _warned_missing_secret:
             _warned_missing_secret.add(key)
             log.warning(
-                "task webhook: inbox %s/%s has a webhook_url but no secret in env %r "
-                "(it must be set and start %s); notices are held until then",
+                "task webhook: inbox %s/%s has a webhook_url but no usable secret in env %r "
+                "(unset, or a whsec_ value that is empty or not base64; the name must start %s); "
+                "notices are held until then",
                 key[0],
                 key[1],
                 ref or "<unset>",
                 webhook_secret_org_prefix(key[0]),
             )
-        return None
-    return secret_bytes(raw)
+    return secret
 
 
 async def _deliver_inbox(
@@ -238,7 +154,7 @@ async def _deliver_inbox(
     cursor: WebhookCursorRow | None,
     *,
     now: datetime,
-    env: Mapping[str, str],
+    env: Mapping[str, str] | None,
 ) -> str:
     """One inbox: ``"delivered"``, ``"failed"`` or ``"skipped"`` (nothing new,
     a retry not yet due, or no secret)."""
@@ -260,16 +176,29 @@ async def _deliver_inbox(
         return "skipped"
     body = notice_body(org, inbox, last_seq, rows)
     msg_id = str(int(rows[-1]["seq"]))
-    headers = signed_headers(secret, msg_id=msg_id, timestamp=int(time.time()), body=body)
-    status = await _post(transport, str(inbox_row["webhook_url"]), headers, body)
-    if 200 <= status < 300:
+    headers = webhooks.signed_headers(
+        secret, msg_id=msg_id, timestamp=int(time.time()), body=body, user_agent=USER_AGENT
+    )
+    delivery = await webhooks.post(
+        transport,
+        str(inbox_row["webhook_url"]),
+        headers,
+        body,
+        ack_timeout_seconds=ACK_TIMEOUT_SECONDS,
+    )
+    if delivery.ok:
         await repo.insert_webhook_cursor(
             _cursor_row(
-                org, inbox, last_seq=int(msg_id), attempts=0, next_try_at=now, last_status=status
+                org,
+                inbox,
+                last_seq=int(msg_id),
+                attempts=0,
+                next_try_at=now,
+                last_status=delivery.status,
             )
         )
         return "delivered"
-    await _record_failure(org, inbox, cursor, now=now, status=status)
+    await _record_failure(org, inbox, cursor, now=now, status=delivery.status)
     return "failed"
 
 
@@ -308,7 +237,6 @@ async def deliver_once(
     """One pass over every inbox with a webhook_url. `transport` replaces the
     network (tests); each delivery gets a fresh client on it."""
     now = now or datetime.now(UTC)
-    env = os.environ if env is None else env
     inboxes = await repo.list_webhook_inboxes()
     if not inboxes:
         return DeliverResult()

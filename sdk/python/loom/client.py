@@ -3003,6 +3003,50 @@ class UiOps:
         return cast("_ops.UiVitalsOutput", await self._agent.call("ui.vitals", body, **options))
 
 
+class WebhookOps:
+    """The `webhook.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def deliveries(
+        self, body: _ops.WebhookDeliveriesBody | None = None, /, **options: Any
+    ) -> _ops.WebhookDeliveriesOutput:
+        """`webhook.deliveries`."""
+        return cast(
+            "_ops.WebhookDeliveriesOutput",
+            await self._agent.call("webhook.deliveries", body, **options),
+        )
+
+    async def list(
+        self, body: _ops.WebhookListBody | None = None, /, **options: Any
+    ) -> _ops.WebhookListOutput:
+        """`webhook.list`."""
+        return cast(
+            "_ops.WebhookListOutput", await self._agent.call("webhook.list", body, **options)
+        )
+
+    async def register(
+        self, body: _ops.WebhookRegisterBody | None = None, /, **options: Any
+    ) -> _ops.WebhookRegisterOutput:
+        """`webhook.register`."""
+        return cast(
+            "_ops.WebhookRegisterOutput",
+            await self._agent.call("webhook.register", body, **options),
+        )
+
+    async def remove(
+        self, body: _ops.WebhookRemoveBody | None = None, /, **options: Any
+    ) -> _ops.WebhookRemoveOutput:
+        """`webhook.remove`."""
+        return cast(
+            "_ops.WebhookRemoveOutput", await self._agent.call("webhook.remove", body, **options)
+        )
+
+
 class WorkingMemoryOps:
     """The `working_memory.*` operations."""
 
@@ -3108,4 +3152,5 @@ class OpsClient:
         self.task = TaskOps(agent)
         self.tracker = TrackerOps(agent)
         self.ui = UiOps(agent)
+        self.webhook = WebhookOps(agent)
         self.working_memory = WorkingMemoryOps(agent)

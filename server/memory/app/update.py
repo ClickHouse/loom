@@ -26,7 +26,7 @@ from server.memory.api.models_crud import (
     MemoryUpdateInput,
     MemoryUpdateOutput,
 )
-from server.memory.app import after_write
+from server.memory.app import after_write, webhooks
 from server.memory.app import provenance as app_provenance
 from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.conflicts import same_key_mark
@@ -731,7 +731,8 @@ async def _write_revision(
         else []
     )
     try:
-        await asyncio.gather(
+        # Every insert runs to its end, so the fence below comes after the retire.
+        memory_done, *others_done = await asyncio.gather(
             insert_memory_versions([memory_row], ch=ch),
             *([memory_repo.insert_embedding_rows(emb_rows, ch=ch)] if emb_rows else []),
             *(
@@ -739,11 +740,20 @@ async def _write_revision(
                 if searchable
                 else [memory_repo.tombstone_vectors_of(existing, version=new_version, ch=ch)]
             ),
+            return_exceptions=True,
         )
+        if not isinstance(memory_done, BaseException):
+            # The row is in: announce it even when the rest of the write fails; a retry
+            # writes and announces a new version.
+            await webhooks.announce([("memory.revised", memory_row)])
+        for done in [memory_done, *others_done]:
+            if isinstance(done, BaseException):
+                raise done
     finally:
         if sensitivity == "high":
             # After the retire (at the same version, the later insert wins the tie),
-            # and even when the gather failed: the version row may be in.
+            # and even when an insert failed or the write was cancelled: the version
+            # row may be in.
             await fence_high([(memory_repo.embedding_key(existing), new_version)], ch=ch)
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows(emb_rows, ch=ch)

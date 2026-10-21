@@ -85,7 +85,7 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "p2": _Row("p2", "proposed", conflict_with=["id-fact"]),
         "fact": _Row("fact", "active"),
     }
-    seen: dict[str, Any] = {"mirror": [], "audit": [], "flagged": []}
+    seen: dict[str, Any] = {"mirror": [], "audit": [], "flagged": [], "announced": []}
 
     async def _many(
         ident: Any, keys: list[str], *, ch: Any = None, strong: bool = False, scope: Any = None
@@ -116,7 +116,12 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     # The stub builder returns partial rows; the funnel's full-row check is
     # pinned in test_rmt_write_is_typed.
     monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
+
+    async def _announce(changes: Any) -> None:
+        seen["announced"].extend((event, row["memory_key"]) for event, row in changes)
+
     monkeypatch.setattr(audit, "emit", _emit)
+    monkeypatch.setattr(p.webhooks, "announce", _announce)
     return seen
 
 
@@ -157,6 +162,18 @@ def test_reject_records_the_reason(repo: dict[str, Any]) -> None:
     )
     row = ch.inserts[0][0]
     assert (row["status"], row["rejection_reason"]) == ("rejected", "3 fails")
+
+
+def test_an_accepted_proposal_is_announced_as_written(repo: dict[str, Any]) -> None:
+    """The proposal was never served: accepting it is the key's first served write."""
+    asyncio.run(p.decide("o", "n", ["p1", "fact"], "accept", actor="human:t", ch=_CH()))
+    assert repo["announced"] == [("memory.written", "p1")]
+
+
+def test_a_rejected_proposal_is_not_announced(repo: dict[str, Any]) -> None:
+    """A rejected proposal was never served or announced: nothing changed for a reader."""
+    asyncio.run(p.decide("o", "n", ["p1"], "reject", actor="human:t", ch=_CH()))
+    assert repo["announced"] == []
 
 
 def test_apply_policy_does_nothing_under_manual(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Awaitable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -15,7 +16,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
 from server.embedding import get_embedder
 from server.identity.app.request_scope import request_scope
@@ -33,7 +34,7 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app import after_write
+from server.memory.app import after_write, webhooks
 from server.memory.app.auto_resolution import Follow, follow_beside_response
 from server.memory.app.drops import record_drop
 from server.memory.app.edge_links import drop_undeclared_edges_beside, owes_undeclared_drop
@@ -43,6 +44,7 @@ from server.memory.app.triple_projections import project_stated_relations
 from server.memory.app.write_fence import lift_above_deletes, lift_after_insert
 from server.memory.domain.embed_text import embedding_texts
 from server.memory.domain.trust import attests
+from server.memory.domain.webhook_events import EventType
 from server.memory.store.inserts import insert_memory_versions
 
 log = logging.getLogger(__name__)
@@ -228,6 +230,7 @@ class _SetWrite:
     on_expire: str = ""
     memory_id: str = ""
     had_existing_row: bool = False
+    restated: bool = False
     writer_actor: str = ""
     source_class: str = ""
     memory_row: dict[str, Any] = field(default_factory=dict)
@@ -269,6 +272,43 @@ async def _lift_after_insert(
     return w.version
 
 
+def _whole_seconds(dt: datetime | None) -> datetime | None:
+    """`dt` as the DateTime column stores it: naive UTC, whole seconds."""
+    dt = to_naive_utc(dt)
+    return dt.replace(microsecond=0) if dt else None
+
+
+def _only_reinforces(w: _SetWrite) -> bool:
+    """The same value said again with the same status, type, tags, expiry, confidence,
+    valid_at, valid_to and sensitivity: the new version only reinforces the live row. A restated
+    rejected, superseded or conflicted row is served again, so it is a change. The live
+    row reads back at its columns' precision (Float32 confidence, whole-second DateTime),
+    so each field is compared at that precision."""
+    if not w.restated:
+        return False
+    row, existing = w.memory_row, w.existing
+    return (
+        str(row.get("status") or "active") == str(existing.status or "active")
+        and row.get("memory_type") == existing.memory_type
+        and sorted(row.get("tags") or []) == sorted(existing.tags or [])
+        and _whole_seconds(row.get("expires_at")) == _whole_seconds(existing.expires_at)
+        and math.isclose(float(row.get("confidence") or 0.0), existing.confidence, rel_tol=1e-6)
+        and _whole_seconds(row.get("valid_at")) == _whole_seconds(existing.valid_at)
+        and _whole_seconds(row.get("valid_to")) == _whole_seconds(existing.valid_to)
+        and str(row.get("sensitivity") or "") == str(existing.sensitivity or "")
+    )
+
+
+async def _announce_set(w: _SetWrite) -> None:
+    """Announce the inserted row: `memory.written` for a new key, `memory.revised` for
+    any change to a live key, nothing for a pure reinforcement or a proposal. Called
+    once the row is in, whatever fails after it."""
+    if _only_reinforces(w) or w.memory_row.get("status") == "proposed":
+        return
+    event: EventType = "memory.revised" if w.had_existing_row else "memory.written"
+    await webhooks.announce([(event, w.memory_row)])
+
+
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     """Phase 7 of memory.set: the non-embedded write — one loom.memory row, no peers.
 
@@ -301,7 +341,10 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     await _lift_above_deletes(w, ch)
     with traced("ch.insert.memory", table="loom.memory"):
         await insert_memory_versions([memory_row], ch=ch)
-    version = await _lift_after_insert(w, ch)
+    try:
+        version = await _lift_after_insert(w, ch)
+    finally:
+        await _announce_set(w)  # the row is in, whatever failed after it
     # The version this replaces may have been embedded (re-set as 'high', or retyped).
     try:
         await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
@@ -743,8 +786,17 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
             await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
     with traced("ch.insert.dual_write", concurrent=2):
-        await asyncio.gather(_insert_memory(), _insert_embedding())
-    await _lift_after_insert(w, ch, [embedding_row])
+        memory_done, embedding_done = await asyncio.gather(
+            _insert_memory(), _insert_embedding(), return_exceptions=True
+        )
+    if isinstance(memory_done, BaseException):
+        raise memory_done
+    try:
+        if isinstance(embedding_done, BaseException):
+            raise embedding_done
+        await _lift_after_insert(w, ch, [embedding_row])
+    finally:
+        await _announce_set(w)  # the row is in, whatever failed after it
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
 

@@ -3863,6 +3863,93 @@ settings:
   # miss. [live]
   # memory_search_spelling_lookup_timeout_s: 0.4
 
+  # ===== Memory webhooks: their delivery worker and the URLs they may reach =====
+
+  # Deliver the signed memory-change events of loom.memory_webhook_outbox to each
+  # namespace's registered webhooks (the memory_webhook_deliver worker). [restart]
+  # memory_webhook_deliver_enabled: true
+
+  # Seconds between memory webhook delivery passes while events are going out. [restart]
+  # memory_webhook_deliver_interval_seconds: 5
+
+  # Seconds between memory webhook delivery passes that found nothing due. [restart]
+  # memory_webhook_deliver_idle_interval_seconds: 30
+
+  # Seconds a memory webhook delivery pass may run before the supervisor abandons it (at
+  # least 30). [restart]
+  # memory_webhook_deliver_max_pass_seconds: 120.0
+
+  # Seconds before the pass deadline a memory webhook delivery pass stops its POSTs,
+  # kept for the insert after them; less than memory_webhook_deliver_max_pass_seconds.
+  # [restart]
+  # memory_webhook_deliver_reserve_seconds: 20.0
+
+  # Seconds past memory_webhook_deliver_max_pass_seconds a memory webhook event a pass
+  # leased stays passed over by other passes, so a crashed pass's events come back after
+  # it. [live]
+  # memory_webhook_lease_margin_seconds: 60.0
+
+  # Leases (max pass plus lease margin each) after a webhook.remove in which delivery
+  # passes still mark the removed memory webhook's events dead. [live]
+  # memory_webhook_removal_window_leases: 10
+
+  # Due memory webhook events one delivery pass POSTs at most; the rest go next pass.
+  # [live]
+  # memory_webhook_max_posts_per_pass: 40
+
+  # Events of one memory webhook a delivery pass POSTs at most, so every webhook with
+  # work gets its turn. [live]
+  # memory_webhook_posts_per_webhook: 10
+
+  # Memory webhook POSTs one delivery pass has in flight at once (one per webhook at
+  # most). [live]
+  # memory_webhook_deliver_concurrency: 4
+
+  # Seconds a memory webhook receiver has to answer a POST (the name lookup, the
+  # connection and the status line) before it counts as failed; also the registration's
+  # lookup limit. [live]
+  # memory_webhook_ack_timeout_seconds: 10.0
+
+  # Comma-separated seconds a failed memory webhook event waits before each retry, one
+  # step per failed attempt; every step over 0. [live]
+  # memory_webhook_backoff_steps_seconds: "5,30,120,600,1800"
+
+  # Seconds a failed memory webhook event waits at most: caps each backoff step and is
+  # the wait after the last. [live]
+  # memory_webhook_max_backoff_seconds: 3600.0
+
+  # POSTs per memory webhook event before it is marked dead; the 2.75-day delivery
+  # deadline marks it dead sooner whatever this is. [live]
+  # memory_webhook_max_attempts: 60
+
+  # Failed POSTs in a row after which the delivery worker passes a memory webhook over
+  # for a cooldown (kept per process; a 2xx resets it). [live]
+  # memory_webhook_failures_before_cooldown: 5
+
+  # Seconds of a memory webhook's first cooldown; each one after it doubles, up to
+  # memory_webhook_max_cooldown_seconds. [live]
+  # memory_webhook_cooldown_seconds: 60
+
+  # Seconds a memory webhook's cooldown grows to at most. [live]
+  # memory_webhook_max_cooldown_seconds: 3600
+
+  # Seconds between each process's reads of the registered memory webhooks; a webhook
+  # registered or removed on another process applies to writes here within it. [live]
+  # memory_webhook_refresh_seconds: 10.0
+
+  # Live memory webhooks a namespace may hold: every memory write inserts one outbox row
+  # per webhook that takes its event. [live]
+  # memory_webhook_max_per_namespace: 10
+
+  # True lets a memory webhook use plain http (a local receiver in development); false:
+  # https only. [restart]
+  # memory_webhook_allow_http: false
+
+  # Comma-separated hostnames or IP literals (exact, any case) a memory webhook may
+  # reach although they resolve to a private, loopback or link-local address; "" = none.
+  # [restart]
+  # memory_webhook_private_hosts: ""
+
   # ===== Namespace registration, write marks and bench-namespace GC =====
 
   # --- namespace write marks ---

@@ -457,6 +457,15 @@ _WORKERS: tuple[_Worker, ...] = (
         idle_interval="task_webhook_deliver_idle_interval_seconds",
     ),
     _Worker(
+        "memory_webhook_deliver",
+        "server.memory.workers.webhook_deliver",
+        "memory_webhook_deliver_enabled",
+        "memory_webhook_deliver_interval_seconds",
+        # the POST budget: webhook_deliver._post_budget_seconds
+        max_pass_setting="memory_webhook_deliver_max_pass_seconds",
+        idle_interval="memory_webhook_deliver_idle_interval_seconds",
+    ),
+    _Worker(
         "tracker_links",
         "server.tracker.workers.links",
         "tracker_links_enabled",

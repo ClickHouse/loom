@@ -29,6 +29,7 @@ merge, duplicate, conflict or rejected. The verdicts and conflict policies are i
 | Store a row with exact typed fields                   | `memory.record.write`           | See [typed records](#typed-records).                                            |
 | Store a document                                      | `knowledge.add`                 | Not a memory; see [knowledge](../knowledge.md).                                 |
 | Park scratch state (a cursor, a lease)                | `working_memory.set`            | Not embedded or ranked; see [working memory](./working-memory-and-profiles.md). |
+| Learn when a namespace's memory changes               | `webhook.register`              | Admin; see [change webhooks](#change-webhooks).                                 |
 
 Each op is `POST /v1/<op>`, an SDK method, and, where exposed, the MCP tool
 `loom_<op with dots as underscores>`. The [operations reference](../../reference/operations.md#memory)
@@ -253,6 +254,206 @@ They answer predicate questions without parsing text.
 - Each field value carries a `state` (`value`, `unknown`, `rejected`, `absent`).
 - `memory.set_from_messages` with `record_schema` and `memory_key` extracts one record.
 
+## Change webhooks
+
+A product built on Loom (a chat service that shows a user what the assistant remembers,
+say) can be told when memory in a namespace changes instead of polling for it. A
+namespace admin registers a URL with `webhook.register`; Loom then POSTs one signed event
+per change. The event carries ids, the memory key and the identity tuple, never a value,
+tags or evidence: the receiver reads the memory back with its own token
+(`memory.get_by_id`), so what it may read is decided when it reads, as for any other read.
+A key reaches every registered receiver, including one whose token may not read the row,
+so a secret or a fact never goes in a key. Copies into the namespace (`memory.copy_to`,
+`memory.cross_promote`) and `namespace.restore` from a snapshot send no event: after one,
+the receiver reads the namespace again. The full list of writes that send none is below
+the table.
+
+| Event               | Sent after                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.written`    | `memory.set` or `memory.bulk_set` writes a key that held no live row, or a proposal is accepted                                                                                                                                                                                                                                                                                                   |
+| `memory.revised`    | a new value, type, tags, expiry, confidence, `valid_at`, `valid_to` or sensitivity of a live key: `memory.set`, `memory.bulk_set`, `memory.update`, `memory.update_by_id`, `namespace.rollback`, the source of `memory.move` with `keep_redirect`, an expiry that demotes or anonymizes, a completed run's retention (`demote` or `expire`), the sensitivity sweep's new label                    |
+| `memory.tombstoned` | `memory.delete`, `memory.delete_version`, `memory.clear` (one per row it clears), `conflicts.resolve` and `memory.dedup_resolve` for the side they tombstone, `blacklist.add` and `blacklist.sweep` for each live row the sweep tombstones, `namespace.rollback` back to a tombstone or removing a key born later, the source of `memory.move` without `keep_redirect`, an expiry that tombstones |
+| `memory.restored`   | `memory.restore`, or `namespace.rollback` reviving a key that is tombstoned now                                                                                                                                                                                                                                                                                                                   |
+| `memory.redacted`   | `memory.redact` scrubs a historical version, and once for each profile key with versions built from that memory, naming its newest scrubbed version                                                                                                                                                                                                                                               |
+| `memory.erased`     | an erasure saga completes (`erasure.request`, `collection.delete`, `code.repo.remove`)                                                                                                                                                                                                                                                                                                            |
+
+Ops that write through `memory.set` (procedures, profiles, learnings, decisions) send its
+events. A `memory.set` of the same value with the same type, tags, expiry, confidence,
+`valid_at`, `valid_to` and sensitivity (a restatement, which only reinforces the row)
+sends none; the same value with any of those changed is `memory.revised`. A retry with the
+same fields is a restatement and sends nothing; a retry that recomputes a relative expiry
+(`ttl_seconds`, a type's retention, the sensitive-data retention) moves `expires_at` and
+is `memory.revised`. `memory.bulk_set` skips any entry whose value equals the live row's:
+it writes no version and sends no event, even when the entry's tags, expiry or confidence
+differ. In one `memory.bulk_set`, a key that an earlier entry of the batch wrote is
+`memory.revised`; if the batch's lookup of live keys fails, its revisions are announced as
+`memory.written`. A merge (`merged_into_key`) writes no version at your key and sends no
+event; neither does a dry run or a refused write.
+
+These writes send no event:
+
+- the summaries `memory.delete` retires with the row they were built from
+- `memory.consolidate` and the consolidation worker
+- observations and their distillation
+- period digests
+- `memory.touch`, `memory.pin` and `memory.unpin`, `memory.lock` and `memory.unlock`,
+  `memory.verify` and `memory.apply`
+- `memory.reject`, and the quarantine `memory.outcome` makes after repeated negative
+  outcomes. Both set the row's status to `rejected` in place, which takes it out of search:
+  a receiver that mirrors what Loom serves reads the key again after one.
+- `memory.resolve_orphan_duplicates`, which re-activates rows
+- `memory.dedup_collapse`, which changes only the search mirror
+- `memory.promote` and `memory.demote`, which change the namespace's shared copy, not the
+  memory row
+- the counters of `memory.outcome` and `memory.outcome_run`
+- `memory.assign_category`, `memory.link` and `memory.reindex`
+- a proposal (`memory.set` with `proposed`, which is not served until it is accepted) and
+  its rejection
+- the status change `conflicts.resolve` and `memory.dedup_resolve` make on the rows they keep
+- the supersessions a write makes of other rows: the older same-key rows the `newest_wins`
+  conflict policy retires, and the peers a `refines` verdict supersedes. The new row's own
+  event is sent.
+- the status a conflict verdict lands after the write, inline or from the deferred judge
+  (`conflicted` on the row and its peers, `duplicate` on the row). The write's own event is
+  sent.
+- the undo of an automatic supersession through `memory.restore`
+- copies into another namespace (`memory.copy_to`, `memory.cross_promote`)
+- `namespace.restore` from a snapshot
+- entity backfills
+- typed records (`memory.record.*`) and saved chat messages (`conversation.*`). Neither is
+  a memory row.
+
+Accepting a proposal, by `memory.proposal_decide` or the namespace's `auto` proposal
+policy, sends `memory.written`.
+
+```json
+{
+  "type": "memory.revised",
+  "event_id": "5f0c…",
+  "org": "acme",
+  "namespace": "chat",
+  "agent": "assistant",
+  "user_id": "u-42",
+  "session_id": "-",
+  "memory_key": "user/pref/tea",
+  "memory_id": "0b7e…",
+  "version": 1790000000000000000,
+  "actor": "human:alice",
+  "request_id": "r-91c2…",
+  "erasure_id": "",
+  "occurred_at": "2026-09-20T12:00:00.000Z"
+}
+```
+
+`memory.erased` carries the `erasure_id` the request returned and no key, user,
+identity or requester (`actor` is `-`, `request_id` empty): a namespace erasure goes to that namespace's webhooks, a user's erasure to
+every webhook of the org that takes the event, including namespaces that never held
+the user. `erasure.status` of a user's erasure answers only a flat org admin or
+platform admin whose token names the org, so a receiver's token cannot read the user
+id from it.
+
+| Operation            | Role  | What it does                                                                                                                                                                                                                                                                             |
+| -------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webhook.register`   | admin | Registers `url`, `secret_ref` and `events` (default all six); the same URL again replaces it. At most `LOOM_MEMORY_WEBHOOK_MAX_PER_NAMESPACE` per namespace (10 by default): two registrations of one new URL at the same moment can make two webhooks, one past the cap; remove either. |
+| `webhook.list`       | admin | The namespace's webhooks, with `secret_present` (whether the replica that answered holds a usable secret).                                                                                                                                                                               |
+| `webhook.remove`     | admin | Removes one by `webhook_id`; none of its events is sent after the call, save a POST already in flight.                                                                                                                                                                                   |
+| `webhook.deliveries` | admin | The last 3 days of events by state: `pending`, `delivered`, `dead`, with the last HTTP status or error.                                                                                                                                                                                  |
+
+**Signing.** Each request carries the Standard Webhooks headers the task inbox webhook
+uses: `webhook-id` (the event id; drop a repeat), `webhook-timestamp` (unix seconds;
+refuse one more than a few minutes old to bound replay) and
+`webhook-signature: v1,<base64 HMAC-SHA256>` over `"{id}.{timestamp}.{body}"`. The secret
+lives only in the server's environment: `secret_ref` names the variable, one of the
+org's own, `LOOM_WEBHOOK_SECRET_<ORG>__<NAME>`, encoded as for
+[task inbox webhooks](../tasks-and-decisions.md); a `whsec_` prefix marks a base64 key,
+whose line breaks and other whitespace are dropped.
+A secret belongs to the org, not to one webhook: every webhook that names the same
+`secret_ref` signs with it, so a receiver checks the signed body's `org` and `namespace`
+before acting on an event.
+
+**URLs.** `https` only, unless `LOOM_MEMORY_WEBHOOK_ALLOW_HTTP` is set (a local receiver
+in development), and with no user name or password in it. The host must resolve to
+public addresses: loopback, private, link-local (cloud metadata) and multicast targets
+are refused at registration and at every delivery, unless
+`LOOM_MEMORY_WEBHOOK_PRIVATE_HOSTS` names the host. Each delivery connects to the address
+it checked and follows no redirect.
+
+**Delivery.** The write leaves one row per event and webhook in
+`loom.memory_webhook_outbox` and makes no network call; the `memory_webhook_deliver`
+worker sends it. Any 2xx within 10 s (`LOOM_MEMORY_WEBHOOK_ACK_TIMEOUT_SECONDS`)
+acknowledges it; the 10 s cover the name lookup, the connection and the status line, and
+the answer's body is never read. Anything else is retried after 5 s, 30 s, 2 min, 10 min
+and 30 min (`LOOM_MEMORY_WEBHOOK_BACKOFF_STEPS_SECONDS`) and then hourly
+(`LOOM_MEMORY_WEBHOOK_MAX_BACKOFF_SECONDS`, which also caps the earlier waits), until
+`LOOM_MEMORY_WEBHOOK_MAX_ATTEMPTS` attempts (60 by default, about 2.3 days of retries)
+mark it `dead`, and any event a receiver has not taken 2.75 days after it happened is
+marked `dead` with "not delivered in time". `actor` is the principal that
+made the change, or `worker:<name>` for a change a background pass made (the expiry
+sweep, the `delete_version` check).
+
+- **Fairness.** A pass takes events in turns: every webhook's oldest due event, then
+  every webhook's second, at most 10 of one webhook
+  (`LOOM_MEMORY_WEBHOOK_POSTS_PER_WEBHOOK`), sent one after another, so a receiver that
+  answers in 1 s takes about 10 events per pass with the defaults. A pass sends at most
+  40 in all (`LOOM_MEMORY_WEBHOOK_MAX_POSTS_PER_PASS`), 4 at a time
+  (`LOOM_MEMORY_WEBHOOK_DELIVER_CONCURRENCY`) and one at a time per webhook, so a slow
+  receiver holds at most one of the 4. While fewer than 40 webhooks have work, every
+  webhook with work gets its first POST of a pass before any webhook gets a second. A
+  webhook whose last 5 POSTs failed (`LOOM_MEMORY_WEBHOOK_FAILURES_BEFORE_COOLDOWN`) is
+  passed over for a cooldown that starts at a minute
+  (`LOOM_MEMORY_WEBHOOK_COOLDOWN_SECONDS`) and doubles up to an hour
+  (`LOOM_MEMORY_WEBHOOK_MAX_COOLDOWN_SECONDS`), checked before each POST; a 2xx ends it.
+  The cooldown is kept per server process, so a restart or a new worker leader starts it
+  afresh. A pass POSTs until every POST could have waited its whole ack deadline, for
+  the larger of an even share of the pass (40 / 4 = 10 POSTs per slot) and one webhook's
+  whole turn (10 POSTs one after another): max(40 / 4, 10) × 10 s = 100 s after the pass
+  starts, and at the latest until
+  `LOOM_MEMORY_WEBHOOK_DELIVER_RESERVE_SECONDS` (20 s) before its deadline
+  (`LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`, 120 s); the reserve covers the one
+  insert after the POSTs. At that point the pass cancels its POSTs still in flight: a
+  receiver may already have handled one, but no outcome is recorded, so its event keeps
+  the lease and is sent again under the same `webhook-id` once the lease ends. The reads before the POSTs come out of the POST budget, which
+  counts from the start of the pass, so when the due-event read grows with the outbox
+  backlog, raise `LOOM_MEMORY_WEBHOOK_DELIVER_MAX_PASS_SECONDS`. What a pass did not send
+  goes next pass. With fast receivers the ceiling is about 40 events per pass, a pass
+  every 5 s while there is work: some 8 events a second per deployment with the
+  defaults. A deployment that needs more raises the per-pass and concurrency settings,
+  and the pass deadline with them.
+- **Waiting and dead events.** While the variable `secret_ref` names is unset or not
+  usable (a `whsec_` value that is empty or not base64), the webhook's events wait, and the wait
+  counts as no attempt; after 2.5 days they are marked `dead` with "no usable secret".
+  An event of a working webhook that a receiver has not taken after 2.75 days (a
+  receiver that is down, or a backlog that never reached its turn) is marked `dead` with
+  "not delivered in time".
+  A pass checks before each POST that the webhook was not removed since it began, so
+  after `webhook.remove` only a POST already in flight goes out.
+  The events of a removed webhook are marked `dead` by the next delivery pass that runs
+  within about 30 minutes of the removal (`LOOM_MEMORY_WEBHOOK_REMOVAL_WINDOW_LEASES` widens
+  it); after that they stay listed as `pending` until they expire. Registering the same
+  URL again creates a new webhook that does not inherit them. An event whose memory was
+  erased before it went out is marked `dead` and not sent: the key's history is read just
+  before each POST, so only an erasure that lands during that POST can let one out.
+- **Repeats.** An event is sent until a receiver takes it or it is marked dead (see
+  above), and a delivered event can arrive more than once, in no order; a change can also
+  go unannounced (a failed outbox insert, a registration not yet seen by the serving
+  process, a rolling upgrade), so a receiver that mirrors memory re-reads the namespace
+  from time to time. Order events by `version`, and read the row back rather than
+  trusting the event's age. Two events can carry the same `version`: a `memory.clear` tombstone does not write a new version, so its
+  `memory.tombstoned` event carries the version it tombstoned; on a tie,
+  `memory.tombstoned` comes after `memory.written` or `memory.revised`. A
+  `memory.redacted` event's `version` names the historical version it scrubbed, not a
+  new head, so it does not move the key's order; for a profile key scrubbed with the
+  memory it built from, that version can be the head, so read the key back. A repeat shares its
+  `webhook-id`: a retry, two overlapping passes, and the same version of a memory
+  announced twice to the same webhook (a `delete_version` check that runs again) all
+  carry one id, so drop an id you have seen.
+- **Keeping.** An outbox insert that fails is logged and that event is not sent; the
+  write still stands. A webhook registered on one server process applies to writes on the
+  others within `LOOM_MEMORY_WEBHOOK_REFRESH_SECONDS`. Events and their delivery record
+  are read for 3 days and leave the disk within about 4: each day's events are dropped
+  together once the day's last one is 3 days old. An erasure deletes the events in its scope; their delivery records
+  name no key or identity and expire with the rest.
+
 ## Settings
 
 | Setting                              | Default | Effect                                                                                                                        |
@@ -261,6 +462,9 @@ They answer predicate questions without parsing text.
 | `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | true    | Detect credential, card, SSN and PIN shapes (`high`) and email, phone and IBAN shapes (`medium`) when `sensitivity` is unset. |
 | `LOOM_MAX_REQUEST_BYTES`             | 32 MiB  | Request-body cap.                                                                                                             |
 
+Change webhook settings (`LOOM_MEMORY_WEBHOOK_*`, including
+`LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED`, which stops delivery) are in
+[configuration: MemoryWebhook](../../reference/configuration.md#memorywebhook).
 Conflict and duplicate settings are in
 [conflicts and refusal](./conflicts-and-refusal.md#settings). Per namespace,
 `namespace.register` sets `conflict_threshold`, `default_conflict_policy` and

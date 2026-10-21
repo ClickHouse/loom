@@ -7,14 +7,16 @@ tombstone cascades.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import Any
 
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
+from server.memory.domain.webhook_events import memory_change
 from server.memory.store.embeddings import (
     mirror_status_to_embeddings,
     reemit_embedding_rows_for_keys,
@@ -27,6 +29,7 @@ from server.memory.store.rows import (
     build_memory_version_row,
     next_version,
 )
+from server.observability import degradations
 
 _log = logging.getLogger(__name__)
 
@@ -325,12 +328,18 @@ async def downgrade_consolidated_dependents(
     return len(to_tomb), len(to_down)
 
 
+# Tombstoned rows one page of `bulk_tombstone_scope`'s callback carries.
+# not a setting: an in-process buffer, the rows one page holds and one outbox insert takes
+CLEAR_PAGE_ROWS = 1000
+
+
 async def bulk_tombstone_scope(
     *,
     org: str,
     namespace: str,
     user_id: str | None = None,
     agent: str | None = None,
+    on_tombstoned: Callable[[list[dict[str, Any]]], Awaitable[None]] | None = None,
     ch: _CHClient | None = None,
 ) -> dict[str, int]:
     """`memory.clear`: bulk-tombstone every live memory row matching
@@ -340,19 +349,25 @@ async def bulk_tombstone_scope(
     repo runs the query as-given (a scope-less call would clear the whole
     namespace — that's `erasure.request_namespace`'s job).
 
+    `on_tombstoned`, when given, is called after the memory mutation and before
+    the embeddings one, with each page of the memory rows it tombstoned
+    (identity tuple, memory_key, memory_id and version), for the handler's
+    webhook events; without it no row is read. A failed read-back is noted as
+    a degradation, never raised.
+
     Returns {table_name: rows_tombstoned}.
     """
     ch = ch or _default_client()
 
-    where = ["org = {org:String}", "namespace = {ns:String}", "tombstoned_at IS NULL"]
+    scope = ["org = {org:String}", "namespace = {ns:String}"]
     params: dict[str, Any] = {"org": org, "ns": namespace}
     if user_id is not None:
-        where.append("user_id = {uid:String}")
+        scope.append("user_id = {uid:String}")
         params["uid"] = user_id
     if agent is not None:
-        where.append("agent = {agent:String}")
+        scope.append("agent = {agent:String}")
         params["agent"] = agent
-    scope_sql = " AND ".join(where)
+    scope_sql = " AND ".join([*scope, "tombstoned_at IS NULL"])
     # Locked rows survive a clear: the memory table filters
     # on the lock in force; memory_embeddings has no lock columns, so it
     # excludes the locked keys by subquery. What was left behind is reported
@@ -374,6 +389,8 @@ async def bulk_tombstone_scope(
             f"{scope_sql} AND memory_key NOT IN (SELECT memory_key FROM loom.memory FINAL "
             f"WHERE {scope_sql} AND {locked_predicate()})"
         )
+    # One timestamp for the whole clear, so the rows it tombstoned can be read back.
+    params["at"] = naive_utc_now_seconds()
     counts: dict[str, int] = {}
     for table in ("loom.memory", "loom.memory_embeddings"):
         where_sql = where_by_table[table]
@@ -388,14 +405,58 @@ async def bulk_tombstone_scope(
         await ch.execute(
             f"""
             ALTER TABLE {table}
-            UPDATE tombstoned_at = now()
+            UPDATE tombstoned_at = {{at:DateTime}}
             WHERE {where_sql}
             SETTINGS mutations_sync = 2
             """,
             params=params,
         )
+        # Announced before the embeddings step, so a failure there cannot lose
+        # the events: a retry finds no live memory rows and announces nothing.
+        if table == "loom.memory" and on_tombstoned is not None:
+            try:
+                await _page_tombstoned(" AND ".join(scope), params, on_tombstoned, ch=ch)
+            except Exception as e:  # noqa: BLE001 — the rows are tombstoned; the clear must not fail
+                degradations.note("memory.webhook", "not_announced", e)
     counts["locked_skipped"] = locked_n
     return counts
+
+
+async def _page_tombstoned(
+    scope_sql: str,
+    params: dict[str, Any],
+    on_page: Callable[[list[dict[str, Any]]], Awaitable[None]],
+    *,
+    ch: Any,  # a CHClient: `raw_stream` is not on `_CHClient`
+) -> None:
+    """Hand `on_page` the memory rows in scope tombstoned at `params["at"]`, a page
+    at a time in sort-key order. One streamed read, so the scope is scanned once
+    however many pages it fills. A row a concurrent delete tombstoned in the same
+    second comes too, at the version that delete announced, so its event repeats
+    that one's id."""
+    sql = f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, memory_id, version
+        FROM loom.memory FINAL
+        WHERE {scope_sql} AND tombstoned_at = {{at:DateTime}}
+        ORDER BY agent, user_id, session_id, memory_key
+        FORMAT JSONEachRow
+    """
+    page: list[dict[str, Any]] = []
+    partial = b""  # a row split across two chunks
+    async with ch.raw_stream(sql, params) as chunks:
+        async for chunk in chunks:
+            *lines, partial = (partial + chunk).split(b"\n")
+            for line in lines:
+                if not line:
+                    continue
+                row = json.loads(line)
+                row["version"] = int(row["version"])  # JSONEachRow quotes a UInt64
+                page.append(row)
+                if len(page) == CLEAR_PAGE_ROWS:
+                    await on_page(page)
+                    page = []
+    if page:
+        await on_page(page)
 
 
 async def tombstone_cascade_by_ids(
@@ -405,7 +466,7 @@ async def tombstone_cascade_by_ids(
     when: datetime,
     update: Callable[[MemoryRow], dict[str, Any]] | None = None,
     ch: _CHClient | None = None,
-) -> int:
+) -> list[dict[str, Any]]:
     """Tombstone rows by memory_id AND mirror the tombstone onto every tier
     search reads.
 
@@ -424,7 +485,8 @@ async def tombstone_cascade_by_ids(
     `update(existing)` may add overrides (an audit note on source_trace).
     The embeddings mirror is best-effort: the memory tombstone is
     durable and the orphan_vector_reconcile worker heals a missed mirror.
-    Returns the number of memory rows tombstoned."""
+    Returns each tombstoned row's identity tuple, memory_key, memory_id and
+    tombstone version (`memory_change`), for the caller's webhook events."""
     ch = ch or _default_client()
     rows: list[MemoryRow] = []
     seen: set[str] = set()
@@ -437,11 +499,14 @@ async def tombstone_cascade_by_ids(
         if existing is not None:
             rows.append(existing)
     if not rows:
-        return 0
+        return []
 
+    # Drawn after the rows are read, so a write that landed before the read sorts below it.
     version = next_version()  # the tombstones', which the vector retire carries
+    tombstoned: list[dict[str, Any]] = []
 
     def _tombstone(existing: MemoryRow) -> dict[str, Any]:
+        tombstoned.append(memory_change(existing, version))
         overrides: dict[str, Any] = {
             "status": "tombstoned",
             "tombstoned_at": when,
@@ -453,12 +518,13 @@ async def tombstone_cascade_by_ids(
         return overrides
 
     # `write_versions_by_ids` mirrors the tombstone onto memory_embeddings at its version.
-    return await write_versions_by_ids(
+    await write_versions_by_ids(
         org,
         [r.memory_id for r in rows],
         _tombstone,
         ch=ch,
     )
+    return tombstoned
 
 
 async def tombstone_by_id(
@@ -466,14 +532,14 @@ async def tombstone_by_id(
     memory_id: str,
     *,
     ch: _CHClient | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     """Tombstone one row by memory_id (UUID), cascading to the embeddings
-    tier (see tombstone_cascade_by_ids).
+    tier (see tombstone_cascade_by_ids), and return what that returns.
 
     Used by `memory.dedup_resolve` when the decision is to kill one
     side of the duplicate pair, keyed on the surrogate UUID rather
     than the identity tuple."""
-    await tombstone_cascade_by_ids(
+    return await tombstone_cascade_by_ids(
         org,
         [memory_id],
         when=naive_utc_now(),

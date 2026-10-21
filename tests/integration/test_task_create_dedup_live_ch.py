@@ -637,17 +637,18 @@ async def _delivered(org: str, cursor: dict[str, Any] | None) -> list[str]:
     """The events the webhook notice for inbox `bot` names past `cursor`."""
     import json
 
+    from server.core import webhooks
     from server.tasks.workers import webhook_deliver
 
     bodies: list[bytes] = []
 
-    async def post(transport: Any, url: str, headers: Any, body: bytes) -> int:
+    async def post(transport: Any, url: str, headers: Any, body: bytes, **kw: Any) -> Any:
         bodies.append(body)
-        return 200
+        return webhooks.Delivery(status=200)
 
     inbox = {"org": org, "inbox": "bot", "webhook_url": "https://example.com/hook"}
     with pytest.MonkeyPatch.context() as m:
-        m.setattr(webhook_deliver, "_post", post)
+        m.setattr(webhooks, "post", post)
         m.setattr(webhook_deliver, "_secret_for", lambda row, env: b"secret")
         m.setattr(webhook_deliver.task_cursors, "LAG_SECONDS", 0)
         await webhook_deliver._deliver_inbox(

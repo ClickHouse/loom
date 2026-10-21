@@ -179,7 +179,7 @@ schema. These rules keep that safe. The operator procedure is in
     rollout an N-1 pin racing an N retirement can leave the pinned row's vector
     superseded until the row's next write (or `loom reconcile-status`).
 16. **A triple row N-1 writes arrives at its whole second.** N-1 does not set
-    `entity_triples.seen_at` (migration 065), so its rows take the column's default,
+    `entity_triples.seen_at` (migration 066), so its rows take the column's default,
     their `last_seen` second (`.000000`). Two values of a single-valued relation
     starting the same day and arriving in the same second, one from each build, then
     order the N-1 row first, whichever arrived later; the next write of either fact
@@ -214,6 +214,17 @@ schema. These rules keep that safe. The operator procedure is in
     `loom.extraction_policies` and extracts without it. Set a policy only once no N-1
     replica serves. A rollback leaves the rows in place but no replica applies them
     until the build that reads them is back.
+14. **A new side effect of a write** (such as memory webhook events): N-1 does not
+    perform it. A memory write served by an N-1 replica leaves no
+    `loom.memory_webhook_outbox` row, so it sends no event, and an erasure saga run by
+    N-1 has no step for the outbox and its census does not count it. Webhooks are
+    registered (`webhook.register`) only once no N-1 replica serves, so no outbox row
+    exists while an N-1 replica can complete an erasure. A rollback to N-1 after webhooks
+    exist leaves the outbox rows written before it: N-1 never reads or erases them, and
+    they leave the disk within about 4 days (the outbox is read for 3 days and drops a
+    day's part once its last row is 3 days old). Rolling forward again, N's worker sends
+    none of an erased user's events, because it skips an event whose key has no history
+    left in `loom.memory_versions`, which every build's erasure deletes.
 
 ## What checks them
 

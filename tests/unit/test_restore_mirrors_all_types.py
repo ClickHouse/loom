@@ -192,6 +192,31 @@ async def test_restore_revives_the_embeddings_row_for_every_type(
     assert any("FROM loom.memory_embeddings" in s for s in ch.sqls)
 
 
+@pytest.mark.asyncio
+async def test_restore_announces_its_row_when_the_high_fence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row is live once inserted: a failure after it answers an error, and the
+    memory.restored event is already in the outbox (a retry finds the key live)."""
+    existing = _row("semantic", tombstoned_at=_NOW - timedelta(days=2), sensitivity="high")
+    ch = _CH([])
+    _wire(monkeypatch, existing, ch)
+    announced: list[Any] = []
+
+    async def _announce(changes: Any) -> None:
+        announced.extend(changes)
+
+    async def _fence(*_: Any, **__: Any) -> None:
+        raise RuntimeError("fence insert failed")
+
+    monkeypatch.setattr("server.memory.app.webhooks.announce", _announce)
+    monkeypatch.setattr("server.memory.app.high_fence.fence_high", _fence)
+    with pytest.raises(RuntimeError, match="fence"):
+        await restore_mod.handle_memory_restore(_restore_input())
+    [(event, row)] = announced
+    assert event == "memory.restored" and row["tombstoned_at"] is None
+
+
 def test_the_types_cover_both_sides_of_the_old_guard() -> None:
     # a type guard would exclude at least one of the types
     assert {is_searchable_type(t) for t in _TYPES} == {True, False}
