@@ -98,6 +98,12 @@ def test_a_viewer_op_that_writes_is_stamped_like_any_write() -> None:
     assert mcp_runs.stamps_run(dataclasses.replace(search, writes=True))
 
 
+def test_a_conversation_update_keeps_the_threads_run() -> None:
+    """A thread's `run_id` is its binding: an update that names none keeps it, so the
+    session run is not stamped on it."""
+    assert not mcp_runs.stamps_run(OPERATIONS_BY_NAME["conversation.update"])
+
+
 def test_writes_stamp_reads_label_ledger_and_code_never() -> None:
     ops = OPERATIONS_BY_NAME
     assert mcp_runs.stamps_run(ops["memory.set"])

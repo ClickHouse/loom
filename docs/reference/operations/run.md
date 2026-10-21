@@ -146,7 +146,7 @@ A page of a namespace's agent runs and their match count (`total`), filtered and
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `agent` | `str` | `''` | Only this agent's runs; "", "*" or "-" = every agent. |
-| `session_id` | `str` | `''` | Only this session's runs; "" or "-" = every session. |
+| `session_id` | `str` | `''` | Only this session's runs; "", "*" or "-" = every session. |
 | `status` | `Literal['', 'active', 'completed', 'failed', 'cancelled']` | `''` | Only runs in this status; "" lists every status. |
 | `limit` | `int` | `50` | At most this many runs, in `order_by` order; the server caps it at 200. |
 | `offset` | `int` | `0` | Runs to skip before the page (0-100,000); default 0, the first page. |

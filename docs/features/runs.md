@@ -1,7 +1,7 @@
 # Runs
 
 A run is one execution of a task, such as "triage issue 1234". `run.begin` opens it and returns a `run_id`; the
-agent passes that id on its writes (`memory.set`, `observe.record`); `run.complete` closes it with a status, the
+agent passes that id on its writes (`memory.set`, `memory.update`, `observe.record`); `run.complete` closes it with a status, the
 memories the agent relied on, and optionally a reflection. A body `run_id` on a read (`memory.search`, `memory.ask`)
 filters to the run's own rows, so reads are labelled instead: by the `X-Loom-Run-Id` header over HTTP (`run_scope`
 in the Python SDK), and by the session's own run over MCP. A memory that a successful run relied on ranks higher next time; one that a failed run

@@ -32,8 +32,9 @@ _NEVER_STAMPED_PREFIXES = ("run.", "code.")
 # Ops whose `run_id` is part of the row's SCOPE, not its
 # provenance. A working-memory block written with the session's run lands at
 # run scope, where no other connection, the primer, or a later `replace`
-# addressed without it ever reads it. They stay labelled on the ledger.
-_RUN_SCOPED_PREFIXES = ("working_memory.",)
+# addressed without it ever reads it. A conversation thread's `run_id` is its
+# binding: an update that names none keeps it. They stay labelled on the ledger.
+_RUN_SCOPED_PREFIXES = ("working_memory.", "conversation.update")
 # Reads the session run labels although their input carries no `run_id`:
 # `search.query` (the `loom_search` tool) is the read agents call most.
 _LABELLED_READS = frozenset({"search.query"})

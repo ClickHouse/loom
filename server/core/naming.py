@@ -40,21 +40,18 @@ def reserved_for_sso(namespace: str) -> bool:
     return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
 
 
+def named(value: str | None, *, wildcard: bool = False) -> str | None:
+    """An identity filter's value, or None when it names nothing: empty, or the
+    SENTINEL the SDKs stamp on every call that names no user, session or run.
+    With `wildcard`, "*" (every agent / session) names nothing too."""
+    if not value or value == SENTINEL or (wildcard and value == "*"):
+        return None
+    return value
+
+
 def names_session(session_id: str) -> bool:
     """Whether a session id names a session rather than "not given"."""
-    return session_id.strip() not in ("", SENTINEL)
-
-
-def named(value: str | None) -> str | None:
-    """An identity filter's value, or None when it names nothing: empty, or the
-    SENTINEL the SDKs stamp on every call that names no user, session or run."""
-    return value if value and value != SENTINEL else None
-
-
-def named_one(value: str | None) -> str | None:
-    """`named`, also None for "*", the reader's "every agent / session" wildcard."""
-    v = named(value)
-    return v if v != "*" else None
+    return named(session_id.strip()) is not None
 
 
 _NAMESPACE_RE = re.compile(r"[a-z0-9][a-z0-9-]*")

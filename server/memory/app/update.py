@@ -15,7 +15,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
-from server.core.naming import named, named_one
+from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
@@ -196,7 +196,7 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
                     f"memory_key {input.memory_key!r} is live under "
                     f"{len(rows)} identity tuples in namespace "
                     f"{input.namespace!r}; pass a named agent/user_id/session_id "
-                    'to narrow it ("-", and "*" for agent, do not narrow), or '
+                    'to narrow it ("-" does not narrow, nor "*" for agent), or '
                     "memory.update_by_id with one of the ids"
                 ),
                 "memory_key": input.memory_key,
@@ -246,9 +246,13 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
     }
     # "-" (the identity sentinel the SDKs stamp) means unset, and "*" too for agent,
     # as in memory.ask.
-    for col in ("agent", "user_id", "session_id"):
-        val = (named_one if col == "agent" else named)(getattr(input, col, ""))
-        if val:
+    narrowing = {
+        "agent": named(input.agent, wildcard=True),
+        "user_id": named(input.user_id),
+        "session_id": named(input.session_id),
+    }
+    for col, val in narrowing.items():
+        if val is not None:
             where.append(f"{col} = {{{col}:String}}")
             params[col] = val
     sql = f"""

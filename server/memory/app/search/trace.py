@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.naming import named
 from server.embedding import get_embedder
 from server.memory.api.models_search import (
     MemorySearchTraceInput,
@@ -16,7 +17,7 @@ from server.memory.api.models_search import (
     _SearchTraceLogRow,
 )
 from server.memory.app.search.embed import _bounded_query_embed
-from server.memory.app.search.filters import read_filters, without_run_sentinel
+from server.memory.app.search.filters import read_filters
 from server.memory.app.search.query_spelling import embed_query
 from server.memory.app.search.vector_legs import _plane_fields
 
@@ -32,7 +33,8 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     from server.observability.otel import traced
 
     input, _ = pin_read_filters(input, current_auth())
-    input = without_run_sentinel(input)
+    # The identity sentinel "-" the SDKs stamp on a call that names no run filters nothing.
+    input = input.model_copy(update={"run_id": named(input.run_id)})
     embedder = get_embedder()
     with traced("embed.compute.query", model=embedder.model_name):
         query_vec, spellings = await embed_query(

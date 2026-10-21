@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.core.hashing import sha256_value_json as _content_sha256_of_stored
-from server.core.naming import named_one
+from server.core.naming import named
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -125,14 +125,14 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
 
     A digest is the one derived row loom writes on every ingest; serving it on the wire lets a
     caller audit its fidelity to the turns it compresses without database access.
-    `session_id` "*" lists all."""
+    `session_id` "*" or "-" lists all."""
     from server.core.ch import get_client as _get_client
 
     ch = _get_client()
     where = "org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL"
     params: dict[str, Any] = {"o": input.org, "n": input.namespace, "lim": int(input.limit) + 1}
     # "*" and the identity sentinel "-" the SDKs stamp list every session.
-    if named_one(input.session_id):
+    if named(input.session_id, wildcard=True):
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
     where += scope_and(request_scope(), params)

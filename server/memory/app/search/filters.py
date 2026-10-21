@@ -4,18 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from server.core.naming import SENTINEL
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.served_superseded import served_flags
-
-
-def without_run_sentinel[M: MemorySearchInput](input: M) -> M:
-    """`input` with `run_id` "-" read as no run filter. The SDKs stamp the identity
-    sentinel when a call names no run; filtering on it would serve only rows written
-    outside every run."""
-    if input.run_id == SENTINEL:
-        return input.model_copy(update={"run_id": None})
-    return input
 
 
 def read_filters(input: MemorySearchInput) -> dict[str, Any]:

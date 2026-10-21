@@ -15,7 +15,7 @@ usage event (search-side reinforcement), and on a completed run a positive
 `evidence` event as well. The server derives what the run wrote and
 recalled from the run_id, and its cost from the session.
 
-Pass the run_id on writes (memory.set, observe.record). On a read
+Pass the run_id on writes (memory.set, memory.update, observe.record). On a read
 (memory.search, memory.ask) a body run_id filters to the run's own rows;
 `run_scope` labels reads with the `X-Loom-Run-Id` header instead.
 """
@@ -235,9 +235,9 @@ class RunClient:
         budget_seconds: int = 0,
     ) -> dict[str, Any]:
         """Open a run. Returns {run_id, status, started_at, next}. Pass the
-        run_id on memory.set / observe.record; on memory.search or memory.ask
-        a body run_id filters to the run's rows, so label reads with
-        `run_scope` (the `X-Loom-Run-Id` header) instead.
+        run_id on writes (memory.set, memory.update, observe.record); on
+        memory.search or memory.ask a body run_id filters to the run's rows,
+        so label reads with `run_scope` (the `X-Loom-Run-Id` header) instead.
         `role` (planner / executor / critic / your own word) tags the run's
         reflection `role:<role>` so a same-role memory.search(role=...)
         prefers it. `budget_usd` / `budget_seconds` (0 = none) set a budget

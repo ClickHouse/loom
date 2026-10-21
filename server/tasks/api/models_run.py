@@ -15,7 +15,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from server.core.naming import SENTINEL, names_session
+from server.core.naming import SENTINEL, named, names_session
 from server.operations.base import MCP_HIDDEN
 from server.operations.read_projection import ProjectedRow
 from server.tasks.domain.budgets import BudgetKind
@@ -284,10 +284,8 @@ class RunGradeInput(BaseModel):
     @model_validator(mode="after")
     def _one_target(self) -> RunGradeInput:
         # The identity sentinel "-" the SDKs stamp names no run or session.
-        if self.run_id == SENTINEL:
-            self.run_id = ""
-        if self.session_id == SENTINEL:
-            self.session_id = ""
+        self.run_id = named(self.run_id) or ""
+        self.session_id = named(self.session_id) or ""
         if bool(self.run_id.strip()) == bool(self.session_id.strip()):
             raise ValueError("pass exactly one of run_id or session_id")
         return self
@@ -359,7 +357,7 @@ class RunListInput(BaseModel):
     namespace: str
     # Only this agent's runs; "", "*" or "-" = every agent.
     agent: str = ""
-    # Only this session's runs; "" or "-" = every session.
+    # Only this session's runs; "", "*" or "-" = every session.
     session_id: str = ""
     # Only runs in this status; "" lists every status.
     status: Literal["", "active", "completed", "failed", "cancelled"] = ""

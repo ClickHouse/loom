@@ -837,7 +837,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "run.begin": (
         "Open a RUN — one execution of a task — BEFORE you start working on "
         "it. Pass the goal and the user's original request; you get back a "
-        "run_id. Pass that run_id on memory.set and observe.record so what "
+        "run_id. Pass that run_id on writes (memory.set, memory.update, "
+        "observe.record) so what "
         "this run writes joins one ledger row (a run_id on a search filters to "
         "the run's rows; your reads are labelled with the session's own run, so "
         "credit what you relied on in memories_used). Close it with "
