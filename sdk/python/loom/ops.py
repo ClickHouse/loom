@@ -202,6 +202,7 @@ OpName = Literal[
     "memory.export_evidence",
     "memory.exposure_summary",
     "memory.extraction_status",
+    "memory.extraction_status_mine",
     "memory.for_file",
     "memory.get",
     "memory.get_by_id",
@@ -539,6 +540,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.export_evidence",
     "memory.exposure_summary",
     "memory.extraction_status",
+    "memory.extraction_status_mine",
     "memory.for_file",
     "memory.get",
     "memory.get_by_id",
@@ -2665,6 +2667,18 @@ OPS: dict[str, OpSpec] = {
         True,
         "viewer",
         "stable",
+        80,
+        False,
+        True,
+    ),
+    "memory.extraction_status_mine": OpSpec(
+        "memory.extraction_status_mine",
+        "MemoryExtractionStatusMineInput",
+        "MemoryExtractionStatusMineBody",
+        "MemoryExtractionStatusMineOutput",
+        True,
+        "viewer",
+        "experimental",
         80,
         False,
         True,
@@ -11591,6 +11605,29 @@ class ExtractionQueueRow(TypedDict, total=False):
     last_error: Required[str]
     enqueued_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
+
+
+class MemoryExtractionStatusMineInput(TypedDict, total=False):
+    "Your deferred memory.set_from_messages batches, by the queue_id each call returned."
+
+    org: Required[str]
+    namespace: Required[str]
+    queue_ids: Required[list[str]]
+
+
+class MemoryExtractionStatusMineBody(TypedDict, total=False):
+    "Your deferred memory.set_from_messages batches, by the queue_id each call returned."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    queue_ids: Required[list[str]]
+
+
+class MemoryExtractionStatusMineOutput(TypedDict, total=False):
+    batches: NotRequired[list["ExtractionQueueRow"]]
+    unknown: NotRequired[list[str]]
+    pending: NotRequired[int]
+    failed: NotRequired[int]
 
 
 class MemoryForFileInput(TypedDict, total=False):

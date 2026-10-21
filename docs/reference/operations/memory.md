@@ -758,6 +758,25 @@ State of deferred set_from_messages batches.
 | `pending` | `int` | Not yet extracted (pending + running) in the requested scope. |
 | `failed` | `int` | Of the returned batches, how many ended `failed`. |
 
+## `memory.extraction_status_mine`
+
+Your deferred memory.set_from_messages batches, by the queue_id each call returned.
+
+`POST /v1/memory.extraction_status_mine` · MCP `loom_memory_extraction_status_mine` · role `viewer` · read · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `queue_ids` | `list[str]` | required | The ids deferred memory.set_from_messages calls returned. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `batches` | `list[_ExtractionQueueRow]` | The asked batches you queued, newest first: state, attempts, sizes and last error. |
+| `unknown` | `list[str]` | The asked ids no batch of yours answers to, in the order asked: queued by another principal, in another namespace or outside the token's read scope, past the queue's 30-day retention, or never queued. |
+| `pending` | `int` | Of the returned batches, how many are not extracted yet (`pending`, `running`). |
+| `failed` | `int` | Of the returned batches, how many ended `failed`. |
+
 ## `memory.for_file`
 
 What Loom knows about ONE file, shaped for the moment before an edit: memories whose files[] facet names the path (repo-relative or bare filename both match).
@@ -2074,8 +2093,8 @@ Run LLM extraction on `messages` and write the extracted facts.
 | `value_updates_linked` | `int` | Older memories this ingest marked superseded by a value update (memory.app.value_updates; 0 when detection is off). |
 | `stubbed_fields` | `list[str]` | Schema mode only: record_schema fields the extractor could not validate after its retries and wrote as null (never a fabricated value). |
 | `degraded` | `list[str]` | Schema mode only: what the response skipped and why, e.g. the memory_records projection for a caller bounded to one user. |
-| `deferred` | `bool` | defer=true: nothing extracted yet; `written` is empty and `queue_id` is the handle memory.extraction_status reports on. |
-| `queue_id` | `str` | The queued batch's id for `memory.extraction_status`; '' when inline. |
+| `deferred` | `bool` | defer=true: nothing extracted yet; `written` is empty and `queue_id` is the handle memory.extraction_status_mine (and memory.extraction_status) report on. |
+| `queue_id` | `str` | The queued batch's id for `memory.extraction_status_mine` and `memory.extraction_status`; '' when inline. |
 | `deferred_by` | `str` | "" (inline) \| "flag" (the caller passed defer=true) \| "allowlist" (the deployment's extraction_defer_agents chose for the caller) |
 | `stage_ms` | `dict[str, float]` | Wall time per stage of the ingest: handler stages (evidence_write, pipeline, projections, ontology, total), pipeline steps (`step.<id>`) and bulk-write phases (`bulk.<phase>`). |
 | `observation_date_source` | `str` | Where the observation date the facts were anchored to came from: "caller" \| "request_time" \| "" (none — undated rows). |

@@ -426,6 +426,50 @@ async def list_status(
     return [dict(r) for r in rows]
 
 
+async def list_own_status(
+    *,
+    org: str,
+    namespace: str,
+    queue_ids: list[str],
+    enqueued_by: str,
+    scope: ReadFilters,
+    ch: Any | None = None,
+) -> list[dict[str, Any]]:
+    """The batches among `queue_ids` that `enqueued_by` queued in (org, namespace),
+    inside `scope`, newest first, payload excluded: `memory.extraction_status_mine`.
+
+    The id and the read scope's user and session are sort-key columns, which every
+    version of a batch shares, so they filter in PREWHERE under FINAL, and only the
+    asked batches' payloads are read for the enqueuer they store (`ENQUEUED_BY_KEY`,
+    '' for a row a dev-mode server queued)."""
+    from server.core.ch import get_client
+
+    ch = ch or get_client()
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "qids": list(queue_ids),
+        "by": enqueued_by,
+        "lim": len(queue_ids),
+    }
+    in_scope = scope_and(scope, params)
+    rows = await ch.query_all(
+        f"""
+        SELECT queue_id, agent, user_id, session_id, status, attempts,
+               message_count, content_chars, written, last_error,
+               enqueued_at, updated_at
+        FROM {TABLE} FINAL
+        PREWHERE org = {{org:String}} AND namespace = {{ns:String}}
+          AND queue_id IN {{qids:Array(String)}}{in_scope}
+        WHERE JSONExtractString(payload, '{ENQUEUED_BY_KEY}') = {{by:String}}
+        ORDER BY enqueued_at DESC
+        LIMIT {{lim:UInt32}}
+        """,
+        params=params,
+    )
+    return [dict(r) for r in rows]
+
+
 __all__ = [
     "COLUMNS",
     "ENQUEUED_BY_KEY",
@@ -439,6 +483,7 @@ __all__ = [
     "claim_batch",
     "enqueue",
     "enqueued_actor",
+    "list_own_status",
     "list_status",
     "mark_done",
     "mark_error",

@@ -675,6 +675,16 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         status="pending" if f else None,
         ch=ch,
     )
+    await EQ.list_own_status(
+        org=ORG,
+        namespace=NS,
+        queue_ids=[_UUID, "q2"],
+        enqueued_by="process:sa:a",
+        scope=ReadFilters(scope="own_user", user_id="u1", session_id=None)
+        if f
+        else WHOLE_NAMESPACE,
+        ch=ch,
+    )
     await EQ.pending_count(
         org=ORG, namespace=NS, agent=AGENT if f else None, user_id="alice" if f else None, ch=ch
     )

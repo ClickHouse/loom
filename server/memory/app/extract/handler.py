@@ -20,6 +20,8 @@ from server.memory.api.models_bulk import (
     REFUSED,
     MemoryBulkSetInput,
     MemoryExtractionStatusInput,
+    MemoryExtractionStatusMineInput,
+    MemoryExtractionStatusMineOutput,
     MemoryExtractionStatusOutput,
     MemorySetFromMessagesInput,
     MemorySetFromMessagesOutput,
@@ -143,6 +145,35 @@ async def handle_memory_extraction_status(
         batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
         pending=pending,
         failed=failed,
+    )
+
+
+async def handle_memory_extraction_status_mine(
+    input: MemoryExtractionStatusMineInput,
+) -> MemoryExtractionStatusMineOutput:
+    """memory.extraction_status_mine — the caller's own deferred batches, by id: those
+    its principal queued (`writer_actor`, as `enqueue` stored it) in this namespace and
+    inside its read scope. Every other id is `unknown`, so the answer never says whether
+    another principal's batch exists."""
+    from server.identity.app.request_scope import request_scope
+    from server.memory.app import extraction_queue
+    from server.memory.app.provenance import writer_actor
+
+    asked = list(dict.fromkeys(input.queue_ids))
+    rows = await extraction_queue.list_own_status(
+        org=input.org,
+        namespace=input.namespace,
+        queue_ids=asked,
+        enqueued_by=writer_actor(),
+        scope=request_scope(),
+    )
+    found = {str(r.get("queue_id") or "") for r in rows}
+    finished = (extraction_queue.STATUS_DONE, extraction_queue.STATUS_FAILED)
+    return MemoryExtractionStatusMineOutput(
+        batches=[_ExtractionQueueRow.model_validate(r) for r in rows],
+        unknown=[qid for qid in asked if qid not in found],
+        pending=sum(1 for r in rows if r.get("status") not in finished),
+        failed=sum(1 for r in rows if r.get("status") == extraction_queue.STATUS_FAILED),
     )
 
 

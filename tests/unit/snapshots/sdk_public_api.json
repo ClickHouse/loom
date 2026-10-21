@@ -973,6 +973,10 @@
               "body",
               "options"
             ],
+            "extraction_status_mine": [
+              "body",
+              "options"
+            ],
             "for_file": [
               "body",
               "options"

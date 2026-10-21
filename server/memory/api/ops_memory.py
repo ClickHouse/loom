@@ -22,6 +22,7 @@ from server.memory.api.ops_bulk import (
     memory_bulk_get,
     memory_bulk_set,
     memory_extraction_status,
+    memory_extraction_status_mine,
     memory_import_curated,
     memory_set_from_messages,
 )
@@ -120,6 +121,7 @@ OPERATIONS: list[Operation] = [
     memory_set_from_messages,
     memory_bulk_get,
     memory_extraction_status,
+    memory_extraction_status_mine,
     memory_touch,
     memory_lock,
     memory_unlock,

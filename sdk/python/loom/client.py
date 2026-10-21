@@ -1587,6 +1587,15 @@ class MemoryOps:
             await self._agent.call("memory.extraction_status", body, **options),
         )
 
+    async def extraction_status_mine(
+        self, body: _ops.MemoryExtractionStatusMineBody | None = None, /, **options: Any
+    ) -> _ops.MemoryExtractionStatusMineOutput:
+        """`memory.extraction_status_mine`."""
+        return cast(
+            "_ops.MemoryExtractionStatusMineOutput",
+            await self._agent.call("memory.extraction_status_mine", body, **options),
+        )
+
     async def for_file(
         self, body: _ops.MemoryForFileBody | None = None, /, **options: Any
     ) -> _ops.MemoryForFileOutput:

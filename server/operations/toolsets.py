@@ -52,8 +52,10 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # delete of one exact version (import-okf --prune).
         "memory.keys",
         "memory.delete_version",
-        # Deferred-batch lifecycle is an SDK/dashboard view; the agent sees
-        # `pending_extraction` on search/ask instead.
+        # Deferred-batch lifecycle across the namespace (every agent's and user's
+        # batches, up to 500 a call) is an SDK/dashboard view. An agent polls the
+        # batches it queued with memory.extraction_status_mine, and sees
+        # `pending_extraction` on search/ask.
         "memory.extraction_status",
         # Run ledger paging is a dashboard/SDK view; an agent wants ONE run
         # (run.get), never the catalogue.
