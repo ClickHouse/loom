@@ -343,6 +343,9 @@ def _local_memory(rows: list[_Row], *later: list[_Row]) -> _LocalCH:
     as its own part, as a later write would be (no merge runs between them)."""
     # the CLI's closing invariant reads memory_embeddings, whose vector column is quantized
     setup = ["SET enable_quantized_codec = 1", ddl("memory"), ddl("memory_embeddings")]
+    # An insert merges its own block by default, keeping only each key's newest version;
+    # every version listed stays a row, as separate writes leave them until a merge.
+    setup.append("SET optimize_on_insert = 0")
     params: dict[str, Any] = {}
     for part, part_rows in enumerate([rows, *later]):
         if part_rows:
@@ -515,14 +518,15 @@ async def test_a_pass_whose_time_runs_out_applies_what_it_found_and_stores_its_c
 async def test_one_pass_crosses_several_agents_it_finds_nothing_to_label_in(monkeypatch) -> None:
     # Agents `a` and `b` each hold more than a page of selected-but-unlabelled rows, ahead
     # of a PIN row in agent `c`. One pass reads a page of each, moves past both and labels
-    # the PIN row.
+    # the PIN row. Its three pages are spent, so it reads none of the rest of `a` and `b`
+    # and says it was truncated.
     spins = _spin_rows_then_a_pin(3)[:-1]
     in_b = [r._replace(agent="b", memory_id=_uuid(10 + i)) for i, r in enumerate(spins)]
     pin_row = _Row("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60, agent="c")
     ch = _local_memory([*spins, *in_b, pin_row])
     applied, out = await _run_pass_recording(monkeypatch, ch, rows_per_pass=2, pages=3)
     assert [c.memory_key for c in applied] == ["vault_door"]
-    assert out["scanned"] == 5 and not out["truncated"]
+    assert out["scanned"] == 5 and out["truncated"]
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1083,8 @@ async def test_the_cli_sweep_pages_through_its_whole_scope(capsys, monkeypatch) 
     read = ch.query_all
 
     async def _recording(sql: str, params: dict[str, Any] | None = None) -> list[Any]:
-        page_params.append(params or {})
+        # a copy: the page adds its FINAL read's bounds to the dict its key read was sent
+        page_params.append(dict(params or {}))
         return await read(sql, params)
 
     monkeypatch.setattr(ch, "query_all", _recording)
