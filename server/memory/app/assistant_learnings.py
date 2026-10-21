@@ -66,7 +66,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
         record_drop(state.org, state.namespace, "learnings.file", "no_assistant_turn", item=key)
         return False
     # Refuse (blacklist), as memory.bulk_set does for every other extracted fact.
-    if await _blacklisted(state, key, value):
+    if await _blacklisted(state, key, value, "rule not filed"):
         return False
     cid = assistant_rules.candidate_id(state.org, state.namespace, agent, key, value)
     row = await learnings_repo.find_candidate(state.org, state.namespace, cid)
@@ -80,9 +80,9 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
         # A quote that matches a blacklist pattern is left blank, as one that reads
         # as a credential is. Checked whole: the cut and the folded spacing could
         # split a pattern or change its spacing.
-        if asked and await _blacklisted(state, key, asked):
+        if asked and await _blacklisted(state, key, asked, "quote stored blank"):
             asked = ""
-        if said and await _blacklisted(state, key, said):
+        if said and await _blacklisted(state, key, said, "quote stored blank"):
             said = ""
         asked, said = assistant_rules.bounded_quotes(asked, said)
         await learnings_repo.insert_supporter(
@@ -136,16 +136,17 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     return wrote
 
 
-async def _blacklisted(state: WorkflowState, key: str, text: str) -> bool:
+async def _blacklisted(state: WorkflowState, key: str, text: str, outcome: str) -> bool:
     """Whether `text` matches a blacklist pattern for the request's org and
-    namespace. A match counts its pattern's hit and is logged, as memory.bulk_set
-    counts the entries it drops."""
+    namespace. A match counts its pattern's hit and is logged with `outcome`, what
+    the caller does with the text, as memory.bulk_set counts the entries it drops."""
     hit = await blacklist_guard.find_match(org=state.org, namespace=state.namespace, value=text)
     if hit is None:
         return False
     await blacklist_guard.note_hit(hit.pattern_id)
     log.warning(
-        "learnings queue dropped blacklisted text key=%r pattern=%s scope=%s",
+        "learnings queue: blacklisted text, %s key=%r pattern=%s scope=%s",
+        outcome,
         key,
         hit.pattern_id,
         hit.scope,
