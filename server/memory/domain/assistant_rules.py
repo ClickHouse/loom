@@ -103,9 +103,6 @@ def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
 
 # Words of a user turn that ask for a standing behaviour ("always answer me in French").
 _ASKS = {"always", "never", "don't", "dont"}  # not a setting: a word list
-# Words just before an ask word that keep it an imperative ("please always ...", "can
-# you never ..."); after any other word ("I never ...") it states a fact.
-_OPENERS = {"please", "you"}  # not a setting: a word list
 # Words that open a question asking for a behaviour ("could you always ...?").
 _POLITE = {"can", "could", "would", "will"}  # not a setting: a word list
 # Words a rule and a request share without naming the same behaviour.
@@ -124,6 +121,16 @@ def _stems(words: list[str]) -> set[str]:
     return {word.removesuffix("s") for word in words if word not in _COMMON}
 
 
+def _opens_imperative(words: list[str], i: int) -> bool:
+    """Whether the ask word at `words[i]` opens an imperative: first in the sentence,
+    after "please" ("please always ...") or after "can/could/would/will you" ("could
+    you always ..."). After any other word ("I never ...", "You never told me ...")
+    it states a fact."""
+    if i == 0 or words[i - 1] == "please":
+        return True
+    return words[i - 1] == "you" and i >= 2 and words[i - 2] in _POLITE
+
+
 def _requested_words(sentence: str) -> list[str]:
     """The words after the ask word that opens an imperative in `sentence`, or none.
     A question asks for a behaviour only when it opens with can, could, would or
@@ -133,7 +140,7 @@ def _requested_words(sentence: str) -> list[str]:
     if sentence.endswith("?") and not (words[:1] and words[0] in _POLITE and words[1:2] == ["you"]):
         return []
     for i, word in enumerate(words):
-        if word in _ASKS and (i == 0 or words[i - 1] in _OPENERS):
+        if word in _ASKS and _opens_imperative(words, i):
             return words[i + 1 :]
     return []
 
@@ -143,10 +150,11 @@ def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: 
     asks for the behaviour the rule states. The assistant agreeing to a user's
     request ("always answer me in French") states that user's preference, not a
     rule of the bot. A request is a sentence where always, never or don't opens
-    an imperative: first, or after "please" or "you" ("Please always ...", "Don't
-    use ...", "Could you always ...?"). The words after it share at least two of
-    the rule's words, and at least half of them. A statement ("I never received
-    my refund"), a question about a policy ("Do you always escalate refunds?") or
+    an imperative: first, after "please", or after "can/could/would/will you"
+    ("Please always ...", "Don't use ...", "Could you always ...?"). The words
+    after it share at least two of the rule's words, and at least half of them. A
+    statement ("I never received my refund", "You never told me you escalate
+    refunds"), a question about a policy ("Do you always escalate refunds?") or
     a plain request on its topic ("Please refund my order") asks for no behaviour."""
     asked = _user_turn_before(messages, cited[0])
     rule = _stems(_words(str(fact.get("value") or "")))

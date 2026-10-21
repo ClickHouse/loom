@@ -83,12 +83,13 @@ Behaviour the assistant agrees to at the user's request is the user's preference
 a rule of the bot: "always answer me in French" answered with "I will always answer you
 in French" is a memory about the user. A rule is not filed when a sentence of the user
 turn before its first cited assistant turn opens an imperative with "always", "never"
-or "don't" (first in the sentence, or after "please" or "you"), and the words after it
+or "don't" (first in the sentence, after "please", or after "can", "could", "would" or
+"will" you), and the words after it
 share at least two of the rule's content words and at least half of them. A question
 asks for a behaviour only when it opens with "can", "could", "would" or "will" you
 ("Could you always answer me in French?"). The drop is counted in `loom.memory_drops`
 (stage `learnings.file`, reason `user_requested`). A statement ("I never received my
-refund over $500"), a question about the policy ("Do you always escalate refunds over
+refund over $500", "You never told me you escalate refunds over $500"), a question about the policy ("Do you always escalate refunds over
 $500?") or a request on its topic ("Please refund my order") asks for no behaviour, so
 the rule is filed.
 
