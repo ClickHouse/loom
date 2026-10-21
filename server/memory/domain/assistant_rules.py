@@ -103,9 +103,9 @@ def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
 
 
 def bounded_quotes(asked: str, said: str) -> tuple[str, str]:
-    """The quotes a supporter row stores, each bounded. A quote that reads as a
-    credential is left blank, so no secret lands in the queue."""
-    # Read whole: a credential the cut would split no longer reads as one.
+    """The quotes a supporter row stores, each bounded. A quote that reads as high
+    is left blank, so no secret lands in the queue."""
+    # Read whole: a high shape the cut would split no longer reads as high.
     return (
         "" if reads_high(asked) else _bounded(asked, _USER_CHARS),
         "" if reads_high(said) else _bounded(said, _SAID_CHARS),

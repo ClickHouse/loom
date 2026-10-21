@@ -58,7 +58,7 @@ _EMPTIED_PAGE = 1000  # not a setting: read buffer size; any page gives the same
 
 def _lost_plain_vector(emptied: dict[int, Any], sources: list[dict[str, Any]]) -> bool:
     """Whether a live source row lost a vector its target row was staged without, and its
-    text does not read as a credential."""
+    text does not read as high."""
     for r in sources:
         pairs = zip(emptied[int(r["ordinal"])], r["has_vector"], strict=True)
         lost_vector = any(e and v for e, v in pairs)
@@ -74,7 +74,7 @@ async def _holds_plain_emptied(
     text_column: str,
     client: _CHClient,
 ) -> bool:
-    """Whether a row the rebuild left empty holds text that does not read as a credential.
+    """Whether a row the rebuild left empty holds text that does not read as high.
     A page of the target's empty ordinals, then the snapshot's text for those ordinals
     only: neither table is joined, and no page reads past its own ordinals."""
     # The `size0` subcolumn: the page reads the arrays' lengths, never the vectors.
@@ -123,7 +123,7 @@ async def verify_reembedded_target(
 
     `text_column` names the text column of a raw-passage table: a row there that the
     rebuild staged without a vector, though its source held one, is accepted when that
-    text reads as a credential, as its write path leaves it
+    text reads as high, as its write path leaves it
     (`provider_rebuild_batch.PASSAGE_TABLES`).
 
     Returns the logical row count. Prefix derivation and cache invalidation have
@@ -186,8 +186,8 @@ async def verify_reembedded_target(
         type(result.get(name)) is not int or result[name] < 0 for name in fields
     ):
         raise ValueError("Cannot establish rebuild verification result")
-    # A raw-passage row the rebuild left empty is accepted when its text reads as a
-    # credential, as its write path leaves it.
+    # A raw-passage row the rebuild left empty is accepted when its text reads as
+    # high, as its write path leaves it.
     vector_lost = bool(result["emptied"])
     if vector_lost and text_column:
         vector_lost = await _holds_plain_emptied(names, schema, vectors, text_column, client)
