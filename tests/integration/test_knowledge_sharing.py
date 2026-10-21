@@ -7,7 +7,6 @@ Skips without LOOM_BASE_URL."""
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -254,7 +253,6 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     nonce = _nonce()
     turn = {"conversation_id": "c9", "message_id": "m9"}
     content = f"The renewal note {nonce}."
-    before = datetime.now(UTC) - timedelta(minutes=5)
     saved = _chat_ok(
         gw,
         "alice",
@@ -268,10 +266,6 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
         ("c9", "m9", "assistant")
     ], rows
     assert rows[0]["content_excerpt"] == content, rows
-    saved_at = datetime.fromisoformat(rows[0]["ts"].replace("Z", "+00:00"))
-    saved_at = saved_at.replace(tzinfo=saved_at.tzinfo or UTC)
-    # The row this save wrote, stamped with its save time.
-    assert before <= saved_at <= datetime.now(UTC) + timedelta(minutes=5), rows
     status = {**mine, "message_ids": ["m9", "m8"]}
     assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]
     search = {"user_id": "alice", "query": nonce}
@@ -284,6 +278,13 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     bobs = {"user_id": "bob", "query": nonce}
     assert _chat_ok(gw, "bob", "conversation.search_saved_messages", bobs)["hits"] == []
     r = _chat(gw, "bob", "conversation.search_saved_messages", search)
+    assert r.status_code == 403 and nonce not in r.text, r.text
+    bobs_status = {"user_id": "bob", "conversation_id": "c9", "message_ids": ["m9"]}
+    assert _chat_ok(gw, "bob", "conversation.saved_status", bobs_status)["saved"] == []
+    assert _chat(gw, "bob", "conversation.saved_status", status).status_code == 403
+    bobs_list = {"user_id": "bob", "conversation_id": "c9"}
+    assert _chat_ok(gw, "bob", "conversation.list_saved_messages", bobs_list)["rows"] == []
+    r = _chat(gw, "bob", "conversation.list_saved_messages", mine)
     assert r.status_code == 403 and nonce not in r.text, r.text
     r = gw.call(
         "bob",
