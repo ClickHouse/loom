@@ -257,11 +257,12 @@ never takes a visible row's place on the page.
   one feature by building a second document store: chunking, lexical statistics,
   embedding retries and erasure twice, and documents that can never join a collection.
 - **Saved messages as documents in the personal collection**
-  (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its own, but it serves only a chat that
-  signs end-user tokens, so a chat that records its conversations would need the
-  conversation ops anyway: two ways to save one message. A document gets no role or
-  credential check, and a client finds a conversation's saved state by listing a URI
-  prefix. Saved messages are conversation rows in both cases instead.
+  (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its
+  own, but it serves only a chat that signs end-user tokens, so a chat that records its
+  conversations would need the conversation ops anyway: two ways to save one message. A
+  document gets no role or credential check, and a client finds a conversation's saved
+  state by listing a URI prefix. Saved messages are conversation rows in both cases
+  instead.
 - **One namespace per tenant with row-level ACLs.** Every read filters rows one by one and
   prunes nothing, and a move or a revoke rewrites every affected chunk row.
 - **An ACL key in the sort order.** A request's readable set is a union over its
