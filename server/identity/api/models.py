@@ -300,6 +300,11 @@ class NamespaceGetOutput(BaseModel):
     # updated only by a named-namespace ADMIN token with a direct grant; clients mirror
     # that to hide settings they would be refused. None when not found.
     classification: Literal["standard", "restricted"] | None = None
+    # The current revision of the namespace's guide, the `expected_revision` of its next
+    # `namespace.guide_set`; 0 when it never had one.
+    guide_revision: int | None = None
+    # The guide's one-line summary; empty when there is no guide or it was cleared.
+    guide_summary: str | None = None
     # When the namespace was first registered (UTC).
     created_at: datetime | None = None
     # When the registry row was last written (UTC).
@@ -320,7 +325,9 @@ class NamespaceDeleteOutput(BaseModel):
 
 class NamespaceBrowseInput(BaseModel):
     org: str
-    query: str = ""  # substring match on namespace name or description
+    # Substring match on the namespace name or description, or on a public
+    # namespace's guide summary.
+    query: str = ""
     # At most this many rows, most members first; `closed` rows are dropped after the limit.
     limit: int = Field(default=50, ge=1, le=500)
     # `closed` rows (bench/scratch) are omitted unless asked for;
@@ -347,6 +354,11 @@ class _BrowseEntry(BaseModel):
     my_role: str = ""
     repo: str = ""
     branch: str = ""
+    # The current revision of the namespace's guide (the `expected_revision` of its next
+    # `namespace.guide_set`) and its one-line summary, for a public row or one the caller
+    # belongs to; 0 and "" when it never had a guide, and "" when the guide was cleared.
+    guide_revision: int = 0
+    guide_summary: str = ""
 
 
 class NamespaceBrowseOutput(BaseModel):

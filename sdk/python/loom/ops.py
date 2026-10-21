@@ -260,6 +260,9 @@ OpName = Literal[
     "namespace.cancel_request",
     "namespace.delete",
     "namespace.get",
+    "namespace.guide_get",
+    "namespace.guide_history",
+    "namespace.guide_set",
     "namespace.join",
     "namespace.leave",
     "namespace.list",
@@ -593,6 +596,9 @@ OP_NAMES: tuple[str, ...] = (
     "namespace.cancel_request",
     "namespace.delete",
     "namespace.get",
+    "namespace.guide_get",
+    "namespace.guide_history",
+    "namespace.guide_set",
     "namespace.join",
     "namespace.leave",
     "namespace.list",
@@ -3356,6 +3362,42 @@ OPS: dict[str, OpSpec] = {
         30,
         False,
         True,
+    ),
+    "namespace.guide_get": OpSpec(
+        "namespace.guide_get",
+        "NamespaceGuideGetInput",
+        "NamespaceGuideGetBody",
+        "NamespaceGuideGetOutput",
+        True,
+        "viewer",
+        "experimental",
+        40,
+        False,
+        True,
+    ),
+    "namespace.guide_history": OpSpec(
+        "namespace.guide_history",
+        "NamespaceGuideHistoryInput",
+        "NamespaceGuideHistoryBody",
+        "NamespaceGuideHistoryOutput",
+        True,
+        "viewer",
+        "experimental",
+        60,
+        False,
+        True,
+    ),
+    "namespace.guide_set": OpSpec(
+        "namespace.guide_set",
+        "NamespaceGuideSetInput",
+        "NamespaceGuideSetBody",
+        "NamespaceGuideSetOutput",
+        True,
+        "writer",
+        "experimental",
+        250,
+        True,
+        False,
     ),
     "namespace.join": OpSpec(
         "namespace.join",
@@ -7806,6 +7848,7 @@ class ContextPackInput(TypedDict, total=False):
                 "conversations",
                 "runs",
                 "namespace_health",
+                "namespace_guide",
                 "mentor",
             ]
         ]
@@ -7848,6 +7891,7 @@ class ContextPackBody(TypedDict, total=False):
                 "conversations",
                 "runs",
                 "namespace_health",
+                "namespace_guide",
                 "mentor",
             ]
         ]
@@ -14276,6 +14320,8 @@ class BrowseEntry(TypedDict, total=False):
     my_role: NotRequired[str]
     repo: NotRequired[str]
     branch: NotRequired[str]
+    guide_revision: NotRequired[int]
+    guide_summary: NotRequired[str]
 
 
 class NamespaceCancelRequestInput(TypedDict, total=False):
@@ -14355,8 +14401,82 @@ class NamespaceGetOutput(TypedDict, total=False):
     code_change_policy: NotRequired[Optional[Literal["retire_removed", "flag", "revise"]]]
     tag_registry: NotRequired[Optional[list[dict[str, Any]]]]
     classification: NotRequired[Optional[Literal["standard", "restricted"]]]
+    guide_revision: NotRequired[Optional[int]]
+    guide_summary: NotRequired[Optional[str]]
     created_at: NotRequired[Optional[str]]
     updated_at: NotRequired[Optional[str]]
+
+
+class NamespaceGuideGetInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    revision: NotRequired[int]
+
+
+class NamespaceGuideGetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    revision: NotRequired[int]
+
+
+class NamespaceGuideGetOutput(TypedDict, total=False):
+    found: Required[bool]
+    revision: NotRequired[int]
+    content: NotRequired[str]
+    summary: NotRequired[str]
+    note: NotRequired[str]
+    updated_by: NotRequired[str]
+    updated_at: NotRequired[Optional[str]]
+
+
+class NamespaceGuideHistoryInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class NamespaceGuideHistoryBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class NamespaceGuideHistoryOutput(TypedDict, total=False):
+    revisions: Required[list["GuideRevision"]]
+
+
+class GuideRevision(TypedDict, total=False):
+    revision: Required[int]
+    summary: Required[str]
+    note: Required[str]
+    updated_by: Required[str]
+    updated_at: Required[str]  # date-time as ISO-8601 text
+    chars: Required[int]
+
+
+class NamespaceGuideSetInput(TypedDict, total=False):
+    org: Required[str]
+    namespace: Required[str]
+    content: Required[str]
+    summary: NotRequired[Optional[str]]
+    expected_revision: Required[int]
+    note: NotRequired[str]
+
+
+class NamespaceGuideSetBody(TypedDict, total=False):
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    content: Required[str]
+    summary: NotRequired[Optional[str]]
+    expected_revision: Required[int]
+    note: NotRequired[str]
+
+
+class NamespaceGuideSetOutput(TypedDict, total=False):
+    written: Required[bool]
+    conflict: NotRequired[bool]
+    revision: Required[int]
+    current: NotRequired[Optional["NamespaceGuideGetOutput"]]
 
 
 class NamespaceJoinInput(TypedDict, total=False):

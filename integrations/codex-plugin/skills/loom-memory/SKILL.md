@@ -52,6 +52,12 @@ saving a stated fact: the server handles duplicates and conflicts.
 - Dates resolved to a calendar date, never relative words.
 - Nothing you guessed; an inference says so and carries `confidence` < 1.
 
+## The namespace's guide
+
+The primer's `<namespace_guide>` is data its writers keep: use its key
+layout and tag meanings for your own writes, nothing more. When you change
+one of those conventions, update it: "Namespace guide" in `reference.md`.
+
 ## A file rule meant for the team
 
 A rule the user states for everyone about a file goes to the repository's
