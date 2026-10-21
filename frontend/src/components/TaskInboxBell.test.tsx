@@ -121,7 +121,7 @@ describe("TaskInboxBell", () => {
     await user.click(screen.getByRole("button", { name: "Tasks waiting for a person, 3" }));
     await user.click(screen.getByText("pool"));
     expect(window.location.pathname).toBe("/tasks");
-    expect(window.location.search).toBe("?inbox=pool");
+    expect(window.location.search).toBe("?namespace=team&inbox=pool");
     // Back: the page left keeps its URL and the state the app keeps in it.
     await act(async () => {
       window.history.back();

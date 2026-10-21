@@ -39,6 +39,10 @@ import type { View } from "./state";
  */
 export const WILDCARD_NAMESPACE = "*";
 
+/** A namespace name as the server takes one (`server/core/naming.py`): 1–128 lowercase
+ *  letters, digits and hyphens, starting with a letter or digit. */
+export const NAMESPACE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/;
+
 /** A name the dashboard may switch into: a real namespace, whatever its kind. */
 function isReachableNamespace(m: Pick<MyNamespaceEntry, "namespace">): boolean {
   return m.namespace !== WILDCARD_NAMESPACE && m.namespace !== "";
@@ -98,6 +102,20 @@ export function reachableNamespaces(claims: readonly string[], mine: readonly My
     if (isReachableNamespace(m)) allowed.add(m.namespace);
   }
   return allowed;
+}
+
+/** Whether a link may open `namespace`, from what the picker lists: a claim names it, or a
+ *  list_mine row is an active grant on it. A pending request reads nothing, and without
+ *  rows (list_mine failed) only the claims count. A token whose claim is `*` reads more than
+ *  it lists; like the picker, a link to a namespace it does not list finds no access. */
+export function canReadNamespace(
+  namespace: string,
+  claims: readonly string[],
+  mine: readonly MyNamespaceEntry[] | null,
+): boolean {
+  return (
+    claims.includes(namespace) || !!mine?.some((m) => m.namespace === namespace && (m.status ?? "active") === "active")
+  );
 }
 
 /** The auto-claimed personal namespace (`personal-<subject>`), the one row a

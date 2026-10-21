@@ -4,17 +4,13 @@
  * shared entities). These helpers build that link so every entry point lands the Explorer
  * on the same `/graph?seed=<entity>` walk (`seed` is the Explorer's own query key).
  */
-import { useStore } from "./state";
+import { navigationHref, useStore } from "./state";
 
-const GRAPH_PATH = "/graph";
-
-/** The href a seed walk lives at — for anchors, so cmd-click opens a tab. */
+/** The href a seed walk lives at — for anchors, so cmd-click opens a tab on the same
+ *  namespace. */
 export function graphSeedHref(entity: string): string {
   const seed = entity.trim().toLowerCase();
-  if (!seed) return GRAPH_PATH;
-  const params = new URLSearchParams();
-  params.set("seed", seed);
-  return `${GRAPH_PATH}?${params.toString()}`;
+  return navigationHref("graph", seed ? { seed } : {});
 }
 
 /** Open the Explorer on `entity` in this tab, as a new history entry: Back returns to the

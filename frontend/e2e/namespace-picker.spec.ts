@@ -66,6 +66,22 @@ test("Up and Down rove from the search field through the options and the group b
   await expect(page.getByRole("button", { name: /^Namespace: / })).toBeFocused();
 });
 
+test("an open name family is axe-clean, each member led by its description", async ({ page }) => {
+  const family = ["A", "B", "C"].map((w) =>
+    row(`group-${w.toLowerCase()}-shared`, "memory", "writer", `Workspace ${w}`),
+  );
+  await installApi(page, { mine: [...MINE, ...family], claims: MINE.map((r) => r.namespace) });
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await page.getByRole("button", { name: /^Namespace: / }).click();
+  const dialog = page.getByRole("dialog", { name: "Namespaces" });
+  const shared = dialog.getByRole("button", { name: /^group-…/ });
+  await expect(shared).toHaveAttribute("aria-expanded", "false");
+  await shared.click();
+  await expect(dialog.getByRole("button", { name: /Workspace B/ })).toBeVisible();
+  expect(await violations(page)).toEqual([]);
+});
+
 test("a search opens the group it matches", async ({ page }) => {
   const dialog = await openPicker(page);
   await dialog.getByRole("textbox", { name: "Search namespaces" }).fill("loom");
@@ -77,7 +93,8 @@ test("a search opens the group it matches", async ({ page }) => {
 // The list fades out over 24 px at an edge it can still scroll past; a row reached with
 // the arrow keys stops clear of the fade, never under it.
 test("a row reached with Down is scrolled clear of the list's fade", async ({ page }) => {
-  const many = Array.from({ length: 30 }, (_, i) => row(`team-${String(i).padStart(2, "0")}`, "memory", "writer"));
+  // No shared name prefix: three that share one fold into a group of their own.
+  const many = Array.from({ length: 30 }, (_, i) => row(`team${String(i).padStart(2, "0")}`, "memory", "writer"));
   await installApi(page, { mine: [...MINE, ...many], claims: [...MINE, ...many].map((r) => r.namespace) });
   await page.goto("/memories");
   await expect(page.locator("main h1").first()).toBeVisible();

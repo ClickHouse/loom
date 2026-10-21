@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { installApi } from "./fixtures";
+import { installApi, NAMESPACE } from "./fixtures";
 
 // The Graph view's gesture model and hover invariants: nothing is read before a gesture,
 // a deep link is one read, hovering every node shifts no layout and moves no canvas, Walk
@@ -192,13 +192,13 @@ test("the Walk button walks, and Back restores the previous seed", async ({ page
   await page.getByRole("button", { name: "Walk" }).click();
   await expect.poll(() => calls.traverse.length).toBe(2);
   expect(calls.traverse[1]).toMatchObject({ seed_entity: "beta" });
-  await expect(page).toHaveURL(/\/graph\?seed=beta$/);
+  await expect(page).toHaveURL(new RegExp(`/graph\\?namespace=${NAMESPACE}&seed=beta$`));
   await expect(page.locator(`${NODE}[data-id="s"]`)).toHaveText("beta");
   await expect(page.locator(NODE)).toHaveCount(WALK_NODES);
   await shot(page, "05-walked-to-beta");
 
   await page.goBack();
-  await expect(page).toHaveURL(/\/graph\?seed=alpha$/);
+  await expect(page).toHaveURL(new RegExp(`/graph\\?namespace=${NAMESPACE}&seed=alpha$`));
   await expect.poll(() => calls.traverse.length).toBe(3);
   expect(calls.traverse[2]).toMatchObject({ seed_entity: "alpha" });
   await expect(seedInput).toHaveValue("alpha");

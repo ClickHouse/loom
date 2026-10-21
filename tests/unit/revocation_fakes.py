@@ -4,6 +4,7 @@ loom.revoked_tokens, for the unit fakes that stand in for ClickHouse."""
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -16,6 +17,7 @@ def revocation_read(rows: list[dict[str, Any]], sql: str, params: Any) -> dict[s
     if "max(version)" in sql:
         top = int(newest.get("version") or 0) if newest else 0
         return {"v": max(time.time_ns(), top + 1)}
-    if "issued_before IS NULL" in sql:
-        return {"x": 1} if newest is not None and newest.get("issued_before") is None else None
+    if "SELECT jti, revoked_at" in sql:
+        if newest is not None and newest["expires_at"] > datetime.now(UTC).replace(tzinfo=None):
+            return dict(newest)
     return None

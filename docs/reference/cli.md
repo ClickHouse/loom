@@ -112,6 +112,10 @@ docker exec loom-server loom revoke-token --jti <jti> --reason "leaked"
 docker exec loom-server loom revoke-token --subject my-bot --issued-before 2030-01-01T00:00:00Z
 ```
 
+A permanent revocation cannot be given an expiry or narrowed to restore tokens
+retired before it. Choose a cutoff at or after its existing cutoff, or the
+permanent revocation time plus the token clock-skew allowance.
+
 `--save` writes the token to `~/.loom/token` (or a path you give) instead of
 printing it. Without `--ttl-days` the token has no expiry and can only be
 retired with `loom revoke-token`. `--read-scope own_user` limits reads to the

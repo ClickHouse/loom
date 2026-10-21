@@ -67,11 +67,12 @@ async def subject_aliases(org: str, subject: str, *, ch: object | None = None) -
     return out
 
 
-async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
+async def _rows(org: str, subject: str, ch: object | None) -> list[dict[str, Any]]:
+    """The accounts tying `subject` to another spelling, matched in any case."""
     from server.core.ch import get_client
 
     client = ch or get_client()
-    rows = await client.query_all(  # type: ignore[attr-defined]
+    rows: list[dict[str, Any]] = await client.query_all(  # type: ignore[attr-defined]
         """
         SELECT owner_email, contact_email
         FROM loom.namespaces FINAL
@@ -83,6 +84,11 @@ async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
         """,
         params={"org": org, "sub": subject},
     )
+    return rows
+
+
+async def read_aliases(org: str, subject: str, ch: object | None) -> list[str]:
+    rows = await _rows(org, subject, ch)
     out = [subject]
     for r in rows:
         for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
@@ -98,6 +104,29 @@ def invalidate(org: str, subjects: Iterable[str]) -> None:
     for key, (_, spellings) in list(_CACHE.items()):
         if key[0] == org and lowered & {s.lower() for s in (key[1], *spellings)}:
             del _CACHE[key]
+
+
+async def spellings(org: str, subject: str) -> list[str]:
+    """Every spelling of `subject` a change keyed by exact spelling must reach
+    (a revocation): itself, an email's lower case, and each spelling the
+    directory ties to it, as stored. Read uncached, and raising when the
+    directory cannot be read: never guess."""
+    from server.core.ch import own_write_reads
+
+    if not subject:
+        return []
+    out = [subject]
+    if "@" in subject and subject.lower() != subject:
+        out.append(subject.lower())  # how the directory keeps an address
+    if not has_aliases(subject):
+        return out
+    with own_write_reads():
+        rows = await _rows(org, subject, None)
+    for r in rows:
+        for spelling in (str(r.get("owner_email") or ""), str(r.get("contact_email") or "")):
+            if spelling and spelling not in out:
+                out.append(spelling)
+    return out
 
 
 async def canonical_subject(org: str, subject: str, *, ch: object | None = None) -> str:
