@@ -15,7 +15,7 @@ from server.insights.api.models_mentor import MentorGuideInput
 from server.insights.app.mentor_guide import handle_mentor_guide
 from server.operations.registry import OPERATIONS_BY_NAME
 from server.operations.toolsets import _MCP_HIDDEN_OPS
-from server.transport import gates
+from server.transport import gates, mcp_op
 
 
 def _guide(part: str):
@@ -107,6 +107,12 @@ def test_every_token_that_may_read_the_guide_is_admitted(caller: str) -> None:
     target = gates.authz_target(op, org="acme", namespace=None, auth=auth)
     asyncio.run(gates.authorize(op, auth, target, transport="http"))
     gates.read_scope(op, auth, MentorGuideInput())
+
+
+@pytest.mark.parametrize("toolset", [None, "core", "coding", "readonly"])
+def test_loom_op_reaches_the_guide_on_every_toolset(toolset: str | None) -> None:
+    # Primer rule 7 names `loom_op` (op `mentor.guide`) on every connection.
+    assert mcp_op.reachable(OPERATIONS_BY_NAME["mentor.guide"], toolset)
 
 
 def test_the_image_ships_the_guide() -> None:

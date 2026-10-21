@@ -11,7 +11,10 @@ repository) has every field.
 Calling convention, by surface: MCP tool `loom_<op_with_underscores>` or
 `loom_op {op, arguments}`; Python `await agent.call("<op>", {...})`;
 TypeScript `await agent.call("<op>", {...})`; HTTP `POST /v1/<op>`. The SDKs
-stamp `org`, `namespace` and `agent` for you; over HTTP you send them. Ops
+stamp `org`, `namespace` and `agent` for you; over HTTP you send them. A
+stamped `agent` narrows a read that defaults to every author (`memory.search`‡,
+`memory.ask`) to your own rows: pass `agent: "*"` there, or use the typed
+helpers (Python `agent.memory.*`, TypeScript `agent.recall` and `agent.ask`). Ops
 marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
 `loom_search` searches memory, knowledge and conversations, and the rest are
 SDK and HTTP only.
@@ -128,11 +131,11 @@ on loses that boost.
 | `observe.record` | Record one tool observation (input, output, error) under the run. |
 
 Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
-Its typed helpers carry the run's `run_id` on every call, and on
-`memory.search`‡ and `memory.ask` send it as the `X-Loom-Run-Id` header (a
-body `run_id` there filters to the run's rows). A raw `agent.call` inside
-the scope gets it only on memory writes and working-memory `set` and
-`append`.
+Its typed helpers carry the run's `run_id` on every call, and on recall
+reads (`memory.search`‡, `memory.ask`, `memory.list`) send it as the
+`X-Loom-Run-Id` header (a body `run_id` there filters to the run's rows). A raw `agent.call` inside
+the scope gets it only on writes (memory writes, `observe.record`, and
+working-memory `set` and `append`), and as the header on recall reads.
 
 ## Conversations and session briefs
 
@@ -188,7 +191,7 @@ the billing service".
 |---|---|
 | `conflicts.list`‡, `conflicts.resolve`‡ | Contradictions waiting for a decision; settle one (admin). |
 | `blacklist.add`†, `blacklist.list`‡ | Refuse a pattern the user never wants stored (422 `BLACKLISTED`). |
-| `namespace.validate` | Check the rows you wrote for shape problems. |
+| `namespace.validate` | An integrity report for the namespace; fix the findings on keys you wrote. |
 | `namespace.audit` | Find whole-namespace mistakes (documents as memories, hash keys, coordination as memory). |
 | `mentor.brief` | Your usage profile, the planes you are not using and the counts behind each hint. |
 | `mentor.guide`† | This guide (`part`: `skill`, `reference` or `all`). |
@@ -223,4 +226,4 @@ the repository.
 |---|---|
 | `namespace.list_mine` | The namespaces your token reaches. |
 | `grants.create`, `grants.list` | Share a namespace with another agent or person (admin). |
-| `erasure.request`, `erasure.status`†‡ | Erase everything about a user or subject, across every table that can hold memory content. |
+| `erasure.request`, `erasure.status`†‡ | Erase everything about a user or subject, across every table that can hold memory content (org admin for a user, admin for a namespace). |

@@ -60,8 +60,9 @@ change between releases, and ops MCP does not serve with ‡.
    a `run_id` filters to the run's own rows (over HTTP, the `X-Loom-Run-Id`
    header labels a read without filtering it). In Python,
    `agent.run_scope(...)` does this for every typed helper; in TypeScript,
-   pass `runId` in the scope argument of writes only; over MCP, the
-   connection's own run labels reads.
+   pass `runId` in the scope argument of writes, working-memory calls and
+   `contextPack`, never of `recall` or `ask`; over MCP, the connection's own
+   run labels reads.
 3. **Search once per question.** `search.query`† (`loom_search` over MCP)
    covers memory, profile, knowledge and conversations in one call;
    `memory.ask` returns a cited answer. Do not search before writing a fact
@@ -141,8 +142,9 @@ reads the loop uses:
 - `memory.search`‡ and `memory.ask` read every author unless you name an
   `agent`; a `user_id` or `session_id` narrows them to those rows.
 - `context.pack` recalls memories of every author, narrowed by `user_id`
-  and `session_id` (with no `query`, it reads only rows under the identity
-  it names). A pack that names this session's `session_id` recalls only
+  and `session_id`. With no `query`, only `mode: "startup"` loads memories:
+  pinned and recent rows of every author under exactly that `user_id` and
+  `session_id`. A pack that names this session's `session_id` recalls only
   this session's memories, so leave it off when the task needs what
   earlier sessions learned.
 - `memory.get` and `memory.delete` take your row under the key, else the
@@ -151,11 +153,13 @@ reads the loop uses:
   `session_id` exactly (`user_id` and `session_id` default to `-`); `"*"`
   on a field reads every value.
 
-Read and revise through the SDKs' typed helpers (Python `agent.memory.*`,
-TypeScript `agent.recall` and `agent.ask`): they send the identity each op
-expects. A raw `agent.call` stamps your own `agent` and `-` for the rest;
-in TypeScript it takes `userId`, `sessionId` and `runId` in its scope
-argument, not the body.
+Read through the SDKs' typed helpers (Python `agent.memory.*`, which also
+revise; TypeScript `agent.recall` and `agent.ask`): they send the identity
+each op expects, `agent: "*"` included. A raw `agent.call` stamps your own
+`agent` and `-` for the rest, so on a read that defaults to every author
+(`memory.search`‡, `memory.ask`) it reads only your own rows unless you
+pass `agent: "*"`. In TypeScript, `agent.call` takes `userId`, `sessionId`
+and `runId` in its scope argument, not the body.
 
 A token minted with an
 `own_user` read scope refuses a read without `user_id` (400
