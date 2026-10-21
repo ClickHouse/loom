@@ -499,8 +499,9 @@ class MemoryRestoreOutput(BaseModel):
 class MemoryClearInput(BaseModel):
     """Bulk-tombstone memories in one scope.
 
-    At least one of `user_id` or `agent` must name a concrete value; a clear with
-    neither (or `"*"` on both) is refused at the handler (use erasure.request_namespace).
+    At least one of `user_id` or `agent` must name a concrete value, other than `'-'` when
+    the other is open (`"*"` or unset); anything wider is refused at the handler (use
+    erasure.request_namespace).
     `confirm_subject` must equal one of those concrete values — guards against UI-dropdown
     accidents.
     """

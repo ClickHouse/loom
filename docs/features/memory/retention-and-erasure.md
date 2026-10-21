@@ -38,7 +38,8 @@ the row and its prior versions in `loom.memory_versions` stay on disk:
 - `memory.clear` (admin) tombstones every memory for an agent or user in a namespace;
   `confirm_subject` must repeat a scope value. `agent="*"` with a `user_id` clears that
   user's rows under every agent, and `user_id="*"` with an `agent` that agent's rows for
-  every user. Locked rows stay and are counted in `locked_skipped`. Cleared keys revive the same way.
+  every user; `'-'` beside an open field is refused, as a namespace-wide clear is.
+  Locked rows stay and are counted in `locked_skipped`. Cleared keys revive the same way.
 
 To remove the bytes, use an [erasure](#erasure). To strip one value but keep the row and
 audit trail, use [`memory.redact`](./history-and-provenance.md#scrubbing-history-memoryredact).

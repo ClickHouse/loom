@@ -1118,9 +1118,10 @@ async def _retire_derived(
 async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     """Bulk-tombstone for `memory.clear`.
 
-    Defenses: a concrete `user_id` or `agent` is required (`"*"` opens that axis;
-    a scope-less clear is `erasure.request_namespace`'s job), and `confirm_subject`
-    must match a concrete one (guard against UI-dropdown accidents).
+    Defenses: a concrete `user_id` or `agent` other than `'-'` is required when the
+    other is open (`"*"` or unset; a scope-less clear is `erasure.request_namespace`'s
+    job), and `confirm_subject` must match a concrete one (guard against UI-dropdown
+    accidents).
 
     Same tombstone semantics as `memory.delete`.
     """
@@ -1129,13 +1130,16 @@ async def handle_memory_clear(input: MemoryClearInput) -> MemoryClearOutput:
     # "*" opens an axis as it does on reads; matched literally it would clear nothing.
     user_id = None if input.user_id == "*" else input.user_id
     agent = None if input.agent == "*" else input.agent
-    if user_id is None and agent is None:
+    # With one axis open, the other must name someone: "-" (no user, no agent) beside an
+    # open axis selects most of a namespace, which is erasure's job too.
+    named = [v for v in (user_id, agent) if v not in (None, "-")]
+    if (user_id is None or agent is None) and not named:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "MISSING_SCOPE",
                 "message": (
-                    "memory.clear requires a concrete `user_id` or `agent` "
+                    "memory.clear requires a concrete `user_id` or `agent` other than '-' "
                     '("*" means every value of that field). For namespace-wide clearing use '
                     "erasure.request_namespace (full saga, cross-system "
                     "cascade, auditable)."

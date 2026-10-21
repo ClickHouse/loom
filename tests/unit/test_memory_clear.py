@@ -183,36 +183,6 @@ async def test_clear_zero_rows_is_well_formed(
 
 
 @pytest.mark.asyncio
-async def test_clear_reads_star_agent_as_every_agent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """agent="*" clears the user's rows under every agent, as reads treat it."""
-    from server.memory import store as memory_repo
-    from server.memory.api.models_crud import MemoryClearInput
-    from server.memory.app.handlers import handle_memory_clear
-
-    captured: dict[str, object] = {}
-
-    async def fake_bulk(*, org, namespace, user_id=None, agent=None, on_tombstoned=None, ch=None):
-        captured.update(user_id=user_id, agent=agent)
-        return {"loom.memory": 2, "loom.memory_embeddings": 2}
-
-    monkeypatch.setattr(memory_repo, "bulk_tombstone_scope", fake_bulk)
-
-    out = await handle_memory_clear(
-        MemoryClearInput(
-            org="clickhouse",
-            namespace="finance",
-            user_id="alice",
-            agent="*",
-            confirm_subject="alice",
-        )
-    )
-    assert out.total == 4
-    assert captured == {"user_id": "alice", "agent": None}
-
-
-@pytest.mark.asyncio
 async def test_clear_star_agent_tombstones_without_an_agent_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -355,8 +325,15 @@ async def test_clear_refuses_star_as_confirm_subject() -> None:
 
 
 @pytest.mark.asyncio
-async def test_clear_refuses_star_on_every_axis() -> None:
-    """ "*" on both axes is a namespace-wide clear, which is erasure's job."""
+@pytest.mark.parametrize(
+    ("user_id", "agent"),
+    [("*", "*"), ("-", "*"), ("*", "-"), ("-", None), (None, "-")],
+)
+async def test_clear_refuses_a_scope_that_names_nobody(
+    user_id: str | None, agent: str | None
+) -> None:
+    """An open axis beside another open one, or beside '-' (no user, no agent), selects most of
+    a namespace: erasure's job."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
@@ -365,9 +342,9 @@ async def test_clear_refuses_star_on_every_axis() -> None:
             MemoryClearInput(
                 org="clickhouse",
                 namespace="finance",
-                user_id="*",
-                agent="*",
-                confirm_subject="*",
+                user_id=user_id,
+                agent=agent,
+                confirm_subject="-" if "-" in (user_id, agent) else "*",
             )
         )
     assert exc.value.status_code == 400
