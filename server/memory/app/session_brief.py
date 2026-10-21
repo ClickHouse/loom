@@ -148,9 +148,15 @@ async def _revise_window(
             max_tokens=llm_max_tokens("session_brief_revision"),
             response_format={"type": "json_object"},
         )
-    except Exception as e:  # a failed call costs this window only
-        if operator_policy and isinstance(e, customer.ModelCallsDisabled):
+    except customer.ModelCallsDisabled as e:
+        if operator_policy:  # a switched-off org stops the save under a policy
             raise
+        log.warning(
+            "session.brief_save: model call failed (%s); window revised without the model",
+            e,
+        )
+        return fallback(), 0, 0, 0, False
+    except Exception as e:  # noqa: BLE001 — a failed call costs this window only
         log.warning(
             "session.brief_save: model call failed (%s); window revised without the model",
             e,

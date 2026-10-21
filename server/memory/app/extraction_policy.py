@@ -135,9 +135,14 @@ async def _check_namespace_cap(org: str, namespace: str) -> None:
 async def handle_extraction_policy_clear(
     input: ExtractionPolicyClearInput,
 ) -> ExtractionPolicyOutput:
-    """Remove the scope's policy. A namespace's clear leaves the org's in force."""
+    """Remove the scope's policy. A namespace's clear leaves the org's in force.
+    A scope with no live policy is left as it is: no row is written, so clearing
+    names that were never set cannot grow the table every process reads."""
     org, namespace = _scope(input)
-    await _write(org, namespace, "")
+    with own_write_reads():
+        live = await repo.get(org, namespace)
+    if live is not None:
+        await _write(org, namespace, "")
     return await _output(org, namespace)
 
 

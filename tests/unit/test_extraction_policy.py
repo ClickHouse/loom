@@ -413,6 +413,16 @@ async def test_the_org_scope_lists_every_namespace_policy(stored) -> None:
     assert one.namespace_policies == []
 
 
+async def test_clearing_a_never_set_namespace_writes_no_row(stored) -> None:
+    from server.memory.api.models_extraction_policy import ExtractionPolicyClearInput
+
+    out = await extraction_policy.handle_extraction_policy_clear(
+        ExtractionPolicyClearInput(org="acme", scope="namespace", namespace="never-set")
+    )
+    assert (out.namespace, out.policy, out.updated_at) == ("never-set", "", None)
+    assert stored == [], "a clear with no live policy adds nothing to the table"
+
+
 async def test_namespace_policies_stop_at_the_per_org_cap(
     stored, monkeypatch: pytest.MonkeyPatch
 ) -> None:

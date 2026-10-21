@@ -48,9 +48,10 @@ async def namespace_count(org: str, *, ch: _CHClient | None = None) -> int:
 
 
 async def namespace_rows(org: str, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
-    """The org's namespaces that hold a live policy, by name; at most
-    `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` rows, as `extraction_policy.set`
-    refuses one more. `deleted = 0` stays in WHERE (after FINAL), as in `get`."""
+    """Every namespace of the org that holds a live policy, by name.
+    `extraction_policy.set` keeps new ones at `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES`,
+    but a lowered cap or two concurrent sets can leave more. `deleted = 0` stays
+    in WHERE (after FINAL), as in `get`."""
     ch = ch or _default_client()
     rows: list[dict[str, Any]] = await ch.query_all(
         "SELECT namespace, updated_by, updated_at FROM loom.extraction_policies FINAL "
