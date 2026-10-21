@@ -150,6 +150,9 @@ class SweepCandidate:
     memory_key: str
     level: str  # 'high' | 'medium'
     shapes: tuple[str, ...]  # 'credential' | 'email' | 'phone' | 'other'
+    # The scanned row's sort key as stored: the fields above write an empty agent, user or
+    # session as '-', which sorts after ''.
+    sort_key: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -259,8 +262,7 @@ async def scan(
     if len(report.candidates) > limit:
         report.candidates = report.candidates[:limit]
         report.truncated = True
-        last_kept = report.candidates[-1]
-        report.resume_after = {col: getattr(last_kept, col) for col in SORT_KEY}
+        report.resume_after = report.candidates[-1].sort_key
     return report
 
 
@@ -302,6 +304,7 @@ def _add_candidates(report: SweepReport, rows: list[dict[str, Any]], keep: set[s
                 memory_key=str(r["memory_key"]),
                 level=level,
                 shapes=shapes,
+                sort_key={col: r[col] for col in SORT_KEY},
             )
         )
 

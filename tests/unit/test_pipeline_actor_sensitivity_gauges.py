@@ -305,7 +305,7 @@ class _LocalCH:
 
 
 class _Row(NamedTuple):
-    """One loom.memory row version, under agent `a`, session `-`."""
+    """One loom.memory row version, under session `-`."""
 
     org: str
     ns: str
@@ -317,6 +317,7 @@ class _Row(NamedTuple):
     sensitivity: str = ""
     version: int = 0
     tombstoned: bool = False
+    agent: str = "a"
 
 
 def _local_memory(rows: list[_Row]) -> _LocalCH:
@@ -326,7 +327,7 @@ def _local_memory(rows: list[_Row]) -> _LocalCH:
     values, params = [], {}
     for i, row in enumerate(rows):
         values.append(
-            f"({{org{i}:String}}, {{ns{i}:String}}, 'a', {{user{i}:String}}, '-', "
+            f"({{org{i}:String}}, {{ns{i}:String}}, {{agent{i}:String}}, {{user{i}:String}}, '-', "
             f"{{id{i}:UUID}}, {{key{i}:String}}, {{value{i}:String}}, toDateTime({{at{i}:UInt32}}), "
             f"{{sens{i}:String}}, {{ver{i}:UInt64}}, "
             f"if({{tomb{i}:Bool}}, toDateTime({{at{i}:UInt32}}), NULL))"
@@ -334,6 +335,7 @@ def _local_memory(rows: list[_Row]) -> _LocalCH:
         params |= {
             f"org{i}": row.org,
             f"ns{i}": row.ns,
+            f"agent{i}": row.agent,
             f"user{i}": row.user,
             f"id{i}": row.memory_id,
             f"key{i}": row.key,
@@ -419,13 +421,16 @@ async def test_a_pass_reads_at_most_its_page_cap() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
-async def test_each_pass_starts_after_the_key_the_last_one_stopped_at(monkeypatch) -> None:
-    # Two pages of selected-but-unlabelled rows sit ahead of a PIN row, and a pass reads one
-    # page. Each pass starts after the last key the one before read, so the third reaches
-    # the PIN row; it reads the last row, and the pass after it starts again at the first.
+async def test_each_pass_starts_at_the_agent_the_last_one_stopped_in(monkeypatch) -> None:
+    # Agent `a` holds two pages of selected-but-unlabelled rows, agent `b` a PIN row, and a
+    # pass reads one page. The second pass starts and stops in `a`, so the third starts past
+    # it and reaches the PIN row; it reads the last row, and the pass after it starts again
+    # at the first. The cursor names the agent only, never a user or a memory key.
     from server.workers import pass_context
 
-    ch = _local_memory(_spin_rows_then_a_pin(4))
+    spins = _spin_rows_then_a_pin(4)[:-1]
+    pin_row = _Row("o", "n", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60, agent="b")
+    ch = _local_memory([*spins, pin_row])
     cursor = ""
     labelled, cursors = [], []
     for _ in range(4):
@@ -436,20 +441,58 @@ async def test_each_pass_starts_after_the_key_the_last_one_stopped_at(monkeypatc
             pass_context.clear()
         labelled.append([c.memory_key for c in applied])
         cursor = ctx.cursor
-        cursors.append(json.loads(cursor)[-1:])
+        cursors.append(json.loads(cursor))
     assert labelled == [[], [], ["vault_door"], []]
-    assert cursors == [["spin_1"], ["spin_3"], [], ["spin_1"]]
+    assert cursors == [["o", "n", "a"], ["o", "n", "a\x01"], [], ["o", "n", "a"]]
 
 
-def test_a_sort_key_too_long_for_the_cursor_store_resumes_at_or_before_it() -> None:
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> None:
+    # With a limit of two, the first page gives one candidate and the second two, so the
+    # third is cut. The scan resumes after the second kept row's stored key, whose empty
+    # user id stays '' (a '-' sorts after every key here), and the next scan labels the third.
+    pin = "badge PIN is 4471"
+    rows = [
+        _Row("o", "n", "", _uuid(1), "k0_spin", {"spin": "4471"}, 60),
+        _Row("o", "n", "", _uuid(2), "k1_pin", pin, 60),
+        _Row("o", "n", "", _uuid(3), "k2_pin", pin, 60),
+        _Row("o", "n", "", _uuid(4), "k3_pin", pin, 60),
+    ]
+    ch = _local_memory(rows)
+    first = await sweep.scan(since_days=2, limit=2, pages=3, ch=ch)  # type: ignore[arg-type]
+    assert [c.memory_key for c in first.candidates] == ["k1_pin", "k2_pin"] and first.truncated
+    assert first.resume_after == {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "",
+        "session_id": "-",
+        "memory_key": "k2_pin",
+    }
+    rest = await sweep.scan(
+        since_days=2,
+        limit=2,
+        pages=3,
+        start_after=first.resume_after,
+        ch=ch,  # type: ignore[arg-type]
+    )
+    assert [c.memory_key for c in rest.candidates] == ["k3_pin"]
+
+
+def test_the_cursor_keeps_the_agent_and_resumes_at_or_before_it() -> None:
     from server.memory.workers.sensitivity_sweep import cursor_key, cursor_text
     from server.workers.pass_context import MAX_CURSOR
 
-    key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
-    long_key = key | {"memory_key": "k" * MAX_CURSOR}
-    assert cursor_key(cursor_text(key | {"memory_key": "k"})) == key | {"memory_key": "k"}
-    assert cursor_key(cursor_text(long_key)) == key | {"memory_key": ""}
+    key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "u", "session_id": "s"}
+    start = {"org": "o", "namespace": "n", "agent": "a", "user_id": "", "session_id": ""}
+    assert cursor_text(key | {"memory_key": "k"}) == '["o", "n", "a"]'
+    assert cursor_key(cursor_text(key | {"memory_key": "k"})) == start | {"memory_key": ""}
+    long_agent = key | {"agent": "a" * MAX_CURSOR, "memory_key": "k"}
+    assert cursor_key(cursor_text(long_agent)) == start | {"agent": "", "memory_key": ""}
     assert cursor_text(None) == "[]" and cursor_key("[]") is None and cursor_key("") is None
+    # a cursor an older build wrote, with the whole sort key, starts at the first key
+    assert cursor_key(json.dumps(["o", "n", "a", "u", "s", "k"])) is None
 
 
 @pytest.mark.asyncio

@@ -4975,7 +4975,7 @@
           "default": 10,
           "minimum": 1,
           "type": "integer",
-          "description": "Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep pass scans at most (at least 1); the next pass starts after the last key this one read."
+          "description": "Pages of `sensitivity_sweep_max_rows_per_pass` keys one sensitivity sweep pass scans at most (at least 1); the next pass starts at the agent this one stopped in."
         },
         "sensitivity_sweep_shapes": {
           "default": "credential,email",
