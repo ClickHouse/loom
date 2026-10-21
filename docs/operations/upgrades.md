@@ -102,9 +102,10 @@ off and delete the rows of `loom.learnings_supporters` and the `assistant_turn` 
 The previous build serves a promoted bot rule to every agent in the namespace, not only
 its bot. To prevent that, delete the documents tagged `source-kind:assistant_turn` with
 `knowledge.delete` before rolling back; otherwise accept the wider serving.
-There is no schema step: the previous build reads and writes the newer schema. Its version writes to
-`loom.memory` and the other `ReplacingMergeTree` memory tables keep the columns it does
-not know ([rolling upgrades](../architecture/rolling-upgrades.md)).
+There is no migration to undo: the previous build reads and writes the newer schema.
+Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
+keep the columns it does not know
+([rolling upgrades](../architecture/rolling-upgrades.md)).
 
 There are no down-migrations. To return to an earlier schema, restore a backup taken
 before the upgrade ([backup and recovery](./backup-and-recovery.md)).

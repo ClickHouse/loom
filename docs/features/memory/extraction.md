@@ -74,10 +74,10 @@ restart, see [runtime settings](../../operations/runtime-settings.md)), the extr
 call also returns these, marked `"about": "agent"`, at no extra model call. The setting
 is the only way on: a request's `agent_learnings=false` turns it off for that call, and
 `agent_learnings=true` while the setting is off is ignored and named in `ignored_args`
-(and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. Turn it on, and review
-`assistant_turn` candidates, only once no replica runs a build without it: an older
-build does not erase `loom.learnings_supporters`, and on promote it writes the bot's
-rule as the approver's own memory
+(and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. Turn
+it on, and review `assistant_turn` candidates, only once no replica runs a build
+without it: an older build does not erase `loom.learnings_supporters`, and on promote
+it writes the bot's rule as the approver's own memory
 ([rolling upgrades](../../architecture/rolling-upgrades.md)). Before rolling back to
 such a build, turn it off, then delete the rows of `loom.learnings_supporters`, where
 users' quotes live (an older build's erasure does not cover that table), and the
@@ -89,25 +89,34 @@ Behaviour the assistant agrees to at the user's request is the user's preference
 rule of the bot: "always answer me in French" answered with "I will always answer you in
 French" is a memory about the user. A rule is not filed when a sentence of the user turn
 before its first cited assistant turn, in `messages` or the earlier `last_messages`,
-opens an imperative with "always", "never", "don't" or "do not" (first in the sentence, after "please", after "can", "could",
-"would" or "will" you, or after "want" or "need" you to), or opens a clause after a
-comma or semicolon with "always" ("From now on, always ..."), and the words after it
-share at least two of the rule's content words and at least half of them, and the
-request asks for the behaviour to happen or not as the rule says: a request with
-"never", "don't" or "do not" matches a rule with "never" or "not", except that "only"
-and "anything but" read as positive ("Don't answer me in anything but French"). A question
-asks for a behaviour only when it opens with "can", "could", "would" or "will" you
-and its requested words name the user as the one it is done to ("me" or "us"):
-"Could you always answer me in French?". The drop is counted in `loom.memory_drops` (stage
-`learnings.file`, reason `user_requested`). A statement ("I never received my refund
-over $500", "You never told me you escalate refunds over $500", "I called twice, never
-got my refund over $500"), a question about the policy ("Do you always escalate refunds
-over $500?", "Will you always escalate my refund over $500?") or a request on its topic
-("Please refund my order") asks for no behaviour, and a request for the opposite ("Never
-escalate my refund over $500 to a human" before "I always escalate any refund over $500
-to a human") is not agreed to, so the rule is filed. The filter
-reads English requests only; in other languages only the prompt clause keeps an agreed
-request from being filed.
+meets all three of these:
+
+- **It requests the behaviour.** It opens an imperative with "always", "never", "don't"
+  or "do not": first in the sentence, after "please", after "can", "could", "would" or
+  "will" you, or after "want" or "need" you to. Or it opens a clause after a comma or
+  semicolon with "always" ("From now on, always ..."). A question counts only when it
+  opens with "can", "could", "would" or "will" you and its requested words name the
+  user as the one it is done to ("me" or "us"): "Could you always answer me in
+  French?".
+- **It overlaps the rule.** The words after the opening share at least two of the
+  rule's content words and at least half of them.
+- **It has the rule's polarity.** A request with "never", "don't" or "do not" matches a
+  rule with "never" or "not", except that "only" and "anything but" read as positive
+  ("Don't answer me in anything but French").
+
+The drop is counted in `loom.memory_drops` (stage `learnings.file`, reason
+`user_requested`). These still file the rule:
+
+- a statement: "I never received my refund over $500", "You never told me you escalate
+  refunds over $500", "I called twice, never got my refund over $500";
+- a question about the policy: "Do you always escalate refunds over $500?", "Will you
+  always escalate my refund over $500?";
+- a request on its topic: "Please refund my order";
+- a request for the opposite, which is not agreed to: "Never escalate my refund over
+  $500 to a human" before "I always escalate any refund over $500 to a human".
+
+The filter reads English requests only; in other languages only the prompt clause keeps
+an agreed request from being filed.
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule

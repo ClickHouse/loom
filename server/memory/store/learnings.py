@@ -203,9 +203,8 @@ async def supporter_stats(
 ) -> list[dict[str, Any]]:
     """Per candidate: distinct users, distinct sessions, distinct writers (the
     principals that wrote the rows: one token can send many user_ids), the mean
-    confidence, the
-    first `_SUPPORTER_PAIRS` (user_id, session_id) pairs by time and the earliest
-    remaining supporter's quotes.
+    confidence, the first `_SUPPORTER_PAIRS` (user_id, session_id) pairs by time
+    and the earliest remaining supporter's quotes.
 
     A (user, session) counts once even when two racing filings both wrote its row:
     the inner query keeps its earliest row. The quotes are one row's pair, the
