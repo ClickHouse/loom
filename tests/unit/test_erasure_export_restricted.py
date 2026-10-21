@@ -18,6 +18,8 @@ from server.operations.base import Role
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
 ORG, PRIV, STD = "clickhouse", "tracker-ops-restricted", "support-bot"
+_EXPORT_CONVERSATIONS = h._export_conversations
+_EXPORT_THREADS = h._export_conversation_threads
 
 
 @pytest.fixture
@@ -27,11 +29,13 @@ def exports(monkeypatch):
         kept = [r for r in rows if _visible(shown, r["namespace"])][:limit]
         return kept, len(kept), False
 
-    async def _empty(org, scope_type, scope_value, *, limit, shown):
+    async def _empty(org, scope_type, scope_value, *, limit, shown, **_k):
         return ([], 0, False)
 
     monkeypatch.setattr(h, "_export_memory", _mem)
     monkeypatch.setattr(h, "_export_knowledge", _empty)
+    monkeypatch.setattr(h, "_export_conversations", _empty)
+    monkeypatch.setattr(h, "_export_conversation_threads", _empty)
     monkeypatch.setattr(h, "_export_agent_events", _empty)
     monkeypatch.setattr(h, "_export_audit_log", _empty)
 
@@ -178,6 +182,64 @@ async def test_a_user_export_carries_their_personal_collection_and_no_other_unre
     assert out.counts["memory"] == 2
 
 
+@pytest.mark.asyncio
+async def test_a_user_export_carries_their_conversation_rows_and_audits_the_high_ones(
+    exports, monkeypatch
+) -> None:
+    """A user's turns and saved messages are exported, a row of a restricted namespace
+    the caller may not read is not, and each one whose text reads as a credential is
+    labelled 'high' and audited as served."""
+    key = "AKIA" + "ABCDEFGHIJKLMNOP"
+
+    def turn(ns: str, msg_id: str, content: str, saved: bool) -> dict:
+        return {
+            "namespace": ns,
+            "thread_id": "t1",
+            "msg_id": msg_id,
+            "content": content,
+            "reasoning": "",
+            "metadata": "{}",
+            "is_saved": saved,
+        }
+
+    async def _conversations(org, scope_type, scope_value, *, include_tombstoned, limit, shown):
+        assert scope_type == "user_id" and scope_value == "u1" and include_tombstoned
+        stored = [
+            turn(STD, "m-saved", "the renewal clause", True),
+            turn(STD, "m-turn", f"my key is {key}", False),
+            turn(PRIV, "m-hidden", "restricted", True),
+        ]
+        return [r for r in stored if _visible(shown, r["namespace"])][: limit + 1]
+
+    async def _threads(org, scope_type, scope_value, *, include_tombstoned, limit, shown):
+        return [{"namespace": STD, "thread_id": "t1", "title": "Renewal", "metadata": "{}"}]
+
+    audited: list[tuple[str, list[dict]]] = []
+
+    async def _emit_many(event, **kw):
+        audited.append((kw["namespace"], kw["subjects"]))
+
+    # The handler's own section readers, over faked store reads.
+    monkeypatch.setattr(h, "_export_conversations", _EXPORT_CONVERSATIONS)
+    monkeypatch.setattr(h, "_export_conversation_threads", _EXPORT_THREADS)
+    monkeypatch.setattr(h.erasure_exports, "export_conversations", _conversations)
+    monkeypatch.setattr(h.erasure_exports, "export_conversation_threads", _threads)
+    monkeypatch.setattr(h.audit, "emit_many", _emit_many)
+    set_current_auth(_admin("*", role=Role.ORG_ADMIN))
+    out = await h.handle_erasure_export(
+        ErasureExportInput(org=ORG, scope_type="user_id", scope_value="u1", requester="ops@x")
+    )
+    rows = out.conversations.rows
+    assert [(r["msg_id"], r["is_saved"], r["sensitivity"]) for r in rows] == [
+        ("m-saved", True, ""),
+        ("m-turn", False, "high"),
+    ]
+    assert out.counts["conversations"] == 2 and not out.conversations.truncated
+    assert [r["title"] for r in out.conversation_threads.rows] == ["Renewal"]
+    assert out.counts["conversation_threads"] == 1
+    assert audited == [(STD, [{"thread_id": "t1", "msg_id": "m-turn"}])]
+
+
 def _visible(shown, namespace: str) -> bool:
     """What `Shown.clause()` keeps, for the fakes above."""
     if namespace in shown.hidden:
@@ -220,3 +282,75 @@ def test_an_export_leaves_out_what_it_may_not_show_before_its_limit(shown, first
         exports.export_knowledge(ORG, "user_id", "u1", limit=1, shown=shown, ch=_Local())
     )
     assert [r["namespace"] for r in got] == [first]
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize(
+    ("include_tombstoned", "expected"),
+    [(True, ["m-saved", "m-turn", "m-gone"]), (False, ["m-saved", "m-turn"])],
+)
+def test_a_user_export_reads_their_turns_and_saved_messages(include_tombstoned, expected) -> None:
+    """Run on clickhouse-local: the user's transcript turns and saved messages, in thread
+    order, without another user's rows or a collection the caller may not read."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    class _Local:
+        async def query_all(self, sql, params=None, **_k):
+            insert = (
+                "INSERT INTO loom.conversations (org, namespace, agent, thread_id, msg_id,"
+                " role, content, user_id, ts, is_saved, saved_at, tombstoned_at) VALUES"
+                f" ('{ORG}', '{STD}', 'bot', 't1', 'm-saved', 'user', 'a', 'u1',"
+                " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL),"
+                f" ('{ORG}', '{STD}', 'bot', 't1', 'm-turn', 'assistant', 'b', 'u1',"
+                " '2026-01-01 00:00:02', false, NULL, NULL),"
+                f" ('{ORG}', '{STD}', 'bot', 't1', 'm-gone', 'user', 'c', 'u1',"
+                " '2026-01-01 00:00:03', false, NULL, '2026-01-03 00:00:00'),"
+                f" ('{ORG}', '{STD}', 'bot', 't2', 'm-other', 'user', 'd', 'u2',"
+                " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL),"
+                f" ('{ORG}', 'col-hidden', 'bot', 't3', 'm-col', 'user', 'e', 'u1',"
+                " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL)"
+            )
+            return run([ddl("conversations"), insert], sql, params)
+
+    got = asyncio.run(
+        exports.export_conversations(
+            ORG,
+            "user_id",
+            "u1",
+            include_tombstoned=include_tombstoned,
+            limit=10,
+            shown=Shown(collections=()),
+            ch=_Local(),
+        )
+    )
+    assert [r["msg_id"] for r in got] == expected
+    assert got[0]["is_saved"] is True and got[0]["saved_at"] is not None
+    assert {r["user_id"] for r in got} == {"u1"}
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_user_export_reads_the_latest_version_of_their_threads() -> None:
+    """Run on clickhouse-local: one row per thread the user owns, its latest title."""
+    import asyncio
+
+    from server.erasure.store import exports
+
+    class _Local:
+        async def query_all(self, sql, params=None, **_k):
+            insert = (
+                "INSERT INTO loom.conversation_threads (org, namespace, agent, thread_id,"
+                " title, user_id, created_at, updated_at) VALUES"
+                f" ('{ORG}', '{STD}', 'bot', 't1', 'old', 'u1', '2026-01-01', '2026-01-01'),"
+                f" ('{ORG}', '{STD}', 'bot', 't1', 'Renewal', 'u1', '2026-01-01', '2026-01-02'),"
+                f" ('{ORG}', '{STD}', 'bot', 't2', 'theirs', 'u2', '2026-01-01', '2026-01-01')"
+            )
+            return run([ddl("conversation_threads"), insert], sql, params)
+
+    got = asyncio.run(
+        exports.export_conversation_threads(
+            ORG, "user_id", "u1", include_tombstoned=True, limit=10, ch=_Local()
+        )
+    )
+    assert [(r["thread_id"], r["title"]) for r in got] == [("t1", "Renewal")]

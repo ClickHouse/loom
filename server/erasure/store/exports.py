@@ -10,6 +10,8 @@ from server.erasure.store.rows import (
     AgentEventExportRow,
     AuditExportRow,
     ChunkExportRow,
+    ConversationExportRow,
+    ConversationThreadExportRow,
     MemoryExportRow,
 )
 
@@ -106,6 +108,66 @@ async def export_knowledge(
         params={"org": org, "scope": scope_value, "lim": int(limit), **shown_params},
     )
     return cast("list[ChunkExportRow]", rows)
+
+
+async def export_conversations(
+    org: str,
+    scope_type: str,
+    scope_value: str,
+    *,
+    include_tombstoned: bool,
+    limit: int,
+    shown: Shown = _EVERY,
+    ch: _CHClient | None = None,
+) -> list[ConversationExportRow]:
+    """Read loom.conversations rows (transcript turns and saved messages) in one
+    namespace, or the ones one user owns, oldest first per thread."""
+    ch = ch or _default_client()
+    shown_sql, shown_params = shown.clause()
+    column = "user_id" if scope_type == "user_id" else "namespace"
+    tomb_clause = "" if include_tombstoned else " AND tombstoned_at IS NULL"
+    rows = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, thread_id, msg_id, role, content,
+               reasoning, metadata, tokens, run_id, ts, is_saved, saved_at, tombstoned_at
+        FROM loom.conversations
+        WHERE org = {{org:String}} AND {column} = {{scope:String}}{tomb_clause}{shown_sql}
+        ORDER BY namespace, thread_id, ts, msg_id
+        LIMIT {{lim:UInt64}}
+        """,
+        params={"org": org, "scope": scope_value, "lim": int(limit), **shown_params},
+    )
+    return cast("list[ConversationExportRow]", rows)
+
+
+async def export_conversation_threads(
+    org: str,
+    scope_type: str,
+    scope_value: str,
+    *,
+    include_tombstoned: bool,
+    limit: int,
+    shown: Shown = _EVERY,
+    ch: _CHClient | None = None,
+) -> list[ConversationThreadExportRow]:
+    """Read loom.conversation_threads rows (titles and metadata) in one
+    namespace, or the ones one user owns."""
+    ch = ch or _default_client()
+    shown_sql, shown_params = shown.clause()
+    column = "user_id" if scope_type == "user_id" else "namespace"
+    tomb_clause = "" if include_tombstoned else " AND tombstoned_at IS NULL"
+    rows = await ch.query_all(
+        f"""
+        SELECT org, namespace, agent, user_id, thread_id, title, metadata, run_id,
+               created_at, updated_at, tombstoned_at
+        FROM loom.conversation_threads FINAL
+        WHERE org = {{org:String}} AND {column} = {{scope:String}}{tomb_clause}{shown_sql}
+        ORDER BY namespace, thread_id
+        LIMIT {{lim:UInt64}}
+        """,
+        params={"org": org, "scope": scope_value, "lim": int(limit), **shown_params},
+    )
+    return cast("list[ConversationThreadExportRow]", rows)
 
 
 async def export_agent_events(

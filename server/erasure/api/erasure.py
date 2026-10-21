@@ -206,8 +206,8 @@ class ErasureExportInput(BaseModel):
     requester: str = Field(..., description="email or service account requesting the export")
     include_tombstoned: bool = Field(
         default=True,
-        description="Include tombstoned memory rows. Default True: subject has the "
-        "right to know what was held about them, even if pending deletion.",
+        description="Include tombstoned memory and conversation rows. Default True: subject "
+        "has the right to know what was held about them, even if pending deletion.",
     )
     # Per-section caps. If a section exceeds, `truncated[section]=True` is set.
     # 10k rows is enough for an internal admin tool; ops can re-query CH for the rest.
@@ -235,12 +235,19 @@ class ErasureExportOutput(BaseModel):
     scope_value: str
     # Echo of who asked for the export.
     requester: str
-    # Rows per section (`memory`, `knowledge`, `agent_events`, `audit_log`) before truncation.
+    # Rows per section (`memory`, `knowledge`, `conversations`, `conversation_threads`,
+    # `agent_events`, `audit_log`) before truncation.
     counts: dict[str, int]
     # `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`.
     memory: ErasureExportSection
     # Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope.
     knowledge: ErasureExportSection
+    # `loom.conversations` rows in scope: transcript turns and saved messages
+    # (`is_saved`), tombstoned ones too when `include_tombstoned`. `sensitivity` is
+    # 'high' on a row whose text reads as a credential.
+    conversations: ErasureExportSection
+    # `loom.conversation_threads` rows in scope: each thread's title and metadata.
+    conversation_threads: ErasureExportSection
     # Per-request ledger rows in scope, newest first.
     agent_events: ErasureExportSection
     # Audit rows in scope; for `user_id`, rows whose subject mentions the user id.

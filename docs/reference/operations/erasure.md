@@ -20,7 +20,7 @@ GDPR Article 20 portability.
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | required | `user_id` exports one user's rows across the org (org admin only); `namespace` exports one namespace (admin on it). |
 | `scope_value` | `str` | required | The user id or namespace to export. |
 | `requester` | `str` | required | email or service account requesting the export |
-| `include_tombstoned` | `bool` | `True` | Include tombstoned memory rows. |
+| `include_tombstoned` | `bool` | `True` | Include tombstoned memory and conversation rows. |
 | `section_limit` | `int` | `10000` | Per-section caps. |
 
 | Output field | Type | Meaning |
@@ -30,9 +30,11 @@ GDPR Article 20 portability.
 | `scope_type` | `Literal['user_id', 'namespace', 'namespace_list']` | Echo of the requested scope kind. |
 | `scope_value` | `str` | Echo of the requested user id or namespace. |
 | `requester` | `str` | Echo of who asked for the export. |
-| `counts` | `dict[str, int]` | Rows per section (`memory`, `knowledge`, `agent_events`, `audit_log`) before truncation. |
+| `counts` | `dict[str, int]` | Rows per section (`memory`, `knowledge`, `conversations`, `conversation_threads`, `agent_events`, `audit_log`) before truncation. |
 | `memory` | `ErasureExportSection` | `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`. |
 | `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope. |
+| `conversations` | `ErasureExportSection` | `loom.conversations` rows in scope: transcript turns and saved messages (`is_saved`), tombstoned ones too when `include_tombstoned`. |
+| `conversation_threads` | `ErasureExportSection` | `loom.conversation_threads` rows in scope: each thread's title and metadata. |
 | `agent_events` | `ErasureExportSection` | Per-request ledger rows in scope, newest first. |
 | `audit_log` | `ErasureExportSection` | Audit rows in scope; for `user_id`, rows whose subject mentions the user id. |
 

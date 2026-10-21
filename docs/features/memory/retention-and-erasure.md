@@ -176,12 +176,12 @@ external step keeps failing). See [troubleshooting](../../operations/troubleshoo
 
 ### Operations
 
-| Op                | Role                         | Does                                                                                                                                                                                       |
-| ----------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `erasure.request` | writer (admin on the target) | Run the saga for one scope. `urgency` `normal` or `urgent`; `purge`; `external`.                                                                                                           |
-| `erasure.status`  | viewer                       | One request's state, current step, failure reason and census. A user's erasure answers only an org admin or platform admin of its org. Not listed in the MCP toolsets.                     |
-| `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                    |
-| `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over). Includes tombstoned rows by default. |
+| Op                | Role                         | Does                                                                                                                                                                                                                                                                      |
+| ----------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `erasure.request` | writer (admin on the target) | Run the saga for one scope. `urgency` `normal` or `urgent`; `purge`; `external`.                                                                                                                                                                                          |
+| `erasure.status`  | viewer                       | One request's state, current step, failure reason and census. A user's erasure answers only an org admin or platform admin of its org. Not listed in the MCP toolsets.                                                                                                    |
+| `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                                                                                                   |
+| `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `conversations` (transcript turns and saved messages), `conversation_threads`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over). Includes tombstoned rows by default. |
 
 Ledger rows are kept 90 days. Field lists:
 [operations reference](../../reference/operations.md#erasure).

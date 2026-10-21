@@ -1,11 +1,11 @@
 """erasure.export — GDPR Article 20 right-to-portability.
 
 Verifies:
-  - user_id scope returns the user's memory + agent_events + audit_log;
-    other users excluded.
+  - user_id scope returns the user's memory + conversation turns and saved
+    messages + agent_events + audit_log; other users excluded.
   - namespace scope returns the namespace's memory + knowledge chunks +
     agent_events + audit_log; other namespaces excluded.
-  - empty subject → empty sections, counts={0,0,0,0}.
+  - empty subject → empty sections, every count 0.
   - tombstoned rows included by default; excluded when include_tombstoned=False.
   - The export itself emits an erasure.exported audit row.
   - section_limit truncation flag.
@@ -93,13 +93,16 @@ async def test_export_user_id_empty_subject_returns_empty_sections(admin_agent) 
     nobody = f"ghost-{uuid.uuid4().hex[:8]}"
     archive = await admin_agent.erasure.export_user_id(nobody, requester="ops@x.com")
 
-    assert archive["counts"] == {
-        "memory": 0,
-        "knowledge": 0,
-        "agent_events": 0,
-        "audit_log": 0,
-    }
-    for section in ("memory", "knowledge", "agent_events", "audit_log"):
+    sections = (
+        "memory",
+        "knowledge",
+        "conversations",
+        "conversation_threads",
+        "agent_events",
+        "audit_log",
+    )
+    assert archive["counts"] == dict.fromkeys(sections, 0)
+    for section in sections:
         assert archive[section]["rows"] == []
         assert archive[section]["truncated"] is False
 
@@ -164,6 +167,104 @@ async def test_export_user_id_includes_agent_events(admin_agent, ch_client) -> N
     archive = await admin_agent.erasure.export_user_id(user, requester="ops@x.com")
     assert archive["counts"]["agent_events"] >= 1
     assert all(r["user_id"] == user for r in archive["agent_events"]["rows"])
+
+
+def _post(base: str, token: str, op: str, body: dict) -> dict:
+    import httpx
+
+    r = httpx.post(
+        f"{base}/v1/{op}", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=30
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+@pytest.mark.asyncio
+async def test_export_user_id_includes_their_saved_messages_and_turns(
+    admin_agent, control_plane_url: str, mint_test_token
+) -> None:
+    """A user's saved message, their transcript turns and their thread export with the
+    columns stored; another user's do not, and a turn holding a key is labelled high."""
+    ns = admin_agent.namespace
+    org = "export-test-org"
+    tok = mint_test_token(org=org, namespaces=[ns], roles=["admin", "writer"])
+    grace = f"grace-{uuid.uuid4().hex[:6]}"
+    heidi = f"heidi-{uuid.uuid4().hex[:6]}"
+    thread = f"t-{uuid.uuid4().hex[:6]}"
+    base = {"org": org, "namespace": ns, "agent": "chat"}
+    key = "AKIA" + "ABCDEFGHIJKLMNOP"
+
+    _post(control_plane_url, tok, "conversation.set_logging", {**base, "enabled": True})
+    _post(
+        control_plane_url,
+        tok,
+        "conversation.create",
+        {**base, "thread_id": thread, "title": "Renewal terms", "user_id": grace},
+    )
+    _post(
+        control_plane_url,
+        tok,
+        "conversation.append",
+        {
+            **base,
+            "thread_id": thread,
+            "msg_id": "m-turn",
+            "role": "user",
+            "content": f"my key is {key}",
+            "user_id": grace,
+        },
+    )
+    saved = _post(
+        control_plane_url,
+        tok,
+        "conversation.save_message",
+        {
+            **base,
+            "conversation_id": thread,
+            "message_id": "m-saved",
+            "role": "assistant",
+            "content": "the renewal clause caps the increase at four percent",
+            "user_id": grace,
+        },
+    )
+    assert saved["indexed"] is True
+    _post(
+        control_plane_url,
+        tok,
+        "conversation.save_message",
+        {
+            **base,
+            "conversation_id": f"t-{heidi}",
+            "message_id": "m-heidi",
+            "role": "user",
+            "content": "heidi's own saved message",
+            "user_id": heidi,
+        },
+    )
+
+    archive = await admin_agent.erasure.export_user_id(grace, requester="ops@x.com")
+
+    rows = {r["msg_id"]: r for r in archive["conversations"]["rows"]}
+    assert set(rows) == {"m-turn", "m-saved"}
+    assert archive["counts"]["conversations"] == 2
+    msg = rows["m-saved"]
+    assert (msg["namespace"], msg["agent"], msg["thread_id"], msg["role"]) == (
+        ns,
+        "chat",
+        thread,
+        "assistant",
+    )
+    assert msg["content"] == "the renewal clause caps the increase at four percent"
+    assert msg["user_id"] == grace and msg["is_saved"] is True
+    assert msg["saved_at"] is not None and msg["tombstoned_at"] is None
+    assert msg["sensitivity"] == ""
+    turn = rows["m-turn"]
+    assert turn["is_saved"] is False and turn["content"] == f"my key is {key}"
+    assert turn["sensitivity"] == "high"
+    threads = archive["conversation_threads"]["rows"]
+    assert [(t["thread_id"], t["title"], t["user_id"]) for t in threads] == [
+        (thread, "Renewal terms", grace)
+    ]
 
 
 # ============================================================
