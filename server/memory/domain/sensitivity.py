@@ -523,7 +523,7 @@ def reads_high(text: str) -> bool:
     )
 
 
-def _spans_as_written(text: str) -> list[tuple[int, int]]:
+def _high_text_spans(text: str) -> list[tuple[int, int]]:
     """The [start, end) ranges of `text` that `_reads_high_text` reads as high, with each
     `"key": value` pair that states a secret (`{"badge_pin": "4471"}`)."""
     spans = [m.span() for pat in _HIGH_SHAPES for m in pat.finditer(text)]
@@ -539,7 +539,7 @@ def _spans_as_written(text: str) -> list[tuple[int, int]]:
 def high_spans(text: str) -> list[tuple[int, int]]:
     """The [start, end) character ranges of `text` that read as high, by the rule
     `reads_high` applies: as written, and with JSON string escapes undone."""
-    spans = _spans_as_written(text)
+    spans = _high_text_spans(text)
     escapes = list(_JSON_ESCAPE.finditer(text))
     if not escapes:
         return spans
@@ -558,7 +558,7 @@ def high_spans(text: str) -> list[tuple[int, int]]:
         before = bisect.bisect_left(decoded_at, pos)
         return pos + (shortened[before - 1] if before else 0)
 
-    spans += [(in_text(start), in_text(end)) for start, end in _spans_as_written(unescaped)]
+    spans += [(in_text(start), in_text(end)) for start, end in _high_text_spans(unescaped)]
     return spans
 
 
