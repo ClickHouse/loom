@@ -256,8 +256,8 @@ never takes a visible row's place on the page.
 - **A personal-documents table with `user_id` in the sort key.** It fixes the cost of
   one feature by building a second document store: chunking, lexical statistics,
   embedding retries and erasure twice, and documents that can never join a collection.
-- **Saved messages as documents in the personal collection** (`chat/<conversation>/<message>`
-  through `knowledge.upsert`). It needs no op of its own, but it serves only a chat that
+- **Saved messages as documents in the personal collection**
+  (`chat/<conversation>/<message>` through `knowledge.upsert`). It needs no op of its own, but it serves only a chat that
   signs end-user tokens, so a chat that records its conversations would need the
   conversation ops anyway: two ways to save one message. A document gets no role or
   credential check, and a client finds a conversation's saved state by listing a URI
