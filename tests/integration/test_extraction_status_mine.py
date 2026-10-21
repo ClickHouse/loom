@@ -6,7 +6,8 @@ principal that queued it, in the namespace it was queued in, over MCP through `l
 namespace, a token for another namespace, the queuing principal asking in another
 namespace, and a token of another org get the id back in `unknown` or the namespace
 gate's refusal, never the batch. The namespace-wide memory.extraction_status stays hidden
-from MCP and its refusal names this op.
+from MCP and its refusal names this op. memory.extraction_retry_mine puts the queuing
+principal's failed batch back to `pending` once, under the same bounds.
 
 Each test registers its own namespaces. The CI servers run with
 LOOM_BACKGROUND_WORKERS=off, so a queued batch stays `pending`; no assertion depends on
@@ -167,3 +168,48 @@ def test_the_namespace_wide_op_stays_hidden_and_names_the_bounded_one(
     sc = res["structuredContent"]
     assert res["isError"] and sc["code"] == "OP_NOT_ON_MCP", res
     assert OP in sc["instead"], sc
+
+
+def _mark_failed(ch: Any, org: str, ns: str, queue_id: str) -> None:
+    """A newer version of the batch, `failed` with its attempts spent, as the worker
+    leaves one whose replays all failed."""
+    ch.command(
+        """
+        INSERT INTO loom.memory_extraction_queue
+        SELECT * REPLACE ('failed' AS status, 3 AS attempts,
+                          'ExtractionError: the model answered nothing' AS last_error,
+                          version + 1 AS version)
+        FROM loom.memory_extraction_queue FINAL
+        WHERE org = {org:String} AND namespace = {ns:String} AND queue_id = {qid:String}
+        """,
+        parameters={"org": org, "ns": ns, "qid": queue_id},
+    )
+
+
+def test_only_the_queuing_principal_requeues_its_failed_batch(
+    control_plane_url: str, queued: dict[str, str], ch_client: Any
+) -> None:
+    org, ns, qid = queued["org"], queued["ns_a"], queued["queue_id"]
+    _mark_failed(ch_client, org, ns, qid)
+    body = {"org": org, "namespace": ns, "queue_ids": [qid]}
+    owner = _mint(org, [ns], queued["s1"])
+    out = _ok(control_plane_url, owner, OP, body)
+    assert out["failed"] == 1 and out["batches"][0]["status"] == "failed", out
+
+    other = _mint(org, [ns], f"sa:ext-other-{uuid.uuid4().hex[:6]}")
+    out = _ok(control_plane_url, other, "memory.extraction_retry_mine", body)
+    assert (out["requeued"], out["not_failed"], out["unknown"]) == ([], [], [qid]), out
+    assert _ok(control_plane_url, owner, OP, body)["batches"][0]["status"] == "failed"
+
+    res = _loom_op(
+        control_plane_url,
+        owner,
+        "memory.extraction_retry_mine",
+        {"namespace": ns, "queue_ids": [qid]},
+    )
+    assert not res.get("isError") and res["structuredContent"]["requeued"] == [qid], res
+    batch = _ok(control_plane_url, owner, OP, body)["batches"][0]
+    assert batch["status"] == "pending", batch
+    # A second call finds it waiting and leaves it.
+    out = _ok(control_plane_url, owner, "memory.extraction_retry_mine", body)
+    assert (out["requeued"], out["not_failed"], out["unknown"]) == ([], [qid], []), out
