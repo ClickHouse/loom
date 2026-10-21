@@ -388,14 +388,29 @@ describe("a link's namespace", () => {
     expect(address()).toBe(`/memories?namespace=${NS}`);
   });
 
-  it("opens no namespace the claims lack when the membership read fails: the page says it has no access", async () => {
+  it("when the membership read fails, a link opens no namespace the claims lack: its access could not be checked", async () => {
     window.history.replaceState(null, "", "/memories?namespace=joined&memory=k");
     serve("failing");
     render(<App />);
-    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to joined" }) !== null);
+    await until(
+      () => screen.queryByRole("heading", { level: 1, name: "Couldn't check your access to joined" }) !== null,
+    );
     expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: "joined" });
+    expect(screen.queryByText(/cannot read/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     expect(calls.some((c) => c.body?.namespace === "joined")).toBe(false);
     expect(calls.some((c) => c.path.startsWith("memory."))).toBe(false);
+  });
+
+  it("when the membership read fails, a reload still opens the saved pick: the server answers its reads", async () => {
+    // Every address names its namespace, so a reload of the saved pick is a link to it.
+    localStorage.setItem("loom_namespace_v1", "joined");
+    window.history.replaceState(null, "", "/memories?namespace=joined");
+    serve("failing");
+    render(<App />);
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: "joined" }, deniedNamespace: null });
+    expect(calls.filter((c) => c.path === "memory.list").every((c) => c.body?.namespace === "joined")).toBe(true);
   });
 
   it("takes and scrubs a link's token even when the return's code fails to load, and boots on", async () => {

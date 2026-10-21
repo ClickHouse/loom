@@ -57,6 +57,18 @@ describe("NamespaceNoAccess", () => {
     expect(history.length).toBe(before);
   });
 
+  it("when the membership read failed, says the access could not be checked, never that it is refused", async () => {
+    useStore.setState({ myNamespaces: null });
+    const { container } = render(<NamespaceNoAccess namespace="group-b-shared" />);
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Couldn't check your access to group-b-shared" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/cannot read|No access/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue in team" })).toBeInTheDocument();
+    expect(await axeViolations(container)).toEqual([]);
+  });
+
   it("opens the namespace picker from its link", async () => {
     render(<NamespaceNoAccess namespace="group-b-shared" />);
     await userEvent.click(screen.getByRole("button", { name: "namespace menu" }));

@@ -149,6 +149,60 @@ describe("writing the address", () => {
   });
 });
 
+describe("an entry Back reaches from another namespace", () => {
+  const joined = { ...team, namespace: "joined" };
+  beforeEach(() => {
+    authOff.value = false;
+    useStore.setState({ identity: joined, deniedNamespace: null, view: "memories", inspectedMemoryKey: null });
+    at("/memories?namespace=joined", { loomNamespace: "joined" });
+  });
+
+  it("becomes this namespace's: a memory opened on it reopens after a reload", async () => {
+    useStore.getState().navigate("recall");
+    useStore.getState().setIdentity(team);
+    await back("memories");
+    expect(history.state).toMatchObject({ loomNamespace: "team", loomInspect: null });
+    useStore.getState().inspect("team-key", { agent: "bot" });
+    expect(address()).toBe("/memories?namespace=team&memory=team-key");
+    // A reload: boot reads the address and settles on `team`.
+    useStore.setState({ identity: null, inspectedMemoryKey: null, inspectedAgent: "" });
+    useStore.getState().bootIdentity(team);
+    useStore.getState().bootView("memories");
+    expect(useStore.getState()).toMatchObject({ inspectedMemoryKey: "team-key", inspectedAgent: "bot" });
+  });
+
+  it("after the account loses that namespace, a reload opens nothing under the no-access page", async () => {
+    useStore.getState().navigate("recall");
+    useStore.getState().setIdentity(team);
+    await back("memories");
+    useStore.getState().inspect("team-key", { agent: "bot" });
+    // A reload once `team` is unreadable: the page on `joined`, the address still on `team`.
+    useStore.setState({ identity: null, inspectedMemoryKey: null, inspectedAgent: "" });
+    useStore.getState().bootIdentity(joined, "team");
+    useStore.getState().bootView("memories");
+    expect(useStore.getState()).toMatchObject({ deniedNamespace: "team", inspectedMemoryKey: null });
+  });
+});
+
+describe("what boot records of a link", () => {
+  beforeEach(() => useStore.setState({ identity: null, deniedNamespace: null, linkOpened: null }));
+
+  it("keeps an equal identity's object, so views do not read again", () => {
+    useStore.getState().bootIdentity(team);
+    const first = useStore.getState().identity;
+    useStore.getState().bootIdentity({ ...team });
+    expect(useStore.getState().identity).toBe(first);
+  });
+
+  it("names the namespace a link opened until a switch", () => {
+    useStore.getState().bootIdentity({ ...team, namespace: "group-a-shared" }, null, "group-a-shared");
+    expect(useStore.getState().linkOpened).toBe("group-a-shared");
+    at("/memories?namespace=group-a-shared");
+    useStore.getState().setIdentity(team);
+    expect(useStore.getState().linkOpened).toBeNull();
+  });
+});
+
 describe("a link to a namespace the account cannot read", () => {
   beforeEach(() => {
     authOff.value = false;

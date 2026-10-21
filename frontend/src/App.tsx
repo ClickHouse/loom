@@ -24,7 +24,7 @@ import {
   landingTarget,
   needsMemoryNamespace,
 } from "./lib/namespace";
-import { claimsFromToken, provisionalNamespace, rememberKinds, sameIdentity, takeLinkToken } from "./lib/boot";
+import { claimsFromToken, provisionalNamespace, rememberKinds, takeLinkToken } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
 import { MemoryScopeMissing } from "./components/MemoryScopeMissing";
@@ -353,8 +353,12 @@ export default function App() {
         }
         // A link's namespace opens when the account can read it, and is never saved as the
         // pick. One it cannot read leaves the page on the namespace a visit without the
-        // link opens, behind a page that says so (`ViewSwitch`).
-        const readable = linked !== null && canReadNamespace(linked, claims, useStore.getState().myNamespaces);
+        // link opens, behind a page that says so (`ViewSwitch`). Every address the app writes
+        // names its namespace, so a reload is a link too: when the membership read failed, the
+        // saved pick still opens (the server answers every read), and any other link's page
+        // says its access could not be checked.
+        const known = useStore.getState().myNamespaces;
+        const readable = linked !== null && (canReadNamespace(linked, claims, known) || (!known && linked === saved));
         const denied = linked !== null && !readable ? linked : null;
         const pick = readable ? linked : saved;
         const reach = readable ? [linked] : claims;
@@ -367,11 +371,9 @@ export default function App() {
         if (initial) {
           const ns = deepLinkNamespace(initial, pick, reach, mine);
           // An empty namespace is the honest "nothing selected" state; every
-          // view's ScopeBadge names it. The identity object is replaced only
-          // when it changed: views key their reads on it, and the
-          // provisional paint above usually already holds this answer.
-          const next = { org: effectiveOrg, namespace: ns ?? "", agent: "loom-ui" };
-          if (denied || !sameIdentity(useStore.getState().identity, next)) bootIdentity(next, denied);
+          // view's ScopeBadge names it. The provisional paint above usually already
+          // holds this answer, and an equal identity keeps its object.
+          bootIdentity({ org: effectiveOrg, namespace: ns ?? "", agent: "loom-ui" }, denied, readable ? linked : null);
           bootView(initial);
         } else {
           // The bare root: the default-namespace chain (saved pick → own memory namespace →
@@ -381,7 +383,11 @@ export default function App() {
           // with the picker on that namespace; only a token that reaches nothing lands on
           // Setup, whose notice says how to get in.
           const target = landingTarget(pick, reach, mine);
-          bootIdentity({ org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" }, denied);
+          bootIdentity(
+            { org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" },
+            denied,
+            readable ? linked : null,
+          );
           if (target.namespace === null) {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
@@ -508,7 +514,7 @@ export default function App() {
       {/* Where a navigation went, said once (lib/place.ts `announce`). */}
       <p id="loom-nav-status" role="status" className="sr-only" />
 
-      {inspectedKey && inspectorIdentity && (
+      {inspectedKey && inspectorIdentity && !denied && (
         <Suspense fallback={null}>
           <MemoryInspector
             identity={inspectorIdentity}

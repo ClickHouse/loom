@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Identity, MyNamespaceEntry, WhoAmI } from "../api";
 import { hasToken, isAuthDisabled, isProxyMode } from "../api";
+import { sameIdentity } from "./boot";
 import { NAMESPACE_NAME } from "./namespace";
 import { patchEntry, readPlace, rememberPlace, type Place } from "./place";
 
@@ -235,11 +236,24 @@ function entryHere(namespace: string | null): boolean {
 /** Back and Forward never switch namespace: the address names the page's, and nothing an
  *  entry made in another names. A move inside one view (the Graph's walks) calls it too. */
 export function addressPageNamespace(): void {
-  const want = addressFor(
-    pageNamespace(),
-    entryHere(useStore.getState().identity?.namespace ?? null) ? [] : SWITCH_CLEARS,
-  );
-  if (want !== window.location.pathname + window.location.search + window.location.hash) patchEntry({}, want);
+  const namespace = useStore.getState().identity?.namespace ?? null;
+  const here = entryHere(namespace);
+  const want = addressFor(pageNamespace(), here ? [] : SWITCH_CLEARS);
+  // An entry made in another namespace becomes this one's, so what is opened on it next
+  // reopens after a reload, and what it remembered of the other never does.
+  if (!here || want !== window.location.pathname + window.location.search + window.location.hash)
+    patchEntry(here ? {} : stampFor(namespace), want);
+}
+
+/** The entry state that makes the current entry `namespace`'s: stamped with it, and
+ *  remembering no memory of the namespace it was made in. */
+function stampFor(namespace: string | null): Record<string, unknown> {
+  const place = readPlace(typeof history === "undefined" ? null : history.state);
+  return {
+    loomNamespace: namespace,
+    loomInspect: null,
+    ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "" } } : {}),
+  };
 }
 
 /** What the URL opens on view `v`: the memory, document or thread its query names. */
@@ -284,6 +298,10 @@ interface AppState {
   /** The namespace a link named that the account cannot read. The page says so, over the
    *  namespace a visit without the link opens, until a navigation or a pick leaves it. */
   deniedNamespace: string | null;
+  /** The namespace a link opened for this tab: never saved as the pick, so what saves a
+   *  namespace on the way back from elsewhere (a tracker's Patterns board) skips it. A
+   *  switch ends it. */
+  linkOpened: string | null;
   view: View;
   /** Counts user navigations (setView and the open-X helpers), never the boot's
    *  application of the URL's view nor Back/Forward; the shell's scroll reset and its
@@ -316,9 +334,11 @@ interface AppState {
   setMyNamespaces: (rows: MyNamespaceEntry[] | null) => void;
   setWhoami: (w: WhoAmI | null) => void;
   setIdentity: (i: Identity | null) => void;
-  /** Boot's identity, provisional or settled: not a switch, so the URL's object stays.
-   *  `denied`: the namespace the link named, when the account cannot read it. */
-  bootIdentity: (i: Identity | null, denied?: string | null) => void;
+  /** Boot's identity, provisional or settled: not a switch, so the URL's object stays, and
+   *  an equal identity keeps its object (views key their reads on it). `denied`: the
+   *  namespace the link named, when the account cannot read it; `linkOpened`: the one it
+   *  opened. */
+  bootIdentity: (i: Identity | null, denied?: string | null, linkOpened?: string | null) => void;
   setView: (v: View) => void;
   /** A navigation to `v` with a query, a way back or an arrival note (see NavOptions). */
   navigate: (v: View, opts?: NavOptions) => void;
@@ -377,6 +397,7 @@ export const useStore = create<AppState>((set, get) => ({
   gateReason: null,
   myNamespaces: null,
   deniedNamespace: null,
+  linkOpened: null,
   view: "memories",
   navSeq: 0,
   navNote: null,
@@ -402,19 +423,12 @@ export const useStore = create<AppState>((set, get) => ({
   setIdentity: (identity) => {
     const s = get();
     if (s.identity && identity && (s.identity.namespace !== identity.namespace || s.deniedNamespace)) {
-      const place = readPlace(typeof history === "undefined" ? null : history.state);
-      patchEntry(
-        {
-          loomNamespace: identity.namespace,
-          loomInspect: null,
-          ...(place ? { loomPlace: { ...place, inspected: null, inspectedAgent: "" } } : {}),
-        },
-        addressFor(identity.namespace, SWITCH_CLEARS),
-      );
+      patchEntry(stampFor(identity.namespace), addressFor(identity.namespace, SWITCH_CLEARS));
       // The Recall Lab's run filter names a run of the namespace left.
       set({
         identity,
         deniedNamespace: null,
+        linkOpened: null,
         inspectedMemoryKey: null,
         pendingConversationThread: null,
         pendingDocSourceUri: null,
@@ -422,7 +436,12 @@ export const useStore = create<AppState>((set, get) => ({
       });
     } else set({ identity });
   },
-  bootIdentity: (identity, denied = null) => set({ identity, deniedNamespace: denied }),
+  bootIdentity: (identity, denied = null, linkOpened = null) =>
+    set((s) => ({
+      identity: identity && sameIdentity(s.identity, identity) ? s.identity : identity,
+      deniedNamespace: denied,
+      linkOpened,
+    })),
   setView: (view) => get().navigate(view),
   navigate: (view, opts = {}) => {
     // A navigation leaves a link's unreadable namespace for the one the picker shows.
@@ -439,9 +458,9 @@ export const useStore = create<AppState>((set, get) => ({
   },
   bootView: (view) => {
     pushView(view, {}, false);
-    // What a link names belongs to its namespace: none of it opens on another, so nothing
-    // opens under a link's unreadable namespace (the address still names that one).
-    const here = entryHere(get().identity?.namespace ?? null);
+    // What a link names belongs to its namespace: none of it opens on another, and nothing
+    // opens under the page that says the account cannot read the link's namespace.
+    const here = !get().deniedNamespace && entryHere(get().identity?.namespace ?? null);
     set({ view, ...(here ? openedByUrl(view) : { inspectedMemoryKey: null, inspectedAgent: "" }) });
   },
   arriveFromHistory: (view, place) => {

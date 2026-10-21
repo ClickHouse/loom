@@ -23,7 +23,7 @@ import { useStore } from "../lib/state";
 import { patchEntry } from "../lib/place";
 import { useAbortableEffect } from "../lib/hooks";
 import { humanizeError } from "../lib/format";
-import { getSavedNamespace, listTrackerSources, listMine, setSavedNamespace } from "../api";
+import { forgetSavedNamespace, getSavedNamespace, listTrackerSources, listMine, setSavedNamespace } from "../api";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
 import {
@@ -139,8 +139,8 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
   const navigate = useStore((s) => s.navigate);
   const [busy, setBusy] = useState<string | null>(null);
   // Back from a tracker's Patterns board: the entry Open left names the namespace it was
-  // in (the switch made on it rewrote its address), and arriving on it switches back, once.
-  // The pick Open replaced is saved again, so a namespace a link opened for the tab never is.
+  // in (the switch made on it rewrote its address), and arriving on it switches back, once,
+  // saving what Open decided (`open`); with nothing to save it forgets the pick Open made.
   useEffect(() => {
     const state = history.state as Record<string, unknown> | null;
     const left = state?.loomNamespaceLeft;
@@ -150,6 +150,7 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
     if (!now || now.namespace === left) return;
     setIdentity({ ...now, namespace: left });
     if (typeof state?.loomSavedLeft === "string") setSavedNamespace(state.loomSavedLeft);
+    else forgetSavedNamespace();
     toast(`Switched back to ${left}`, "info");
   }, []);
   const target = (ns: TrackerSourceNamespace): JoinTarget => ({
@@ -213,7 +214,11 @@ export function useRecordActions(org: string, refresh: () => Promise<void>): Rec
    *  namespace switch is said in a toast, so the side effect of the jump is never silent. */
   const open = (ns: TrackerSourceNamespace) => {
     if (!identity) return;
-    patchEntry({ loomNamespaceLeft: identity.namespace, loomSavedLeft: getSavedNamespace() });
+    // What Back saves: the pick Open replaces, else the namespace Open leaves, unless a link
+    // opened that one for the tab (a link's namespace is never saved).
+    const left = identity.namespace;
+    const keep = getSavedNamespace() ?? (useStore.getState().linkOpened === left ? null : left);
+    patchEntry({ loomNamespaceLeft: left, loomSavedLeft: keep });
     setIdentity({ ...identity, namespace: ns.namespace });
     setSavedNamespace(ns.namespace);
     navigate("graph", { query: { mode: "patterns" }, back: "Repositories" });
