@@ -117,24 +117,23 @@ async def handle_namespace_guide_history(
 
 
 async def current_guide(org: str, namespace: str) -> NamespaceGuideGetOutput:
-    """The current guide as other reads show it (`namespace.get`, the session-start
-    pack): from any replica, without the sequentially consistent read a get makes."""
+    """The current guide as the session-start pack shows it: from any replica,
+    without the sequentially consistent read a get makes."""
     return _output(await repo.latest(org, namespace))
 
 
-def guide_audit_subject(input: NamespaceGuideSetInput, response: Any) -> dict[str, Any]:
+def guide_audit_subject(input: NamespaceGuideSetInput, response: dict[str, Any]) -> dict[str, Any]:
     """What a save's audit row records, never the text, summary or note: what it
     was made from, the text's length and hash, and whether it wrote a revision."""
-    out = response if isinstance(response, dict) else {}
     return {
         "org": input.org,
         "namespace": input.namespace,
         "expected_revision": input.expected_revision,
         "chars": len(input.content),
         "content_sha256": hashlib.sha256(input.content.encode()).hexdigest(),
-        "written": bool(out.get("written")),
-        "conflict": bool(out.get("conflict")),
-        "revision": int(out.get("revision") or 0),
+        "written": bool(response["written"]),
+        "conflict": bool(response["conflict"]),
+        "revision": int(response["revision"]),
     }
 
 
@@ -158,8 +157,8 @@ def _stored_summary(input: NamespaceGuideSetInput, row: dict[str, Any] | None) -
 
 
 def _output(row: dict[str, Any] | None) -> NamespaceGuideGetOutput:
-    # A token narrowed to one user reads the guide (guide_get, namespace.get, the
-    # session-start pack) but not who wrote it.
+    # A token narrowed to one user reads the guide (guide_get, the session-start
+    # pack) but not who wrote it.
     if row is None:
         return NamespaceGuideGetOutput(found=False)
     return NamespaceGuideGetOutput(

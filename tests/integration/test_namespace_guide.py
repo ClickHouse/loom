@@ -213,14 +213,15 @@ def test_of_saves_made_at_once_from_one_revision_exactly_one_lands(
             )
         # A save that waited past the claim's wait answers 503 OVERLOADED: it wrote nothing.
         assert r.status_code in (200, 503), r.text[:300]
-        return dict(r.json()) if r.status_code == 200 else {"written": False, "conflict": True}
+        return dict(r.json()) if r.status_code == 200 else {"overloaded": True}
 
     async def all_at_once() -> list[dict[str, Any]]:
         return list(await asyncio.gather(*(save(i) for i in range(6))))
 
     results = asyncio.run(all_at_once())
-    assert sum(r["written"] for r in results) == 1
-    assert all(r["conflict"] for r in results if not r["written"])
+    answered = [r for r in results if not r.get("overloaded")]
+    assert sum(r["written"] for r in answered) == 1
+    assert all(r["conflict"] for r in answered if not r["written"])
     history = _ok(control_plane_url, writer, "namespace.guide_history", base)["revisions"]
     assert [r["revision"] for r in history] == [1]
 
