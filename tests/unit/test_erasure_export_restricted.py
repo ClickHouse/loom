@@ -358,6 +358,8 @@ _TURNS = (
     " '2026-03-01 00:00:00', false, NULL, NULL)"
 )
 _AS_OF = datetime(2026, 2, 1)
+# An org admin who may read no collection.
+_NO_COLLECTIONS = Shown(collections=())
 # What an org admin with no grant on PRIV and no readable collection is shown.
 _HIDING = Shown(hidden=(PRIV,), collections=())
 
@@ -371,7 +373,14 @@ class _LocalTurns:
         return [{**r, "ts": datetime.fromisoformat(r["ts"])} if "ts" in r else r for r in rows]
 
 
-def _read_turns(scope_type: str, scope_value: str, *, include_tombstoned=True, max_bytes=1000):
+def _read_turns(
+    scope_type: str,
+    scope_value: str,
+    *,
+    include_tombstoned=True,
+    max_bytes=1000,
+    shown=_NO_COLLECTIONS,
+):
     import asyncio
 
     from server.erasure.store import exports
@@ -385,7 +394,7 @@ def _read_turns(scope_type: str, scope_value: str, *, include_tombstoned=True, m
             limit=10,
             max_bytes=max_bytes,
             as_of=_AS_OF,
-            shown=Shown(collections=()),
+            shown=shown,
             ch=_LocalTurns(),
         )
     )
@@ -411,6 +420,18 @@ def test_an_export_reads_the_turns_and_saved_messages_in_scope(
     assert "m-later" not in {r["msg_id"] for r in got}  # stamped after `as_of`
     assert "row_bytes" not in got[0] and "bytes_before" not in got[0]
     assert got[0]["is_saved"] is True and got[0]["saved_at"] is not None
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_a_user_export_reads_the_saved_messages_in_their_own_collection() -> None:
+    """Run on clickhouse-local: a saved-only message in the user's personal collection
+    (`@me`) is exported once that collection is among those shown, as the handler adds it
+    for a user export."""
+    got, _ = _read_turns(
+        "user_id", "u1", include_tombstoned=False, shown=Shown(collections=("col-hidden",))
+    )
+    assert [r["msg_id"] for r in got] == ["m-col", "m-saved", "m-turn"]
+    assert got[0]["namespace"] == "col-hidden" and got[0]["is_saved"] is True
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")

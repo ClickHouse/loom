@@ -289,8 +289,9 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
         limit=input.section_limit + 1,
         shown=shown,
     )
-    thread_rows, thread_count, thread_trunc = _page(threads, input.section_limit)
-    thread_rows = await _labelled(thread_rows, _THREAD_TEXT)
+    thread_trunc = len(threads) > input.section_limit
+    thread_rows = await _labelled(threads[: input.section_limit], _THREAD_TEXT)
+    thread_count = len(thread_rows)
     evt_rows, evt_count, evt_trunc = await _export_agent_events(
         input.org,
         input.scope_type,
