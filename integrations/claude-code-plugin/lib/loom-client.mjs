@@ -756,8 +756,8 @@ export function redactHead(text, max, token = resolveToken()) {
 
 // What a hook's `git diff` passes so the user's diff settings cannot change what is
 // sent: no external tool, colour or textconv program, git's own path prefixes, a
-// submodule as one line rather than its commit subjects, and git's default hunk
-// boundaries (no merging of nearby hunks, the default algorithm).
+// submodule as one line rather than its commit subjects, and nearby hunks kept
+// apart (`diff.interHunkContext` would merge them into one wider range).
 export const DIFF_ARGS = [
   "--no-ext-diff",
   "--no-color",
@@ -766,7 +766,6 @@ export const DIFF_ARGS = [
   "--dst-prefix=b/",
   "--submodule=short",
   "--inter-hunk-context=0",
-  "--diff-algorithm=myers",
 ];
 
 // A hunk header: its ranges, then the function context git appends to it.
@@ -810,8 +809,9 @@ export function hunkFunctionName(context) {
   if (/(^|[^:]):$|=$/.test(before) && !ACCESS_SPECIFIERS.has(before)) return "";
   if (NOT_FUNCTION_NAMES.has(name)) return "";
   if (!/^~?[A-Za-z_][\p{L}\p{N}_]*(::~?[A-Za-z_][\p{L}\p{N}_]*)*$/u.test(name)) return "";
-  // the identifier test above rejects `=`, `:` and `.`, so of the redaction patterns
-  // only the token shapes can match a name
+  // the identifier test above rejects `=`, `.` and a lone `:`, so a name cannot be an
+  // assignment's value; of the redaction patterns only the token shapes are applied
+  // (`SECRET_ASSIGNMENT_RE` would read a `Secret::get` scope as one)
   return TOKEN_SHAPE_RE.test(name) ? "" : name;
 }
 

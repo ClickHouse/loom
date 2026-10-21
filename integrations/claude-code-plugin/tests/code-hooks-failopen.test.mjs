@@ -359,6 +359,12 @@ test("shunt: a tracker search reaches tracker.duplicate_check redacted", async (
 test("blast radius and test gate: only the diff's paths and hunk headers reach the server", async () => {
   const { dir, tmp, transcript } = dirtySession();
   fs.appendFileSync(path.join(dir, "src/a.cpp"), 'const char* api_key = "s3cr3t-value";\n');
+  // a second change three lines above the first: two hunks unless they are merged
+  const src = path.join(dir, "src/a.cpp");
+  fs.writeFileSync(
+    src,
+    fs.readFileSync(src, "utf8").replace("int f397() { return 397; }", "int f397() { return -397; }"),
+  );
   // A user's diff settings (colour, an external tool, a textconv filter, other
   // path prefixes) must not change what is sent. Each one, left on, changes or
   // empties the +++ path or the @@ header asserted below.
@@ -372,6 +378,8 @@ test("blast radius and test gate: only the diff's paths and hunk headers reach t
     ["diff.external", external],
     ["diff.conv.textconv", textconv],
     ["diff.mnemonicPrefix", "true"],
+    ["diff.noprefix", "true"],
+    ["diff.interHunkContext", "10"],
   ]) {
     execFileSync("git", ["config", key, value], { cwd: dir });
   }
@@ -393,5 +401,25 @@ test("blast radius and test gate: only the diff's paths and hunk headers reach t
     assert.ok(!sent.body.diff.includes("int g()"), `${op} sends no changed line`);
     assert.match(sent.body.diff, /^\+\+\+ b\/src\/a\.cpp$/m, `${op} keeps the path`);
     assert.match(sent.body.diff, /^@@ .*\+\d+/m, `${op} keeps the hunk header`);
+    assert.equal(sent.body.diff.match(/^@@ /gm).length, 2, `${op} keeps the two hunks apart`);
   }
+});
+
+test("blast radius: a change with no path or range for the server sends nothing", async () => {
+  const { dir, tmp } = dirtySession();
+  execFileSync("git", ["checkout", "-q", "--", "src/a.cpp"], { cwd: dir });
+  fs.chmodSync(path.join(dir, "src/a.cpp"), 0o755);
+  const bodies = await withCapturingServer(async (url) => {
+    const edit = {
+      tool_name: "Edit",
+      tool_input: { file_path: path.join(dir, "src/a.cpp") },
+      cwd: dir,
+      session_id: "s",
+    };
+    await run("loom-blast-radius.mjs", edit, { tmp, url });
+  });
+  assert.deepEqual(
+    bodies.map((b) => b.url).filter((u) => u === "/v1/code.impact"),
+    [],
+  );
 });
