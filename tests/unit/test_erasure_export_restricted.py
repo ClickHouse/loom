@@ -399,6 +399,7 @@ def test_an_export_reads_the_turns_and_saved_messages_in_scope(
     thread order, without another scope's rows or a collection the caller may not read."""
     got, over_budget = _read_turns(scope_type, scope_value, include_tombstoned=include_tombstoned)
     assert [r["msg_id"] for r in got] == expected and not over_budget
+    assert "m-later" not in {r["msg_id"] for r in got}  # stamped after `as_of`
     assert "bytes_before" not in got[0]
     assert got[0]["is_saved"] is True and got[0]["saved_at"] is not None
 

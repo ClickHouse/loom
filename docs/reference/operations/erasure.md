@@ -34,7 +34,7 @@ GDPR Article 20 portability.
 | `memory` | `ErasureExportSection` | `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`. |
 | `knowledge` | `ErasureExportSection` | Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope. |
 | `conversations` | `ErasureExportSection` | Turns and saved messages in scope with their `sensitivity`, up to `erasure_export_conversation_max_bytes` of text plus the turn that crosses it. |
-| `conversation_threads` | `ErasureExportSection` | `loom.conversation_threads` rows in scope: each thread's title and metadata. |
+| `conversation_threads` | `ErasureExportSection` | `loom.conversation_threads` rows in scope: each thread's title and metadata, capped by `section_limit` rows only (no byte budget). |
 | `agent_events` | `ErasureExportSection` | Per-request ledger rows in scope, newest first. |
 | `audit_log` | `ErasureExportSection` | Audit rows in scope; for `user_id`, rows whose subject mentions the user id. |
 

@@ -160,6 +160,8 @@ async def export_conversations(
         "as_of": as_of,
         **shown_params,
     }
+    # A row's sums depend only on the rows before it, so the windows need only the
+    # first `limit` rows in order.
     sizes = await ch.query_all(
         f"""
         SELECT namespace, thread_id, ts, msg_id, bytes_before
@@ -173,6 +175,8 @@ async def export_conversations(
                 SELECT namespace, thread_id, ts, msg_id, {_CONVERSATION_BYTES} AS row_bytes
                 FROM loom.conversations
                 WHERE {where}
+                ORDER BY {_CONVERSATION_ORDER}
+                LIMIT {{lim:UInt64}}
             )
         )
         WHERE bytes_before_previous < {{max_bytes:UInt64}}
