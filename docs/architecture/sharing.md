@@ -71,11 +71,12 @@ The same five ops serve both ways a chat runs in front of Loom:
   no user axis to bound), so no transcript lives in a personal collection: a save there
   stores the text the request sends as a saved-only row, and unsaving it removes the row.
 
-In both, a save is refused for text that reads as high sensitivity (a credential, card
-number, SSN or stated PIN) and for a tombstoned turn (in `@me`, one a user erasure left),
-with its `reason`; in a recording namespace also for a stored system or tool turn (a
-request can name only a user or assistant role). Under the pinned token a body naming
-another user is refused (403). A client draws a conversation's saved state with one
+A save the server will not index answers `indexed: false` with a `reason`:
+`high_sensitivity` for text that reads as high (a credential, card number, SSN or stated
+PIN), `deleted` for a tombstoned turn (in `@me`, one a user erasure left), and, in a
+recording namespace, `unsupported_role` for a stored system or tool turn and
+`owner_mismatch` for another user's turn. Under the pinned token, a body naming another
+user is refused with 403. A client draws a conversation's saved state with one
 `conversation.saved_status` call, and a user erasure takes the user's conversation rows,
 saved ones included. A user-scope `erasure.export` does not return conversation rows,
 so it leaves out saved messages, as it leaves out the rest of a user's transcript.

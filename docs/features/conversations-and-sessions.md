@@ -97,8 +97,9 @@ They differ from `conversation.append` and `conversation.search` in six ways:
   `user_id` is refused with 403, and every statement carries the token's user. An
   end-user token ([sharing](../architecture/sharing.md#saved-messages)) is pinned the same
   way and calls these ops with `namespace: "@me"`, the user's personal collection; the
-  transcript ops refuse it, so a save there stores the text it sends. The
-  conversation tables have no `session_id`, so an `own_session` token is refused.
+  transcript ops refuse it, so a save there stores the text the request sends as a
+  saved-only row, and unsaving it removes the row. The conversation tables have no
+  `session_id`, so an `own_session` token is refused.
   `conversation.search` and `conversation.get` stay refused under such a token, because
   a thread mixes users and has no user axis to bound.
 - **Ownership, deletion and role are checked on every save.** Saving a message stored
