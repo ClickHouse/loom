@@ -93,6 +93,7 @@ def receiver(monkeypatch: pytest.MonkeyPatch) -> Iterator[Receiver]:
     r = Receiver()
     yield r
     r.server.shutdown()
+    r.server.server_close()
 
 
 @pytest.fixture(autouse=True)

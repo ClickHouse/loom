@@ -516,8 +516,8 @@ for one registry read (`server/core/polled_copy.py`). A failed read keeps the la
 write on a cold copy waits for the first read; if that read fails, writes announce nothing
 (noted as a degradation) until a read lands. `memory.clear` tombstones with one mutation
 per table and, only when a webhook of the namespace takes `memory.tombstoned`, reads back
-the rows that mutation stamped, 1000 at a time in sort-key order, one outbox insert per
-page.
+the rows that mutation stamped in one streamed read in sort-key order, so the scope is
+scanned once, with one outbox insert per 1000 rows.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
 the events of webhooks removed in the last `memory_webhook_removal_window_leases` lease

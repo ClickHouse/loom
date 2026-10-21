@@ -6,6 +6,7 @@ tombstone cascades.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -355,39 +356,36 @@ async def _page_tombstoned(
     params: dict[str, Any],
     on_page: Callable[[list[dict[str, Any]]], Awaitable[None]],
     *,
-    ch: _CHClient,
+    ch: Any,  # a CHClient: `raw_stream` is not on `_CHClient`
 ) -> None:
     """Hand `on_page` the memory rows in scope tombstoned at `params["at"]`, a page
-    at a time in sort-key order. A row a concurrent delete tombstoned in the same
+    at a time in sort-key order. One streamed read, so the scope is scanned once
+    however many pages it fills. A row a concurrent delete tombstoned in the same
     second comes too, at the version that delete announced, so its event repeats
     that one's id."""
-    after: tuple[str, str, str, str] = ("", "", "", "")
-    while True:
-        rows = await ch.query_all(
-            f"""
-            SELECT org, namespace, agent, user_id, session_id, memory_key, memory_id, version
-            FROM loom.memory FINAL
-            WHERE {scope_sql} AND tombstoned_at = {{at:DateTime}}
-              AND (agent, user_id, session_id, memory_key)
-                  > ({{a_agent:String}}, {{a_uid:String}}, {{a_sid:String}}, {{a_key:String}})
-            ORDER BY agent, user_id, session_id, memory_key
-            LIMIT {{limit:UInt32}}
-            """,
-            params={
-                **params,
-                "a_agent": after[0],
-                "a_uid": after[1],
-                "a_sid": after[2],
-                "a_key": after[3],
-                "limit": CLEAR_PAGE_ROWS,
-            },
-        )
-        if rows:
-            await on_page(rows)
-        if len(rows) < CLEAR_PAGE_ROWS:
-            return
-        last = rows[-1]
-        after = (last["agent"], last["user_id"], last["session_id"], last["memory_key"])
+    sql = f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, memory_id, version
+        FROM loom.memory FINAL
+        WHERE {scope_sql} AND tombstoned_at = {{at:DateTime}}
+        ORDER BY agent, user_id, session_id, memory_key
+        FORMAT JSONEachRow
+    """
+    page: list[dict[str, Any]] = []
+    partial = b""  # a row split across two chunks
+    async with ch.raw_stream(sql, params) as chunks:
+        async for chunk in chunks:
+            *lines, partial = (partial + chunk).split(b"\n")
+            for line in lines:
+                if not line:
+                    continue
+                row = json.loads(line)
+                row["version"] = int(row["version"])  # JSONEachRow quotes a UInt64
+                page.append(row)
+                if len(page) == CLEAR_PAGE_ROWS:
+                    await on_page(page)
+                    page = []
+    if page:
+        await on_page(page)
 
 
 async def tombstone_cascade_by_ids(

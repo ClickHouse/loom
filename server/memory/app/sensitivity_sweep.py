@@ -52,7 +52,7 @@ from server.memory.domain.sensitivity import (
     pin_grammar,
     sensitivity_tags,
 )
-from server.memory.domain.webhook_events import memory_change
+from server.memory.domain.webhook_events import EventType, memory_change
 from server.memory.store.sensitivity_sweep_sql import (
     AGENT_KEY,
     SORT_KEY,
@@ -527,56 +527,60 @@ async def apply(candidates: list[SweepCandidate], *, ch: _CHClient | None = None
     ch = ch or _default_client()
     result = ApplyResult()
     now = naive_utc_now()
-    for c in candidates:
-        try:
-            version = memory_repo.next_version()  # the relabel's, which the high retire carries
+    # Announced in one insert, in a `finally`: a pass cut short still announces
+    # what it relabelled, since the next scan reads only unlabelled rows.
+    relabelled: list[tuple[EventType, dict[str, Any]]] = []
+    try:
+        for c in candidates:
+            try:
+                version = memory_repo.next_version()  # the relabel's, which the high retire carries
 
-            def _relabel(
-                existing: Any, _c: SweepCandidate = c, _v: int = version
-            ) -> dict[str, Any]:
-                tags = list(getattr(existing, "tags", None) or [])
-                return {
-                    "sensitivity": _c.level,
-                    "tags": [*tags, *sensitivity_tags(_c.level, tags)],
-                    "updated_at": now,
-                    "version": _v,
-                }
+                def _relabel(
+                    existing: Any, _c: SweepCandidate = c, _v: int = version
+                ) -> dict[str, Any]:
+                    tags = list(getattr(existing, "tags", None) or [])
+                    return {
+                        "sensitivity": _c.level,
+                        "tags": [*tags, *sensitivity_tags(_c.level, tags)],
+                        "updated_at": now,
+                        "version": _v,
+                    }
 
-            if c.level == HIGH:
-                # Vectors and chunks go first, at the relabel's version: if they fail,
-                # the row keeps its empty label and the next pass retries it (the
-                # scan only reads unlabelled rows).
-                key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
-                retired = await memory_repo.retire_vectors_for_keys([(key, version)], ch=ch)
-                await fence_high([(key, version)], ch=ch)
-            n = await memory_repo.write_versions_by_ids(c.org, [c.memory_id], _relabel, ch=ch)
-            if not n:
-                continue  # gone between scan and apply
-            result.relabelled += n
-            # Announced now: a pass cut short later would lose it, since the next
-            # scan reads only unlabelled rows.
-            await webhooks.announce([("memory.revised", memory_change(c, version))])
-            if c.level == HIGH:
-                result.high += 1
-                result.embeddings_tombstoned += retired
-                # Again now the label is in: a chunk writer re-checks the head after its
-                # insert, and so does a reindex, so chunks or a vector that landed between
-                # the fence and the relabel saw an unlabelled head and stayed. The vector
-                # retire takes a version drawn now: a reindexed row sits above the fence.
-                await tombstone_chunks_of([key], ch=ch)
-                heads = await memory_repo.memory_rows_by_identity_keys(
-                    [key], ch=ch, sequential=memory_repo.read_your_writes_enabled()
-                )
-                head = heads.get(key)
-                if head is not None and int(head.version) == version:  # still this relabel
-                    await memory_repo.retire_vectors_for_keys(
-                        [(key, memory_repo.next_version())], ch=ch
+                if c.level == HIGH:
+                    # Vectors and chunks go first, at the relabel's version: if they fail,
+                    # the row keeps its empty label and the next pass retries it (the
+                    # scan only reads unlabelled rows).
+                    key = (c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key)
+                    retired = await memory_repo.retire_vectors_for_keys([(key, version)], ch=ch)
+                    await fence_high([(key, version)], ch=ch)
+                n = await memory_repo.write_versions_by_ids(c.org, [c.memory_id], _relabel, ch=ch)
+                if not n:
+                    continue  # gone between scan and apply
+                result.relabelled += n
+                relabelled.append(("memory.revised", memory_change(c, version)))
+                if c.level == HIGH:
+                    result.high += 1
+                    result.embeddings_tombstoned += retired
+                    # Again now the label is in: a chunk writer re-checks the head after its
+                    # insert, and so does a reindex, so chunks or a vector that landed between
+                    # the fence and the relabel saw an unlabelled head and stayed. The vector
+                    # retire takes a version drawn now: a reindexed row sits above the fence.
+                    await tombstone_chunks_of([key], ch=ch)
+                    heads = await memory_repo.memory_rows_by_identity_keys(
+                        [key], ch=ch, sequential=memory_repo.read_your_writes_enabled()
                     )
-            else:
-                result.medium += 1
-                result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
-        except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
-            result.failed.append((c, f"{c.namespace}/{c.memory_key}: {e}"))
+                    head = heads.get(key)
+                    if head is not None and int(head.version) == version:  # still this relabel
+                        await memory_repo.retire_vectors_for_keys(
+                            [(key, memory_repo.next_version())], ch=ch
+                        )
+                else:
+                    result.medium += 1
+                    result.embeddings_tagged += await _tag_embeddings(c, ch=ch)
+            except Exception as e:  # noqa: BLE001 — one row's failure never stops the sweep
+                result.failed.append((c, f"{c.namespace}/{c.memory_key}: {e}"))
+    finally:
+        await webhooks.announce(relabelled)
     return result
 
 

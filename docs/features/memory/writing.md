@@ -348,8 +348,9 @@ policy, sends `memory.written`.
 `memory.erased` carries the `erasure_id` the request returned and no key, user,
 identity or requester (`actor` is `-`, `request_id` empty): a namespace erasure goes to that namespace's webhooks, a user's erasure to
 every webhook of the org that takes the event, including namespaces that never held
-the user. `erasure.status` of a user's erasure answers only a flat org admin of the
-org or a platform admin, so a receiver's token cannot read the user id from it.
+the user. `erasure.status` of a user's erasure answers only a flat org admin or
+platform admin whose token names the org, so a receiver's token cannot read the user
+id from it.
 
 | Operation            | Role  | What it does                                                                                                                                                                                                                                                                             |
 | -------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

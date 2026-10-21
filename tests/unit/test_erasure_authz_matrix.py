@@ -235,8 +235,9 @@ EXPORT: dict[str, dict[str, str]] = {
     "writer": {"ns_own": "403", "ns_other": "403", "user_id": "403"},
 }
 # A namespace saga needs VIEWER on its namespace; a user_id saga names the
-# erased user, so it needs the org-wide view; a namespace list needs flat
-# membership of the saga's org. A refusal is found=False.
+# erased user, so it needs the org-wide view from a token of its org; a
+# namespace list needs flat membership of the saga's org. A refusal is
+# found=False.
 STATUS: dict[str, dict[str, str]] = {
     "admin": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "ok"},
     "empty_subject": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "ok"},
@@ -256,7 +257,7 @@ STATUS: dict[str, dict[str, str]] = {
     "platform_admin": {
         "ns_own": "hidden",
         "ns_other": "hidden",
-        "user_id": "ok",
+        "user_id": "hidden",
         "ns_list": "hidden",
     },
     "scoped": {"ns_own": "ok", "ns_other": "hidden", "user_id": "hidden", "ns_list": "hidden"},

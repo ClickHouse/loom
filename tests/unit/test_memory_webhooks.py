@@ -793,7 +793,7 @@ async def test_a_blacklist_sweep_announces_the_rows_it_tombstones(
 
 
 @pytest.mark.asyncio
-async def test_a_sweep_cut_short_has_announced_the_rows_it_relabelled(
+async def test_a_sweep_cut_short_announces_the_rows_it_relabelled_in_one_insert(
     monkeypatch: pytest.MonkeyPatch, announced: list[Any]
 ) -> None:
     from server.memory.app import sensitivity_sweep
@@ -822,8 +822,14 @@ async def test_a_sweep_cut_short_has_announced_the_rows_it_relabelled(
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", write)
     monkeypatch.setattr(sensitivity_sweep, "_tag_embeddings", tag)
     with pytest.raises(asyncio.CancelledError):
-        await sensitivity_sweep.apply([candidate("first"), candidate("second")], ch=object())
-    assert _events(announced) == {("memory.revised", "first")}
+        await sensitivity_sweep.apply(
+            [candidate("zero"), candidate("first"), candidate("second")], ch=object()
+        )
+    (call,) = announced
+    assert {(e, c["memory_key"]) for e, c in call} == {
+        ("memory.revised", "zero"),
+        ("memory.revised", "first"),
+    }
 
 
 @pytest.mark.asyncio

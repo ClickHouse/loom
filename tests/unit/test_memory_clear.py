@@ -180,13 +180,13 @@ async def test_clear_zero_rows_is_well_formed(
     assert all(v == 0 for v in out.rows_affected.values())
 
 
-def _clear_ch(monkeypatch: pytest.MonkeyPatch, pages: list[list[dict]]):
+def _clear_ch(monkeypatch: pytest.MonkeyPatch, tombstoned: list[dict]):
     from tests.unit.ch_fake import RecordingCH
 
     ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 0}], times=1)
     ch.on("SELECT count() AS n", [{"n": 2}])
-    for page in pages:
-        ch.on("ORDER BY agent, user_id, session_id, memory_key", page, times=1)
+    if tombstoned:
+        ch.on("ORDER BY agent, user_id, session_id, memory_key", tombstoned, times=1)
     return ch.install(monkeypatch)
 
 
@@ -232,7 +232,7 @@ async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
         due_in_s=float("inf"),
     )
     monkeypatch.setattr(lifecycle, "CLEAR_PAGE_ROWS", 2)
-    ch = _clear_ch(monkeypatch, [[row("a"), row("b")], [row("c")]])
+    ch = _clear_ch(monkeypatch, [row("a"), row("b"), row("c")])
     announced: list[list[str]] = []
 
     async def announce(changes) -> None:
@@ -243,11 +243,12 @@ async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
         MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
     )
     assert announced == [["a", "b"], ["c"]]
-    first, second = ch.statements("ORDER BY agent, user_id, session_id, memory_key")
-    assert first.params["a_key"] == "" and second.params["a_key"] == "b"
+    # One read fills every page, so the scope is scanned once.
+    (read,) = ch.statements("ORDER BY agent, user_id, session_id, memory_key")
+    assert read.kind == "raw_stream"
     # The pages read back exactly the rows this clear's mutation stamped.
     (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
-    assert first.params["at"] == memory_alter.params["at"]
+    assert read.params["at"] == memory_alter.params["at"]
 
 
 @pytest.mark.asyncio
@@ -263,8 +264,8 @@ async def test_clear_announces_before_the_embeddings_step(monkeypatch: pytest.Mo
         read_age_s=0.0,
         due_in_s=float("inf"),
     )
-    cleared = {"agent": "bot", "user_id": "u1", "session_id": "-", "memory_key": "a"}
-    ch = _clear_ch(monkeypatch, [[cleared]])
+    cleared = {"agent": "bot", "user_id": "u1", "session_id": "-", "memory_key": "a", "version": 1}
+    ch = _clear_ch(monkeypatch, [cleared])
 
     async def execute(sql, params=None, **_kw):
         if "loom.memory_embeddings" in sql:
