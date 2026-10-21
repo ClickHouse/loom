@@ -136,18 +136,18 @@ read boundary: everyone who reads it reads every row in it. On writes, set
 end user when you serve many, `session_id` to the conversation or job, and
 `run_id` to the task execution.
 
-On reads the same fields select rows, and ops differ in how; each op's
-field list says how (the operations reference; over MCP, `loom_op` help
-lists each op's arguments). Three rules
+On reads the same fields select rows, and ops differ in how. Three rules
 cover the loop:
 
 - **Every author: send `agent: "*"`.** A raw `agent.call` stamps your own
   `agent`, which narrows most reads and `memory.update` to rows you wrote.
   The typed search, ask and update helpers (Python `agent.memory.search`,
   `ask`, `update`; TypeScript `agent.recall`, `agent.ask`) already read
-  every author. Not on `context.pack` or `working_memory.*`: they read
-  your own agent's working-memory blocks and memory stack, and an
-  `agent: "*"` there finds none of them.
+  every author. Not on ops about you: `context.pack` and
+  `working_memory.*` read your own agent's working-memory blocks and
+  memory stack, and `mentor.brief` your own usage, so an `agent: "*"`
+  there finds none of yours (`mentor.brief` then reports the namespace's
+  most active writer instead).
 - **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
   read narrows it to those rows. `search.query`† has none of them; to read
   one user's rows, use `memory.ask` with `user_id`.

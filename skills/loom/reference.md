@@ -13,8 +13,8 @@ Calling convention, by surface: MCP tool `loom_<op_with_underscores>` or
 TypeScript `await agent.call("<op>", {...})`; HTTP `POST /v1/<op>`. The SDKs
 stamp `org`, `namespace` and `agent` for you; over HTTP you send them. A
 stamped `agent` narrows every op that looks rows up by author to your own
-rows; pass `agent: "*"` when you mean every author (each op's field list in
-the operations reference says whether it looks rows up by author). Ops
+rows; pass `agent: "*"` when you mean every author, except on the ops about
+you that the skill's Identity section names. Ops
 marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
 `loom_search` searches memory, knowledge and conversations, and the rest are
 SDK and HTTP only.
