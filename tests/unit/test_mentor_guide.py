@@ -111,7 +111,7 @@ def test_every_token_that_may_read_the_guide_is_admitted(caller: str) -> None:
     gates.read_scope(op, auth, MentorGuideInput())
 
 
-def test_loom_op_returns_the_guide_as_markdown_text(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_loom_op_returns_the_guide_in_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -129,9 +129,9 @@ def test_loom_op_returns_the_guide_as_markdown_text(monkeypatch: pytest.MonkeyPa
     }
     body = TestClient(app).post("/mcp", json=call).json()["result"]
     assert not body.get("isError"), body
-    assert body["content"][0]["text"] == _guide("skill").text
-    assert "†" in body["content"][0]["text"]
-    assert body["structuredContent"] == {"version": server.__version__, "part": "skill"}
+    # Some clients hand the model only structuredContent: the text must be there.
+    assert body["structuredContent"]["text"] == _guide("skill").text
+    assert body["structuredContent"]["version"] == server.__version__
 
 
 def test_the_image_ships_the_guide() -> None:

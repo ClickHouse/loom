@@ -137,7 +137,8 @@ end user when you serve many, `session_id` to the conversation or job, and
 `run_id` to the task execution.
 
 On reads the same fields select rows, and ops differ in how; each op's
-field list in the operations reference says how. Three rules
+field list says how (the operations reference; over MCP, `loom_op` help
+lists each op's arguments). Three rules
 cover the loop:
 
 - **Every author: send `agent: "*"`.** A raw `agent.call` stamps your own
@@ -145,8 +146,8 @@ cover the loop:
   The typed search, ask and update helpers (Python `agent.memory.search`,
   `ask`, `update`; TypeScript `agent.recall`, `agent.ask`) already read
   every author. Not on `context.pack` or `working_memory.*`: they read
-  your own agent's blocks and profile, and an `agent: "*"` there finds
-  none.
+  your own agent's working-memory blocks and memory stack, and an
+  `agent: "*"` there finds none of them.
 - **Narrow only on purpose.** A `user_id`, `session_id` or `run_id` on a
   read narrows it to those rows. `search.query`† has none of them; to read
   one user's rows, use `memory.ask` with `user_id`.
