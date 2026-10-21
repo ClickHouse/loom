@@ -100,7 +100,7 @@ session brief or the task inbox.
 
 | Op | Use it to |
 |---|---|
-| `context.pack` | The token-budgeted bundle for a task: profile, working memory, relevant memories (every author), your own pinned and recently recalled rows (the memory stack), procedures, mentor hints; optionally knowledge, conversations, recent runs. `mode`: `startup`, `task`, `debug`, `handoff`. |
+| `context.pack` | The token-budgeted bundle for a task: profile, working memory, relevant memories (every author), your own pinned and recently recalled rows (the memory stack), procedures, decisions, namespace health, mentor hints; optionally knowledge, conversations, recent runs. `mode`: `startup`, `task`, `debug`, `handoff`. |
 | `context.offload`† | Park a large blob (a log, a diff, a tool result) and get a pointer and summary. |
 | `context.fetch`† | Read back the parts of an offloaded blob that match a pattern. |
 | `search.query`† | One search over memory, profile, knowledge and conversations (`loom_search` over MCP). |
@@ -226,5 +226,5 @@ the repository.
 | Op | Use it to |
 |---|---|
 | `namespace.list_mine` | The namespaces your token reaches. |
-| `grants.create`, `grants.list` | Share a namespace with another agent or person (admin). |
+| `grants.create`, `grants.list` | Share a namespace with another agent or person (`grants.create`: admin); list the grants. |
 | `erasure.request`, `erasure.status`†‡ | Erase everything about a user or subject, across every table that can hold memory content (org admin for a user, admin for a namespace). |

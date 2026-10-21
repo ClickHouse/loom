@@ -157,7 +157,8 @@ reads the loop uses:
   on a field reads every value.
 
 Read through the SDKs' typed helpers (Python `agent.memory.*`, which also
-revise; TypeScript `agent.recall` and `agent.ask`): they send the identity
+cover revisions such as `agent.memory.update`; TypeScript `agent.recall`
+and `agent.ask`): they send the identity
 each op expects, `agent: "*"` included. A raw `agent.call` stamps your own
 `agent` and `-` for the rest, so on a read that defaults to every author
 (`memory.search`‡, `memory.ask`) it reads only your own rows unless you
@@ -167,12 +168,16 @@ and `runId` in its scope argument, not the body.
 A token minted with an `own_user` read scope refuses a read without
 `user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it, unless it is
 pinned to one user (as an end user's token is), which reads that user's
-rows. Such a token, and an end user's, reaches only ops that keep their
+rows. `search.query`† has no `user_id`, so under an unpinned `own_user`
+token it always answers 400; use `memory.ask` or `memory.search`‡ with
+`user_id` there. Such a token, and an end user's, reaches only ops that keep their
 answer inside that user: any other op answers 403 `AUTH_INSUFFICIENT`
 naming it. That covers namespace-wide reads (`namespace.validate`,
-`mentor.brief`), namespace-wide refusals (`blacklist.add`†) and revisions
-by key or id (`memory.update`, `memory.move`); skip that step or ask the
-owner. An end user's token also reaches no op outside a namespace except
+`mentor.brief`), namespace-wide refusals (`blacklist.add`†), revisions by
+key or id (`memory.update`, `memory.move`, `memory.link`, `memory.verify`),
+writes to tables with no user column (`memory.record.write`,
+`decision.record`†, `procedure.record_run`†, `context.offload`†),
+conversations and the entity graph; skip that step or ask the owner. An end user's token also reaches no op outside a namespace except
 `collection.create`†, `collection.list`†, `namespace.list_mine`,
 `grants.pending_for_me`† and `mentor.guide`† (so not `ops.capabilities`).
 
@@ -205,5 +210,6 @@ Then `namespace.validate` and fix findings on the keys you wrote. Say
 - Calling `conversation.append` when a plugin already captures the session:
   every turn is stored twice.
 
-`namespace.audit` finds these in a namespace you read; `reference.md` lists
-each plane with its ops.
+`namespace.audit` finds these in a namespace you read; the reference
+(`mentor.guide`† with `part: "reference"`, or `reference.md`) lists each
+plane with its ops.
