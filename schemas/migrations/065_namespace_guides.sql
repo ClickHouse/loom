@@ -5,8 +5,8 @@
 --
 -- One row per revision, numbered from 1; the highest revision is the guide.
 -- A writer names the revision it read, so of two edits made from one
--- revision the second is refused and merges onto the first. content = '' is a
--- cleared guide. updated_by is the actor that wrote the revision. A build
+-- revision the second is refused, and its writer merges it into the first and
+-- sends it again. content = '' is a cleared guide. updated_by is the actor that wrote the revision. A build
 -- that predates this table never reads it.
 CREATE TABLE IF NOT EXISTS loom.namespace_guides
 (

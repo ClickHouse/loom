@@ -151,12 +151,11 @@ The guide reaches agents without being asked for:
   and a restricted row shows none at all.
 - **`namespace.get`** carries `guide_revision` and `guide_summary`.
 
-Reading a guide takes read access to its namespace: a public row's visibility widens no read,
-so `namespace.browse` shows every public namespace's summary, and the whole guide is for
-its members (`namespace.join`). In the
-dashboard, Spaces shows a public namespace's guide summary under its description, and
-the **Guide** menu item of a public namespace you belong to, or one you manage, opens
-the guide; a writer edits it
+Reading a guide takes read access to its namespace, since a public row's visibility
+widens no read: `namespace.browse` shows the org each public namespace's summary, and
+the whole guide is for its members (`namespace.join`). In the dashboard, Spaces shows a
+public namespace's guide summary under its description, and the **Guide** menu item of
+a public namespace you belong to, or one you manage, opens the guide; a writer edits it
 there, saving from the revision they opened, as an agent does. A namespace erasure
 deletes every revision of its guide.
 

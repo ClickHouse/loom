@@ -230,6 +230,22 @@ def test_the_session_start_pack_carries_the_guide_under_its_revision(
     assert out.section_meta["namespace_guide"]["revision"] == 1
 
 
+def test_a_token_narrowed_to_one_user_reads_the_guide_but_not_its_writer(
+    guides: _Guides,
+) -> None:
+    from server.memory.app.context_pack import handle_context_pack
+
+    _set("Keys: acct/<id>/plan", 0, summary="plans")
+    pinned = principal("viewer", org="o", namespaces=("ns",), read_user_id="u1")
+    pack = ContextPackInput(org="o", namespace="ns", agent="a", only_sections=["namespace_guide"])
+    with acting_as(pinned):
+        read = _get()
+        section = asyncio.run(handle_context_pack(pack)).sections["namespace_guide"]
+    assert (read.found, read.content, read.updated_by) == (True, "Keys: acct/<id>/plan", "")
+    assert section.startswith("- [guide/1 by=unknown]")
+    assert _get().updated_by.endswith("bot")
+
+
 def test_a_guide_cut_to_the_pack_budget_says_where_the_rest_is(guides: _Guides) -> None:
     from server.memory.app.context_pack import handle_context_pack
 

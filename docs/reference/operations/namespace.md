@@ -184,14 +184,14 @@ Save a new revision of the namespace's guide after you change one of its convent
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `content` | `str` | required | The whole new guide in Markdown, at most 32,000 characters; "" clears it. |
 | `summary` | `str \| None` | `None` | One line, at most 300 characters, that a directory shows for the namespace; left out, the current summary is kept, and "" removes it. |
-| `expected_revision` | `int` | required | The revision this edit was made from (0 when there is no guide yet). |
+| `expected_revision` | `int` | required | The revision this edit was made from (0 when there is no guide yet); a guide that has moved past it refuses the write and answers with its current text. |
 | `note` | `str` | `''` | What this revision changes and why, at most 500 characters. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `written` | `bool` | True when this call wrote a new revision. |
-| `conflict` | `bool` | True when `expected_revision` was not the current revision: nothing was written, and `current` holds the guide to merge into. |
-| `revision` | `int` | The current revision after the call: the one written, or the one that refused it. |
+| `conflict` | `bool` | True when the guide moved past `expected_revision` and this save's text differs from it: nothing was written, and `current` holds the guide to merge into. |
+| `revision` | `int` | The current revision after the call (the one written, or the one that refused it), which the next edit passes as `expected_revision`. |
 | `current` | `NamespaceGuideGetOutput \| None` | On a conflict, the current guide; otherwise None. |
 
 ## `namespace.join`
