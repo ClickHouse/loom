@@ -196,8 +196,8 @@ async def handle_memory_update(input: MemoryUpdateInput) -> MemoryUpdateOutput:
                     f"memory_key {input.memory_key!r} is live under "
                     f"{len(rows)} identity tuples in namespace "
                     f"{input.namespace!r}; pass agent/user_id/session_id to "
-                    "narrow it, or memory.update_by_id with one of the ids (a row "
-                    "with no user or session is reached only by its id)"
+                    "narrow it, or memory.update_by_id with one of the ids "
+                    '(user_id and session_id "-" do not narrow)'
                 ),
                 "memory_key": input.memory_key,
                 "candidates": [c.model_dump() for c in rows],
