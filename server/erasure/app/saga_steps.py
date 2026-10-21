@@ -172,7 +172,7 @@ async def _step_erase_blobs_by_ns(org: str, namespace: _NS) -> int:
 UserStep = tuple[str, Callable[[str, str], Awaitable[int]]]
 NamespaceStep = tuple[str, Callable[[str, _NS], Awaitable[int]]]
 
-# The steps that run after the memory steps, one per table.
+# The steps that run after the memory steps; each deletes or tombstones its own tables.
 _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("conversations.tombstone", ledger_steps.tombstone_conversations_by_namespace),
     ("context_blobs.tombstone", ledger_steps.tombstone_context_blobs_by_namespace),
