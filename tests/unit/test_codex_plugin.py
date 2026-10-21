@@ -227,20 +227,26 @@ def test_both_plugins_ship_one_version() -> None:
     assert codex == claude
 
 
-def test_listing_fields_name_files_the_plugins_ship() -> None:
-    """The directory listings read these fields; a path that does not exist ships a listing
-    with no icon, and Codex shows at most three default prompts."""
+def test_listing_icons_are_files_the_plugins_ship() -> None:
+    """The directory listings read these paths; one that does not exist ships a listing
+    with no icon."""
     claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
-    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
-    assert (CLAUDE / claude["icon"]).is_file()
     skill = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+    interface = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())["interface"]
+    assert (CLAUDE / claude["icon"]).is_file()
     assert (ROOT / skill["icon"]).is_file()
-    interface = codex["interface"]
-    assert (CODEX / interface["logo"]).is_file() and (CODEX / interface["composerIcon"]).is_file()
-    assert (
-        isinstance(interface["defaultPrompt"], list) and 1 <= len(interface["defaultPrompt"]) <= 3
-    )
-    assert all(len(p) <= 128 for p in interface["defaultPrompt"])
+    assert (CODEX / interface["logo"]).is_file()
+    assert (CODEX / interface["composerIcon"]).is_file()
+
+
+def test_codex_default_prompts_fit_the_directory() -> None:
+    """Codex shows at most three default prompts of at most 128 characters each."""
+    prompts = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())["interface"][
+        "defaultPrompt"
+    ]
+    assert isinstance(prompts, list)
+    assert 1 <= len(prompts) <= 3
+    assert all(len(p) <= 128 for p in prompts)
 
 
 def test_both_plugins_link_the_data_handling_section() -> None:
