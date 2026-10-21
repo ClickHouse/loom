@@ -16,16 +16,29 @@ Codex build runs the same scripts; see [codex.md](codex.md).
 
 ## Data handling
 
-The plugin sends data only to the Loom server you configure (`server_url`), with the token
-you give it. Nothing goes to the plugin's authors or to any other service. What it sends is
-listed in [what the hooks do](#what-the-hooks-do): tool calls, chat turns, token usage and
-the session's working-memory note, after a client-side secret redaction. The server keeps
-them in its own ClickHouse database. It passes text to an LLM or embedding provider only if
-its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
-Chat turns are stored only when the namespace has conversation logging on. Deleting data
-is covered in [retention and erasure](../memory/retention-and-erasure.md). The `loom-status`
-skill can install Node.js from a Node.js package repository, and runs that installer
-only after you agree.
+This section covers the Claude Code plugin and the Codex plugin, which run the same
+scripts. The plugin sends data only to the Loom server it is configured with, using the
+token you give it. Nothing goes to the plugin's authors or to any other service. Before
+anything is sent, a client-side redaction removes common credential shapes; it is best
+effort, not a guarantee. The table in [what the hooks do](#what-the-hooks-do) lists each
+request. Together they send:
+
+- prompts, to fetch recalled memories and code pointers for them;
+- each tool call's input, output or error (`observe.record`), and the paths of files read
+  or edited, for the code shunt, file rules and blast radius;
+- chat turns (`conversation.append`), which the server stores only when the namespace has
+  conversation logging on;
+- the session's last turns (up to 200), to `memory.set_from_messages`, which keeps them as
+  source evidence for the facts it extracts whatever the logging setting is
+  (`LOOM_SESSION_MEMORY=off` stops it);
+- a run record (the first prompt as its goal, the last reply), a working-memory note
+  (goal, git status, files edited, last reply), a session brief and token usage.
+
+The server keeps this in its own ClickHouse database. It passes text to an LLM or embedding
+provider only if its operator configured one ([models and keys](../../getting-started/models-and-keys.md)).
+Deleting data is covered in [retention and erasure](../memory/retention-and-erasure.md).
+The `loom-status` skill can install Node.js from a Node.js package repository, and runs
+that installer only after you agree.
 
 ## Requirements
 
