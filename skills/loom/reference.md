@@ -100,7 +100,7 @@ session brief or the task inbox.
 
 | Op | Use it to |
 |---|---|
-| `context.pack` | The token-budgeted bundle for a task: profile, working memory, relevant memories, procedures, mentor hints; optionally knowledge, conversations, recent runs. `mode`: `startup`, `task`, `debug`, `handoff`. |
+| `context.pack` | The token-budgeted bundle for a task: profile, working memory, relevant memories (every author), your own pinned and recently recalled rows (the memory stack), procedures, mentor hints; optionally knowledge, conversations, recent runs. `mode`: `startup`, `task`, `debug`, `handoff`. |
 | `context.offload`† | Park a large blob (a log, a diff, a tool result) and get a pointer and summary. |
 | `context.fetch`† | Read back the parts of an offloaded blob that match a pattern. |
 | `search.query`† | One search over memory, profile, knowledge and conversations (`loom_search` over MCP). |

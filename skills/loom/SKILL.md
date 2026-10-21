@@ -141,13 +141,15 @@ reads the loop uses:
   `memory.ask` or `memory.search`‡ with `user_id`.
 - `memory.search`‡ and `memory.ask` read every author unless you name an
   `agent`; a `user_id` or `session_id` narrows them to those rows.
-- `context.pack` recalls memories of every author, narrowed by `user_id`
-  and `session_id`. With no `query`, only `mode: "startup"` loads memories:
-  pinned and recent rows of every author under exactly that `user_id` and
-  `session_id`. A pack that names this session's `session_id` recalls only
-  this session's memories; keep it on anyway, because the pack picks this
-  session's working-memory blocks by it, and read what earlier sessions
-  learned with `search.query`† or `memory.ask`.
+- `context.pack` has two memory parts. Its relevant memories (with a
+  `query`, or in `mode: "startup"` without one) come from every author,
+  narrowed by `user_id` and `session_id`. Its memory stack, in every mode,
+  holds only your own agent's pinned and recently recalled rows under
+  exactly that `user_id` and `session_id`. A pack that names this
+  session's `session_id` recalls only this session's memories; keep it on
+  anyway, because the pack picks this session's working-memory blocks by
+  it, and read what earlier sessions learned with `search.query`† or
+  `memory.ask`.
 - `memory.get` and `memory.delete` take your row under the key, else the
   same user's row under another agent.
 - `memory.list` needs `agent` and matches `agent`, `user_id` and

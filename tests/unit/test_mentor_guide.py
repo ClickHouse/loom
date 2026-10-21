@@ -52,8 +52,10 @@ def test_every_op_the_guide_names_is_registered() -> None:
 
 
 def test_every_op_the_guide_names_carries_its_experimental_and_not_on_mcp_markers() -> None:
+    # A name alone (`memory.set`†) or opening a call (`run.begin(goal=...)`†): the
+    # markers follow the span's closing backtick.
     for name, experimental, hidden in re.findall(
-        r"`([a-z_]+(?:\.[a-z_]+)+)`(†?)(‡?)", _guide("all").text
+        r"`([a-z_]+(?:\.[a-z_]+)+)(?:\([^`]*\))?`(†?)(‡?)", _guide("all").text
     ):
         if name in OPERATIONS_BY_NAME:
             assert bool(experimental) == (OPERATIONS_BY_NAME[name].maturity == "experimental"), name
