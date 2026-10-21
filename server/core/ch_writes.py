@@ -12,8 +12,7 @@ from typing import Any
 
 from server.settings import settings
 
-# A ClickHouse buffer bound (default 450 statements) set high so the time window decides the flush.
-# not a setting: a ClickHouse buffer bound the time window caps; a change needs a measurement
+# not a setting: above ClickHouse's 450 default so the time window decides the flush; measure first
 _ASYNC_INSERT_MAX_QUERY_NUMBER = 10_000
 
 

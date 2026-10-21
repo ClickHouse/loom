@@ -132,9 +132,9 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
 | `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batched inserts: concurrent inserts into one table share a part and each still returns once written. False: these inserts are committed, one part each. |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest wait, ms, of a batched insert a request waits on (audit rows, transcript turns, request ledgers) for concurrent inserts to share its part; the pooled connection is held meanwhile. |
-| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of a batched insert no request waits on (the usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's own default. |
-| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait. |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` | `int` | `50` | live | Longest wait, ms, of a batched or waited async insert a request waits on for others to share its part; holds a pooled connection meanwhile. |
+| `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS` | `int` | `200` | live | Longest wait, ms, of a batched or waited async insert no request waits on (the usage-event and write-mark flushes, webhook delivery attempts); ClickHouse's default. |
+| `LOOM_CH_BATCHED_INSERT_WAIT_MIN_MS` | `int` | `10` | live | Shortest wait, ms, of a batched or waited async insert: what a lone insert waits when writes are sparse; capped at the insert's longest wait. |
 | `LOOM_CH_POOL_WAIT_MS` | `int` | `500` |  | Max wait, ms, for a pool slot before failing fast with 503 OVERLOADED. 0 = no slot gate. |
 | `LOOM_CH_REPLICA_BOUND_RETRIES` | `int` | `2` |  | Fresh connections a statement tries after a replica-bound error (a replica that lost its Keeper session, a replica's read-only table). Behind a load balancer one reconnect can land on the replica that just failed, so a single retry is not enough. |
 

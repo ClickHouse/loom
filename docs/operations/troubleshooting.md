@@ -110,10 +110,11 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   pressure.
 - **Fix:** the query or worker that dominates. A Loom far from its ClickHouse (a WAN)
   needs `LOOM_LATENCY_BUDGET_MULTIPLIER` near 20 so its latency budgets do not fire on
-  every call. For `OVERLOADED` under a sustained write rate, lower
-  `LOOM_CH_BATCHED_INSERT_WAIT_MAX_MS` and `LOOM_CH_BATCHED_INSERT_BACKGROUND_WAIT_MAX_MS`
-  (live settings), switch batching off with `LOOM_CH_BATCHED_INSERTS=false`, or raise
-  `LOOM_CH_POOL_MAXSIZE`.
+  every call. For `OVERLOADED` under a sustained write rate, lower the insert waits live
+  with `loom settings set ch_batched_insert_wait_max_ms <ms>` (and
+  `ch_batched_insert_background_wait_max_ms`), switch batching off with
+  `loom settings set ch_batched_inserts false`, or raise `LOOM_CH_POOL_MAXSIZE` (a
+  restart). [Runtime settings](./runtime-settings.md) covers live overrides.
   The [errors reference](../reference/errors.md) lists every code.
 
 ## Providers and search quality
