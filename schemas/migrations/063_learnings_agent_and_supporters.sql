@@ -4,7 +4,8 @@
 -- or, with destination="memory", writes the memory row under it.
 -- Existing candidates read agent = ''. A build without this change ignores the column
 -- and the table, and its user erasure does not delete loom.learnings_supporters, so
--- memory_extract_agent_learnings stays off until every replica runs this build.
+-- memory_extract_agent_learnings (on by default) is turned off while a replica still
+-- runs such a build.
 ALTER TABLE loom.learnings_queue
     ADD COLUMN IF NOT EXISTS `agent` LowCardinality(String) DEFAULT '';
 

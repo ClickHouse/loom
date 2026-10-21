@@ -568,6 +568,35 @@ async def test_a_rule_citing_only_a_user_turn_is_never_filed(
     assert drops == [("learnings.file", "no_assistant_turn", "assistant_rule_refund_escalation")]
 
 
+@pytest.mark.asyncio
+async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_filed(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drops: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        assistant_learnings,
+        "record_drop",
+        lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
+    )
+    state = _state(
+        "alice",
+        "s1",
+        messages=[
+            {"role": "user", "content": "Please always answer me in French."},
+            {"role": "assistant", "content": "Bien sûr, je vous répondrai toujours en français."},
+        ],
+    )
+    fact = _rule_fact(
+        key="assistant_rule_language",
+        value="The assistant always answers the user in French.",
+    )
+    assert await _file(state, fact) == 0
+    assert queue.rows == {} and queue.supporters == {}
+    assert drops == [("learnings.file", "user_requested", "assistant_rule_language")]
+    # A rule the user did not ask for is still filed after an unrelated request.
+    assert await _file(_state("bob", "s2")) == 1
+
+
 # Built at runtime so the secret scanner does not read it as a leaked key.
 _KEY_ID = "AKIA" + "IOSFODNN7EXAMPLE"
 

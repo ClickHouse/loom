@@ -6,14 +6,12 @@ erasure takes that user's quotes and leaves a candidate nobody backs only its
 decision.
 
 Runs on the fake LLM, which reads an assistant's "I always ..." sentence as a
-rule when the extraction prompt carries the assistant-rules block. The module
-turns memory_extract_agent_learnings on through a live override for its own
-tests and clears it after, so every other test keeps the default (off).
+rule when the extraction prompt carries the assistant-rules block, which
+memory_extract_agent_learnings (on by default) adds.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -22,14 +20,10 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
 
 _RULE = "I always escalate any refund over $500 to a human."
 _AGENT = "support-bot"
-
-
-_SETTING = "memory_extract_agent_learnings"
 
 
 @pytest.fixture(scope="module")
@@ -39,41 +33,6 @@ def base_url(control_plane_url: str) -> str:
         if not c.get("/v1/health").json().get("fake_llm"):
             pytest.skip("scripts the fake LLM's reading of assistant rules")
     return control_plane_url
-
-
-def _admin_client(base_url: str) -> httpx.AsyncClient:
-    """Authenticated as test_settings_overrides.py is: the suite's LOOM_API_KEY."""
-    tok = os.environ.get("LOOM_API_KEY")
-    headers = {"Authorization": f"Bearer {tok}"} if tok else {}
-    return httpx.AsyncClient(base_url=base_url, timeout=10.0, headers=headers)
-
-
-async def _set_setting(c: httpx.AsyncClient, body: dict[str, Any]) -> None:
-    r = await c.post("/v1/admin/settings.set", json={"name": _SETTING, **body})
-    assert r.status_code == 200, r.text
-    value = r.json()["setting"]["value"]
-
-    async def _adopted() -> bool:
-        # With several processes, the one that took the write may not answer the
-        # next request: wait until the listing shows the value in force.
-        listed = await c.post("/v1/admin/settings.list", json={"prefix": _SETTING})
-        assert listed.status_code == 200, listed.text
-        (row,) = [s for s in listed.json()["settings"] if s["name"] == _SETTING]
-        return row["value"] == value
-
-    await eventually(_adopted, max_wait=30, description=f"{_SETTING} = {value}")
-
-
-@pytest_asyncio.fixture(scope="module", autouse=True)
-async def agent_learnings_on(base_url: str) -> AsyncIterator[None]:
-    """Turns assistant-turn learnings on for this module alone, then clears the
-    override so the rest of the suite runs with the setting's default."""
-    async with _admin_client(base_url) as c:
-        await _set_setting(c, {"value": True})
-        try:
-            yield
-        finally:
-            await _set_setting(c, {"clear": True})
 
 
 @pytest.fixture

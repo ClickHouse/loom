@@ -60,23 +60,31 @@ a release changed is kept; whether its CI was green at the time is dropped.
 
 ## Rules the assistant states about itself
 
-Experimental. A chat bot's replies carry rules about its own behaviour: "I escalate any
-refund over $500 to a human", "I always answer in bullet points". With
-`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS=true` for the deployment (a live setting:
-`loom settings set memory_extract_agent_learnings true` turns it on without a restart,
-see [runtime settings](../../operations/runtime-settings.md)), the extraction call also
-returns these, marked `"about": "agent"`, at no extra model call. The setting is the
-only way on: a request's `agent_learnings=false` turns it off for that call, and
+A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
+$500 to a human", "I always answer in bullet points". With
+`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` on (the default; a live setting:
+`loom settings set memory_extract_agent_learnings false` turns it off without a
+restart, see [runtime settings](../../operations/runtime-settings.md)), the extraction
+call also returns these, marked `"about": "agent"`, at no extra model call. The setting
+is the only way on: a request's `agent_learnings=false` turns it off for that call, and
 `agent_learnings=true` while the setting is off is ignored and named in `ignored_args`
-(and the `X-Loom-Ignored-Args` header). It is off by default: it adds a block to the
-extraction prompt, and extraction quality has not been benchmarked with it on. Turn it
-on only once every replica runs a build that has it. Before rolling back to a build
-without it, turn it off, then delete the rows of `loom.learnings_supporters`, where
+(and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. On
+an extraction eval it filed every bot rule for review, while off about half were stored
+as the user's memory and the rest dropped; recall of user facts held, no user fact was
+filed as a bot rule, and input tokens rose by under 2%. While a rolling upgrade still
+runs a build without it, turn it off: an older build lists a pending candidate and, on
+promote, writes the bot's rule as the approver's own memory. Before rolling back to
+such a build, turn it off, then delete the rows of `loom.learnings_supporters`, where
 users' quotes live (an older build's erasure does not cover that table), and the
 `assistant_turn` candidates
-(`ALTER TABLE loom.learnings_queue DELETE WHERE source_kind = 'assistant_turn'`). An
-older build lists a pending one and, on promote, writes the bot's rule as the
-approver's own memory. Coding captures never use it.
+(`ALTER TABLE loom.learnings_queue DELETE WHERE source_kind = 'assistant_turn'`).
+Coding captures never use it.
+
+Behaviour the assistant agrees to at the user's request is the user's preference, not
+a rule of the bot: "always answer me in French" answered with "I will always answer you
+in French" is a memory about the user. A rule whose cited assistant turn follows a user
+turn asking for the same behaviour is never filed, and the drop is counted in
+`loom.memory_drops` (stage `learnings.file`, reason `user_requested`).
 
 Such a rule is never written as a memory. An end user can talk a bot into saying
 anything, and a memory at the agent's level would reach every user of the bot. The rule
@@ -89,12 +97,15 @@ request's `(org, namespace, agent)`:
   is a separate candidate, so a first wording never collects the support of a later
   one. The same rule worded differently in another session is a separate candidate too,
   so wording drift splits its support. The extractor's key rewrites leave a rule's key
-  alone. While a bot's promoted rule is served, no new candidate is filed for that bot
-  under that key: a promoted rule is served back to the bot, which restates it in its
-  own words, and each restatement would otherwise wait for review again. The skip is
-  counted in `loom.memory_drops` (stage `learnings.file`, reason `already_promoted`).
-  To revise a promoted rule, delete its `learning://<candidate_id>` document with
-  `knowledge.delete`: the next statement under its key is filed as a new candidate.
+  alone. While a bot's rule promoted to knowledge is served, no new candidate is filed
+  for that bot under that key: a promoted rule is served back to the bot, which
+  restates it in its own words, and each restatement would otherwise wait for review
+  again. The skip is counted in `loom.memory_drops` (stage `learnings.file`, reason
+  `already_promoted`). Only a knowledge promotion stops new filings under its key: a
+  rule promoted with `destination="memory"` leaves no `learning://<candidate_id>`
+  document, so each restatement of it is filed as a new candidate. To revise a promoted
+  rule, delete its `learning://<candidate_id>` document with `knowledge.delete`: the
+  next statement under its key is filed as a new candidate.
   A rejected rule is never served back, so it stops only its own wording: a different
   rule under its key is still filed.
 - The candidate row holds the rule and no user's words. Each session that states it adds
@@ -378,7 +389,7 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_*`                      | When a long session is split into fixed windows, and their size.                               |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
-| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Experimental, off by default: file the assistant's rules about itself for review.              |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | On by default: file the assistant's rules about itself for review.                             |
 | `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
 | `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |

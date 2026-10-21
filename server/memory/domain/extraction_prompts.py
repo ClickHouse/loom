@@ -1970,8 +1970,11 @@ Only rules the assistant states about ITSELF that hold beyond this
 conversation. NOT a one-time action ("I've escalated your refund"), NOT an
 answer, recommendation or pleasantry, and NOT a rule the USER states or asks
 for: how the user wants to be treated is the user's preference, with "about"
-omitted. An "about": "agent" entry is not stored as a memory; do not also
-emit the rule as a normal fact.
+omitted. Behaviour the assistant agrees to at the user's request is the
+user's preference too, never an "about": "agent" rule: [user] "always answer
+me in French", [assistant] "I will always answer you in French" is a fact
+about the user ("The user wants answers in French."). An "about": "agent"
+entry is not stored as a memory; do not also emit the rule as a normal fact.
 """
 
 _JUDGE_SYSTEM_PROMPT = """You judge extracted memorable facts against

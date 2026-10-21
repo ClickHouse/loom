@@ -7,6 +7,7 @@ serves (serves_agent, hits_to_ask).
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -85,12 +86,46 @@ def cited_texts(
         said = evidence
     else:
         said = turns[0]
-    before = messages[: cited[0]]
-    asked = next(
-        (str(m.get("content") or "") for m in reversed(before) if m.get("role") == "user"),
+    return _user_turn_before(messages, cited[0]), said or str(fact.get("value") or "")
+
+
+def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
+    return next(
+        (
+            str(m.get("content") or "")
+            for m in reversed(messages[:index])
+            if m.get("role") == "user"
+        ),
         "",
     )
-    return asked, said or str(fact.get("value") or "")
+
+
+# Words of a user turn that ask for a standing behaviour ("always answer me in French").
+_ASKS = {"always", "never", "please", "don't", "dont"}  # not a setting: a word list
+# Words a rule and a request share without naming the same behaviour.
+_COMMON = set(
+    "a an the to in on of for and or with me my i you your user user's assistant always"
+    " never will please".split()
+)  # not a setting: a word list
+
+
+def _stems(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9'$]+", text.lower())
+    return {word.removesuffix("s") for word in words if word not in _COMMON}
+
+
+def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]) -> bool:
+    """Whether the user turn just before the first of the `cited` assistant turns
+    asks for the behaviour the rule states. The assistant agreeing to a user's
+    request ("always answer me in French") states that user's preference, not a
+    rule of the bot: the turn holds an ask word and at least two of the rule's
+    words, and at least half of them."""
+    asked = _user_turn_before(messages, cited[0])
+    if not _ASKS & set(re.findall(r"[a-z']+", asked.lower())):
+        return False
+    rule = _stems(str(fact.get("value") or ""))
+    shared = rule & _stems(asked)
+    return len(shared) >= 2 and 2 * len(shared) >= len(rule)
 
 
 def bounded_quotes(asked: str, said: str) -> tuple[str, str]:

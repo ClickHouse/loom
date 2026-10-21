@@ -65,6 +65,11 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
     if not cited:
         record_drop(state.org, state.namespace, "learnings.file", "no_assistant_turn", item=key)
         return False
+    # Behaviour the assistant agrees to at the user's request is that user's
+    # preference: filed, it would reach every user of the bot.
+    if assistant_rules.user_requested(fact, state.messages, cited):
+        record_drop(state.org, state.namespace, "learnings.file", "user_requested", item=key)
+        return False
     # Refuse (blacklist), as memory.bulk_set does for every other extracted fact.
     if await _blacklisted(state, key, value, "rule not filed"):
         return False

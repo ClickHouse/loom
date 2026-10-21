@@ -1773,8 +1773,7 @@ class ExtractionSettings(BaseModel):
     memory_capture_structured_answers: Annotated[bool, LIVE] = True
     # Whether extraction files the rules an assistant states about itself as assistant_turn
     # learnings candidates for review (never memories); a request can only turn it off.
-    # Experimental.
-    memory_extract_agent_learnings: Annotated[bool, LIVE] = False
+    memory_extract_agent_learnings: Annotated[bool, LIVE] = True
     # Current messages totalling at most this many characters are
     # extracted with the compact system prompt (every rule, the schema anchors a short
     # statement can match, no structured-answer block); longer ones keep the full
