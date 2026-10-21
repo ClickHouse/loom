@@ -158,8 +158,9 @@ from one per insert to the rate above. Batching trades latency for parts: each w
 insert adds up to its window, and holds its pooled connection meanwhile. A sustained
 R_request request-path and R_background background batched inserts a second therefore
 hold at least R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
-`ch_batched_insert_background_wait_max_ms` / 1000 connections: a delivery worker writing
-20 attempt batches a second holds at least 4. That is a lower bound: a waiting insert
+`ch_batched_insert_background_wait_max_ms` / 1000 connections: 100 `conversation.append`
+a second, two batched inserts each, hold at least 100 × 2 × 50 / 1000 = 10. That is a
+lower bound: a waiting insert
 holds its connection for the window and then the flush and part write, which queue up
 and grow under load. A measured run of one process taking 200 writes a second, two
 batched inserts each, once ended with 212 requests refused with 503 `OVERLOADED` at

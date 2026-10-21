@@ -68,12 +68,21 @@ checkout.
 1. Read the release's [GitHub Release](https://github.com/ClickHouse/loom/releases) notes
    for operator steps (new settings, backfills a deployment must run) and the
    client-visible wire changes.
-2. Size the ClickHouse pool for batched inserts, which are on by default. Before
-   upgrading a process that sustains more than about 100 writes a second, raise
-   `LOOM_CH_POOL_MAXSIZE` well above R_request × `ch_batched_insert_wait_max_ms` / 1000 +
-   R_background × `ch_batched_insert_background_wait_max_ms` / 1000 plus its other
-   statements, or start it with `LOOM_CH_BATCHED_INSERTS=false`
-   ([batched inserts](../architecture/clickhouse.md#batched-inserts)).
+2. Size the ClickHouse pool for batched inserts, which are on by default. Each batched
+   insert holds a pooled connection while it waits, so a process needs at least
+   R_request × `ch_batched_insert_wait_max_ms` / 1000 + R_background ×
+   `ch_batched_insert_background_wait_max_ms` / 1000 connections on top of its other
+   statements. R_request is the batched inserts a second that requests wait on: about 2
+   per `conversation.append` and up to 4 per memory write. R_background is the
+   background flushes a second (usage events, write marks, webhook attempts). Treat the
+   result as a floor: the measured need was more than 3 times it, because a waiting
+   insert also holds its connection through the flush. Raise `LOOM_CH_POOL_MAXSIZE` to
+   several times the bound, or start the process with `LOOM_CH_BATCHED_INSERTS=false`
+   ([batched inserts](../architecture/clickhouse.md#batched-inserts)). After the
+   rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and
+   `loom.ch.pool.overloaded_total`; if `waiters` stays above zero or `overloaded_total`
+   climbs, raise `LOOM_CH_POOL_MAXSIZE` or set `ch_batched_inserts` to `false` (live, no
+   restart).
 3. From the new build's checkout, against the production ClickHouse, run
    `loom migrate --dry-run --strict`. It lists what the boot will apply and stops on
    ledger problems ([troubleshooting](./troubleshooting.md#migrations-pending-or-checksum-drift)).
