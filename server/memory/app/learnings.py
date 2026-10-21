@@ -171,10 +171,10 @@ async def handle_learnings_quality(
 async def handle_learnings_review(
     input: LearningsReviewInput,
 ) -> LearningsReviewOutput:
-    """Flip a candidate's status. On 'promote', fan out via the existing
-    `handle_memory_promote` path so the institutional row in
-    `loom.shared` gets the same provenance + reversal-window the
-    explicit promotion flow gives it.
+    """Flip a candidate's status. On 'promote', write it to `destination`, or
+    when unset to knowledge for an `assistant_turn` rule and to memory
+    otherwise: `loom.shared` through memory.promote for a supporters
+    candidate, a new row through memory.set for the rest.
 
     Idempotent: re-reviewing an already-decided candidate is a no-op
     (returns the existing status), except a bot's rule whose last supporter
