@@ -213,7 +213,7 @@ async def scan(
     org: str | None = None,
     namespace: str | None = None,
     since_days: int | None = None,
-    limit: int = 20000,
+    limit: int,
     page_size: int,
     pages: int | None,
     only_shapes: Iterable[str] | None = None,

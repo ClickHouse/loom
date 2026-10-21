@@ -179,13 +179,21 @@ async def test_scan_labels_exactly_as_the_write_path_would() -> None:
         ]
     )
     report = await sweep.scan(
-        org="clickhouse", namespace="demo-full", since_days=2, page_size=100, pages=1, ch=ch
+        org="clickhouse",
+        namespace="demo-full",
+        since_days=2,
+        limit=100,
+        page_size=100,
+        pages=1,
+        ch=ch,
     )
     assert report.scanned == 4 and len(report.candidates) == 3 and not report.truncated
     assert report.by_level == {"high": 1, "medium": 2}
     assert report.by_shape == {"credential": 1, "email": 1, "phone": 1}
     assert report.by_namespace()[("clickhouse", "demo-full")] == {"high": 1, "medium": 2}
-    narrowed = await sweep.scan(only_shapes=["credential", "email"], page_size=100, pages=1, ch=ch)
+    narrowed = await sweep.scan(
+        only_shapes=["credential", "email"], limit=100, page_size=100, pages=1, ch=ch
+    )
     assert narrowed.by_shape == {"credential": 1, "email": 1}  # the phone-only row is skipped
     for sql, params in ch.calls[:2]:  # a page's keys, then their current versions
         assert "sensitivity = ''" in sql and "{shape:String}" in sql
