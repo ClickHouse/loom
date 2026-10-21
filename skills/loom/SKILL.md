@@ -111,7 +111,8 @@ change between releases, and ops MCP does not serve with ‡.
 | You see | It means | Do |
 |---|---|---|
 | `memory_id` and `version` on a `memory.set`, `new_version` on a `memory.update` | it persisted | only now say "saved" |
-| `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key and identity; nothing was written | find the key with `memory.ask` or `memory.list`, then retry; never assume it saved |
+| `updated: false`, `reason: "not_found"` on a `memory.update` | no live row under that key for the identity you sent; nothing was written | resend with `agent: "*"` when another agent wrote it; never assume it saved |
+| 409 `AMBIGUOUS_KEY`, `candidates` on a `memory.update` | several writers hold that key | resend with the candidate's `agent`, `user_id` and `session_id`, or use `memory.update_by_id` with its id |
 | `conflict_verdict: "conflict"`, `peers` | it contradicts a stored fact; both are marked | show both and ask which is current |
 | 409 `PINNED_CONFLICT` | a pinned fact holds that key, or one close to it; a write that does not pin never replaces it | if the pinned fact is wrong, `memory.update` it (the pin stays); if yours is a different fact, store it under its own key |
 | `conflict_verdict: "pending"` | the conflict judge runs after the write | the row is stored; `memory.get` later shows the settled `status` |
@@ -157,14 +158,18 @@ reads the loop uses:
   `session_id` exactly (`user_id` and `session_id` default to `-`); `"*"`
   on a field reads every value.
 
-Read through the SDKs' typed helpers (Python `agent.memory.*`, which also
-cover revisions such as `agent.memory.update`; TypeScript `agent.recall`
-and `agent.ask`): they send the identity
-each op expects, `agent: "*"` included. A raw `agent.call` stamps your own
-`agent` and `-` for the rest, so on a read that filters on the author
-(`memory.search`‡, `memory.ask`, `memory.history`†, `conversation.search`†‡)
-it reads only your own rows unless you pass `agent: "*"`. In TypeScript, `agent.call` takes `userId`, `sessionId`
-and `runId` in its scope argument, not the body.
+Whenever you mean rows from every author, say so: a raw `agent.call`
+stamps your own `agent` (and `-` for the rest), and every op that looks
+rows up by author then sees only yours. Pass `agent: "*"` on those calls:
+reads (`memory.search`‡, `memory.ask`, `memory.list`, `memory.history`†,
+`conversation.search`†‡) and revisions by key (`memory.update`).
+`memory.related`† looks its source key up under your exact identity, so
+name the identity that wrote it. In the Python helpers the argument is
+`agent_id="*"` (`agent="*"` on `agent.memory.update`; `agent.memory.list`
+takes none, so list every author through `agent.call`);
+`agent.memory.search` and `agent.memory.ask`, and TypeScript `agent.recall`
+and `agent.ask`, already send it. In TypeScript, `agent.call` takes
+`userId`, `sessionId` and `runId` in its scope argument, not the body.
 
 A token minted with an `own_user` read scope refuses a read without
 `user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it, unless it is

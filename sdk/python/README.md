@@ -93,7 +93,7 @@ prompt of an agent that has no plugin to carry it; `part="reference"` returns
 every plane with its ops.
 
 ```python
-system_prompt = base_prompt + "\n\n" + await agent.guide()
+system_prompt = "You triage support tickets.\n\n" + await agent.guide()
 ```
 
 ## Ask the mentor

@@ -12,9 +12,8 @@ Calling convention, by surface: MCP tool `loom_<op_with_underscores>` or
 `loom_op {op, arguments}`; Python `await agent.call("<op>", {...})`;
 TypeScript `await agent.call("<op>", {...})`; HTTP `POST /v1/<op>`. The SDKs
 stamp `org`, `namespace` and `agent` for you; over HTTP you send them. A
-stamped `agent` narrows every read that filters on the author
-(`memory.search`‡, `memory.ask`, `memory.history`†, `conversation.search`†‡)
-to your own rows: pass `agent: "*"` there, or use the typed helpers (Python `agent.memory.*`, TypeScript `agent.recall` and `agent.ask`). Ops
+stamped `agent` narrows every op that looks rows up by author to your own
+rows; pass `agent: "*"` when you mean every author. The skill's Identity section lists those ops. Ops
 marked ‡ are not served over MCP (the refusal is `OP_NOT_ON_MCP`): over MCP,
 `loom_search` searches memory, knowledge and conversations, and the rest are
 SDK and HTTP only.

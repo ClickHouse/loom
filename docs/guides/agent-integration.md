@@ -14,7 +14,7 @@ the loop, where each kind of state goes and how to read answers (`part: "skill"`
 plane with its ops (`part: "reference"`). Put it in the agent's system prompt:
 
 ```python
-system_prompt = base_prompt + "\n\n" + await agent.guide()
+system_prompt = "You triage support tickets.\n\n" + await agent.guide()
 ```
 
 Over MCP the primer names the call; an Agent-Skills client installs it with
