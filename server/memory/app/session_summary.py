@@ -11,7 +11,7 @@ from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
 from server.memory.domain.extraction_policy import with_policy
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.observability.genai import staged
 from server.settings.budgets import llm_max_tokens
 
@@ -137,9 +137,10 @@ async def _draft_session_summary(
 ) -> SessionSummaryDraft | None:
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the
-    embedder returns an empty vector (the read leg filters embedding_dim > 0).
-    The digest is written from the raw turns, so it follows the operator's
-    extraction policy as the extractor does."""
+    embedder returns an empty vector (the read leg filters embedding_dim > 0);
+    a digest that reads as a credential is drafted with no vector. The digest is
+    written from the raw turns, so it follows the operator's extraction policy as
+    the extractor does."""
     from server.llm.client import get_llm_client
 
     if not msgs:
@@ -156,13 +157,19 @@ async def _draft_session_summary(
         log.info("session_summaries: empty digest for session=%r; skipping", input.session_id)
         return None
     embedder = get_embedder()
-    embedding = await embedder.embed(summary_text)
-    if not embedding:
-        log.info("session_summaries: empty embedding for session=%r; skipping", input.session_id)
-        return None
+    # A digest that reads as a credential is written without a vector: the summary leg
+    # reads only digests that have one, and the text never reaches the embedder.
+    embedding: list[float] = []
+    if not reads_high(summary_text):
+        embedding = list(await embedder.embed(summary_text))
+        if not embedding:
+            log.info(
+                "session_summaries: empty embedding for session=%r; skipping", input.session_id
+            )
+            return None
     return SessionSummaryDraft(
         summary_text=summary_text,
-        embedding=list(embedding),
+        embedding=embedding,
         embedding_model=embedder.model_name,
         tokens_in=int(getattr(result, "tokens_in", 0) or 0),
         tokens_out=int(getattr(result, "tokens_out", 0) or 0),
