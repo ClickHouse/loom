@@ -15,7 +15,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core.llm_free import refuse_synthesis
-from server.core.naming import SENTINEL
+from server.core.naming import named
 from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
 from server.memory.api.models_common import run_next_hint
 from server.memory.api.models_search import MemorySearchInput
@@ -236,9 +236,9 @@ async def handle_memory_ask(input: MemoryAskInput) -> MemoryAskOutput:
     # "unset", so map it to None rather than filtering on a literal "-".
     # read_scope rides along: the search handler resolves it against the
     # token's claim and turns it into user/session predicates.
-    uid = input.user_id if input.user_id and input.user_id != SENTINEL else None
-    rid = input.run_id if input.run_id and input.run_id != SENTINEL else None
-    sid = input.session_id if input.session_id and input.session_id != SENTINEL else None
+    uid = named(input.user_id)
+    rid = named(input.run_id)
+    sid = named(input.session_id)
 
     # Retrieval sees the question; synthesis sees the whole contract. Option blocks, "answer
     # with the letter", stamped dates are for the model, and embedded with the question they
@@ -462,10 +462,9 @@ async def _pending_extraction(input: MemoryAskInput) -> int:
     """Deferred batches in flight for the asked scope; 0 on any failure — disclosure must
     never fail an answer."""
     try:
-        from server.core.naming import SENTINEL
         from server.memory.app.pending_disclosure import pending_extraction
 
-        uid = input.user_id if input.user_id and input.user_id != SENTINEL else None
+        uid = named(input.user_id)
         return await pending_extraction(
             org=input.org, namespace=input.namespace, agent=input.agent, user_id=uid
         )

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.core.naming import named
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.app.search.budget import SearchBudget, _ensure_search_budget
 from server.memory.app.search.query_plan import (
@@ -175,6 +176,7 @@ async def _resolve_search_input(
     from server.identity.domain.read_scope import pin_read_filters
 
     input, _ = pin_read_filters(input, current_auth())
+    input = input.model_copy(update={"run_id": named(input.run_id)})
     input, _top_k_ceiling = _apply_k_defaults(input)
 
     # One budget object bounds the whole recursive fallback cascade; minted

@@ -53,7 +53,8 @@ class CostSummaryInput(BaseModel):
     agent: str | None = None
     # Only this op name (for example `memory.ask`); None counts every op.
     operation: str | None = None
-    user_id: str | None = None  # filter to one end-user; forces an events scan
+    # One end user only (forces an events scan); None or "-" = every user.
+    user_id: str | None = None
     # One class only (production | interactive | bench);
     # forces an events scan like `user_id`.
     traffic_class: str | None = None

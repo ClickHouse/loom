@@ -16,6 +16,7 @@ from server.core.cursors import decode_cursor as _decode_cursor
 from server.core.cursors import encode_cursor as _encode_cursor
 from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError
+from server.core.naming import SENTINEL, named
 from server.embedding import get_embedder
 from server.identity.app.conversation_logging import set_conversation_logging
 from server.identity.app.request_scope import request_scope
@@ -619,13 +620,17 @@ async def handle_conversation_update(
 
     from server.knowledge.store import conversations as conversation_repo
 
+    # None and the identity sentinel "-" the SDKs stamp keep the thread's run; "" clears it.
+    if input.run_id == SENTINEL:
+        input = input.model_copy(update={"run_id": None})
     if input.title is None and input.metadata is None and input.run_id is None:
         raise HTTPException(
             status_code=400,
             detail={
                 "code": "NO_FIELDS_PROVIDED",
                 "message": (
-                    "conversation.update requires at least one of `title`, `metadata`, or `run_id`."
+                    "conversation.update requires at least one of `title`, `metadata`, or "
+                    '`run_id` (`run_id` "-" keeps the thread\'s run; "" detaches it).'
                 ),
             },
         )
@@ -644,7 +649,10 @@ async def handle_conversation_update(
     merged_metadata = (
         json.dumps(input.metadata) if input.metadata is not None else existing.get("metadata", "{}")
     )
-    merged_run_id = input.run_id if input.run_id is not None else existing.get("run_id", "-") or "-"
+    if input.run_id is None:
+        merged_run_id = existing.get("run_id", SENTINEL) or SENTINEL
+    else:
+        merged_run_id = input.run_id or SENTINEL
 
     await conversation_repo.insert_thread(
         {
@@ -739,7 +747,7 @@ def _thread_reader(agent: str) -> str | None:
     """The agent filter for one thread's reads: "*" or "-" reads every agent's turns
     (a caller that has only the thread id: a search hit, a memory's source), as
     conversation.search reads them."""
-    return None if agent in ("*", "-") else agent
+    return None if agent in ("*", SENTINEL) else agent
 
 
 async def _conversation_get_reads(input: ConversationGetInput) -> ConversationGetOutput:
@@ -836,7 +844,7 @@ async def handle_conversation_list(
         input.namespace,
         _thread_reader(input.agent),
         input.thread_id,
-        run_id=input.run_id,
+        run_id=named(input.run_id),
         after=after,
         limit=input.limit + 1,  # +1 to detect "more"
     )
@@ -877,6 +885,11 @@ def _conversation_read_scope() -> ReadFilters:
 async def handle_conversation_search(
     input: ConversationSearchInput,
 ) -> ConversationSearchOutput:
+    # The identity sentinel "-" the SDKs stamp filters nothing here. The saved-message
+    # search shares `_search_conversations` and keeps its user_id exact: it is the owner.
+    input = input.model_copy(
+        update={"run_id": named(input.run_id), "user_id": named(input.user_id)}
+    )
     return await _search_conversations(input, saved_only=False)
 
 
