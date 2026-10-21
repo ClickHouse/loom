@@ -36,13 +36,15 @@ def run(
     `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
     whose type does not fit its column fails or matches what it would in production."""
     script = ";\n".join(["CREATE DATABASE IF NOT EXISTS loom", *setup, sql])
-    # The server's own binder, which also keeps a DateTime64 value's fraction.
+    # The server's own binder, which also keeps a DateTime64 value's fraction; the
+    # session is in UTC, as the server's is, since a zone-less one is read in it.
     _, bound = bind_query(script, params or {}, UTC)
     binds = [f"--{k}={v}" for k, v in bound.items()]
     kept = ["--path", str(path)] if path else []
     # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
     out = subprocess.run(
-        [CLICKHOUSE or "clickhouse", "local", "--multiquery", *kept, *binds],
+        [CLICKHOUSE or "clickhouse", "local", "--multiquery", "--session_timezone=UTC", *kept]
+        + binds,
         input=script + " FORMAT JSONEachRow",
         capture_output=True,
         text=True,
