@@ -1061,8 +1061,10 @@ async def handle_conversation_search_saved_messages(
             )
         # A message that reads as a credential is never a keyword hit either: one saved
         # by an earlier build is held back here, as the vector leg holds it back.
-        plain = without_credentials(
-            (r for r in rows if r["role"] in ("user", "assistant")),
+        # The check reads each message whole, so it runs in a thread, off the event loop.
+        plain = await asyncio.to_thread(
+            without_credentials,
+            [r for r in rows if r["role"] in ("user", "assistant")],
             lambda r: str(r["content"]),
             candidate_limit,
         )

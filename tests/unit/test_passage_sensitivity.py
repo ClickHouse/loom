@@ -327,18 +327,27 @@ def test_split_credentials_keeps_a_boundary_character_that_only_happens_to_repea
 def test_split_credentials_reads_each_session_once(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.memory.domain import sensitivity
 
-    # Two sessions of 128 chunks each: the patterns run once over each session's text.
+    # Two sessions of 128 chunks each: the spans are found once over each session's joined
+    # text, and each chunk is also read alone, once, because a chunk can start inside a word.
     chunks = [(s, n, f"{s} {n} notes on the plan. ") for s in ("a", "b") for n in range(128)]
     scanned: list[str] = []
+    read_alone: list[str] = []
     spans = sensitivity.credential_spans
+    holds = sensitivity._holds_credential
 
-    def counting(text: str) -> list[tuple[int, int]]:
+    def counting_spans(text: str) -> list[tuple[int, int]]:
         scanned.append(text)
         return spans(text)
 
-    monkeypatch.setattr(sensitivity, "credential_spans", counting)
+    def counting_holds(text: str) -> bool:
+        read_alone.append(text)
+        return holds(text)
+
+    monkeypatch.setattr(sensitivity, "credential_spans", counting_spans)
+    monkeypatch.setattr(sensitivity, "_holds_credential", counting_holds)
     assert sensitivity.split_credentials(chunks) == [False] * 256
     assert scanned == ["".join(c for s, _, c in chunks if s == name) for name in ("a", "b")]
+    assert sum(len(t) for t in read_alone) <= sum(len(c) for _, _, c in chunks)
 
 
 def test_split_credentials_finds_a_key_cut_at_the_boundary_of_long_chunks() -> None:

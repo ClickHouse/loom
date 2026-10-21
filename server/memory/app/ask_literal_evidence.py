@@ -16,6 +16,7 @@ Fail-open to no extra hits.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import logging
 from typing import Any
@@ -132,7 +133,9 @@ async def literal_complete(
     # A turn that reads as a credential still counts as a statement, but its text never
     # becomes a hit or reaches the synthesis prompt.
     LAST_LITERAL_STATEMENTS.set(len(rows))
-    shown = without_credentials(rows, lambda r: str(r.get("content") or ""))
+    shown = await asyncio.to_thread(
+        without_credentials, rows, lambda r: str(r.get("content") or "")
+    )
     hits = turn_hits(shown, ranked, max_hits=max_hits)
     if hits:
         log.info(

@@ -32,8 +32,11 @@ async def embed_plain(
 ) -> list[Embedded]:
     """One entry per text; a text that reads as a credential never reaches `embed`. A caller
     that passes `held` has already checked each text, both by its own text and by whether a
-    credential in the text it was cut from overlaps it, so `held` decides alone."""
-    holds = held if held is not None else [reads_high(text) for text in texts]
+    credential in the text it was cut from overlaps it, so `held` decides alone. Otherwise
+    each text is checked in a thread, off the event loop."""
+    holds = held
+    if holds is None:
+        holds = await asyncio.to_thread(lambda: [reads_high(text) for text in texts])
     plain = [text for text, h in zip(texts, holds, strict=True) if not h]
     produced = await embed(plain) if plain else []
     vectors = iter(produced)
