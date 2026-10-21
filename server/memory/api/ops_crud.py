@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from server.memory.api.models_apply import MemoryApplyInput, MemoryApplyOutput
 from server.memory.api.models_crud import (
+    MemoryAutoRetirementsInput,
+    MemoryAutoRetirementsOutput,
     MemoryClearInput,
     MemoryClearOutput,
     MemoryDeleteInput,
@@ -24,6 +26,8 @@ from server.memory.api.models_crud import (
     MemoryRestoreOutput,
     MemorySetInput,
     MemorySetOutput,
+    MemoryStatusesInput,
+    MemoryStatusesOutput,
     MemorySweepExpiredInput,
     MemorySweepExpiredOutput,
     MemoryTouchInput,
@@ -41,6 +45,7 @@ from server.memory.app.apply_ops import (
     handle_memory_apply,
     handle_memory_sweep_expired,
 )
+from server.memory.app.auto_resolution import handle_memory_auto_retirements
 from server.memory.app.curation import handle_memory_redact
 from server.memory.app.handlers import (
     handle_memory_clear,
@@ -52,7 +57,7 @@ from server.memory.app.handlers import (
     handle_memory_touch,
     handle_memory_unpin,
 )
-from server.memory.app.query import handle_memory_keys, handle_memory_list
+from server.memory.app.query import handle_memory_keys, handle_memory_list, handle_memory_statuses
 from server.memory.app.restore import handle_memory_restore
 from server.memory.app.update import handle_memory_update, handle_memory_update_by_id
 from server.memory.app.verify import handle_memory_verify
@@ -263,4 +268,28 @@ memory_verify = Operation(
     # memory_id addressing carries no namespace for the transport to check;
     # the handler re-checks access against the resolved row's namespace.
     skip_namespace_authz=True,
+)
+
+
+memory_statuses = Operation(
+    name="memory.statuses",
+    maturity="experimental",
+    input_model=MemoryStatusesInput,
+    output_model=MemoryStatusesOutput,
+    handler=handle_memory_statuses,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
+)
+
+
+memory_auto_retirements = Operation(
+    name="memory.auto_retirements",
+    maturity="experimental",
+    input_model=MemoryAutoRetirementsInput,
+    output_model=MemoryAutoRetirementsOutput,
+    handler=handle_memory_auto_retirements,
+    idempotent=True,
+    required_role=Role.VIEWER,
+    audit=False,
 )

@@ -167,12 +167,15 @@ def _extraction_system_prompt(
     existing_memories: list[dict[str, str]] | None,
     namespace_categories: list[dict[str, str]] | None,
     custom_instructions: str,
+    agent_learnings: bool = False,
 ) -> str:
     """The extractor's system prompt: the base prompt under the strict-examples
     preamble, the fence note, the namespace's categories and the caller's
     instructions. Each call appends the operator's policy after it
     (`with_policy`)."""
-    system_prompt = with_strict_examples_preamble(_extraction_base_prompt(compact))
+    system_prompt = with_strict_examples_preamble(
+        _extraction_base_prompt(compact, agent_learnings=agent_learnings)
+    )
     if existing_memories:
         from server.memory.domain.prompt_fence import FENCE_NOTE
 
@@ -369,13 +372,17 @@ def _settle_facts(
     existing_memories: list[dict[str, str]] | None,
     speaker_attribution: bool,
     from_turns: bool,
+    rules: list[ExtractedFact],
 ) -> list[ExtractedFact]:
     """The deterministic passes between the model's answer and the judge:
     stable and relation keys, citation repair, temporal anchors and
     timestamps, suffix and attribute normalisation, relative-date grounding,
     speakers, code facets, index links, the grounding grade and speaker
     attribution. Without `from_turns` (an operator policy) nothing is taken
-    from the turns past what the model wrote. Pure."""
+    from the turns past what the model wrote. The assistant's `rules` get no
+    pass and are returned after the facts: a key rewrite would rekey a rule each
+    session, and citation repair scores only user turns, so it would move a rule's
+    citation off the assistant turn it must cite. Pure."""
     # Entity-stable key rewrite: turn a concept-level key
     # (`user_task_status`) into an entity-prefixed one (`pr107585_status`)
     # when the fact carries a salient identifier. Applied here so every
@@ -404,7 +411,10 @@ def _settle_facts(
     # The rows the model left out are recovered from the turns, unless an
     # operator policy is in force: the model may have left them out for it.
     if from_turns:
-        facts = _recover_rows(facts, messages)
+        # With no user fact, the rules stand in, so a rules-only answer still
+        # recovers what the model left out of the user's turns.
+        seen = facts or rules
+        facts = facts + _recover_rows(seen, messages)[len(seen) :]
     facts = apply_message_timestamps(facts, messages)
     facts = strip_variant_suffixes(facts)
     if facts:
@@ -437,7 +447,18 @@ def _settle_facts(
     # the evidence itself — the item's name occurs in assistant turns and in
     # no user turn — so "what have you recommended to me?" finds it. Pure.
     facts = attribute_assistant_introduced(facts, messages) if speaker_attribution else facts
-    return facts
+    return facts + rules
+
+
+def _split_agent_rules(
+    facts: list[ExtractedFact], agent_learnings: bool
+) -> tuple[list[ExtractedFact], list[ExtractedFact]]:
+    """The user facts and the assistant's rules about itself. Off, a fact the model
+    still marks as the assistant's rule is the user's, and gets every pass a user
+    fact gets."""
+    if not agent_learnings:
+        return [replace(f, about="user") if f.about == "agent" else f for f in facts], []
+    return [f for f in facts if f.about != "agent"], [f for f in facts if f.about == "agent"]
 
 
 @staged("extract")
@@ -459,6 +480,7 @@ async def extract_from_messages(
     namespace: str = "",
     llm_cache: bool | None = None,
     compact_prompt: bool | None = None,  # None = judge `messages`
+    agent_learnings: bool = False,
 ) -> ExtractionResult:
     """Run one LLM completion to extract memorable facts from messages.
 
@@ -490,6 +512,9 @@ async def extract_from_messages(
     misfire), one retry with a stricter prompt addendum is attempted.
     Token cost in the misfire case: one extra LLM call. In the
     legitimately-empty case (greetings, trivial replies): no retry.
+
+    `agent_learnings` asks the same call for the assistant's standing rules about
+    itself, returned as facts with `about="agent"` (`_split_agent_rules`).
     """
     if not messages:
         client = get_llm_client()
@@ -516,6 +541,7 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         namespace_categories=namespace_categories,
         custom_instructions=custom_instructions,
+        agent_learnings=agent_learnings,
     )
     system_prompt = with_policy(base_prompt, operator_policy)
     # JSON mode constrains the model to valid JSON; the try/except below
@@ -586,10 +612,12 @@ async def extract_from_messages(
         if _cs_result is not None:
             accumulated = _merge_llm_results(accumulated, _cs_result)
 
-    # Relation backfill: the facts the first pass left without a typed
-    # relation get one more, smaller call. Before the relation key rewrite
-    # below, which keys a fact by its single-valued relation, and before the
-    # judge, which then grades the backfilled facts too.
+    # Relation backfill: the facts the first pass left without a typed relation get
+    # one more, smaller call. Before the relation key rewrite below, which keys a fact
+    # by its single-valued relation, and before the judge, which then grades the
+    # backfilled facts too. A bot's rule takes no part: it is filed to the learnings
+    # queue, never keyed by a relation.
+    facts, rules = _split_agent_rules(facts, agent_learnings)
     relations_backfilled = 0
     if facts:
         facts, _bf_result, relations_backfilled = await _backfill_relations(facts, client=client)
@@ -597,7 +625,6 @@ async def extract_from_messages(
             accumulated = _merge_llm_results(accumulated, _bf_result)
         if relations_backfilled:
             log.info("relation backfill gave %d fact(s) a typed relation", relations_backfilled)
-
     facts = _settle_facts(
         facts,
         messages,
@@ -605,6 +632,7 @@ async def extract_from_messages(
         existing_memories=existing_memories,
         speaker_attribution=speaker_attribution,
         from_turns=not operator_policy,
+        rules=rules,
     )
 
     # Judge gate: drop WRONG, keep CORRECT/UNCERTAIN. observation_date

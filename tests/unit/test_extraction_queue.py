@@ -24,7 +24,7 @@ import pytest
 from fastapi import HTTPException
 
 from server.core.errors import ModelCallDeferred, ModelCallRefused
-from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters, replayed_read_scope
 from server.llm.gateway import GatewayUnavailable
 from server.llm.identity import IdentityUnread
 from server.memory.api.models_bulk import MemorySetFromMessagesInput, _Message
@@ -134,7 +134,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 ) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, *, scope, ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         assert input.defer is True
         return "abc123"
 
@@ -155,7 +155,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
 
-    async def _enqueue(input, *, scope, ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         raise RuntimeError("ch down")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -219,33 +219,53 @@ def test_payload_stores_the_requests_read_scope() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
 async def test_replay_runs_under_the_stored_scope_and_unbinds_after(
     monkeypatch: pytest.MonkeyPatch,
+    legacy: bool,
 ) -> None:
     import server.memory.app.extract.handler as mx
     from server.identity.app.request_scope import request_scope
+    from server.llm import customer
     from server.memory.api.models_bulk import MemorySetFromMessagesOutput
+    from server.memory.app.provenance import writer_actor
 
     seen: list[Any] = []
+    before = customer.attribution()
 
-    async def _handler(input):
-        seen.append(request_scope())
+    async def _handler(input, *, rule_agent):
+        seen.append((request_scope(), customer.attribution(), writer_actor(), rule_agent))
         return MemorySetFromMessagesOutput()
 
     monkeypatch.setattr(mx, "handle_memory_set_from_messages", _handler)
     payload, _, _ = q.payload_for(
-        _input(), scope=ReadFilters(scope="own_user", user_id="u1", session_id=None)
+        _input(),
+        scope=ReadFilters(scope="own_user", user_id="u1", session_id=None),
+        enqueued_by="process:sa:trust:writer",
+        rule_agent="writer",
     )
-    await queue.replay_row({"payload": payload})
-    assert (seen[0].scope, seen[0].user_id) == ("own_user", "u1")
+    if legacy:
+        data = json.loads(payload)
+        data.pop(q.READ_SCOPE_KEY)
+        data.pop(q.RULE_AGENT_KEY)
+        payload = json.dumps(data)
+    await queue.replay_row({"org": "o", "namespace": "n", "user_id": "u1", "payload": payload})
+    scope, attribution, actor, rule_agent = seen[0]
+    assert scope == (
+        WHOLE_NAMESPACE if legacy else ReadFilters(scope="own_user", user_id="u1", session_id=None)
+    )
+    assert attribution == customer.Attribution("o", "n", "sa:trust:writer", "u1")
+    assert actor == "process:sa:trust:writer"
+    assert rule_agent == ("" if legacy else "writer")
     assert request_scope().narrowed is False, "the next replay starts unbound"
+    assert customer.attribution() == before
 
 
 def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> None:
     payload, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE)
     data = json.loads(payload)
     data.pop(q.READ_SCOPE_KEY)
-    assert queue.replay_scope({"payload": json.dumps(data)}).narrowed is False
+    assert replayed_read_scope(data.get(q.READ_SCOPE_KEY)).narrowed is False
 
 
 @pytest.mark.parametrize(
@@ -254,14 +274,16 @@ def test_a_payload_queued_before_scopes_were_stored_replays_namespace_wide() -> 
         {"scope": "own_user", "user_id": None, "session_id": None},
         {"scope": "own_session", "user_id": "u1", "session_id": None},
         {"scope": "everyone", "user_id": "u1", "session_id": None},
+        {"scope": "refused", "user_id": "u1", "session_id": None},
+        ["own_user", "u1"],
     ],
 )
-def test_an_incomplete_stored_scope_fails_the_row(stored: dict[str, Any]) -> None:
+async def test_an_incomplete_stored_scope_fails_the_row(stored: Any) -> None:
     payload = json.dumps(
         {**json.loads(q.payload_for(_input(), scope=WHOLE_NAMESPACE)[0]), q.READ_SCOPE_KEY: stored}
     )
     with pytest.raises(ValueError):
-        queue.replay_scope({"payload": payload})
+        await queue.replay_row({"payload": payload})
 
 
 def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
@@ -272,7 +294,7 @@ def test_defer_with_a_scope_that_does_not_resolve_is_refused_not_queued(
     import server.memory.app.extract.handler as mx
     from server.core.errors import IdentityIncompleteError
 
-    async def _enqueue(input, *, scope, ch=None):
+    async def _enqueue(input, *, scope, rule_agent="", ch=None):
         raise AssertionError("nothing is queued")
 
     monkeypatch.setattr(q, "enqueue", _enqueue)
@@ -384,7 +406,7 @@ async def test_worker_replays_claimed_rows_and_marks_state(
 
     seen: list[MemorySetFromMessagesInput] = []
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         seen.append(inp)
         if inp.messages[0].content.startswith("FAIL"):
             raise RuntimeError("extractor down")
@@ -601,7 +623,7 @@ async def test_worker_is_serial_within_a_namespace_and_parallel_across(
     in_flight: dict[str, int] = {"n": 0, "m": 0}
     overlap_seen = {"value": False}
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         ns = inp.namespace
         in_flight[ns] += 1
         assert in_flight[ns] == 1, "two batches of one namespace ran at once"
@@ -642,7 +664,7 @@ async def test_namespace_concurrency_one_is_fully_serial(monkeypatch: pytest.Mon
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     active = {"n": 0}
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         active["n"] += 1
         assert active["n"] == 1
         await asyncio.sleep(0.005)
@@ -676,7 +698,7 @@ async def test_one_group_raising_still_waits_for_every_other_group(
     ]
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
-    async def _fake_handler(inp):
+    async def _fake_handler(inp, **_kw):
         if inp.namespace == "b":
             await asyncio.sleep(0.05)
 
@@ -732,7 +754,7 @@ def _replaying(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> StubCH:
     ch.query_all_returns = [[_stored_row(queue_id="q1", attempts=2)]]
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
 
-    async def _fake_handler(inp: Any) -> Any:
+    async def _fake_handler(inp: Any, **_kw: Any) -> Any:
         raise error
 
     from server.memory.app.extract import handler as extract_handler_mod
@@ -863,7 +885,7 @@ class _Queue:
 
 
 def _attribution(r: dict[str, Any]) -> tuple[str, str, str, str]:
-    return (r["org"], r["namespace"], r["user_id"], r["enqueued_by"])
+    return (r["org"], r["namespace"], r["user_id"], r["enqueued_by"] or q.enqueued_actor(r))
 
 
 def _queued(queue_id: str, by: str, minute: int, **kw: Any) -> dict[str, Any]:
@@ -896,11 +918,52 @@ async def test_the_claim_takes_other_work_while_an_enqueuer_is_held() -> None:
     assert [r["queue_id"] for r in claimed] == ["b-1"]  # not agent-a's, which would be held
     sql = table.sql[0]
     assert "startsWith(last_error, 'held: ') AND lease_until >= now64(3)" in sql
-    # the enqueuer's own column, never a payload read for every row
-    assert "(org, namespace, user_id, enqueued_by) NOT IN" in sql and "JSONExtract" not in sql
+    assert (
+        sql.count("if(enqueued_by != '', enqueued_by, JSONExtractString(payload, 'enqueued_by'))")
+        == 2
+    )
     table.rows["a-held"]["lease_until"] = datetime.now(UTC) - timedelta(seconds=1)
     claimed = await q.claim_batch(limit=3, lease_seconds=600, ch=table)
     assert [r["queue_id"] for r in claimed] == ["a-held", "a-next", "b-2"]  # the hold is over
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held_column", ["", "process:sa:t:agent-a"])
+async def test_a_payload_only_enqueuer_waits_without_holding_another_enqueuer(
+    held_column: str,
+) -> None:
+    from clickhouse_connect.driver.binding import format_query_value
+
+    from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
+
+    if CLICKHOUSE is None:
+        pytest.skip("clickhouse binary not installed")
+    a, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by="process:sa:t:agent-a")
+    b, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by="process:sa:t:agent-b")
+    setup = [ddl("memory_extraction_queue")]
+    for qid, payload, status, lease, age, column in (
+        ("a-held", a, "running", "now64(3) + INTERVAL 10 MINUTE", 3, held_column),
+        ("a-next", a, "pending", "toDateTime64(0, 3)", 2, ""),
+        ("b-next", b, "pending", "toDateTime64(0, 3)", 1, ""),
+    ):
+        setup.append(
+            "INSERT INTO loom.memory_extraction_queue "
+            "(org, namespace, agent, user_id, session_id, queue_id, payload, status, "
+            "lease_until, enqueued_at, version, enqueued_by, last_error) VALUES "
+            f"('o', 'n', 'a', 'u1', '-', {format_query_value(qid)}, "
+            f"{format_query_value(payload)}, {format_query_value(status)}, {lease}, "
+            f"now64(3) - INTERVAL {age} MINUTE, 1, {format_query_value(column)}, "
+            f"{format_query_value('held: refused' if status == 'running' else '')})"
+        )
+
+    class NativeQueue(StubCH):
+        async def query_all(self, sql, params=None):
+            return run(setup, sql, params)
+
+    ch = NativeQueue()
+    claimed = await q.claim_batch(limit=1, lease_seconds=600, ch=ch)
+    assert [row["queue_id"] for row in claimed] == ["b-next"]
+    assert [row["queue_id"] for row in ch.inserts[0][1]] == ["b-next"]
 
 
 @pytest.mark.asyncio

@@ -6,8 +6,8 @@
 // and the run ledger says the session ended, not what it learned. This hook hands the
 // transcript's real turns to memory.set_from_messages(defer=true) once, at
 // SessionEnd: the server extracts the facts, writes the session summary,
-// judges the outcome and, later, distils the reflections. Memories, not the
-// transcript — the transcript itself still lands only where recording is on.
+// judges the outcome and, later, distils the reflections. The turns it sends are
+// kept as the facts' source evidence, whether or not recording is on.
 
 const MAX_TURNS = 200; // last N real turns of the session
 const MAX_MESSAGE_CHARS = 6000; // per turn

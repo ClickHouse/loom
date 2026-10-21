@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from server.llm import customer
 from tests.unit.test_model_call_holds import _Embedder, _stub, _Stubs, _worker
 from tests.unit.test_model_call_holds import agents as agents
@@ -102,7 +104,7 @@ def test_a_held_writer_does_not_starve_its_neighbour(agents, clock, monkeypatch)
 
 
 def test_projection_writer_matches_the_failures_agent(writers):
-    from server.memory.workers import projection_repair
+    from server.memory.app import projection_failures
 
     writers.writers[("acme", AGENT_NS, "other-agent", "u1", "-", "k1")] = f"process:{AGENT_8}"
     writers.writers[("acme", AGENT_NS, "target-agent", "u1", "-", "k1")] = (
@@ -116,11 +118,11 @@ def test_projection_writer_matches_the_failures_agent(writers):
         projection="entity_vectors",
         payload={"user_id": "u1"},
     )
-    assert asyncio.run(projection_repair._writer(failure)) == "sa:cell-t1:agent-7"
+    assert asyncio.run(projection_failures._writer(failure)) == "sa:cell-t1:agent-7"
 
 
 def test_model_free_projections_do_not_need_a_writer(writers):
-    from server.memory.workers import projection_repair
+    from server.memory.app import projection_failures
 
     writers.writers[("acme", AGENT_NS, "a", "u1", "s1", "k1")] = f"process:{AGENT_8}"
     writers.writers[("acme", AGENT_NS, "a", "u2", "s2", "k1")] = "process:another-writer"
@@ -138,11 +140,11 @@ def test_model_free_projections_do_not_need_a_writer(writers):
             projection=projection,
             payload={},
         )
-        assert asyncio.run(projection_repair._writer(failure)) == ""
+        assert asyncio.run(projection_failures._writer(failure)) == ""
 
 
 def test_chunk_repair_uses_the_sources_session(writers):
-    from server.memory.workers import projection_repair
+    from server.memory.app import projection_failures
 
     writers.writers[("acme", AGENT_NS, "a", "u1", "s1", "k1")] = f"process:{AGENT_8}"
     writers.writers[("acme", AGENT_NS, "a", "u2", "s2", "k1")] = "process:another-writer"
@@ -155,7 +157,7 @@ def test_chunk_repair_uses_the_sources_session(writers):
         payload={},
         source_resource_id="memory.set_from_messages:s1:source",
     )
-    assert asyncio.run(projection_repair._writer(failure)) == AGENT_8
+    assert asyncio.run(projection_failures._writer(failure)) == AGENT_8
 
 
 def test_ambiguous_repairs_leave_room_for_other_failures(monkeypatch, clock):
@@ -166,30 +168,155 @@ def test_ambiguous_repairs_leave_room_for_other_failures(monkeypatch, clock):
 
     switch_off()
     failures = [
-        SimpleNamespace(failure_id=key, org="acme", namespace="ns", payload={})
+        SimpleNamespace(
+            failure_id=key, org="acme", namespace="ns", projection="memory_chunks", payload={}
+        )
         for key in ("ambiguous", "healthy")
     ]
     repaired = []
+    marked = []
+
+    class CH:
+        async def execute(self, sql, params=None):
+            marked.extend(params["failure_ids"])
 
     async def scan(*, limit, exclude_orgs, exclude_ids):
         return [f for f in failures if f.failure_id not in exclude_ids][:limit]
 
-    async def writer(failure):
+    async def writer(failure, **kwargs):
         if failure.failure_id == "ambiguous":
             raise IdentityUnread("more than one writer")
         return ""
 
-    async def retry(failure):
+    async def retry(failure, **kwargs):
         repaired.append(failure.failure_id)
-        return SimpleNamespace(retried=True, resolved=True, reason="", error="")
+        return projection_failures.ProjectionFailureRetryResult(
+            failure.failure_id, failure.projection, retried=True, resolved=True
+        )
 
     monkeypatch.setattr(projection_failures, "scan_active_projection_failures", scan)
-    monkeypatch.setattr(projection_failures, "retry_projection_failure", retry)
-    monkeypatch.setattr(projection_repair, "_writer", writer)
+    monkeypatch.setattr(projection_failures, "_retry", retry)
+    monkeypatch.setattr(projection_failures, "_writer", writer)
+    monkeypatch.setattr(projection_failures, "get_client", lambda: CH())
     config = projection_repair.ProjectionRepairConfig(max_failures_per_pass=1)
-    asyncio.run(projection_repair.run_pass(config))
-    asyncio.run(projection_repair.run_pass(config))
+    first = asyncio.run(projection_repair.run_pass(config))
+    second = asyncio.run(projection_repair.run_pass(config))
+    assert (first.retried, first.resolved, first.failed) == (0, 0, [])
+    assert (second.retried, second.resolved) == (1, 1)
     assert repaired == ["healthy"]
+    assert marked == ["healthy"]
+
+
+def test_projection_retry_uses_the_original_writer_in_an_admin_context(writers, monkeypatch):
+    from server.llm import customer
+    from server.memory.app import projection_failures
+    from server.memory.store import conflict_resolver
+
+    writers.writers[("acme", AGENT_NS, "a", "u1", "s1", "k1")] = "human:sso-alice"
+    failure = projection_failures.ProjectionFailureRow(
+        failure_id="repair",
+        org="acme",
+        namespace=AGENT_NS,
+        agent="a",
+        projection="memory_chunks",
+        source_operation="memory.set_from_messages",
+        source_resource_id="memory.set_from_messages:s1:source",
+        memory_keys=["k1"],
+        error_type="TimeoutError",
+        error_message="",
+        payload={"user_id": "u1"},
+    )
+    seen, marked = [], []
+
+    class CH:
+        async def execute(self, sql, params=None):
+            marked.extend(params["failure_ids"])
+
+    async def not_erasing(org, **kwargs):
+        return False
+
+    async def replay(failure, **kwargs):
+        seen.append(customer.attribution())
+
+    monkeypatch.setattr(conflict_resolver, "under_erasure", not_erasing)
+    monkeypatch.setattr(projection_failures, "_retry_memory_chunks", replay)
+    with customer.for_org("admin-org", namespace="admin-ns", subject="admin"):
+        original = customer.attribution()
+        (result,) = asyncio.run(projection_failures.retry_failures([failure], ch=CH()))
+        assert customer.attribution() == original
+    assert [(a.org, a.namespace, a.subject, a.user_id) for a in seen] == [
+        ("acme", AGENT_NS, "sso-alice", "u1")
+    ]
+    assert result.resolved and marked == ["repair"]
+
+
+@pytest.mark.parametrize("stale_first", [True, False])
+def test_vector_repair_names_only_the_writers_of_values_still_held(
+    writers, monkeypatch, stale_first
+):
+    from server.llm import customer
+    from server.memory.app import projection_failures, projections
+    from server.memory.store import conflict_resolver
+
+    writers.writers[("acme", AGENT_NS, "a", "u1", "s1", "k1")] = "human:sso-bob"
+    writers.writers[("acme", AGENT_NS, "a", "u1", "s1", "k2")] = "human:sso-alice"
+    ids = ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"]
+    entries = [
+        {"memory_key": key, "memory_type": "semantic", "value": value, "entities": [value]}
+        for key, value in (("k1", "first"), ("k2", "second"))
+    ]
+    failure = projection_failures.ProjectionFailureRow(
+        failure_id="repair",
+        org="acme",
+        namespace=AGENT_NS,
+        agent="a",
+        projection="entity_vectors",
+        source_operation="memory.bulk_set",
+        source_resource_id="",
+        memory_keys=["k1", "k2"],
+        error_type="TimeoutError",
+        error_message="",
+        payload={
+            "entries": entries,
+            "results": [
+                {"memory_key": entry["memory_key"], "memory_id": mid, "version": 1}
+                for entry, mid in zip(entries, ids, strict=True)
+            ],
+            "user_id": "u1",
+            "session_id": "s1",
+        },
+    )
+    replayed, marked, reads = [], [], []
+
+    class CH:
+        async def query_all(self, sql, params=None):
+            reads.append(params["versions"])
+            return [
+                {"id": mid, "sha": sha}
+                for mid, sha in params["versions"]
+                if not stale_first or mid != ids[0]
+            ]
+
+        async def execute(self, sql, params=None):
+            marked.extend(params["failure_ids"])
+
+    async def not_erasing(org, **kwargs):
+        return False
+
+    async def replay(input, results, embedder, **kwargs):
+        replayed.append(([e.memory_key for e in input.entries], customer.attribution().subject))
+
+    monkeypatch.setattr(conflict_resolver, "under_erasure", not_erasing)
+    monkeypatch.setattr(projections, "write_entity_vectors", replay)
+    (result,) = asyncio.run(projection_failures.retry_failures([failure], ch=CH()))
+    if stale_first:
+        assert result.resolved and replayed == [(["k2"], "sso-alice")]
+        assert marked == ["repair"]
+    else:
+        assert result.reason == "model_calls_held" and not result.retried
+        assert not result.resolved and not result.error
+        assert replayed == marked == []
+    assert len(reads) == 1
 
 
 def test_structured_profiles_use_the_newest_principal_in_their_facts(writers, monkeypatch):

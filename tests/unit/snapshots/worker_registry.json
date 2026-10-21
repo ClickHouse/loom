@@ -155,17 +155,17 @@
    }
   },
   {
-   "deadline_seconds()": 120.0,
+   "deadline_seconds()": 600.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
-   "interval_seconds": 30.0,
-   "max_pass_seconds": null,
-   "name": "conflict_sweep",
+   "interval_seconds": 10.0,
+   "max_pass_seconds": 600.0,
+   "name": "conflict_resolver",
    "owned_tables": [],
    "pass_callable": {
-    "id": "server.memory.workers.conflict_sweep:run_pass"
+    "id": "server.memory.workers.conflict_resolver:run_pass"
    }
   },
   {
@@ -844,20 +844,6 @@
    }
   },
   {
-   "deadline_seconds()": 120.0,
-   "due_scope": null,
-   "first_pass_due": null,
-   "has_first_pass_hook": false,
-   "idle_interval_seconds": null,
-   "interval_seconds": 30.0,
-   "max_pass_seconds": null,
-   "name": "conflict_sweep",
-   "owned_tables": [],
-   "pass_callable": {
-    "id": "server.memory.workers.conflict_sweep:run_pass"
-   }
-  },
-  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -1363,17 +1349,17 @@
    }
   },
   {
-   "deadline_seconds()": 120.0,
+   "deadline_seconds()": 600.0,
    "due_scope": null,
    "first_pass_due": null,
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
-   "interval_seconds": 30.0,
-   "max_pass_seconds": null,
-   "name": "conflict_sweep",
+   "interval_seconds": 10.0,
+   "max_pass_seconds": 600.0,
+   "name": "conflict_resolver",
    "owned_tables": [],
    "pass_callable": {
-    "id": "server.memory.workers.conflict_sweep:run_pass"
+    "id": "server.memory.workers.conflict_resolver:run_pass"
    }
   },
   {

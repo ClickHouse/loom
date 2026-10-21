@@ -13,9 +13,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from server.memory.app.entity_projections import (  # noqa: E402
+from server.memory.app.set_entities import (  # noqa: E402
     _candidate_entities_from_value,
 )
+from server.memory.domain.graph_quality import canonical_entity_text  # noqa: E402
 
 
 # --- entity candidate stoplist -------------------------------------------------
@@ -81,6 +82,100 @@ def test_measured_sentence_loses_only_the_function_word() -> None:
         "peak",
     ):
         assert kept in ents, f"{kept!r} must remain reachable as a seed"
+
+
+@pytest.mark.parametrize(
+    ("text", "words"),
+    [
+        ("next.js, socket.io and config.yaml", ["next.js", "socket.io", "and", "config.yaml"]),
+        ("x.ai, t.co, ASP.NET and Node.JS", ["x.ai", "t.co", "ASP.NET", "and", "Node.JS"]),
+        # A run of single letters is an abbreviation, not a name.
+        ("the U.S. office", ["the", "U", "S", "office"]),
+        ("tools, e.g. a linter", ["tools", "e", "g", "a", "linter"]),
+        # Digits are no letters: a version stays whole.
+        ("Python 3.9 and 3.11", ["Python", "3.9", "and", "3.11"]),
+    ],
+)
+def test_a_dot_is_inside_a_word_unless_every_part_is_one_letter(
+    text: str, words: list[str]
+) -> None:
+    from server.memory.domain import triples_follow_rows as tfr
+
+    assert tfr.split_words(text, dots=True) == words
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
+    [
+        ("दिल्ली", "दिल्ली"),
+        ("กรุงเทพ", "กรุงเทพ"),
+        # Typed as one composed letter or as a letter and its mark: one node.
+        ("Zu\u0308rich", "zürich"),
+        ("Zürich", "zürich"),
+        # "İ".lower() is "i" and a dot above, which nobody types.
+        ("İstanbul", "istanbul"),
+        ("Istanbul", "istanbul"),
+        # Latin and ASCII are as they were.
+        ("The Straße", "straße"),
+        ("Café-Bar!", "café-bar"),
+        ("node.js", "node.js"),
+        ("Alice's   API responses", "alice api response"),
+        # A compatibility spelling is the same name: full-width letters, a ligature.
+        ("ＴＯＫＹＯ", "tokyo"),
+        ("Tokyo", "tokyo"),
+        ("ﬁnance", "finance"),
+        # A mark with no letter before it marks nothing.
+        ("\u0301Tokyo", "tokyo"),
+        ('"\u0301Tokyo"', "tokyo"),
+    ],
+)
+def test_the_canonical_form_keeps_combining_marks(raw: str, canonical: str) -> None:
+    assert canonical_entity_text(raw) == canonical
+    assert canonical_entity_text(canonical) == canonical
+
+
+@pytest.mark.parametrize(
+    ("text", "names"),
+    [
+        ("Иван lives in Москва", ["иван", "москва"]),
+        ("محمد lives in القاهرة", ["محمد", "القاهرة"]),
+        ("田中 lives in 東京", ["田中", "東京"]),
+        ("김민준 lives in 서울", ["김민준", "서울"]),
+        ("I live in Zürich", ["zürich"]),
+        # Each word stays whole, vowel signs and all.
+        ("मैं नई दिल्ली में रहता हूँ", ["दिल्ली"]),
+        ("मैं दिल्ली में रहता हूँ", ["दिल्ली", "रहता"]),
+        ("ฉันอยู่ กรุงเทพ", ["กรุงเทพ"]),
+        ("I live in İstanbul", ["istanbul"]),
+        ("I live in Zu\u0308rich", ["zürich"]),
+        # A run of unspaced text is not a name.
+        ("東京に住んでいます", []),
+        ("Lives in Αθήνας", ["αθήνας"]),
+        # A dot between letters or digits is inside the name.
+        (
+            "we deploy with next.js and socket.io on k8s, see config.yaml",
+            ["next.js", "socket.io", "k8s", "config.yaml"],
+        ),
+    ],
+)
+def test_a_name_in_any_script_is_an_entity(text: str, names: list[str]) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert all(n in ents for n in names), ents
+    assert "rich" not in ents
+    assert "東京に住んでいます" not in ents
+    # No fragment of a word whose vowel signs became spaces.
+    assert not {"द ल ल", "रहत", "ฉ นอย", "กร งเทพ", "i stanbul", "zu rich"} & set(ents)
+    assert not {"next", "socket", "config", "yaml"} & set(ents)
+
+
+@pytest.mark.parametrize("text", ["我住在北京", "北京是首都", "我们明天去上海"])
+def test_a_spaceless_chinese_sentence_is_not_one_entity(text: str) -> None:
+    assert text not in _candidate_entities_from_value(text)
+
+
+@pytest.mark.parametrize("name", ["东京", "毛泽东", "乌鲁木齐"])
+def test_a_chinese_name_of_up_to_four_characters_is_an_entity(name: str) -> None:
+    assert name in _candidate_entities_from_value(f"We met in {name} today")
 
 
 # --- batched embedding order --------------------------------------------------
@@ -310,3 +405,107 @@ def test_canonical_order_survives_offset_enumeration() -> None:
     for offset in range(1, len(ents)):
         for i in range(len(ents) - offset):
             assert ents[i] <= ents[i + offset]
+
+
+@pytest.mark.parametrize(
+    ("text", "junk"),
+    [
+        # A polite Korean verb: "I live in Seoul".
+        ("서울 에 살아요", ["살아요"]),
+        ("저는 학생 입니다", ["입니다"]),
+        # Listed greetings, copulas and verb endings written alone are not names.
+        ("こんにちは です ます", ["こんにちは", "です", "ます"]),
+        ("東京 に いる する ある", ["いる", "する", "ある"]),
+        ("東京 に 行きました", ["行きました"]),
+        # Common words in nearly every sentence: "please", "thank you", "and", "very",
+        # "went".
+        ("東京 に 行った", ["行った"]),
+        ("ください ありがとう そして とても", ["ください", "ありがとう", "そして", "とても"]),
+    ],
+)
+def test_a_spaced_korean_or_japanese_verb_is_not_an_entity(text: str, junk: list[str]) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
+    for name in ("서울", "東京"):
+        if name in text:
+            assert canonical_entity_text(name) in ents
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["さいたま に 住んで いる", "田中 lives in 東京", "さいたま と なごや"],
+)
+def test_a_japanese_name_written_in_hiragana_is_an_entity(text: str) -> None:
+    # Saitama is written in hiragana; the script alone says nothing about grammar.
+    ents = _candidate_entities_from_value(text)
+    for name in ("さいたま", "なごや", "田中", "東京"):
+        if name in text:
+            assert canonical_entity_text(name) in ents, ents
+    assert canonical_entity_text("いる") not in ents
+
+
+@pytest.mark.parametrize(
+    ("text", "names", "junk"),
+    [
+        # "I lived in Seoul": a particle on the noun, a plain past-tense verb.
+        ("저는 서울에 살았다", ["서울"], ["저는", "서울에", "살았다", "저"]),
+        ("서울을 좋아한다", ["서울"], ["서울을", "좋아한다"]),
+        ("김민준 은 서울 이 좋다", ["김민준", "서울"], ["좋다"]),
+        ("학생 이다 그리고 조용 하다", ["학생"], ["이다", "하다"]),
+        ("있다 없다 했다 간다", [], ["있다", "없다", "했다", "간다"]),
+        # Plain past and future endings, and common words: "ate", "was", "will go",
+        # "same", "many", "and", "really", "too", "go", "come", "see".
+        (
+            "먹었다 공부했었다 학생이였다 가겠다",
+            [],
+            ["먹었다", "공부했었다", "학생이였다", "가겠다"],
+        ),
+        ("서울 은 좋았다", ["서울"], ["좋았다"]),
+        ("같다 많다 그리고 정말 너무", [], ["같다", "많다", "그리고", "정말", "너무"]),
+        ("부산 에 가요 와요 봐요", ["부산"], ["가요", "와요", "봐요"]),
+        # Names and nouns that end like a particle or a verb stay whole: a name ending
+        # in 은 or 이, a province in 도, a village (마을), the sea and Canada (다).
+        (
+            "김하은 고양이 제주도 마을 바다 캐나다",
+            ["김하은", "고양이", "제주도", "마을", "바다", "캐나다"],
+            [],
+        ),
+        # Countries that end like a verb (간다, 완다), and one with its particle.
+        ("우간다 르완다 캐나다", ["우간다", "르완다", "캐나다"], []),
+        ("우간다를 좋아한다", ["우간다"], ["좋아한다"]),
+        # A name ending in 요 is not a polite verb.
+        ("히데요 는 서울 에 살아요", ["히데요", "서울"], ["살아요"]),
+        # The particle 에서 and the plain copula come off the noun; a name keeps them.
+        ("서울에서 부산에서", ["서울", "부산"], ["서울에서", "부산에서"]),
+        ("학생이다 서울입니다", ["학생", "서울"], ["학생이다", "서울입니다", "이다", "입니다"]),
+        ("아이다", ["아이다"], []),
+    ],
+)
+def test_a_korean_particle_or_plain_verb_is_not_an_entity(
+    text: str, names: list[str], junk: list[str]
+) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert all(canonical_entity_text(n) in ents for n in names), ents
+    assert not {canonical_entity_text(j) for j in junk} & set(ents), ents
+
+
+@pytest.mark.parametrize(
+    ("text", "names", "junk"),
+    [
+        # "We go to school", "She likes Busan now": a pronoun or a time word, once its
+        # particle is off, is in nearly every sentence and names nothing.
+        ("우리는 학교에 간다", ["학교"], ["우리"]),
+        ("그녀는 지금 부산을 좋아해요", ["부산"], ["그녀", "지금"]),
+        ("저희는 오늘 서울에 가요", ["서울"], ["저희", "오늘"]),
+        ("당신을 어제 만났다", [], ["당신", "어제"]),
+        ("너희를 내일 그들을 본다", [], ["너희", "내일", "그들"]),
+        # A time word with its 은 or 는.
+        ("오늘은 지금은 내일은 어제는 부산", ["부산"], ["오늘은", "지금은", "내일은", "어제는"]),
+    ],
+)
+def test_a_korean_pronoun_or_time_word_is_not_an_entity(
+    text: str, names: list[str], junk: list[str]
+) -> None:
+    ents = _candidate_entities_from_value(text)
+    assert all(canonical_entity_text(n) in ents for n in names), ents
+    assert not {canonical_entity_text(j) for j in junk} & set(ents), ents

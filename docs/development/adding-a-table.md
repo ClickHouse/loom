@@ -70,7 +70,7 @@ For a `_CENSUS` table:
   to the schema.
 
 Test the step's statement shape with a stub client, as `tests/unit/test_erasure_repo.py` and
-`tests/unit/test_erasure_uncounted_tables.py` do.
+`tests/unit/test_erasure_late_steps.py` do.
 
 ## 4. Classify any mutation
 

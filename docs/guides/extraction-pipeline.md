@@ -14,18 +14,18 @@ parameter of the Python SDK's `memory.set_from_messages` helper; send it over HT
 
 `DEFAULT_PIPELINE` in `server/memory/app/pipeline.py`:
 
-| Step                              | Does                                                             |
-| --------------------------------- | ---------------------------------------------------------------- |
-| `loom.fetch_namespace_categories` | Loads the namespace's tag taxonomy for the extractor.            |
-| `loom.fetch_existing_memories`    | Nearest existing memories (up to 50), shown to the extractor.    |
-| `loom.llm_extract`                | The extraction call.                                             |
-| `loom.drop_recall_echoes`         | Drops facts restating memories the session was served.           |
-| `loom.drop_session_echoes`        | Drops facts restating what the session's own Loom calls carried. |
-| `loom.drop_activity_narration`    | Drops narration of tool activity with no durable outcome.        |
-| `loom.drop_non_durable`           | Coding sessions: drops status snapshots, housekeeping, plans.    |
-| `loom.verify_durable`             | Coding sessions: verifier pass over the remaining facts.         |
-| `loom.hash_dedup`                 | Drops facts whose canonical hash is already stored.              |
-| `loom.bulk_write`                 | Writes through `memory.bulk_set` (conflict verdicts, audit row). |
+| Step                              | Does                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `loom.fetch_namespace_categories` | Loads the namespace's tag taxonomy for the extractor.                                            |
+| `loom.fetch_existing_memories`    | Nearest existing memories (up to 50), shown to the extractor.                                    |
+| `loom.llm_extract`                | The extraction call.                                                                             |
+| `loom.drop_recall_echoes`         | Drops facts restating memories the session was served.                                           |
+| `loom.drop_session_echoes`        | Drops facts restating what the session's own Loom calls carried.                                 |
+| `loom.drop_activity_narration`    | Drops narration of tool activity with no durable outcome.                                        |
+| `loom.drop_non_durable`           | Coding sessions: drops status snapshots, housekeeping, plans.                                    |
+| `loom.verify_durable`             | Coding sessions: verifier pass over the remaining facts.                                         |
+| `loom.hash_dedup`                 | Drops facts whose canonical hash is already stored.                                              |
+| `loom.bulk_write`                 | Files bot rules (`about="agent"`) to the learnings queue, writes the rest via `memory.bulk_set`. |
 
 A coding session is a transcript whose `extra_tags` carry a coding-agent source tag
 (`source:claude-code`, `source:codex`, `source:cursor`), or a trajectory replay. The two coding
@@ -96,6 +96,9 @@ descriptor arrive as `config`. The step runs in-process with read and write acce
 whole `WorkflowState`: identity, messages, existing memories, extracted facts, counters.
 `register_step` replaces an existing registration under the same id, so an operator step
 can also replace a built-in.
+
+A step that replaces `loom.bulk_write` must leave `about="agent"` facts out of what it
+writes: those are the bot's rules, which the built-in files to the learnings queue.
 
 > **Warning:** a step that drops or rewrites `extracted_facts` changes what every caller
 > naming it stores. A step placed after `loom.bulk_write` sees the written rows in

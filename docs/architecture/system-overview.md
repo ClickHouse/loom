@@ -139,7 +139,8 @@ at most once a minute (`gates._fail_open`). Authentication and authorization fai
 
 **Unknown arguments.** Input models ignore unknown keys, so `server/transport/arg_check.py`
 names them: the response carries `ignored_args` (and `did_you_mean` for a close field
-name), and HTTP sets `X-Loom-Ignored-Args`. A write op refuses a close match with 422
+name), and HTTP sets `X-Loom-Ignored-Args`. Both list first any field the op read but
+declined to apply, then the unread keys. A write op refuses a close match with 422
 `UNKNOWN_ARGUMENT`. Identity keys and keys the transport reads itself (`consumer`,
 `traffic_class`, `explain`, the idempotency key) are never reported.
 
@@ -291,8 +292,8 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
     failure never fails boot; the scalar settings apply.
 
 Shutdown reverses this: stop the loops, drain the workers (10 s), release the lease, drain
-the Langfuse queue, the event emitter and the deferred writes (conflict judges, exposure
-rows, after-write projections, the events stream). The ClickHouse client disconnects last.
+the Langfuse queue, the event emitter and the deferred writes (exposure rows,
+after-write projections, the events stream). The ClickHouse client disconnects last.
 
 `/v1/health` reports ClickHouse reachability and a `problems` list (for example a fake
 provider). It answers 503 only when ClickHouse is down;

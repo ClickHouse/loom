@@ -1013,37 +1013,49 @@ def test_projection_repair_names_each_failures_org(metered, monkeypatch, caplog)
         await _model_call(seen)
         return pf.ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
+    async def marked(done: Any, **k: Any) -> None:
+        return None
+
     monkeypatch.setattr(pf, "scan_active_projection_failures", scan)
-    monkeypatch.setattr(pf, "retry_projection_failure", retry)
+    monkeypatch.setattr(pf, "_retry", retry)
+    monkeypatch.setattr(pf, "mark_retried", marked)
     result = asyncio.run(projection_repair.run_pass())
     assert seen == ["acme"] and result.resolved == 1
     _no_refusal_logged(caplog)
 
 
-def test_the_deferred_conflict_judge_names_the_writes_org(metered, monkeypatch, caplog) -> None:
-    from datetime import UTC, datetime
+def test_the_conflict_resolver_names_the_rows_org(metered, monkeypatch, caplog) -> None:
     from types import SimpleNamespace
 
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.app import conflicts as cf
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.workers import conflict_resolver as w
 
     seen: list[str] = []
 
-    async def judge(pj: Any) -> Any:
+    async def resolve(r: Any, **k: Any) -> Any:
         await _model_call(seen)
         return None
 
-    async def moved(*a: Any, **k: Any) -> bool:
-        return False  # a newer write took the key: nothing lands
+    async def over_cap(*a: Any, **k: Any) -> bool:
+        return False
 
-    monkeypatch.setattr(cf, "settle_deferred_judgement", judge)
-    monkeypatch.setattr(cd, "still_current", moved)
-    monkeypatch.setattr(cd, "emit_settle_row", lambda *a, **k: None)
-    ident = SimpleNamespace(org="acme", namespace="ns", memory_key="k")
-    verdict = asyncio.run(
-        cd.settle(ident, None, memory_id="m1", version=1, created_at=datetime.now(UTC))
+    async def flush() -> None:
+        return None
+
+    monkeypatch.setattr(resolver, "resolve_row", resolve)
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", over_cap)
+    monkeypatch.setattr(
+        "server.observability.events.get_emitter", lambda: SimpleNamespace(flush_now=flush)
     )
-    assert seen == ["acme"] and verdict == cd.MOVED
+    monkeypatch.setattr("server.workers.cost_event.emit_worker_cost_event_for", lambda **k: None)
+    row = {"org": "acme", "namespace": "ns", "agent": "a", "user_id": "-"}
+    row |= {"session_id": "-", "memory_key": "k", "content_sha256": "sha"}
+
+    async def one() -> None:
+        await w._resolve_one(w._Pass(), row, "manual")
+
+    asyncio.run(one())
+    assert seen == ["acme"]
     _no_refusal_logged(caplog)
 
 
@@ -1094,7 +1106,7 @@ def test_an_extraction_queue_replay_names_the_rows_org(metered, monkeypatch, cap
 
     seen: list[str] = []
 
-    async def handler(inp: Any) -> Any:
+    async def handler(inp: Any, **_kw: Any) -> Any:
         await _model_call(seen)
         return MemorySetFromMessagesOutput()
 

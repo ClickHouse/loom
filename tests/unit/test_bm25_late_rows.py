@@ -121,7 +121,7 @@ async def test_memory_set_answers_before_its_late_row_is_indexed(monkeypatch) ->
     from server.memory.app import after_write
     from server.memory.app import write as write_mod
     from server.memory.domain.conflicts import ConflictResult
-    from tests.unit.test_conflict_judge_deferred import _input, _wire
+    from tests.unit.test_memory_set_verdict import _input, _wire
 
     _wire(monkeypatch, ConflictResult(verdict="clear", peers=[]))
     release, indexed = _late_and_blocked(monkeypatch)

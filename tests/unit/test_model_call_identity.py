@@ -380,7 +380,7 @@ def test_an_extraction_queue_replay_is_the_enqueuers(directory, monkeypatch) -> 
 
     call = _Headers()
 
-    async def handler(inp: Any) -> Any:
+    async def handler(inp: Any, **_: Any) -> Any:
         await call()
         return MemorySetFromMessagesOutput()
 

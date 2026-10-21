@@ -138,7 +138,8 @@ _KNOWN_STAGES: frozenset[str] = frozenset(
         "ask_deep_select",
         "ask_premise",
         "ask_synthesize_deep",
-        "conflict_judge",
+        # The background conflict resolver's one call per marked row.
+        "conflict_resolver",
         # tracker.duplicate_check judge over the uncertain band
         "dupcheck_judge",
         "observe_extract.event",

@@ -186,6 +186,9 @@ class MemorySetFromMessagesInput(_Identity):
     # statement-dense ingest (a fact list, a long update) asks for it; a chat
     # transcript keeps the default, which its asides do not repay.
     coverage_sweep: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
+    # None follows memory_extract_agent_learnings (default off); false skips filing the
+    # assistant's rules for this call, and true while the setting is off is named in ignored_args.
+    agent_learnings: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
     # Per-call workflow override. Empty = default pipeline
     # (fetch_existing → llm_extract → hash_dedup → bulk_write). Each step ID names
     # a registered step (loom.fetch_existing_memories / loom.llm_extract /
@@ -218,6 +221,13 @@ class MemorySetFromMessagesInput(_Identity):
     defer: bool = False
 
 
+class _RefusedFact(BaseModel):
+    # The key of an extracted fact the write refused.
+    memory_key: str
+    # Why: blacklisted | pinned | locked | rejected (close to a pinned row).
+    verdict: str
+
+
 class MemorySetFromMessagesOutput(BaseModel):
     """One entry per extracted fact that was written. `tokens_in` /
     `tokens_out` are reported back so the caller can attribute LLM cost
@@ -225,6 +235,9 @@ class MemorySetFromMessagesOutput(BaseModel):
 
     # Key and version of each extracted fact written; empty on a deferred call.
     written: list[_BulkSetResult] = Field(default_factory=list)
+    # The extracted facts the write refused (a blacklisted, pinned or locked key, or a
+    # pinned row close by), with the verdict; not in `written` or the counts.
+    refused: list[_RefusedFact] = Field(default_factory=list)
     # Prompt tokens of the extraction LLM calls.
     tokens_in: int = 0
     # Completion tokens of the extraction LLM calls.
@@ -251,6 +264,13 @@ class MemorySetFromMessagesOutput(BaseModel):
     # The user's facts read from the assistant's premises ("since you enjoy
     # X…"), added to the batch.
     premise_facts: int = 0
+    # Rules the assistant stated about itself that wrote to the learnings queue: a
+    # new candidate or this session's support of one (a session restating a rule it
+    # already backs counts 0). None is written as a memory.
+    learning_candidates: int = 0
+    # Request fields the server did not apply: unknown keys, and `agent_learnings=true`
+    # while the deployment setting memory_extract_agent_learnings is off.
+    ignored_args: list[str] = Field(default_factory=list)
     # Which planner cut them: whole | size. With `segments`
     # this makes the segmentation fire rate one GROUP BY on agent_events
     # (out_segmenter / out_segments).
@@ -310,15 +330,45 @@ class MemorySetFromMessagesOutput(BaseModel):
     llm_cache_misses: int = 0
 
 
+# The verdict of an entry the blacklist refused (memory.set answers 422 BLACKLISTED).
+BLACKLISTED = "blacklisted"
+# The verdict of an entry skipped on a pinned key (memory.set answers 409 PINNED_CONFLICT).
+PINNED = "pinned"
+# The verdict of an entry skipped on a read_only key (memory.set answers 423 LOCKED).
+LOCKED = "locked"
+# The verdict of an entry close to a pinned peer (memory.set answers 409 PINNED_CONFLICT).
+REJECTED = "rejected"
+# The verdicts of an entry refused outright (version 0): the message produced no row,
+# so nothing it carries attaches to the stored one. A restatement of the stored value
+# is not among them.
+REFUSED = frozenset({BLACKLISTED, PINNED, LOCKED, REJECTED})
+
+
 class _BulkSetResult(BaseModel):
     memory_key: str
     version: int
+    # The id of the row this entry wrote; empty when nothing was inserted.
+    memory_id: str = ""
     # The per-row verdict memory.set returns, so a caller of
-    # bulk_set can act on one entry without decoding the aggregate lists.
+    # bulk_set can act on one entry without decoding the aggregate lists, plus
+    # `blacklisted`, `pinned` or `locked` (refused, version 0; a restatement of a
+    # pinned or locked key's value is not).
     # Empty when the entry was not checked (non-searchable, past the cap).
     conflict_verdict: str = ""
     peers: list[MemorySetPeer] = Field(default_factory=list)
     next: str = ""
+    # With `pinned` or `rejected`: the pinned row that refused the entry, as memory.set's
+    # 409 names it ('' when it is outside the read scope).
+    pinned_blocker_id: str = ""
+
+
+def refused_facts(results: list[_BulkSetResult]) -> list[_RefusedFact]:
+    """The key and verdict of each bulk_set result a refusal wrote no row for."""
+    return [
+        _RefusedFact(memory_key=r.memory_key, verdict=r.conflict_verdict)
+        for r in results
+        if r.conflict_verdict in REFUSED
+    ]
 
 
 class MemoryBulkSetOutput(BaseModel):
@@ -326,10 +376,14 @@ class MemoryBulkSetOutput(BaseModel):
     written: list[_BulkSetResult]
     # Keys whose live row is pinned: skipped (result version=0) rather than
     # overwritten, since overwriting would also unpin (entries default pinned=False).
+    # An entry that pins too replaces the value, as on memory.set.
     skipped_pinned: list[str] = Field(default_factory=list)
     # Keys whose live row is locked read_only: skipped (result version=0), where memory.set
     # would answer 423 LOCKED. Unlocking is the owner's act (memory.unlock).
     skipped_locked: list[str] = Field(default_factory=list)
+    # Keys whose entry the blacklist refused: not written (result version=0), where
+    # memory.set would answer 422 BLACKLISTED.
+    skipped_blacklisted: list[str] = Field(default_factory=list)
     # Conflict verdicts, the same four memory.set produces:
     # canonical restatement of an existing row → not inserted, existing row
     # reinforced; close to a pinned peer → not inserted; same fact in other

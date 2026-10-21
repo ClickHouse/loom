@@ -360,7 +360,7 @@ gateway.
   take the newest principal writer among the observations or facts eligible for their prompt.
   Version orders these writes, so an update counts as a new write. Reflection and the period
   digest take the newest writer of the session's memories (`memory_repo.session_writers`);
-  the conflict sweep takes the write's writer. Only a row that
+  the conflict resolver takes the current row's writer. Only a row that
   records no principal (a conversation turn, a shared-scope vector) takes the agent whose own
   namespace it is in (owned by `sa:<trust>:<agent>`, the home its trust made on the agent's
   first token exchange). Only the deployment's own calls (`customer.system()`) name no one.
@@ -457,12 +457,14 @@ summaries, titles). Each is optional, bounded, and fails open to the determinist
 **Why.** An LLM-decided gate cannot be reproduced, audited or unit-tested, and it adds
 cost and latency to every write. The deterministic gates run on the fake provider in CI
 through the production code path. The cost: a cosine threshold cannot tell a revision
-from a contradiction, which is why the optional LLM conflict judge exists.
+from a contradiction, which is why the conflict resolver exists. It judges after the
+write, on the leader, so the write's own verdict stays deterministic.
 
 | Feature                                       | LLM?          | Switch (default)                                                                                                                                                                                                                                                                                             |
 | --------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `memory.set`, `memory.search` core            | No            | —                                                                                                                                                                                                                                                                                                            |
-| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`; optional judge `LOOM_MEMORY_CONFLICT_JUDGE` (off)                                                                                                                                                                                                                                 |
+| Conflict and duplicate verdicts               | No, cosine    | `LOOM_CONFLICT_THRESHOLD`                                                                                                                                                                                                                                                                                    |
+| Conflict resolver (after the write)           | Yes           | `conflict_resolver` worker, `LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED` (on unless the LLM provider or the resolver model's provider is fake); `LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`)                                                                                                                    |
 | `memory.set_from_messages` extraction         | Yes           | Always; deferred runs through the `extraction_queue` worker                                                                                                                                                                                                                                                  |
 | Extraction verifier (coding captures)         | Yes           | `LOOM_MEMORY_EXTRACT_VERIFY_MODELS` (`claude-opus-5-5`; `""` turns it off); fails open                                                                                                                                                                                                                       |
 | `memory.ask` synthesis                        | Yes           | `LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_MEMORY_ASK_SYNTH_MODEL_CHEAP`, `LOOM_MEMORY_ASK_MID_MODEL`                                                                                                                                                                                                              |

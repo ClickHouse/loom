@@ -133,6 +133,7 @@ from server.memory.store.reads import (
     namespace_version,
     overlay_usage_totals_many,
     session_writers,
+    statuses_by_ids,
     versions_above,
 )
 from server.memory.store.redaction import (
@@ -164,6 +165,7 @@ from server.memory.store.rows import (
     serialize_value,
     stored_value_text,
     uuid_or_none,
+    version_time,
     written_now,
 )
 from server.memory.store.sql import (
@@ -184,6 +186,7 @@ __all__ = [
     "_hydrate",
     "_MEMORY_FINAL_PROJECTION",
     "next_version",
+    "version_time",
     "reemit_version",
     "_SEQUENTIAL",
     "apply_entities_batch",
@@ -288,6 +291,7 @@ __all__ = [
     "session_writers",
     "status_by_keys",
     "status_divergence_sql",
+    "statuses_by_ids",
     "stored_value_text",
     "supersede_duplicates",
     "superseded_successors",

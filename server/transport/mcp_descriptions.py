@@ -60,8 +60,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "`tags` for classification. Cite the response's `namespace` and "
         "`memory_key` in your confirmation; `conflict_verdict`, `peers` and "
         "`next` say what the store held (`dry_run=true` checks without "
-        "writing; `pending` settles after the call — `await_verdict=true` "
-        "waits). `value` is stored verbatim — never base64 (kills search; "
+        "writing). `value` is stored verbatim — never base64 (kills search; "
         "see `advisories`).\n\n"
         "**A fact with a natural lifetime gets one at write time.** A "
         "deadline, a temporary state ('on call this week'), a rotating value: "
@@ -1162,13 +1161,19 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     # ---- Learnings (high-confidence promotions) ----
     "learnings.list": (
-        "List candidate learnings (memories the auto-promote worker "
-        "flagged as worth promoting to shared). Use when the user wants "
-        "to review the promotion queue."
+        "List learnings candidates by status (pending by default, promoted, "
+        "rejected). The queue holds memories "
+        "several writers back (promoted to shared), conversation-seeded facts "
+        "(promoted to a namespace memory row), and rules a bot stated about itself "
+        "(source_kind=assistant_turn, promoted to knowledge). Use when the user "
+        "wants to review the promotion queue or find a decided candidate's id."
     ),
     "learnings.review": (
-        "Approve or reject a pending learning. Approving promotes the "
-        "memory to scope=shared; rejecting tombstones the candidate."
+        "Approve or reject a pending learning. Approving promotes a candidate "
+        "several writers back to scope=shared, a conversation-seeded fact to a "
+        "namespace memory row, and a bot's rule to the namespace's knowledge, "
+        "where that bot's reads find it for every user; rejecting keeps the "
+        "candidate as rejected."
     ),
     # ---- Conflicts (contradicting memories) ----
     "conflicts.list": (
@@ -1829,7 +1834,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "namespace, whether it is restricted and authorized, the templates."
     ),
     "task.get": "One task by `task_id`: its state, lease, poster, result and history.",
-    "memory.restore": "Undo a delete: restore a tombstoned memory by key within its 14-day window.",
+    "memory.restore": (
+        "Undo a delete (within 14 days) or an automatic retirement; `if_superseded_by` "
+        "restores only a row still retired behind that memory."
+    ),
     "memory.search_trace_log": (
         "Recall telemetry of a namespace: past queries with the keys and "
         "scores they returned, abstain/risk and latency (needs telemetry on)."

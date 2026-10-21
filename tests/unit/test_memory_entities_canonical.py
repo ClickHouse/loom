@@ -119,6 +119,23 @@ def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
 
 @pytest.mark.parametrize(
     ("raw", "canonical"),
+    # "İ" and an accent: the dot goes and the "i" takes the accent ("í"); a second
+    # dot goes too. U+03D4 is a symbol NFKC makes an upper-case letter of, and with
+    # an accent its lower case is one letter ("ΰ").
+    [
+        ("x\u0130\u0301y", "x\u00edy"),
+        ("x\u0130\u0307y", "xiy"),
+        ("\u03d4", "\u03cb"),
+        ("x\u03d4\u0301y", "x\u03b0y"),
+    ],
+)
+def test_a_letter_normalising_changes_is_a_fixed_point(raw: str, canonical: str) -> None:
+    assert canonical_entity_text(raw) == canonical
+    assert canonical_entity_text(canonical) == canonical
+
+
+@pytest.mark.parametrize(
+    ("raw", "canonical"),
     [
         ("The .NET Services", "net service"),
         ("the .the .net", "net"),
@@ -130,6 +147,17 @@ def test_text_lowercasing_lengthens_is_a_fixed_point_too(raw: str) -> None:
 def test_a_prefix_article_removal_exposes_is_taken_too(raw: str, canonical: str) -> None:
     assert canonical_entity_text(raw) == canonical
     assert canonical_entity_text(canonical) == canonical
+
+
+@pytest.mark.parametrize(
+    "raw",
+    # A mark after a possessive: once the "'s" goes, the mark must join the letter
+    # before it in the same pass, an upper-case "'S" included.
+    ["x's\u0308y", "e'S\u0308e", "\u0130\u0307\u0307\u2019S\u0308", "1\u0386\u0307's\u0e38"],
+)
+def test_a_mark_after_a_possessive_is_a_fixed_point(raw: str) -> None:
+    once = canonical_entity_text(raw)
+    assert canonical_entity_text(once) == once
 
 
 def test_canonical_text_is_a_fixed_point_for_any_mix_of_its_edge_pieces() -> None:

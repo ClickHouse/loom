@@ -19,6 +19,7 @@ from server.memory.app import model_attribution
 from server.memory.domain import provenance, trust
 from server.settings import settings
 from tests.unit.switch_state import switch_off
+from tests.unit.test_conflict_resolver import _q, pass_env, row_env  # noqa: F401
 from tests.unit.test_model_call_identity import AGENT_NS, _Directory, _stub, directory  # noqa: F401
 
 AGENT_8 = "sa:cell-t1:agent-8"
@@ -155,76 +156,89 @@ def test_observe_extract_calls_for_the_agent_that_recorded_the_session(
     assert seen == [AS_AGENT_8]
 
 
-def test_the_conflict_sweep_settles_for_the_writes_writer(monkeypatch: pytest.MonkeyPatch) -> None:
-    import server.memory.store as memory_repo
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.app import conflicts as cf
-    from server.memory.workers import conflict_sweep
+@pytest.mark.parametrize(
+    ("namespace", "actor", "expected"),
+    [
+        (AGENT_NS, "human:sso-alice", AS_ALICE),
+        (AGENT_NS, f"process:{AGENT_8}", AS_AGENT_8),
+        (SHARED, f"process:{AGENT_8}", AS_AGENT_8),
+        (AGENT_NS, "", AS_AGENT_7),
+        (AGENT_NS, provenance.EXTRACTION_WORKER_ACTOR, AS_AGENT_7),
+    ],
+)
+def test_the_conflict_resolver_calls_for_the_fresh_prompt_rows_writer(
+    writers: _Directory,
+    row_env,  # noqa: F811
+    monkeypatch,
+    namespace,
+    actor,
+    expected,
+) -> None:
+    from server.memory.app import conflict_resolver as resolver
+    from tests.unit.claims_fake import fake_key_locks
 
-    key = ("acme", AGENT_NS, "a", "u1", "-", "k1")
-    mem = SimpleNamespace(
-        status="active",
-        content_sha256="",
-        memory_type="semantic",
-        run_id="-",
-        memory_id="m1",
-        valid_at=None,
-        actor=f"process:{AGENT_8}",
-    )
-    settled: list[str] = []
-
-    async def rows(keys: Any, **_: Any) -> dict[Any, Any]:
-        return {key: mem}
-
-    async def check(**_: Any) -> Any:
-        return SimpleNamespace(verdict=cd.PENDING, pending_judge=object())
-
-    async def settle(*_: Any, subject: str = "", **__: Any) -> str:
-        settled.append(subject)
-        return "clear"
-
-    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", rows)
-    monkeypatch.setattr(memory_repo, "stored_value_text", lambda m: "v")
-    monkeypatch.setattr(cf, "check_on_commit", check)
-    monkeypatch.setattr(cd, "settle", settle)
-    r = dict(
-        zip(("org", "namespace", "agent", "user_id", "session_id", "memory_key"), key, strict=True)
-    )
-    asyncio.run(conflict_sweep.rejudge({**r, "version": 1, "created_at": None}, ch=object()))  # type: ignore[arg-type]
-    assert settled == [AGENT_8]
-
-
-def test_a_settle_calls_for_the_subject_it_is_given(writers: _Directory) -> None:
-    from datetime import UTC, datetime
-
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.app import conflicts as cf
-
+    fake_key_locks(monkeypatch, wait_s=10.0)
     seen: list[dict[str, str]] = []
+    row_env.mem.namespace = namespace
+    row_env.mem.actor = "human:stale-writer"
+    fresh = SimpleNamespace(**(vars(row_env.mem) | {"actor": actor}))
+    row_env.heads["m1"] = fresh
+    original = resolver.judge
 
-    async def judge(pj: Any) -> Any:
+    async def judge(new: Any, peers: Any) -> Any:
         seen.append(await _sent())
-        return None
+        return await original(new, peers)
 
-    async def moved(*a: Any, **k: Any) -> bool:
-        return False
-
-    ident = SimpleNamespace(org="acme", namespace=AGENT_NS, memory_key="k", user_id="u1")
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(cf, "settle_deferred_judgement", judge)
-        mp.setattr(cd, "still_current", moved)
-        mp.setattr(cd, "emit_settle_row", lambda *a, **k: None)
-        asyncio.run(
-            cd.settle(
-                ident,
-                None,
-                memory_id="m1",
-                version=1,
-                created_at=datetime.now(UTC),
-                subject=AGENT_8,
-            )
+    monkeypatch.setattr(resolver, "judge", judge)
+    counts = resolver.Counts()
+    asyncio.run(
+        resolver.resolve_row(
+            _q(org="acme", namespace=namespace), policy="newest_wins", counts=counts
         )
-    assert seen == [AS_AGENT_8]
+    )
+    assert seen == [expected]
+    assert counts.judged == 1
+
+
+def test_a_held_conflict_leaves_its_attempts_and_room_for_other_writers(
+    pass_env,  # noqa: F811
+    monkeypatch,
+) -> None:
+    from server.core.errors import ModelCallDeferred
+    from server.memory.workers import conflict_resolver as worker
+    from server.workers import holds
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock(t=1000)
+    monkeypatch.setattr(holds.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(settings, "memory_conflict_resolver_batch", 1)
+    monkeypatch.setattr(settings, "memory_conflict_resolver_recheck_batch", 0)
+    first = _q(memory_key="held")
+    second = _q(memory_key="healthy", agent="another-writer")
+    pass_env.owed = [first, second]
+    pass_env.raise_for["held"] = ModelCallDeferred("wait", hold_s=120)
+    key = worker._attempt_key(first)
+    worker._state.attempts[key] = (1, frozenset({"m2"}))
+
+    async def owed(*, limit, capped=(), held=(), **kw):
+        return [
+            r
+            for r in pass_env.owed
+            if (r["org"], r["namespace"]) not in capped and worker._identity(r) not in held
+        ][:limit]
+
+    monkeypatch.setattr(worker.queue, "owed_rows", owed)
+    first_out = asyncio.run(pass_env.run())
+    assert first_out["errored"] == first_out["judged"] == 0
+    assert worker._state.attempts[key] == (1, frozenset({"m2"}))
+    assert pass_env.stamped == []
+    clock.advance(119)
+    second_out = asyncio.run(pass_env.run())
+    assert second_out["judged"] == 1
+    assert [r[2] for r in pass_env.resolved] == ["healthy"]
+    assert worker._HELD.left(worker._identity(first)) == 1
+    clock.advance(1)
+    assert worker._HELD.current() == frozenset()
 
 
 def test_the_profile_fold_calls_for_its_facts_newest_writer(
@@ -381,7 +395,13 @@ def test_projection_repair_replays_for_the_memories_writer(
         return pf.ProjectionFailureRetryResult(f.failure_id, f.projection, True, True)
 
     monkeypatch.setattr(pf, "scan_active_projection_failures", scan)
-    monkeypatch.setattr(pf, "retry_projection_failure", retry)
+
+    class _CH:
+        async def execute(self, sql: str, params: Any = None) -> None:
+            pass
+
+    monkeypatch.setattr(pf, "get_client", _CH)
+    monkeypatch.setattr(pf, "_retry", retry)
     asyncio.run(projection_repair.run_pass())
     assert seen == [AS_AGENT_8]
 
@@ -395,7 +415,7 @@ def test_a_deferred_extraction_by_a_member_is_the_members(writers: _Directory, m
 
     seen: list[dict[str, str]] = []
 
-    async def handler(inp: Any) -> Any:
+    async def handler(inp: Any, *, rule_agent: str) -> Any:
         seen.append(await _sent())
         return MemorySetFromMessagesOutput()
 
@@ -508,40 +528,19 @@ def test_a_sessions_writer_is_its_newest_live_versions() -> None:
     assert "tombstoned_at IS NULL" in sql and params["keys"] == [("acme", "ns", "a", "-", "s1")]
 
 
-def test_a_judge_scheduled_inside_a_job_is_for_the_jobs_writer(monkeypatch) -> None:
-    """A write a job makes for a row's writer (an extraction replay, say) schedules its
-    deferred judge for that writer; a request's, for its caller; a pipeline's own write
-    whose principal the provenance names, for that principal."""
-    from datetime import UTC, datetime
+def test_an_unread_model_switch_stops_the_conflict_pass_without_attempts(
+    pass_env,  # noqa: F811
+    monkeypatch,
+) -> None:
+    from server.memory.workers import conflict_resolver as worker
 
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.domain.provenance import pipeline_actor
-
-    settled: list[str] = []
-
-    async def settle(*_: Any, subject: str = "", **__: Any) -> str:
-        settled.append(subject)
-        return "clear"
-
-    monkeypatch.setattr(cd, "settle", settle)
-    pending = SimpleNamespace(verdict=cd.PENDING, pending_judge=object())
-
-    async def schedule() -> None:
-        task = cd.schedule_settle(
-            SimpleNamespace(org="acme"),
-            pending,
-            memory_id="m1",
-            version=1,
-            created_at=datetime.now(UTC),
-        )
-        assert task is not None
-        await task
-
-    with customer.for_org("acme", namespace=AGENT_NS, subject=AGENT_8):
-        asyncio.run(schedule())  # no request behind it: the job named the writer
-    with pipeline_actor(f"process:{AGENT_8}"), customer.for_org("acme", namespace=AGENT_NS):
-        asyncio.run(schedule())  # the write's principal, from its provenance
-    assert settled == [AGENT_8, AGENT_8]
+    monkeypatch.setattr(settings, "memory_conflict_resolver_concurrency", 1)
+    pass_env.owed = [_q(memory_key="unread"), _q(memory_key="another", namespace="other")]
+    pass_env.raise_for["unread"] = customer.SwitchUnread()
+    result = asyncio.run(pass_env.run())
+    assert result["judged"] == result["errored"] == 0
+    assert pass_env.resolved == pass_env.stamped == []
+    assert worker._state.attempts == {}
 
 
 def _structured_build(monkeypatch: pytest.MonkeyPatch, facts: list[dict[str, Any]]) -> list[Any]:

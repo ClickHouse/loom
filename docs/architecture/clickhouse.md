@@ -30,7 +30,7 @@ Retention is in [Partitioning and TTL](#partitioning-and-ttl).
 | Write-path state             | `memory_extraction_queue`, `memory_projection_failures`, `memory_drops`, `blacklist`, `blacklist_version`, `conflict_allowlist`, `learnings_queue`, `consolidation_runs`, `memory_ask_precedents`                                                                                                      | Deferred extraction, fail-open projections, `blacklist.*`, `conflicts.resolve`, `memory.consolidate`, `memory.ask`     |
 | Knowledge                    | `documents`, `document_blobs` (uploaded originals), `chunks`, `chunk_supersessions`, `chunk_term_freq`                                                                                                                                                                                                 | `knowledge.add`; `chunk_term_freq_mv`                                                                                  |
 | Conversations                | `conversations`, `conversation_threads`, `conversation_embeddings`                                                                                                                                                                                                                                     | `conversation.*`; `conversation_titler`                                                                                |
-| Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_triple_memories`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                                                              | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
+| Entity graph                 | `entity_edges`, `entity_degree`, `entity_triples`, `entity_edge_memories`, `entity_edge_rows`, `entity_triple_memories`, `entity_triple_rows`, `entity_vectors`, `entity_summaries`, `entity_canonical_map`, `entity_communities`, `operator_edges`                                                    | The `memory.set` after-write projection, `entity_extractor`, `entity_communities`; `entity_degree_mv`                  |
 | Code index                   | `code_files`, `code_chunks`, `code_symbols`, `code_edges`, `code_pr_history` and the other `code_*` tables                                                                                                                                                                                             | `code_ingest`, the `code_scip_*` workers, `code_pr_history`, `code_embed_recovery`, `code_summary`, `code_graph_stats` |
 | Tracker                      | `qa_sources`, `qa_item_embeddings`, `qa_link_candidates`, `qa_test_daily`, `qa_rollup_days`, `qa_fail_hours`                                                                                                                                                                                           | `tracker.source.add`, `tracker_embed`, `tracker_links`, `tracker_test_daily`                                           |
 | Runs, tasks, briefs          | `agent_runs`, `agent_turn_usage`, `session_outcomes_by_user`, `procedure_runs`, `tasks`, `task_events`, `task_leases`, `agent_run_claims`, `task_inboxes`, `session_briefs`, `context_blobs` and neighbours                                                                                            | `run.*`, `task.*` / `inbox.*`, `session.brief_*`, `context.offload`, `reflection_distill`                              |
@@ -579,10 +579,12 @@ self-hosted ReplicatedMergeTree it waits only for inserts written with `insert_q
 and `insert_quorum_parallel = 0`, which ClickHouse refuses for async inserts (and which
 serializes every insert into a table), so a read on one replica can still miss a row
 another replica acknowledged a moment ago. The guarantees built on it, the sign-in attempt
-recounts and the single signing-key retire among them, hold exactly on Cloud and a
-single server. A self-hosted replicated cluster must send every Loom process to one
-replica; `loom doctor`'s `replica_consistency` line warns while `loom.auth_attempts` or
-`loom.signing_keys` has more than one.
+recounts, the single signing-key retire, `task.create`'s idempotency key (a retry finds
+the task the first call stored) and the single `code.coverage.ready` event among them,
+hold exactly on Cloud and a single server. A self-hosted replicated cluster must send
+every Loom process to one replica; `loom doctor`'s `replica_consistency` line warns while
+`loom.auth_attempts`, `loom.signing_keys`, `loom.tasks` or `loom.task_events` has more
+than one.
 
 **Keeper reads.** The Keeper keys that carry state between replicas (the namespace write
 keys, graph projections and writes, claims and leases) are read through each replica's own

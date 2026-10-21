@@ -211,8 +211,22 @@ async def _profile_fold(ch: RecordingCH, c: dict[str, Any]) -> None:
         holds._reset_for_tests()
 
 
+async def _conflict_resolver(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store import conflict_resolver as queue
+
+    held = [(ORG, NS, "bot", "alice", "s1", "fact")] if c["held"] else []
+    await queue.owed_rows(limit=10, held=held, ch=ch)
+    await queue.unjudged_conflicted_rows(limit=10, held=held, ch=ch)
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "workers.conflict_resolver",
+            "server.memory.store.conflict_resolver",
+            _conflict_resolver,
+            {"held": (False, True)},
+        ),
         Case("workers.first_pass", "server.workers.first_pass", _first_pass, {}),
         Case(
             "workers.profile_fold",

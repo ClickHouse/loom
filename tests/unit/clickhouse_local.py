@@ -23,16 +23,24 @@ def ddl(table: str) -> str:
     return f"CREATE TABLE loom.{table}\n" + body.split(";", 1)[0]
 
 
-def run(setup: list[str], sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """The rows `sql` returns after the `setup` statements, in a fresh `loom` database. Its
+def run(
+    setup: list[str],
+    sql: str,
+    params: dict[str, Any] | None = None,
+    *,
+    path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """The rows `sql` returns after the `setup` statements, in a fresh `loom` database, or
+    in the one kept under `path` so a later call sees what this one wrote. Its
     `{name:Type}` parameters are bound by type, as the server binds them, so a parameter
     whose type does not fit its column fails or matches what it would in production."""
-    script = ";\n".join(["CREATE DATABASE loom", *setup, sql])
+    script = ";\n".join(["CREATE DATABASE IF NOT EXISTS loom", *setup, sql])
     # The server's own formatter: the server binds each value through it.
     binds = [f"--param_{k}={format_bind_value(v)}" for k, v in (params or {}).items()]
+    kept = ["--path", str(path)] if path else []
     # The script goes on stdin: a test that keeps vector rows outgrows one argument's limit.
     out = subprocess.run(
-        [CLICKHOUSE or "clickhouse", "local", "--multiquery", *binds],
+        [CLICKHOUSE or "clickhouse", "local", "--multiquery", *kept, *binds],
         input=script + " FORMAT JSONEachRow",
         capture_output=True,
         text=True,

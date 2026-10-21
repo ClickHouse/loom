@@ -36,6 +36,8 @@ _FIELDS = Settings.model_fields
 # own tests (test_identity_mode, test_llm_provider_inference,
 # test_default_namespace*).
 _CROSS_CHECKED = {
+    # Its sweep value would exceed half the pass deadline (test_conflict_resolver.py).
+    "memory_conflict_resolver_burst_seconds",
     # Checked against each other (test_model_calls_switch.py).
     "model_calls_policy_refresh_seconds",
     "model_calls_policy_max_stale_seconds",

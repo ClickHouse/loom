@@ -6,7 +6,7 @@ import { Tip } from "../components/ui/Tooltip";
 import { useStore, viewHref, type View } from "../lib/state";
 import { countConflicts, countNewAgents, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
-import { sharedBudgetStatus } from "../lib/sharedReads";
+import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -149,7 +149,15 @@ export const ADMIN_GROUPS: NavGroup[] = [
     ],
   },
 ];
-export const ADMIN_BASE: NavItem[] = ADMIN_GROUPS.flatMap((g) => g.items);
+/** Collections: the org's shared knowledge, which grants open. Every admin sees the ones
+ *  their grants reach, so it heads the Access group for all of them. */
+export const COLLECTIONS_ITEM: NavItem = {
+  id: "admin:collections",
+  label: "Collections",
+  icon: "folder-open",
+  scope: "org",
+};
+export const ADMIN_BASE: NavItem[] = [...ADMIN_GROUPS.flatMap((g) => g.items), COLLECTIONS_ITEM];
 
 /** A view that lives in the admin drawer: the `admin:` ids and the routes
  * filed there under a stable non-prefixed id (Flow). The drawer opens on a deep link to
@@ -171,8 +179,9 @@ export const ADMIN_OPERATOR_ONLY: NavItem[] = [{ id: "admin:users", label: "User
 export const ADMIN_PLATFORM_ONLY: NavItem[] = [
   { id: "admin:settings", label: "Deployment settings", icon: "settings", scope: "deployment" },
 ];
-/** The drawer's Access group: operator entries, shown to platform / org admins. */
-const ACCESS_GROUP: NavGroup = { label: "Access", items: ADMIN_OPERATOR_ONLY };
+/** The drawer's Access group: Collections, then the operator entries shown to platform /
+ *  org admins. */
+const ACCESS_GROUP: NavGroup = { label: "Access", items: [COLLECTIONS_ITEM, ...ADMIN_OPERATOR_ONLY] };
 const DEPLOYMENT_GROUP: NavGroup = { label: "Deployment", items: ADMIN_PLATFORM_ONLY };
 
 /** The operator entries the caller's claims open: Users for an org or platform admin,
@@ -185,8 +194,8 @@ export function operatorItems(whoami: WhoAmI | null): NavItem[] {
 }
 
 /** The drawer items a caller may see, in their groups — Review queue leads Review while
- *  there is something to review; the Access group only for platform / org admins, the
- *  Deployment group only for platform admins. */
+ *  there is something to review; Users in the Access group only for platform / org admins,
+ *  the Deployment group only for platform admins. */
 export function groupAdminItems(visible: NavItem[]): NavGroup[] {
   const byId = new Map(visible.map((i) => [i.id, i] as const));
   const out: NavGroup[] = [];
@@ -207,6 +216,8 @@ export function Sidebar() {
   const toggleSidebar = useStore((s) => s.toggleSidebar);
   const [adminOpen, setAdminOpen] = useState(isDrawerView(view));
   const [conflictCount, setConflictCount] = useState<number | null>(null);
+  // A recent automatic retirement: the queue's Auto-resolved tab has something to show.
+  const [autoResolved, setAutoResolved] = useState(false);
   // Lean notification surface: badge admin items that have actionable
   // state right now. Over-cap on Usage = burning $; new-since-24h on
   // Agents = unexpected client connected.
@@ -252,18 +263,30 @@ export function Sidebar() {
     }
     return item;
   });
+  const openConflicts = conflictCount != null && conflictCount > 0;
+  // The count is of open conflicts; recent auto-resolutions alone show the entry, no number.
+  const reviewBadge = openConflicts ? conflictCount : undefined;
   const visibleAdmin: NavItem[] = !canAdmin
     ? []
-    : conflictCount != null && conflictCount > 0
-      ? [{ id: "admin:review_queue", label: "Review queue", icon: "warning", badge: conflictCount }, ...adminWithBadges]
+    : openConflicts || autoResolved
+      ? [
+          // Open conflicts warn; recent auto-resolutions alone use the Auto-resolved tab's icon.
+          {
+            id: "admin:review_queue",
+            label: "Review queue",
+            icon: openConflicts ? "warning" : "flash",
+            badge: reviewBadge,
+          },
+          ...adminWithBadges,
+        ]
       : adminWithBadges;
 
-  // Fetch conflict count + budget + agents activity on identity change
-  // and refresh every 30s. All three are fail-quiet — a missing
+  // Fetch conflict count + recent auto-resolutions + budget + agents activity on identity
+  // change and refresh every 60s. All four are fail-quiet — a missing
   // backend op just leaves its badge hidden. Only for a known admin of this
   // namespace: otherwise a viewer-only token draws AUTH_INSUFFICIENT 403s on every page
   // load, and a token-only principal through the fail-open gate. Each call also passes
-  // `canCall` so the rule lives in one place. The three reads leave AFTER the page's
+  // `canCall` so the rule lives in one place. The reads leave AFTER the page's
   // first paint, on idle — a badge number is not what the person is waiting for — and the
   // last answer is remembered for the session, so a full reload shows the badges at once
   // from it and refreshes them behind.
@@ -274,11 +297,12 @@ export function Sidebar() {
   useEffect(() => {
     if (!badgeKey) return;
     agentsTick.current = 0;
-    const last = readSession<{ conflicts: number | null; overCap: boolean; newAgents: number }>(
+    const last = readSession<{ conflicts: number | null; autoResolved?: boolean; overCap: boolean; newAgents: number }>(
       badgeKey,
       BADGE_SESSION_TTL_MS,
     );
     setConflictCount(last ? last.conflicts : null);
+    setAutoResolved(last ? !!last.autoResolved : false);
     setOverCap(last ? last.overCap : false);
     setNewAgent24hCount(last ? last.newAgents : 0);
   }, [badgeKey]);
@@ -287,7 +311,7 @@ export function Sidebar() {
     let cancelled = false;
     const fetch_ = async () => {
       const tasks: Promise<void>[] = [];
-      const next = { conflicts: null as number | null, overCap: false, newAgents: 0 };
+      const next = { conflicts: null as number | null, autoResolved: false, overCap: false, newAgents: 0 };
       if (canCall("conflicts.list", roleHere, whoami)) {
         tasks.push(
           // The badge asks for the number, not 100 rows with their values (33 MB per tick
@@ -297,6 +321,23 @@ export function Sidebar() {
               if (!cancelled) {
                 next.conflicts = n;
                 setConflictCount(n);
+              }
+            })
+            .catch(() => {
+              /* hide */
+            }),
+        );
+      }
+      // The Review queue shows the Auto-resolved tab only to a role that reaches both.
+      if (canCall("memory.auto_retirements", roleHere, whoami) && canCall("audit.list", roleHere, whoami)) {
+        tasks.push(
+          // Whether the Auto-resolved tab has a row (`hasAutoResolved` says what it reads).
+          // Shared with the Review queue page, which asks the same question.
+          sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
+            .then((found) => {
+              if (!cancelled) {
+                next.autoResolved = found;
+                setAutoResolved(found);
               }
             })
             .catch(() => {

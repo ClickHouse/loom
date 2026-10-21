@@ -1,12 +1,15 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+
+import pytest
 
 from server.memory.domain.graph_quality import (
     canonical_edge_pair,
     canonical_entity,
     canonical_entity_text,
     canonical_relation,
+    ended_verb,
     is_single_valued_relation,
-    should_invalidate_interval,
+    order_ended_before_dated,
     triple_interval_repairs,
 )
 
@@ -30,24 +33,6 @@ def test_canonical_relation_marks_out_of_ontology_lower_confidence() -> None:
     assert rejected.verb == "mentions"
     assert rejected.accepted is False
     assert rejected.confidence == 0.5
-
-
-def test_should_invalidate_open_interval_only_when_newer_fact_is_dated() -> None:
-    assert should_invalidate_interval(
-        existing_valid_at=datetime(2024, 1, 1),
-        existing_valid_to=None,
-        new_valid_at=datetime(2025, 1, 1),
-    )
-    assert not should_invalidate_interval(
-        existing_valid_at=datetime(2024, 1, 1),
-        existing_valid_to=datetime(2024, 6, 1),
-        new_valid_at=datetime(2025, 1, 1),
-    )
-    assert not should_invalidate_interval(
-        existing_valid_at=datetime(2024, 1, 1),
-        existing_valid_to=None,
-        new_valid_at=None,
-    )
 
 
 def test_triple_interval_repairs_close_conflicting_current_state() -> None:
@@ -76,6 +61,27 @@ def test_triple_interval_repairs_close_conflicting_current_state() -> None:
         "acme",
         "user",
     )
+
+
+def test_a_value_stated_with_its_own_end_is_not_closed_early() -> None:
+    # A documented limit: "works at Acme until December" stays current until then.
+    repairs = triple_interval_repairs(
+        existing=[
+            {
+                "subject": "user",
+                "relation": "works_at",
+                "object": "acme",
+                "valid_from": datetime(2023, 1, 1),
+                "valid_to": datetime(2025, 12, 1),
+            }
+        ],
+        new_subject="user",
+        new_relation="works at",
+        new_object="ClickHouse",
+        new_valid_at=datetime(2025, 1, 1),
+    )
+
+    assert repairs == []
 
 
 def test_triple_interval_repairs_do_not_close_multi_valued_relations() -> None:
@@ -172,7 +178,7 @@ def test_interval_rules_tie_undated_and_late_arrival() -> None:
         new_relation="work_at",
         new_object="globex",
         new_valid_at=None,
-        arrival_at=datetime(2026, 9, 12, 8),
+        new_seen_at=datetime(2026, 9, 12, 8),
     )
     assert [r.old_object for r in undated] == ["acme"]
     assert undated[0].valid_to == datetime(2026, 9, 12, 8)
@@ -265,3 +271,372 @@ def test_lexical_junk_is_never_a_graph_node() -> None:
     )
     for r in real:
         assert not is_lexical_junk_entity(r), r
+
+
+# ---------------------------------------------------------------------------
+# Which value is newer: every row is placed by (start day, seen_at, object).
+# ---------------------------------------------------------------------------
+
+
+def _live(obj: str, valid_from: datetime | None, seen: datetime) -> dict:
+    return {
+        "subject": "user",
+        "relation": "live_in",
+        "object": obj,
+        "valid_from": valid_from,
+        "valid_to": None,
+        "seen_at": seen,
+    }
+
+
+def _repairs(existing: list[dict], new: dict, **kw) -> list:
+    return triple_interval_repairs(
+        existing=existing,
+        new_subject="user",
+        new_relation="live_in",
+        new_object=new["object"],
+        new_valid_at=new["valid_from"],
+        new_seen_at=new["seen_at"],
+        **kw,
+    )
+
+
+def _survivors(rows: list[dict]) -> set[str]:
+    """The values none of the writers' repairs closes, when each writer's repair reads
+    every row: the values left current."""
+    closed = {r.old_object for new in rows for r in _repairs(rows, new)}
+    return {row["object"] for row in rows} - closed
+
+
+def test_three_values_that_cycled_pairwise_leave_one_current_value() -> None:
+    # Pairwise, the old rules took A over B, B over C and C over A, and all three closed.
+    # By (start day, seen_at): B (Oct 15) > C (Oct 14) > A (Oct 13).
+    rows = [
+        _live("a", datetime(2026, 10, 13, 12), datetime(2026, 10, 15, 0, 0, 3)),
+        _live("b", None, datetime(2026, 10, 15, 0, 0, 2)),
+        _live("c", datetime(2026, 10, 14), datetime(2026, 10, 15, 0, 0, 1)),
+    ]
+    assert _survivors(rows) == {"b"}
+
+
+@pytest.mark.parametrize(("london_us", "paris_us", "survivor"), [(1, 2, "paris"), (2, 1, "london")])
+def test_two_undated_writers_in_one_second_agree_and_the_later_arrival_wins(
+    london_us: int, paris_us: int, survivor: str
+) -> None:
+    second = datetime(2026, 10, 1, 10, 0, 5)
+    rows = [
+        _live("london", None, second.replace(microsecond=london_us)),
+        _live("paris", None, second.replace(microsecond=paris_us)),
+    ]
+    assert _survivors(rows) == {survivor}
+
+
+@pytest.mark.parametrize("undated_first", [True, False])
+def test_racing_dated_and_undated_writers_agree_on_the_later_day(undated_first: bool) -> None:
+    # Rome dated Oct 14 and undated London seen Oct 15, whichever arrived first: the
+    # later day wins, so both writers' repairs close Rome.
+    london_s, rome_s = (1, 2) if undated_first else (2, 1)
+    rows = [
+        _live("london", None, datetime(2026, 10, 15, 10, 0, london_s)),
+        _live("rome", datetime(2026, 10, 14), datetime(2026, 10, 15, 10, 0, rome_s)),
+    ]
+    assert _survivors(rows) == {"london"}
+
+
+def test_a_fact_dated_today_closes_an_undated_value_seen_earlier_today() -> None:
+    london = _live("london", None, datetime(2026, 10, 14, 9))
+    paris = _live("paris", datetime(2026, 10, 14), datetime(2026, 10, 14, 10))
+    repairs = _repairs([london], paris)
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("london", datetime(2026, 10, 14))]
+    assert _survivors([london, paris]) == {"paris"}
+
+
+def test_an_undated_update_later_the_same_day_closes_a_dated_value() -> None:
+    paris = _live("paris", datetime(2026, 10, 14), datetime(2026, 10, 14, 9))
+    london = _live("london", None, datetime(2026, 10, 14, 10, 0, 0, 250))
+    repairs = _repairs([paris], london)
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 10, 14, 10))]
+    assert _survivors([london, paris]) == {"london"}
+
+
+def test_an_undated_value_seen_before_a_past_fact_was_told_stays_current() -> None:
+    # London stated undated on Oct 1; on Oct 15 an import says Rome from Jul 1. Rome
+    # was over by the time London was seen: London stays current, Rome closes then.
+    london = _live("london", None, datetime(2026, 10, 1))
+    rome = _live("rome", datetime(2026, 7, 1), datetime(2026, 10, 15))
+    repairs = _repairs([london], rome)
+    assert [(r.old_object, r.new_object, r.valid_to) for r in repairs] == [
+        ("rome", "london", datetime(2026, 10, 1))
+    ]
+
+
+@pytest.mark.parametrize("berlin_is_new", [True, False])
+def test_a_future_dated_plan_is_not_closed_before_it_begins(berlin_is_new: bool) -> None:
+    # Berlin from Dec 1, stated Oct 1; London stated undated on Oct 5. Whichever repair
+    # runs, London closes when Berlin begins.
+    berlin = _live("berlin", datetime(2026, 12, 1), datetime(2026, 10, 1))
+    london = _live("london", None, datetime(2026, 10, 5))
+    new, old = (berlin, london) if berlin_is_new else (london, berlin)
+    repairs = _repairs([old], new)
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("london", datetime(2026, 12, 1))]
+
+
+def test_within_one_write_the_later_stated_value_wins() -> None:
+    # One write states Zurich, then Amsterdam, on the session date: the write stores
+    # Amsterdam a microsecond after Zurich, so Zurich closes though it sorts after it.
+    day, seen = datetime(2026, 10, 1), datetime(2026, 10, 1, 10, 0, 0, 7)
+    zurich = _live("zurich", day, seen)
+    amsterdam = _live("amsterdam", day, seen + timedelta(microseconds=1))
+    repairs = _repairs([zurich], amsterdam)
+    assert [(r.old_object, r.new_object) for r in repairs] == [("zurich", "amsterdam")]
+    assert _survivors([zurich, amsterdam]) == {"amsterdam"}
+
+
+@pytest.mark.parametrize("london_first", [True, False])
+def test_within_one_write_an_ended_undated_value_is_older_than_a_dated_one(
+    london_first: bool,
+) -> None:
+    # "I lived in London" and "I moved to Paris on Oct 1", written Oct 15, in either
+    # order: London, worded as ended, is seen just before Paris starts, so Paris closes
+    # it then and stays current.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    london = _live("london", None, seen)
+    paris = _live("paris", datetime(2026, 10, 1), seen)
+    rows = [london, paris] if london_first else [paris, london]
+    for n, row in enumerate(rows):
+        row["seen_at"] = seen + timedelta(microseconds=n)
+    order_ended_before_dated(rows, {rows.index(london)})
+    assert london["seen_at"] < datetime(2026, 10, 1)
+    assert [(r.old_object, r.valid_to) for r in _repairs([london], paris)] == [
+        ("london", datetime(2026, 10, 1))
+    ]
+    assert _survivors(rows) == {"paris"}
+
+
+@pytest.mark.parametrize("london_end", [None, datetime(2021, 6, 1)])
+def test_within_one_write_a_value_that_still_holds_beats_a_dated_past_one(
+    london_end: datetime | None,
+) -> None:
+    # "I live in Paris", then "I moved to London in 2019" (or "lived in London 2019 to
+    # 2021"): the order says nothing, Paris is worded as holding, so nothing moves.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    paris = _live("paris", None, seen)
+    london = {**_live("london", datetime(2019, 1, 1), seen + timedelta(microseconds=1))}
+    london["valid_to"] = london_end
+    order_ended_before_dated([paris, london], set())
+    assert paris["seen_at"] == seen
+    assert _survivors([paris, london]) == {"paris"}
+
+
+@pytest.mark.parametrize("relation", ["live_in", "like"])
+def test_an_ended_value_moves_before_a_dated_one_whatever_the_relation(relation: str) -> None:
+    # Whether a relation holds one value is the namespace's to change; a replay must
+    # store the same seen_at as the write did, so the move cannot depend on it.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    london = {**_live("london", None, seen), "relation": relation}
+    paris = {**_live("paris", datetime(2026, 10, 1), seen), "relation": relation}
+    order_ended_before_dated([london, paris], {0})
+    assert london["seen_at"] == datetime(2026, 10, 1) - timedelta(microseconds=2)
+
+
+def test_within_one_write_an_ended_value_restated_with_a_date_does_not_move() -> None:
+    # "I lived in Paris" next to "I moved to Paris on Oct 1": the same value, no move.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    lived = _live("paris", None, seen)
+    moved = _live("paris", datetime(2026, 10, 1), seen + timedelta(microseconds=1))
+    order_ended_before_dated([lived, moved], {0})
+    assert lived["seen_at"] == seen
+
+
+@pytest.mark.parametrize(
+    ("verb", "ended"),
+    [
+        ("lived_in", True),
+        ("Lived in", True),
+        ("worked_at", True),
+        ("was_based_in", True),
+        ("lives_in", False),
+        ("live_in", False),
+        ("works_at", False),
+        ("has_lived_in", False),
+        ("moved_to", False),
+        ("joined", False),
+        ("livestreamed", False),
+    ],
+)
+def test_ended_verb(verb: str, ended: bool) -> None:
+    assert ended_verb(verb) is ended
+
+
+@pytest.mark.parametrize("berlin_first", [True, False])
+def test_within_one_write_a_later_start_day_wins_whatever_the_order(berlin_first: bool) -> None:
+    # One write: "I move to Berlin" (in 45 days) and "I live in Paris" (undated), in
+    # either order. Write order only breaks a same-day tie: Paris closes when Berlin
+    # begins, and Berlin stays current.
+    seen = datetime(2026, 10, 15, 10, 0, 0, 7)
+    first, second = seen, seen + timedelta(microseconds=1)
+    berlin = _live("berlin", datetime(2026, 11, 29), first if berlin_first else second)
+    paris = _live("paris", None, second if berlin_first else first)
+    old, new = (berlin, paris) if berlin_first else (paris, berlin)
+    order_ended_before_dated([old, new], {[old, new].index(paris)})  # a future start moves nothing
+    assert paris["seen_at"] == (second if berlin_first else first)
+    repairs = _repairs([old], new)
+    assert [(r.old_object, r.valid_to) for r in repairs] == [("paris", datetime(2026, 11, 29))]
+    assert _survivors([berlin, paris]) == {"berlin"}
+
+
+@pytest.mark.parametrize(
+    ("acme", "globex", "closed"),
+    [
+        # Different days: by date, whatever arrived first.
+        ((datetime(2026, 9, 1), 2), (datetime(2026, 9, 2), 1), "acme"),
+        ((datetime(2026, 9, 2), 1), (datetime(2026, 9, 1), 2), "globex"),
+        # One day: by arrival, whatever the hour stated (a deliberate change: the
+        # stated time of day no longer orders).
+        ((datetime(2026, 9, 1, 18), 1), (datetime(2026, 9, 1, 9), 2), "acme"),
+        ((datetime(2026, 9, 1, 9), 2), (datetime(2026, 9, 1, 18), 1), "globex"),
+        # One day and one instant: by object text.
+        ((datetime(2026, 9, 1), 1), (datetime(2026, 9, 1), 1), "acme"),
+    ],
+)
+def test_dated_values_order_by_day_then_by_arrival(acme, globex, closed) -> None:
+    def row(obj: str, start: datetime, us: int) -> dict:
+        return {**_live(obj, start, datetime(2026, 9, 12, 10, 0, 0, us)), "relation": "work_at"}
+
+    rows = [row("acme", *acme), row("globex", *globex)]
+    for new in rows:
+        repairs = triple_interval_repairs(
+            existing=rows,
+            new_subject="user",
+            new_relation="work_at",
+            new_object=new["object"],
+            new_valid_at=new["valid_from"],
+            new_seen_at=new["seen_at"],
+        )
+        assert [r.old_object for r in repairs] == [closed]
+
+
+def test_an_undated_value_seen_after_midnight_beats_the_session_days_date() -> None:
+    # A behaviour change: a session crossing midnight UTC. London undated, seen at
+    # 00:05 on Oct 15, is newer than Paris dated to the session's day, Oct 14, though
+    # Paris arrived at 00:10. The day decides, so the order stays total.
+    london = _live("london", None, datetime(2026, 10, 15, 0, 5))
+    paris = _live("paris", datetime(2026, 10, 14), datetime(2026, 10, 15, 0, 10))
+    repairs = _repairs([london], paris)
+    assert [(r.old_object, r.new_object, r.valid_to) for r in repairs] == [
+        ("paris", "london", datetime(2026, 10, 15, 0, 5))
+    ]
+
+
+def test_a_same_date_tie_gives_each_object_one_verdict() -> None:
+    # Plain MergeTree keeps one open row per observation. London seen before and
+    # after the new Paris must not both close London and close Paris: one newer row
+    # makes the whole value the newer.
+    day = datetime(2026, 10, 1)
+    london = [_live("london", day, datetime(2026, 10, 1, 10, 0, s)) for s in (0, 5)]
+    repairs = _repairs(london, _live("paris", day, datetime(2026, 10, 1, 10, 0, 3)))
+    assert {(r.old_object, r.new_object) for r in repairs} == {("paris", "london")}
+
+
+@pytest.mark.parametrize("new_valid_at", [None, datetime(2026, 10, 1, 10)])
+def test_an_undated_value_seen_after_the_write_arrived_is_the_newer_one(new_valid_at) -> None:
+    # A replay reuses the arrival of the write it repeats: the undated Paris a later
+    # write stated is newer than it and stays current. The older London closes as ever.
+    paris_seen = datetime(2026, 10, 1, 10, 0, 5)
+    rome = _live("rome", new_valid_at, datetime(2026, 10, 1, 10))
+    repairs = _repairs(
+        [_live("london", None, datetime(2026, 10, 1, 9)), _live("paris", None, paris_seen)], rome
+    )
+    assert {(r.old_object, r.new_object, r.valid_to) for r in repairs} == {
+        ("london", "rome", datetime(2026, 10, 1, 10)),
+        ("rome", "paris", paris_seen),
+    }
+
+
+def test_a_value_restated_with_a_later_date_is_judged_once_by_its_newest_row() -> None:
+    # London from March, restated from August; Paris from June arrives. London's
+    # August row makes it the newer: Paris closes, and no London row does.
+    repairs = _repairs(
+        [
+            _live("london", datetime(2026, 3, 1), datetime(2026, 9, 1)),
+            _live("london", datetime(2026, 8, 1), datetime(2026, 9, 2)),
+        ],
+        _live("paris", datetime(2026, 6, 1), datetime(2026, 9, 3)),
+    )
+    assert [(r.old_object, r.new_object, r.valid_to) for r in repairs] == [
+        ("paris", "london", datetime(2026, 8, 1))
+    ]
+
+
+def test_a_value_seen_again_undated_keeps_its_dated_start() -> None:
+    # Beta from 2023, seen again undated in 2025; Acme from 2020 is told late. Beta is
+    # the newer: Acme closes when Beta first began, not when it was seen again.
+    def beta(start: datetime | None, seen: datetime) -> dict:
+        return {
+            "subject": "alice",
+            "relation": "works_at",
+            "object": "beta",
+            "valid_from": start,
+            "valid_to": None,
+            "seen_at": seen,
+        }
+
+    repairs = triple_interval_repairs(
+        existing=[
+            beta(datetime(2023, 1, 1), datetime(2023, 1, 2)),
+            beta(None, datetime(2025, 1, 1)),
+        ],
+        new_subject="alice",
+        new_relation="works_at",
+        new_object="acme",
+        new_valid_at=datetime(2020, 1, 1),
+        new_seen_at=datetime(2026, 10, 1),
+    )
+    assert [(r.old_object, r.new_object, r.valid_to) for r in repairs] == [
+        ("acme", "beta", datetime(2023, 1, 1))
+    ]
+
+
+def test_every_start_of_an_older_value_is_closed() -> None:
+    # Each start closes its own edge interval.
+    repairs = _repairs(
+        [
+            _live("london", datetime(2026, 1, 1), datetime(2026, 9, 1)),
+            _live("london", datetime(2026, 3, 1), datetime(2026, 9, 1)),
+        ],
+        _live("paris", datetime(2026, 6, 1), datetime(2026, 9, 2)),
+    )
+    assert sorted((r.old_object, r.valid_from, r.valid_to) for r in repairs) == [
+        ("london", datetime(2026, 1, 1), datetime(2026, 6, 1)),
+        ("london", datetime(2026, 3, 1), datetime(2026, 6, 1)),
+    ]
+
+
+def test_an_undated_row_is_judged_by_when_it_was_seen() -> None:
+    # London was stated undated on Feb 1; Rome from Jul 1 arrives on Oct 15 and
+    # London closes then. A London row dated 2025 and seen on Oct 10 is older too:
+    # each row starts at its own date, or undated, when it was seen.
+    undated = _live("london", None, datetime(2026, 2, 1))
+    dated = _live("london", datetime(2025, 1, 1), datetime(2026, 10, 10))
+    rome = _live("rome", datetime(2026, 7, 1), datetime(2026, 10, 15))
+
+    def closes(existing: list[dict]) -> list[tuple]:
+        return sorted(
+            (r.old_object, r.valid_from or datetime.min, r.valid_to)
+            for r in _repairs(existing, rome)
+        )
+
+    assert closes([undated]) == [("london", datetime.min, datetime(2026, 7, 1))]
+    assert closes([undated, dated]) == [
+        ("london", datetime.min, datetime(2026, 7, 1)),
+        ("london", datetime(2025, 1, 1), datetime(2026, 7, 1)),
+    ]
+
+
+def test_a_repair_carries_the_arrival_of_the_value_that_closed() -> None:
+    # The replay judges a restatement against the closing value's own arrival.
+    seen = datetime(2026, 10, 1, 10, 0, 0, 42)
+    (closed,) = _repairs([_live("london", None, datetime(2026, 9, 1))], _live("rome", None, seen))
+    assert closed.new_seen_at == seen
+    (late,) = _repairs([_live("london", None, seen)], _live("rome", datetime(2026, 7, 1), seen))
+    assert (late.old_object, late.new_seen_at) == ("rome", seen)
