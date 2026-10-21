@@ -274,6 +274,7 @@
 2baacf579b8b	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 2bc1110dc6d5	WITH docs AS ( SELECT thread_id, msg_id, any(role) AS msg_role, argMax(content, ts) AS body, max(ts) AS saved_at, arrayFilter(t -> length(t) >= ?, splitByNonAlpha(lowerUTF8(body))) AS words FROM loom.
 2c04b7b2650d	SELECT count() AS n FROM loom.entity_summaries FINAL WHERE org = {org:String} AND tombstoned_at IS NULL AND namespace IN {ns:Array(String)}
+2c202ca21803	ALTER TABLE loom.memory UPDATE value = ?, value_json = ?, evidence = ?, entities = [], concepts = [], redacted_at = {ts:DateTime}, redaction_reason = {rb:String} WHERE org = {org:String} AND ((memory_
 2c737f9a7281	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 2c81c12c46cd	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 2cad8bf84992	SELECT org, qa_namespace, issue_number, pr_number, rank, score, bm25_title, bm25_body, bm25_norm, window_hours, component_match, frames_symbols, frames_files, frames_total, closes_mention, terms, pr_t
@@ -501,6 +502,7 @@
 4cfef796c1ab	ALTER TABLE loom.documents UPDATE superseded_at = {now:DateTime} WHERE (org = {org:String} AND user_id != {uid:String} AND superseded_at IS NULL AND (namespace, source_uri) IN ( SELECT namespace, sour
 4d19c2282f56	ALTER TABLE loom.session_brief_revisions DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sy
 4d7bac78429c	ALTER TABLE loom.memory_record_versions DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
+4dcb3641062a	ALTER TABLE loom.memory_versions UPDATE value = ?, value_json = ?, evidence = ?, entities = [], concepts = [], redacted_at = {ts:DateTime}, redaction_reason = {rb:String} WHERE org = {org:String} AND 
 4ddbe76045c3	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, cosineDistance(e.embedding, {q:Array(Float32)}) AS dist
 4e3818b72bd5	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 4e608b5f94ce	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
@@ -653,7 +655,6 @@
 666bc5854794	SELECT countIf(n > ?) / greatest(count(), ?) AS reused_share FROM ( SELECT memory_key, count() AS n FROM loom.memory_embeddings FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstone
 6684f1838501	SELECT count() AS n FROM loom.memory_chunk_sources FINAL WHERE org = {org:String} AND (namespace, memory_key) IN (SELECT namespace, memory_key FROM loom.memory WHERE org = {org:String} AND user_id = {
 66a80f4706a4	ALTER TABLE loom.operator_edges DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
-66cb850c0de8	SELECT agent, session_id, memory_key, max(version) AS newest FROM loom.memory_versions WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {u:String} AND memory_type = ? AND startsWith(
 67017e115884	SELECT org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key FROM loom.memory_embeddings PREWHERE embedding_dim = ? WHERE tombstoned_at IS NULL AND embed_failed_at IS NULL AND
 6714d711e222	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 67521fc19437	SELECT session_id, substring(summary_text, ?, ?) AS content_excerpt, cosineDistance(summary_embedding, {q:Array(Float32)}) AS distance, -- NB: alias must NOT be `valid_at` — under the analyzer a -- SE
@@ -679,7 +680,6 @@
 6ae046a1eb58	ALTER TABLE loom._migration_lock DELETE WHERE name = {name:String} AND holder = {me:String} SETTINGS keeper_map_strict_mode = ?
 6af63397c87d	ALTER TABLE loom.operator_edges DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 6af71c1daf2b	SELECT length(value) AS chars FROM loom.memory FINAL WHERE org = {o:String} AND namespace = {n:String} AND user_id = {u:String} AND memory_type = ? AND tombstoned_at IS NULL ORDER BY created_at DESC L
-6b1070e6f346	ALTER TABLE loom.memory UPDATE value = ?, value_json = ?, evidence = ?, entities = [], concepts = [], redacted_at = {ts:DateTime}, redaction_reason = {rb:String} WHERE org = {org:String} AND ((memory_
 6b2f67cd11ca	SELECT path, max(computed_at) AS newest_at FROM loom.code_unit_risk WHERE org = {org:String} AND namespace = {ns:String} GROUP BY path
 6b4932fdfd22	ALTER TABLE loom.conflict_allowlist DELETE WHERE (org = {org:String} AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
 6b6d53e64bd0	ALTER TABLE loom.entity_edges DELETE WHERE (org = {org:String} AND namespace IN {ns:Array(String)}) AND ({erasure_mutation_tag:String} = {erasure_mutation_tag:String}) SETTINGS mutations_sync = ?
@@ -1045,7 +1045,6 @@
 9f3688435054	SELECT count() AS n FROM loom.conversations WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
 9f3874c7363e	SELECT pr_number, title, author, labels, merged_at, merge_commit_sha, linked_issues, body_excerpt FROM loom.code_pr_history FINAL WHERE org = {org:String} AND namespace = {ns:String} AND has(files, {p
 9f5d32094111	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
-9f7d78d5f53c	ALTER TABLE loom.memory_versions UPDATE value = ?, value_json = ?, evidence = ?, entities = [], concepts = [], redacted_at = {ts:DateTime}, redaction_reason = {rb:String} WHERE org = {org:String} AND 
 9fad0b356a81	SELECT namespace, countIf(status=?) AS pending, countIf(status=?) AS promoted, countIf(status=?) AS rejected, if(countIf(status IN (?,?)) > ?, countIf(status=?) / countIf(status IN (?,?)), ?) AS appro
 9fff0b609d85	SELECT toUInt32(quantileExact(?)(failing_tests)) AS median_tests, count() AS hours FROM loom.qa_fail_hours FINAL WHERE org = {org:String} AND qa_namespace = {ns:String} AND hour >= {h0:DateTime} AND h
 a0585852a421	SELECT memory_id, memory_key, value, pinned, agent, user_id, session_id, run_id, valid_at FROM loom.memory FINAL PREWHERE org = {org:String} AND namespace = {ns:String} AND (agent, user_id, session_id
@@ -1208,6 +1207,7 @@ b44f9aa844ae	ALTER TABLE loom.memory_chunk_sources DELETE WHERE (org = {org:Stri
 b46d982f0a46	SELECT path, scope, symbol_ids, start_line, end_line, content FROM ( SELECT path, scope, symbol_ids, start_line, end_line, content, chunk_id, tombstoned_at FROM loom.code_chunks WHERE org = {org:Strin
 b477b850b86e	SELECT operation, sumMerge(cost_usd_state) AS cost_usd, sumMerge(tokens_state) AS tokens, sumMerge(embed_tokens_state) AS embed_tokens, countMerge(ops_state) AS ops, sumMerge(errors_state) AS errors, 
 b478870f3be3	SELECT count() AS n FROM loom.context_blobs FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
+b49285646859	SELECT agent, session_id, memory_key, max(version) AS newest FROM loom.memory_versions WHERE org = {org:String} AND namespace = {ns:String} AND agent = ? AND user_id = {u:String} AND memory_type = ? A
 b49fc192acf0	SELECT candidate_id, memory_key, memory_type, proposed_value, supporter_count, confidence_avg, supporters, rationale, source_kind, status, proposed_at, decided_at, decided_by, decision_reason FROM loo
 b4ed88f8ac76	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, ? - cosineDistance(e.embedding, {qv:Array(Float32)}) AS similarity, toString(coalesce(e.temporal_
 b4fcede7dd0d	SELECT * EXCEPT (embedding) FROM loom.code_summaries FINAL WHERE (org, namespace, embedding_model, scope_type, scope_path) IN {keys:Array(Tuple(String, String, String, String, String))} AND embedding_

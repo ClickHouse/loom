@@ -165,16 +165,15 @@ class ProfileSchemaOutput(BaseModel):
 
 
 class ProfileStructuredInput(_Identity):
-    # `own_user` reads only the caller's own profile; a session-bounded token is refused.
+    # The token's read_scope is the ceiling; the op always reads the one user_id named
+    # (or pinned), and own_session is refused.
     read_scope: Literal["namespace", "own_user"] = "namespace"
 
 
 class ProfileStructuredOutput(BaseModel):
-    # `ready` (current; every property null for a user whose facts are all gone),
-    # `stale` (memories or the schema changed since the build), `pending` (no live
-    # profile: not built yet, or the built row expired, was redacted (until the worker
-    # rebuilds it) or is labelled `high` (held until the key moves to a new version))
-    # or `no_schema` (the namespace has none, or its stored one no longer parses).
+    # ready: current, or all null for a user with no facts; stale: memories or schema
+    # changed since the build; pending: no live profile yet (unbuilt, expired, redacted
+    # or high); no_schema: none set or it no longer parses.
     status: Literal["ready", "stale", "pending", "no_schema"]
     # Every property of the schema, null where the memories do not settle it ({} under
     # `no_schema`).

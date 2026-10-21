@@ -154,11 +154,11 @@ The user's structured profile and whether it is current.
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
 | `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
-| `read_scope` | `Literal['namespace', 'own_user']` | `'namespace'` | `own_user` reads only the caller's own profile; a session-bounded token is refused. |
+| `read_scope` | `Literal['namespace', 'own_user']` | `'namespace'` | The token's read_scope is the ceiling; the op always reads the one user_id named (or pinned), and own_session is refused. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | `ready` (current; every property null for a user whose facts are all gone), `stale` (memories or the schema changed since the build), `pending` (no live profile: not built yet, or the built row expired, was redacted (until the worker… |
+| `status` | `Literal['ready', 'stale', 'pending', 'no_schema']` | ready: current, or all null for a user with no facts; stale: memories or schema changed since the build; pending: no live profile yet (unbuilt, expired, redacted or high); no_schema: none set or it no longer parses. |
 | `profile` | `dict[str, Any]` | Every property of the schema, null where the memories do not settle it ({} under `no_schema`). |
 | `built_at` | `datetime \| None` | When the profile was built; None while pending. |
 | `memory_id` | `str` | The memory row that holds the profile, whose history is the profile's history. |

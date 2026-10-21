@@ -126,6 +126,9 @@ async def test_a_profile_is_built_in_the_schema_shape_and_kept_current(
     pending = _read(base, admin, ns, "u1")
     assert pending["status"] == "pending"
     assert pending["profile"] == {"timezone": None, "languages": None}
+    # A user with no facts gets no row from the worker, so the read answers ready now.
+    empty = _read(base, admin, ns, "u3")
+    assert empty["status"] == "ready" and empty["profile"] == {"timezone": None, "languages": None}
 
     await _build(ns)
     ready = _read(base, admin, ns, "u1")
@@ -279,7 +282,10 @@ async def test_erasing_a_user_removes_their_profile(
         parameters={"o": ORG, "n": ns},
     ).result_rows[0][0]
     assert live == 0
-    assert _read(base, admin, ns, "carol")["status"] == "pending"
+    # The row is gone with the facts: the answer is the all-null profile, ready.
+    gone = _read(base, admin, ns, "carol")
+    assert gone["status"] == "ready" and gone["built_at"] is None
+    assert gone["profile"] == {"timezone": None, "languages": None}
 
 
 def test_a_session_bounded_token_cannot_read_a_profile(control_plane_url: str, ns: str) -> None:

@@ -176,13 +176,17 @@ async def handle_profile_structured(input: ProfileStructuredInput) -> ProfileStr
             label=settings.structured_profile_label,
             scope=rf,
         )
-        if row is None:
-            return ProfileStructuredOutput(
-                status="pending", profile=profile_schema.project(props, {}), schema_sha256=sha
-            )
-        digest, _ = await profile_sources.sources_digest(
+        digest, count = await profile_sources.sources_digest(
             org=input.org, namespace=input.namespace, user_id=uid, scope=rf
         )
+        if row is None:
+            # A user with no facts gets no row from the worker; the answer is the
+            # all-null profile it would build.
+            return ProfileStructuredOutput(
+                status="ready" if count == 0 else "pending",
+                profile=profile_schema.project(props, {}),
+                schema_sha256=sha,
+            )
     current = profile_sources.is_current(list(row.get("tags") or []), sha, digest)
     return ProfileStructuredOutput(
         status="ready" if current else "stale",

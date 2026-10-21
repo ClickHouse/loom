@@ -74,7 +74,8 @@ _MARK_REDACTED = ", redacted_at = {ts:DateTime}, redaction_reason = {rb:String}"
 # The user's profile versions whose trace names the memory among those they were
 # built from (`profile.fold:<label>:<id>,<id>,...`). Redacted versions count too:
 # a retried redact must reach the same profile keys as the call that failed.
-_BUILT_FROM = """namespace = {ns:String} AND user_id = {u:String}
+# The builders write only under agent '-', which lets the sort key prune to the user.
+_BUILT_FROM = """namespace = {ns:String} AND agent = '-' AND user_id = {u:String}
   AND memory_type = 'profile'
   AND startsWith(source_trace, 'profile.fold:')
   AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))"""
