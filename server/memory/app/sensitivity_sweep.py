@@ -122,7 +122,11 @@ _COARSE_BY_SHAPE = {
         rf"|{_COARSE_KEYED}"
     ),
     "email": r"@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-    "phone": r"[0-9]{3}[\s.()-]*[0-9]{3}[\s.-]*[0-9]{4}",
+    # the detector allows one Unicode space between groups, which JSON text may escape
+    "phone": (
+        rf"[0-9]{{3}}(?:[\s.()-]|{_ASSIGN_SPACE})*"
+        rf"[0-9]{{3}}(?:[\s.-]|{_ASSIGN_SPACE})*[0-9]{{4}}"
+    ),
     "other": rf"{_JSON_BOUNDARY}[A-Z]{{2}}[0-9]{{2}}(?: ?[A-Z0-9]{{4}}){{2}}",  # IBAN
 }
 

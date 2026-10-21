@@ -839,6 +839,8 @@ _PREFILTER_OBJECTS = [
     {"note": "deploy:\npassword=hunter2222"},  # written `\npassword`
     {"note": "api_key = abcdefgh12345678"},
     {"card": 4111111111111111},  # a lone card number
+    {"note": "call 415\n555\n0123"},  # written `415\n555\n0123`
+    {"note": "415\u00a0555\u00a00123"},  # written `415\u00a0555\u00a00123`
 ]
 _PREFILTER_TEXTS = [
     "PIN is 4471",

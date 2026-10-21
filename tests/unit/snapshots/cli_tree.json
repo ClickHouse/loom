@@ -10875,7 +10875,7 @@
        "nargs": null,
        "type": "server.cli.ops:_positive_int",
        "required": false,
-       "help": "Candidates found per run (labelled with --apply)",
+       "help": "Candidates found per run, labelled with --apply (default 20000)",
        "metavar": null
       },
       {

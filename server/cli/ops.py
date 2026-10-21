@@ -297,7 +297,10 @@ async def _integrity_repair_run(ch: Any, args: argparse.Namespace) -> int:
 
 
 def _positive_int(value: str) -> int:
-    n = int(value)
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer") from None
     if n < 1:
         raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer")
     return n
@@ -323,7 +326,7 @@ def _add_sensitivity_sweep_parser(sub: Any) -> None:
         "--limit",
         type=_positive_int,
         default=20000,
-        help="Candidates found per run (labelled with --apply)",
+        help="Candidates found per run, labelled with --apply (default 20000)",
     )
     p_ssw.add_argument("--show", type=int, default=20, help="Namespaces to print")
     p_ssw.add_argument(
