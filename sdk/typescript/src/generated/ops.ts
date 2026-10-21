@@ -2655,7 +2655,7 @@ export interface ErasureExportInput {
   scope_value: string;
   /** email or service account requesting the export */
   requester: string;
-  /** Include tombstoned memory rows. Default True: subject has the right to know what was held about them, even if pending deletion. */
+  /** Include tombstoned memory and conversation rows. Default True: subject has the right to know what was held about them, even if pending deletion. */
   include_tombstoned?: boolean;
   section_limit?: number;
 }
@@ -2675,6 +2675,8 @@ export interface ErasureExportOutput {
   counts: Record<string, number>;
   memory: ErasureExportSection;
   knowledge: ErasureExportSection;
+  conversations: ErasureExportSection;
+  conversation_threads: ErasureExportSection;
   agent_events: ErasureExportSection;
   audit_log: ErasureExportSection;
 }

@@ -31,6 +31,17 @@ _ROWS = rows_by_substring(
             {"mutation_id": "m1", "is_done": 1, "parts_to_do": 0, "latest_fail_reason": ""}
         ],
         "count()": [{"n": 1}],
+        # The conversation export's size pass finds one turn, so its text read renders.
+        "AS bytes_before_previous": [
+            {
+                "namespace": "n",
+                "thread_id": "t",
+                "ts": datetime(2026, 1, 1),
+                "msg_id": "m",
+                "row_bytes": 1,
+                "bytes_before": 0,
+            }
+        ],
     }
 )
 
@@ -109,6 +120,19 @@ async def _exports(ch: RecordingCH, c: dict[str, Any]) -> None:
     scope_type = c["scope_type"]
     value = "alice" if scope_type == "user_id" else "n"
     await erasure_exports.export_memory(
+        ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
+    )
+    await erasure_exports.export_conversations(
+        ORG,
+        scope_type,
+        value,
+        include_tombstoned=c["include_tombstoned"],
+        limit=100,
+        max_bytes=1000,
+        as_of=datetime(2026, 1, 2),
+        ch=ch,
+    )
+    await erasure_exports.export_conversation_threads(
         ORG, scope_type, value, include_tombstoned=c["include_tombstoned"], limit=100, ch=ch
     )
     await erasure_exports.export_agent_events(ORG, scope_type, value, limit=100, ch=ch)

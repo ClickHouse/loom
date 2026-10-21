@@ -206,8 +206,8 @@ class ErasureExportInput(BaseModel):
     requester: str = Field(..., description="email or service account requesting the export")
     include_tombstoned: bool = Field(
         default=True,
-        description="Include tombstoned memory rows. Default True: subject has the "
-        "right to know what was held about them, even if pending deletion.",
+        description="Include tombstoned memory and conversation rows. Default True: subject "
+        "has the right to know what was held about them, even if pending deletion.",
     )
     # Per-section caps. If a section exceeds, `truncated[section]=True` is set.
     # 10k rows is enough for an internal admin tool; ops can re-query CH for the rest.
@@ -235,12 +235,22 @@ class ErasureExportOutput(BaseModel):
     scope_value: str
     # Echo of who asked for the export.
     requester: str
-    # Rows per section (`memory`, `knowledge`, `agent_events`, `audit_log`) before truncation.
+    # Rows returned per section (`memory`, `knowledge`, `conversations`,
+    # `conversation_threads`, `agent_events`, `audit_log`): at most `section_limit`, and
+    # the section's `truncated` says more exist.
     counts: dict[str, int]
     # `loom.memory` rows in scope; tombstoned rows too when `include_tombstoned`.
     memory: ErasureExportSection
     # Knowledge chunk rows of the namespace, or every one the user wrote for a `user_id` scope.
     knowledge: ErasureExportSection
+    # Turns and saved messages in scope with their `sensitivity`, up to
+    # `erasure_export_conversation_max_bytes` of text plus the turn that crosses it.
+    # `is_saved` marks a saved message, 'high' marks text that reads as high, and
+    # tombstoned rows come too when `include_tombstoned`.
+    conversations: ErasureExportSection
+    # Threads in scope with their title, metadata and `sensitivity`, capped by
+    # `section_limit` rows only (no byte budget).
+    conversation_threads: ErasureExportSection
     # Per-request ledger rows in scope, newest first.
     agent_events: ErasureExportSection
     # Audit rows in scope; for `user_id`, rows whose subject mentions the user id.
