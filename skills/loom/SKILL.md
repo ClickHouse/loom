@@ -164,15 +164,17 @@ each op expects, `agent: "*"` included. A raw `agent.call` stamps your own
 pass `agent: "*"`. In TypeScript, `agent.call` takes `userId`, `sessionId`
 and `runId` in its scope argument, not the body.
 
-A token minted with an
-`own_user` read scope refuses a read without `user_id` (400
-`IDENTITY_INCOMPLETE`) rather than widening it, unless it is pinned to one
-user (as an end user's token is), which reads that user's rows.
-Such a token, and an end user's, reaches only ops that keep their answer
-inside that user: any other op answers 403 `AUTH_INSUFFICIENT` naming it.
-That covers namespace-wide reads (`namespace.validate`, `mentor.brief`),
-namespace-wide refusals (`blacklist.add`†) and revisions by key or id
-(`memory.update`, `memory.move`); skip that step or ask the owner.
+A token minted with an `own_user` read scope refuses a read without
+`user_id` (400 `IDENTITY_INCOMPLETE`) rather than widening it, unless it is
+pinned to one user (as an end user's token is), which reads that user's
+rows. Such a token, and an end user's, reaches only ops that keep their
+answer inside that user: any other op answers 403 `AUTH_INSUFFICIENT`
+naming it. That covers namespace-wide reads (`namespace.validate`,
+`mentor.brief`), namespace-wide refusals (`blacklist.add`†) and revisions
+by key or id (`memory.update`, `memory.move`); skip that step or ask the
+owner. An end user's token also reaches no op outside a namespace except
+`collection.create`†, `collection.list`†, `namespace.list_mine`,
+`grants.pending_for_me`† and `mentor.guide`† (so not `ops.capabilities`).
 
 ## End-of-task review
 
