@@ -985,8 +985,8 @@ async def _search_substring_fallback(
         # Spare rows, so the turns held back below do not leave the page short.
         limit=input.top_k + HELD_MARGIN,
     )
-    # A turn that reads as a credential is never a search hit, as the vector path holds
-    # it. A matched turn can be megabytes long, so the check runs off the event loop.
+    # The fallback checks each matched turn's whole text and drops one that reads as a
+    # credential. A matched turn can be megabytes long, so the check runs off the event loop.
     rows = await asyncio.to_thread(without_credentials, rows, lambda r: r.content, input.top_k)
     hits = [
         _ConversationHit(

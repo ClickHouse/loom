@@ -137,9 +137,8 @@ def _inputs(
         if row.get("tombstoned_at") is not None:
             continue
         text = _source_text(table, row, index, source_texts)
-        if table in PASSAGE_TABLES:
-            if reads_high(text) or index in held:
-                continue
+        if table in PASSAGE_TABLES and (index in held or reads_high(text)):
+            continue
         for column in columns:
             value = text
             if column == "memory_key_embedding":
