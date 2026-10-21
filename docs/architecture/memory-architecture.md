@@ -472,16 +472,17 @@ process tier expires within `LOOM_EMBEDDING_CACHE_TTL_S`.
 
 A bot's rule (`about="agent"`) is never written as a memory: `loom.bulk_write` files it
 to `loom.learnings_queue` as a candidate and adds a row with the user's quotes to
-`loom.learnings_supporters`. A supporter row carries the identity tuple, its `agent`
-the bot the rule was said to, so it names that bot without its candidate. A user
-erasure's `learnings_queue.delete` step deletes the user's supporter rows, then each
-`assistant_turn` candidate left with no supporter. A pending one is deleted. A decided one keeps its decision on a new version with the rule
-blanked, so a rejected rule never comes back as pending. Both deletes are bounded to the
-rows the step read, so a review or a supporter that lands meanwhile survives, and the
-census reopens the step for whatever still holds the rule. A candidate carries no
-`user_id`, and once a user's supporter rows are gone nothing ties an unsupported
-candidate to that user, so the census counts every unsupported candidate that still holds
-its rule in the org, whichever erasure left it.
+`loom.learnings_supporters`. A supporter row carries the identity tuple, its `agent` the
+bot the rule was said to, so it names that bot without its candidate. A user erasure's
+`learnings_queue.delete` step deletes the user's supporter rows, then each
+`assistant_turn` candidate left with no supporter. A pending one is deleted. A decided
+one keeps its decision on a new version with the rule blanked, so a rejected rule never
+comes back as pending. Both deletes are bounded to the rows the step read, so a review
+or a supporter that lands meanwhile survives, and the census reopens the step for
+whatever still holds the rule. A candidate carries no `user_id`, and once a user's
+supporter rows are gone nothing ties an unsupported candidate to that user, so the
+census counts every unsupported candidate that still holds its rule in the org,
+whichever erasure left it.
 
 ## Audit rows
 
