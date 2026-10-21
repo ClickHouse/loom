@@ -41,8 +41,8 @@ client is constructed and pass `user_id`, `session_id` and `run_id` per call, `-
 each one a call does not name. Where one of these fields filters a read (searches, asks,
 the startup pack, conversation and run listings, `memory.update`'s key lookup), `-`
 means no filter: a search that names no run reads every run's rows. Where the field is
-the row's address (`memory.get`, `memory.list`, `memory.stack`, working memory, profile writes,
-saved messages), `-` is the row written with no user, session or run.
+the row's address (`memory.get`, `memory.list`, `memory.stack`, working memory, profile
+writes, saved messages), `-` is the row written with no user, session or run.
 
 **Reads span every author.** A read defaults to `agent="*"`: every row of the namespace,
 whoever wrote it. Passing an `agent` only narrows. `user_id` and `session_id` on a read
