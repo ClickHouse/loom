@@ -182,8 +182,10 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) later while passes have budget
   left; `profile.structured` reports it `stale` at once. Other changes are rebuilt after
   `LOOM_STRUCTURED_PROFILE_COOLDOWN_SECONDS` (600). A user
-  whose facts are all gone gets an all-`null` profile without a model call. An expired,
-  redacted or `high` profile row reads as no profile (`pending`) and is rebuilt.
+  whose facts are all gone gets an all-`null` profile without a model call. An expired
+  or redacted profile row reads as no profile (`pending`) and is rebuilt. A `high`
+  profile row also reads as no profile, but the worker leaves it as it is: it holds
+  like a pin until the key moves to a new version.
 - **Validation.** The model's answer is held to the schema before it is written: a value
   of the wrong type, outside its enum or constraints, a number that is not finite (or an
   integer past 2^53), or a property the schema does not declare is dropped (`null`).
@@ -203,13 +205,16 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   namespace is scanned at most once per that age while nobody else is behind. A user
   whose build failed (a model error, an answer that is not a JSON object, including one
   cut off at its 2048-token cap (the `structured_profile` entry of `LLM_MAX_TOKENS`,
-  changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`)) is skipped for
+  changed through `LOOM_LLM_MAX_TOKENS_OVERRIDES`)) waits
   `LOOM_STRUCTURED_PROFILE_BACKOFF_BASE_SECONDS` (300), doubling up to
-  `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600), and tried again after. A
+  `LOOM_STRUCTURED_PROFILE_BACKOFF_CAP_SECONDS` (21600). It is left out of the namespace
+  scans made while it waits, so it is tried again at the first scan after the wait ends:
+  at most the wait plus `LOOM_STRUCTURED_PROFILE_SCAN_MAX_AGE_SECONDS` (600) after the
+  failure. A
   namespace whose scan or stored schema fails is counted and backs off the same way until
   the wait is over or its schema changes; a namespace that is waiting takes no place in
-  the pass. A build the profile row refuses (locked, pinned, over its size cap,
-  blacklisted) is not retried until the user's memories or the profile row change (an
+  the pass. A build the profile row refuses (locked, pinned, labelled `high`, over its
+  size cap, blacklisted) is not retried until the user's memories or the profile row change (an
   unpin, an unlock, of a redacted row too), or `LOOM_STRUCTURED_PROFILE_REFUSAL_RETRY_SECONDS` (21600) pass, so
   a lock that lapses on its own is retried. Both waits are kept by the worker's process
   and start over when another process takes the worker lease. A pass that reaches every

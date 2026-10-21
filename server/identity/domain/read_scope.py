@@ -357,6 +357,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not memory_schema.register / propose / approve: a schema is namespace-wide and
     # refuses every user's non-matching writes.
     "memory_schema.list": "value schemas",
+    # A narrowed token is not told the subject that set the schema (updated_by).
     "profile_schema.get": "operator configuration: property names and descriptions",
     "admin.users": "the deployment's users",
     # Not agents.connected: no user axis; it lists every user's agents, their ops,

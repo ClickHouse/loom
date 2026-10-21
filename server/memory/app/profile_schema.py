@@ -16,6 +16,7 @@ from typing import Any
 from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError, ValidationError
+from server.identity.app.request_scope import request_narrowed
 from server.identity.domain.read_scope import effective_read_scope, resolve_read_filters
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_profile import (
@@ -61,10 +62,16 @@ async def handle_profile_schema_set(input: ProfileSchemaSetInput) -> ProfileSche
 
 
 async def handle_profile_schema_get(input: ProfileSchemaInput) -> ProfileSchemaOutput:
-    """The namespace's profile schema, its hash, and who set it when."""
+    """The namespace's profile schema, its hash, and who set it when. A token
+    narrowed to one user reads the schema but not the subject that set it."""
     with own_write_reads():  # an admin reads right after setting it, on any replica
         row = await repo.get(input.org, input.namespace)
-    return _output(row) if row else ProfileSchemaOutput(found=False)
+    if row is None:
+        return ProfileSchemaOutput(found=False)
+    out = _output(row)
+    if request_narrowed():
+        out.updated_by = ""
+    return out
 
 
 async def handle_profile_schema_clear(input: ProfileSchemaInput) -> ProfileSchemaOutput:

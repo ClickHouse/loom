@@ -460,16 +460,20 @@ async def test_an_expired_redacted_or_high_profile_is_no_profile(gone: dict[str,
 
     built = await _built(_fact(_A, "u1", "tz", "a"), **gone)
     ch = _LocalCH(*built)
-    row = await src.profile_row(
-        org="o",
-        namespace="n",
-        user_id="u1",
-        label="structured_profile",
-        scope=WHOLE_NAMESPACE,
-        ch=ch,
-    )
-    assert row is None
+    key = {
+        "org": "o",
+        "namespace": "n",
+        "user_id": "u1",
+        "label": "structured_profile",
+        "scope": WHOLE_NAMESPACE,
+        "ch": ch,
+    }
+    assert await src.profile_row(**key) is None
     assert await _behind(ch) == ["u1"]
+    # The head still carries its label, so the worker holds a high one instead of
+    # writing over it (test_a_high_profile_keeps_its_label).
+    head = await src.profile_head_hold(**key)
+    assert head is not None and (head["sensitivity"] == "high") == ("sensitivity" in gone)
 
 
 @_needs_ch
@@ -896,3 +900,28 @@ async def test_the_listing_leaves_out_waiting_namespaces_before_its_limit() -> N
         exclude_orgs=[], after=None, limit=1, waiting=[("o1", "a", "old")], ch=ch
     )
     assert [(r["org"], r["namespace"]) for r in rows] == [("o1", "a")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("narrowed", [False, True])
+async def test_a_narrowed_token_reads_the_schema_but_not_who_set_it(
+    monkeypatch: pytest.MonkeyPatch, narrowed: bool
+) -> None:
+    from server.memory.api.models_profile import ProfileSchemaInput
+    from server.memory.app import profile_schema as schema_app
+
+    stored = {
+        "schema_json": json.dumps(_schema(tz=_TZ)),
+        "schema_sha256": _SHA,
+        "updated_by": "human:admin",
+        "updated_at": None,
+    }
+
+    async def get(org: str, namespace: str) -> dict[str, Any]:
+        return stored
+
+    monkeypatch.setattr(schema_app.repo, "get", get)
+    monkeypatch.setattr(schema_app, "request_narrowed", lambda: narrowed)
+    out = await schema_app.handle_profile_schema_get(ProfileSchemaInput(org="o", namespace="n"))
+    assert out.found and out.schema_sha256 == _SHA
+    assert out.updated_by == ("" if narrowed else "human:admin")

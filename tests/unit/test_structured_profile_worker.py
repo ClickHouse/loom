@@ -314,6 +314,10 @@ def test_a_pinned_or_locked_profile_refuses_a_write() -> None:
     assert w._refuses_a_write({"pinned": 1, "lock_mode": "", "lock_until": None})
     assert w._refuses_a_write({"pinned": 0, "lock_mode": "read_only", "lock_until": None})
     assert not w._refuses_a_write({"pinned": 0, "lock_mode": "no_delete", "lock_until": None})
+    high = {"pinned": 0, "lock_mode": "", "lock_until": None, "tags": []}
+    assert w._refuses_a_write({**high, "sensitivity": "high"})
+    assert w._refuses_a_write({**high, "sensitivity": "", "tags": ["sensitivity:high"]})
+    assert not w._refuses_a_write({**high, "sensitivity": "low"})
 
 
 def _one_user(
@@ -470,6 +474,29 @@ async def test_a_pin_on_a_redacted_head_is_refused_before_the_model_call(
     with pytest.raises(w.Refused) as e:
         await w.build_profile(_ONE, "u1")
     assert (e.value.digest, e.value.profile_version) == ("d1", 4) and written == []
+
+
+@pytest.mark.asyncio
+async def test_a_high_profile_keeps_its_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A high head reads as no profile; a rebuild would write an unlabelled row over it,
+    # so it holds like a pin, at the head's version, and nothing is written.
+    high = {
+        "version": 3,
+        "pinned": 0,
+        "lock_mode": "",
+        "lock_until": None,
+        "sensitivity": "high",
+        "tags": [],
+    }
+    written = _one_user(monkeypatch, head=high)
+
+    async def no_call(*a: Any) -> dict[str, Any]:
+        raise AssertionError("no model call for a high profile")
+
+    monkeypatch.setattr(w, "_ask", no_call)
+    with pytest.raises(w.Refused) as e:
+        await w.build_profile(_ONE, "u1")
+    assert (e.value.digest, e.value.profile_version) == ("d1", 3) and written == []
 
 
 @pytest.mark.asyncio

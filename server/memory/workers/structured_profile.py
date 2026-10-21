@@ -52,7 +52,7 @@ from server.memory.domain import lock, profile_schema
 from server.memory.domain.profile_facts import fact_text, render_fold_input
 from server.memory.domain.prompt_fence import FENCE_NOTE, fence, new_nonce
 from server.memory.domain.provenance import pipeline_actor
-from server.memory.domain.sensitivity import value_reads_high
+from server.memory.domain.sensitivity import is_high, value_reads_high
 from server.memory.store import profile_schemas, profile_sources
 from server.memory.store.profile_sources import Behind
 from server.observability import cost_accumulator
@@ -121,13 +121,14 @@ _SYSTEM = (
 
 
 class Refused(Exception):
-    """The user's profile row will not take this build: a lock, a pin or a 4xx refusal.
+    """The user's profile row will not take this build: a lock, a pin, a `high` label
+    or a 4xx refusal.
     `digest` and `profile_version` (the version of the profile key's head, redacted
     or not) are what the build saw; the user waits until either moves on."""
 
     def __init__(self, digest: str, profile_version: int, status: int) -> None:
-        # status: the write's HTTP status, 0 for a lock or pin seen before the model call.
-        what = f"status {status}" if status else "locked or pinned"
+        # status: the write's HTTP status, 0 for a hold seen before the model call.
+        what = f"status {status}" if status else "held: locked, pinned or high"
         super().__init__(f"{what}, at digest {digest!r}, profile version {profile_version}")
         self.digest = digest
         self.profile_version = profile_version
@@ -477,9 +478,13 @@ async def run_pass(cfg: StructuredProfileConfig | None = None) -> StructuredProf
 
 
 def _refuses_a_write(row: dict[str, Any] | None) -> bool:
-    """Whether the live profile row refuses a changed value: pinned, or locked for it."""
+    """Whether the profile key's head holds against a rebuild: pinned, locked for a
+    changed value, or labelled `high` (a rebuild would write an unlabelled row that
+    profile.render and context.pack serve)."""
     if row is None:
         return False
+    if is_high(row.get("sensitivity"), row.get("tags")):
+        return True
     mode = lock.effective_mode(SimpleNamespace(**row))
     return bool(row.get("pinned")) or "value" in lock.REFUSES.get(mode, frozenset())
 
@@ -509,8 +514,8 @@ async def build_profile(schema: ActiveSchema, user_id: str) -> int | None:
         return None
     if existing and profile_sources.is_current(existing["tags"], schema.sha256, digest):
         return None  # built since the scan listed the user (another pass, another replica)
-    # A pin or lock still holds on a head that was redacted or expired, which reads as
-    # no profile; checked before paying for the model call.
+    # A pin, a lock or a `high` label still holds on a head that reads as no profile
+    # (redacted, expired or high); checked before paying for the model call.
     hold = existing or await profile_sources.profile_head_hold(
         org=org,
         namespace=ns,

@@ -2243,8 +2243,10 @@ class MemorySettings(BaseModel):
     # schema change skips this wait. 0 rebuilds on the next pass.
     structured_profile_cooldown_seconds: Annotated[int, LIVE] = Field(default=600, ge=0)
     # Seconds a user whose structured profile build failed waits before the first
-    # retry; each further failure doubles the wait. Also the first wait of a namespace
-    # whose scan or stored schema failed. Above 0.
+    # retry; each further failure doubles the wait. The retry comes at the first
+    # namespace scan after the wait ends: at most the wait plus
+    # `structured_profile_scan_max_age_seconds` after the failure. Also the first wait
+    # of a namespace whose scan or stored schema failed. Above 0.
     structured_profile_backoff_base_seconds: Annotated[int, LIVE] = Field(default=300, gt=0)
     # Longest wait, in seconds, of a user or namespace whose structured profile build
     # keeps failing. Above 0.

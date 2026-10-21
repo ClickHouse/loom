@@ -64,7 +64,8 @@ _PROFILE_HEAD = """
 """
 
 # A live structured profile row: not deleted, expired or redacted. A 'high' row is
-# readable by key only, so profile.structured serves none and the worker rebuilds it.
+# readable by key only, so profile.structured serves none; the worker reads the head
+# (`profile_head_hold`) and leaves a high one as it is.
 _LIVE_PROFILE = f"""{_PROFILE_HEAD}
     AND redacted_at IS NULL AND sensitivity != 'high'
     AND (expires_at IS NULL OR expires_at > now())
@@ -178,7 +179,7 @@ async def profile_row(
     row: dict[str, Any] | None = await ch.query_one(
         f"""
         SELECT toString(memory_id) AS memory_id, version, value, tags, updated_at,
-               pinned, lock_mode, lock_until
+               pinned, lock_mode, lock_until, sensitivity
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}
           AND {_LIVE_PROFILE}{scope_and(scope, params)}
@@ -198,13 +199,14 @@ async def profile_head_hold(
     scope: ReadFilters,
     ch: _CHClient | None = None,
 ) -> dict[str, Any] | None:
-    """The version, pin and lock of the user's structured profile key's head, redacted
-    or expired: a write to the key checks its head, not the row a reader is served."""
+    """The version, pin, lock and sensitivity of the user's structured profile key's
+    head, redacted, expired or high: a write to the key checks its head, not the row
+    a reader is served."""
     ch = ch or _default_client()
     params: dict[str, Any] = {"org": org, "ns": namespace, "uid": user_id, "label": label}
     row: dict[str, Any] | None = await ch.query_one(
         f"""
-        SELECT version, pinned, lock_mode, lock_until
+        SELECT version, pinned, lock_mode, lock_until, sensitivity, tags
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}} AND user_id = {{uid:String}}
           AND {_PROFILE_HEAD}{scope_and(scope, params)}

@@ -157,7 +157,7 @@ class ProfileSchemaOutput(BaseModel):
     json_schema: dict[str, Any] = {}
     # SHA-256 of the schema's properties (not its titles or order), which each profile names.
     schema_sha256: str = ""
-    # The subject that set it; empty when not found.
+    # The subject that set it; empty when not found, or for a token narrowed to one user.
     updated_by: str = ""
     # When it was set; None when not found.
     updated_at: datetime | None = None
