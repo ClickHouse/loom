@@ -143,9 +143,8 @@ async def test_mirror_failure_is_logged_not_raised(
     tombstoned = await memory_repo.tombstone_cascade_by_ids(
         "o", ["m1"], when=datetime(2026, 9, 12), ch=_Down()
     )
-    assert (
-        len(tombstoned) == 1
-    )  # the memory tombstone is durable; the reconcile worker heals the mirror
+    # The memory tombstone is durable; the reconcile worker heals the mirror.
+    assert len(tombstoned) == 1
 
 
 @pytest.mark.asyncio
