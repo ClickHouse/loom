@@ -72,6 +72,15 @@ test("the function context git appends to a hunk header is redacted, the range k
 test("text that is not in git's diff format is redacted as a body", () => {
   const out = redactDiff("\u001b[1mdiff --git a/x b/x\u001b[m\n+password=hunter2\n", 200_000, "");
   assert.ok(!out.includes("hunter2"), out);
+  const fake = redactDiff("@@ api_key=hunter2 @@\n", 200_000, "");
+  assert.ok(!fake.includes("hunter2"), fake);
+});
+
+test("a C++ scope operator in a hunk header's context is not read as an assignment", () => {
+  for (const ctx of ["bool PrivateKey::verify(int x)", "AccessToken::AccessToken(const String & s)"]) {
+    const diff = ["diff --git a/k.cpp b/k.cpp", "+++ b/k.cpp", `@@ -1 +1 @@ ${ctx}`, "+x();", ""].join("\n");
+    assert.ok(redactDiff(diff, 200_000, "").includes(`@@ -1 +1 @@ ${ctx}`), ctx);
+  }
 });
 
 test("the result never exceeds the bound, with or without redactions", () => {

@@ -702,8 +702,9 @@ const PRIVATE_KEY_RE = /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----E
 const TOKEN_SHAPES_RE =
   /\b(?:(?:AKIA|ASIA)[0-9A-Z]{16}|(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}|github_pat_\w{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-(?:ant|proj)-[\w-]{20,}|glpat-[\w-]{20,})\b/g;
 // `password=…`, `"api_key": "…"`, `AWS_SECRET_ACCESS_KEY=…`: the name stays, the value goes.
+// `::` is a scope operator (`PrivateKey::verify`), not an assignment.
 const SECRET_ASSIGNMENT_RE =
-  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
+  /\b([\w.-]{0,64}?(?:password|passwd|secret|secret[_-]?key|token|api[_-]?key|access[_-]?key|private[_-]?key)\b["']?\s*(?:=|:(?!:))\s*)("[^"]*"|'[^']*'|[^\s"'\\,;}]+)/gi;
 const JWT_RE = /\beyJ[\w-]{0,512}\.[\w-]{1,8192}\.[\w-]{0,1024}/g;
 const BEARER_RE = /\b(Bearer)\s+[^\s"'\\]+/gi;
 const BASIC_AUTH_RE = /(\bAuthorization["']?\s*[:=]\s*["']?Basic)\s+[^\s"'\\]+/gi;
@@ -755,7 +756,7 @@ export function redactHead(text, max, token = resolveToken()) {
 }
 
 // A hunk header: its ranges, then the function context git appends to it.
-const HUNK_HEADER_RE = /^(@@+ [^@]*@@+)(.*)$/;
+const HUNK_HEADER_RE = /^(@@+(?: [-+]\d+(?:,\d+)?)+ @@+)(.*)$/;
 
 /** `redactSecrets` over a unified diff, cut to `max` chars. The file header
  *  lines (`diff --git` up to the first hunk) and each hunk header's ranges are
@@ -770,7 +771,7 @@ export function redactDiff(diff, max, token = resolveToken()) {
   let built = 0;
   let body = [];
   let bodyChars = 0;
-  let inHunk = true;
+  let inBody = true;
   const emit = (text) => {
     out.push(text);
     built += text.length + 1;
@@ -782,12 +783,12 @@ export function redactDiff(diff, max, token = resolveToken()) {
   };
   for (const line of String(diff ?? "").split("\n")) {
     if (built + bodyChars >= max + REDACT_MARGIN) break;
-    if (line.startsWith("diff --git ")) inHunk = false;
+    if (line.startsWith("diff --git ")) inBody = false;
     const hunk = HUNK_HEADER_RE.exec(line);
-    if (hunk || !inHunk) {
+    if (hunk || !inBody) {
       flush();
       emit(hunk ? hunk[1] + redactSecrets(hunk[2], token) : line);
-      if (hunk) inHunk = true;
+      if (hunk) inBody = true;
     } else {
       body.push(line);
       bodyChars += line.length + 1;
