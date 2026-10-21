@@ -57,7 +57,9 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
             ch=ch,
         )
         result = await sweep.apply(report.candidates, ch=ch)
-        pass_context.set_cursor(cursor_text(report.resume_after, past=_stuck(report, result)))
+        pass_context.set_cursor(
+            cursor_text(report.resume_after, past=_resume_past_agent(report, result))
+        )
         outcome = {"scanned": report.scanned, "truncated": report.truncated, **result.as_dict()}
         rec.outcome = outcome
         if result.relabelled or result.errors:
@@ -75,7 +77,7 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
     return outcome
 
 
-def _stuck(report: SweepReport, result: ApplyResult) -> bool:
+def _resume_past_agent(report: SweepReport, result: ApplyResult) -> bool:
     """Whether the next pass starts past the agent this one stopped in (the cursor rules in
     docs/architecture/security.md, "Sensitivity")."""
     if result.relabelled or not report.resume_after:
