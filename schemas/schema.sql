@@ -2326,7 +2326,8 @@ CREATE TABLE IF NOT EXISTS loom.memory_extraction_queue
     `written` UInt32 DEFAULT 0,
     `enqueued_at` DateTime64(3) DEFAULT now64(3),
     `updated_at` DateTime64(3) DEFAULT now64(3),
-    `version` UInt64
+    `version` UInt64,
+    `enqueued_by` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(enqueued_at)

@@ -307,6 +307,7 @@ def _stored_row(**kw: Any) -> dict[str, Any]:
         "enqueued_at": datetime(2026, 9, 12, 7, 0, tzinfo=UTC),
         "updated_at": datetime(2026, 9, 12, 7, 0, tzinfo=UTC),
         "version": 1,
+        "enqueued_by": "",
     }
     row.update(kw)
     return row
@@ -860,13 +861,15 @@ class _Queue:
 
 
 def _attribution(r: dict[str, Any]) -> tuple[str, str, str, str]:
-    return (r["org"], r["namespace"], r["user_id"], q.enqueued_actor(r))
+    return (r["org"], r["namespace"], r["user_id"], r["enqueued_by"])
 
 
 def _queued(queue_id: str, by: str, minute: int, **kw: Any) -> dict[str, Any]:
     payload, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by=by)
     enqueued = datetime(2026, 9, 12, 8, minute, tzinfo=UTC)
-    return _stored_row(queue_id=queue_id, payload=payload, enqueued_at=enqueued, **kw)
+    return _stored_row(
+        queue_id=queue_id, payload=payload, enqueued_at=enqueued, enqueued_by=by, **kw
+    )
 
 
 @pytest.mark.asyncio
@@ -882,7 +885,10 @@ async def test_the_claim_takes_other_work_while_an_enqueuer_is_held() -> None:
     )
     claimed = await q.claim_batch(limit=1, lease_seconds=600, ch=table)
     assert [r["queue_id"] for r in claimed] == ["b-1"]  # not agent-a's, which would be held
-    assert "WHERE status = {held:String} AND lease_until >= now64(3)" in table.sql[0]
+    sql = table.sql[0]
+    assert "WHERE status = {held:String} AND lease_until >= now64(3)" in sql
+    # the enqueuer's own column, never a payload read for every row
+    assert "(org, namespace, user_id, enqueued_by) NOT IN" in sql and "JSONExtract" not in sql
     table.rows["a-held"]["lease_until"] = datetime.now(UTC) - timedelta(seconds=1)
     claimed = await q.claim_batch(limit=3, lease_seconds=600, ch=table)
     assert [r["queue_id"] for r in claimed] == ["a-held", "a-next", "b-2"]  # the hold is over
@@ -931,3 +937,14 @@ def test_the_ttl_drop_follows_the_tables_ttl() -> None:
     ddl = (Path(__file__).resolve().parents[2] / "schemas" / "schema.sql").read_text()
     table = ddl.split("CREATE TABLE IF NOT EXISTS loom.memory_extraction_queue", 1)[1]
     assert f"TTL enqueued_at + toIntervalDay({q.TTL_DAYS})" in table.split(";", 1)[0]
+
+
+@pytest.mark.asyncio
+async def test_the_enqueuer_rides_its_own_column_and_a_hold_fills_an_old_rows() -> None:
+    ch = StubCH()
+    await q.enqueue(_input(defer=True), scope=WHOLE_NAMESPACE, ch=ch)
+    queued = ch.inserts[-1][1][0]
+    assert queued["enqueued_by"] == q.enqueued_actor(queued)  # the payload's, once more
+    old = {**_queued("old", "process:sa:t:agent-a", 0), "enqueued_by": ""}  # before the column
+    await q.mark_held(old, reason="refused", seconds=60, ch=ch)
+    assert ch.inserts[-1][1][0]["enqueued_by"] == "process:sa:t:agent-a"

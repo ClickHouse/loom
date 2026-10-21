@@ -79,6 +79,7 @@ COLUMNS = (
     "enqueued_at",
     "updated_at",
     "version",
+    "enqueued_by",
 )
 
 _SYNC = {"async_insert": 0, "wait_for_async_insert": 1}
@@ -155,6 +156,7 @@ async def enqueue(input: Any, *, scope: ReadFilters, ch: Any | None = None) -> s
         "enqueued_at": now,
         "updated_at": now,
         "version": next_version(),
+        "enqueued_by": str(json.loads(payload).get(ENQUEUED_BY_KEY) or ""),
     }
     await ch.insert(TABLE, [row], settings=_SYNC)
     return qid
@@ -173,7 +175,7 @@ def _mirror(row: dict[str, Any], **changes: Any) -> dict[str, Any]:
     for c in ("attempts", "written", "message_count", "content_chars"):
         if out.get(c) is None:
             out[c] = 0
-    for c in ("last_error", "payload"):
+    for c in ("last_error", "payload", "enqueued_by"):
         if out.get(c) is None:
             out[c] = ""
     return out
@@ -209,12 +211,7 @@ async def claim_batch(
 
     ch = ch or get_client()
     scope = ""
-    params: dict[str, Any] = {
-        "waiting": list(WAITING),
-        "held": STATUS_HELD,
-        "by": ENQUEUED_BY_KEY,
-        "lim": int(limit),
-    }
+    params: dict[str, Any] = {"waiting": list(WAITING), "held": STATUS_HELD, "lim": int(limit)}
     if org_filter is not None:
         scope += " AND org = {org_f:String}"
         params["org_f"] = org_filter
@@ -231,8 +228,9 @@ async def claim_batch(
         FROM {TABLE} FINAL
         WHERE status IN {{waiting:Array(String)}} AND lease_until < now64(3)
           -- an enqueuer, namespace and user with a request held now: none claimed
-          AND (org, namespace, user_id, JSONExtractString(payload, {{by:String}})) NOT IN (
-              SELECT org, namespace, user_id, JSONExtractString(payload, {{by:String}})
+          -- (narrow columns only: the payload is read for the claimed rows alone)
+          AND (org, namespace, user_id, enqueued_by) NOT IN (
+              SELECT org, namespace, user_id, enqueued_by
               FROM {TABLE} FINAL
               WHERE status = {{held:String}} AND lease_until >= now64(3)
           )
@@ -333,6 +331,8 @@ async def mark_held(
                 status=STATUS_HELD,
                 last_error=f"held: {reason}"[:2000],
                 lease_until=_now() + timedelta(seconds=max(0.0, float(seconds))),
+                # a row queued before the column existed carries it in its payload
+                enqueued_by=str(row.get("enqueued_by") or "") or enqueued_actor(row),
             )
         ],
         settings=_SYNC,
