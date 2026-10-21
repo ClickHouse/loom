@@ -32,3 +32,14 @@ def test_an_unreadable_catalog_warns_and_is_skipped_offline(
     monkeypatch.setattr(doctor, "_doctor_ch_query", boom)
     assert doctor._doctor_replica_consistency_check(SimpleNamespace())[1] == doctor.WARN
     assert "replica_consistency" in [n for n, _, _ in doctor._doctor_ch_read_checks(None)]
+
+
+def test_the_task_tables_are_checked(monkeypatch: pytest.MonkeyPatch) -> None:
+    # task.create's idempotency and the coverage ready event's exactly-once rest on a
+    # sequential read seeing another process's insert, as the sign-in limits do.
+    asked: list[dict[str, list[str]]] = []
+    monkeypatch.setattr(
+        doctor, "_doctor_ch_query", lambda _s, _sql, params: asked.append(params) or []
+    )
+    doctor._doctor_replica_consistency_check(SimpleNamespace())
+    assert {"tasks", "task_events"} <= set(asked[0]["tables"])

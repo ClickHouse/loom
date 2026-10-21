@@ -5,14 +5,18 @@ and reassign."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, cast
 
-from server.core import readiness
+from server.core import leases, readiness
 from server.core.datetimes import utc_now as _now
+from server.core.errors import PreconditionFailedError
 from server.tasks.api.models_task import (
     TaskAcceptInput,
     TaskBlockInput,
@@ -53,7 +57,9 @@ from server.tasks.app.common import (
     _load_readable_inbox,
     _load_task_owner_side,
     _loads,
+    _log_transition,
     _naive,
+    _next_row,
     _not_found,
     _owner_check,
     _owner_refusal,
@@ -70,9 +76,10 @@ from server.tasks.app.trust import (
     _token_subject,
     _triage_note,
 )
+from server.tasks.domain.cursors import BACKFILLED
 from server.tasks.domain.states import TaskStatus
 from server.tasks.store import repo as repo
-from server.tasks.store.rows import TaskRow
+from server.tasks.store.rows import InboxRow, TaskRow
 
 
 async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
@@ -93,13 +100,78 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         )
     if input.parent_task_id and not repo.is_uuid(input.parent_task_id):
         raise _invalid("parent_task_id is not a task id")
-    if input.idempotency_key:
-        prior = await repo.fetch_task_by_idempotency_key(
-            input.org, input.inbox, input.idempotency_key
-        )
-        if prior is not None:
-            return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+    async with _one_create_per_key(input):
+        if input.idempotency_key:
+            prior = await repo.fetch_task_by_idempotency_key(
+                input.org, input.inbox, input.idempotency_key
+            )
+            if prior is not None:
+                return await _prior_task(prior)
+        return await _create(input, inbox, subject)
 
+
+async def _prior_task(prior: TaskRow, *, backfill: bool = True) -> TaskCreateOutput:
+    """The answer to a create whose key already holds `prior`: a never-claimed task a
+    cut-off create left without its created event gets it here (`backfill=False`: the
+    first create is still running and writes its own event). A lease row it left out
+    is the lease reconcile's to write, after its grace."""
+    if backfill and prior["status"] in ("todo", "triage") and int(prior["fence"]) == 0:
+        await _backfill_created_event(prior)
+    return TaskCreateOutput(task=_payload(prior), created=False, seq=int(prior["version"]))
+
+
+async def _backfill_created_event(prior: TaskRow) -> None:
+    """Log the created event a cut-off create left out; a late first create's event
+    shares its dedup token, and readers keep only the first."""
+    events = await repo.task_history(prior["org"], str(prior["task_id"]), consistent=True)
+    if any(e["event"] == "created" for e in events):
+        return
+    if events:
+        # The task was accepted or edited since: it landed in the status the first of
+        # those events left, and its created event goes just before that one. A cursor
+        # reader already past that seq never sees it: it is history only.
+        landed, seq = str(events[0]["from_status"]), int(events[0]["seq"]) - 1
+    else:
+        # Nothing after it: a fresh seq, so cursor readers (webhooks, task.updates,
+        # task.watch) past the task's version still deliver it.
+        landed, seq = str(prior["status"]), await repo.server_version(int(prior["version"]))
+    agent = str(prior["from_agent"])
+    await _log_transition(
+        cast(TaskRow, {**prior, "status": ""}),
+        cast(TaskRow, {**prior, "status": landed}),
+        seq,
+        event="created",
+        actor=_actor(f"process:{agent}"),
+        agent=agent,
+        # The mode follows from where it landed; whether a policy decided is not kept.
+        patch={
+            "kind": prior["kind"],
+            "mode": "auto" if landed == "todo" else "triage",
+            BACKFILLED: True,
+        },
+    )
+
+
+@asynccontextmanager
+async def _one_create_per_key(input: TaskCreateInput) -> AsyncIterator[None]:
+    """Creates with one idempotency key run one at a time across replicas, from
+    the lookup to the insert, so a retry that waited finds the task the first one
+    stored. 409 while another create keeps the key past the wait, 503 when the
+    lease store does not answer (as for a memory key's write lock)."""
+    if not input.idempotency_key:
+        yield
+        return
+    ident = "\x1f".join((input.org, input.inbox, input.idempotency_key))
+    name = "task.create/" + hashlib.sha256(ident.encode()).hexdigest()[:40]
+    async with leases.holding(name, ttl_s=60, wait_s=10) as held:
+        if not held:
+            raise PreconditionFailedError(
+                "another task.create with this idempotency_key is still running; retry"
+            )
+        yield
+
+
+async def _create(input: TaskCreateInput, inbox: InboxRow, subject: str) -> TaskCreateOutput:
     mode, policy = await _decide_mode(
         inbox, subject=subject, agent=input.agent, kind=input.kind, brief=input.brief
     )
@@ -145,22 +217,26 @@ async def handle_task_create(input: TaskCreateInput) -> TaskCreateOutput:
         "version": 0,
         "is_deleted": 0,
     }
+    # The transition starts from a "previous" row with no status yet, so the
+    # event's from_status is empty and to_status is the landing state.
+    start = cast(TaskRow, {**task, "status": ""})
     actor = _actor(f"process:{input.agent}")
-    token = (
-        f"task.create:{input.org}:{input.inbox}:{input.idempotency_key}"
-        if input.idempotency_key
-        else ""
-    )
-    # ``_record`` writes from a "previous" row: for a create that row has no
-    # status yet, so from_status is empty and to_status is the landing state.
-    row, seq = await _record(
-        cast(TaskRow, {**task, "status": ""}),
+    row, seq = await _next_row(start, actor=actor, status=status)
+    if input.idempotency_key:
+        stored = await repo.insert_created_task(row)
+        if str(stored["task_id"]) != task_id:
+            # A create whose lease ran out lost the race; the winner logs its own event.
+            return await _prior_task(stored, backfill=False)
+    else:
+        await repo.insert_task_version(row)
+    await _log_transition(
+        start,
+        row,
+        seq,
         event="created",
         actor=actor,
         agent=input.agent,
         patch={"kind": input.kind, "mode": mode, "policy": bool(policy)},
-        dedup_token=token,
-        status=status,
     )
     backend = await repo.lease_backend()
     await backend.ensure_row(task_id, input.org, input.inbox, 0)
@@ -221,13 +297,19 @@ async def _claim_one(
     backend = await repo.lease_backend()
     lease_until = _naive(_now() + timedelta(seconds=lease_seconds))
     assert lease_until is not None
+    task_id, fence = str(task["task_id"]), int(task.get("fence") or 0)
     result = await backend.try_claim(
-        str(task["task_id"]),
-        claimant,
-        expected_fence=int(task.get("fence") or 0),
-        lease_until=lease_until,
+        task_id, claimant, expected_fence=fence, lease_until=lease_until
     )
     if not result.won:
+        return None
+    # A lease row can be written from a status read nobody holds (the lease reconcile or
+    # a reopen): the claim stands only if the task, read after winning, is still the todo
+    # task at the fence it claimed. Otherwise it undoes its own bump and nothing else; a
+    # row left for an ended task is the lease sweep's to remove.
+    now = await repo.fetch_task(task["org"], task_id)
+    if now is None or now["status"] != "todo" or int(now.get("fence") or 0) != fence:
+        await backend.give_back(task_id, claimant, held_fence=result.fence, fence=fence)
         return None
     return await _record(
         task,
@@ -617,6 +699,7 @@ async def handle_task_wont_do(input: TaskReasonInput) -> TaskOutput:
     if not owner_side:
         _owner_refusal(unverified)
         raise _not_found()
+    # The lease goes before the status row, so a claim racing this one finds none.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -635,6 +718,7 @@ async def handle_task_cancel(input: TaskReasonInput) -> TaskOutput:
     """Owner side, or the poster while nobody owns the task."""
 
     task, _owner_side, _unverified = await _load_for_reason_op(input)
+    # The lease goes before the status row, so a claim racing this one finds none.
     await _drop_lease(task)
     row, seq = await _record(
         task,
@@ -656,7 +740,9 @@ async def handle_task_reopen(input: TaskReasonInput) -> TaskOutput:
     if task["status"] not in ("failed", "wont_do", "cancelled"):
         raise await _state_conflict("TASK_NOT_REOPENABLE", task)
     backend = await repo.lease_backend()
-    await backend.ensure_row(str(task["task_id"]), task["org"], task["inbox"], int(task["fence"]))
+    await backend.ensure_row(
+        str(task["task_id"]), task["org"], task["inbox"], int(task["fence"]), reset_idle=True
+    )
     row, seq = await _record(
         task,
         event="reopened",
@@ -763,6 +849,7 @@ async def handle_task_reassign(input: TaskReassignInput) -> TaskReassignOutput:
     if mode == "deny":
         raise _err(403, "TASK_POSTER_DENIED", "the destination denies this poster and kind")
     actor = _actor(f"process:{input.agent}")
+    # The lease goes before the status row, so a claim racing this one finds none.
     await _drop_lease(task)
     old, _seq = await _record(
         task,

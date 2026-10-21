@@ -127,6 +127,20 @@ async def test_unconditional_set_takes_no_lock(monkeypatch: pytest.MonkeyPatch) 
     assert seen == [0]
 
 
+async def test_a_pin_holds_the_keys_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A retirement takes the key's lock too: a pin landing beside it waits for it."""
+    locks = _locks(FakeKeeper(), monkeypatch)
+    seen: list[int] = []
+
+    async def phases(input: Any) -> str:
+        seen.append(len(locks))
+        return "written"
+
+    monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
+    assert await write_mod._handle_memory_set(_set_input("x", "", pinned=True)) == "written"
+    assert seen == [1]
+
+
 async def test_conditional_update_rereads_the_head_under_the_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -155,7 +169,7 @@ async def test_conditional_update_rereads_the_head_under_the_lock(
     assert held_during_read == [1] and written == [stale]
 
 
-def _set_input(value: str, if_match_sha256: str) -> Any:
+def _set_input(value: str, if_match_sha256: str, pinned: bool = False) -> Any:
     return SimpleNamespace(
         org="org",
         namespace="ns",
@@ -165,6 +179,7 @@ def _set_input(value: str, if_match_sha256: str) -> Any:
         memory_key=_IDENT[5],
         value=value,
         if_match_sha256=if_match_sha256,
+        pinned=pinned,
     )
 
 
@@ -243,3 +258,25 @@ async def test_a_writer_queued_in_this_process_past_its_wait_asks_no_keeper(
             pytest.fail("entered a held lock")
     assert len(ch.sql) == sent
     await holding
+
+
+@pytest.mark.parametrize(("op", "what"), [("memory.pin", "the pin"), ("memory.set", "the write")])
+async def test_a_busy_key_names_what_to_retry(
+    monkeypatch: pytest.MonkeyPatch, op: str, what: str
+) -> None:
+    """memory.pin, or a memory.set with pinned=true: each says to retry itself."""
+    from server.core.errors import PreconditionFailedError
+    from server.memory.app.handlers import handle_memory_pin
+    from server.memory.store import key_write_lock as kl
+
+    handler = {"memory.pin": handle_memory_pin, "memory.set": write_mod.handle_memory_set}[op]
+    _locks(FakeKeeper(), monkeypatch)
+
+    async def phases(input: Any) -> str:
+        return "written"
+
+    monkeypatch.setattr(write_mod, "_memory_set_phases", phases)
+    held = _set_input("x", "", pinned=True)
+    async with kl.key_write_locks.hold("org", "ns", "agent", "-", "-", _IDENT[5]):
+        with pytest.raises(PreconditionFailedError, match=f"retry {what}"):
+            await handler(held)

@@ -7,14 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import UTC, datetime
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from server.llm import customer
-from tests.unit.switch_state import switch_off
 
 HELD = [
     customer.ModelCallsDisabled("model calls are switched off for org 'acme'"),
@@ -295,112 +294,55 @@ def test_the_period_digest_records_no_failure_when_its_call_is_held(monkeypatch,
 
 
 @held
-def test_a_held_deferred_judge_lands_no_verdict_and_stamps_nothing(monkeypatch, error) -> None:
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.app import conflicts as cf
+def test_the_conflict_resolvers_judge_lets_a_held_call_through(monkeypatch, error) -> None:
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.domain.conflict_resolution import Note
 
-    stamped: list[Any] = []
-    drops: list[str] = []
-
-    async def stamp(*a: Any, **k: Any) -> None:
-        stamped.append(a)
-
-    monkeypatch.setattr(cf, "settle_deferred_judgement", _raise(error))
-    monkeypatch.setattr(cd, "stamp_checked", stamp)
-    monkeypatch.setattr(cd, "emit_settle_row", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "server.memory.app.drops.record_drop",
-        lambda org, ns, stage, reason, **k: drops.append(reason),
-    )
-    ident = SimpleNamespace(org="acme", namespace="ns", memory_key="k")
-    verdict = asyncio.run(
-        cd.settle(ident, None, memory_id="m1", version=1, created_at=datetime.now(UTC))
-    )
-    assert verdict == cd.HELD and stamped == [] and drops == [cd.HELD]
-
-
-@held
-def test_the_conflict_judge_lets_a_held_call_through(error) -> None:
-    from server.memory.app import conflict_judge
-
-    llm = SimpleNamespace(complete=_raise(error))
-    peers = [SimpleNamespace(memory_id="p1", value="the old value")]
+    monkeypatch.setattr(resolver, "_client", lambda: SimpleNamespace(complete=_raise(error)))
+    new = Note(memory_id="m1", memory_key="k", value="the new value")
+    peers = [Note(memory_id="p1", memory_key="k2", value="the old value", similarity=0.9)]
     with pytest.raises(type(error)):
-        asyncio.run(conflict_judge.judge(llm, "the new value", peers))
+        asyncio.run(resolver.judge(new, peers))
 
 
 @held
-def test_the_conflict_sweep_leaves_a_mark_whose_judge_is_held_unstamped(monkeypatch, error) -> None:
-    """The real re-judge and settle: the deferred judge's model call is refused, so
-    the verdict is `held`, nothing is stamped and the mark waits for the org."""
-    import server.memory.store as memory_repo
-    from server.memory.app import conflict_deferred as cd
-    from server.memory.app import conflicts as cf
-    from server.memory.domain.conflicts import ConflictPeer, PendingJudge
-    from server.memory.store import conflict_marks
-    from server.memory.workers import conflict_sweep as w
-    from server.settings import settings
+def test_the_conflict_resolver_leaves_a_held_row_owed_with_no_attempt(monkeypatch, error) -> None:
+    """The judge's call is held: no error, no attempt, and the namespace waits for the
+    next pass."""
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.workers import conflict_resolver as w
 
-    mark = {
+    async def over_cap(*a: Any, **k: Any) -> bool:
+        return False
+
+    async def flush() -> None:
+        return None
+
+    monkeypatch.setattr(resolver, "resolve_row", _raise(error))
+    monkeypatch.setattr("server.observability.budget.namespace_over_cap", over_cap)
+    monkeypatch.setattr(
+        "server.observability.events.get_emitter", lambda: SimpleNamespace(flush_now=flush)
+    )
+    monkeypatch.setattr("server.workers.cost_event.emit_worker_cost_event_for", lambda **k: None)
+    monkeypatch.setattr(w, "_state", w._State())
+    row = {
         "org": "acme",
         "namespace": "n",
         "agent": "a",
         "user_id": "-",
         "session_id": "-",
         "memory_key": "k",
-        "memory_type": "semantic",
-        "version": 2,
-        "created_at": datetime.now(UTC),
         "content_sha256": "sha",
-        "embedding": [0.1, 0.2],
     }
-    mem = SimpleNamespace(
-        status="active",
-        content_sha256="sha",
-        memory_type="semantic",
-        memory_id="m1",
-        run_id="-",
-        valid_at=None,
-    )
-    peer = ConflictPeer(
-        memory_id="p1",
-        memory_key="k2",
-        similarity=0.9,
-        pinned=False,
-        canonical="",
-        value="the old value",
-    )
-    stamped: list[Any] = []
 
-    async def marks(**k: Any) -> list[dict[str, Any]]:
-        return [dict(mark)]
+    async def one() -> Any:
+        p = w._Pass()
+        await w._resolve_one(p, row, "manual")
+        return p
 
-    async def rows(keys: Any, **k: Any) -> dict[Any, Any]:
-        return {keys[0]: mem}
-
-    async def pending(**k: Any) -> Any:  # the candidate search; the judge is deferred
-        pj = PendingJudge("acme", "n", "the new value", [peer], [peer], "conflict", None, "-", "")
-        return SimpleNamespace(verdict=cd.PENDING, pending_judge=pj)
-
-    async def stamp(*a: Any, **k: Any) -> None:
-        stamped.append(a)
-
-    switch_off()
-    monkeypatch.setattr(settings, "memory_conflict_judge", True)
-    monkeypatch.setattr(conflict_marks, "stale_pending_marks", marks)
-    monkeypatch.setattr(memory_repo, "memory_rows_by_identity_keys", rows)
-    monkeypatch.setattr(memory_repo, "stored_value_text", lambda m: "the new value")
-    monkeypatch.setattr(cf, "check_on_commit", pending)
-    monkeypatch.setattr(
-        "server.llm.client.get_llm_client", lambda: SimpleNamespace(complete=_raise(error))
-    )
-    monkeypatch.setattr(settings, "memory_ask_synth_model_cheap", "")
-    monkeypatch.setattr(cd, "stamp_checked", stamp)
-    monkeypatch.setattr(cd, "emit_settle_row", lambda *a, **k: None)
-    monkeypatch.setattr("server.memory.app.drops.record_drop", lambda *a, **k: None)
-    outcome = asyncio.run(w.run_pass(ch=object()))
-    assert outcome["verdicts"] == {cd.HELD: 1} and outcome["errors"] == 0
-    assert stamped == []
+    p = asyncio.run(one())
+    assert p.errors == [] and p.counts.errored == 0 and p.unavailable is None
+    assert p.stopped == {("acme", "n")} and w._state.attempts == {}
 
 
 @held
@@ -527,12 +469,16 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
     async def resolve(**k: Any) -> None:
         resolved.append(k)
 
+    async def not_erasing(*a: Any, **k: Any) -> bool:
+        return False
+
     refusing = _Refusing()
     monkeypatch.setattr("server.embedding.get_embedder", lambda: refusing)
+    monkeypatch.setattr("server.memory.store.conflict_resolver.under_erasure", not_erasing)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr(pf, "mark_projection_failures_resolved", resolve)
     # The real retry and chunk write: only the embedder refuses.
-    out = asyncio.run(pf.retry_projection_failure(failure, ch=ch))
+    (out,) = asyncio.run(pf.retry_failures([failure], ch=ch))
     assert not out.retried and not out.resolved and not out.error
     assert out.reason == "model_calls_held"
     assert resolved == [] and ch.inserted == []  # the row stays open, no chunk written
@@ -543,7 +489,7 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
             raise RuntimeError("provider down")
 
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _BatchDown())
-    out = asyncio.run(pf.retry_projection_failure(failure, ch=ch))
+    (out,) = asyncio.run(pf.retry_failures([failure], ch=ch))
     assert out.reason == "model_calls_held" and resolved == []
 
 

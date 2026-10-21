@@ -4,8 +4,9 @@ One pass: leases past ``lease_until`` go back to ``todo`` (``attempt + 1``),
 or to ``blocked`` on a human after the inbox's ``max_attempts``; deferred
 tasks past ``resume_at`` go back to ``todo``; a triage row older than its
 inbox's escalation threshold is escalated once. Every action is a
-``task_events`` row under the actor ``process:task_lease_sweep``. The
-supervisor runs the pass in the lease-holding process only.
+``task_events`` row under the actor ``process:task_lease_sweep``. Last, lease
+rows that disagree with their task are put right (no event: the task does not
+change). The supervisor runs the pass in the lease-holding process only.
 """
 
 from __future__ import annotations
@@ -25,10 +26,11 @@ class SweepResult:
     blocked: int
     resumed: int
     escalated: int
+    leases: int
 
     @property
     def total(self) -> int:
-        return self.expired + self.blocked + self.resumed + self.escalated
+        return self.expired + self.blocked + self.resumed + self.escalated + self.leases
 
 
 async def run_pass() -> SweepResult:
@@ -42,10 +44,11 @@ async def run_pass() -> SweepResult:
         pass_context.mark_idle()
     else:
         log.info(
-            "task_lease_sweep: expired=%d blocked=%d resumed=%d escalated=%d",
+            "task_lease_sweep: expired=%d blocked=%d resumed=%d escalated=%d leases=%d",
             result.expired,
             result.blocked,
             result.resumed,
             result.escalated,
+            result.leases,
         )
     return result

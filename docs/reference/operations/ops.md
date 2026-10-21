@@ -54,7 +54,7 @@ List recorded projection failures: derived rows (embeddings, graph edges, summar
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str \| None` | `None` | The namespace the op reads or writes. |
 | `projection` | `str` | `''` | Only failures of this projection (the derived table, such as `memory_chunks` or `entity_edges`); empty lists every projection. |
-| `status` | `Literal['active', 'resolved', '']` | `'active'` | `active` lists open failures, `resolved` closed ones, empty both. |
+| `status` | `Literal['active', 'resolved', 'abandoned', '']` | `'active'` | `active` lists open failures, `resolved` repaired ones, `abandoned` those the repair gave up on (the reason is in `error_message`), empty all of them. |
 | `limit` | `int` | `100` | At most this many failures, newest first. |
 
 | Output field | Type | Meaning |
@@ -95,5 +95,6 @@ Retry open projection failures for a namespace, optionally one projection kind.
 | `results` | `list[ProjectionFailureRetryRow]` | One entry per failure attempted, with whether it was retried and resolved and why not. |
 | `retried` | `int` | Failures whose projection has a retry path and was attempted. |
 | `resolved` | `int` | Failures whose retry succeeded and which are now marked resolved. |
+| `abandoned` | `int` | Failures the retry gave up on, now marked abandoned. |
 
 <!-- prettier-ignore-end -->

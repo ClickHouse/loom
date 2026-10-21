@@ -578,6 +578,10 @@ async function installDemoApi(page: Page): Promise<void> {
         const m = byKey(String(body.memory_key ?? ""));
         return json(m ? detail(m) : { found: false });
       }
+      case "/v1/memory.get_by_id": {
+        const m = MEMORIES.find((x) => x.id === String(body.memory_id ?? ""));
+        return json(m ? detail(m) : { found: false });
+      }
       case "/v1/memory.bulk_get": {
         const keys = Array.isArray(body.memory_keys) ? body.memory_keys.map(String) : [];
         const results: Record<string, unknown> = {};

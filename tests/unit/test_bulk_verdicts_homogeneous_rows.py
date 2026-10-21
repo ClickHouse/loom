@@ -29,7 +29,11 @@ def test_verdicts_never_change_the_key_set() -> None:
         2: SimpleNamespace(verdict="conflict", peers=[SimpleNamespace(memory_id="p1")]),
         3: SimpleNamespace(verdict="merge", existing_memory_id="e1"),
     }
-    plan = apply_bulk_verdicts(rows, emb, [0, 1, 2, 3], results, verdicts)
+    # The merged row (3) does not land.
+    landed = {id(r) for r in rows[:3]}
+    plan = apply_bulk_verdicts(
+        rows, emb, [0, 1, 2, 3], results, verdicts, stale_rows=(), landed_rows=landed
+    )
     keysets = {frozenset(r.keys()) for r in plan.memory_rows}
     assert len(keysets) == 1, keysets
     by = {r["memory_key"]: r for r in plan.memory_rows}

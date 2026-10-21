@@ -96,8 +96,16 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "entity_canonical_map": ("gap", "memory"),
     "entity_communities": ("gap", "memory"),
     "entity_edge_memories": ("gap", "memory"),
+    "entity_edge_rows": (
+        "insert_once",
+        "every column is in the sort key: a re-insert is the same row",
+    ),
     "entity_summaries": ("gap", "memory"),
     "entity_triple_memories": ("gap", "memory"),
+    "entity_triple_rows": (
+        "insert_once",
+        "every column is in the sort key: a re-insert is the same row",
+    ),
     "entity_vectors": ("gap", "memory"),
     "erasure_requests": ("gap", "platform"),
     "erasure_reversals": ("gap", "platform"),

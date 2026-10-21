@@ -423,11 +423,12 @@ async def provider_report() -> None:
     embedder.
     """
     from server.embedding import embedder as _embedder_mod
-    from server.llm.client import log_llm_provider_resolution
+    from server.llm.client import log_conflict_resolver_resolution, log_llm_provider_resolution
     from server.settings import log_unknown_env_keys
 
     log_unknown_env_keys()
     log_llm_provider_resolution()
+    log_conflict_resolver_resolution()
     try:
         await _embedder_mod.probe_embedding_dim()
     except Exception as e:  # noqa: BLE001 — an unreachable embedder never fails boot
@@ -601,14 +602,11 @@ async def drain_writes() -> None:
     from server.auth import shielded
 
     await shielded.drain(timeout_s=5.0)
-    # In-flight deferred conflict judges settle first.
-    from server.memory.app import conflict_deferred, drops
-
-    await conflict_deferred.drain(timeout_s=15.0)
     # Restricted-access audit rows and policy decision rows (an enforced
     # denial among them) still being written land first.
     from server.identity.app import policy_gate as _policy_gate
     from server.identity.app import restricted_access as _restricted_access
+    from server.memory.app import drops
 
     await _restricted_access.drain(timeout_s=5.0)
     await _policy_gate.drain(timeout_s=5.0)
@@ -617,6 +615,10 @@ async def drain_writes() -> None:
     from server.memory.app import after_write as _after_write
 
     await _after_write.drain(timeout_s=10.0)
+    # The point-write intents those follows finished, resolved in one flush.
+    from server.memory.app import intent_marks as _intent_marks
+
+    await _intent_marks.drain()
     # The ends of the graph projections just drained: one left pending holds every
     # walk of its namespace on every process for its full wait.
     from server.memory.app import graph_write_marks as _graph_marks

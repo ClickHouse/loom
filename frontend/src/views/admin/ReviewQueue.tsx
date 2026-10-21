@@ -14,13 +14,21 @@ import {
   removeAllowlist,
   listLearnings,
   reviewLearning,
+  listAutoResolved,
+  listUnsuperseded,
+  auditInstant,
+  restoreMemory,
+  getMemoryById,
+  autoResolveReasonText,
+  type MemoryById,
+  type AutoResolvedRow,
   type ConflictRow,
   type AllowlistRow,
   type ResolveDecision,
   type LearningEntry,
   type LearningStatus,
 } from "../../api";
-import { useIdentity } from "../../lib/state";
+import { useIdentity, useStore } from "../../lib/state";
 import { IconButton } from "../../components/IconButton";
 import { Panel } from "../../components/ui/Panel";
 import { LoadingSkeleton, PageHeader, SectionHeading, TabTrigger } from "../../components/ui";
@@ -34,6 +42,9 @@ import { toast } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { formatValue, truncate, humanizeError, SENSITIVE_READ_BY_KEY } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
+import { useNamespaceRole } from "../../lib/namespaceRole";
+import { canCall } from "../../lib/canCall";
+import { sharedHasAutoResolved } from "../../lib/sharedReads";
 import { useRowNav } from "../../lib/useRowNav";
 import { PageContainer } from "../../layout/PageContainer";
 
@@ -48,6 +59,8 @@ import { PageContainer } from "../../layout/PageContainer";
  * Sub-tabs:
  *   - Conflicts:   pairs of memories that disagree on a value
  *   - Learnings:   facts the extractor proposed for promotion
+ *   - Auto-resolved: memories Loom retired on its own (`memory.auto_supersede`), each
+ *                    with an Undo (`memory.restore`)
  *   - Exceptions:  allowlist of pairs we've explicitly said may coexist
  */
 // Radix's tab panel attributes, cleared while Conflicts is the only panel.
@@ -66,7 +79,20 @@ export function ReviewQueue() {
   const [probedExceptions, setProbedExceptions] = useState<AllowlistRow[] | null>(null);
   const hasLearnings = (probedLearnings?.length ?? 0) > 0;
   const hasExceptions = (probedExceptions?.length ?? 0) > 0;
-  const tabbed = hasLearnings || hasExceptions;
+  // The probe's yes/no, tagged with the namespace it read: the reset after a namespace
+  // switch runs a tick after the first render of the new namespace, which must not show
+  // the previous namespace's tab.
+  const scopeKey = `${identity.org}/${identity.namespace}`;
+  const [probedAuto, setProbedAuto] = useState<{ found: boolean; scope: string } | null>(null);
+  const hasAuto = probedAuto?.scope === scopeKey && probedAuto.found;
+  // The Auto-resolved panel reads its rows when the tab is first opened, then stays mounted.
+  const [autoOpened, setAutoOpened] = useState(false);
+  // The tab lists retirements and reads their Undo records (audit.list): asked only by a
+  // role known to reach both.
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const autoReadable = canCall("memory.auto_retirements", role, whoami) && canCall("audit.list", role, whoami);
+  const tabbed = hasLearnings || hasExceptions || hasAuto;
   // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
   // they revealed) must not outlive it, or a namespace with neither sub-tab strands the
   // viewer on a hidden panel.
@@ -81,6 +107,7 @@ export function ReviewQueue() {
       setProbedExceptions(null);
       setSeedsUsed({ learnings: false, exceptions: false });
       setTab("conflicts");
+      setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
         .then((r) => {
           if (live()) setProbedLearnings(r.rows || []);
@@ -98,6 +125,24 @@ export function ReviewQueue() {
     },
     [identity.org, identity.namespace],
   );
+  useAbortableEffect(
+    (_signal, live) => {
+      setProbedAuto(null);
+      if (!autoReadable) {
+        // The Auto-resolved tab goes with the access: leave it for Conflicts.
+        setTab((t) => (t === "auto" ? "conflicts" : t));
+        setAutoOpened(false);
+        return;
+      }
+      // The same question the sidebar asks, so the page and the sidebar share one read.
+      sharedHasAutoResolved({ org: identity.org, namespace: identity.namespace })
+        .then((found) => {
+          if (live()) setProbedAuto({ found, scope: scopeKey });
+        })
+        .catch(() => {});
+    },
+    [identity.org, identity.namespace, autoReadable],
+  );
 
   return (
     <PageContainer>
@@ -110,7 +155,13 @@ export function ReviewQueue() {
       </p>
       {/* Conflicts mounts (and reads) once, at once; the sub-tabs join it when a probe finds
           rows. Until then the lone panel is the page itself, not a tab panel without tabs. */}
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs
+        value={tab}
+        onValueChange={(t) => {
+          setTab(t);
+          if (t === "auto") setAutoOpened(true);
+        }}
+      >
         {tabbed && (
           <Tabs.TriggersList className="mb-5" aria-label="Review queue">
             <TabTrigger value="conflicts" icon="warning">
@@ -119,6 +170,11 @@ export function ReviewQueue() {
             {hasLearnings && (
               <TabTrigger value="learnings" icon="sparkle">
                 Learnings
+              </TabTrigger>
+            )}
+            {hasAuto && (
+              <TabTrigger value="auto" icon="flash">
+                Auto-resolved
               </TabTrigger>
             )}
             {hasExceptions && (
@@ -137,6 +193,14 @@ export function ReviewQueue() {
               initialPending={seedsUsed.learnings ? null : probedLearnings}
               onSeedUsed={() => setSeedsUsed((u) => ({ ...u, learnings: true }))}
             />
+          </Tabs.Content>
+        )}
+        {hasAuto && autoOpened && (
+          // Kept mounted once opened, so its loaded pages and Undo outcomes survive a tab
+          // switch; a namespace switch drops it with the probe.
+          <Tabs.Content value="auto" forceMount className="data-[state=inactive]:hidden">
+            {/* Keyed by namespace: another namespace's rows are a new panel. */}
+            <AutoResolvedPanel key={scopeKey} />
           </Tabs.Content>
         )}
         {hasExceptions && (
@@ -404,7 +468,7 @@ function ConflictsPanel() {
             createdAt={current.created_at}
             sensitive={current.sensitivity === "high"}
           />
-          <Side label="B · conflicting peer" memKey={current.memory_key} value={null} version={null} peerId={peerId} />
+          <PeerSide rows={rows} peerId={peerId} />
         </div>
         <TextAreaField
           label="Reason for the decision"
@@ -747,6 +811,286 @@ function LearningsPanel({
   );
 }
 
+// ─── Auto-resolved panel ───────────────────────────────────────────────
+
+/** What became of a row after the Undo: restored, or `memory.restore` found it no longer
+ *  retired behind that memory (restored, deleted or retired behind another since). */
+type UndoOutcome = "restored" | "gone";
+
+// One retirement record: a memory retired twice shows up once per record.
+const entryKey = (r: AutoResolvedRow) => `${r.memory_id}@${r.ts}>${r.superseded_by}`;
+
+/** The earlier of two audit times; "" is none yet. */
+const earlierTime = (a: string, b: string): string => (a === "" || auditInstant(b) < auditInstant(a) ? b : a);
+
+/** Newest restore per id across two reads. */
+function mergeUndone(a: Map<string, string>, b: Map<string, string>): Map<string, string> {
+  const out = new Map(a);
+  for (const [id, ts] of b) {
+    const prev = out.get(id);
+    if (!prev || auditInstant(ts) > auditInstant(prev)) out.set(id, ts);
+  }
+  return out;
+}
+
+function AutoResolvedPanel() {
+  const identity = useIdentity();
+  const whoami = useStore((s) => s.whoami);
+  const role = useNamespaceRole(identity.namespace);
+  const canRestore = canCall("memory.restore", role, whoami);
+  const [rows, setRows] = useState<AutoResolvedRow[] | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
+  // The tab showed because a row exists, so a failed read must not look like an empty list.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  const [reload, setReload] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Restores read so far (memory_id -> newest restore), and how far back that read
+  // reaches: a row older than `undoneSince` is not known yet and offers no Undo.
+  const [undone, setUndone] = useState<Map<string, string>>(new Map());
+  const [undoneSince, setUndoneSince] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<Map<string, UndoOutcome>>(new Map());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  // What the live region last said: one region for the panel, so rows changing are quiet.
+  const [announcement, setAnnouncement] = useState("");
+  // The panel is keyed by namespace, so a reply that lands after it goes is dropped.
+  const mounted = useRef(true);
+  const loadingRef = useRef(false);
+  // The last page removes Load more, which held the focus: it goes to the first Undo that
+  // page added, else the last one in the list.
+  const listBox = useRef<HTMLDivElement>(null);
+  const focusAdded = useRef<number | null>(null);
+  const oldest = (rows ?? []).map((r) => r.ts).reduce(earlierTime, "");
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useAbortableEffect(
+    (signal, live) => {
+      setLoadError(null);
+      listAutoResolved({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((r) => {
+          if (!live()) return;
+          setRows(r.rows || []);
+          setCursor(r.next_cursor);
+        })
+        .catch((e) => {
+          if (live()) setLoadError(e);
+        });
+    },
+    [identity.org, identity.namespace, reload],
+  );
+
+  useAbortableEffect(
+    (signal, live) => {
+      if (!oldest) return;
+      // Re-reads from the oldest row on show up to now (audit.list has no upper bound);
+      // capped at UNSUPERSEDED_MAX_PAGES, and what is known stays on screen meanwhile.
+      listUnsuperseded({ org: identity.org, namespace: identity.namespace }, { since: oldest, signal })
+        .then((m) => {
+          if (!live()) return;
+          setUndone((prev) => mergeUndone(prev, m));
+          setUndoneSince(oldest);
+        })
+        .catch(() => {
+          // Unknown: offer Undo. A row an Undo restored answers restored; one changed since
+          // answers restored=false.
+          if (live()) setUndoneSince(oldest);
+        });
+    },
+    [identity.org, identity.namespace, oldest],
+  );
+
+  // A row retired again after an undo is retired, so the undo must be the later event, and
+  // the row must no longer be retired behind that memory: an Undo record whose restore
+  // failed names a row still retired. With the row's state unknown, Undo is offered: a
+  // repeat Undo of a restored row answers restored.
+  const undoneBefore = (r: AutoResolvedRow) => {
+    const at = undone.get(r.memory_id);
+    const stillRetired =
+      r.current == null || (r.current.status === "superseded" && r.current.superseded_by === r.superseded_by);
+    return at != null && auditInstant(at) >= auditInstant(r.ts) && !stillRetired;
+  };
+  const known = (r: AutoResolvedRow) => undoneSince != null && auditInstant(r.ts) >= auditInstant(undoneSince);
+
+  useEffect(() => {
+    const at = focusAdded.current;
+    if (at === null || loadingMore) return;
+    focusAdded.current = null;
+    if (cursor !== null || document.activeElement !== document.body) return;
+    const added = listBox.current?.querySelectorAll<HTMLElement>("tbody tr") ?? [];
+    for (const tr of [...added].slice(at)) {
+      const button = tr.querySelector<HTMLElement>("button");
+      if (button) return button.focus();
+    }
+    [...(listBox.current?.querySelectorAll<HTMLElement>("tbody button") ?? [])].at(-1)?.focus();
+  });
+
+  const loadMore = async () => {
+    if (!cursor || loadingRef.current) return;
+    loadingRef.current = true;
+    focusAdded.current = rows?.length ?? 0;
+    setLoadingMore(true);
+    try {
+      const page = await listAutoResolved({ org: identity.org, namespace: identity.namespace }, { cursor });
+      if (!mounted.current) return;
+      setRows((rs) => [...(rs ?? []), ...page.rows]);
+      setCursor(page.next_cursor);
+    } catch (e) {
+      if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      loadingRef.current = false;
+      if (mounted.current) setLoadingMore(false);
+    }
+  };
+
+  const setBusyFor = (id: string, on: boolean) =>
+    setBusy((s) => {
+      const next = new Set(s);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const undo = async (r: AutoResolvedRow) => {
+    const k = entryKey(r);
+    if (busy.has(k)) return;
+    setBusyFor(k, true);
+    try {
+      const out = await restoreMemory(
+        { org: identity.org, namespace: identity.namespace, agent: r.agent },
+        r.memory_key,
+        { user_id: r.user_id, session_id: r.session_id, if_superseded_by: r.superseded_by },
+      );
+      if (!mounted.current) return;
+      setOutcome((m) => new Map(m).set(k, out.restored ? "restored" : "gone"));
+      const said = out.restored ? `Restored ${r.memory_key}` : `${r.memory_key} changed since; nothing undone`;
+      // A screen reader repeats nothing when the text does not change: a trailing non-breaking
+      // space makes a second Undo of the same key read again.
+      setAnnouncement((prev) => (prev === said ? `${said}\u00a0` : said));
+      if (out.restored) toast("Restored", "ok");
+    } catch (e) {
+      if (mounted.current) toast(`Failed: ${humanizeError(e)}`, "error");
+    } finally {
+      setBusyFor(k, false);
+    }
+  };
+
+  const status = (r: AutoResolvedRow) => {
+    const o = outcome.get(entryKey(r));
+    if (o === "gone") {
+      return <span className="text-sm text-text-muted">Changed since</span>;
+    }
+    if (o === "restored" || undoneBefore(r)) {
+      return (
+        <span className="inline-flex items-center gap-1 text-sm text-success">
+          <Icon name="check" size="sm" aria-hidden="true" /> Restored
+        </span>
+      );
+    }
+    // Without the row it retired behind, an Undo could only be an unguarded restore.
+    if (!canRestore || !r.superseded_by) return null;
+    if (!known(r)) {
+      return <span className="text-sm text-text-muted">Checking…</span>;
+    }
+    return (
+      <Button
+        type="secondary"
+        htmlType="button"
+        iconLeft="history"
+        onClick={() => undo(r)}
+        disabled={busy.has(entryKey(r))}
+        aria-label={`Undo retirement of ${r.memory_key}`}
+      >
+        Undo
+      </Button>
+    );
+  };
+
+  if (loadError != null) {
+    return (
+      <ListState kind="error" things="retired memories" error={loadError} onRetry={() => setReload((n) => n + 1)} />
+    );
+  }
+  if (rows !== null && rows.length === 0 && !cursor) {
+    return (
+      <ListState
+        kind="empty"
+        icon="secure"
+        title="Nothing retired automatically"
+        description="Memories Loom retires on its own in the last 30 days show here, each with an Undo."
+      />
+    );
+  }
+  return (
+    <div>
+      <p className="text-sm text-text-muted mb-3 max-w-2xl">
+        Memories Loom retired on its own in the last 30 days. They no longer come back in recall, but history keeps
+        them. Undo brings one back.
+      </p>
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
+      {/* The first read is the table's header over a skeleton. */}
+      <div ref={listBox}>
+        <Table
+          aria-label="Auto-resolved memories"
+          aria-busy={rows === null || loadingMore || undefined}
+          noDataMessage={rows === null ? <TableSkeleton label="Loading retired memories" /> : undefined}
+          size="sm"
+          headers={[
+            { label: "Key" },
+            { label: "Why" },
+            { label: "Behind" },
+            { label: "Retired", width: "120px" },
+            { label: <span className="sr-only">Undo</span>, width: "140px" },
+          ]}
+          rows={(rows ?? []).map((r) => ({
+            id: entryKey(r),
+            items: [
+              { label: <span className="block min-w-0 truncate font-mono text-xs">{r.memory_key}</span> },
+              {
+                label: (
+                  <span className="text-sm">
+                    {autoResolveReasonText(r.reason) ?? "Retired automatically"}
+                    {r.unconfirmed ? <span className="text-text-muted"> · may not have taken effect</span> : null}
+                  </span>
+                ),
+              },
+              {
+                label: (
+                  <span className="block min-w-0 truncate font-mono text-xs">
+                    {r.superseded_by_key || r.superseded_by || "—"}
+                  </span>
+                ),
+              },
+              { label: <ListTime time={r.ts} quiet className="text-text-muted" /> },
+              { label: status(r) },
+            ],
+          }))}
+        />
+      </div>
+      {cursor ? (
+        <BusyButton
+          type="secondary"
+          htmlType="button"
+          fillWidth
+          className="mt-3"
+          busy={loadingMore}
+          onClick={() => void loadMore()}
+        >
+          Load more
+        </BusyButton>
+      ) : (
+        rows !== null && <p className="mt-3 text-sm text-text-muted">Nothing older within 30 days.</p>
+      )}
+    </div>
+  );
+}
+
 // ─── Exceptions (allowlist) panel ──────────────────────────────────────
 
 function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | null; onSeedUsed: () => void }) {
@@ -876,6 +1220,46 @@ function AllowlistPanel({ initial, onSeedUsed }: { initial?: AllowlistRow[] | nu
         }))}
       />
     </div>
+  );
+}
+
+/** The peer a conflict names by id: its own key and value, from the queue when the peer
+ *  is conflicted there too, else read by id. Until then (or when the id reads nothing)
+ *  the card names the peer by its id only. */
+function PeerSide({ rows, peerId }: { rows: ConflictRow[]; peerId?: string }) {
+  const identity = useIdentity();
+  const listed = peerId ? rows.find((r) => r.memory_id === peerId) : undefined;
+  const [fetched, setFetched] = useState<{ id: string; row: MemoryById | null } | null>(null);
+  useAbortableEffect(
+    (signal, live) => {
+      if (!peerId || listed) return;
+      // The card never shows a high peer's value, so the answer never carries one.
+      getMemoryById(identity.org, peerId, { signal, omit_high_value: true })
+        .then((r) => {
+          if (live()) setFetched({ id: peerId, row: r.found ? r : null });
+        })
+        .catch(() => {
+          if (live()) setFetched({ id: peerId, row: null });
+        });
+    },
+    [identity.org, peerId, !!listed],
+  );
+  const read = fetched && fetched.id === peerId ? fetched.row : null;
+  const peer = listed ?? read;
+  if (!peer) {
+    return <Side label="B · conflicting peer" memKey="—" value={null} version={null} peerId={peerId} />;
+  }
+  return (
+    <Side
+      label="B · conflicting peer"
+      memKey={peer.memory_key}
+      value={peer.value}
+      version={peer.version}
+      pinned={peer.pinned}
+      createdAt={peer.created_at ?? undefined}
+      // A high peer's value is read by key in Memories, as side A's is.
+      sensitive={peer.sensitivity === "high"}
+    />
   );
 }
 

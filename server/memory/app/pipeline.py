@@ -14,7 +14,7 @@ from typing import Any
 
 from server.core.datetimes import parse_iso_dt
 from server.core.hashing import hash_text
-from server.memory.api.models_bulk import MemoryBulkSetInput, _BulkSetEntry
+from server.memory.api.models_bulk import REFUSED, MemoryBulkSetInput, _BulkSetEntry, refused_facts
 from server.memory.api.models_crud import MemoryDeleteInput
 from server.memory.app.assistant_learnings import file_assistant_rules
 from server.memory.app.pipeline_state import PipelineStep, StepCallable, WorkflowState
@@ -1000,11 +1000,18 @@ async def _step_bulk_write(
         run_id=state.run_id,
         entries=entries,
     )
-    bulk_out = await handle_memory_bulk_set(bulk_input)
-    state.written = [{"memory_key": r.memory_key, "version": r.version} for r in bulk_out.written]
-    for _phase, _ms in (getattr(bulk_out, "stage_ms", None) or {}).items():
-        state.stage_ms[f"bulk.{_phase}"] = float(_ms)
+    _record_bulk_out(state, await handle_memory_bulk_set(bulk_input))
     return state
+
+
+def _record_bulk_out(state: WorkflowState, bulk_out: Any) -> None:
+    """The whole per-entry result, so set_from_messages answers what bulk_set did, but
+    for a refused entry (blacklisted, pinned or locked key): it produced no row, and
+    neither evidence nor chunks may attach to the stored one through it."""
+    state.written = [r.model_dump() for r in bulk_out.written if r.conflict_verdict not in REFUSED]
+    state.refused = [f.model_dump() for f in refused_facts(bulk_out.written)]
+    for phase, ms in (getattr(bulk_out, "stage_ms", None) or {}).items():
+        state.stage_ms[f"bulk.{phase}"] = float(ms)
 
 
 # Register built-ins at module import

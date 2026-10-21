@@ -23,7 +23,6 @@ from server.memory.api.models_crud import (
     MemorySetInput,
     MemorySetOutput,
 )
-from server.memory.app import conflict_deferred as _cd
 from server.memory.app import provenance as app_provenance
 from server.memory.app.set_commit import (
     _count_write,
@@ -142,7 +141,9 @@ def _pinned_dry_run_output(
     )
 
 
-async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
+async def handle_memory_set(
+    input: MemorySetInput, *, op: str = "memory.set", retry_what: str = "the write"
+) -> MemorySetOutput:
     """Count the write outcome for every terminal shape, then delegate.
 
     Successful shapes are counted inside `_handle_memory_set` where the conflict
@@ -152,7 +153,7 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     non-HTTPException failures a ClickHouse outage actually raises — is `error`.
     """
     try:
-        out = await _handle_memory_set(input)
+        out = await _handle_memory_set(input, op=op, retry_what=retry_what)
     except HTTPException as e:
         code = e.detail.get("code", "") if isinstance(e.detail, dict) else ""
         outcome = _WRITE_OUTCOME_BY_ERROR_CODE.get(str(code))
@@ -176,8 +177,6 @@ async def handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
     advisories = value_shape_advisories(input.value, input.memory_type)
     if advisories:
         out.advisories = [*out.advisories, *advisories]
-    if hasattr(out, "conflict_verdict"):  # a patched inner handler may return a bare object
-        out.verdict_at = _cd.verdict_at(out.conflict_verdict)
     return out
 
 
@@ -408,6 +407,10 @@ async def _set_prepare_value(w: _SetWrite) -> None:
         now=datetime.now(UTC),
         settings=settings,
     )
+    # A new expiry from the retention window is an expiry change: a read_only lock refuses
+    # it as it refuses a ttl_seconds (423, refused_action 'expire'), as memory.bulk_set does.
+    if expires_at != w.expires_at:
+        _lock.assert_unlocked(existing, "expire", op="memory.set")
     # Protected-attribute label: a tag, never a refusal.
     from server.memory.domain.sensitivity import attribute_tags
 
@@ -605,10 +608,27 @@ def _set_build_memory_row(w: _SetWrite) -> None:
     w.memory_row = memory_row
 
 
-async def _handle_memory_set(input: MemorySetInput) -> MemorySetOutput:
-    """memory.set; a conditional write holds the key's write lock."""
-    if not input.if_match_sha256:
+async def _handle_memory_set(
+    input: MemorySetInput, *, op: str = "memory.set", retry_what: str = "the write"
+) -> MemorySetOutput:
+    """memory.set; a conditional write and a pin hold the key's write lock from their read
+    to their insert, as a resolver write does, so a retirement never lands between them."""
+    if not (input.if_match_sha256 or input.pinned):
         return await _memory_set_phases(input)
+    # A pin rewrites the row from its read: a retirement landing between the two would be
+    # written over by the pinned copy, active again, so the pin holds the lock across both.
+    if not input.if_match_sha256:  # a pin: busy, the answer says what to retry
+        async with key_write_lock.key_lock_for(
+            input.org,
+            input.namespace,
+            input.agent,
+            input.user_id,
+            input.session_id,
+            input.memory_key,
+            what=retry_what,
+            operation=op,
+        ):
+            return await _memory_set_phases(input)
     async with key_write_lock.key_write_locks.hold(
         input.org,
         input.namespace,
@@ -689,7 +709,9 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         # happened), no write tick. The version is 0 so nothing can mistake it for one.
         return _set_dry_run_answer(w, conflict_result, peers_out, duplicate_of_id)
 
-    await _set_dual_write(w, ch, _cfg, conflict_result)
+    conflict_result = await _set_dual_write(w, ch, _cfg, conflict_result)
+    if conflict_result.verdict == "clear":
+        peers_out = []  # a conflict the mark found no live peer for: none to resolve
 
     return await _set_after_write(w, ch, _cfg, conflict_result, duplicate_of_id, peers_out)
 
