@@ -45,7 +45,9 @@ async def test_contextualize_chunks_is_ordered_bounded_and_fail_open():
                 text="Context: " + user.split("<chunk>\n")[1].split("\n")[0][:20]
             )
 
-    out = await contextualize_chunks(LLM(), "doc", ["alpha", "boom", "gamma"], concurrency=2)
+    out = await contextualize_chunks(
+        LLM(), "doc", ["alpha", "boom", "gamma"], concurrency=2, operator_policy=""
+    )
     assert out == ["alpha", "", "gamma"]
     assert len(calls) == 3
-    assert await contextualize_chunks(LLM(), "doc", []) == []
+    assert await contextualize_chunks(LLM(), "doc", [], operator_policy="") == []

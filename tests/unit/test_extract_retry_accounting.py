@@ -46,7 +46,9 @@ def _patch(monkeypatch: pytest.MonkeyPatch, client: _Scripted) -> None:
 async def test_a_zero_fact_retry_that_finds_nothing_is_still_counted(monkeypatch) -> None:
     client = _Scripted(['{"facts": []}', '{"facts": []}'])
     _patch(monkeypatch, client)
-    res = await extract_from_messages(_MESSAGES, judge=False, coverage_sweep=False)
+    res = await extract_from_messages(
+        _MESSAGES, judge=False, coverage_sweep=False, operator_policy=""
+    )
     assert client.calls == 2 and res.facts == []
     assert (res.llm_result.tokens_in, res.llm_result.tokens_out) == (200, 20)
     assert res.llm_result.cached_input_tokens == 80
@@ -58,7 +60,9 @@ async def test_a_zero_fact_retry_that_finds_nothing_is_still_counted(monkeypatch
 async def test_an_unparseable_retry_leaves_the_first_pass_standing(monkeypatch) -> None:
     client = _Scripted(['{"facts": []}', "I'm sorry, I can't help with that."])
     _patch(monkeypatch, client)
-    res = await extract_from_messages(_MESSAGES, judge=False, coverage_sweep=False)
+    res = await extract_from_messages(
+        _MESSAGES, judge=False, coverage_sweep=False, operator_policy=""
+    )
     assert client.calls == 2 and res.facts == []
     assert res.llm_result.tokens_in == 200
 
@@ -80,7 +84,9 @@ async def test_the_judge_call_is_counted_and_the_extraction_keeps_its_text(monke
     verdict = '{"verdicts": [{"key": "offsite_city", "verdict": "CORRECT"}]}'
     client = _Scripted([_FACT_REPLY, verdict])
     _patch(monkeypatch, client)
-    res = await extract_from_messages(_MESSAGES, judge=True, coverage_sweep=False)
+    res = await extract_from_messages(
+        _MESSAGES, judge=True, coverage_sweep=False, operator_policy=""
+    )
     assert client.calls == 2 and [f.judge_verdict for f in res.facts] == ["CORRECT"]
     assert (res.llm_result.tokens_in, res.llm_result.tokens_out) == (200, 20)
     assert (res.llm_result.cached_input_tokens, res.llm_result.cache_write_input_tokens) == (80, 10)
@@ -94,7 +100,9 @@ async def test_an_unreadable_judge_reply_keeps_every_fact_counts_the_call_and_sa
     client = _Scripted([_FACT_REPLY, "no verdicts today"])
     _patch(monkeypatch, client)
     with caplog.at_level("WARNING"):
-        res = await extract_from_messages(_MESSAGES, judge=True, coverage_sweep=False)
+        res = await extract_from_messages(
+            _MESSAGES, judge=True, coverage_sweep=False, operator_policy=""
+        )
     assert [f.memory_key for f in res.facts] == ["offsite_city"] and res.dropped_judge_wrong == 0
     assert res.llm_result.tokens_in == 200
     assert any("judge reply unreadable" in r.message for r in caplog.records)

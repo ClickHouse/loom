@@ -93,7 +93,7 @@ async def test_truncation_retries_with_raised_budget(
     client = _SequenceClient([_TRUNCATED, _COMPLETE])
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: client)
 
-    result = await extract_from_messages(_MSGS, max_tokens=1024, judge=False)
+    result = await extract_from_messages(_MSGS, max_tokens=1024, judge=False, operator_policy="")
 
     assert client.calls == [1024, 2048], "retry must double the budget"
     assert [f.memory_key for f in result.facts] == ["k1", "k2", "k3"]
@@ -110,7 +110,7 @@ async def test_truncation_retry_budget_is_capped(
     client = _SequenceClient([_TRUNCATED, _COMPLETE])
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: client)
 
-    await extract_from_messages(_MSGS, max_tokens=6000, judge=False)
+    await extract_from_messages(_MSGS, max_tokens=6000, judge=False, operator_policy="")
 
     assert client.calls == [6000, 8192]
 
@@ -122,7 +122,7 @@ async def test_still_truncated_salvages_prefix_instead_of_failing(
     client = _SequenceClient([_TRUNCATED, _TRUNCATED])
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: client)
 
-    result = await extract_from_messages(_MSGS, max_tokens=1024, judge=False)
+    result = await extract_from_messages(_MSGS, max_tokens=1024, judge=False, operator_policy="")
 
     # The complete prefix objects land; the cut-off trailing one is dropped.
     assert [f.memory_key for f in result.facts] == ["k1", "k2"]
@@ -139,7 +139,7 @@ async def test_unsalvageable_truncation_still_raises(
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: client)
 
     with pytest.raises(ExtractionError):
-        await extract_from_messages(_MSGS, max_tokens=1024, judge=False)
+        await extract_from_messages(_MSGS, max_tokens=1024, judge=False, operator_policy="")
 
 
 @pytest.mark.asyncio
@@ -151,7 +151,7 @@ async def test_non_truncation_parse_failure_keeps_strict_retry(
     client = _SequenceClient(["pure prose, not JSON", _COMPLETE])
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: client)
 
-    result = await extract_from_messages(_MSGS, max_tokens=1024, judge=False)
+    result = await extract_from_messages(_MSGS, max_tokens=1024, judge=False, operator_policy="")
 
     assert client.calls == [1024, 1024]
     assert len(result.facts) == 3

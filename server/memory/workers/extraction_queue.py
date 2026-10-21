@@ -112,10 +112,10 @@ async def run_pass(cfg: ExtractionQueueConfig | None = None) -> ExtractionQueueR
         try:
             written = await q.replay_row(row)
         except (customer.ModelCallsDisabled, customer.SwitchUnread):
-            # Switched off after the claim, or the switch went unread: no attempt
-            # spent. The lease runs out and the row waits, unclaimed, until the
-            # org is back on or the switch is read. Not `HOLDS`: a request naming
-            # no customer never will, so it spends its attempts and fails.
+            # Switched off after the claim, or the model-call switch or the extraction
+            # policies went unread: no attempt spent. The lease runs out and the row
+            # waits, unclaimed, until the org is back on and both are read. Not `HOLDS`:
+            # a request naming no customer never will, so it spends its attempts and fails.
             result.skipped += 1
             return
         except Exception as e:

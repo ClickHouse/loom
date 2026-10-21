@@ -17,8 +17,10 @@ from fastapi import HTTPException
 
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import BackendUnavailableError
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE, ReadFilters
+from server.llm import customer
 from server.memory.api.models_session_brief import (
     SessionBriefDeleteInput,
     SessionBriefDeleteOutput,
@@ -33,6 +35,7 @@ from server.memory.api.models_session_brief import (
 )
 from server.memory.domain import session_brief as sb
 from server.memory.domain import session_brief_render as sb_render
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.store import session_briefs as repo
 from server.observability.budget_shape import note_budget_shape
 from server.observability.genai import staged
@@ -121,32 +124,51 @@ async def _revise_window(
     total: int,
     budget: int,
     context_line: str,
+    operator_policy: str,
 ) -> tuple[sb.BriefSections, int, int, int, bool]:
     """One window through the model. Returns (merged sections, dropped,
     tokens_in, tokens_out, used_model). A failed or unparseable call falls
-    back to the deterministic builder for this window only."""
+    back to the deterministic builder for this window only, or, under an
+    operator's policy, keeps `prev`: the builder copies the raw events. Under a
+    policy, a call for an org whose model calls are switched off raises
+    `customer.ModelCallsDisabled`."""
     condensed, _stats = sb.condense_events(events, budget)
+
+    def fallback() -> sb.BriefSections:
+        if operator_policy:
+            return prev or sb.BriefSections()
+        return sb.merge_sections(prev, sb.deterministic_revision(events))
+
     try:
         result = await client.complete(
-            system=sb.SYSTEM_PROMPT,
+            system=with_policy(sb.SYSTEM_PROMPT, operator_policy),
             user=sb.user_prompt(
                 prev, condensed, window=index, windows=total, context_line=context_line
             ),
             max_tokens=llm_max_tokens("session_brief_revision"),
             response_format={"type": "json_object"},
         )
-    except Exception as e:  # noqa: BLE001 — a brief without the model beats no brief
-        log.warning("session.brief_save: model call failed (%s); deterministic window", e)
-        return sb.merge_sections(prev, sb.deterministic_revision(events)), 0, 0, 0, False
+    except Exception as e:  # a failed call costs this window only
+        if operator_policy and isinstance(e, customer.ModelCallsDisabled):
+            raise  # a switched-off org stops the save under a policy
+        log.warning(
+            "session.brief_save: model call failed (%s); window revised without the model",
+            e,
+        )
+        return fallback(), 0, 0, 0, False
     try:
         parsed = sb.parse_revision(result.text)
-    except Exception as e:  # noqa: BLE001 — a malformed reply degrades one window, never the save
-        log.warning("session.brief_save: model reply rejected (%s); deterministic window", e)
+    except Exception as e:  # noqa: BLE001 — a rejected reply costs this window only
+        log.warning(
+            "session.brief_save: model reply rejected (%s); window revised without the model", e
+        )
         parsed = None
     if parsed is None:
-        log.warning("session.brief_save: unparseable model output; deterministic window")
+        log.warning(
+            "session.brief_save: unparseable model output; window revised without the model"
+        )
         return (
-            sb.merge_sections(prev, sb.deterministic_revision(events)),
+            fallback(),
             0,
             int(result.tokens_in),
             int(result.tokens_out),
@@ -162,13 +184,26 @@ async def _revise_window(
     return merged, dropped, int(result.tokens_in), int(result.tokens_out), True
 
 
-async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revision:
+async def _revise_from_events(
+    inp: Any, prev: sb.BriefSections | None, policy: str
+) -> _Revision | None:
+    """The brief revised with `inp.events`. Under an operator's `policy` the
+    deterministic builder, which copies the raw events, never runs: with no
+    model to call (no real model, `use_llm` false, or the org's model calls
+    switched off before the first window was revised) the answer is None and
+    nothing is written. An org switched off later keeps the windows already
+    revised and stops there, like a failed window. When every window's call
+    failed, was held by an unread switch or did not parse, it raises
+    BackendUnavailableError: a save of events alone is refused (503) so the
+    client sends them again, and one with the agent's sections saves those."""
     budget = int(settings.session_brief_window_chars)
     windows = sb.split_windows(
         list(inp.events), budget * 3, max(1, int(settings.session_brief_max_windows))
     )
     use, client = _use_llm(inp)
     if not use:
+        if policy:
+            return None
         cur = prev
         for w in windows:
             cur = sb.merge_sections(cur, sb.deterministic_revision(w))
@@ -186,13 +221,29 @@ async def _revise_from_events(inp: Any, prev: sb.BriefSections | None) -> _Revis
     any_model = False
     ctx = _context_line(inp)
     for i, w in enumerate(windows, 1):
-        cur, dropped, t_in, t_out, used = await _revise_window(
-            client, cur, w, index=i, total=len(windows), budget=budget, context_line=ctx
-        )
+        try:
+            cur, dropped, t_in, t_out, used = await _revise_window(
+                client,
+                cur,
+                w,
+                index=i,
+                total=len(windows),
+                budget=budget,
+                context_line=ctx,
+                operator_policy=policy,
+            )
+        except customer.ModelCallsDisabled:  # raised only under a policy
+            if not any_model:
+                return None
+            break
         rev.dropped += dropped
         rev.tokens_in += t_in
         rev.tokens_out += t_out
         any_model = any_model or used
+    if not any_model and policy:
+        raise BackendUnavailableError(
+            "the brief could not be revised under the operator's extraction policy; try again"
+        )
     rev.sections = cur or sb.BriefSections()
     if not any_model:
         rev.author = "deterministic"
@@ -301,14 +352,32 @@ async def handle_session_brief_save(inp: SessionBriefSaveInput) -> SessionBriefS
     ):
         return unchanged("already-saved")
 
+    # The brief is written from the session's own events, so the model is given
+    # the operator's extraction policy; one this process cannot read refuses
+    # the save (503), and the client sends the events again.
+    from server.memory.app import extraction_policy
+
+    policy = await extraction_policy.effective(inp.org, inp.namespace) if inp.events else ""
     if inp.sections is not None:
         base = prev
         if inp.events:
-            base = (await _revise_from_events(inp, prev)).sections
+            # The agent's own sections are saved even when no window could be
+            # revised under the policy, as when there is no model to call.
+            try:
+                revised = await _revise_from_events(inp, prev, policy)
+            except BackendUnavailableError:
+                revised = None
+            base = revised.sections if revised is not None else prev
         rev = _Revision(sections=sb.overlay_sections(base, inp.sections), author="model")
     else:
-        rev = await _revise_from_events(inp, prev)
-    rev.sections = sb_render.keep_client_summary(prev, rev.sections, inp.events)
+        revised = await _revise_from_events(inp, prev, policy)
+        if revised is None:
+            return unchanged("not-revised")
+        rev = revised
+    # A client's compaction summary is raw text: under a policy none is taken from
+    # this save's events, and the brief keeps the one it held.
+    summaries = [] if policy else inp.events
+    rev.sections = sb_render.keep_client_summary(prev, rev.sections, summaries)
 
     events_in = len(inp.events)
     events_total = int(live.get("events_total") or 0) + events_in if live else events_in

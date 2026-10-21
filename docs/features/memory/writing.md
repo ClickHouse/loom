@@ -67,9 +67,9 @@ is chunked on its headings and searched with its section. Store the document in
 **Memory types.** `memory_type` (default `semantic`) decides whether a row is embedded and
 searched. `episodic` and `profile` rows are not embedded and never appear in
 `memory.search`. A `procedural` write that is not a procedure body is stored as
-`semantic` (`retyped_from`). A `sensitivity="high"` row, or one detected as a credential,
-is never embedded and is readable by key only. The full table is in
-[memory concepts](../../concepts/memory.md).
+`semantic` (`retyped_from`). A `sensitivity="high"` row, or one detected as high (a
+credential, card number, SSN or stated PIN), is never embedded and is readable by key
+only. The full table is in [memory concepts](../../concepts/memory.md).
 
 ## What a write returns
 
@@ -432,8 +432,9 @@ sweep, the `delete_version` check).
   URL again creates a new webhook that does not inherit them. An event whose memory was
   erased before it went out is marked `dead` and not sent: the key's history is read just
   before each POST, so only an erasure that lands during that POST can let one out.
-- **Repeats.** An event in the outbox is delivered at least once, in no order; a change
-  can go unannounced (a failed outbox insert, a registration not yet seen by the serving
+- **Repeats.** An event is sent until a receiver takes it or it is marked dead (see
+  above), and a delivered event can arrive more than once, in no order; a change can also
+  go unannounced (a failed outbox insert, a registration not yet seen by the serving
   process, a rolling upgrade), so a receiver that mirrors memory re-reads the namespace
   from time to time. Order events by `version`, and read the row back rather than
   trusting the event's age. Two events can carry the same `version`: a `memory.clear` tombstone does not write a new version, so its
@@ -454,11 +455,11 @@ sweep, the `delete_version` check).
 
 ## Settings
 
-| Setting                              | Default | Effect                                                            |
-| ------------------------------------ | ------- | ----------------------------------------------------------------- |
-| `LOOM_MEMORY_VALUE_ADVISORY_CHARS`   | 30000   | Size past which a value earns the oversized advisory. 0 disables. |
-| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | true    | Detect credential and contact shapes when `sensitivity` is unset. |
-| `LOOM_MAX_REQUEST_BYTES`             | 32 MiB  | Request-body cap.                                                 |
+| Setting                              | Default | Effect                                                                                                                        |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_MEMORY_VALUE_ADVISORY_CHARS`   | 30000   | Size past which a value earns the oversized advisory. 0 disables.                                                             |
+| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | true    | Detect credential, card, SSN and PIN shapes (`high`) and email, phone and IBAN shapes (`medium`) when `sensitivity` is unset. |
+| `LOOM_MAX_REQUEST_BYTES`             | 32 MiB  | Request-body cap.                                                                                                             |
 
 Change webhook settings (`LOOM_MEMORY_WEBHOOK_*`, including
 `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED`, which stops delivery) are in

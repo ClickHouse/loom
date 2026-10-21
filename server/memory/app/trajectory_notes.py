@@ -41,6 +41,7 @@ from typing import Any
 from server.core.datetimes import naive_utc_now
 from server.llm import customer
 from server.memory.api.models_crud import MemoryDeleteInput, MemorySetInput
+from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.transcript_rows import EVENT_SOURCE_TRACE, EVENT_TAG, FROM_OBSERVATION_TAG
 from server.observability.genai import llm_stage
 from server.settings.budgets import llm_max_tokens
@@ -281,12 +282,15 @@ def render_event(
     *,
     step: int = 0,
     total: int = 0,
+    with_action: bool = True,
 ) -> str:
     """`Step k/n · After <tool> `<action>`: <title>. <transition>` — the step
     index orders the session's events for a reader that sees several, the
-    action names which call this was."""
+    action names which call this was. Without `with_action` (an operator's
+    extraction policy is in force) the action, taken from the raw call rather
+    than the model's reply, is left out."""
     head = f"After {after.tool_name}" if after.tool_name else "After the action"
-    action = action_summary(after)
+    action = action_summary(after) if with_action else ""
     if action:
         head = f"{head} `{action}`"
     prefix = f"Step {step}/{total} · " if step and total else ""
@@ -425,11 +429,17 @@ async def distill_events(
     """One model call per transition pair → one `semantic` memory tagged
     `event`, dated at the later observation, chained to the previous event
     with a `precedes` edge. Fail-open per pair, except for a call the switch
-    holds (`customer.HOLDS`), which propagates."""
+    holds (`customer.HOLDS`), which propagates, as does an extraction policy
+    this process cannot read. Each call ends with the operator's policy."""
+    from server.memory.app import extraction_policy
     from server.memory.app.write import handle_memory_set
 
     res = res or ExtrasResult()
     pairs = transition_pairs(observations, max_pairs=max_events, only_after=only_after)
+    if not pairs:
+        return res
+    policy = await extraction_policy.effective(session["org"], session["namespace"])
+    system = with_policy(_EVENT_SYSTEM, policy)
     ordered = sorted(
         observations, key=lambda o: (o.created_at is None, o.created_at or datetime.min)
     )
@@ -437,7 +447,7 @@ async def distill_events(
     total = len(ordered)
     sid = str(session.get("session_id") or "")
     prev_key = ""
-    if pairs and only_after is not None and pairs[0][0].memory_key not in only_after:
+    if only_after is not None and pairs[0][0].memory_key not in only_after:
         # The first transition of this pass follows an observation an earlier
         # pass distilled; chain onto that pass's last event.
         prev_key = event_memory_key(sid, pairs[0][0].memory_key)
@@ -446,7 +456,7 @@ async def distill_events(
         try:
             with llm_stage("observe_extract.event"):
                 out = await llm.complete(
-                    _EVENT_SYSTEM,
+                    system,
                     event_prompt(before, after),
                     max_tokens=llm_max_tokens("observe_extract.event"),
                 )
@@ -476,9 +486,11 @@ async def distill_events(
                         after,
                         step=position.get(after.memory_key, 0),
                         total=total,
+                        with_action=not policy,
                     ),
                     tags=tags,
-                    entities=list(after.file_paths[:12]),
+                    # Under a policy no path from the raw call is stored.
+                    entities=[] if policy else list(after.file_paths[:12]),
                     confidence=0.9,
                     source_trace=f"{EVENT_SOURCE_TRACE}:{before.memory_key}>{after.memory_key}",
                     valid_at=after.valid_at or after.created_at,
@@ -522,7 +534,8 @@ async def distill_notes(
 ) -> ExtrasResult:
     """One model call per session → a procedure (procedure plane) and a hint
     (`semantic` memory tagged `hint`). Fail-open, except for a call the switch
-    holds (`customer.HOLDS`), which propagates."""
+    holds (`customer.HOLDS`), which propagates, as does an extraction policy
+    this process cannot read. The call ends with the operator's policy."""
     res = res or ExtrasResult()
     useful = [o for o in observations if not o.trivial]
     # A procedure (and the session hint) is mined only from a
@@ -534,10 +547,14 @@ async def distill_notes(
 
     if len(useful) < int(settings.observe_extract_notes_min_observations):
         return res
+    from server.memory.app import extraction_policy
+
+    policy = await extraction_policy.effective(session["org"], session["namespace"])
+    system = with_policy(_NOTES_SYSTEM, policy)
     try:
         with llm_stage("observe_extract.notes"):
             out = await llm.complete(
-                _NOTES_SYSTEM,
+                system,
                 notes_prompt(observations),
                 max_tokens=llm_max_tokens("observe_extract.notes"),
             )
@@ -590,8 +607,10 @@ async def distill_notes(
             # A derived row with no entities gets no entity-ANN boost and no
             # entity-overlap credit when the question names one ("what about
             # server/main.py"): reachable by cosine, but un-boosted. The
-            # hint's entities are the session's paths.
-            hint_entities = hint_entities_for(observations)
+            # hint's entities are the session's paths, so a question naming a
+            # file boosts it; under an operator policy none is taken from the
+            # raw calls.
+            hint_entities = [] if policy else hint_entities_for(observations)
             await handle_memory_set(
                 MemorySetInput(
                     org=session["org"],

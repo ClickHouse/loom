@@ -688,7 +688,7 @@ context.pack, context offload, session briefs and the mentor's hints.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CONTEXT_OFFLOAD_MAX_BYTES` | `int` | `8000000` | live | context.offload: largest single parked tool result, in bytes. |
-| `LOOM_SESSION_BRIEF_LLM` | `bool` | `True` | live | session.brief_save. `session_brief_llm` off = every brief comes from the deterministic builder (goal, status, files, errors, rules, pointers; no decisions or dead ends). The model is the deployment's LLM when `session_brief_llm_model` has no key. A save condenses its events into windows of `session_brief_window_chars` (≈6k tokens each) and revises the brief once per window, at most `session_brief_max_windows` calls per save (the last window takes the remainder, condensed harder). |
+| `LOOM_SESSION_BRIEF_LLM` | `bool` | `True` | live | session.brief_save. `session_brief_llm` off = every brief comes from the deterministic builder (goal, status, files, errors, rules, pointers; no decisions or dead ends), except under an operator's extraction policy, where a save of events alone with no model to call writes nothing. The model is the deployment's LLM when `session_brief_llm_model` has no key. A save condenses its events into windows of `session_brief_window_chars` (≈6k tokens each) and revises the brief once per window, at most `session_brief_max_windows` calls per save (the last window takes the remainder, condensed harder). |
 | `LOOM_SESSION_BRIEF_WINDOW_CHARS` | `int` | `24000` | live | Condensed size, characters, of one brief window (floor 2000); a window holds about three times this much raw event text before it is condensed. |
 | `LOOM_SESSION_BRIEF_MAX_WINDOWS` | `int` | `4` | live | Most windows (and model revision calls) per brief save; the last window takes the rest. |
 | `LOOM_MENTOR_TTL_SECONDS` | `int` | `3600` | live | Seconds a per-process (org, namespace, agent) mentor profile is cached (a failed read ≤ 300 s). 0 disables the mentor everywhere (no pack section, no call hints, empty mentor.brief). |
@@ -780,6 +780,12 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 | `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `3` | live | Attempts before a failing batch stops returning to `pending` and is marked failed. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
+
+### Operator extraction policy
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_EXTRACTION_POLICY_MAX_NAMESPACES` | `int` | `1000` | live | Most namespaces of one org that may hold their own extraction policy; `extraction_policy.set` with scope `namespace` refuses one more. |
 
 ## Knowledge
 
@@ -1042,14 +1048,15 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | `bool` | `True` |  | With no explicit `sensitivity`, detect it from the value with regexes: credential shapes -> 'high' (never embedded, key-only reads, audited); email/phone -> 'medium' (embedded, labelled). Off = every row stays ''. |
+| `LOOM_MEMORY_SENSITIVITY_AUTODETECT` | `bool` | `True` |  | With no explicit `sensitivity`, detect it from the value with regexes: credential shapes, card numbers, SSNs and stated PINs -> 'high' (never embedded, key-only reads, audited); email/phone/IBAN -> 'medium' (embedded, labelled). Off = every row stays ''. |
 | `LOOM_MEMORY_SENSITIVE_RETENTION_DAYS` | `int` | `0` |  | `medium`/`high` rows get expires_at = now + N days on the set and bulk paths (a shorter caller expiry wins) and, if the caller set none, this on_expire. 0 = off. |
 | `LOOM_MEMORY_SENSITIVE_ON_EXPIRE` | `'tombstone' \| 'demote' \| 'anonymize'` | `'anonymize'` |  | `on_expire` given to a sensitive row whose caller set none. |
 | `LOOM_SENSITIVITY_SWEEP_ENABLED` | `bool` | `True` |  | Daily sweep: re-label live rows written `sensitivity = ''` by a path that skipped the detector, as a new version per row; `high` rows' embeddings are tombstoned, never ALTER UPDATE. Covers the trailing window; the backlog is `loom sensitivity-sweep --apply`. |
 | `LOOM_SENSITIVITY_SWEEP_INTERVAL_SECONDS` | `int` | `86400` |  | Seconds between sensitivity sweep passes. |
 | `LOOM_SENSITIVITY_SWEEP_WINDOW_DAYS` | `int` | `2` |  | Days back the sensitivity sweep re-labels rows created in. |
-| `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` |  | Rows one sweep pass re-labels (at least 1). |
-| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other). `phone` (a ten-digit run) mostly matches ids, and a `medium` label demotes the row in ranking, so it is left to the operator's `--only-shape phone`. |
+| `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` | `int` | `500` |  | Rows one sensitivity sweep pass re-labels, and the keys per page it reads (at least 1). |
+| `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` | `int` | `10` | live | Pages one sensitivity sweep pass reads at most, each of `sensitivity_sweep_max_rows_per_pass` keys (1 to 1000). |
+| `LOOM_SENSITIVITY_SWEEP_SHAPES` | `str` | `'credential,email'` |  | Shapes the sensitivity sweep applies (comma-separated: credential, email, phone, other); every high row is `credential`; `phone` and `other` (IBAN-only rows) are left to the operator's `loom sensitivity-sweep --apply`. |
 | `LOOM_MEMORY_ATTRIBUTE_TAGGING` | `bool` | `True` |  | Tag rows mentioning a protected attribute or common proxy with `attribute:<class>` at write time (gender, religion, health, age, family, income, ethnicity, sexuality, politics). A label, never a gate; the profile fold leaves such rows out. |
 
 ### Code-linked memories
@@ -1476,8 +1483,8 @@ Embedding and LLM providers.
 | `LOOM_INFERENCE_CUSTOMER_REQUIRED` | `bool` | `False` |  | True (a cell serving several customers): refuse to start without inference_customer_header, so no model call goes out unattributed. |
 | `LOOM_INFERENCE_CUSTOMER_FORMAT` | `str` | `'{org}'` |  | How the customer header names an org, as the gateway knows it: `{org}` is the org id, around it letters, digits and . _ ~ : @ - only ("{org}" = the id as is). |
 | `LOOM_INFERENCE_FEATURE_MAP_JSON` | `str` | `''` |  | JSON object from Loom's feature names (hyde, memory.search, worker.embedding, ...) to the gateway's (letters, digits, . _ ~ : @ -); "*" for any other; "" = Loom's. |
-| `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls); a change reaches every process within it. |
-| `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` | `float` | `60.0` |  | Seconds a process trusts its copy of the org model-call switch when it cannot read it again; past it, every model call for an org is refused (fail closed). 15 to 300. |
+| `LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between each process's reads of the orgs whose model calls are switched off (loom.org_model_calls) and of the operators' extraction policies (loom.extraction_policies); a change reaches every process within it. |
+| `LOOM_MODEL_CALLS_POLICY_MAX_STALE_SECONDS` | `float` | `60.0` |  | Seconds a process trusts its copy of the org model-call switch, and of the extraction policies, when it cannot read it again; past it, every model call for an org is refused and no extraction runs (fail closed). 15 to 300. |
 | `LOOM_MODEL_CALLS_OFF_MAX_WAIT_DAYS` | `int` | `7` |  | Days a switched-off org's queued requests (the extraction queue) wait, from when the org was switched off, before they are dropped, each with a memory_drops record. 1 to 29: the queue's own 30-day TTL would otherwise remove them first, with no record. |
 | `LOOM_MODEL_CALLS_OFF_DROP_PER_PASS` | `int` | `500` |  | Waiting requests of a switched-off org one extraction-queue pass drops; the rest go on the next pass. |
 | `LOOM_EMBEDDING_CACHE_SHARED` | `bool` | `True` |  | Shared query-embedding cache in loom.embedding_cache behind the per-process LRU, rows keyed (model, sha1(org, model, version salt, normalised text)); a call outside a request skips both tiers. Only single-text (query) embeds up to `embedding_cache_shared_max_chars` (0 = no cap) use it. Off = process cache only. |

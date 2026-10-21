@@ -66,8 +66,8 @@ async def test_short_input_gets_compact_prompt_and_explicit_flag_wins(
     client = _Capture()
     monkeypatch.setattr("server.memory.app.extract.client.get_llm_client", lambda: client)
     msgs = [{"role": "user", "content": "ok"}]
-    await extract_from_messages(msgs, judge=False)
-    await extract_from_messages(msgs, judge=False, compact_prompt=False)
+    await extract_from_messages(msgs, judge=False, operator_policy="")
+    await extract_from_messages(msgs, judge=False, compact_prompt=False, operator_policy="")
     compact, full = client.systems[0], client.systems[-1]
     assert "EXAMPLE 26" not in compact and "EXAMPLE 26" in full
     assert "STRUCTURED / ENUMERATED ASSISTANT ANSWERS" not in compact

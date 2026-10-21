@@ -111,7 +111,9 @@ async def test_schema_mode_entry_defaults_valid_at_from_observation_date(
     async def _fake_inline(*args, **kwargs):
         return None
 
-    async def _fake_typed(msgs, schema, *, max_tokens=1024, observation_date=None):
+    async def _fake_typed(
+        msgs, schema, *, max_tokens=1024, observation_date=None, operator_policy=""
+    ):
         return (
             ExtractedRecord(record={"name": "x"}),
             LLMResult(text="", tokens_in=0, tokens_out=0, provider="p", model="m"),

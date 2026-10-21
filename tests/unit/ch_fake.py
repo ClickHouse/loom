@@ -145,3 +145,33 @@ class RecordingCH:
         for target in ("server.core.ch", *also):
             monkeypatch.setattr(f"{target}.get_client", lambda: self)
         return self
+
+
+class ConversationsCH:
+    """loom.conversations for conversation.compact: answers every read with
+    `rows` (none from the embeddings reconcile), and records each insert,
+    by table, and each statement."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.inserted: list[dict[str, Any]] = []  # loom.conversations rows
+        self.embedded: list[dict[str, Any]] = []  # loom.conversation_embeddings rows
+        self.sql: list[str] = []
+        self.executed: list[tuple[str, dict[str, Any]]] = []
+
+    async def query_all(self, sql: str, params: dict[str, Any] | None = None):
+        self.sql.append(sql)
+        # ClickHouse answers FINAL on a plain MergeTree with code 181.
+        assert "loom.conversations FINAL" not in sql, "FINAL on plain MergeTree"
+        # The embeddings reconcile's re-read finds no row left to reconcile.
+        return [] if "FROM loom.conversation_embeddings FINAL" in sql else self.rows
+
+    async def query_one(self, sql: str, params: dict[str, Any] | None = None):
+        return None  # the shared embedding cache reads it as a miss
+
+    async def insert(self, table: str, rows: list[dict[str, Any]], **kw: Any) -> None:
+        (self.embedded if table == "loom.conversation_embeddings" else self.inserted).extend(rows)
+
+    async def execute(self, sql: str, params: dict[str, Any] | None = None, **kw: Any) -> None:
+        self.sql.append(sql)
+        self.executed.append((sql, params or {}))

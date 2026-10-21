@@ -101,7 +101,17 @@ schema. These rules keep that safe. The operator procedure is in
     resumes a user purge without purging (it reads no `purge` column). Collections are
     created (`collection.create`, which N-1 does not serve) and end-user issuers
     registered (`LOOM_JWT_END_USER_ISSUERS_JSON`) only once no N-1 replica serves.
-12. **A new side effect of a write** (such as memory webhook events): N-1 does not
+
+12. **Saved conversation messages:** older builds can compact concurrently saved
+    turns and rebuild embeddings without carrying their saved state. Clients use
+    `conversation.save_message` only once every serving replica runs the build that
+    preserves saved messages. A rollback pauses saved-message writes and compaction
+    until every replica supports that state again.
+13. **An extraction policy** (`extraction_policy.set`): N-1 does not read
+    `loom.extraction_policies` and extracts without it. Set a policy only once no N-1
+    replica serves. A rollback leaves the rows in place but no replica applies them
+    until the build that reads them is back.
+14. **A new side effect of a write** (such as memory webhook events): N-1 does not
     perform it. A memory write served by an N-1 replica leaves no
     `loom.memory_webhook_outbox` row, so it sends no event, and an erasure saga run by
     N-1 has no step for the outbox and its census does not count it. Webhooks are
@@ -112,12 +122,6 @@ schema. These rules keep that safe. The operator procedure is in
     day's part once its last row is 3 days old). Rolling forward again, N's worker sends
     none of an erased user's events, because it skips an event whose key has no history
     left in `loom.memory_versions`, which every build's erasure deletes.
-
-13. **Saved conversation messages:** older builds can compact concurrently saved
-    turns and rebuild embeddings without carrying their saved state. Clients use
-    `conversation.save_message` only once every serving replica runs the build that
-    preserves saved messages. A rollback pauses saved-message writes and compaction
-    until every replica supports that state again.
 
 ## What checks them
 

@@ -72,14 +72,15 @@ def classify_kind(namespace: str) -> str:
 
 def should_autoregister(op: Operation, org: str | None, namespace: str | None) -> bool:
     """A write-shaped op (WRITER role or above) addressed IN a namespace:
-    not the self-service namespace ops, not the code plane, not the
-    operator planes, and not a request whose identity is missing or the
-    wildcard."""
+    not an org admin's op (it sets an org-wide control such as an extraction
+    policy, whatever namespace it names), not the self-service namespace ops,
+    not the code plane, not the operator planes, and not a request whose
+    identity is missing or the wildcard."""
     if not settings.namespace_autoregister_enabled:
         return False
     if not org or not namespace or org in _MISSING or namespace in _MISSING:
         return False
-    if op.required_role.value < Role.WRITER.value:
+    if not Role.WRITER <= op.required_role < Role.ORG_ADMIN:
         return False
     skip = _csv(settings.namespace_autoregister_skip_prefixes)
     return not any(op.name.startswith(p) for p in skip)
