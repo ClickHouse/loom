@@ -354,7 +354,8 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
     changes S. `--list` prints the unexpired revocations. A `--subject`
     revocation with neither `--issued-before` nor `--expires-at` is for good,
     as `POST /v1/admin/revoke_subject` writes it (`server.auth.subject_revocation`):
-    the tokens the subject made are also listed revoked."""
+    the tokens the subject made are also listed revoked. Run again, it writes
+    nothing and says the subject is already revoked; the first reason stays."""
     import getpass
 
     from server.auth import revocation, subject_revocation
@@ -398,15 +399,17 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         # user's belongs to their org alone.
         org = end_user_org or "-"
         counts: dict[str, int] = {}
+        kept = False
         if args.scim:
             row, failed = await _scim_give_back(token_id, issued_before, args.reason or "", by)
             if row is None:
                 return failed
         elif for_good:
-            done = await subject_revocation.revoke_subject(
-                token_id, by=by, org=org, reason=args.reason or ""
-            )
-            row, counts = done.row, {"sessions": done.sessions, "tokens": done.tokens}
+            done = await _revoke_for_good(token_id, by=by, org=org, reason=args.reason or "")
+            if isinstance(done, int):
+                return done
+            row, kept = done.row, done.kept
+            counts = {"sessions": done.sessions, "tokens": done.tokens}
         else:
             if issued_before is not None:
                 await _warn_about_a_narrowing(token_id)
@@ -421,19 +424,37 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
             await subject_revocation.audit_revocation(
                 row, token_id=token_id, kind=kind, by=by, org=org, scim=args.scim
             )
-        _print_revoked(args, row, kind, token_id, end_user_org, issued_before, counts)
+        _print_revoked(args, row, kind, token_id, end_user_org, issued_before, counts, kept)
         return 0
 
     try:
         return run_connected(_run)
     except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so
-        if for_good:  # its row may have landed before its tokens were all marked
-            print(
-                f"  ✗ revocation not finished, run it again: {type(e).__name__}: {e}",
-                file=sys.stderr,
-            )
-        else:
-            print(f"  ✗ revocation not recorded: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"  ✗ revocation not recorded: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
+
+
+async def _revoke_for_good(subject: str, *, by: str, org: str, reason: str) -> Any:
+    """`revoke-token --subject` for good through the shared steps: the
+    `Revoked`, or the exit code once a failure is said as what it left."""
+    from server.auth import subject_revocation
+
+    try:
+        row, kept = await subject_revocation.record(subject, by=by, reason=reason)
+    except Exception as e:  # noqa: BLE001 — nothing was written, and it must say so
+        print(
+            f"  ✗ revocation not recorded, nothing was written: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        return await subject_revocation.finish(subject, row, kept, by=by, org=org)
+    except Exception as e:  # noqa: BLE001 — the revocation holds; the marking must be finished
+        print(
+            f"  ✗ revoked {subject!r}, but marking the tokens it made revoked did not finish "
+            f"({type(e).__name__}: {e}); run it again to finish",
+            file=sys.stderr,
+        )
         return 1
 
 
@@ -445,13 +466,24 @@ def _print_revoked(
     end_user_org: str,
     issued_before: Any,
     counts: dict[str, int],
+    kept: bool = False,
 ) -> None:
     """What `revoke-token` wrote, as JSON or one line; `counts` are a revocation
-    for good's sessions and tokens."""
+    for good's sessions and tokens, and `kept` says it found one already."""
     from server.settings import settings
 
     if args.json:
-        print(json.dumps({**row, "jti": token_id, "matched_claim": kind, **counts}, default=str))
+        extra = {**counts, "already_revoked": kept} if counts else {}
+        print(json.dumps({**row, "jti": token_id, "matched_claim": kind, **extra}, default=str))
+        return
+    if kept:  # written before, by whoever and for whatever reason it was
+        why = f": {row['reason']}" if row["reason"] else ""
+        print(
+            f"already revoked {kind} {token_id!r} for good, since "
+            f"{str(row['revoked_at'])[:19]} by {row['revoked_by']}{why}; nothing written; "
+            f"{counts['sessions']} sign-in session(s) and {counts['tokens']} token(s) it made "
+            "are refused, those tokens listed revoked"
+        )
         return
     what = "narrowed SCIM's revocation of" if args.scim else "revoked"
     print(f"{what} {kind} {token_id!r}", end="")

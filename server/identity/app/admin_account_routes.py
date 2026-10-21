@@ -4,10 +4,10 @@ do on the host, for an admin signed in from anywhere (`loom call`, the SDK)."""
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
 from server.auth import agents, machines, oauth, revocation, subject_revocation
@@ -238,70 +238,65 @@ class RevokeSubjectInput(_Input):
     issued_before: datetime | None = None
 
 
-# How far ahead of this server's clock `issued_before` may be: a caller's clock
-# running a little ahead, never a cutoff that refuses the subject's next sign-in.
-_AHEAD_S = 300  # not a setting: it bounds a caller's clock error, nothing an operator tunes
-
-
-def _refused_cutoff(issued_before: datetime | None) -> str | None:
-    if issued_before is None:
-        return None
-    if issued_before.tzinfo is None:
-        return "issued_before needs its UTC offset (RFC 3339), e.g. 2026-01-31T12:00:00Z"
-    if issued_before > datetime.now(UTC) + timedelta(seconds=_AHEAD_S):
-        return "issued_before is in the future: send the time the revocation is for"
-    return None
-
-
 @router.post("/v1/admin/revoke_subject")
 async def revoke_subject(input: RevokeSubjectInput, info: Admin) -> dict[str, Any]:
     """Revoke every token and sign-in session of a subject, in every org and for
     good, and list the tokens it made revoked (see `loom revoke-token --subject`).
 
     Outright by default; with `issued_before`, only those issued before it on any
-    replica (to its next second, plus the clock skew replicas may have), so a
-    later sign-in works. A revocation already there is never weakened: an
-    outright one, or a later cutoff, stays. The spellings `org`'s directory ties
-    to the subject are revoked with it, as grants read them: a person's email and
-    the login handle of the account it signs in to. `org` is also where the audit
-    rows land; an end user's subject, `<org>/user:<id>`, must name it. `sessions`
-    and `tokens` count the sign-in sessions and the tokens made by those subjects
-    that the revocation ends, so a repeat answers the same.
+    replica (to its next second, plus the clock skew replicas may have; an
+    instant ahead of the server counts as now), so a later sign-in works. A
+    revocation already there is never weakened: a cutoff is recorded beside the
+    subject's own revocation and only ever moves later. The spellings `org`'s
+    directory ties to the subject are revoked with it, as grants read them: a
+    person's email and the login handle of the account it signs in to. `org` is
+    also where the audit rows land; an end user's subject, `<org>/user:<id>`, must
+    name it. `sessions` and `tokens` count the sign-in sessions and the tokens made
+    by those subjects that the revocation ends, so a repeat answers the same.
     """
     org, subject = input.org, input.subject.strip()
     if not org.strip() or "*" in org or org != org.strip():
         raise _invalid(ValueError(f"org must name one org, got {org!r}"))
-    problem = subject_revocation.refusal(subject) or _refused_cutoff(input.issued_before)
+    problem = subject_revocation.refusal(subject)
+    if input.issued_before is not None and input.issued_before.tzinfo is None:
+        problem = "issued_before needs its UTC offset (RFC 3339), e.g. 2026-01-31T12:00:00Z"
     end_user_org = org_of_end_user_revocation(subject)
     if problem is None and end_user_org and end_user_org != org:
         problem = f"an end user's revocation is their org's: send org {end_user_org!r}"
     if problem:
         raise _invalid(ValueError(problem))
+    # Taken once: an instant ahead of the server is clamped to its clock.
+    at = None if input.issued_before is None else subject_revocation.cutoff(input.issued_before)
     done = await subject_revocation.revoke_in_org(
-        org, subject, by=_by(info), reason=input.reason, issued_before=input.issued_before
-    )
-    applied = (
-        None if input.issued_before is None else subject_revocation.cutoff(input.issued_before)
+        org, subject, by=_by(info), reason=input.reason, at=at
     )
     return {
         "subjects": [s for s, _ in done],
         "org": org,
         "revoked_at": max(d.row["revoked_at"] for _, d in done),
         "reason": input.reason,
-        # The cutoff asked for, as applied (to its next second, plus the replicas'
-        # clock skew); None for an outright request. A later cutoff a subject
-        # already had stays in force.
-        "issued_before": applied,
-        # The subjects revoked outright now: all of them for an outright request,
-        # those an earlier outright revocation still holds for a cutoff.
-        "outright": [s for s, d in done if d.row["issued_before"] is None],
+        # The cutoff applied; None for an outright request. A later cutoff a
+        # subject already had stays in force.
+        "issued_before": at,
+        # The subjects revoked outright now: all of them after an outright
+        # request, and after a cutoff those an outright revocation still holds.
+        "outright": [s for s, d in done if d.outright],
         "sessions": sum(d.sessions for _, d in done),
         "tokens": sum(d.tokens for _, d in done),
     }
 
 
 @router.get("/v1/admin/revocations")
-async def revocations(subject: str | None = None) -> dict[str, Any]:
-    """The unexpired revocations, newest first; `?subject=` narrows them to one
-    subject's own row, an operator cutoff's and SCIM's (see `loom revoke-token --list`)."""
-    return {"revocations": await revocation.list_active(subject)}
+async def revocations(
+    subject: str | None = None,
+    since: datetime | None = None,
+    limit: Annotated[int, Query(ge=1, le=10000)] = 1000,
+) -> dict[str, Any]:
+    """The unexpired revocations, newest first, at most `limit` (1000 by default);
+    `?subject=` narrows them to one subject's own row, an operator cutoff's and
+    SCIM's, `?since=` to those written since (see `loom revoke-token --list`)."""
+    if since is not None and since.tzinfo is None:
+        raise _invalid(ValueError("since needs its UTC offset (RFC 3339)"))
+    narrowed = None if subject is None else subject.strip()
+    rows = await revocation.list_active(narrowed, since=since, limit=limit)
+    return {"revocations": rows}

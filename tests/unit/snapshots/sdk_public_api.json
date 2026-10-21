@@ -2179,7 +2179,9 @@
             "fleet_cost": [
               "body"
             ],
-            "model_configuration_status": [],
+            "model_configuration_status": [
+              "params"
+            ],
             "namespace_adopt": [
               "body"
             ],
@@ -2195,14 +2197,18 @@
             "retry_model_configuration": [
               "body"
             ],
-            "revocations": [],
+            "revocations": [
+              "params"
+            ],
             "revoke_subject": [
               "body"
             ],
             "save_model_configuration": [
               "body"
             ],
-            "schema_status": [],
+            "schema_status": [
+              "params"
+            ],
             "settings_history": [
               "body"
             ],
@@ -2230,7 +2236,9 @@
             "validate_model_configuration": [
               "body"
             ],
-            "workers_status": []
+            "workers_status": [
+              "params"
+            ]
           }
         }
       }

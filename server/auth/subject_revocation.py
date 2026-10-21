@@ -1,14 +1,20 @@
 """Revoking a subject: what `loom revoke-token` and `POST /v1/admin/revoke_subject`
 share, so the two cannot drift.
 
-The subject's row in loom.revoked_tokens (`revocation.revoke`) refuses every
-token whose `sub` is the subject, every token it made or that descends from one
-of its tokens (their `creator` and `parent_subjects`), and every refresh of its
-sign-in sessions; every mint and refresh reads revocations from ClickHouse, so
-none makes it a new token either. Outright, the row refuses all of them; with a
-cutoff, those issued before it, so a later sign-in works. The tokens it ends
-are then marked revoked in their token lists, freeing their names, as a SCIM
-deactivation does (`service_accounts.revoke_created_by`).
+Outright, the subject's own row in loom.revoked_tokens (`revocation.revoke`)
+refuses every token whose `sub` is the subject, every token it made or that
+descends from one of its tokens (their `creator` and `parent_subjects`), and
+every refresh of its sign-in sessions. Up to an instant, a cutoff does the same
+for what was issued before it, so a later sign-in works; it is written beside
+the subject's own row (`revocation.cut_off`), so whatever that row says stays
+in force. Every mint and refresh reads revocations from ClickHouse, so neither
+makes the subject a token it refuses. The tokens it ends are then marked
+revoked in their token lists, freeing their names, as a SCIM deactivation does
+(`service_accounts.revoke_created_by`).
+
+`record` writes the revocation (or finds one that already covers it) and
+`finish` counts and marks what it ends and audits it: a failure in `record`
+wrote nothing, one in `finish` left the revocation in force.
 """
 
 from __future__ import annotations
@@ -49,8 +55,11 @@ def refusal(subject: str) -> str | None:
 
 def cutoff(issued_before: datetime) -> datetime:
     """The cutoff that ends every token issued before `issued_before` on any
-    replica: its second, and a clock running ahead of the one that read it."""
-    return revocation.past_every_token_before(as_aware_utc(issued_before))
+    replica: its second, and a clock running ahead of the one that read it. An
+    instant ahead of this one counts as now: a cutoff later than the replicas'
+    clocks would refuse sign-ins still to come."""
+    at = revocation.past_every_token_before(as_aware_utc(issued_before))
+    return min(at, revocation.from_now_on())
 
 
 async def audit_revocation(
@@ -85,21 +94,23 @@ async def audit_revocation(
 
 @dataclass(frozen=True, slots=True)
 class Revoked:
-    """A subject revoked for good: the row in force (written now, or `kept`, an
-    earlier one that already covered the request), how many of its sign-in
-    sessions it ends, and how many tokens it made (directly or through its
-    tokens) it ends, each now listed revoked."""
+    """A subject revoked for good: the row in force for the request (written
+    now, or `kept`, an earlier one that already covered it), whether the subject
+    is now revoked `outright` (by that row, or one beside it), how many of its
+    sign-in sessions it ends, and how many tokens it made (directly or through
+    its tokens) it ends, each now listed revoked."""
 
     row: dict[str, Any]
+    kept: bool
+    outright: bool
     sessions: int
     tokens: int
-    kept: bool
 
 
 @asynccontextmanager
 async def _held(subject: str) -> AsyncIterator[None]:
-    """The subject's own row read and written as one step: a cutoff never lands
-    between another call's read and its outright revocation."""
+    """A revocation of the subject read and written as one step: two requests
+    never both find a row missing and write over each other."""
     from server.core import leases
 
     name = f"subject-revocation:{uuid.uuid5(_LEASE_NAMESPACE, subject)}"
@@ -109,61 +120,54 @@ async def _held(subject: str) -> AsyncIterator[None]:
         yield
 
 
-def _covers(row: dict[str, Any], at: datetime | None) -> bool:
-    """Whether the subject's own row already refuses, for good, everything a
-    revocation outright (`at` None) or cut off at `at` would: it never lapses,
-    and it is outright or cuts off at `at` or later."""
-    if not revocation.never_lapses(row):  # a time-boxed one gives way to one for good
-        return False
-    held = row["issued_before"]
-    return held is None or (at is not None and as_aware_utc(held) >= at)
-
-
-async def _write(
-    subject: str, at: datetime | None, *, reason: str, by: str
+async def record(
+    subject: str, *, by: str, reason: str = "", at: datetime | None = None
 ) -> tuple[dict[str, Any], bool]:
-    """Revoke `subject` outright (`at` None) or for tokens issued before `at`,
-    unless its own row already covers that: an outright revocation, or a later
-    cutoff, stays as it is. The row in force, and whether it was kept."""
+    """Revoke `subject` for good: outright (`at` None), on its own key, unless
+    that key already revokes it outright for good; or up to the cutoff `at` (from
+    `cutoff`), on the cutoff key beside it, unless that key already holds a
+    later cutoff. The subject's own row is never touched by a cutoff, so an
+    outright revocation stays, a time-boxed one until it lapses. Returns the row
+    in force for the request and whether it was there already. Raises, having
+    written nothing that lands, when the revocation cannot be written."""
+    subject = subject.strip()  # as `revocation.revoke` keys it
     async with _held(subject):
-        current = await revocation.own_row(subject)
-        if current is not None and _covers(current, at):
+        if at is None:
+            current = await revocation.stored(subject)
+            if (
+                current is not None
+                and current["issued_before"] is None
+                and revocation.never_lapses(current)
+            ):
+                return current, True
+            return await revocation.revoke(subject, reason=reason, revoked_by=by), False
+        current = await revocation.stored(revocation.CUTOFF_PREFIX + subject)
+        if current is not None and as_aware_utc(current["issued_before"]) >= at:
             return current, True
-        return await revocation.revoke(
-            subject, reason=reason, revoked_by=by, issued_before=at
-        ), False
+        row = await revocation.cut_off(subject, issued_before=at, reason=reason, revoked_by=by)
+        return row, False
 
 
-async def revoke_subject(
-    subject: str,
-    *,
-    by: str,
-    org: str,
-    reason: str = "",
-    issued_before: datetime | None = None,
-) -> Revoked:
-    """Revoke every token and sign-in session of `subject` for good, outright or
-    (with `issued_before`) those issued before it, never weakening a revocation
-    it finds, then mark the tokens it ends revoked. The caller has checked
-    `refusal`. Run again, it finishes what a failed try left and answers the
-    same counts. Raises when the revocation did not land, or (after it landed,
-    and its audit row with it) when marking the tokens did not finish."""
+async def finish(subject: str, row: dict[str, Any], kept: bool, *, by: str, org: str) -> Revoked:
+    """After `record`: count the sign-in sessions the subject's revocations end
+    (a logout or a refusal ended some already; one refreshed since a cutoff
+    lives on), mark revoked the tokens they end, and audit it. Raises, the
+    revocation in force all the same, when marking the tokens did not finish;
+    run again, it finishes and answers the same counts."""
     from server.auth import oauth_store, service_accounts
 
-    subject = subject.strip()  # as `revocation.revoke` keys it
-    at = None if issued_before is None else cutoff(issued_before)
-    row, kept = await _write(subject, at, reason=reason, by=by)
-    held = row["issued_before"]
-    before = None if held is None else int(as_aware_utc(held).timestamp())
-    sessions, tokens = 0, 0
+    subject = subject.strip()
+    outright, sessions, tokens = False, 0, 0
     try:
-        # A session a logout or a refusal ended has its own revocation; one
-        # refreshed since the cutoff lives on.
-        families = await oauth_store.session_families(subject)
-        sessions = sum(
-            revocation.kills(before, newest) and not revocation.is_revoked(family)
-            for family, newest in families.items()
-        )
+        revoked = await revocation.cutoffs([subject])  # its own row, the cutoff's, SCIM's
+        if subject in revoked:
+            at = revoked[subject]
+            outright = at is None
+            families = await oauth_store.session_families(subject)
+            sessions = sum(
+                revocation.kills(at, newest) and not revocation.is_revoked(family)
+                for family, newest in families.items()
+            )
         tokens = len(await service_accounts.revoke_created_by([subject], revoked_by=by))
     finally:  # a revocation that landed is recorded, even if the marking did not finish
         end_user_org = org_of_end_user_revocation(subject)
@@ -177,24 +181,27 @@ async def revoke_subject(
             tokens=tokens,
             kept=kept,
         )
-    return Revoked(row=row, sessions=sessions, tokens=tokens, kept=kept)
+    return Revoked(row=row, kept=kept, outright=outright, sessions=sessions, tokens=tokens)
+
+
+async def revoke_subject(
+    subject: str, *, by: str, org: str, reason: str = "", at: datetime | None = None
+) -> Revoked:
+    """`record` then `finish`. The caller has checked `refusal`."""
+    row, kept = await record(subject, by=by, reason=reason, at=at)
+    return await finish(subject, row, kept, by=by, org=org)
 
 
 async def revoke_in_org(
-    org: str,
-    subject: str,
-    *,
-    by: str,
-    reason: str = "",
-    issued_before: datetime | None = None,
+    org: str, subject: str, *, by: str, reason: str = "", at: datetime | None = None
 ) -> list[tuple[str, Revoked]]:
     """`revoke_subject` for `subject` and every spelling `org`'s directory ties
-    to it, as grants read them (`aliases`): an email reaches the login handle
-    of the account it signs in to, a handle its email. Raises, revoking
-    nothing, when the directory cannot be read."""
+    to it, as grants read them (`aliases.spellings`): an email (and its lower
+    case) reaches the login handle of the account it signs in to, a handle its
+    email. Raises, revoking nothing, when the directory cannot be read."""
     from server.auth.aliases import spellings
 
     return [
-        (s, await revoke_subject(s, by=by, org=org, reason=reason, issued_before=issued_before))
+        (s, await revoke_subject(s, by=by, org=org, reason=reason, at=at))
         for s in await spellings(org, subject.strip())
     ]

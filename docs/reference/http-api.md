@@ -115,7 +115,7 @@ the same routes), and the curated `agent.deployment` methods over them.
 | `POST /v1/admin/namespace.adopt` | `org_admin` | Install a new admin on a namespace that has no remaining active admin grant. |
 | `POST /v1/admin/prompts.evaluate` | `platform_admin` | Compute a should-promote verdict for one prompt version. |
 | `POST /v1/admin/ratelimit.set` | `platform_admin` | Install a per-(namespace\|org) rate-limit override. |
-| `GET /v1/admin/revocations` | `platform_admin` | The unexpired revocations, newest first; `?subject=` narrows them to one subject's own row, an operator cutoff's and SCIM's (see `loom revoke-token --list`). |
+| `GET /v1/admin/revocations` | `platform_admin` | The unexpired revocations, newest first, at most `limit` (1000 by default); `?subject=` narrows them to one subject's own row, an operator cutoff's and SCIM's, `?since=` to those written since (see `loom revoke-token --list`). |
 | `POST /v1/admin/revoke_subject` | `platform_admin` | Revoke every token and sign-in session of a subject, in every org and for good, and list the tokens it made revoked (see `loom revoke-token --subject`). |
 | `GET /v1/admin/schema.status` | `platform_admin` | Report the gap between what migrations expect and what's in CH. |
 | `POST /v1/admin/settings.history` | `platform_admin` | The recorded changes of one setting, or of every setting, newest first: who made each, the value before and after. |

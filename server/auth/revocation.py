@@ -9,8 +9,9 @@ The table is ReplacingMergeTree ORDER BY jti: the newest row per key governs.
 - `revoke` is the write path (`loom revoke-token`, the admin endpoint) and
   takes effect in this process at once, even when the re-read after the
   insert fails; `list_active` is its read. `cut_off` writes an operator
-  action's cutoff (adopt, a bot replaced or disabled) under its own key
-  beside the subject's, so neither ever replaces the other; `scim_revoke`
+  action's cutoff (adopt, a bot replaced or disabled, a subject revoked up to
+  an instant over the admin API) under its own key beside the subject's, so
+  neither ever replaces the other; `scim_revoke`
   writes SCIM's revocation of a subject under another (`SCIM_PREFIX`).
 - Every process that verifies tokens holds its own snapshot: `load_at_boot`
   fills it, and `start_refresh_loop` re-reads it each
@@ -345,33 +346,32 @@ async def _write(
     return row
 
 
-async def cut_off(subject: str, *, issued_before: datetime, reason: str, revoked_by: str) -> None:
+async def cut_off(
+    subject: str, *, issued_before: datetime, reason: str, revoked_by: str
+) -> dict[str, Any]:
     """Revoke the tokens of `subject` issued before `issued_before`, leaving any
-    outright revocation of it as it is."""
+    outright revocation of it as it is. Returns the row as written."""
     from server.core.ch import get_client
 
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     cutoff = issued_before.astimezone(UTC).replace(tzinfo=None)
     version = await _next_version(CUTOFF_PREFIX + subject)
-    await get_client().insert(
-        "loom.revoked_tokens",
-        [
-            {
-                "jti": CUTOFF_PREFIX + subject,
-                "revoked_at": now,
-                "expires_at": revocation_expiry(None),
-                "reason": reason,
-                "revoked_by": revoked_by,
-                "issued_before": cutoff,
-                "version": version,
-            }
-        ],
-    )
+    row: dict[str, Any] = {
+        "jti": CUTOFF_PREFIX + subject,
+        "revoked_at": now,
+        "expires_at": revocation_expiry(None),
+        "reason": reason,
+        "revoked_by": revoked_by,
+        "issued_before": cutoff,
+        "version": version,
+    }
+    await get_client().insert("loom.revoked_tokens", [row])
     await refresh()  # as `revoke` does; the fold below covers a re-read that missed it
     global _cut_off
     seconds = _cutoff_seconds(cutoff) or 0
     _cut_off = {**_cut_off, subject: max(_cut_off.get(subject, 0), seconds)}
     _remember("cut_off", subject, seconds, version)
+    return row
 
 
 async def _next_version(jti: str) -> int:
@@ -406,9 +406,9 @@ def never_lapses(row: dict[str, Any]) -> bool:
     return expires is not None and expires >= as_aware_utc(_LATEST_EXPIRY)
 
 
-async def own_row(subject: str) -> dict[str, Any] | None:
-    """The unexpired revocation row of `subject`'s own key (not an operator
-    cutoff's nor SCIM's), read as of every write that landed; None when it has none."""
+async def stored(key: str) -> dict[str, Any] | None:
+    """The unexpired revocation row of `key` (a subject's own, or one prefixed
+    `CUTOFF_PREFIX` or `SCIM_PREFIX`), read as of every write that landed."""
     from server.core.ch import get_client, own_write_reads
 
     with own_write_reads():
@@ -418,7 +418,7 @@ async def own_row(subject: str) -> dict[str, Any] | None:
             FROM loom.revoked_tokens FINAL
             WHERE jti = {j:String} AND expires_at > now()
             """,
-            params={"j": subject},
+            params={"j": key},
         )
     return None if row is None else dict(row)
 
@@ -520,14 +520,17 @@ async def _read_revocations(keys: list[str]) -> list[dict[str, Any]]:
         )
 
 
-async def list_active(subject: str | None = None) -> list[dict[str, Any]]:
+async def list_active(
+    subject: str | None = None, *, since: datetime | None = None, limit: int | None = None
+) -> list[dict[str, Any]]:
     """The unexpired revocations, newest first — the same rows the refresh
     worker reads every `jwt_revocation_cache_ttl_seconds`, so this read is
     already paid for at that cadence. It grows with the revoked tokens not yet
     expired and with every subject an operator or SCIM cut off, whose row never
     expires. An operator cutoff's row says `kind: cutoff`, SCIM's `kind: scim`,
     and each names its subject. With `subject`, only the rows of that subject
-    (its own, an operator cutoff's and SCIM's), read by key."""
+    (its own, an operator cutoff's and SCIM's), read by key; with `since`, only
+    those written since; at most `limit`."""
     from server.core.ch import get_client
 
     where = "expires_at > now()"
@@ -535,12 +538,20 @@ async def list_active(subject: str | None = None) -> list[dict[str, Any]]:
     if subject is not None:
         where += " AND jti IN {keys:Array(String)}"
         params["keys"] = _keys_of([subject])
+    if since is not None:
+        # clickhouse-connect binds naive datetimes as client-local; pin UTC.
+        where += " AND revoked_at >= {since:DateTime64(3)}"
+        params["since"] = since if since.tzinfo is not None else since.replace(tzinfo=UTC)
+    bound = ""
+    if limit is not None:
+        bound, params["lim"] = "LIMIT {lim:UInt32}", int(limit)
     rows = await get_client().query_all(
         f"""
         SELECT jti, revoked_at, expires_at, reason, revoked_by, issued_before
         FROM loom.revoked_tokens FINAL
         WHERE {where}
         ORDER BY revoked_at DESC
+        {bound}
         """,
         params=params,
     )
