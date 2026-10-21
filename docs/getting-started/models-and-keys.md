@@ -338,10 +338,12 @@ path that names none is refused even on a hit.
 #### Naming the agent on every call
 
 A gateway that bills or limits each agent reads whom a call is for from headers. Map each
-header to a template, and every chat, embedding, rerank and classify request carries it:
+header to a template, and every chat, embedding, rerank and classify request to the gateway
+carries it:
 
 ```bash
 LOOM_INFERENCE_IDENTITY_HEADERS_JSON='{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}'
+LOOM_INFERENCE_GATEWAY_HOSTS=gateway.example   # required: identity headers go only to these hosts
 LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} names (the default)
 ```
 
@@ -357,11 +359,26 @@ LOOM_INFERENCE_TENANT_CLAIM=tenant_id   # the workload trust claim {tenant} name
 - Background jobs name the identity of the rows they work on: the writer of a memory or of a
   deferred extraction, else the agent whose own namespace the row is in. A job batching rows
   makes one call per identity.
-- When the gateway refuses one identity (a 403, or a 429 whose error names a budget), that
-  request answers 403 `MODEL_CALL_REFUSED`; nothing retries it, `/v1/health` does not read it
-  as a provider failure, and background jobs leave that identity's work for
-  `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (10 minutes by default) while other identities'
-  work goes on.
+- No other host gets the identity headers: a reranker, a classifier or a provider outside
+  `LOOM_INFERENCE_GATEWAY_HOSTS` never learns whom a call is for.
+- List the answers your gateway gives for one identity in
+  `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON`, each by its status and the exact `code`, `type` or
+  `message` of its error body. The default lists only `429 budget_exceeded`:
+
+  ```bash
+  LOOM_INFERENCE_IDENTITY_REFUSALS_JSON='{
+    "refused": [{"status": 429, "code": "budget_exceeded"},
+                {"status": 403, "type": "permission_error", "message": "The agent is not allowed to use inference."}],
+    "wait":    [{"status": 429, "type": "rate_limit_error", "message": "The agent has too many inference requests in progress. Retry later."}]
+  }'
+  ```
+
+- An answer under `refused` makes that request answer 403 `MODEL_CALL_REFUSED`, and one under
+  `wait` 503 `MODEL_CALL_DEFERRED` with the gateway's `Retry-After`. Nothing retries either,
+  `/v1/health` does not read them as a provider failure, and background jobs hold that
+  identity's calls to the same model, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (10
+  minutes by default) after a refusal and the `Retry-After` after a wait, while other work
+  goes on. Any answer the table does not list is the provider's, as always.
 - How each value is found: [identity headers](../architecture/llm-architecture.md#identity-headers).
 
 #### Switching an org's model calls off

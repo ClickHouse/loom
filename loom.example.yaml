@@ -412,8 +412,15 @@ settings:
   # exactly. [restart]
   # inference_tenant_claim: "tenant_id"
 
-  # Seconds a background job leaves the work of an identity the gateway refused (a
-  # budget 429, a 403) before it calls for that identity again; 0 calls again at once.
+  # JSON object of the gateway answers that hold one identity, not the provider:
+  # {"refused": [...], "wait": [...]}, each entry {"status": <int>} and at least one of
+  # the error body's exact "code", "type" or "message". A refused identity's job work
+  # waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After.
+  # Read only with identity headers set (server/llm/gateway.py). [restart]
+  # inference_identity_refusals_json: '{"refused": [{"status": 429, "code": "budget_exceeded"}]}'
+
+  # Seconds a background job leaves the work of an identity the gateway refused (an
+  # answer listed under "refused") before it calls for it again; 0 calls again at once.
   # [restart]
   # inference_refusal_cooldown_seconds: 600.0
 

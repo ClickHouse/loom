@@ -49,7 +49,7 @@ from typing import Any
 
 import httpx
 
-from server.clients._http import refuse_off_gateway
+from server.clients import _http
 from server.core.llm_free import reads_llm_free
 from server.llm import customer
 from server.llm.json_text import strip_code_fence
@@ -66,6 +66,15 @@ def _timeout() -> httpx.Timeout:
     # not a setting: the connect, write and pool waits; the read is the setting
     return httpx.Timeout(
         connect=2.0, read=settings.memory_search_rerank_timeout_s, write=2.0, pool=2.0
+    )
+
+
+async def _post(url: str, body: dict[str, Any], headers: dict[str, str]) -> httpx.Response:
+    """A reranker call on the model client, not followed elsewhere: its hook refuses a
+    host off the gateway, sends the identity headers only to the gateway's hosts, and
+    reads a gateway's refusal of the call's identity (`server.clients._http`)."""
+    return await _http.get_model_client().post(
+        url, json=body, headers=headers, timeout=_timeout(), follow_redirects=False
     )
 
 
@@ -190,11 +199,11 @@ async def rerank(
     headers = customer.headers(await customer.require())
     try:
         with traced("rerank.http", candidates=len(candidates), endpoint_host=_host_of(url)):
-            refuse_off_gateway(url)  # its own client: the model client's hook never runs
-            async with httpx.AsyncClient(timeout=_timeout()) as client:
-                resp = await client.post(url, json=body, headers=headers)
-                resp.raise_for_status()
-                payload = resp.json()
+            resp = await _post(url, body, headers)
+            resp.raise_for_status()
+            payload = resp.json()
+    except customer.HOLDS:
+        raise  # the gateway refused or held the call's identity: never "kept the input order"
     except Exception as e:  # noqa: BLE001 — a failed reranker keeps the input order
         log.warning("rerank.call failed (%s); falling back to input order", e)
         _degradations.note("rerank", "input_order_kept", e)
@@ -265,11 +274,11 @@ async def _rerank_with_builtin_cohere(
     }
     try:
         with traced("rerank.cohere", model=model, candidates=len(candidates)):
-            refuse_off_gateway(_COHERE_API_URL)
-            async with httpx.AsyncClient(timeout=_timeout()) as client:
-                resp = await client.post(_COHERE_API_URL, json=body, headers=headers)
-                resp.raise_for_status()
-                payload = resp.json()
+            resp = await _post(_COHERE_API_URL, body, headers)
+            resp.raise_for_status()
+            payload = resp.json()
+    except customer.HOLDS:
+        raise  # never "kept the input order"
     except Exception as e:  # noqa: BLE001 — a failed Cohere call keeps the input order
         log.warning("Cohere rerank failed: %s; falling back to input order", e)
         _degradations.note("rerank:cohere", "input_order_kept", e)

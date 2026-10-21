@@ -160,15 +160,33 @@ class GatewayRequiredError(LoomServerError):
 
 
 class ModelCallRefused(LoomServerError):
-    """403 — the inference gateway refused a model call for the identity it was
-    made for (a 429 naming a budget, or a 403), with identity headers set: that
-    identity's refusal, not the provider's failure. It is not retried, marks no
-    provider failing and switches no org off; a background job leaves that
-    identity's work for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS`.
+    """403 — the inference gateway refused the call for the identity it was made
+    for: that identity's refusal, not the provider's failure. The answer is one
+    `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists under `refused` (an agent over
+    its budget, an agent not allowed). It is not retried, marks no provider
+    failing and switches no org off; a background job leaves that identity's
+    calls to the same model for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS`.
     `gateway_status` and `gateway_code` say what the gateway answered."""
 
     code = "MODEL_CALL_REFUSED"
     status_code = 403
+
+    def __init__(self, message: str = "", *, hold_s: float = 0.0, **extra: Any) -> None:
+        super().__init__(message, **extra)
+        # How long a job leaves the identity's calls to that route and model (0: none
+        # held); not part of the answer.
+        self.hold_s = hold_s
+
+
+class ModelCallDeferred(ModelCallRefused):
+    """503 — the inference gateway asked the call's identity to wait for
+    `retry_after_s`, its `Retry-After`. The answer is one
+    `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists under `wait` (too many of the
+    agent's requests in progress, no credential for it yet). Not retried here;
+    a background job holds that identity's calls to the same model as long."""
+
+    code = "MODEL_CALL_DEFERRED"
+    status_code = 503
 
 
 class BackendUnavailableError(LoomServerError):

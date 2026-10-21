@@ -3577,6 +3577,41 @@ IDENTITY_PLACEHOLDERS = ("org", "namespace", "agent", "tenant", "subject", "user
 IDENTITY_PLACEHOLDER = re.compile(r"\{(" + "|".join(IDENTITY_PLACEHOLDERS) + r")\}")
 # The text around them: printable ASCII but braces, which a header carries as it is.
 _IDENTITY_TEXT = re.compile(r"[\x20-\x7a|~]*")
+# What one entry of LOOM_INFERENCE_IDENTITY_REFUSALS_JSON may match besides its status:
+# fields of the answer's error body (`{"error": {...}}`), each matched exactly.
+IDENTITY_REFUSAL_FIELDS = ("code", "type", "message")
+
+
+@functools.lru_cache(maxsize=4)
+def _identity_refusals(raw: str) -> dict[str, tuple[dict[str, Any], ...]]:
+    """LOOM_INFERENCE_IDENTITY_REFUSALS_JSON decoded and checked, once per value: every
+    gateway answer to a model call is matched against it."""
+    parsed = json.loads(raw) if raw.strip() else {}
+    if not isinstance(parsed, dict) or set(parsed) - {"refused", "wait"}:
+        raise ValueError("LOOM_INFERENCE_IDENTITY_REFUSALS_JSON keys are 'refused' and 'wait'")
+    out: dict[str, tuple[dict[str, Any], ...]] = {}
+    for kind, entries in parsed.items():
+        if not isinstance(entries, list):
+            raise ValueError(f"LOOM_INFERENCE_IDENTITY_REFUSALS_JSON: {kind!r} is a list")
+        for e in entries:
+            status = e.get("status") if isinstance(e, dict) else None
+            fields = set(e) - {"status"} if isinstance(e, dict) else set()
+            if (
+                not isinstance(status, int)
+                or isinstance(status, bool)
+                or not 400 <= status <= 599
+                or not fields
+                or fields - set(IDENTITY_REFUSAL_FIELDS)
+                or not all(isinstance(e[f], str) and e[f] for f in fields)
+            ):
+                raise ValueError(
+                    f"LOOM_INFERENCE_IDENTITY_REFUSALS_JSON: each {kind!r} entry is "
+                    '{"status": 400..599} and at least one of "code", "type", "message"'
+                )
+        out[kind] = tuple(entries)
+    return out
+
+
 # Hop-by-hop headers (RFC 9110 §7.6.1): a proxy drops them, so no identity rides one.
 _HOP_BY_HOP = frozenset(
     {
@@ -3727,8 +3762,16 @@ class ProviderSettings(ModelSettings):
     inference_identity_headers_json: Annotated[str, JsonObject] = ""
     # The workload trust claim {tenant} names: the value the trust requires of it, exactly.
     inference_tenant_claim: str = "tenant_id"
-    # Seconds a background job leaves the work of an identity the gateway refused (a
-    # budget 429, a 403) before it calls for that identity again; 0 calls again at once.
+    # JSON object of the gateway answers that hold one identity, not the provider:
+    # {"refused": [...], "wait": [...]}, each entry {"status": <int>} and at least one of
+    # the error body's exact "code", "type" or "message". A refused identity's job work
+    # waits inference_refusal_cooldown_seconds, a waiting one the answer's Retry-After.
+    # Read only with identity headers set (server/llm/gateway.py).
+    inference_identity_refusals_json: Annotated[str, JsonObject] = (
+        '{"refused": [{"status": 429, "code": "budget_exceeded"}]}'
+    )
+    # Seconds a background job leaves the work of an identity the gateway refused (an
+    # answer listed under "refused") before it calls for it again; 0 calls again at once.
     inference_refusal_cooldown_seconds: float = Field(600.0, ge=0)
     # Seconds between each process's reads of the orgs whose model calls are
     # switched off (loom.org_model_calls); a change reaches every process within it.
@@ -3809,6 +3852,10 @@ class ProviderSettings(ModelSettings):
             return {}
         return dict(json_map_items(raw, "LOOM_INFERENCE_FEATURE_MAP_JSON", strings_only=True))
 
+    def identity_refusals(self) -> dict[str, tuple[dict[str, Any], ...]]:
+        """`inference_identity_refusals_json` parsed: "refused" and "wait" entries."""
+        return _identity_refusals(self.inference_identity_refusals_json)
+
     def identity_headers(self) -> tuple[tuple[str, str], ...]:
         """`inference_identity_headers_json` parsed: (header, template) pairs, each
         template without its surrounding whitespace."""
@@ -3882,7 +3929,14 @@ class ProviderSettings(ModelSettings):
     @model_validator(mode="after")
     def _check_identity_headers(self) -> ProviderSettings:
         """Every identity header is a header name, once, that neither a sender nor the
-        customer or feature header sets, with a template of known placeholders."""
+        customer or feature header sets, with a template of known placeholders; they go
+        only to the gateway's hosts, so they need them. The refusals table parses."""
+        self.identity_refusals()
+        if self.identity_headers() and not self.gateway_hosts():
+            raise ValueError(
+                "LOOM_INFERENCE_IDENTITY_HEADERS_JSON needs LOOM_INFERENCE_GATEWAY_HOSTS: "
+                "identity headers go only to the gateway's hosts"
+            )
         taken = {h.lower() for h in (self.inference_customer_header, self.inference_feature_header)}
         for name, template in self.identity_headers():
             refused = _SENDER_HEADERS | _HOP_BY_HOP | taken

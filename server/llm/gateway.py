@@ -18,29 +18,37 @@ the provider's key is the bearer, as always; `LOOM_OPENAI_BASE_URL` /
 to a host `LOOM_INFERENCE_GATEWAY_HOSTS` does not list.
 
 With identity headers set (server/llm/identity.py) the gateway can refuse one
-identity: a 403, or a 429 whose error names a budget, from a gateway host is
-that identity's refusal (`ModelCallRefused`), never the provider's failure. It
-is not retried and marks no provider failing; a background job leaves that
-identity's work for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (`refused_for`),
-and other identities' calls go on.
+identity. An answer from a gateway host that `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON`
+lists, matched exactly by its status and its error body's code, type or message,
+is that identity's, never the provider's failure: one under "refused" raises
+`ModelCallRefused`, one under "wait" `ModelCallDeferred`. Neither is retried or
+marks a provider failing. A background job's calls for that identity, to the same
+path and model, are held for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` (a refusal)
+or the answer's `Retry-After` (a wait), and refused before anything is sent
+(`sending`); other identities' calls, and its own to other models, go on. A
+success there ends the hold. Any other answer is the provider's, as always.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 
 from server.clients._http import refuse_off_gateway
-from server.clients._http_errors import provider_error_code, provider_error_detail
-from server.core.errors import LoomServerError, ModelCallRefused
+from server.clients._http_errors import provider_error_detail
+from server.core.errors import LoomServerError, ModelCallDeferred, ModelCallRefused
 from server.settings import settings
-from server.settings.catalog import url_host
+from server.settings.catalog import IDENTITY_REFUSAL_FIELDS, url_host
 
 log = logging.getLogger(__name__)
 
@@ -68,10 +76,28 @@ _file_token = ""
 _file_read_at = 0.0
 _file_refused = False
 
-# Identities the gateway refused, by their identity headers' values: when (time.monotonic)
-# a job may call for one again, and what the gateway answered.
-_refused: dict[tuple[tuple[str, str], ...], tuple[float, int, str]] = {}
-_REFUSED_MAX = 10_000  # not a setting: bounds memory; an identity dropped is asked once more
+# A call's identity, as the gateway judges it: each identity header's value.
+Identity = tuple[tuple[str, str], ...]
+# Where a call goes: its path and the model its body names.
+Route = tuple[str, str]
+
+
+@dataclass(frozen=True)
+class _Hold:
+    """What the gateway answered for one identity at one route, and until when
+    (time.monotonic) a job's calls there are held."""
+
+    until: float
+    status: int
+    code: str
+    wait: bool
+
+
+_held: dict[Identity, dict[Route, _Hold]] = {}
+_HELD_MAX = 10_000  # not a setting: bounds memory; an identity dropped is asked once more
+# A "wait" answer's hold without a Retry-After, and the most of one that is kept.
+_WAIT_S = 5.0  # not a setting: the common gateway default
+_WAIT_MAX_S = 300.0  # not a setting: a longer wait is asked about again after it
 _LOG_EVERY_S = 60.0  # not a setting: how often a refusal's log line repeats
 _logged_at: dict[tuple[int, str], float] = {}
 
@@ -190,23 +216,70 @@ async def _workload_bearer() -> str:
     return _file_token
 
 
+async def sending(request: httpx.Request) -> None:
+    """Before a model call goes out: a job's call (`customer.for_org`) for an
+    identity, path and model the gateway refused or asked to wait, still held,
+    raises that answer's error and sends nothing, so the job goes on with other
+    work. A request's call always asks the gateway. Runs before every request of
+    the model client (`server.clients._http`)."""
+    if not _held or not _judges_identities(request):
+        return
+    from server.llm import customer
+
+    if not customer.job_call():
+        return
+    identity = identity_of(request.headers)
+    routes = _held.get(identity)
+    if not routes:
+        return
+    route = _route(request)
+    hold = routes.get(route)
+    if hold is None:
+        return
+    left = hold.until - time.monotonic()
+    if left <= 0:
+        _release(identity, route)
+        return
+    what = "asked to wait" if hold.wait else "refused"
+    raise _held_error(
+        hold.status,
+        hold.code,
+        hold.wait,
+        left,
+        f"the inference gateway {what} this identity's calls here: {math.ceil(left)} s left",
+    )
+
+
 async def answered(response: httpx.Response) -> None:
-    """What the gateway's answer to a model call says: in the bearer mode a 401
-    makes the next call read the token file again at once; a refusal of the
-    call's identity raises `ModelCallRefused` and starts that identity's
-    cooldown. Runs on every response of the model client (`server.clients._http`)."""
+    """What the gateway's answer to a model call says. In the bearer mode a 401
+    makes the next call read the token file again at once. An answer
+    LOOM_INFERENCE_IDENTITY_REFUSALS_JSON lists is the call's identity's: one
+    under "refused" raises `ModelCallRefused` and holds that identity's job calls
+    to the same path and model for LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS, one
+    under "wait" `ModelCallDeferred`, held for its Retry-After. A success ends
+    the hold there. Runs on every response of the model client."""
     global _file_refused
-    if response.status_code == 401 and bearing():
+    status = response.status_code
+    if status == 401 and bearing():
         _file_refused = True
-    if response.status_code in (403, 429) and _judges_identities(response.request):
-        await response.aread()
-        detail = provider_error_detail(response)
-        if response.status_code == 429 and "budget" not in detail.lower():
-            return  # a rate limit: retried as any is
-        code = provider_error_code(
-            httpx.HTTPStatusError(detail, request=response.request, response=response)
-        )
-        raise _refuse(identity_of(response.request.headers), response.status_code, code, detail)
+    if not _judges_identities(response.request):
+        return
+    if status < 300:
+        identity = identity_of(response.request.headers) if _held else ()
+        if identity in _held:
+            _release(identity, _route(response.request))
+        return
+    table = settings.identity_refusals()
+    if not any(e["status"] == status for entries in table.values() for e in entries):
+        return  # the provider's answer, as always: read by the sender
+    await response.aread()
+    fields = _error_fields(response)
+    for kind, entries in table.items():
+        for entry in entries:
+            if entry["status"] == status and all(
+                fields.get(f) == entry[f] for f in IDENTITY_REFUSAL_FIELDS if f in entry
+            ):
+                raise _hold(response, entry, wait=kind == "wait")
 
 
 def _judges_identities(request: httpx.Request) -> bool:
@@ -220,53 +293,104 @@ def _judges_identities(request: httpx.Request) -> bool:
     return not (exchanging() and request.url == httpx.URL(settings.inference_token_url))
 
 
-def _refuse(
-    identity: tuple[tuple[str, str], ...], status: int, code: str, detail: str
-) -> ModelCallRefused:
-    """The refusal of `identity`, its cooldown started; logged once a minute per answer."""
-    cooldown = settings.inference_refusal_cooldown_seconds
-    if cooldown > 0:
-        if len(_refused) >= _REFUSED_MAX:
-            _refused.clear()
-        _refused[identity] = (time.monotonic() + cooldown, status, code)
+def _error_fields(response: httpx.Response) -> dict[str, str]:
+    """The error body's code, type and message, as the gateway wrote them."""
+    try:
+        data = response.json()
+    except ValueError:  # not JSON: nothing to match
+        return {}
+    err = data.get("error") if isinstance(data, dict) else None
+    if isinstance(err, str):
+        return {"message": err}
+    if not isinstance(err, dict):
+        return {}
+    out: dict[str, str] = {}
+    for name in IDENTITY_REFUSAL_FIELDS:
+        value = err.get(name)
+        if isinstance(value, str) or (isinstance(value, int) and not isinstance(value, bool)):
+            out[name] = str(value)
+    return out
+
+
+def _route(request: httpx.Request) -> Route:
+    """The path `request` goes to and the model its JSON body names ('' for none)."""
+    try:
+        body = json.loads(request.content or b"null")
+    except (ValueError, httpx.RequestNotRead):  # not JSON, or streamed: no model to read
+        body = None
+    model = body.get("model") if isinstance(body, dict) else None
+    return request.url.path, model if isinstance(model, str) else ""
+
+
+def _hold(response: httpx.Response, entry: Mapping[str, Any], *, wait: bool) -> ModelCallRefused:
+    """The answer's error, and the hold of its identity at its route started;
+    logged once a minute per answer."""
+    request, status = response.request, response.status_code
+    code = str(entry.get("code") or entry.get("type") or "")
+    seconds = _retry_after(response) if wait else settings.inference_refusal_cooldown_seconds
+    if seconds > 0:
+        if len(_held) >= _HELD_MAX:
+            _held.clear()
+        hold = _Hold(time.monotonic() + seconds, status, code, wait)
+        _held.setdefault(identity_of(request.headers), {})[_route(request)] = hold
     now = time.monotonic()
     if now - _logged_at.get((status, code), -_LOG_EVERY_S) >= _LOG_EVERY_S:
         _logged_at[(status, code)] = now
         # The status and code, never the identity or the gateway's text: either can
         # name a person.
         log.warning(
-            "inference gateway refused a model call for its identity (%d %s); "
-            "jobs leave that identity's work for %.0f s",
+            "inference gateway %s a model call for its identity (%d %s); "
+            "jobs hold that identity's calls to the same model for %.0f s",
+            "asked to wait" if wait else "refused",
             status,
             code or "no code",
-            cooldown,
+            seconds,
         )
-    return _refusal(status, code, f"the inference gateway refused this call ({status} {detail})")
+    what = "asked this call to wait" if wait else "refused this call"
+    said = " ".join(filter(None, (str(status), provider_error_detail(response))))
+    return _held_error(status, code, wait, seconds, f"the inference gateway {what} ({said})")
 
 
-def _refusal(status: int, code: str, message: str) -> ModelCallRefused:
-    return ModelCallRefused(message.strip(), gateway_status=status, gateway_code=code)
+def _held_error(
+    status: int, code: str, wait: bool, seconds: float, message: str
+) -> ModelCallRefused:
+    if wait:
+        return ModelCallDeferred(
+            message,
+            gateway_status=status,
+            gateway_code=code,
+            retry_after_s=max(1, math.ceil(seconds)),
+            hold_s=seconds,
+        )
+    return ModelCallRefused(message, gateway_status=status, gateway_code=code, hold_s=seconds)
 
 
-def identity_of(headers: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
+def _retry_after(response: httpx.Response) -> float:
+    """The answer's Retry-After in seconds (delta-seconds or an HTTP date), at most
+    `_WAIT_MAX_S`; `_WAIT_S` without a usable one."""
+    value = (response.headers.get("retry-after") or "").strip()
+    seconds = _WAIT_S
+    if value.isdigit():
+        seconds = float(value)
+    elif value:
+        try:
+            seconds = parsedate_to_datetime(value).timestamp() - time.time()
+        except (TypeError, ValueError):
+            seconds = _WAIT_S
+    return min(max(seconds, 0.0), _WAIT_MAX_S)
+
+
+def _release(identity: Identity, route: Route) -> None:
+    routes = _held.get(identity)
+    if routes is not None:
+        routes.pop(route, None)
+        if not routes:
+            _held.pop(identity, None)
+
+
+def identity_of(headers: Mapping[str, str]) -> Identity:
     """The identity a call names, as the gateway judges it: each identity header's value."""
     return tuple((name, headers.get(name) or "") for name, _ in settings.identity_headers())
-
-
-def refused_for(identity: tuple[tuple[str, str], ...]) -> ModelCallRefused | None:
-    """The refusal a job meets for an identity the gateway refused less than the
-    cooldown ago, without a call; None for any other."""
-    held = _refused.get(identity)
-    if held is None:
-        return None
-    end, status, code = held
-    left = end - time.monotonic()
-    if left <= 0:
-        _refused.pop(identity, None)
-        return None
-    return _refusal(
-        status, code, f"the inference gateway refused this identity's calls: {left:.0f} s left"
-    )
 
 
 async def _identity_token() -> str:
@@ -326,5 +450,5 @@ def _reset_for_tests() -> None:
     global _token, _expires_at, _renew_at, _file_token, _file_read_at, _file_refused
     _token, _expires_at, _renew_at = "", 0.0, 0.0
     _file_token, _file_read_at, _file_refused = "", 0.0, False
-    _refused.clear()
+    _held.clear()
     _logged_at.clear()

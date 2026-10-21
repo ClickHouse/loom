@@ -240,9 +240,10 @@ what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude mod
   401, 403 and 404 propagate. Each hand-over is logged and counted (`loom.llm.fallback`),
   and the result names the model that answered. Fallbacks do not chain.
 - **Missing key.** The client is the fake (`_build_llm_client`), logged at WARNING.
-- **One identity refused.** With identity headers set, a 403, or a 429 whose error names a
-  budget, from a gateway host is the gateway refusing the call's identity
-  ([identity headers](#identity-headers)): never retried, never handed to the fallback model.
+- **One identity refused.** With identity headers set, an answer from a gateway host that
+  `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing the call's identity or
+  asking it to wait ([identity headers](#identity-headers)): never retried, never handed to the
+  fallback model.
 
 ### Response cache
 
@@ -319,7 +320,8 @@ as authorized for its token.
 `LOOM_INFERENCE_IDENTITY_HEADERS_JSON` names more of whom a call is for, for a gateway that
 bills or limits each agent or person (`server/llm/identity.py`). It maps header names to
 templates; `customer.require()` renders them from the call's attribution, and the senders add
-them beside the customer header on every chat, embedding, rerank and classify request.
+them beside the customer header on every chat, embedding, rerank and classify request to the
+gateway.
 
 | Placeholder   | A request                                                                       | A job (`customer.for_org`)                                    |
 | ------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -362,21 +364,40 @@ them beside the customer header on every chat, embedding, rerank and classify re
   most once a minute per process. A failed read serves the copy in hand; with none the call is
   held (`identity.IdentityUnread`, one of `customer.HOLDS`): it waits rather than go out as
   someone else's.
-- **One identity refused.** A 403, or a 429 whose error names a budget, that a gateway host
-  answers is the gateway refusing that identity, not a provider failure: the model client's
-  response hook (`gateway.answered`) raises `ModelCallRefused`, so the request answers 403
-  `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`. It is not
-  retried or handed to the fallback model, `/v1/health` reads nothing from it, and the org's
-  switch is untouched. It is one of `customer.HOLDS`, so a job leaves the row as it is, and
-  for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` a job's call for that identity is refused in
-  `customer.require()` with nothing sent, while other identities' calls go on. A request
-  always asks the gateway, which may take the identity back at any time. Any other 429 is a
-  rate limit, retried as before.
+- **Only to the gateway.** The identity headers go only to a host
+  `LOOM_INFERENCE_GATEWAY_HOSTS` lists, so setting them requires it. The model client's request
+  hook (`server/clients/_http.py`) drops them from any other request, a redirect hop included:
+  an operator's reranker, a namespace's classifier, Cohere or a provider elsewhere never learns
+  whom a call is for. The reranker and classifier post through the model client too.
+- **One identity refused.** An answer from a gateway host that
+  `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing that identity, not a
+  provider failure. Each entry names a status and at least one of the error body's `code`,
+  `type` or `message` (under `error`), each matched exactly; no word in a message counts. The
+  default lists the metering's `429 budget_exceeded`. The model client's response hook
+  (`gateway.answered`) raises `ModelCallRefused` for an entry under `refused`, so the request
+  answers 403 `MODEL_CALL_REFUSED` with the gateway's `gateway_status` and `gateway_code`, and
+  `ModelCallDeferred` for one under `wait`, answered 503 `MODEL_CALL_DEFERRED` with the
+  gateway's `Retry-After`. Neither is retried or handed to the fallback model, `/v1/health`
+  reads nothing from either, and the org's switch is untouched. Both are `customer.HOLDS`, so a
+  job leaves the row as it is.
+- **A job's hold.** After that answer, a job's calls (`customer.for_org`) for the identity to
+  the same path and model are held: refused by the request hook (`gateway.sending`) with
+  nothing sent, for `LOOM_INFERENCE_REFUSAL_COOLDOWN_SECONDS` after a refusal and the answer's
+  `Retry-After` (at most 5 minutes) after a wait. Its calls to another model or to the
+  embeddings go on, and so do other identities'. A success at that path and model, from a
+  request or a job, ends the hold. A request always asks the gateway, which may take the
+  identity back at any time. Any other answer is the provider's, as before: another 403 is a
+  provider failure, never retried, and another 429 a rate limit, retried.
 
-**Why the namespace's owner.** Most rows a job works on record no writer (an embedding stub, a
-conversation turn), and an agent's token has its own namespace as its home, so the namespace
-names the agent the work is for. A row of a shared namespace that records no writer goes out
-with the headers that rendered and no agent.
+**Why the namespace's owner.** Some rows a job works on record no principal (a conversation
+turn, a shared-scope vector), and an agent's token has its own namespace as its home, so the
+namespace names the agent the work is for. A row of a shared namespace that records no writer
+goes out with the headers that rendered and no agent.
+
+**Why a table of answers.** A gateway's refusal of one identity and its own failure can share a
+status (a 403 for an agent not allowed, and for Loom's credential not allowed to act for agents),
+and a word in a message is no contract. The deployment lists the exact answers its gateway gives
+for one identity, and only those hold the identity rather than read as the provider down.
 
 ## Fake providers
 

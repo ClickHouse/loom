@@ -9,6 +9,7 @@ import asyncio
 import httpx
 import pytest
 
+from server.clients import _http
 from server.observability import degradations as D
 from server.observability import provider_health
 
@@ -87,20 +88,16 @@ async def test_classify_fallbacks_note_the_degradation(monkeypatch):
             return self._p
 
     class _Client:
+        """The model client: answers every post with `resp`."""
+
         def __init__(self, resp):
             self._resp = resp
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
 
         async def post(self, *a, **k):
             return self._resp
 
     # 1. transport error → caller's type kept, noted
-    monkeypatch.setattr(C.httpx, "AsyncClient", lambda **k: _Client(_Resp({}, 502)))
+    monkeypatch.setattr(_http, "get_model_client", lambda: _Client(_Resp({}, 502)))
     D.begin()
     assert (
         await C.classify(endpoint="http://x", prompt_template="", value="v", valid_types=["fact"])
@@ -108,9 +105,7 @@ async def test_classify_fallbacks_note_the_degradation(monkeypatch):
     )
     assert D.current() and D.current()[0].startswith("classify: caller_type_kept (HTTPStatusError")
     # 2. unregistered type → noted with the offending type
-    monkeypatch.setattr(
-        C.httpx, "AsyncClient", lambda **k: _Client(_Resp({"memory_type": "weird"}))
-    )
+    monkeypatch.setattr(_http, "get_model_client", lambda: _Client(_Resp({"memory_type": "weird"})))
     D.begin()
     assert (
         await C.classify(endpoint="http://x", prompt_template="", value="v", valid_types=["fact"])
@@ -118,7 +113,7 @@ async def test_classify_fallbacks_note_the_degradation(monkeypatch):
     )
     assert "'weird' not a registered type" in D.current()[0]
     # 3. success → nothing degraded, health records success
-    monkeypatch.setattr(C.httpx, "AsyncClient", lambda **k: _Client(_Resp({"memory_type": "fact"})))
+    monkeypatch.setattr(_http, "get_model_client", lambda: _Client(_Resp({"memory_type": "fact"})))
     D.begin()
     assert (
         await C.classify(endpoint="http://x", prompt_template="", value="v", valid_types=["fact"])
@@ -132,16 +127,12 @@ async def test_rerank_http_fallback_notes_the_degradation(monkeypatch):
     from server.memory.app import rerank as R
 
     class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
+        """The model client: every post times out."""
 
         async def post(self, *a, **k):
             raise httpx.ReadTimeout("slow reranker")
 
-    monkeypatch.setattr(R.httpx, "AsyncClient", lambda **k: _Client())
+    monkeypatch.setattr(_http, "get_model_client", _Client)
     monkeypatch.setattr(R.settings, "rerank_endpoints_json", '{"slow": "http://x"}')
     cands = [
         R.RerankCandidate(

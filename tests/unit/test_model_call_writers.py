@@ -19,8 +19,8 @@ from server.memory.domain import provenance, trust
 from server.settings import settings
 from tests.unit.test_model_call_identity import AGENT_NS, _Directory, _stub, directory  # noqa: F401
 
-AGENT_8 = "sa:nerve-t1:agent-8"
-NS_8 = "nerve-t1-agent-8"
+AGENT_8 = "sa:cell-t1:agent-8"
+NS_8 = "cell-t1-agent-8"
 SHARED = "t-1-shared"
 _TEMPLATES = '{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}'
 
@@ -48,7 +48,7 @@ def test_a_pipelines_own_actor_names_no_principal() -> None:
     assert trust.subject_of("process:ci-bot") == "ci-bot"  # a token's own subject
     for pipeline in (provenance.EXTRACTION_WORKER_ACTOR, provenance.cli_actor("import"), ""):
         assert trust.subject_of(pipeline) == ""
-    assert trust.subject_of("sa:nerve-t1:agent-8") == ""  # no kind: not an actor string
+    assert trust.subject_of("sa:cell-t1:agent-8") == ""  # no kind: not an actor string
 
 
 def test_every_process_actor_the_server_writes_is_a_registered_pipeline() -> None:

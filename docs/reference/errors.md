@@ -483,9 +483,13 @@ Raised in `server/memory/app/handlers.py`.
 
 HTTP 403, raised as `server.llm.customer.ModelCallsDisabled`. The org's admin switched its model calls off: nothing is sent for it.
 
+#### `MODEL_CALL_DEFERRED`
+
+HTTP 503, raised as `server.core.errors.ModelCallDeferred`. 503 — the inference gateway asked the call's identity to wait for `retry_after_s`, its `Retry-After`.
+
 #### `MODEL_CALL_REFUSED`
 
-HTTP 403, raised as `server.core.errors.ModelCallRefused`. 403 — the inference gateway refused a model call for the identity it was made for (a 429 naming a budget, or a 403), with identity headers set: that identity's refusal, not the provider's failure.
+HTTP 403, raised as `server.core.errors.ModelCallRefused`. 403 — the inference gateway refused the call for the identity it was made for: that identity's refusal, not the provider's failure.
 
 #### `MODEL_CALL_UNATTRIBUTED`
 

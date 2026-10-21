@@ -189,22 +189,18 @@ def test_the_shared_http_clients_take_their_timeout_and_pool_from_settings(
 
 
 class _RecordingClient:
-    """Records the timeout a call builds its client with, then fails the call."""
+    """The model client: records the timeout each post waits, then fails the call."""
 
     seen: list[Any] = []
 
-    def __init__(self, **kw: Any) -> None:
+    async def post(self, url: str, **kw: Any) -> Any:
         _RecordingClient.seen.append(kw["timeout"])
-
-    async def __aenter__(self) -> _RecordingClient:
         raise _Stop
-
-    async def __aexit__(self, *a: Any) -> None:
-        return None
 
 
 @pytest.fixture
 def recording_client(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    from server.clients import _http
     from server.llm import customer
 
     async def _org() -> str:
@@ -213,6 +209,7 @@ def recording_client(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     _RecordingClient.seen = []
     monkeypatch.setattr(customer, "require", _org)
     monkeypatch.setattr(customer, "headers", lambda org: {})
+    monkeypatch.setattr(_http, "get_model_client", _RecordingClient)
     return _RecordingClient.seen
 
 
@@ -224,7 +221,6 @@ async def test_a_rerank_endpoint_call_waits_its_setting(
 
     monkeypatch.setattr(settings, "memory_search_rerank_timeout_s", 3.5)
     monkeypatch.setattr(settings, "rerank_endpoints_json", '{"gw": "https://rerank.example/v1"}')
-    monkeypatch.setattr(rerank.httpx, "AsyncClient", _RecordingClient)
     candidate = rerank.RerankCandidate("k", "ns", "text", "fact", 0.5)
     kept = await rerank.rerank(endpoint="gw", prompt_template="", query="q", candidates=[candidate])
     assert kept == [candidate]  # fail open
@@ -238,7 +234,6 @@ async def test_a_classify_endpoint_call_waits_its_setting(
     from server.memory.app import classify
 
     monkeypatch.setattr(settings, "memory_classify_timeout_s", 2.5)
-    monkeypatch.setattr(classify.httpx, "AsyncClient", _RecordingClient)
     got = await classify.classify(
         endpoint="https://classify.example/v1", prompt_template="", value="v", valid_types=[]
     )

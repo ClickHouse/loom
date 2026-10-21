@@ -17,6 +17,7 @@ from server.llm import gateway
 from server.llm.customer import Customer
 from server.memory.app.log_once import LogOnce
 from server.settings import Settings, settings
+from tests.unit.model_client import through_the_model_client
 
 _GW = "https://gateway.example/v1/chat/completions"
 
@@ -546,35 +547,33 @@ def test_the_dashboards_check_names_the_refusal(required: None, wire: list[str])
     assert (check.ready, check.code) == (False, "gateway_required")
 
 
-class _NoPost:
-    """An httpx.AsyncClient stand-in that records what would be posted."""
+class _Posts:
+    """The model client's wire: records each URL posted to, and answers `answer`."""
 
-    posted: list[str] = []
+    def __init__(self, answer: dict[str, Any]) -> None:
+        self.posted: list[str] = []
+        self.answer = answer
 
-    def __init__(self, **_: Any) -> None:
-        pass
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.posted.append(str(request.url))
+        return httpx.Response(200, json=self.answer)
 
-    async def __aenter__(self) -> _NoPost:
-        return self
 
-    async def __aexit__(self, *a: Any) -> None:
-        return None
-
-    async def post(self, url: str, **_: Any) -> httpx.Response:
-        _NoPost.posted.append(url)
-        return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+def _posts(monkeypatch: pytest.MonkeyPatch, answer: dict[str, Any] | None = None) -> _Posts:
+    wire = _Posts(answer or {})
+    client = through_the_model_client(monkeypatch)
+    monkeypatch.setattr(client, "_transport", httpx.MockTransport(wire))
+    return wire
 
 
 def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
     required: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Each posts on its own client, so each checks the URL itself.
+    # Each posts on the model client, whose hook refuses the URL on every hop.
     from server.memory.app import classify, rerank
     from server.memory.app.rerank import RerankCandidate
 
-    monkeypatch.setattr(_NoPost, "posted", [])
-    monkeypatch.setattr(rerank.httpx, "AsyncClient", _NoPost)
-    monkeypatch.setattr(classify.httpx, "AsyncClient", _NoPost)
+    wire = _posts(monkeypatch)
     monkeypatch.setenv("COHERE_API_KEY", "c-key")
     monkeypatch.setattr(settings, "rerank_endpoints_json", '{"direct": "https://10.0.0.5/rerank"}')
     candidates = [RerankCandidate("k", "ns", "text", "observation", 0.5)]
@@ -588,7 +587,7 @@ def test_no_rerank_or_classify_endpoint_posts_off_the_gateways_hosts(
             classify.classify(endpoint=url, prompt_template="", value="v", valid_types=[])
         )
         assert label == ""  # the caller's type stays
-    assert _NoPost.posted == []
+    assert wire.posted == []
 
 
 @pytest.mark.parametrize(
@@ -630,14 +629,7 @@ def test_a_classify_endpoint_at_a_listed_host_receives_the_post(
 ) -> None:
     from server.memory.app import classify
 
-    class _Answers(_NoPost):
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            _NoPost.posted.append(url)
-            body = {"memory_type": "decision"}
-            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(_NoPost, "posted", [])
-    monkeypatch.setattr(classify.httpx, "AsyncClient", _Answers)
+    wire = _posts(monkeypatch, {"memory_type": "decision"})
     label = asyncio.run(
         classify.classify(
             endpoint="https://gateway.example/classify",
@@ -646,7 +638,7 @@ def test_a_classify_endpoint_at_a_listed_host_receives_the_post(
             valid_types=["decision"],
         )
     )
-    assert label == "decision" and _NoPost.posted == ["https://gateway.example/classify"]
+    assert label == "decision" and wire.posted == ["https://gateway.example/classify"]
 
 
 def test_a_classify_endpoint_off_the_gateways_hosts_is_refused_at_write(required: None) -> None:

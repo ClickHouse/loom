@@ -8,11 +8,14 @@ per call; the lifespan in server/main.py calls `aclose()` at shutdown.
 Callers pass their own per-request timeout when the default is too short.
 
 Both follow redirects, so neither is for caller-supplied URLs: a client that
-must not be redirected to another host (webhook delivery) builds its own.
+must not be redirected to another host (webhook delivery) builds its own, and a
+model call to one (a namespace's classifier) passes `follow_redirects=False`.
 The model client runs `_on_request` before every request it sends, each
-redirect hop included, so while the gateway is required no model call leaves
-for a host LOOM_INFERENCE_GATEWAY_HOSTS does not list, and `_on_response`
-after every answer, which tells the gateway's bearer what it said
+redirect hop included: while the gateway is required no model call leaves for
+a host LOOM_INFERENCE_GATEWAY_HOSTS does not list, the identity headers go only
+to a host it lists, and a job's call for an identity the gateway holds is
+refused unsent (`server.llm.gateway.sending`). `_on_response` runs after every
+answer, which tells the gateway's bearer and its identity holds what it said
 (`server.llm.gateway.answered`).
 """
 
@@ -25,6 +28,7 @@ import httpx
 
 from server.core.errors import GatewayRequiredError
 from server.settings import settings
+from server.settings.catalog import url_host
 
 _lock = threading.Lock()
 _client: httpx.AsyncClient | None = None
@@ -64,6 +68,15 @@ def refuse_off_gateway(url: str) -> None:
 
 async def _on_request(request: httpx.Request) -> None:
     refuse_off_gateway(str(request.url))
+    identity = settings.identity_headers()
+    if identity and url_host(str(request.url)) not in settings.gateway_hosts():
+        # Whom a call is for is the gateway's to know: a reranker, a classifier or a
+        # provider elsewhere never gets the identity headers, a redirect hop included.
+        for name, _ in identity:
+            request.headers.pop(name, None)
+    from server.llm import gateway
+
+    await gateway.sending(request)
 
 
 async def _on_response(response: httpx.Response) -> None:

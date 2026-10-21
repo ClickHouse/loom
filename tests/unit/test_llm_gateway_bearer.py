@@ -12,10 +12,10 @@ from typing import Any
 import httpx
 import pytest
 
-from server.clients import _http
 from server.llm import gateway
 from server.settings import Settings, settings
 from tests.unit.clock_fake import ManualClock
+from tests.unit.model_client import through_the_model_client
 
 _CHAT = {
     "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
@@ -72,22 +72,6 @@ class _Wire:
         if request.url.path.endswith("/messages"):
             return httpx.Response(200, json=_MESSAGES)
         return httpx.Response(200, json=_VECTORS)
-
-
-def through_the_model_client(monkeypatch: pytest.MonkeyPatch) -> httpx.AsyncClient:
-    """A fresh model client, its hooks in place, that every sender posts through: a
-    sender first imported while a test patched `get_model_client` keeps that patch
-    under its own name, so each is pointed back here."""
-    from server.embedding import compatible
-    from server.embedding import openai as embed_openai
-    from server.llm import anthropic
-    from server.llm import openai as chat_openai
-
-    monkeypatch.setattr(_http, "_model_client", None)  # restored after the test
-    for mod in (chat_openai, anthropic, embed_openai):
-        monkeypatch.setattr(mod, "_http_client", _http.get_model_client)
-    monkeypatch.setattr(compatible, "get_model_client", _http.get_model_client)
-    return _http.get_model_client()
 
 
 @pytest.fixture

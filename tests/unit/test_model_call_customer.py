@@ -15,6 +15,7 @@ import pytest
 from server.llm import customer
 from server.observability import genai
 from server.settings import settings
+from tests.unit.model_client import through_the_model_client
 
 
 @pytest.fixture
@@ -146,28 +147,24 @@ def test_chat_and_embedding_requests_carry_the_customer(metered, monkeypatch) ->
     assert [h["X-Customer"] for h in sent] == ["acme"] * 5
 
 
+def _sent_headers(monkeypatch: pytest.MonkeyPatch, answer: dict[str, Any]) -> list[Any]:
+    """The headers of each request the model client sends, every one answered `answer`."""
+    sent: list[Any] = []
+
+    def wire(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers)
+        return httpx.Response(200, json=answer)
+
+    client = through_the_model_client(monkeypatch)
+    monkeypatch.setattr(client, "_transport", httpx.MockTransport(wire))
+    return sent
+
+
 def test_rerank_and_classify_requests_carry_the_customer(metered, monkeypatch) -> None:
     from server.memory.app import classify as classify_mod
     from server.memory.app import rerank as rerank_mod
 
-    sent: list[dict[str, str]] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            sent.append(kw.get("headers") or {})
-            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(rerank_mod.httpx, "AsyncClient", _Client)
-    monkeypatch.setattr(classify_mod.httpx, "AsyncClient", _Client)
+    sent = _sent_headers(monkeypatch, {})
     monkeypatch.setenv("COHERE_API_KEY", "key")
     _request("acme")
     candidates = [rerank_mod.RerankCandidate("k", "ns", "v", "fact", 1.0)]
@@ -415,23 +412,7 @@ def test_an_operator_reranker_carries_the_customer_and_refuses_outside_its_fail_
 ) -> None:
     from server.memory.app import rerank as rerank_mod
 
-    sent: list[dict[str, str]] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            sent.append(kw.get("headers") or {})
-            return httpx.Response(200, json={"ranked": []}, request=httpx.Request("POST", url))
-
-    monkeypatch.setattr(rerank_mod.httpx, "AsyncClient", _Client)
+    sent = _sent_headers(monkeypatch, {"ranked": []})
     monkeypatch.setattr(
         type(settings), "rerank_endpoint_map", lambda self: {"ops": "https://rerank.example"}
     )
@@ -585,26 +566,9 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
     async def types(org: str, ns: str) -> list[Any]:
         return [{"memory_type": "observation"}]
 
-    sent: list[dict[str, str]] = []
-
-    class _Client:
-        def __init__(self, **_: Any) -> None:
-            pass
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *_: Any) -> None:
-            return None
-
-        async def post(self, url: str, **kw: Any) -> httpx.Response:
-            sent.append(kw.get("headers") or {})
-            body = {"memory_type": "observation"}
-            return httpx.Response(200, json=body, request=httpx.Request("POST", url))
-
+    sent = _sent_headers(monkeypatch, {"memory_type": "observation"})
     monkeypatch.setattr(classify_mod, "get_namespace_classify_config", config)
     monkeypatch.setattr(namespace_types, "list_type_configs", types)
-    monkeypatch.setattr(classify_mod.httpx, "AsyncClient", _Client)
     body = MemorySetInput(
         org="acme",
         namespace="ns",
@@ -619,7 +583,8 @@ def test_inline_classify_lets_a_refusal_through_and_is_untouched_without_a_heade
     monkeypatch.setattr(settings, "inference_customer_header", "")
     resolved, _, _ = asyncio.run(write._set_resolve_type(body))
     # Unset: the classifier is asked once, with no metering header, and its type applies.
-    assert resolved.memory_type == "observation" and sent == [{}]
+    assert resolved.memory_type == "observation" and len(sent) == 1
+    assert "x-customer" not in sent[0]
     from server.observability import provider_health
 
     provider_health.reset()  # classify recorded a success in the process-wide state

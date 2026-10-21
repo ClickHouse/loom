@@ -18,6 +18,7 @@ _OBJECTS = [
     "rerank_endpoints_json",
     "inference_feature_map_json",
     "inference_identity_headers_json",
+    "inference_identity_refusals_json",
     "code_vector_tables",
     "latency_budget_overrides",
     "latency_budget_overrides_by_consumer",
@@ -33,7 +34,10 @@ _OBJECT_SAMPLES = {
     "rerank_endpoints_json": ' {"gw": "https://rerank.example/v1"} ',
     "inference_feature_map_json": ' {"hyde": "query-expansion"} ',
     "inference_identity_headers_json": ' {"X-Agent": "{agent}"} ',
+    "inference_identity_refusals_json": ' {"wait": [{"status": 503, "type": "api_error"}]} ',
 }
+# What a sample needs beside it to load.
+_COMPANIONS = {"inference_identity_headers_json": {"inference_gateway_hosts": "gateway.example"}}
 _ARRAYS = ["code_repos_json", "code_test_gate_run_templates"]
 _CANARY = "s3cr3t-canary"
 
@@ -55,7 +59,7 @@ def test_the_checked_fields_are_the_json_valued_ones() -> None:
 def test_an_object_field_takes_empty_or_an_object(field: str) -> None:
     assert getattr(_load(**{field: ""}), field) == ""
     sample = _OBJECT_SAMPLES.get(field, ' {"a": {}} ')
-    assert getattr(_load(**{field: sample}), field) == sample
+    assert getattr(_load(**{field: sample}, **_COMPANIONS.get(field, {})), field) == sample
     for bad in (f'{{"a": "{_CANARY}"', f'["{_CANARY}"]'):
         with pytest.raises(ValidationError, match=field) as caught:
             _load(**{field: bad})

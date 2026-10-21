@@ -19,9 +19,10 @@ from server.auth.jwt import AuthInfo
 from server.llm import customer, identity
 from server.observability import genai
 from server.settings import Settings, settings
+from tests.unit.model_client import through_the_model_client
 
-AGENT = "sa:nerve-t1:agent-7"
-AGENT_NS = "nerve-t1-agent-7"
+AGENT = "sa:cell-t1:agent-7"
+AGENT_NS = "cell-t1-agent-7"
 _HEADERS = (
     '{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}", '
     '"X-Org": "{org}", "X-Namespace": "{namespace}", "X-User": "{user_id}"}'
@@ -29,13 +30,13 @@ _HEADERS = (
 
 
 class _Directory:
-    """The reads identity headers make, stubbed: trust `nerve-t1` requires
-    `tenant_id=t1`, namespace `nerve-t1-agent-7` is its agent's, `sso-alice`'s
+    """The reads identity headers make, stubbed: trust `cell-t1` requires
+    `tenant_id=t1`, namespace `cell-t1-agent-7` is its agent's, `sso-alice`'s
     address is alice@example.com."""
 
     def __init__(self) -> None:
         self.claims: dict[str, dict[str, str]] = {
-            "nerve-t1": {"tenant_id": "t1", "org_id": "o9", "agent_id": "*"}
+            "cell-t1": {"tenant_id": "t1", "org_id": "o9", "agent_id": "*"}
         }
         self.owners: dict[tuple[str, str], str] = {("acme", AGENT_NS): AGENT, ("acme", "ns"): ""}
         self.reads: list[tuple[str, str]] = []
@@ -172,9 +173,9 @@ def test_a_trust_is_read_once_a_minute_and_a_prefix_claim_names_no_tenant(direct
     _as(AGENT)
     _sent()
     _sent()
-    assert directory.reads.count(("trust", "nerve-t1")) == 1
-    directory.claims["nerve-t2"] = {"tenant_id": "t*"}
-    _as("sa:nerve-t2:agent-1")
+    assert directory.reads.count(("trust", "cell-t1")) == 1
+    directory.claims["cell-t2"] = {"tenant_id": "t*"}
+    _as("sa:cell-t2:agent-1")
     sent = _sent()  # no tenant: the agent does not go alone either
     assert "X-Tenant" not in sent and "X-Agent" not in sent and sent["X-Org"] == "acme"
 
@@ -206,7 +207,7 @@ def test_a_deployment_call_names_no_one(directory) -> None:
 
 
 def test_a_job_names_its_rows_identity_never_the_requests(directory) -> None:
-    _as("sa:nerve-t1:agent-9", namespace="other")
+    _as("sa:cell-t1:agent-9", namespace="other")
     with customer.for_org("acme", namespace=AGENT_NS, user_id="u1"):
         sent = _sent()
     assert (sent["X-Agent"], sent["X-User"]) == ("agent-7", "u1")  # the namespace's agent
@@ -300,53 +301,48 @@ def test_gemini_embeddings_carry_the_identity(directory, monkeypatch) -> None:
     assert _carries(vectors.calls[0]["headers"])
 
 
-class _HttpClient:
-    """What `httpx.AsyncClient(...)` builds for the operator endpoints: records the headers."""
+def _sent_headers(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The headers of each request the model client sends to the operator endpoints."""
+    sent: list[Any] = []
 
-    sent: list[dict[str, str]] = []
+    def wire(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers)
+        return httpx.Response(200, json={"ranked": [], "results": [], "memory_type": "a"})
 
-    def __init__(self, **_: Any) -> None:
-        pass
-
-    async def __aenter__(self) -> _HttpClient:
-        return self
-
-    async def __aexit__(self, *_: Any) -> None:
-        return None
-
-    async def post(self, url: str, **kw: Any) -> httpx.Response:
-        _HttpClient.sent.append(kw.get("headers") or {})
-        return httpx.Response(200, json={"ranked": []}, request=httpx.Request("POST", url))
+    client = through_the_model_client(monkeypatch)
+    monkeypatch.setattr(client, "_transport", httpx.MockTransport(wire))
+    return sent
 
 
-def test_rerank_requests_carry_the_identity(directory, monkeypatch) -> None:
+def test_rerank_requests_carry_the_identity_to_the_gateway_only(directory, monkeypatch) -> None:
     from server.memory.app import rerank as rerank_mod
 
-    _HttpClient.sent = []
-    monkeypatch.setattr(rerank_mod.httpx, "AsyncClient", _HttpClient)
+    sent = _sent_headers(monkeypatch)
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "rerank.example")
     monkeypatch.setattr(settings, "rerank_endpoints_json", '{"gw": "https://rerank.example/v1"}')
     monkeypatch.setenv("COHERE_API_KEY", "key")
     _as(AGENT)
     candidates = [rerank_mod.RerankCandidate("k", AGENT_NS, "v", "fact", 1.0)]
-    asyncio.run(rerank_mod._rerank_with_builtin_cohere("builtin:cohere", "q", candidates))
     asyncio.run(
         rerank_mod.rerank(endpoint="gw", prompt_template="t", query="q", candidates=candidates)
     )
-    assert len(_HttpClient.sent) == 2 and all(_carries(h) for h in _HttpClient.sent)
+    asyncio.run(rerank_mod._rerank_with_builtin_cohere("builtin:cohere", "q", candidates))
+    assert len(sent) == 2 and _carries(sent[0])
+    assert not {"x-tenant", "x-agent", "x-org"} & set(sent[1])  # Cohere is no gateway host
 
 
 def test_classify_requests_carry_the_identity(directory, monkeypatch) -> None:
     from server.memory.app import classify as classify_mod
 
-    _HttpClient.sent = []
-    monkeypatch.setattr(classify_mod.httpx, "AsyncClient", _HttpClient)
+    sent = _sent_headers(monkeypatch)
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "classify.example")
     _as(AGENT)
     asyncio.run(
         classify_mod.classify(
             endpoint="https://classify.example", prompt_template="t", value="v", valid_types=["a"]
         )
     )
-    assert _carries(_HttpClient.sent[0])
+    assert _carries(sent[0])
 
 
 class _Headers:
@@ -451,7 +447,7 @@ def test_the_embedding_worker_makes_one_call_per_identity(directory, monkeypatch
     from server.memory.workers import embedding
 
     monkeypatch.setattr(settings, "inference_identity_headers_json", '{"X-Agent": "{agent}"}')
-    directory.owners[("acme", "nerve-t1-agent-8")] = "sa:nerve-t1:agent-8"
+    directory.owners[("acme", "cell-t1-agent-8")] = "sa:cell-t1:agent-8"
     sent: list[tuple[str, int]] = []
 
     class _Embedder:
@@ -463,7 +459,7 @@ def test_the_embedding_worker_makes_one_call_per_identity(directory, monkeypatch
 
     rows = [
         _stub(AGENT_NS, "k1", "a", user_id="u1"),
-        _stub("nerve-t1-agent-8", "k2", "bb", user_id="u1"),
+        _stub("cell-t1-agent-8", "k2", "bb", user_id="u1"),
         _stub(AGENT_NS, "k3", "ccc", user_id="u2"),
     ]
     out = asyncio.run(embedding._embed_rows(_Embedder(), rows))
@@ -486,6 +482,7 @@ def _stub(namespace: str, key: str, text: str, *, user_id: str = "u1") -> dict[s
 
 
 def _load(headers: str, **extra: str) -> Settings:
+    extra.setdefault("inference_gateway_hosts", "gateway.example")
     return Settings(_env_file=None, inference_identity_headers_json=headers, **extra)  # type: ignore[call-arg, arg-type]
 
 
@@ -529,10 +526,10 @@ def test_the_agent_and_its_tenant_go_together_or_not_at_all(directory, monkeypat
         "inference_identity_headers_json",
         '{"X-Tenant": "{tenant}", "X-Agent": "{agent}", "X-Actor": "{email}"}',
     )
-    directory.claims["nerve-t3"] = {"agent_id": "*"}  # a trust that requires no tenant
-    _as("sa:nerve-t3:agent-2")
+    directory.claims["cell-t3"] = {"agent_id": "*"}  # a trust that requires no tenant
+    _as("sa:cell-t3:agent-2")
     assert _sent() == {}  # an agent alone is no identity the gateway takes: neither goes
-    _as("sa:nerve-t1")  # the trust's own token: a tenant, and no agent
+    _as("sa:cell-t1")  # the trust's own token: a tenant, and no agent
     assert _sent() == {}
     _as("sso-alice", service=False, namespace="ns")
     assert _sent() == {"X-Actor": "alice@example.com"}  # the actor stands alone
@@ -542,14 +539,14 @@ def test_the_agent_and_its_tenant_go_together_or_not_at_all(directory, monkeypat
 
 def test_settings_trim_templates_and_refuse_empty_ones_and_hop_by_hop_names() -> None:
     assert _load('{"X-Agent": "  {agent} "}').identity_headers() == (("X-Agent", "{agent}"),)
-    for bad in (
-        '{"X-Agent": "   "}',
-        '{"Connection": "{agent}"}',
-        '{"Transfer-Encoding": "{agent}"}',
-        '{"TE": "{agent}"}',
-        '{"Proxy-Authorization": "{agent}"}',
+    for bad, why in (
+        ('{"X-Agent": "   "}', "is empty"),
+        ('{"Connection": "{agent}"}', "end-to-end"),
+        ('{"Transfer-Encoding": "{agent}"}', "end-to-end"),
+        ('{"TE": "{agent}"}', "end-to-end"),
+        ('{"Proxy-Authorization": "{agent}"}', "end-to-end"),
     ):
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError, match=why):
             _load(bad)
 
 
@@ -557,7 +554,7 @@ def test_a_jobs_batch_groups_rows_by_the_identity_they_render(directory, monkeyp
     from server.memory.workers import embedding
 
     monkeypatch.setattr(settings, "inference_identity_headers_json", '{"X-Agent": "{agent}"}')
-    directory.owners[("acme", "nerve-t1-agent-8")] = "sa:nerve-t1:agent-8"
+    directory.owners[("acme", "cell-t1-agent-8")] = "sa:cell-t1:agent-8"
     directory.owners[("acme", "shared")] = ""
     calls: list[tuple[str, int]] = []
 
@@ -570,10 +567,10 @@ def test_a_jobs_batch_groups_rows_by_the_identity_they_render(directory, monkeyp
             return [[1.0, 0.0] for _ in texts]
 
     rows = [
-        _stub("nerve-t1-agent-8", "k1", "its own namespace"),
+        _stub("cell-t1-agent-8", "k1", "its own namespace"),
         _stub("shared", "k2", "the shared namespace, written by agent-8"),
         _stub(AGENT_NS, "k3", "agent-7's"),
     ]
-    directory.writers[("acme", "shared", "a", "u1", "-", "k2")] = "process:sa:nerve-t1:agent-8"
+    directory.writers[("acme", "shared", "a", "u1", "-", "k2")] = "process:sa:cell-t1:agent-8"
     asyncio.run(embedding._embed_rows(_Embedder(), rows))
     assert calls == [("agent-8", 2), ("agent-7", 1)]  # two namespaces, one identity: one call

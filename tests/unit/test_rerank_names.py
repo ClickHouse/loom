@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from server.clients import _http
 from server.code.api.models_search import CodeAskInput, CodeSearchInput
 from server.identity.api.models import NamespaceRegisterInput
 from server.memory.api.models_search import MemorySearchInput, MemorySearchTraceInput
@@ -37,18 +38,9 @@ def _cands() -> list[R.RerankCandidate]:
 
 
 class _Recorder:
-    """Stands in for httpx.AsyncClient and records every POST."""
+    """Stands in for the model client and records every POST."""
 
     posts: list[str] = []
-
-    def __init__(self, **_: Any) -> None:
-        pass
-
-    async def __aenter__(self) -> _Recorder:
-        return self
-
-    async def __aexit__(self, *_: Any) -> bool:
-        return False
 
     async def post(self, url: str, json: Any = None, **_: Any) -> Any:
         _Recorder.posts.append(url)
@@ -66,7 +58,7 @@ class _Recorder:
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> type[_Recorder]:
     _Recorder.posts = []
-    monkeypatch.setattr(R.httpx, "AsyncClient", _Recorder)
+    monkeypatch.setattr(_http, "get_model_client", _Recorder)
     return _Recorder
 
 

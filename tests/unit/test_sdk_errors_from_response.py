@@ -134,6 +134,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "MODEL_CALL_UNATTRIBUTED": BackendUnavailable,  # a 500 with no SDK class: mapped by status
     "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status
     "MODEL_CALL_REFUSED": AuthInsufficient,  # a 403 with no SDK class, never retried
+    "MODEL_CALL_DEFERRED": BackendUnavailable,  # a 503 with no SDK class: mapped by status
 }
 
 

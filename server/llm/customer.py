@@ -42,7 +42,6 @@ from urllib.parse import quote
 
 from server.core.errors import BackendUnavailableError, LoomServerError, ModelCallRefused
 from server.core.polled_copy import PolledCopy
-from server.llm import gateway
 from server.llm.identity import Attribution as Attribution  # what a job's batch groups by
 from server.llm.identity import IdentityUnread, split_by, splits
 from server.llm.identity import render as render_identity
@@ -185,15 +184,20 @@ def attribution() -> Attribution:
     )
 
 
+def job_call() -> bool:
+    """Whether the current model call is a job's or a CLI's (inside `for_org`),
+    not a request's: only a job's calls wait out an identity the gateway holds
+    (`server.llm.gateway.sending`)."""
+    return _attribution.get() is not None
+
+
 async def require() -> Customer:
     """Whom the current model call is for, checked before anything is sent,
     cached or recorded: no customer with no customer header configured, and the
     identity headers rendered (`identity.render`). Raises ModelCallsDisabled
     when the call's org is switched off (header or not), Unattributed, logged,
-    when a header is configured and the call names no org, IdentityUnread when
-    what names its identity cannot be read, and, for a job's call, the
-    ModelCallRefused of an identity the gateway refused within its cooldown,
-    which sends nothing."""
+    when a header is configured and the call names no org, and IdentityUnread
+    when what names its identity cannot be read."""
     who = attribution()
     org = who.org
     if org and await switched_off(org):
@@ -202,12 +206,7 @@ async def require() -> Customer:
         # An identity header names whom a call is for: one that names no org would go
         # out as the gateway's default identity, billed to no one it names.
         _unattributed("names no org for its identity headers")
-    out = Customer(name=_customer_named(org), identity=await render_identity(who))
-    if _attribution.get() is not None and splits():
-        held = gateway.refused_for(gateway.identity_of(dict(out.identity)))
-        if held is not None:
-            raise held  # a job leaves that identity's work and goes on with others
-    return out
+    return Customer(name=_customer_named(org), identity=await render_identity(who))
 
 
 def _customer_named(org: str) -> str:
