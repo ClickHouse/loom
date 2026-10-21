@@ -1834,6 +1834,7 @@ CREATE TABLE IF NOT EXISTS loom.learnings_supporters
 (
     `org` LowCardinality(String),
     `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
     `candidate_id` UUID,
     `user_id` String,
     `session_id` String,

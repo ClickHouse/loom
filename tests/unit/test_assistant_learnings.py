@@ -1166,6 +1166,62 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("support_bot_token")
+async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import knowledge_search
+    from server.memory.api.models_search import MemorySearchInput
+    from server.memory.app.ask.context_blocks import knowledge_passages
+
+    asked: list[int] = []
+
+    async def search(input: Any) -> Any:
+        asked.append(input.top_k)
+        return _knowledge_hits(input.top_k)
+
+    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    monkeypatch.setattr(settings, "memory_ask_knowledge_top_k", 2)
+    block, n = await knowledge_passages(
+        MemorySearchInput(org="o", namespace="ns", agent="sales-bot", query="refund"),
+        "refund",
+        enabled=True,
+    )
+
+    assert n == 2 and "support rule" in block and "Refunds take five days." in block
+    assert "sales rule" not in block
+    assert asked == [2, assistant_rules.hits_to_ask(2)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("support_bot_token")
+async def test_a_pinned_tokens_ask_synthesis_serves_its_signed_bots_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import knowledge_search
+    from server.memory.api.models_ask import MemoryAskInput
+    from server.memory.app.ask import handler
+    from server.memory.domain import ask_routing
+
+    async def search(input: Any) -> Any:
+        return _knowledge_hits(input.top_k)
+
+    picked: list[list[str]] = []
+
+    def pick(hits: list[Any], max_docs: int) -> list[str]:
+        picked.append([h.source_uri for h in hits])
+        return []
+
+    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    monkeypatch.setattr(ask_routing, "is_corpus_task", lambda _q: True)
+    monkeypatch.setattr(ask_routing, "pick_documents", pick)
+    ask = MemoryAskInput(org="o", namespace="ns", agent="sales-bot", query="summarise refunds")
+
+    assert await handler._maybe_route_to_synthesize(ask) is None
+    assert picked == [["support-rule", "refunds.md"]]
+
+
+@pytest.mark.asyncio
 async def test_a_failed_wider_search_answers_the_first_pass_served_hits() -> None:
     other = ["source-kind:assistant_turn", "agent:sales-bot"]
     hits = [{"id": 1, "tags": other}, {"id": 2, "tags": []}]
@@ -1186,7 +1242,7 @@ async def test_supporter_stats_count_a_session_once_and_quote_one_supporter() ->
 
     def row(user: str, session: str, conf: float, asked: str, said: str, at: str) -> str:
         return (
-            "INSERT INTO loom.learnings_supporters VALUES ('o', 'ns', "
+            "INSERT INTO loom.learnings_supporters VALUES ('o', 'ns', 'support-bot', "
             f"'{_SUPPORTED}', '{user}', '{session}', {conf}, '{asked}', '{said}', '{at}')"
         )
 

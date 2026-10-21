@@ -472,7 +472,8 @@ process tier expires within `LOOM_EMBEDDING_CACHE_TTL_S`.
 
 A bot's rule (`about="agent"`) is never written as a memory: `loom.bulk_write` files it
 to `loom.learnings_queue` as a candidate and adds a row with the user's quotes to
-`loom.learnings_supporters`. A user erasure's `learnings_queue.delete` step deletes the
+`loom.learnings_supporters`. A supporter row carries the identity tuple, its `agent`
+the bot the rule was said to, so it names that bot without its candidate. A user erasure's `learnings_queue.delete` step deletes the
 user's supporter rows, then each `assistant_turn` candidate left with no supporter. A
 pending one is deleted. A decided one keeps its decision on a new version with the rule
 blanked, so a rejected rule never comes back as pending. Both deletes are bounded to the

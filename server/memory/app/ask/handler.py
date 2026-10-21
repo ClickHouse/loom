@@ -401,21 +401,33 @@ async def _maybe_route_to_synthesize(input: MemoryAskInput) -> MemoryAskOutput |
         from server.knowledge.app.knowledge_search import handle_knowledge_search
         from server.knowledge.app.synthesize import handle_knowledge_synthesize
         from server.memory.api.models_ask import MemoryAskOutput
+        from server.memory.app.agent_rules import request_rule_agent, served_hits
 
-        found = await handle_knowledge_search(
-            KnowledgeSearchInput(
-                org=input.org,
-                namespace=input.namespace,
-                query=input.query,
-                top_k=20,
-                namespace_scope="this",
-                collapse_sections=False,
-                # The ask's hard tag filter reaches every leg.
-                tags=_hard_tags(input),
+        async def search(top_k: int) -> list[Any]:
+            found = await handle_knowledge_search(
+                KnowledgeSearchInput(
+                    org=input.org,
+                    namespace=input.namespace,
+                    query=input.query,
+                    top_k=top_k,
+                    namespace_scope="this",
+                    collapse_sections=False,
+                    # The ask's hard tag filter reaches every leg.
+                    tags=_hard_tags(input),
+                )
             )
+            return list(found.results)
+
+        # Another bot's promoted rule is not a rule about this agent.
+        hits = await served_hits(
+            await search(20),
+            search,
+            lambda h: list(getattr(h, "tags", None) or []),
+            request_rule_agent(input.agent),
+            20,
         )
         docs = ask_routing.pick_documents(
-            found.results,
+            hits,
             max_docs=int(settings.memory_ask_synthesize_route_max_docs),
         )
         if not docs:

@@ -105,6 +105,7 @@ _SUPPORTER_PAIRS = 50  # not a setting: a bound on one wire field's length
 SUPPORTER_COLUMNS = (
     "org",
     "namespace",
+    "agent",
     "candidate_id",
     "user_id",
     "session_id",

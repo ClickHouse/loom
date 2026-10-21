@@ -79,6 +79,7 @@ async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> boo
             {
                 "org": state.org,
                 "namespace": state.namespace,
+                "agent": agent,
                 "candidate_id": cid,
                 "user_id": state.user_id,
                 "session_id": state.session_id,

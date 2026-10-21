@@ -110,7 +110,8 @@ request's `(org, namespace, agent)`:
   tagged `agent:<agent>`; the tag names the bot, and the document's author is the
   reviewer). The agent reads that serve knowledge serve it to that bot only, for
   every user, a user bounded to their own rows included: `context.pack` with
-  `include_knowledge`, `memory.stack` and `loom_search`. Another agent in the
+  `include_knowledge`, `memory.stack`, `loom_search` and `memory.ask` (its knowledge
+  passages and its whole-document route). Another agent in the
   namespace is not served it, and a rule filed for every agent (`-`) carries no agent
   tag and is served to every agent. `knowledge.search` is not filtered by agent; a bot
   finds its own rules with `knowledge.search(tags=["agent:<agent>"])`.

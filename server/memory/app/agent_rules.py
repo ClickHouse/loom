@@ -1,6 +1,6 @@
 """Which bot a request files rules for and is served promoted rules as, and the
 filter that keeps another bot's rules out of the knowledge hits of
-`context.pack`, `memory.stack` and `loom_search`. It reads the request's auth
+`context.pack`, `memory.stack`, `loom_search` and `memory.ask`. It reads the request's auth
 context, so it lives in app; the tag rule is server.memory.domain.assistant_rules."""
 
 from __future__ import annotations
