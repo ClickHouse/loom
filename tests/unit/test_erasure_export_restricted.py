@@ -340,8 +340,9 @@ _TURNS = (
     " role, content, user_id, ts, is_saved, saved_at, tombstoned_at) VALUES"
     f" ('{ORG}', '{STD}', 'bot', 't1', 'm-saved', 'user', 'aaaa', 'u1',"
     " '2026-01-01 00:00:01', true, '2026-01-02 00:00:00', NULL),"
+    # A sub-second stamp, as a real turn has: the text read must still reach it.
     f" ('{ORG}', '{STD}', 'bot', 't1', 'm-turn', 'assistant', 'bbbb', 'u1',"
-    " '2026-01-01 00:00:02', false, NULL, NULL),"
+    " '2026-01-01 00:00:02.500', false, NULL, NULL),"
     f" ('{ORG}', '{STD}', 'bot', 't1', 'm-gone', 'user', 'cccc', 'u1',"
     " '2026-01-01 00:00:03', false, NULL, '2026-01-03 00:00:00'),"
     f" ('{ORG}', '{STD}', 'bot', 't2', 'm-other', 'user', 'dddd', 'u2',"
@@ -358,10 +359,12 @@ _HIDING = Shown(hidden=(PRIV,), collections=())
 
 
 class _LocalTurns:
-    """clickhouse-local holding `_TURNS`: six bytes of text a row (content, '{}' metadata)."""
+    """clickhouse-local holding `_TURNS`: six bytes of text a row (content, '{}' metadata).
+    Each `ts` comes back as a datetime, as the server's client returns it."""
 
     async def query_all(self, sql, params=None, **_k):
-        return run([ddl("conversations"), _TURNS], sql, params)
+        rows = run([ddl("conversations"), _TURNS], sql, params)
+        return [{**r, "ts": datetime.fromisoformat(r["ts"])} if "ts" in r else r for r in rows]
 
 
 def _read_turns(scope_type: str, scope_value: str, *, include_tombstoned=True, max_bytes=1000):
