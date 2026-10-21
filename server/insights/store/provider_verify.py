@@ -1,5 +1,7 @@
 """Fail-closed verification of staged re-embedding before publication."""
 
+import asyncio
+from typing import Any
 from uuid import UUID
 
 from server.core.repo_base import _CHClient, _default_client
@@ -54,6 +56,17 @@ def _emptied(schema: SourceSchema, columns: list[str]) -> str:
 _EMPTIED_PAGE = 1000  # not a setting: read buffer size; any page gives the same verdict
 
 
+def _lost_plain_vector(emptied: dict[int, Any], sources: list[dict[str, Any]]) -> bool:
+    """Whether a live source row lost a vector its target row was staged without, and its
+    text does not read as a credential."""
+    for r in sources:
+        pairs = zip(emptied[int(r["ordinal"])], r["has_vector"], strict=True)
+        lost_vector = any(e and v for e, v in pairs)
+        if lost_vector and r["live"] and not reads_high(str(r["text"])):
+            return True
+    return False
+
+
 async def _holds_plain_emptied(
     names: StagingNames,
     schema: SourceSchema,
@@ -87,11 +100,8 @@ async def _holds_plain_emptied(
                 f" WHERE {_ORDINAL} IN {{ordinals:Array(UInt64)}}",
                 {"ordinals": sorted(emptied)},
             )
-            for r in sources:
-                pairs = zip(emptied[int(r["ordinal"])], r["has_vector"], strict=True)
-                lost_vector = any(e and v for e, v in pairs)
-                if lost_vector and r["live"] and not reads_high(str(r["text"])):
-                    return True
+            if await asyncio.to_thread(_lost_plain_vector, emptied, sources):
+                return True
         if len(page) < _EMPTIED_PAGE:
             return False
         after = int(page[-1]["ordinal"])

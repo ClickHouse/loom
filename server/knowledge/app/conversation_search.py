@@ -8,6 +8,7 @@ shape (no vector), not a service concern.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -16,7 +17,7 @@ from server.core.repo_base import _default_client
 from server.core.vectors.search_settings import vector_search_settings
 from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.knowledge.domain.conversations import ConversationRole
-from server.memory.domain.sensitivity import HELD_MARGIN, reads_high
+from server.memory.domain.sensitivity import HELD_MARGIN, without_credentials
 
 
 class _CHClient(Protocol):
@@ -126,7 +127,10 @@ async def vector_search(
         """,
         params=params,
     )
-    # The whole embedded text is read so the credential check below covers all of it.
+    # The whole embedded text is read so the credential check covers all of it. A turn that
+    # reads as a credential gets no embedding row; this holds back a row an earlier build
+    # wrote for one.
+    rows = await asyncio.to_thread(without_credentials, rows, lambda r: str(r["embedded_text"]))
     excerpt_chars = int(settings.conversation_search_excerpt_chars)
     hits = [
         ConversationHit(
@@ -138,9 +142,6 @@ async def vector_search(
             distance=float(r["distance"]),
         )
         for r in rows
-        # A turn that reads as a credential gets no embedding row; this holds back a row
-        # an earlier build wrote for one.
-        if not reads_high(str(r["embedded_text"]))
     ]
     # Recency breaks exact distance ties (newest first).
     hits.sort(key=lambda h: (h.distance, _ts_desc_key(h.ts)))

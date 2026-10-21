@@ -271,6 +271,20 @@ def test_credential_spans_map_an_escaped_match_back_to_the_text() -> None:
     assert text[start:end] == "password=hunter2hunter2"
 
 
+def test_credential_spans_read_many_unclosed_key_headers_in_linear_time() -> None:
+    import time
+
+    from server.memory.domain.sensitivity import credential_spans
+
+    # About 400 KB of headers with no closing line, the size of a long conversation. A
+    # search for a closing line that ran on past the next header took tens of seconds here.
+    text = ("-----BEGIN " + "PRIVATE KEY-----\n") * 15_000
+    started = time.perf_counter()
+    spans = credential_spans(text)
+    assert time.perf_counter() - started < 2.0
+    assert len(spans) == 15_000
+
+
 _KEY_HEAD = "the staging account uses " + AWS_KEY_ID[:10]
 _KEY_TAIL = AWS_KEY_ID[10:] + " for uploads"
 

@@ -821,33 +821,35 @@ returns it.
 
 - Chunk writers: a verbatim chunk in `loom.memory_chunks` (a conversation chunk
   `memory.set_from_messages` writes, a chunk of a long `memory.set` value, a chunk
-  `memory.import_evidence` writes) is held this way. Chunks overlap and can be cut through
-  a key, and a chunk that holds only a key's head or tail does not read as one on its own.
-  The conversation and long-value writers check the chunked text once, plus one chunk past
-  its end for a key that crosses it, in a worker thread, and also hold every chunk whose
-  character range overlaps a credential, and every chunk whose own text reads as one (a
-  chunk can start inside a word, where a pattern's word boundary falls). A private-key
-  block reads as a credential from its header to its closing line (without one, through the
-  base64 characters, line breaks and `Proc-Type:` / `DEK-Info:` lines after the header, so
-  prose ends it), so
-  every chunk its body covers is held, though a body line does not read as a key alone. A chunk of a long `memory.set` value is held by its own text whatever its
-  row's label; a `low` row stays findable through its own embedding.
-  `memory.import_evidence` applies the same rule to each session's text rebuilt from its imported chunks: the chunks in
-  `chunk_index` order, each one's overlap with the chunk before it dropped (a repeat of at
-  least 50 characters; chunks with no overlap are joined whole), and a gap in `chunk_index`
-  starts a new text. Imported chunks have no minimum length, so a key can run through a
-  whole chunk; every chunk a key in the rebuilt text touches is held, and a private-key
-  block with no closing line holds every chunk its body lines cover. A session written
-  by two calls can hold two texts at one index, which leaves no single text to rebuild, so
-  each chunk of such a session is held when its own text reads as a credential, or when it
-  and a chunk at the next index that it overlaps (a repeat of at least 50 characters) make a
-  text where a key touches it; two chunks with no overlap are not joined. The check reads one
-  call's chunks only (at most 256), so a key cut at the boundary between the last chunk of
-  one call and the first chunk of the next reads as a credential in neither, and both
-  chunks are embedded. `loom okf import` sends each session's chunks whole in one call, so
-  only a session of more than 256 chunks can still hit this gap.
-  `memory.get` on a `chunk:` key leaves out a neighbour with no vector, as it leaves out
-  one that reads as a credential, and audits a key read of either.
+  `memory.import_evidence` writes) is held this way. Chunks overlap and can be cut
+  through a key, and a chunk that holds only a key's head or tail does not read as one
+  on its own. The conversation and long-value writers check the chunked text once, plus
+  one chunk past its end for a key that crosses it, in a worker thread, and also hold
+  every chunk whose character range overlaps a credential, and every chunk whose own
+  text reads as one (a chunk can start inside a word, where a pattern's word boundary
+  falls). A private-key block reads as a credential from its header to its closing line
+  (without one, through the base64 characters, line breaks and `Proc-Type:` /
+  `DEK-Info:` lines after the header, so prose ends it), so every chunk its body covers
+  is held, though a body line does not read as a key alone. A chunk of a long
+  `memory.set` value is held by the value's text, as a conversation chunk is, whatever
+  its row's label; a `low` row stays findable through its own embedding.
+  `memory.import_evidence` applies the same rule to each session's text rebuilt from its
+  imported chunks: the chunks in `chunk_index` order, each one's overlap with the chunk
+  before it dropped (a repeat of at least 50 characters; chunks with no overlap are
+  joined whole), and a gap in `chunk_index` starts a new text. Imported chunks have no
+  minimum length, so a key can run through a whole chunk; every chunk a key in the
+  rebuilt text touches is held, and a private-key block with no closing line holds every
+  chunk its body lines cover. A session written by two calls can hold two texts at one
+  index, which leaves no single text to rebuild, so each chunk of such a session is held
+  when its own text reads as a credential, or when it and a chunk at the next index that
+  it overlaps (a repeat of at least 50 characters) make a text where a key touches it;
+  two chunks with no overlap are not joined. The check reads one call's chunks only (at
+  most 256), so a key cut at the boundary between the last chunk of one call and the
+  first chunk of the next reads as a credential in neither, and both chunks are
+  embedded. `loom okf import` sends each session's chunks whole in one call, so only a
+  session of more than 256 chunks can still hit this gap. `memory.get` on a `chunk:` key
+  leaves out a neighbour with no vector, as it leaves out one that reads as a
+  credential, and audits a key read of either.
 - Digests and turns: a session digest whose text reads as a credential is written without
   a vector. A `conversation.append` turn that reads as one is stored as written in
   `loom.conversations` and gets no row in `loom.conversation_embeddings`, which keeps it
