@@ -634,7 +634,8 @@ def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     so a token bound to one end user never shares a precedent with another
     user's token whatever the body names. The agent whose promoted rules the
     knowledge passages serve is part of the shape when it is not the body's
-    agent, so a bot's token never reuses an answer drawn from another bot's rule."""
+    agent ('-' when the body sends none), so a bot's token never reuses an
+    answer drawn from another bot's rule."""
     import hashlib
     import json
 
@@ -648,7 +649,8 @@ def ask_shape_sha256(input: MemoryAskInput, settings: Any) -> str:
     # Only a user or session the read filters on is part of the shape.
     exclude |= {f for f in ("user_id", "session_id") if getattr(input, f) in (None, "-")}
     shape = input.model_dump(exclude=exclude, exclude_defaults=True)
-    if rule_agent != input.agent:
+    # An empty body agent is served as '-', so only a pin that changes the agent adds the key.
+    if rule_agent != (input.agent or "-"):
         shape["rule_agent"] = rule_agent
     # Absent, not empty, at every default: the shape a build without this key hashed.
     if shaped := _shape_settings(settings):

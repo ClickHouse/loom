@@ -1,6 +1,7 @@
-"""Erasure steps for the tables outside the census: conversations, parked
+"""Erasure steps for the ledger, trace and queue tables: conversations, parked
 context, session briefs, the idempotency cache, traces, events, tasks, agent
-runs and the curation, consolidation and projection-failure ledgers."""
+runs, the curation, consolidation and projection-failure ledgers, and the
+learnings queue and its supporters."""
 
 from __future__ import annotations
 
@@ -22,14 +23,15 @@ from server.erasure.store.predicates import (
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Steps for tables outside the census. Every `loom.*` table is a census row,
+# Steps for the ledger, trace and queue tables. Every `loom.*` table is a census row,
 # a documented step-only table or a NO_MEMORY_CONTENT entry (the registry
 # test holds schema.sql to the three lists). These steps reach the readable
 # tables that fall outside both lists: raw conversation
 # turns, parked context, search/exposure/code traces and the events stream
 # they come from, the ingest drop ledger, code anchors, chunk-derived entity
-# rows, the learnings queue, agent runs, curation tables, the
-# consolidation and projection-failure ledgers. All are keyed on
+# rows, agent runs, curation tables, the consolidation and
+# projection-failure ledgers. The learnings queue and its supporters are
+# census rows whose steps live here too. All are keyed on
 # (org, namespace) and reach the user axis where the table carries one.
 # ---------------------------------------------------------------------------
 
