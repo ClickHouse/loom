@@ -656,6 +656,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch=ch,
     )
     await PF.scan_active_projection_failures(ch=ch)
+    await PF.scan_active_projection_failures(after=(_DT, _UUID), ch=ch)
     await PF.mark_projection_failures_resolved(org=ORG, failure_ids=[_UUID], ch=ch)
     await EQ.claim_batch(
         limit=10,

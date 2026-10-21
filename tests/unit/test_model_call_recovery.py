@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -169,7 +170,12 @@ def test_ambiguous_repairs_leave_room_for_other_failures(monkeypatch, clock):
     switch_off()
     failures = [
         SimpleNamespace(
-            failure_id=key, org="acme", namespace="ns", projection="memory_chunks", payload={}
+            failure_id=key,
+            org="acme",
+            namespace="ns",
+            projection="memory_chunks",
+            payload={},
+            created_at=datetime(2026, 1, 1),
         )
         for key in ("ambiguous", "healthy")
     ]
@@ -180,8 +186,11 @@ def test_ambiguous_repairs_leave_room_for_other_failures(monkeypatch, clock):
         async def execute(self, sql, params=None):
             marked.extend(params["failure_ids"])
 
-    async def scan(*, limit, exclude_orgs, exclude_ids):
-        return [f for f in failures if f.failure_id not in exclude_ids][:limit]
+    async def scan(*, limit, exclude_orgs, after):
+        start = next(
+            (i + 1 for i, f in enumerate(failures) if after == (f.created_at, f.failure_id)), 0
+        )
+        return failures[start : start + limit]
 
     async def writer(failure, **kwargs):
         if failure.failure_id == "ambiguous":

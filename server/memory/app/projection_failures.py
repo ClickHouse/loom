@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from server.core.ch import get_client
-from server.core.datetimes import naive_utc_now, parse_iso_dt, to_naive_utc
+from server.core.datetimes import as_aware_utc, naive_utc_now, parse_iso_dt, to_naive_utc
 from server.identity.domain.read_scope import (
     READ_SCOPE_KEY,
     WHOLE_NAMESPACE,
@@ -526,7 +526,7 @@ async def scan_active_projection_failures(
     *,
     limit: int = 50,
     exclude_orgs: frozenset[str] = frozenset(),
-    exclude_ids: frozenset[str] = frozenset(),
+    after: tuple[datetime, str] | None = None,
     ch: Any | None = None,
 ) -> list[ProjectionFailureRow]:
     """Return active failures across orgs for the repair worker, oldest first. Failures
@@ -536,10 +536,20 @@ async def scan_active_projection_failures(
     from server.memory.store.conflict_resolver import ERASING_ORGS_SQL
 
     ch = ch or get_client()
+    params: dict[str, Any] = {
+        "lim": int(limit),
+        "off": sorted(exclude_orgs),
+        "follow_owed": FOLLOW_OWED,
+        "grace": FOLLOW_OWED_GRACE_S,
+    }
+    cursor_sql = ""
+    if after is not None:
+        cursor_sql = "AND (f.created_at, f.failure_id) > ({after_at:DateTime}, {after_id:UUID})"
+        params.update(after_at=as_aware_utc(after[0]), after_id=after[1])
     rows = await ch.query_all(
         f"""
         SELECT
-            toString(failure_id) AS failure_id,
+            toString(f.failure_id) AS failure_id,
             org,
             namespace,
             agent,
@@ -553,24 +563,18 @@ async def scan_active_projection_failures(
             status,
             created_at,
             resolved_at
-        FROM loom.memory_projection_failures
+        FROM loom.memory_projection_failures AS f
         WHERE status = 'active'
           AND org NOT IN ({ERASING_ORGS_SQL})
           AND org NOT IN {{off:Array(String)}}
-          AND toString(failure_id) NOT IN {{held:Array(String)}}
+          {cursor_sql}
           AND NOT (projection = {{follow_owed:String}}
                    AND created_at > now() - INTERVAL {{grace:UInt32}} SECOND)
-        ORDER BY created_at ASC, failure_id ASC
+        ORDER BY f.created_at ASC, f.failure_id ASC
         LIMIT {{lim:UInt32}}
         SETTINGS select_sequential_consistency = 1
         """,
-        params={
-            "lim": int(limit),
-            "off": sorted(exclude_orgs),
-            "held": sorted(exclude_ids),
-            "follow_owed": FOLLOW_OWED,
-            "grace": FOLLOW_OWED_GRACE_S,
-        },
+        params=params,
     )
     return [_row_from_ch(dict(row)) for row in rows]
 

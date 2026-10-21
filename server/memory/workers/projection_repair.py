@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from server.llm import customer
 from server.settings import settings
-from server.workers.holds import UNREAD_HOLD_S, Held
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
-_HELD: Held[str] = Held()
+# Walk past failures that remain active, including held identities.
+_after: tuple[datetime, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,10 @@ class ProjectionRepairResult:
 async def run_pass(
     cfg: ProjectionRepairConfig | None = None,
 ) -> ProjectionRepairResult:
+    global _after
+
     cfg = cfg or ProjectionRepairConfig()
+    limit = max(1, int(cfg.max_failures_per_pass))
     result = ProjectionRepairResult()
     with record_pass("projection_repair") as rec:
         from server.memory.app.projection_failures import (
@@ -50,15 +54,13 @@ async def run_pass(
         )
 
         failures = await scan_active_projection_failures(
-            limit=max(1, int(cfg.max_failures_per_pass)),
+            limit=limit,
             exclude_orgs=await customer.switched_off_orgs(),  # theirs wait, taking no slot
-            exclude_ids=_HELD.current(),
+            after=_after,
         )
         retries = await retry_failures(failures)
         result.scanned = len(retries)
         for retry in retries:
-            if retry.reason == "model_calls_held":
-                _HELD.hold([retry.failure_id], UNREAD_HOLD_S)
             if retry.retried:
                 result.retried += 1
             if retry.resolved:
@@ -83,6 +85,13 @@ async def run_pass(
             "abandoned": result.abandoned,
             "failed": len(result.failed),
         }
+
+    if len(failures) < limit:
+        _after = None
+    else:
+        last = failures[-1]
+        assert last.created_at is not None  # The table column is non-nullable.
+        _after = (last.created_at, last.failure_id)
 
     log.info(
         "projection repair pass: scanned=%d retried=%d resolved=%d unsupported=%d"

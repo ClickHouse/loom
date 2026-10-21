@@ -93,9 +93,7 @@ def test_projection_repair_scans_no_failure_of_a_switched_off_org(monkeypatch) -
     assert _excludes(ch, "acme")
     seen: list[frozenset[str]] = []
 
-    async def scan(
-        *, limit: int, exclude_orgs: frozenset[str], exclude_ids: frozenset[str]
-    ) -> list[Any]:
+    async def scan(*, limit: int, exclude_orgs: frozenset[str], after: Any) -> list[Any]:
         seen.append(exclude_orgs)
         return []
 

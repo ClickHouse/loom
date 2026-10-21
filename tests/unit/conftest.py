@@ -691,6 +691,16 @@ def _deferred_ledgers_left_empty() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _worker_cursors_left_empty() -> Iterator[None]:
+    """A worker's next page must not depend on a previous test's pass."""
+    if module := sys.modules.get("server.memory.workers.projection_repair"):
+        module._after = None
+    yield
+    if module := sys.modules.get("server.memory.workers.projection_repair"):
+        module._after = None
+
+
+@pytest.fixture(autouse=True)
 def _model_call_holds_left_empty() -> Iterator[None]:
     """Leave no job's held work, and no gateway hold, to the next test.
 
