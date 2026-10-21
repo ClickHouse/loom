@@ -8,7 +8,7 @@
 //   - the view's chunk is preloaded for the URL before any answer,
 //   - the page's first data read leaves while list_mine is still pending,
 //   - the late list_mine answer does not replay the page's reads.
-import { act, cleanup, render } from "./test/rtl";
+import { act, cleanup, fireEvent, render, screen } from "./test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { preloadView } = vi.hoisted(() => ({ preloadView: vi.fn() }));
@@ -274,6 +274,210 @@ describe("boot order", () => {
     await until(() => useStore.getState().identity?.namespace === "joined");
     expect(useStore.getState().identity?.namespace).toBe("joined");
   });
+});
+
+// A link names its namespace (`?namespace=`): one the account can read opens for this tab
+// and is never saved as the pick; one it cannot read shows a page saying so, over the
+// namespace a visit without the link opens, and nothing is read there or saved.
+describe("a link's namespace", () => {
+  const JOINED = { ...MINE[0], namespace: "joined", role: "writer" };
+  let calls: { path: string; body: Record<string, unknown> | null }[];
+  function serve(rows: unknown[] | "failing") {
+    calls = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const path = url
+          .replace(/^https?:\/\/[^/]+/, "")
+          .split("?")[0]
+          .replace("/v1/", "");
+        calls.push({ path, body: typeof init?.body === "string" ? JSON.parse(init.body) : null });
+        if (path === "whoami")
+          return json({ authenticated: true, subject: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+        if (path === "namespace.list_mine")
+          return rows === "failing" ? new Response("{}", { status: 500 }) : json({ ...GENERIC, rows });
+        return json(GENERIC);
+      }),
+    );
+  }
+  const address = () => window.location.pathname + window.location.search;
+  const savedDefault = () => calls.some((c) => c.path === "me/set-default-namespace");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+    invalidateShared();
+    resetNamespaceRoleCache();
+    useStore.setState({
+      authed: true,
+      whoami: null,
+      myNamespaces: null,
+      identity: null,
+      deniedNamespace: null,
+      view: "setup",
+    });
+    Element.prototype.scrollTo = vi.fn();
+    localStorage.setItem("loom_token_v1", jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] }));
+    localStorage.setItem("loom_namespace_v1", NS);
+  });
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null, deniedNamespace: null });
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("opens a namespace the account can read for this tab, and saves nothing", async () => {
+    window.history.replaceState(null, "", "/memories?namespace=joined");
+    serve([...MINE, JOINED]);
+    render(<App />);
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: "joined" }, deniedNamespace: null });
+    expect(address()).toBe("/memories?namespace=joined");
+    expect(calls.filter((c) => c.path === "memory.list").every((c) => c.body?.namespace === "joined")).toBe(true);
+    expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
+    expect(savedDefault()).toBe(false);
+  });
+
+  it("says it has no access to one the account cannot read, reads nothing there, and saves nothing", async () => {
+    window.history.replaceState(null, "", "/memories?namespace=group-b-shared&memory=k");
+    serve(MINE);
+    render(<App />);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to group-b-shared" }) !== null);
+    expect(useStore.getState()).toMatchObject({
+      identity: { namespace: NS },
+      deniedNamespace: "group-b-shared",
+      inspectedMemoryKey: null,
+    });
+    expect(address()).toBe("/memories?namespace=group-b-shared&memory=k");
+    // The picker is there, on the namespace under the page.
+    expect(screen.getByRole("button", { name: `Namespace: ${NS}` })).toBeInTheDocument();
+    expect(calls.some((c) => c.body?.namespace === "group-b-shared")).toBe(false);
+    expect(calls.some((c) => c.path.startsWith("memory."))).toBe(false);
+    expect(localStorage.getItem("loom_namespace_v1")).toBe(NS);
+    expect(savedDefault()).toBe(false);
+    // Continue: the page the link asked for, on the namespace the picker shows.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: `Continue in ${NS}` }));
+    });
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    expect(screen.queryByRole("heading", { name: /No access/ })).toBeNull();
+    expect(address()).toBe(`/memories?namespace=${NS}`);
+    expect(calls.filter((c) => c.path === "memory.list").every((c) => c.body?.namespace === NS)).toBe(true);
+  });
+
+  it("says when the account's request to join it is still waiting", async () => {
+    window.history.replaceState(null, "", "/memories?namespace=group-c-shared");
+    serve([...MINE, { ...MINE[0], namespace: "group-c-shared", role: "writer", status: "pending" }]);
+    render(<App />);
+    await until(() => screen.queryByRole("heading", { level: 1, name: "No access to group-c-shared" }) !== null);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Your request to join is waiting for approval" }),
+    ).toBeTruthy();
+  });
+
+  it("takes the page from ?view= on the bare root and moves to its path", async () => {
+    window.history.replaceState(null, "", `/?view=memories&namespace=${NS}`);
+    serve(MINE);
+    render(<App />);
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    expect(useStore.getState().view).toBe("memories");
+    expect(address()).toBe(`/memories?namespace=${NS}`);
+  });
+
+  it("when the membership read fails, a link opens no namespace the claims lack: its access could not be checked", async () => {
+    window.history.replaceState(null, "", "/memories?namespace=joined&memory=k");
+    serve("failing");
+    render(<App />);
+    await until(
+      () => screen.queryByRole("heading", { level: 1, name: "Couldn't check your access to joined" }) !== null,
+    );
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: NS }, deniedNamespace: "joined" });
+    expect(screen.queryByText(/cannot read/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(calls.some((c) => c.body?.namespace === "joined")).toBe(false);
+    expect(calls.some((c) => c.path.startsWith("memory."))).toBe(false);
+  });
+
+  it("when the membership read fails, a reload still opens the saved pick: the server answers its reads", async () => {
+    // Every address names its namespace, so a reload of the saved pick is a link to it.
+    localStorage.setItem("loom_namespace_v1", "joined");
+    window.history.replaceState(null, "", "/memories?namespace=joined");
+    serve("failing");
+    render(<App />);
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    expect(useStore.getState()).toMatchObject({ identity: { namespace: "joined" }, deniedNamespace: null });
+    expect(calls.filter((c) => c.path === "memory.list").every((c) => c.body?.namespace === "joined")).toBe(true);
+  });
+
+  it("takes and scrubs a link's token even when the return's code fails to load, and boots on", async () => {
+    vi.doMock("./lib/linkToken", () => {
+      throw new Error("Failed to fetch dynamically imported module");
+    });
+    try {
+      sessionStorage.setItem(
+        "loom_sign_in_from_v1",
+        JSON.stringify({ path: "/memories?namespace=joined", at: Date.now() }),
+      );
+      localStorage.removeItem("loom_token_v1");
+      useStore.setState({ authed: false });
+      const token = jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] });
+      window.history.replaceState(null, "", `/#token=${token}`);
+      serve(MINE);
+      render(<App />);
+      await until(() => useStore.getState().identity !== null && useStore.getState().view === "setup");
+      expect(localStorage.getItem("loom_token_v1")).toBe(token);
+      expect(window.location.href).not.toContain("token=");
+      // No way back to the page the sign-in started on: the bare root's landing instead.
+      expect(address()).toBe(`/settings?namespace=${NS}`);
+      expect(screen.queryByText(/Auth bootstrap failed/)).toBeNull();
+    } finally {
+      vi.doUnmock("./lib/linkToken");
+    }
+  });
+
+  it("a move inside one view after a switch brings the address back to the page's namespace", async () => {
+    window.history.replaceState(null, "", `/memories?namespace=${NS}`);
+    serve(MINE);
+    render(<App />);
+    await until(() => calls.some((c) => c.path === "memory.list"));
+    // An entry of the same page made in another namespace, with no stamp of the app's (as the
+    // Graph pushes its walks), and Back onto it.
+    window.history.pushState(null, "", "/memories?namespace=other&memory=k");
+    await act(async () => {
+      window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    });
+    expect(address()).toBe(`/memories?namespace=${NS}`);
+    expect(useStore.getState().identity?.namespace).toBe(NS);
+  });
+
+  for (const root of ["/", "/me"]) {
+    it(`a deep link survives the sign-in redirect: the token comes back to ${root}, the page opens`, async () => {
+      // The gate remembered the link before it sent the browser to the identity provider.
+      sessionStorage.setItem(
+        "loom_sign_in_from_v1",
+        JSON.stringify({ path: "/memories?namespace=joined", at: Date.now() }),
+      );
+      localStorage.removeItem("loom_token_v1");
+      useStore.setState({ authed: false });
+      window.history.replaceState(
+        null,
+        "",
+        `${root}#token=${jwt({ sub: "alice", org: ORG, namespaces: [NS], roles: ["ADMIN"] })}`,
+      );
+      serve([...MINE, JOINED]);
+      render(<App />);
+      await until(() => calls.some((c) => c.path === "memory.list"));
+      expect(useStore.getState()).toMatchObject({ view: "memories", identity: { namespace: "joined" } });
+      expect(address()).toBe("/memories?namespace=joined");
+      expect(window.location.hash).toBe("");
+      expect(sessionStorage.getItem("loom_sign_in_from_v1")).toBeNull();
+      expect(localStorage.getItem("loom_token_v1")).not.toBeNull();
+    });
+  }
 });
 
 describe("login link", () => {

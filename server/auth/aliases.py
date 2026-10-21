@@ -77,7 +77,8 @@ async def _read(org: str, subject: str, ch: object | None) -> list[str]:
         FROM loom.namespaces FINAL
         WHERE org = {org:String} AND ifNull(active, true) = true
           AND contact_email != ''
-          AND lower({sub:String}) IN (lower(owner_email), lower(contact_email))
+          AND (lower({sub:String}) = lower(owner_email)
+               OR lower({sub:String}) = lower(contact_email))
         LIMIT 8
         """,
         params={"org": org, "sub": subject},
