@@ -857,11 +857,13 @@ returns it.
   refused (`reason: "summary-reads-as-credential"`) and tombstones nothing; the window
   stays the same while its turns are live, so a retry most likely gets the same refusal.
 - Provider rebuild: a chunk, digest or turn embedding whose text reads as a credential is
-  staged without a vector, which covers one an earlier build embedded. Only a memory chunk
-  stored without a vector stays without one, so a chunk its writer held as part of a cut
-  key stays held whichever page its neighbours land on. A digest or turn stored without a
-  vector had a failed embed, since its write path checks the whole text, and the rebuild
-  embeds it. Verification reads the text of every row left empty whose source held a
+  staged without a vector, which covers one an earlier build embedded. A memory chunk
+  stored without a vector whose own text is plain is read with its stored neighbours at
+  `chunk_index` ±1 in its session (a primary-key read), and stays without a vector when a
+  key in that joined text touches it, so a chunk its writer held as part of a cut key stays
+  held whichever page its neighbours land on. Any other row stored without a vector (a
+  failed embed, or a row an earlier rebuild staged while its org's model calls were off) is
+  embedded. Verification reads the text of every row left empty whose source held a
   vector and accepts those that read as a credential.
 - `loom reembed` re-embeds only rows that have a vector, and keeps a conversation turn
   that reads as a credential on its old model, which search does not read, until

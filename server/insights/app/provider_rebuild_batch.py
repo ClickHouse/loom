@@ -9,11 +9,13 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from server.core.repo_base import _CHClient
 from server.embedding.embedder import Embedder
 from server.insights.domain.provider_rebuild import EMBEDDING_SURFACES
+from server.insights.store.provider_staging import chunk_texts
 from server.llm import customer
 from server.memory.domain.embed_text import key_axis_text
-from server.memory.domain.sensitivity import reads_high
+from server.memory.domain.sensitivity import reads_high, split_credentials
 
 # Stored text recipes mirror the original write paths. Tracker rows do not
 # contain their source text and therefore require explicit hydration by caller.
@@ -62,10 +64,58 @@ def _has_vector(row: Mapping[str, Any], columns: Sequence[str]) -> bool:
     return any(any(row[column]) for column in columns)
 
 
+def _reembed_columns(table: str) -> list[str]:
+    return [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
+
+
+async def _held_chunks(rows: Sequence[Mapping[str, Any]], ch: _CHClient | None) -> set[int]:
+    """The indexes of the memory chunks stored without a vector that touch a key cut at a
+    chunk boundary: the chunk joined with its stored neighbours at chunk_index ±1 in its
+    session overlaps a credential (`split_credentials`). Only a plain chunk without a
+    vector needs its neighbours read, and such chunks are rare."""
+    columns = _reembed_columns("memory_chunks")
+    empty = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("tombstoned_at") is None
+        and all(column in row for column in columns)
+        and not _has_vector(row, columns)
+        and str(row.get("content") or "").strip()
+        and not reads_high(str(row["content"]))
+    ]
+    if not empty:
+        return set()
+    keys = set()
+    for index in empty:
+        row = rows[index]
+        session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
+        at = int(row["chunk_index"])
+        keys.update((*session, n) for n in (at - 1, at + 1) if n >= 0)
+    stored = await chunk_texts(sorted(keys), ch=ch)
+    held = set()
+    for index in empty:
+        row = rows[index]
+        session = (str(row["org"]), str(row["namespace"]), str(row["session_id"]))
+        at = int(row["chunk_index"])
+        chunks = [
+            (session, int(n["chunk_index"]), str(n["content"]))
+            for n in stored
+            if (str(n["org"]), str(n["namespace"]), str(n["session_id"])) == session
+            and int(n["chunk_index"]) in (at - 1, at + 1)
+        ]
+        chunks.append((session, at, str(row["content"])))
+        if split_credentials(chunks)[-1]:
+            held.add(index)
+    return held
+
+
 def _inputs(
-    table: str, rows: Sequence[Mapping[str, Any]], source_texts: Mapping[int, str]
+    table: str,
+    rows: Sequence[Mapping[str, Any]],
+    source_texts: Mapping[int, str],
+    held: set[int],
 ) -> tuple[list[str], list[tuple[int, str]]]:
-    columns = [s.column for s in EMBEDDING_SURFACES if s.table == table and s.action == "reembed"]
+    columns = _reembed_columns(table)
     if not columns:
         raise RebuildBatchError("unsupported_rebuild_table")
     texts: list[str] = []
@@ -77,7 +127,7 @@ def _inputs(
             continue
         text = _source_text(table, row, index, source_texts)
         if table in PASSAGE_TABLES:
-            if reads_high(text) or (table == "memory_chunks" and not _has_vector(row, columns)):
+            if reads_high(text) or index in held:
                 continue
         for column in columns:
             value = text
@@ -149,6 +199,7 @@ async def rebuild_batch(
     *,
     source_texts: Mapping[int, str] | None = None,
     waiting: list[int] | None = None,
+    ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Return full staged rows; never publish partial or malformed embeddings.
 
@@ -156,16 +207,16 @@ async def rebuild_batch(
     (`embedding_dim = 0`), as a tombstone is, and its index added to `waiting`;
     the rebuild completes and counts it in its progress (`rows_waiting`). Once the
     org is back on, memory_embeddings and code_chunks / code_summaries stubs are
-    embedded again by their recovery workers. A memory chunk stays without a vector
-    until a write replaces it, and a row of any other table until a write replaces
-    it or a later rebuild covers it.
+    embedded again by their recovery workers, and a row of any other table when a
+    write replaces it or a later rebuild covers it.
 
     A raw passage (`PASSAGE_TABLES`) whose text reads as a credential is staged
     without a vector and never sent to the provider; verification reads its text
     and accepts it. A memory chunk stored without a vector is staged without one
-    too: the write path may have held it as part of a key cut at a chunk boundary.
-    A conversation turn or digest stored without a vector had a failed embed, and
-    the rebuild embeds it.
+    too when it and its stored neighbours at chunk_index ±1 make a text where a
+    key touches it: the write path held it as part of a key cut at a chunk
+    boundary. Any other row stored without a vector (a failed embed, or a row a
+    rebuild staged while its org's model calls were off) is embedded.
 
     The caller must hydrate tracker text from its source and supply every stored
     column. Tombstones remain tombstones and are never sent to the provider.
@@ -174,7 +225,8 @@ async def rebuild_batch(
     """
     if not target.model_name or type(target.dim) is not int or not 1 <= target.dim <= 65535:
         raise RebuildBatchError("embedding_target_invalid")
-    texts, slots = _inputs(table, rows, source_texts or {})
+    held = await _held_chunks(rows, ch) if table == "memory_chunks" else set()
+    texts, slots = _inputs(table, rows, source_texts or {}, held)
     # One call carries one org's texts: a model call names a single customer.
     by_org = await customer.by_org(str(rows[index].get("org", "")) for index, _ in slots)
     vectors: list[list[float]] = [[] for _ in texts]

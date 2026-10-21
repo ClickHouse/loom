@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from server.insights.app import provider_rebuild_batch
 from server.insights.app.provider_rebuild_batch import (
     PASSAGE_TABLES,
     SPECIAL_TEXT_TABLES,
@@ -248,14 +249,45 @@ def _without_vector(table: str, text: str, stored: list[float] | None = None) ->
     return row
 
 
+def _stored_chunks(monkeypatch: pytest.MonkeyPatch, rows: list[dict]) -> list[list]:
+    """Answer the neighbour read from `rows`, as loom.memory_chunks would; returns the
+    keys each read asked for."""
+    asked: list[list] = []
+
+    async def read(keys, *, ch=None):
+        asked.append(keys)
+        return [
+            r for r in rows if (r["org"], r["namespace"], r["session_id"], r["chunk_index"]) in keys
+        ]
+
+    monkeypatch.setattr(provider_rebuild_batch, "chunk_texts", read)
+    return asked
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stored", [[], [0.0, 0.0, 0.0]], ids=["empty", "placeholder"])
-async def test_a_plain_memory_chunk_stored_without_a_vector_stays_without_one(stored, target):
-    # The write path may have held it as part of a key cut at a chunk boundary.
-    row = _without_vector("memory_chunks", "source text", stored)
-    result = (await rebuild_batch("memory_chunks", [row], target))[0]
-    target.embed_many.assert_not_awaited()
-    assert result["embedding_dim"] == 0
+async def test_a_plain_memory_chunk_without_a_vector_between_plain_chunks_is_embedded(
+    stored, target, monkeypatch
+):
+    # Emptied by something other than a write-path hold (a failed embed, a rebuild while
+    # the org's model calls were off): its neighbours touch no key, so it is embedded.
+    rows = [
+        {**row_for("memory_chunks"), "chunk_index": 0, "content": "plain words before"},
+        {**_without_vector("memory_chunks", "source text", stored), "chunk_index": 1},
+        {**row_for("memory_chunks"), "chunk_index": 2, "content": "plain words after"},
+    ]
+    asked = _stored_chunks(monkeypatch, rows)
+    result = (await rebuild_batch("memory_chunks", rows[1:2], target))[0]
+    assert asked == [[("private-org", "private-ns", "s", 0), ("private-org", "private-ns", "s", 2)]]
+    target.embed_many.assert_awaited_once_with(["source text"])
+    assert result["embedding_dim"] == 2
+
+
+@pytest.mark.asyncio
+async def test_memory_chunks_with_vectors_read_no_neighbours(target, monkeypatch):
+    asked = _stored_chunks(monkeypatch, [])
+    await rebuild_batch("memory_chunks", [row_for("memory_chunks")], target)
+    assert asked == []
 
 
 @pytest.mark.asyncio
@@ -270,7 +302,9 @@ async def test_a_plain_turn_or_digest_stored_without_a_vector_is_embedded(table,
 
 
 @pytest.mark.asyncio
-async def test_memory_chunks_cut_through_a_key_stay_without_a_vector_on_separate_pages(target):
+async def test_memory_chunks_cut_through_a_key_stay_without_a_vector_on_separate_pages(
+    target, monkeypatch
+):
     from server.memory.app.chunk_projection import chunk_text_with_ranges
     from server.memory.domain.sensitivity import reads_high
 
@@ -285,6 +319,7 @@ async def test_memory_chunks_cut_through_a_key_stay_without_a_vector_on_separate
         else {**_without_vector("memory_chunks", c), "chunk_index": i}
         for i, c in enumerate(contents)
     ]
+    _stored_chunks(monkeypatch, rows)
     first_page = await rebuild_batch("memory_chunks", rows[:1], target)
     second_page = await rebuild_batch("memory_chunks", rows[1:], target)
     assert [r["embedding_dim"] for r in first_page + second_page] == [0, 0, 2]

@@ -330,3 +330,19 @@ async def snapshot_page(
         f"WHERE {_ORDINAL} > {{after:UInt64}} ORDER BY {_ORDINAL} LIMIT {{limit:UInt32}}",
         {"after": after, "limit": limit},
     )
+
+
+async def chunk_texts(
+    keys: list[tuple[str, str, str, int]], *, ch: _CHClient | None = None
+) -> list[dict[str, Any]]:
+    """The live memory chunks at the given `(org, namespace, session_id, chunk_index)`
+    keys, by primary key: each one's key and `content`, every stored text at a key."""
+    if not keys:
+        return []
+    client = ch or _default_client()
+    return await client.query_all(
+        "SELECT org, namespace, session_id, chunk_index, content FROM loom.memory_chunks FINAL "
+        "WHERE (org, namespace, session_id, chunk_index) IN "
+        "{keys:Array(Tuple(String, String, String, UInt32))}",
+        {"keys": keys},
+    )

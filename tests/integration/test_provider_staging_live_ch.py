@@ -554,8 +554,8 @@ def _passage_rows(table: str, org: str, namespace: str, texts: list[str]) -> lis
 @pytest.mark.parametrize("table", ["memory_chunks", "conversation_embeddings"])
 async def test_a_credential_passage_is_staged_empty_and_verifies(table):
     """A passage an earlier build embedded whose text reads as a credential is rebuilt
-    without a vector, as its write path now leaves it; verification accepts that row and
-    no other empty one."""
+    without a vector, as its write path leaves it; verification accepts that row and no
+    other empty one."""
     if os.environ.get("LOOM_PROVIDER_STAGING_LIVE_TEST") != "1":
         pytest.skip(_OPT_IN)
     client = _default_client()
