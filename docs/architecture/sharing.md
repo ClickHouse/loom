@@ -71,15 +71,16 @@ The same five ops serve both ways a chat runs in front of Loom:
   no user axis to bound), so no transcript lives in a personal collection: a save there
   stores the text the request sends as a saved-only row, and unsaving it removes the row.
 
-In both, a save is refused for text that reads as a credential (`reason`), and in a
-recording namespace also for a tombstoned turn or a stored system or tool turn (a request
-can name only a user or assistant role); under the pinned token a body naming another
-user is refused (403); a client draws a conversation's saved state with one
-`conversation.saved_status` call; and a user erasure takes the user's conversation rows,
-saved ones included. A user-scope `erasure.export` does not return conversation rows, so
-it leaves out saved messages, as it leaves out the rest of a user's transcript. The personal
-collection's documents are for what the user brings (an upload, a chat's attachment),
-which is chunked and embedded whatever its text holds.
+In both, a save is refused for text that reads as a credential and for a tombstoned turn
+(in `@me`, one a user erasure left), with its `reason`; in a recording namespace also for
+a stored system or tool turn (a request can name only a user or assistant role). Under
+the pinned token a body naming another user is refused (403). A client draws a
+conversation's saved state with one `conversation.saved_status` call, and a user erasure
+takes the user's conversation rows, saved ones included. A user-scope `erasure.export`
+does not return conversation rows, so it leaves out saved messages, as it leaves out the
+rest of a user's transcript. The personal collection's documents are for what the user
+brings (an upload, a chat's attachment), which is chunked and embedded whatever its text
+holds.
 
 ## Identity
 
@@ -244,10 +245,10 @@ asked to delete. `collection.delete` purges what its collection held (a namespac
 that takes the rows off disk) before the collection leaves the tree. A user-scope
 `erasure.export` returns the chunks that user wrote in the collections its caller may
 read, and in the user's own personal collection (not their saved messages, which are
-conversation rows; see [Saved messages](#saved-messages)). An org admin may erase a collection's
-rows without reading them; a platform admin sees every collection. Each section's read
-leaves out what the caller may not see before its limit, so a hidden row never takes a
-visible row's place on the page.
+conversation rows; see [Saved messages](#saved-messages)). An org admin may erase a
+collection's rows without reading them; a platform admin sees every collection. Each
+section's read leaves out what the caller may not see before its limit, so a hidden row
+never takes a visible row's place on the page.
 
 ## Alternatives not taken
 

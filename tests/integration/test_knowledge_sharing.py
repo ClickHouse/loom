@@ -269,7 +269,9 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     ], rows
     assert nonce in rows[0]["content_excerpt"], rows
     saved_at = datetime.fromisoformat(rows[0]["ts"].replace("Z", "+00:00"))
-    assert (saved_at.tzinfo and saved_at or saved_at.replace(tzinfo=UTC)) >= before, rows
+    saved_at = saved_at.replace(tzinfo=saved_at.tzinfo or UTC)
+    # The save time, not a turn time: the row was written by this save.
+    assert before <= saved_at <= datetime.now(UTC) + timedelta(minutes=5), rows
     status = {**mine, "message_ids": ["m9", "m8"]}
     assert _chat_ok(gw, "alice", "conversation.saved_status", status)["saved"] == ["m9"]
     search = {"user_id": "alice", "query": nonce}
