@@ -613,9 +613,11 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
     now = naive_utc_now()
     reason_blob = (input.reason or "")[:512]
     by_blob = (input.redacted_by or "")[:128]
+    # The named version and every profile version built from it go in one call: two
+    # mutations, and no failure between them leaves the fact scrubbed but not its profiles.
     await memory_repo.redact_versions(
         input.org,
-        [(input.memory_id, input.version)],
+        [(input.memory_id, input.version), *(v for p in profiles for v in p.versions)],
         when=now,
         reason_blob=f"{reason_blob}|{by_blob}",
     )
@@ -632,9 +634,7 @@ async def handle_memory_redact(input: MemoryRedactInput) -> MemoryRedactOutput:
         live_link_inputs=await _live_link_inputs(input.org, head),
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
-    await _redact_profiles(
-        input.org, target, profiles, when=now, reason_blob=f"{reason_blob}|{by_blob}"
-    )
+    await _scrub_profile_derivatives(input.org, target, profiles)
     # A redacted value may already be quoted in a cached answer (7-day TTL) or a precedent
     # (30 days); both carry the keys of the window they rendered, so the text leaves with the
     # row it quoted. A failure here is reported, not swallowed: an ADMIN scrub that left the
@@ -700,26 +700,14 @@ async def _profiles_built_from(
     return profiles
 
 
-async def _redact_profiles(
-    org: str,
-    target: HistoryTarget,
-    profiles: list[_ProfileScrub],
-    *,
-    when: datetime,
-    reason_blob: str,
+async def _scrub_profile_derivatives(
+    org: str, target: HistoryTarget, profiles: list[_ProfileScrub]
 ) -> None:
-    """Scrub every listed profile version, the live one included, and each profile
-    key's derived rows: a model wrote them from the redacted text. The worker
-    rebuilds a scrubbed head from the user's current facts. All the versions go
-    in one statement per table, so a user with many versions costs two mutations."""
+    """Scrub each listed profile key's derived rows: a model wrote them from the
+    redacted text. The caller has scrubbed the versions; the worker rebuilds a
+    scrubbed head from the user's current facts."""
     import server.memory.store as memory_repo
 
-    await memory_repo.redact_versions(
-        org,
-        [v for p in profiles for v in p.versions],
-        when=when,
-        reason_blob=reason_blob,
-    )
     for p in profiles:
         # A scrubbed head keeps no text, so none of the key's derived rows is live.
         head = p.head

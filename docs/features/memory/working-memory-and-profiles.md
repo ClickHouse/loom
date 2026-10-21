@@ -228,8 +228,9 @@ async with Agent(org="acme", namespace="support", agent="chat") as bot:
   check and the write: a row written there while the erasure saga runs is a live row its
   final census finds, and the saga fails closed on it. `memory.redact` of a source fact
   scrubs every profile version whose trace names it, and is refused when the profile key
-  is locked. A version whose trace names no memory ids (a fold version written before
-  traces carried them, or by an older build during a rolling upgrade) is not reached
+  is locked. A profile version whose trace names no memory ids (`profile.fold:<label>`
+  alone, as a build that does not record its sources writes it, including an older build
+  during a rolling upgrade) is not reached and keeps the text until the user is erased
   ([security](../../architecture/security.md#sensitivity)).
 - **Scope.** The read is always for one `user_id`. A token pinned to a user
   (`read_user_id`, an end user's token) reads only that user's profile, with or without

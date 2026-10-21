@@ -2218,8 +2218,8 @@ class MemorySettings(BaseModel):
     structured_profile_enabled: bool = True
     # Seconds between structured profile passes. Above 0.
     structured_profile_interval_seconds: int = Field(default=120, gt=0)
-    # Seconds the structured profile worker waits after a pass that found no profile
-    # to build. Above 0.
+    # Seconds the structured profile worker waits after a pass that reached every
+    # namespace with a schema and took no user. Above 0.
     structured_profile_idle_interval_seconds: int = Field(default=600, gt=0)
     # Seconds one namespace's scan for users behind their structured profile may run;
     # past it the scan fails and the namespace backs off. Above 0.
@@ -2240,7 +2240,7 @@ class MemorySettings(BaseModel):
     # first. At least 1.
     structured_profile_memory_limit: Annotated[int, LIVE] = Field(default=100, ge=1)
     # Seconds after a structured profile is built before new memories rebuild it; a
-    # schema change skips this wait. 0 rebuilds on the next pass.
+    # schema change or a deleted source skips this wait. 0 rebuilds on the next pass.
     structured_profile_cooldown_seconds: Annotated[int, LIVE] = Field(default=600, ge=0)
     # Seconds a user whose structured profile build failed waits before the first
     # retry; each further failure doubles the wait. The retry comes at the first

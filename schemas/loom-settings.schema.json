@@ -5041,7 +5041,7 @@
           "default": 600,
           "minimum": 0,
           "type": "integer",
-          "description": "Seconds after a structured profile is built before new memories rebuild it; a schema change skips this wait. 0 rebuilds on the next pass."
+          "description": "Seconds after a structured profile is built before new memories rebuild it; a schema change or a deleted source skips this wait. 0 rebuilds on the next pass."
         },
         "structured_profile_enabled": {
           "default": true,
@@ -5052,7 +5052,7 @@
           "default": 600,
           "exclusiveMinimum": 0,
           "type": "integer",
-          "description": "Seconds the structured profile worker waits after a pass that found no profile to build. Above 0."
+          "description": "Seconds the structured profile worker waits after a pass that reached every namespace with a schema and took no user. Above 0."
         },
         "structured_profile_interval_seconds": {
           "default": 120,

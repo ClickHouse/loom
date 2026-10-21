@@ -2662,8 +2662,8 @@ settings:
   # Seconds between structured profile passes. Above 0. [restart]
   # structured_profile_interval_seconds: 120
 
-  # Seconds the structured profile worker waits after a pass that found no profile to
-  # build. Above 0. [restart]
+  # Seconds the structured profile worker waits after a pass that reached every
+  # namespace with a schema and took no user. Above 0. [restart]
   # structured_profile_idle_interval_seconds: 600
 
   # Seconds one namespace's scan for users behind their structured profile may run; past
@@ -2688,7 +2688,7 @@ settings:
   # structured_profile_memory_limit: 100
 
   # Seconds after a structured profile is built before new memories rebuild it; a schema
-  # change skips this wait. 0 rebuilds on the next pass. [live]
+  # change or a deleted source skips this wait. 0 rebuilds on the next pass. [live]
   # structured_profile_cooldown_seconds: 600
 
   # Seconds a user whose structured profile build failed waits before the first retry;

@@ -750,16 +750,17 @@ and the free-text fold's `consolidated_profile` name the memories they read in t
 (`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
 memory is scrubbed with its key's derived rows, the live one included. The trace names
 the memory and not its version, so a profile built from another version of it is scrubbed
-too. All the versions reached are scrubbed in one statement per version table, so the
-redaction issues two mutations however many profile versions name the memory. The cached
+too. The named version and every profile version reached are scrubbed in one statement
+per version table, so the redaction issues two mutations however many profile versions
+name the memory. The cached
 answers and ask precedents whose window held a scrubbed profile key are deleted with those
 of the memory's own key. A window records bare keys, and every user's profile has the same
 key, so this reach is org-wide: one redaction clears every cached answer and precedent in
 the org that rendered any user's profile, in every namespace, and each profile key reached
-adds one deletion per table. A profile version whose trace names no memory ids is not
-reached: that is every fold version written by a build before traces carried ids, and every one an older build writes
-during a rolling upgrade, whose `memory.redact` also scrubs no profile. Such a version keeps
-the text until the user is erased. A lock on a profile key reached refuses the redaction
+adds one deletion per table. A profile version whose trace names no memory ids
+(`profile.fold:<label>` alone, as a build that does not record its sources writes it,
+including an older build during a rolling upgrade) is not reached and keeps the text until
+the user is erased. A lock on a profile key reached refuses the redaction
 before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
 profile is left out of `profile.render`, `profile.structured` and profile search, and so
 of every pack and primer, until the worker rebuilds it from the user's current facts; the

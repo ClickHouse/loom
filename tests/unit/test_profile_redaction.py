@@ -4,8 +4,9 @@ A profile version names the memories it was built from in its trace
 (`profile.fold:<label>:<memory ids>`); redacting one of them scrubs every
 version that names it, and leaves the versions built without it. A lock on
 the profile key refuses the redact before anything is scrubbed. However many
-versions match, the scrub is one statement per version table, and the cached
-answers and precedents whose window held a scrubbed profile key are deleted.
+versions match, the named version and the profile versions are scrubbed in one
+statement per version table, and the cached answers and precedents whose window
+held a scrubbed profile key are deleted.
 A version that does not exist scrubs nothing.
 """
 
@@ -107,30 +108,18 @@ class _Head:
 @pytest.mark.asyncio
 async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeypatch) -> None:
     import server.memory.store as memory_repo
+    from server.memory.api.models_crud import MemoryRedactInput
     from server.memory.app import curation
-    from server.memory.store import redaction
-    from server.memory.store.history import HistoryTarget
 
-    built_with = '{"timezone":"secret place"}'
-    built_without = '{"timezone":null}'
-    ch = _StatefulLocalCH(*_PROFILE_TABLES, *_profile_rows(built_with, built_without))
-    monkeypatch.setattr(redaction, "_default_client", lambda: ch)
+    ch = _redact_setup(monkeypatch)
 
-    async def head(*_a: Any, **_k: Any) -> _Head:
-        return _Head()
-
-    async def no_links(*_a: Any) -> str:
-        return ""
-
-    monkeypatch.setattr(memory_repo, "get_by_key", head)
-    monkeypatch.setattr(curation, "_live_link_inputs", no_links)
-    target = HistoryTarget(**_TARGET_KW)
-    profiles = await curation._profiles_built_from("o", target, _SECRET)
-    await curation._redact_profiles(
-        "o", target, profiles, when=datetime(2026, 1, 1), reason_blob="r|admin"
+    out = await curation.handle_memory_redact(
+        MemoryRedactInput(org="o", memory_id=_SECRET, version=1, reason="pii")
     )
 
-    # Three versions name the memory; each version table takes one statement for all of them.
+    assert out.redacted
+    # The named version and the three profile versions that name the memory go in one
+    # statement per version table.
     assert sum(1 for sql in ch.executed if "UPDATE" in sql and "redacted_at" in sql) == 2
     for table in ("memory", "memory_versions"):
         values = await ch.query_all(
@@ -144,7 +133,12 @@ async def test_redact_scrubs_every_profile_version_built_from_the_memory(monkeyp
             (4, 0),
         ]
         assert not any("secret place" in r["value"] for r in values)
-        assert values[3]["value"] == built_without
+        assert values[3]["value"] == '{"timezone":null}'
+    fact = await ch.query_all(
+        "SELECT redacted_at IS NOT NULL AS redacted FROM loom.memory_versions "
+        "WHERE memory_key = 'user_timezone'"
+    )
+    assert [r["redacted"] for r in fact] == [1]
     # A second redaction finds nothing left to scrub.
     assert await memory_repo.profile_versions_built_from("o", "n", "u1", _SECRET) == []
 
@@ -332,9 +326,13 @@ async def test_a_redacted_profile_head_leaves_render_and_profile_search(
 
     target = HistoryTarget(**_TARGET_KW)
     profiles = await curation._profiles_built_from("o", target, _SECRET)
-    await curation._redact_profiles(
-        "o", target, profiles, when=datetime(2026, 1, 1), reason_blob="r|admin"
+    await memory_repo.redact_versions(
+        "o",
+        [v for p in profiles for v in p.versions],
+        when=datetime(2026, 1, 1),
+        reason_blob="r|admin",
     )
+    await curation._scrub_profile_derivatives("o", target, profiles)
 
     rendered = await handle_profile_render(render_input)
     assert rendered.labels == [] and rendered.section_count == 0

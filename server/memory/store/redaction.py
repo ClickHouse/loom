@@ -177,19 +177,14 @@ async def profile_versions_built_from(
     """The user's profile versions, not redacted yet, whose trace names `memory_id`
     among the memories they were built from (`profile.fold:<label>:<id>,<id>,...`)."""
     ch = ch or _default_client()
-    cols = "toString(memory_id) AS memory_id, version, agent, session_id, memory_key"
-    where = """org = {org:String} AND namespace = {ns:String} AND user_id = {u:String}
-        AND memory_type = 'profile' AND redacted_at IS NULL
-        AND startsWith(source_trace, 'profile.fold:')
-        AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))"""
     rows: list[dict[str, Any]] = await ch.query_all(
-        f"""
-        SELECT memory_id, version, agent, session_id, memory_key
-        FROM (
-            SELECT {cols} FROM loom.memory_versions WHERE {where}
-            UNION ALL
-            SELECT {cols} FROM loom.memory WHERE {where}
-        )
+        """
+        SELECT toString(memory_id) AS memory_id, version, agent, session_id, memory_key
+        FROM loom.memory_versions
+        WHERE org = {org:String} AND namespace = {ns:String} AND user_id = {u:String}
+          AND memory_type = 'profile' AND redacted_at IS NULL
+          AND startsWith(source_trace, 'profile.fold:')
+          AND has(splitByRegexp('[:,]', source_trace), toString({mid:UUID}))
         LIMIT 1 BY memory_id, version
         """,
         params={"org": org, "ns": namespace, "u": user_id, "mid": memory_id},
