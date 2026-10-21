@@ -248,6 +248,8 @@ describe("Collections: delete", () => {
     expect(deleteCollection).not.toHaveBeenCalled();
 
     confirmAction.mockResolvedValueOnce(true);
+    // The read after the delete no longer lists the collection.
+    listCollections.mockResolvedValue(page());
     await userEvent.click(screen.getByRole("button", { name: "Actions for col-handbook" }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
     await waitFor(() => expect(deleteCollection).toHaveBeenCalledWith("acme", "col-handbook"));
