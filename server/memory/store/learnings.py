@@ -93,9 +93,11 @@ async def rule_promoted(
     *,
     ch: _CHClient | None = None,
 ) -> bool:
-    """Whether a promoted `assistant_turn` rule of this bot under this key is still
-    served: its `learning://<candidate_id>` document is live. A rule whose document
-    was deleted no longer counts, so a revised rule under its key is filed again."""
+    """Whether an `assistant_turn` rule of this bot under this key is served: its
+    `learning://<candidate_id>` document is live. Only a knowledge promotion writes
+    that document, and a later reject leaves it, so the status is not read. A rule
+    whose document was deleted no longer counts, so a revised rule under its key is
+    filed again."""
     ch = ch or _default_client()
     row = await ch.query_one(
         """
@@ -106,7 +108,7 @@ async def rule_promoted(
             FROM loom.learnings_queue FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND agent = {agent:String} AND memory_key = {k:String}
-              AND source_kind = 'assistant_turn' AND status = 'promoted'
+              AND source_kind = 'assistant_turn'
           )
           AND superseded_at IS NULL
         """,

@@ -105,6 +105,8 @@ def _user_turn_before(messages: list[dict[str, Any]], index: int) -> str:
 _ASKS = {"always", "never", "don't", "dont"}  # not a setting: a word list
 # Words that open a question asking for a behaviour ("could you always ...?").
 _POLITE = {"can", "could", "would", "will"}  # not a setting: a word list
+# Words that ask for a behaviour before "you to" ("I want you to always ...").
+_WANTS = {"want", "need"}  # not a setting: a word list
 # Words a rule and a request share without naming the same behaviour.
 _COMMON = set(
     "a an the to in on of for and or with me my i you your user user's assistant always"
@@ -114,7 +116,8 @@ _COMMON = set(
 
 def _words(text: str) -> list[str]:
     # Mobile keyboards type the typographic apostrophe (U+2019) in "don't".
-    return re.findall(r"[a-z0-9'$]+", text.lower().replace("\u2019", "'"))
+    text = text.lower().replace("\u2019", "'")
+    return re.findall(r"[a-z0-9'$]+", re.sub(r"\bdo not\b", "don't", text))
 
 
 def _stems(words: list[str]) -> set[str]:
@@ -122,40 +125,39 @@ def _stems(words: list[str]) -> set[str]:
 
 
 def _opens_imperative(words: list[str], i: int) -> bool:
-    """Whether the ask word at `words[i]` opens an imperative: first in the sentence,
-    after "please" ("please always ...") or after "can/could/would/will you" ("could
-    you always ..."). After any other word ("I never ...", "You never told me ...")
-    it states a fact."""
+    """Whether the ask word at `words[i]` opens an imperative: first in the words,
+    after "please" ("please always ..."), after "can/could/would/will you" ("could
+    you always ...") or after "want/need you to" ("I want you to always ..."). After
+    any other word ("I never ...", "You never told me ...") it states a fact."""
     if i == 0 or words[i - 1] == "please":
         return True
-    return words[i - 1] == "you" and i >= 2 and words[i - 2] in _POLITE
+    if words[i - 1] == "you":
+        return i >= 2 and words[i - 2] in _POLITE
+    return words[i - 1] == "to" and i >= 3 and words[i - 2] == "you" and words[i - 3] in _WANTS
 
 
 def _requested_words(sentence: str) -> list[str]:
     """The words after the ask word that opens an imperative in `sentence`, or none.
+    A clause after a comma or semicolon opens one too ("From now on, always ...").
     A question asks for a behaviour only when it opens with can, could, would or
     will you ("Could you always answer me in French?"); "Do you always escalate
     refunds?" asks about a policy."""
     words = _words(sentence)
     if sentence.endswith("?") and not (words[:1] and words[0] in _POLITE and words[1:2] == ["you"]):
         return []
-    for i, word in enumerate(words):
-        if word in _ASKS and _opens_imperative(words, i):
-            return words[i + 1 :]
+    for start in [0, *(m.end() for m in re.finditer(r"[,;]\s", sentence))]:
+        words = _words(sentence[start:])
+        for i, word in enumerate(words):
+            if word in _ASKS and _opens_imperative(words, i):
+                return words[i + 1 :]
     return []
 
 
 def user_requested(fact: dict[str, Any], messages: list[dict[str, Any]], cited: list[int]) -> bool:
-    """Whether the user turn just before the first of the `cited` assistant turns
-    asks for the behaviour the rule states. The assistant agreeing to a user's
-    request ("always answer me in French") states that user's preference, not a
-    rule of the bot. A request is a sentence where always, never or don't opens
-    an imperative: first, after "please", or after "can/could/would/will you"
-    ("Please always ...", "Don't use ...", "Could you always ...?"). The words
-    after it share at least two of the rule's words, and at least half of them. A
-    statement ("I never received my refund", "You never told me you escalate
-    refunds"), a question about a policy ("Do you always escalate refunds?") or
-    a plain request on its topic ("Please refund my order") asks for no behaviour."""
+    """Whether the user turn before the first cited assistant turn asks for the
+    behaviour the rule states (an agreed request is the user's preference): a
+    sentence whose requested words share at least two of the rule's words, and at
+    least half of them."""
     asked = _user_turn_before(messages, cited[0])
     rule = _stems(_words(str(fact.get("value") or "")))
     for sentence in re.findall(r"[^.!?\n]+[.!?]*", asked):

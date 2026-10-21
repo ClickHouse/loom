@@ -216,8 +216,9 @@ class _Queue:
         self.inserts: list[dict[str, Any]] = []
         self.supporters: dict[tuple[str, str, str], dict[str, Any]] = {}
         self.order: list[str] = []
-        # Promoted candidates whose `learning://` document was deleted.
-        self.deleted_docs: set[str] = set()
+        # Candidates whose `learning://` document is live: written by a knowledge
+        # promotion, left by a later reject, removed by knowledge.delete.
+        self.docs: set[str] = set()
 
     async def find(self, org: str, namespace: str, cid: str) -> dict[str, Any] | None:
         row = self.rows.get(cid)
@@ -237,12 +238,13 @@ class _Queue:
         self.order.append("supporter")
         self.supporters[(row["candidate_id"], row["user_id"], row["session_id"])] = dict(row)
 
+    def promote(self, cid: str) -> None:
+        self.rows[cid]["status"] = "promoted"
+        self.docs.add(cid)
+
     async def promoted(self, org: str, ns: str, agent: str, key: str) -> bool:
         return any(
-            r["agent"] == agent
-            and r["memory_key"] == key
-            and r["status"] == "promoted"
-            and str(r["candidate_id"]) not in self.deleted_docs
+            r["agent"] == agent and r["memory_key"] == key and str(r["candidate_id"]) in self.docs
             for r in self.rows.values()
         )
 
@@ -431,7 +433,7 @@ async def test_a_supporter_racing_a_review_keeps_the_decision(
 @pytest.mark.asyncio
 async def test_a_decided_candidate_takes_no_more_supporters(queue: _Queue) -> None:
     await _file(_state("alice", "s1"))
-    queue.rows[_cid()]["status"] = "promoted"
+    queue.promote(_cid())
     assert await _file(_state("bob", "s2")) == 0
     assert queue.support(_cid()) == [("alice", "s1")]
 
@@ -447,7 +449,7 @@ async def test_a_promoted_rule_restated_in_new_words_is_not_filed_again(
         lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
     )
     await _file(_state("alice", "s1"))
-    queue.rows[_cid()]["status"] = "promoted"
+    queue.promote(_cid())
     reworded = "The assistant hands refunds above $500 to a human."
     assert await _file(_state("bob", "s2"), _rule_fact(value=reworded)) == 0
     assert set(queue.rows) == {_cid()}
@@ -463,21 +465,33 @@ async def test_a_revised_rule_is_filed_once_the_promoted_rules_document_is_delet
     queue: _Queue,
 ) -> None:
     await _file(_state("alice", "s1"))
-    queue.rows[_cid()]["status"] = "promoted"
+    queue.promote(_cid())
     revised = "The assistant escalates any refund over $1000 to a human."
     assert await _file(_state("bob", "s2"), _rule_fact(value=revised)) == 0
     # The admin deletes the promoted rule's document: the revision reaches a reviewer.
-    queue.deleted_docs.add(_cid())
+    queue.docs.discard(_cid())
     assert await _file(_state("carol", "s3"), _rule_fact(value=revised)) == 1
     assert queue.rows[_cid(revised)]["status"] == "pending"
     assert queue.support(_cid(revised)) == [("carol", "s3")]
 
 
+@pytest.mark.asyncio
+async def test_a_promoted_rule_rejected_later_still_stops_new_wordings(queue: _Queue) -> None:
+    await _file(_state("alice", "s1"))
+    queue.promote(_cid())
+    # The admin rejects the promoted candidate: its document is still served.
+    queue.rows[_cid()]["status"] = "rejected"
+    reworded = "The assistant hands refunds above $500 to a human."
+    assert await _file(_state("bob", "s2"), _rule_fact(value=reworded)) == 0
+    assert set(queue.rows) == {_cid()}
+
+
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 @pytest.mark.asyncio
 async def test_a_promoted_rule_counts_only_while_its_document_is_live() -> None:
-    """rule_promoted on clickhouse-local: a promoted candidate whose `learning://`
-    document a later version superseded no longer counts."""
+    """rule_promoted on clickhouse-local: a candidate counts while its `learning://`
+    document is live, whatever its status, and no longer once a later version
+    superseded the document."""
 
     def candidate(status: str) -> str:
         return (
@@ -510,7 +524,8 @@ async def test_a_promoted_rule_counts_only_while_its_document_is_live() -> None:
 
     live = document(1, "NULL")
     assert await promoted(candidate("promoted"), live)
-    assert not await promoted(candidate("pending"), live)
+    # Rejected after its promotion: the document is still served.
+    assert await promoted(candidate("rejected"), live)
     assert not await promoted(candidate("promoted"))
     # knowledge.delete writes a newer version with superseded_at set.
     assert not await promoted(candidate("promoted"), live, document(2, "now()"))
@@ -526,7 +541,7 @@ async def test_a_rejected_rule_does_not_stop_another_rule_under_its_key(queue: _
     assert await _file(_state("carol", "s3"), _rule_fact(value=other)) == 1
     assert len(queue.rows) == 2
     # Once a rule under the key is promoted, a new wording is not filed.
-    queue.rows[_cid()]["status"] = "promoted"
+    queue.promote(_cid())
     newer = "The assistant passes refunds above $500 to a person."
     assert await _file(_state("dave", "s4"), _rule_fact(value=newer)) == 0
     assert len(queue.rows) == 2
@@ -577,6 +592,12 @@ async def test_a_rule_citing_only_a_user_turn_is_never_filed(
         "Could you always answer me in French?",
         # The typographic apostrophe a mobile keyboard types.
         "Don\u2019t answer me in anything but French.",
+        # An ask word opening a clause after a comma.
+        "From now on, always answer me in French.",
+        # "want you to" asks as "could you" does.
+        "I want you to always answer me in French.",
+        # "do not" reads as "don't".
+        "Do not answer me in anything but French.",
     ],
 )
 async def test_behaviour_the_assistant_agrees_to_at_the_users_request_is_never_filed(
