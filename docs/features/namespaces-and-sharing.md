@@ -158,9 +158,10 @@ page header has a **Guide** button beside **Add memory**, described by the guide
 revision and summary; on a namespace with no guide it opens a writer straight into the
 editor, on an outline of what a newcomer asks (what the namespace holds, its keys, its
 tags, how to use it) that cannot be saved unchanged. Spaces shows a public namespace's
-guide summary under its description; for a namespace you belong to, the summary and the
-**Guide** menu item open the guide. A writer edits it there, saving from the revision
-they opened, as an agent does. A namespace erasure deletes every revision of its guide.
+guide summary under its description; for a namespace you belong to, the summary opens
+the guide, or the **Guide** menu item where no summary is shown. A writer edits it from
+either place, saving from the revision they opened, as an agent does. A namespace
+erasure deletes every revision of its guide.
 
 ## The mentor
 

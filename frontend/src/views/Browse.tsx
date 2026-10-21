@@ -18,6 +18,7 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
+import { isPersonalCollection } from "../lib/namespace";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
@@ -469,7 +470,7 @@ export function Browse() {
           org={identity.org}
           namespace={guideNs}
           // `jwt`: the token names the namespace without a grant row; the server decides.
-          canEdit={["writer", "admin", "jwt"].includes(myRole[guideNs] ?? "")}
+          canEdit={["writer", "admin", "jwt"].includes(myRole[guideNs] ?? "") && !isPersonalCollection(guideNs)}
           onSaved={load}
         />
       )}
@@ -535,12 +536,13 @@ const SpaceRow = memo(function SpaceRow({
   const settings = () => actions.settings(namespace);
   const open = standing === "pending" ? withdraw : standing === "admin" ? settings : join;
   const member = standing === "member" || standing === "admin";
+  // Reading a guide takes a role on the namespace (a public row's visibility widens no
+  // read); a viewer waiting on an upgrade still holds one.
   const canReadGuide = member || !!role;
-  /** The More menu: Settings where you manage it, Guide, Copy name, Leave where you belong. */
+  /** The More menu: Settings where you manage it, Guide where no summary is shown, Copy name,
+   *  Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
-    // Reading a guide takes a role on the namespace (a public row's visibility widens no
-    // read); a viewer waiting on an upgrade still holds one.
     // A row whose summary is shown opens the guide from it: one way in, not two.
     ...(canReadGuide && !guideSummary
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]

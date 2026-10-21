@@ -7,12 +7,11 @@ import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
 import { humanizeError } from "../lib/format";
-import { NAMESPACE_NAME } from "../lib/namespace";
+import { isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
 
 // server/auth/sharing.py: a collection's name starts with `col-`, and `col-me-` is kept
 // for the personal collections the server names.
 const COLLECTION_PREFIX = "col-";
-const PERSONAL_PREFIX = "col-me-";
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
 
@@ -21,7 +20,7 @@ export function collectionNameError(name: string): string | null {
   if (!name.startsWith(COLLECTION_PREFIX) || name.length === COLLECTION_PREFIX.length) {
     return `Start the name with "${COLLECTION_PREFIX}", then lowercase letters, digits and dashes.`;
   }
-  if (name.startsWith(PERSONAL_PREFIX)) return `"${PERSONAL_PREFIX}" is kept for personal collections.`;
+  if (isPersonalCollection(name)) return `"${PERSONAL_COLLECTION_PREFIX}" is kept for personal collections.`;
   if (!NAMESPACE_NAME.test(name)) return "Use lowercase letters, digits and dashes only, at most 128 characters.";
   return null;
 }

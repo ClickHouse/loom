@@ -4,6 +4,7 @@ import { getNamespaceGuide, type Identity, type NamespaceGuide } from "../api";
 import { GuideDialog } from "../flows/GuideDialog";
 import { IconButton } from "./IconButton";
 import { useAbortableEffect } from "../lib/hooks";
+import { isPersonalCollection } from "../lib/namespace";
 import { canWrite, useNamespaceRole } from "../lib/namespaceRole";
 import { Tip } from "./ui";
 
@@ -24,7 +25,7 @@ export function NamespaceGuideButton({
 }) {
   const role = useNamespaceRole(identity.namespace);
   // An end user's personal collection takes no guide (the server refuses the save).
-  const writer = canWrite(role) && !identity.namespace.startsWith("col-me-");
+  const writer = canWrite(role) && !isPersonalCollection(identity.namespace);
   const describedBy = useId();
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [open, setOpen] = useState(false);
@@ -91,7 +92,7 @@ export function NamespaceGuideButton({
           org={identity.org}
           namespace={identity.namespace}
           canEdit={writer}
-          startEditing={writer && guide?.found === false}
+          startEditing={guide?.found === false}
           onSaved={() => setReads((n) => n + 1)}
         />
       )}

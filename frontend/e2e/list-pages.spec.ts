@@ -315,6 +315,32 @@ test.describe("a touch pointer at 375 px", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
+  // A member's guide summary in Spaces is a 12 px line of text, but its link is a button,
+  // and every button is a 44 px target under a coarse pointer: a tap near either edge opens
+  // the guide, not the row's join.
+  test("a Spaces row's guide summary link is a 44 px target", async ({ page }) => {
+    await installApi(page, {
+      browseRows: 3,
+      mine: [
+        { namespace: NAMESPACE, role: "writer", status: "active", visibility: "private", kind: "memory" },
+        { namespace: "team-002", role: "writer", status: "active", visibility: "public", kind: "memory" },
+      ],
+      claims: [NAMESPACE, "team-002"],
+    });
+    await page.goto("/spaces");
+    const link = page.locator("[data-guide-link]");
+    await expect(link).toBeVisible();
+    const box = await link.boundingBox();
+    if (!box) throw new Error("the guide link has no box");
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
+    for (const dy of [3, box.height - 3]) {
+      await page.touchscreen.tap(box.x + 12, box.y + dy);
+      await expect(page.getByRole("dialog", { name: "Guide for team-002" })).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+    }
+  });
+
   // A tag chip keeps its 24 px box, so the row keeps its height, and takes a 44 px tap: a
   // tap 8 px above the box filters by the tag instead of opening the row, and one 8 px below
   // takes the filter off (the row paints only its own box, content-visibility, and the hit
