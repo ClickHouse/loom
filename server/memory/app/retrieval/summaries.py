@@ -194,8 +194,8 @@ async def fetch_session_summaries(
     # there. The shortlist's exact re-read is per granule, so a larger LIMIT
     # costs whole granules of vectors: measured 7.2 MiB at 5 rows, 13.3 MiB at
     # 20 on a 1,564-row namespace, and 10.6 MiB at 5 rows against 13.0 MiB at 7
-    # with 3,072-dim vectors. Reading the whole summary_text instead of its first
-    # 1,200 bytes read no more bytes there.
+    # with 3,072-dim vectors. Only the shortlisted rows' summary_text is read, whole,
+    # so it can be checked for a credential.
     wildcard = not agent or agent in ("*", "-")
     params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1)
     try:

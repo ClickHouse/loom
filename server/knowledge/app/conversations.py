@@ -1338,16 +1338,15 @@ def _compaction_candidates(
     credential is never sent to the summarizer: it stays live, out of the window, and out
     of search (it has no embedding row). The credential check stops once the window is
     full and `min_to_compact` new turns are kept: later turns never reach the
-    summarizer. Summaries before the first new turn are not counted toward the window,
-    whose limit still leaves room for them (`_FOLDED_SUMMARY_CHARS`); every turn from
-    the first new one on is."""
+    summarizer. Summaries before the first new turn are not counted toward the window;
+    every turn from the first new one on is."""
     candidates = []
     is_summary = []
     kept_chars = 0
     new_turns = 0
     counting = False
     for r in turns:
-        window_full = kept_chars > _FOLDED_SUMMARY_CHARS + _COMPACT_TRANSCRIPT_CHARS
+        window_full = kept_chars > _COMPACT_TRANSCRIPT_CHARS
         if window_full and new_turns >= min_to_compact:
             break
         if r.get("is_saved") or reads_high(str(r["content"])):
