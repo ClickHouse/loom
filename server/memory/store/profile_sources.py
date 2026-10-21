@@ -115,7 +115,8 @@ async def user_facts(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The user's current facts, most confident and most recently changed first, at
-    most `limit`; each dated by when it became true, else when it last changed."""
+    most `limit`; each dated by when it became true, else when it last changed, with
+    its writer (`actor`) and `version`, whom a builder's model call is for."""
     ch = ch or _default_client()
     params: dict[str, Any] = {
         "org": org,

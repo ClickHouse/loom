@@ -357,12 +357,12 @@ gateway.
   principal. A deferred `memory.set_from_messages` stores its enqueuer on the queue row; the
   entity extractor, the embedding worker, projection repair and the code-link judge read the
   writer of the memory they work on; observe-extract takes the newest writer of the session's
-  observations, both profile builders the newest principal writer of their facts, reflection and the period digest
-  the newest writer of the session's memories (`memory_repo.session_writers`), and the conflict
-  sweep the write's writer. Only a row that records no principal (a conversation turn, a
-  shared-scope vector) takes the agent whose own namespace it is in (owned by
-  `sa:<trust>:<agent>`, the home its trust made on the agent's first token exchange). Only the
-  deployment's own calls (`customer.system()`) name no one.
+  observations, a profile fold and a structured profile build the newest writer of the facts
+  they read, reflection and the period digest the newest writer of the session's memories
+  (`memory_repo.session_writers`), and the conflict sweep the write's writer. Only a row that
+  records no principal (a conversation turn, a shared-scope vector) takes the agent whose own
+  namespace it is in (owned by `sa:<trust>:<agent>`, the home its trust made on the agent's
+  first token exchange). Only the deployment's own calls (`customer.system()`) name no one.
 - **One identity per call.** A job that batches rows (the embedding worker, `loom reembed`, a
   model rebuild) groups them by the identity they render (`customer.groups`), so one call never
   carries two agents' texts, and one agent's rows in several namespaces share a call.
@@ -408,7 +408,8 @@ gateway.
   workers can reclaim after rollback. It claims none of that enqueuer's other
   requests in the namespace meanwhile (by its `enqueued_by` column). The profile fold reads
   four times its slots, gives a held identity's slot to the next one read, and leaves it out
-  of its scan. The embedding worker records each held stub's `embed_retry_at` without
+  of its scan; the structured profile worker leaves a held user out until the hold ends.
+  The embedding worker records each held stub's `embed_retry_at` without
   spending an attempt. Projection repair excludes held failure IDs before its limit.
   Embedding selection excludes held rows before either limit, including
   when a healthy writer uses the same namespace and agent label. The batch embedders (the

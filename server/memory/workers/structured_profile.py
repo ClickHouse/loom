@@ -66,6 +66,7 @@ from server.settings import settings
 from server.settings.budgets import llm_max_tokens
 from server.workers import pass_context
 from server.workers.cost_event import emit_worker_cost_event_for
+from server.workers.holds import hold_seconds
 from server.workers.status import record_pass
 
 log = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ _CUT_OFF = ("length", "max_tokens")  # not a setting: provider wire values
 
 @dataclass(frozen=True)
 class _Wait:
-    """A failed build or scan waiting to be retried."""
+    """A failed or held build, or a failed scan, waiting to be retried."""
 
     # Monotonic time it may be retried.
     until: float
@@ -102,7 +103,7 @@ class _Refusal:
 
 
 # Kept in this process only, so each starts over when the worker lease moves.
-# (org, namespace, user_id) -> the user's wait after a failed build.
+# (org, namespace, user_id) -> the user's wait after a failed or held build.
 _backoff: dict[tuple[str, str, str], _Wait] = {}
 # (org, namespace) -> the wait of a namespace whose scan or schema failed.
 _namespace_backoff: dict[tuple[str, str], _Wait] = {}
@@ -282,7 +283,7 @@ def _prune() -> None:
 
 
 def backing_off(org: str, namespace: str) -> tuple[str, ...]:
-    """Users of the namespace whose last build failed and who are still waiting."""
+    """Users of the namespace whose last build failed or was held, still waiting."""
     now = time.monotonic()
     waiting = [
         u for (o, n, u), w in _backoff.items() if (o, n) == (org, namespace) and w.until > now
@@ -334,6 +335,11 @@ async def _build_users(
         key = (schema.org, schema.namespace, user_id)
         try:
             dropped = await build_profile(schema, user_id)
+        except customer.GROUP_HOLDS as e:
+            # A hold preserves the next failure wait.
+            last = _backoff.get(key)
+            _backoff[key] = _Wait(time.monotonic() + hold_seconds(e), last.wait if last else 0.0)
+            continue
         except customer.HOLDS:
             continue  # a held call is no failure: the user is built once the org is back
         except Refused as e:

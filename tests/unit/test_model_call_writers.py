@@ -506,3 +506,92 @@ def test_a_judge_scheduled_inside_a_job_is_for_the_jobs_writer(monkeypatch) -> N
     with pipeline_actor(f"process:{AGENT_8}"), customer.for_org("acme", namespace=AGENT_NS):
         asyncio.run(schedule())  # the write's principal, from its provenance
     assert settled == [AGENT_8, AGENT_8]
+
+
+def _structured_build(monkeypatch: pytest.MonkeyPatch, facts: list[dict[str, Any]]) -> list[Any]:
+    """One structured profile build in agent-7's namespace over `facts`, whose model call
+    records the identity headers it carries."""
+    from server.memory.app import profile_schema as schema_app
+    from server.memory.domain import profile_schema as ps
+    from server.memory.store import profile_sources
+    from server.memory.workers import structured_profile as sp
+
+    seen: list[Any] = []
+
+    async def digest(**kw: Any) -> tuple[str, int]:
+        return ("d1", len(facts))
+
+    async def nothing(**kw: Any) -> None:
+        return None
+
+    async def user_facts(**kw: Any) -> list[dict[str, Any]]:
+        return [dict(f) for f in facts]
+
+    async def ask(*a: Any) -> dict[str, Any]:
+        seen.append(await _sent())
+        return {"tz": "UTC"}
+
+    monkeypatch.setattr(profile_sources, "sources_digest", digest)
+    monkeypatch.setattr(profile_sources, "profile_row", nothing)
+    monkeypatch.setattr(profile_sources, "profile_head_hold", nothing)
+    monkeypatch.setattr(profile_sources, "user_facts", user_facts)
+    monkeypatch.setattr(schema_app, "write_structured_profile", nothing)
+    monkeypatch.setattr(sp, "_ask", ask)
+    tz = {"type": "string", "description": "time zone"}
+    props = ps.parse({"type": "object", "properties": {"tz": tz}})
+    schema = sp.ActiveSchema(org="acme", namespace=AGENT_NS, props=props, sha256="h" * 64)
+    asyncio.run(sp.build_profile(schema, "u1"))
+    return seen
+
+
+def test_a_structured_profile_build_calls_for_its_facts_newest_writer(
+    writers: _Directory, monkeypatch
+) -> None:
+    """As the profile fold's: the newest principal that wrote the facts it reads (a
+    pipeline's newer write names none), else the agent whose namespace it is."""
+    facts = [
+        {"memory_id": "m1", "value": '"tz UTC"', "since": "2026-01-01", "version": 2},
+        {"memory_id": "m2", "value": '"en"', "since": "2026-01-02", "version": 3},
+    ]
+    by_agent_8 = [
+        {**facts[0], "actor": f"process:{AGENT_8}"},
+        {**facts[1], "actor": provenance.EXTRACTION_WORKER_ACTOR},
+    ]
+    assert _structured_build(monkeypatch, by_agent_8) == [AS_AGENT_8]
+    by_no_one = [{**f, "actor": "worker:structured-profile"} for f in facts]
+    assert _structured_build(monkeypatch, by_no_one) == [AS_AGENT_7]
+
+
+def test_a_held_identity_waits_out_its_hold_in_the_structured_profile_pass(monkeypatch) -> None:
+    """Like the fold's: a held build is no failure, the pass goes on with the next user,
+    and the held user is left out until its hold ends."""
+    import time
+    from collections import deque
+
+    from server.core.errors import ModelCallRefused
+    from server.memory.store.profile_sources import Behind
+    from server.memory.workers import structured_profile as sp
+
+    async def build(schema: Any, user_id: str) -> int | None:
+        if user_id == "u1":
+            raise ModelCallRefused("refused", hold_s=600.0, gateway_status=429)
+        return 0
+
+    key = ("acme", AGENT_NS, "u1")
+    # u1's last build failed, its wait over: the hold leaves its next failure wait as it was.
+    monkeypatch.setattr(sp, "_backoff", {key: sp._Wait(time.monotonic() - 1, 120.0)})
+    monkeypatch.setattr(sp, "_refused", {})
+    monkeypatch.setattr(sp, "build_profile", build)
+    schema = sp.ActiveSchema(org="acme", namespace=AGENT_NS, props=[], sha256="h" * 64)
+    result = sp.StructuredProfileResult()
+    users = [Behind("u1", "d1", 0), Behind("u2", "d1", 0)]
+    asyncio.run(sp._build_users(schema, users, result, stop_at=time.monotonic() + 600))
+    assert (result.errors, result.profiles_written) == (0, 1)
+    assert sp.backing_off("acme", AGENT_NS) == ("u1",)
+    wait = sp._backoff[key]
+    assert 599 < wait.until - time.monotonic() <= 600 and wait.wait == 120.0
+    # The next pass takes the namespace's other users and leaves u1 out.
+    behind = deque([Behind("u1", "d1", 0), Behind("u3", "d1", 0)])
+    scanned = sp._Scanned(schema.sha256, time.monotonic(), behind, complete=True)
+    monkeypatch.setattr(sp, "_scans", {("acme", AGENT_NS): scanned})
+    assert [b.user_id for b in sp._take(schema, 10) or []] == ["u3"]
