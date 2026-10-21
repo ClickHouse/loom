@@ -436,10 +436,19 @@ def test_a_credential_the_cut_would_split_still_blanks_the_quote() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_rule_that_reads_as_a_credential_is_never_filed(queue: _Queue) -> None:
+async def test_a_rule_that_reads_as_a_credential_is_never_filed(
+    queue: _Queue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drops: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        assistant_learnings,
+        "record_drop",
+        lambda org, ns, stage, reason, *, item="", n=1: drops.append((stage, reason, item)),
+    )
     leaky = _rule_fact(value=f"The assistant shares the key {_KEY_ID} on request.")
     assert await _file(_state("alice", "s1"), leaky) == 0
     assert queue.rows == {} and queue.supporters == {}
+    assert drops == [("learnings.file", "sensitive", "assistant_rule_refund_escalation")]
 
 
 @pytest.mark.asyncio

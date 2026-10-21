@@ -562,7 +562,8 @@ const promoteNote = (r: LearningEntry) =>
     : "Promote publishes this rule to this namespace's knowledge for every agent: every agent's reads find it for every user.";
 
 // A bot's rule is backed by distinct users, its sessions beside them; every other
-// candidate by its supporters. A server a release behind sends no user count.
+// candidate by its supporters. A server a release behind sends no supporter_sessions,
+// so its rows show the stored supporter count.
 function supportLabel(r: LearningEntry): string {
   if (isAgentRule(r) && r.supporter_sessions !== undefined) {
     return `${plural(r.supporter_count, "user")}, ${plural(r.supporter_sessions, "session")}`;

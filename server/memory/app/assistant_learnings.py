@@ -52,9 +52,12 @@ async def file_assistant_rules(state: WorkflowState, facts: list[dict[str, Any]]
 async def _file_one(state: WorkflowState, key: str, fact: dict[str, Any]) -> bool:
     value = str(fact.get("value") or "").strip()
     agent = state.rule_agent
+    if not key or not value or not agent:
+        return False
     # A rule that reads as a credential is never filed: promoted, it would reach
     # every user of the bot.
-    if not key or not value or not agent or reads_high(value):
+    if reads_high(value):
+        record_drop(state.org, state.namespace, "learnings.file", "sensitive", item=key)
         return False
     # Only what the assistant said is its rule: a fact citing no assistant turn
     # would show a user's words to the reviewer as the bot's.
