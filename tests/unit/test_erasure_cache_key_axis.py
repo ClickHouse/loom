@@ -315,6 +315,10 @@ async def test_redact_handler_reports_the_cache_and_precedent_rows_it_deleted(mo
         assert scrubs == ["scrub"] and apply is True
         return {}
 
+    async def _profiles(org, namespace, user_id, memory_id):
+        return []
+
+    monkeypatch.setattr(memory_repo, "profile_keys_built_from", _profiles)
     monkeypatch.setattr(memory_repo, "version_exists", _exists)
     monkeypatch.setattr(memory_repo, "redact_versions", _redact_versions)
     monkeypatch.setattr(memory_repo, "key_derivative_scrubs", _derivatives)
