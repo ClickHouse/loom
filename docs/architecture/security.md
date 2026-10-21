@@ -827,10 +827,13 @@ A worker pass is bounded:
 - It reads its window in the table's sort key order, in pages of
   `LOOM_SENSITIVITY_SWEEP_MAX_ROWS_PER_PASS` keys, until that many candidates are found or
   `LOOM_SENSITIVITY_SWEEP_PAGES_PER_PASS` pages are read.
-- It starts at the agent the pass before stopped in, or past it when that pass started and
-  stopped in the same agent, and the pass after one that reads the window's last row starts
-  again at the first key. A run of selected rows the detector leaves unlabelled in one agent
-  therefore cannot hide another agent's rows from every pass. The cursor, in
+- It starts at the agent the pass before stopped in, and the pass after one that reads the
+  window's last row starts again at the first key. A pass that found nothing to label and
+  started and stopped in the same agent leaves its cursor past that agent instead, or past
+  its namespace or org when a cursor naming the agent does not fit in 512 characters. A run
+  of selected rows the detector leaves unlabelled in one agent therefore cannot hide
+  another agent's rows from every pass, and a pass that labelled rows, or failed to, is
+  followed by one that reads the same agent again. The cursor, in
   `loom.worker_status`, holds the org, namespace and agent only, so it names no user or
   memory key that would outlive an erasure.
 - Its ClickHouse filter selects only the shapes the default filter applies (`credential`

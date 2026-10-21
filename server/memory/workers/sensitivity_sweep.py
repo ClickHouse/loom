@@ -13,10 +13,10 @@ shape matches run ids and integer limits); the historical
 backlog is the operator's `loom sensitivity-sweep --apply`, not this worker's.
 
 A pass starts at the agent the previous one stopped in (the worker's cursor in
-`loom.worker_status`), past it when the previous pass started and stopped in that one
-agent, and the next starts again at the first key once a pass reads the last row. So
-selected rows the detector leaves unlabelled in one agent cannot fill every pass's pages
-ahead of another agent's rows. The cursor is `(org, namespace, agent)` and no more: a user
+`loom.worker_status`), past it when the previous pass found nothing to label and started
+and stopped there, and the next starts again at the first key once a pass reads the last
+row. So selected rows the detector leaves unlabelled in one agent cannot fill every pass's
+pages ahead of another agent's rows. The cursor is `(org, namespace, agent)` and no more: a user
 id or a memory key in `loom.worker_status` would outlive that user's erasure.
 """
 
@@ -54,8 +54,13 @@ async def run_pass(ch: _CHClient | None = None) -> dict[str, Any]:
             ch=ch,
         )
         result = await sweep.apply(report.candidates, ch=ch)
-        # after `apply`, so a pass that fails there is read again from the same agent
-        pass_context.set_cursor(cursor_text(report.resume_after, started_at=start))
+        # after `apply`, so a pass that fails there is read again from the same agent. Only a
+        # pass that found nothing to label may skip ahead: one that labelled rows, or failed
+        # to, reads the same agent again.
+        stuck = not report.candidates and not result.errors
+        pass_context.set_cursor(
+            cursor_text(report.resume_after, started_at=start if stuck else None)
+        )
         outcome = {"scanned": report.scanned, "truncated": report.truncated, **result.as_dict()}
         rec.outcome = outcome
         if result.relabelled or result.errors:
@@ -80,17 +85,33 @@ CURSOR_KEY = SORT_KEY[:3]
 
 def cursor_text(key: dict[str, Any] | None, *, started_at: dict[str, Any] | None = None) -> str:
     """The agent of `key` as the pass's cursor: a JSON list of its org, namespace and agent,
-    `[]` for the first key (never empty, which would keep the previous cursor). When the pass
-    started in that same agent (`started_at`), the cursor is the next agent instead, so the
-    next pass does not read the same page again. A key longer than the cursor store holds
-    keeps its leading columns and empties the rest, which sorts before it."""
+    `[]` for the first key (never empty, which would keep the previous cursor). A key longer
+    than the cursor store holds keeps its leading columns and empties the rest, which sorts
+    before it.
+
+    `started_at` is where a pass that found nothing to label started. When the cursor would
+    be that same place, the next pass would read the same pages again, so the cursor skips
+    past it instead: past the agent, or past the namespace or the org when the longer
+    cursor does not fit, or back to the first key when none does."""
     if not key:
         return "[]"
     parts = [str(key[col]) for col in CURSOR_KEY]
-    if started_at and parts == [started_at[col] for col in CURSOR_KEY]:
-        # sorts after every key in this agent and before the next agent, as no agent name
-        # holds a control character (a NUL would not pass as a query parameter)
-        parts[-1] += "\x01"
+    text = _fitted(parts)
+    if started_at is None or json.loads(text) != [started_at[col] for col in CURSOR_KEY]:
+        return text
+    for kept in range(len(parts), 0, -1):
+        # `\x01` sorts after every key under that column's value and before the next value,
+        # as no org, namespace or agent name holds a control character (a NUL would not pass
+        # as a query parameter)
+        skipped = parts[: kept - 1] + [parts[kept - 1] + "\x01"] + [""] * (len(parts) - kept)
+        text = json.dumps(skipped)
+        if len(text) <= pass_context.MAX_CURSOR:
+            return text
+    return "[]"
+
+
+def _fitted(parts: list[str]) -> str:
+    """`parts` as JSON, with its trailing columns emptied until it fits the cursor store."""
     for kept in range(len(parts), 0, -1):
         text = json.dumps(parts[:kept] + [""] * (len(parts) - kept))
         if len(text) <= pass_context.MAX_CURSOR:

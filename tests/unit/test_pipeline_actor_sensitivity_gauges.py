@@ -356,16 +356,19 @@ def _local_memory(rows: list[_Row]) -> _LocalCH:
 
 
 async def _run_pass_recording(
-    monkeypatch, ch: _LocalCH, *, rows_per_pass: int, pages: int
+    monkeypatch, ch: _LocalCH, *, rows_per_pass: int, pages: int, failing: bool = False
 ) -> tuple[list[Any], dict[str, Any]]:
     """The scheduled pass over `ch`'s rows, with `apply` recording its candidates: the
-    candidates it would label, and the pass's outcome."""
+    candidates it would label, and the pass's outcome. A `failing` apply labels none and
+    reports an error for each."""
     from server.memory.workers import sensitivity_sweep as w
     from server.settings import settings
 
     applied: list[Any] = []
 
     async def _apply(cands, *, ch=None):
+        if failing:
+            return sweep.ApplyResult(errors=[f"{c.memory_key}: write failed" for c in cands])
         applied.extend(cands)
         return sweep.ApplyResult(relabelled=len(cands), high=len(cands))
 
@@ -446,6 +449,66 @@ async def test_each_pass_starts_at_the_agent_the_last_one_stopped_in(monkeypatch
     assert cursors == [["o", "n", "a"], ["o", "n", "a\x01"], [], ["o", "n", "a"]]
 
 
+async def _passes(
+    monkeypatch, rows: list[_Row], *, count: int, failing: tuple[int, ...] = ()
+) -> tuple[list[list[str]], list[Any]]:
+    """`count` scheduled passes of one page of two over `rows`, each starting at the cursor
+    the one before left, with the rows a pass labels stored as `high` before the next. The
+    passes numbered in `failing` fail in `apply`. Returns each pass's labelled keys and its
+    cursor."""
+    from server.workers import pass_context
+
+    cursor = ""
+    labelled, cursors = [], []
+    for i in range(count):
+        ctx = pass_context.begin("sensitivity_sweep", resume_cursor=cursor)
+        try:
+            applied, _out = await _run_pass_recording(
+                monkeypatch, _local_memory(rows), rows_per_pass=2, pages=1, failing=i in failing
+            )
+        finally:
+            pass_context.clear()
+        keys = [c.memory_key for c in applied]
+        rows = [r._replace(sensitivity="high") if r.key in keys else r for r in rows]
+        labelled.append(keys)
+        cursor = ctx.cursor
+        cursors.append(json.loads(cursor))
+    return labelled, cursors
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_pass_that_labels_rows_or_fails_to_leaves_the_cursor_in_that_agent(
+    monkeypatch,
+) -> None:
+    # Six PIN rows in agent `a`, three passes' worth, and the second pass fails in `apply`.
+    # Every pass that had candidates leaves the cursor at `a`, never past it, so the next
+    # reads `a` again and every row is labelled.
+    pin = "badge PIN is 4471"
+    rows = [_Row("o", "n", "-", _uuid(i), f"pin_{i}", pin, 600 - i) for i in range(6)]
+    labelled, cursors = await _passes(monkeypatch, rows, count=5, failing=(1,))
+    assert labelled == [["pin_0", "pin_1"], [], ["pin_2", "pin_3"], ["pin_4", "pin_5"], []]
+    assert cursors == [["o", "n", "a"]] * 4 + [[]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_an_agent_name_longer_than_the_cursor_holds_never_stalls_the_sweep(
+    monkeypatch,
+) -> None:
+    # An agent whose name does not fit the cursor holds more selected-but-unlabelled rows
+    # than a pass reads. The cursor cannot name it, so the pass that finds nothing there
+    # leaves the cursor past its namespace, and the next reaches the PIN row behind it.
+    from server.workers.pass_context import MAX_CURSOR
+
+    long_agent = "a" * MAX_CURSOR
+    spins = [r._replace(agent=long_agent) for r in _spin_rows_then_a_pin(3)[:-1]]
+    pin_row = _Row("o", "p", "-", _uuid(99), "vault_door", "badge PIN is 4471", 60, agent="b")
+    labelled, cursors = await _passes(monkeypatch, [*spins, pin_row], count=3)
+    assert labelled == [[], [], ["vault_door"]]
+    assert cursors == [["o", "n", ""], ["o", "n\x01", ""], []]
+
+
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_candidates_cut_to_the_limit_resume_after_the_last_kept_one() -> None:
@@ -490,6 +553,11 @@ def test_the_cursor_keeps_the_agent_and_resumes_at_or_before_it() -> None:
     assert cursor_key(cursor_text(key | {"memory_key": "k"})) == start | {"memory_key": ""}
     long_agent = key | {"agent": "a" * MAX_CURSOR, "memory_key": "k"}
     assert cursor_key(cursor_text(long_agent)) == start | {"agent": "", "memory_key": ""}
+    # a pass that found nothing skips past the agent, or past the namespace when the agent
+    # does not fit
+    assert cursor_text(key, started_at=cursor_key('["o", "n", "a"]')) == '["o", "n", "a\\u0001"]'
+    stuck = cursor_text(long_agent, started_at=cursor_key('["o", "n", ""]'))
+    assert stuck == '["o", "n\\u0001", ""]'
     assert cursor_text(None) == "[]" and cursor_key("[]") is None and cursor_key("") is None
     # a cursor that is not this worker's three-column form reads as none
     assert cursor_key(json.dumps(["o", "n", "a", "u", "s", "k"])) is None

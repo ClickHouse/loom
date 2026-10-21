@@ -239,10 +239,6 @@ def _iban_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-def _has_iban(text: str) -> bool:
-    return bool(_iban_spans(text))
-
-
 # --- Protected-attribute classes --------------------------------------------
 #
 # A memory-enhanced agent can lean toward whichever group its user's memory
@@ -359,7 +355,7 @@ def detect_sensitivity(text: str) -> str:
         return ""
     if _reads_high_text(text):
         return HIGH
-    if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _has_iban(text):
+    if any(pat.search(text) for pat in _MEDIUM_PATTERNS) or _iban_spans(text):
         return MEDIUM
     return ""
 
