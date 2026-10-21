@@ -93,8 +93,8 @@ class EntityExtractorResult:
     parse_failures: int = 0
     # Rows that exhausted `memory_entity_extract_parse_fail_max` and were stamped `_parse_failed_`.
     parse_poisoned: int = 0
-    # Unlabelled rows whose value reads as a credential: never sent to the model, stamped
-    # `_none_` so the scan stops picking them up (the sweep labels them `high`).
+    # Rows whose value reads as high, whatever their label: never sent to the model, stamped
+    # `_none_` so the scan stops picking them up.
     skipped_sensitive: int = 0
     # Rows the batch write put on each table.
     rows_written: dict[str, int] = field(default_factory=dict)

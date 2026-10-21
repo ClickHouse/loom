@@ -220,7 +220,7 @@ async def _distill_session(
     (one synthetic `user` turn per narrative) and mark the sources DONE."""
     import server.memory.store as memory_repo
 
-    # An observation that holds a credential is never sent to the model, labelled or not:
+    # An observation that holds a high shape is never sent to the model, labelled or not:
     # capture writes it unlabelled and only the sweep labels it later. It is still marked
     # DONE below.
     readable = [o for o in observations if _sendable(o.sensitivity, o.value)]

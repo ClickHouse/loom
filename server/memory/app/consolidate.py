@@ -490,7 +490,7 @@ async def _write_canonical(
     except Exception as e:  # noqa: BLE001 — lineage is additive
         log.warning("consolidate: derived_from links failed (non-fatal): %s", e)
     if canonical_row["sensitivity"] == "high":
-        # The merged text holds a credential: no vector, and the key is fenced.
+        # The merged text holds a high shape: no vector, and the key is fenced.
         from server.memory.app.high_fence import fence_high
 
         await fence_high([(memory_repo.embedding_key(canonical_row), version)], ch=ch)

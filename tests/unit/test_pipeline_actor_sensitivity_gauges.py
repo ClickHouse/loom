@@ -727,6 +727,28 @@ async def test_a_pass_whose_last_page_crosses_an_agent_keeps_its_cursor_at_that_
 
 @pytest.mark.asyncio
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+async def test_a_stale_key_in_an_earlier_agent_never_moves_the_cursor_past_the_next_one(
+    monkeypatch,
+) -> None:
+    # Agent `a` holds a PIN row already labelled `high` whose old unlabelled version stays
+    # until a merge, and agent `b` a selected row the detector leaves unlabelled followed by
+    # a PIN row. The first pass's one page spans `a` and `b`; the stale key is in `a`, so
+    # the cursor stays at `b` and the second pass labels the PIN row there.
+    pin = "badge PIN is 4471"
+    unlabelled = _Row("o", "n", "-", _uuid(1), "pin_a", pin, 600)
+    rows = [
+        unlabelled,
+        unlabelled._replace(sensitivity="high", version=1),
+        _Row("o", "n", "-", _uuid(2), "spin_b", {"spin": "4471"}, 500, agent="b"),
+        _Row("o", "n", "-", _uuid(99), "vault_door", pin, 60, agent="b"),
+    ]
+    labelled, cursors = await _passes(monkeypatch, rows, count=2, pages=1)
+    assert labelled == [[], ["vault_door"]]
+    assert cursors[0] == ["o", "n", "b"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
 async def test_rows_that_fail_in_apply_on_every_pass_never_hold_the_sweep_in_their_agent(
     monkeypatch,
 ) -> None:

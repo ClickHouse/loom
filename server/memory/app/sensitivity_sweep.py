@@ -317,8 +317,8 @@ class _Range:
 
     reached_end: bool  # the range's last key was read
     last: dict[str, Any]  # the key the next page would start after
-    # The range stopped before its end on a page with a stale key: one the FINAL read gave
-    # no current row for, because its only match is an older version.
+    # The range stopped before its end on a page with a stale key in its last key's agent:
+    # one the FINAL read gave no current row for, because its only match is an older version.
     last_page_had_stale_key: bool = False
 
 
@@ -347,9 +347,11 @@ async def _read_range(
         # (a row `apply` labelled, or one deleted, before the parts merge) gives none, and
         # skipping on a page of those would leave the agent's later rows unread. The FINAL
         # read may also return keys written between the two reads, so compare keys, not
-        # counts.
-        stale = bool(_sort_keys(keys) - _sort_keys(rows))  # a page key with no current row
+        # counts. Only the last key's agent counts: a stale key in an earlier agent sorts
+        # before the cursor and does not hold the next agent back.
         last = keys[-1]
+        current = _sort_keys(rows)
+        stale = any(key not in current for key in _sort_keys(keys) if key[:3] == _agent(last))
         if (
             skip
             and not stale

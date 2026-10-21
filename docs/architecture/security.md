@@ -846,8 +846,9 @@ A worker pass is bounded:
 - A pass that labelled rows leaves its cursor at the agent it stopped in, so the next pass
   reads that agent again. A pass that labelled nothing leaves its cursor past that agent
   when its candidates, all in that agent, failed to apply, or when it found none and its
-  last page had a key with no current row, the case of older versions waiting for a
-  merge. So a row that fails every time, or a run of such versions, is read again when the
+  last page had a key with no current row in that agent, the case of older versions
+  waiting for a merge. Such a key in an earlier agent on that page sorts before the
+  cursor, so it does not move the cursor past the agent it stopped in. So a row that fails every time, or a run of such versions, is read again when the
   sweep comes back round to it. A pass whose last page was an ordinary one, even one that
   crossed into the next agent, leaves its cursor at the agent it stopped in, and failures
   in an earlier agent leave the cursor where the pass stopped. A cursor that names an agent
