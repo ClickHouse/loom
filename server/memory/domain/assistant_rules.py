@@ -16,8 +16,9 @@ from server.memory.domain.sensitivity import reads_high
 
 SOURCE_KIND = "assistant_turn"
 
-# A supporter row quotes this much of the rule as said and of the user turn before it.
-_RULE_CHARS = 400  # not a setting: a privacy bound on a user's words kept for review
+# A supporter row keeps this much of the assistant quote as said and of the user turn
+# before it.
+_SAID_CHARS = 400  # not a setting: a bound on the assistant quote a supporter row keeps for review
 _USER_CHARS = 200  # not a setting: a privacy bound on a user's words kept for review
 
 
@@ -134,7 +135,7 @@ def bounded_quotes(asked: str, said: str) -> tuple[str, str]:
     # Read whole: a credential the cut would split no longer reads as one.
     return (
         "" if reads_high(asked) else _bounded(asked, _USER_CHARS),
-        "" if reads_high(said) else _bounded(said, _RULE_CHARS),
+        "" if reads_high(said) else _bounded(said, _SAID_CHARS),
     )
 
 

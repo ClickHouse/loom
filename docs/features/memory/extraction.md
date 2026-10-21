@@ -62,8 +62,8 @@ a release changed is kept; whether its CI was green at the time is dropped.
 
 A chat bot's replies carry rules about its own behaviour: "I escalate any refund over
 $500 to a human", "I always answer in bullet points". With
-`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` on (the default; a live setting:
-`loom settings set memory_extract_agent_learnings false` turns it off without a
+`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` on (off by default; a live setting:
+`loom settings set memory_extract_agent_learnings true` turns it on without a
 restart, see [runtime settings](../../operations/runtime-settings.md)), the extraction
 call also returns these, marked `"about": "agent"`, at no extra model call. The setting
 is the only way on: a request's `agent_learnings=false` turns it off for that call, and
@@ -71,9 +71,11 @@ is the only way on: a request's `agent_learnings=false` turns it off for that ca
 (and the `X-Loom-Ignored-Args` header). It adds a block to the extraction prompt. On
 an extraction eval it filed every bot rule for review, while off about half were stored
 as the user's memory and the rest dropped; recall of user facts held, no user fact was
-filed as a bot rule, and input tokens rose by under 2%. While a rolling upgrade still
-runs a build without it, turn it off: an older build lists a pending candidate and, on
-promote, writes the bot's rule as the approver's own memory. Before rolling back to
+filed as a bot rule, and input tokens rose by under 2%. Turn it on, and review
+`assistant_turn` candidates, only once no replica runs a build without it: an older
+build does not erase `loom.learnings_supporters`, and on promote it writes the bot's
+rule as the approver's own memory
+([rolling upgrades](../../architecture/rolling-upgrades.md)). Before rolling back to
 such a build, turn it off, then delete the rows of `loom.learnings_supporters`, where
 users' quotes live (an older build's erasure does not cover that table), and the
 `assistant_turn` candidates
@@ -389,7 +391,7 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 | `LOOM_MEMORY_EXTRACT_SIZE_SEGMENT_*`                      | When a long session is split into fixed windows, and their size.                               |
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
-| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | On by default: file the assistant's rules about itself for review.                             |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Off by default: file the assistant's rules about itself for review.                            |
 | `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
 | `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |

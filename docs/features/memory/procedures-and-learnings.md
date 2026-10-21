@@ -195,9 +195,9 @@ records the reviewer's choice and never makes it. Any candidate other than a bot
 (below) is written by your own process to `loom.learnings_queue`.
 
 Extraction files one kind of candidate itself. With assistant-turn learnings on
-(the default), a rule a bot states about its own behaviour in a conversation becomes an
-`assistant_turn` candidate for that agent (`agent`), never a memory
-([extraction](./extraction.md#rules-the-assistant-states-about-itself)). The candidate
+(`LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`, off by default), a rule a bot states about its
+own behaviour in a conversation becomes an `assistant_turn` candidate for that agent
+(`agent`), never a memory ([extraction](./extraction.md#rules-the-assistant-states-about-itself)). The candidate
 row holds the rule and no user's words. Each session that states the rule adds a row to
 `loom.learnings_supporters` with that user's own quotes. When the candidate is listed,
 `supporter_count` is the distinct end users, `supporter_sessions` the distinct
@@ -238,11 +238,11 @@ erased answers 404, as a missing candidate does. Field lists:
 
 ## Settings
 
-| Setting                               | Effect                                                                                                                                                         |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_PROCEDURE_STRIKE_LIMIT`         | Consecutive failed runs before quarantine ([Workers](../../reference/configuration.md#workers)).                                                               |
-| `LOOM_REFLECTION_DISTILL_*`           | The reflection distillation worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                          |
-| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` | On by default: extraction files the assistant's rules about itself as `assistant_turn` candidates ([Extraction](../../reference/configuration.md#extraction)). |
+| Setting                               | Effect                                                                                                                                                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_PROCEDURE_STRIKE_LIMIT`         | Consecutive failed runs before quarantine ([Workers](../../reference/configuration.md#workers)).                                                                |
+| `LOOM_REFLECTION_DISTILL_*`           | The reflection distillation worker ([Consolidation](../../reference/configuration.md#consolidation)).                                                           |
+| `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS` | Off by default: extraction files the assistant's rules about itself as `assistant_turn` candidates ([Extraction](../../reference/configuration.md#extraction)). |
 
 ## Limits
 

@@ -186,7 +186,7 @@ class MemorySetFromMessagesInput(_Identity):
     # statement-dense ingest (a fact list, a long update) asks for it; a chat
     # transcript keeps the default, which its asides do not repay.
     coverage_sweep: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
-    # None follows memory_extract_agent_learnings (default on); false skips filing the
+    # None follows memory_extract_agent_learnings (default off); false skips filing the
     # assistant's rules for this call, and true while the setting is off is named in ignored_args.
     agent_learnings: bool | None = Field(default=None, json_schema_extra=MCP_HIDDEN)
     # Per-call workflow override. Empty = default pipeline

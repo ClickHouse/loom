@@ -7,32 +7,49 @@ decision.
 
 Runs on the fake LLM, which reads an assistant's "I always ..." sentence as a
 rule when the extraction prompt carries the assistant-rules block, which
-memory_extract_agent_learnings (on by default) adds.
+memory_extract_agent_learnings adds. The setting is off by default, so the module
+turns it on through a runtime override and clears it after.
 """
 
 from __future__ import annotations
 
+import asyncio
+import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 
 import httpx
 import pytest
 import pytest_asyncio
 
+from tests.integration._eventually import overrides_adopted
 from tests.integration._resources import unique_org
 
 _RULE = "I always escalate any refund over $500 to a human."
 _AGENT = "support-bot"
 
 
+def _set_learnings(c: httpx.Client, body: dict[str, Any]) -> None:
+    r = c.post("/v1/admin/settings.set", json={"name": "memory_extract_agent_learnings", **body})
+    assert r.status_code == 200, r.text
+    asyncio.run(overrides_adopted())
+
+
 @pytest.fixture(scope="module")
-def base_url(control_plane_url: str) -> str:
-    """The server under test; skips unless it runs the fake LLM."""
-    with httpx.Client(base_url=control_plane_url, timeout=5.0) as c:
+def base_url(control_plane_url: str) -> Iterator[str]:
+    """The server under test with assistant-turn learnings on; skips unless it runs
+    the fake LLM."""
+    tok = os.environ.get("LOOM_API_KEY")
+    headers = {"Authorization": f"Bearer {tok}"} if tok else {}
+    with httpx.Client(base_url=control_plane_url, timeout=10.0, headers=headers) as c:
         if not c.get("/v1/health").json().get("fake_llm"):
             pytest.skip("scripts the fake LLM's reading of assistant rules")
-    return control_plane_url
+        _set_learnings(c, {"value": True})
+        try:
+            yield control_plane_url
+        finally:
+            _set_learnings(c, {"clear": True})
 
 
 @pytest.fixture
