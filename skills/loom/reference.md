@@ -135,8 +135,9 @@ Python: `async with agent.run_scope(goal=...) as run:` opens and closes it.
 Its typed helpers carry the run's `run_id`, and label recall reads with the
 `X-Loom-Run-Id` header (a body `run_id` on `memory.search`‡ or `memory.ask`
 filters to the run's rows). A raw `agent.call` in the scope gets the run
-only on the memory writes, `observe.record` and working-memory `set` and
-`append`; pass `run_id` yourself on any other call that takes one.
+only on `memory.set`, `pin`, `update`, `set_from_messages`, `bulk_set` and
+`link`, `observe.record` and working-memory `set` and `append`; pass
+`run_id` yourself on any other call that takes one.
 `memory.update_by_id` has no run field: revise by key inside a run.
 
 ## Conversations and session briefs

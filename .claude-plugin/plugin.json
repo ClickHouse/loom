@@ -6,7 +6,7 @@
   "homepage": "https://github.com/ClickHouse/loom",
   "repository": "https://github.com/ClickHouse/loom",
   "license": "Apache-2.0",
-  "keywords": ["code-intelligence", "code-search", "mcp", "clickhouse", "agent", "skill"],
+  "keywords": ["code-intelligence", "code-search", "agent-memory", "mcp", "clickhouse", "agent", "skill"],
   "displayName": "Loom skills",
   "icon": "./integrations/claude-code-plugin/assets/icon.png"
 }

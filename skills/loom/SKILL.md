@@ -135,7 +135,9 @@ change between releases, and ops MCP does not serve with ‡.
 
 Every row carries `(org, namespace, agent, user_id, session_id)`. The token
 fixes `org` and the namespaces you may read and write. A namespace is the
-read boundary: everyone who reads it reads every row in it. On writes, set
+read boundary: a namespace-wide reader reads every row in it, and
+`user_id` alone is not access control (a token narrowed to one user, below,
+is). On writes, set
 `agent` to your stable name (authorship, not isolation), `user_id` to the
 end user when you serve many, `session_id` to the conversation or job, and
 `run_id` to the task execution.
