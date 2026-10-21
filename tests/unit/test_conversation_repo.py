@@ -148,6 +148,27 @@ async def test_an_embedding_row_in_a_flush_another_width_failed_is_sent_alone(
 
 
 @pytest.mark.asyncio
+async def test_a_batched_embedding_row_that_failed_for_another_reason_is_not_resent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "ch_batched_inserts", True)
+    monkeypatch.setattr(
+        conversations, "embedding_insert_settings", lambda _v: batched_insert_settings()
+    )
+
+    class TooManyParts(StubCH):
+        async def insert(self, table, rows, settings=None):
+            await super().insert(table, rows, settings)
+            raise RuntimeError("Code: 252. Too many parts")
+
+    ch = TooManyParts()
+    row: Any = {"org": "o", "msg_id": "m-1", "embedding": [0.1] * 4}
+    with pytest.raises(RuntimeError, match="Code: 252"):
+        await conversations.insert_embedding(row, ch=ch)
+    assert [s for _, _, s in ch.insert_calls] == [batched_insert_settings()]
+
+
+@pytest.mark.asyncio
 async def test_a_committed_embedding_row_another_width_failed_is_not_resent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

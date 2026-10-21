@@ -77,11 +77,12 @@ checkout.
    background flushes a second (usage events, write marks, webhook attempts). Treat the
    result as a floor: a waiting insert also holds its connection through the flush, and
    a process at 200 writes a second refused writes with a pool at the bound (20) and
-   none at twice it. Keep `LOOM_CH_POOL_MAXSIZE` at least three times the bound: raise
-   it when three times the bound passes the current value, or when the process runs
-   with a pool smaller than the default. The default 64 covers about 400 request-path
-   batched inserts a second, for example 200 `conversation.append` a second, the
-   measured rate. A
+   none at twice it. Keep `LOOM_CH_POOL_MAXSIZE` at least three times the bound plus the
+   process's other statements, and raise it when that sum passes the current value. The
+   default 64 leaves room for about 300 request-path batched inserts a second (three
+   times the bound is 45) with about 20 connections for the process's other statements.
+   The 200 writes a second run that was clean at 64 (`bench/write_rate.py --target
+client`) sent only the two inserts. A
    process that cannot grow its pool starts with `LOOM_CH_BATCHED_INSERTS=false`
    ([batched inserts](../architecture/clickhouse.md#batched-inserts)). After the
    rollout, watch `loom.ch.pool.in_use`, `loom.ch.pool.waiters` and

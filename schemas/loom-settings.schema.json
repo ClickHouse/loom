@@ -204,7 +204,7 @@
         "ch_batched_inserts": {
           "default": true,
           "type": "boolean",
-          "description": "Batch the audit, transcript, agent_events, outbox, webhook and evidence inserts so concurrent ones share a part (docs/architecture/clickhouse.md#batched-inserts); false commits them. The auth-attempt, carry-ack, write-mark, usage-event, policy-witness, projection-failure and graph Undo inserts stay waited async inserts either way."
+          "description": "Batch the inserts docs/architecture/clickhouse.md#batched-inserts lists as switched by this setting, so concurrent ones share a part; false commits them. The waited async inserts listed there stay waited either way."
         },
         "ch_caller_shaped_max_execution_s": {
           "default": 30.0,
