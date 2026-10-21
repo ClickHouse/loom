@@ -264,7 +264,8 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
 
 
 async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str) -> None:
-    """Section 5 (optional): knowledge top-K keyed on `seed`."""
+    """Section 5 (optional): the top-K knowledge hits keyed on `seed` that serve this
+    agent (agent_rules.served_hits drops another bot's promoted rules)."""
     try:
         from server.embedding import get_embedder as _gemb
         from server.knowledge.app.search import HybridSearchQuery as _KSQ
@@ -317,8 +318,8 @@ async def handle_memory_stack(input: MemoryStackInput) -> MemoryStackOutput:
       - pinned:  by version DESC
       - recent_recall: by recall_count + evidence_count, last_recalled_at tiebreak
       - procedure: top-K via procedure.match when seed_query is set
-      - knowledge: top-K from knowledge.search keyed on seed_query
-        (else the most-recent recall excerpt)
+      - knowledge: top-K hybrid search keyed on seed_query (else the most-recent
+        recall excerpt), without other bots' promoted rules
 
     Token estimate is `len(value) // 4` (rough char-to-token approximation).
     """
