@@ -99,23 +99,23 @@ file locks are listed in [system overview](system-overview.md#deployment-topolog
 - **Batched inserts.** A committed insert makes one part, so a table written on every
   request makes parts at the request rate, and merges fall behind ("too many parts"). The
   writes made on every request (`audit_log`, `conversations` and `conversation_embeddings`
-  from `conversation.append`, the `agent_events` flush and the policy witness,
-  `memory_webhook_outbox`, `memory_webhook_attempts`, `entity_canonical_map`,
-  `memory_evidence`, `memory_belief_sources`, the `memory_chunks` of
-  `memory.set_from_messages`, and the usage-event, write-mark and carry-acknowledgement
-  flushes) are sent with `async_insert = 1, wait_for_async_insert = 1`
-  (`batched_insert_settings`): ClickHouse collects the concurrent inserts into one table
-  in one part and answers each once that part is written. On return the row is as durable
-  and as visible as a committed insert's, and a caller's next insert lands in a later
-  part, so the order of one caller's writes holds. The buffer is ClickHouse's, so a Loom
-  process that stops loses nothing it acknowledged. Each insert waits between
-  `ch_batched_insert_wait_min_ms` (writes are sparse) and `ch_batched_insert_wait_max_ms`
-  (under load) for others to join it. Under steady load a table gets about 1000 /
-  `ch_batched_insert_wait_max_ms` parts a second per ClickHouse node and insert shape
-  (ClickHouse keeps one buffer per column list and settings): more when a buffer fills
-  before the wait ends, at most one per insert when writes are sparse. The version rows of
-  `memory`, `memory_embeddings`, `shared`, `session_summaries` and `entity_summaries` stay
-  committed: their fenced `INSERT … SELECT FROM input()` ([rolling
+  from `conversation.append`, the `agent_events` flush, the policy witness's
+  `agent_events` and `memory_exposures` rows, `memory_webhook_outbox`,
+  `memory_webhook_attempts`, `entity_canonical_map`, `memory_evidence`,
+  `memory_belief_sources`, the `memory_chunks` of `memory.set_from_messages`, and the
+  usage-event, write-mark and carry-acknowledgement flushes) are sent with `async_insert =
+1, wait_for_async_insert = 1` (`batched_insert_settings`): ClickHouse collects the
+  concurrent inserts into one table in one part and answers each once that part is
+  written. On return the row is as durable and as visible as a committed insert's, and a
+  caller's next insert lands in a later part, so the order of one caller's writes holds.
+  The buffer is ClickHouse's, so a Loom process that stops loses nothing it acknowledged.
+  Each insert waits between `ch_batched_insert_wait_min_ms` (writes are sparse) and
+  `ch_batched_insert_wait_max_ms` (under load) for others to join it. Under steady load a
+  table gets about 1000 / `ch_batched_insert_wait_max_ms` parts a second per ClickHouse
+  node and insert shape (ClickHouse keeps one buffer per column list and settings): more
+  when a buffer fills before the wait ends, at most one per insert when writes are sparse.
+  The version rows of `memory`, `memory_embeddings`, `shared`, `session_summaries` and
+  `entity_summaries` stay committed: their fenced `INSERT … SELECT FROM input()` ([rolling
   upgrades](rolling-upgrades.md)) cannot be buffered. A write whose token names the row's
   identity (`conversation.save_message`) stays committed too: a replicated table keeps the
   tokens of committed and of buffered inserts apart, so every writer of one identity sends

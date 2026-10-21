@@ -392,7 +392,7 @@ async def write_memory_chunks(
     if not rows:
         return
 
-    # Synchronous for the same reason the caller is synchronous: chunks are read
+    # Waited for, for the same reason the caller is: chunks are read
     # on the default bm25_hybrid search path, so a query landing right after the
     # write must find them; a fire-and-forget insert would break that.
     await ch.insert(
