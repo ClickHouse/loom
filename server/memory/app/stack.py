@@ -12,6 +12,7 @@ from server.core.ch import get_client
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.api.models_lifecycle import MemoryStackInput, MemoryStackOutput, _StackEntry
+from server.memory.app.agent_rules import request_rule_agent, served_hits
 
 log = logging.getLogger(__name__)
 
@@ -263,7 +264,8 @@ async def _stack_procedures(input: MemoryStackInput, fill: _StackFill) -> None:
 
 
 async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str) -> None:
-    """Section 5 (optional): knowledge top-K keyed on `seed`."""
+    """Section 5 (optional): the top-K knowledge hits keyed on `seed` that serve this
+    agent (agent_rules.served_hits drops another bot's promoted rules)."""
     try:
         from server.embedding import get_embedder as _gemb
         from server.knowledge.app.search import HybridSearchQuery as _KSQ
@@ -271,14 +273,22 @@ async def _stack_knowledge(input: MemoryStackInput, fill: _StackFill, seed: str)
 
         embedder = _gemb()
         q_vec = await embedder.embed(seed)
-        ksq = _KSQ(
-            org=input.org,
-            namespaces=(input.namespace,),
-            embedding_model=embedder.model_name,
-            query_vec=q_vec,
-            top_k=int(input.knowledge_top_k),
-        )
-        khits = await hybrid_search(ksq)
+        agent = request_rule_agent(input.agent)
+        top_k = int(input.knowledge_top_k)
+
+        async def search(k: int) -> list[Any]:
+            return await hybrid_search(
+                _KSQ(
+                    org=input.org,
+                    namespaces=(input.namespace,),
+                    embedding_model=embedder.model_name,
+                    query_vec=q_vec,
+                    top_k=k,
+                )
+            )
+
+        # Another bot's promoted rule is not a rule about this agent.
+        khits = await served_hits(await search(top_k), search, lambda h: h.tags, agent, top_k)
         for h in khits:
             val = str(getattr(h, "content", "") or "")
             if not val:
@@ -308,8 +318,8 @@ async def handle_memory_stack(input: MemoryStackInput) -> MemoryStackOutput:
       - pinned:  by version DESC
       - recent_recall: by recall_count + evidence_count, last_recalled_at tiebreak
       - procedure: top-K via procedure.match when seed_query is set
-      - knowledge: top-K from knowledge.search keyed on seed_query
-        (else the most-recent recall excerpt)
+      - knowledge: top-K hybrid search keyed on seed_query (else the most-recent
+        recall excerpt), without other bots' promoted rules
 
     Token estimate is `len(value) // 4` (rough char-to-token approximation).
     """

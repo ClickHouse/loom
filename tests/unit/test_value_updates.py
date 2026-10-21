@@ -232,7 +232,7 @@ async def test_set_from_messages_starts_its_link_count_at_zero(
     from server.memory.app import bulk_set as bulk_set
     from server.memory.app.extract import handler as hm
 
-    async def _enqueued(_inp: object) -> MemorySetFromMessagesOutput:
+    async def _enqueued(_inp: object, _rule_agent: str) -> MemorySetFromMessagesOutput:
         return MemorySetFromMessagesOutput(written=[])
 
     monkeypatch.setattr(hm, "_enqueue_deferred", _enqueued)
