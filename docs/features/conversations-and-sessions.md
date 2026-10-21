@@ -66,9 +66,9 @@ up front.
 
 A chat client can let a user save one message for later search without recording the
 namespace's transcripts. `conversation.save_message` (writer) is that opt-in, and
-`conversation.search_saved_messages` (viewer) is its search. These ops are how Loom
-stores a saved message; a user's files and a chat's attachments are documents in their
-personal collection instead ([why](../architecture/sharing.md#alternatives-not-taken)).
+`conversation.search_saved_messages` (viewer) is its search. A saved message is a
+conversation row, never a document in the user's personal collection
+([sharing](../architecture/sharing.md#saved-messages)).
 
 Clients save messages only when every replica preserves saved state during
 compaction. See the

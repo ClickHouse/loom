@@ -254,12 +254,8 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     nonce = _nonce()
     turn = {"conversation_id": "c9", "message_id": "m9"}
     content = f"The renewal note {nonce}."
-    saved = _chat_ok(
-        gw,
-        "alice",
-        "conversation.save_message",
-        {**turn, "role": "assistant", "content": content, "user_id": "alice"},
-    )
+    body = {**turn, "role": "assistant", "content": content, "user_id": "alice"}
+    saved = _chat_ok(gw, "alice", "conversation.save_message", body)
     assert saved["indexed"] is True, saved
     mine = {"user_id": "alice", "conversation_id": "c9"}
     rows = _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"]
@@ -280,6 +276,7 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
     # The transcript ops refuse an end-user token: `@me` holds saved messages only.
     append = {"thread_id": "c9", "role": "user", "content": "hi", "user_id": "alice"}
     assert _chat(gw, "alice", "conversation.append", append).status_code == 403
+    assert _chat(gw, "alice", "conversation.get", {"thread_id": "c9"}).status_code == 403
     # Bob's `@me` is his own; naming Alice's collection or Alice is refused.
     bobs = {"user_id": "bob", "query": nonce}
     assert _chat_ok(gw, "bob", "conversation.search_saved_messages", bobs)["hits"] == []
@@ -299,8 +296,14 @@ def test_an_end_user_saves_a_chat_message_in_me_and_no_one_else_reads_it(gw: Gat
         agent="chat",
     )
     assert r.status_code == 403 and nonce not in r.text, r.text
+    # Bob's writes naming Alice are refused and leave her saved message in place.
+    assert _chat(gw, "bob", "conversation.save_message", body).status_code == 403
+    unsave = {**turn, "user_id": "alice"}
+    assert _chat(gw, "bob", "conversation.unsave_message", unsave).status_code == 403
+    rows = _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"]
+    assert [row["message_id"] for row in rows] == ["m9"], rows
     # A personal collection records no transcript, so unsaving removes the turn.
-    unsaved = _chat_ok(gw, "alice", "conversation.unsave_message", {**turn, "user_id": "alice"})
+    unsaved = _chat_ok(gw, "alice", "conversation.unsave_message", unsave)
     assert unsaved["removed"] is True, unsaved
     assert _chat_ok(gw, "alice", "conversation.list_saved_messages", mine)["rows"] == []
 
